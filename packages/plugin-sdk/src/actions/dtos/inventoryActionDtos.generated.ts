@@ -360,8 +360,8 @@ export type InventoryActionInputById = {
                     artifactId: string;
                     serverId?: string | undefined;
                 };
-                enabled?: boolean | undefined;
                 required?: boolean | undefined;
+                enabled?: boolean | undefined;
                 maxChars?: number | undefined;
                 placement?: 'system_append' | undefined;
             };
@@ -441,8 +441,8 @@ export type InventoryActionInputById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -462,8 +462,8 @@ export type InventoryActionInputById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;

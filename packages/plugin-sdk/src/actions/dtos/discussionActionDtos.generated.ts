@@ -2970,19 +2970,6 @@ export type DiscussionActionResultById = {
                     accessibility?: 'current' | 'former' | undefined;
                 };
             };
-            id: string;
-            encryptionMode: 'e2ee' | 'plain';
-            ownerAccountId: string;
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -3011,6 +2998,19 @@ export type DiscussionActionResultById = {
                     collisionScope: string;
                     entryId: string;
                 }>;
+            };
+            id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
             };
             access: 'admin' | 'edit' | 'owner' | 'view';
             archivedAt: null | number;
@@ -3707,19 +3707,6 @@ export type DiscussionActionResultById = {
                     accessibility?: 'current' | 'former' | undefined;
                 };
             };
-            id: string;
-            encryptionMode: 'e2ee' | 'plain';
-            ownerAccountId: string;
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -3748,6 +3735,19 @@ export type DiscussionActionResultById = {
                     collisionScope: string;
                     entryId: string;
                 }>;
+            };
+            id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
             };
             access: 'admin' | 'edit' | 'owner' | 'view';
             archivedAt: null | number;
@@ -4828,19 +4828,6 @@ export type DiscussionActionResultById = {
                     accessibility?: 'current' | 'former' | undefined;
                 };
             };
-            id: string;
-            encryptionMode: 'e2ee' | 'plain';
-            ownerAccountId: string;
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -4869,6 +4856,19 @@ export type DiscussionActionResultById = {
                     collisionScope: string;
                     entryId: string;
                 }>;
+            };
+            id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
             };
             access: 'admin' | 'edit' | 'owner' | 'view';
             archivedAt: null | number;
@@ -6300,19 +6300,6 @@ export type DiscussionActionResultById = {
                     accessibility?: 'current' | 'former' | undefined;
                 };
             };
-            id: string;
-            encryptionMode: 'e2ee' | 'plain';
-            ownerAccountId: string;
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -6341,6 +6328,19 @@ export type DiscussionActionResultById = {
                     collisionScope: string;
                     entryId: string;
                 }>;
+            };
+            id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
             };
             access: 'admin' | 'edit' | 'owner' | 'view';
             archivedAt: null | number;
@@ -7040,19 +7040,6 @@ export type DiscussionActionResultById = {
                     accessibility?: 'current' | 'former' | undefined;
                 };
             };
-            id: string;
-            encryptionMode: 'e2ee' | 'plain';
-            ownerAccountId: string;
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -7081,6 +7068,19 @@ export type DiscussionActionResultById = {
                     collisionScope: string;
                     entryId: string;
                 }>;
+            };
+            id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
             };
             access: 'admin' | 'edit' | 'owner' | 'view';
             archivedAt: null | number;
@@ -7780,19 +7780,6 @@ export type DiscussionActionResultById = {
                     accessibility?: 'current' | 'former' | undefined;
                 };
             };
-            id: string;
-            encryptionMode: 'e2ee' | 'plain';
-            ownerAccountId: string;
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
             anchor: null | {
                 kind: 'doc';
                 doc: {
@@ -7821,6 +7808,19 @@ export type DiscussionActionResultById = {
                     collisionScope: string;
                     entryId: string;
                 }>;
+            };
+            id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
             };
             access: 'admin' | 'edit' | 'owner' | 'view';
             archivedAt: null | number;

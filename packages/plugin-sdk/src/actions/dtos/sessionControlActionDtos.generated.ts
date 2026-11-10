@@ -927,6 +927,7 @@ export type SessionControlActionInputById = {
             };
             expectedVersion: number;
             ruleDefinition: {
+                v: 1;
                 filter: Readonly<{
                     show: 'both' | 'runs' | 'sessions';
                     startedBy: readonly ('agents' | 'triggers' | 'you')[];
@@ -996,7 +997,6 @@ export type SessionControlActionInputById = {
                     }>[];
                     source: 'all' | 'direct' | 'persisted';
                 }>;
-                v: 1;
                 enabled: boolean;
             };
         }[];
@@ -1089,8 +1089,8 @@ export type SessionControlActionInputById = {
                     artifactId: string;
                     serverId?: string | undefined;
                 };
-                enabled?: boolean | undefined;
                 required?: boolean | undefined;
+                enabled?: boolean | undefined;
                 maxChars?: number | undefined;
                 placement?: 'system_append' | undefined;
             };
@@ -1115,8 +1115,8 @@ export type SessionControlActionInputById = {
                     artifactId: string;
                     serverId?: string | undefined;
                 };
-                enabled?: boolean | undefined;
                 required?: boolean | undefined;
+                enabled?: boolean | undefined;
                 maxChars?: number | undefined;
                 placement?: 'system_append' | undefined;
             };

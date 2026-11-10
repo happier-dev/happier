@@ -2706,22 +2706,22 @@ export type TeamsActionResultById = {
             eventCount: number;
             requestCount: number;
             tokens: {
-                input: number;
-                output: number;
-                reasoning: number;
-                cacheRead: number;
-                cacheWrite: number;
-                total: number;
+                input: null | number;
+                output: null | number;
+                reasoning: null | number;
+                cacheRead: null | number;
+                cacheWrite: null | number;
+                total: null | number;
             };
             cost: {
-                reportedUsd: number;
-                estimatedUsd: number;
+                reportedUsd: null | number;
+                estimatedUsd: null | number;
                 currency: string;
                 apiEquivalentUsd?: number | undefined;
                 pricingSource?: string | undefined;
                 reportedTotalId?: string | undefined;
                 reportedTotalContributionIds?: string[] | undefined;
-                invoiceUsd?: number | undefined;
+                invoiceUsd?: null | number | undefined;
                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                 breakdown?: undefined | {
@@ -2755,22 +2755,22 @@ export type TeamsActionResultById = {
                 eventCount: number;
                 requestCount: number;
                 tokens: {
-                    input: number;
-                    output: number;
-                    reasoning: number;
-                    cacheRead: number;
-                    cacheWrite: number;
-                    total: number;
+                    input: null | number;
+                    output: null | number;
+                    reasoning: null | number;
+                    cacheRead: null | number;
+                    cacheWrite: null | number;
+                    total: null | number;
                 };
                 cost: {
-                    reportedUsd: number;
-                    estimatedUsd: number;
+                    reportedUsd: null | number;
+                    estimatedUsd: null | number;
                     currency: string;
                     apiEquivalentUsd?: number | undefined;
                     pricingSource?: string | undefined;
                     reportedTotalId?: string | undefined;
                     reportedTotalContributionIds?: string[] | undefined;
-                    invoiceUsd?: number | undefined;
+                    invoiceUsd?: null | number | undefined;
                     billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                     costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                     breakdown?: undefined | {
@@ -2808,22 +2808,22 @@ export type TeamsActionResultById = {
                 eventCount: number;
                 requestCount: number;
                 tokens: {
-                    input: number;
-                    output: number;
-                    reasoning: number;
-                    cacheRead: number;
-                    cacheWrite: number;
-                    total: number;
+                    input: null | number;
+                    output: null | number;
+                    reasoning: null | number;
+                    cacheRead: null | number;
+                    cacheWrite: null | number;
+                    total: null | number;
                 };
                 cost: {
-                    reportedUsd: number;
-                    estimatedUsd: number;
+                    reportedUsd: null | number;
+                    estimatedUsd: null | number;
                     currency: string;
                     apiEquivalentUsd?: number | undefined;
                     pricingSource?: string | undefined;
                     reportedTotalId?: string | undefined;
                     reportedTotalContributionIds?: string[] | undefined;
-                    invoiceUsd?: number | undefined;
+                    invoiceUsd?: null | number | undefined;
                     billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                     costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                     breakdown?: undefined | {

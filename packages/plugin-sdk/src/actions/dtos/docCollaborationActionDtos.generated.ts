@@ -203,8 +203,8 @@ export type DocCollaborationActionResultById = {
             createdAt: number;
             ownerAccountId: string;
             header: Record<string, JsonValue>;
-            access: 'admin' | 'edit' | 'owner' | 'view';
             artifactId: string;
+            access: 'admin' | 'edit' | 'owner' | 'view';
             seq: number;
             publicAudience: 'none' | 'retained' | 'unknown';
             body: null | string | {

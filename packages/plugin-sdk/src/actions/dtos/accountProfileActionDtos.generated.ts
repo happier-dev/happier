@@ -31,8 +31,8 @@ export type AccountProfileActionInputById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -49,9 +49,9 @@ export type AccountProfileActionInputById = {
             }[];
         };
         query: {
-            timeZoneOffsetMinutes?: number | undefined;
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
@@ -676,8 +676,8 @@ export type AccountProfileActionInputById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -694,9 +694,9 @@ export type AccountProfileActionInputById = {
             }[];
         };
         query: {
-            timeZoneOffsetMinutes?: number | undefined;
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
@@ -1321,8 +1321,8 @@ export type AccountProfileActionInputById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -1339,9 +1339,9 @@ export type AccountProfileActionInputById = {
             }[];
         };
         query?: undefined | {
-            timeZoneOffsetMinutes?: number | undefined;
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
@@ -2063,8 +2063,8 @@ export type AccountProfileActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -2072,8 +2072,8 @@ export type AccountProfileActionResultById = {
                 protocol: 'auto' | 'https' | 'ssh';
             }[];
             query: null | {
-                timeZoneOffsetMinutes: number;
                 granularity: 'day' | 'hour' | 'month' | 'week';
+                timeZoneOffsetMinutes: number;
                 includeSeries: boolean;
                 topLimit: number;
                 period: {
@@ -2684,7 +2684,6 @@ export type AccountProfileActionResultById = {
                     kind: 'account' | 'planet';
                 };
             };
-            state: 'published';
             snapshot: {
                 v: 1;
                 computedAtMs: number;
@@ -2893,6 +2892,7 @@ export type AccountProfileActionResultById = {
                     };
                 }[];
             };
+            state: 'published';
             layout: {
                 v: 1;
                 items: ({
@@ -3091,8 +3091,8 @@ export type AccountProfileActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -3100,8 +3100,8 @@ export type AccountProfileActionResultById = {
                 protocol: 'auto' | 'https' | 'ssh';
             }[];
             query: null | {
-                timeZoneOffsetMinutes: number;
                 granularity: 'day' | 'hour' | 'month' | 'week';
+                timeZoneOffsetMinutes: number;
                 includeSeries: boolean;
                 topLimit: number;
                 period: {
@@ -3616,8 +3616,8 @@ export type AccountProfileActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -3625,8 +3625,8 @@ export type AccountProfileActionResultById = {
                 protocol: 'auto' | 'https' | 'ssh';
             }[];
             query: null | {
-                timeZoneOffsetMinutes: number;
                 granularity: 'day' | 'hour' | 'month' | 'week';
+                timeZoneOffsetMinutes: number;
                 includeSeries: boolean;
                 topLimit: number;
                 period: {
@@ -4141,8 +4141,8 @@ export type AccountProfileActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -4150,8 +4150,8 @@ export type AccountProfileActionResultById = {
                 protocol: 'auto' | 'https' | 'ssh';
             }[];
             query: null | {
-                timeZoneOffsetMinutes: number;
                 granularity: 'day' | 'hour' | 'month' | 'week';
+                timeZoneOffsetMinutes: number;
                 includeSeries: boolean;
                 topLimit: number;
                 period: {
@@ -4666,8 +4666,8 @@ export type AccountProfileActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -4675,8 +4675,8 @@ export type AccountProfileActionResultById = {
                 protocol: 'auto' | 'https' | 'ssh';
             }[];
             query: null | {
-                timeZoneOffsetMinutes: number;
                 granularity: 'day' | 'hour' | 'month' | 'week';
+                timeZoneOffsetMinutes: number;
                 includeSeries: boolean;
                 topLimit: number;
                 period: {
@@ -5191,8 +5191,8 @@ export type AccountProfileActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -5200,8 +5200,8 @@ export type AccountProfileActionResultById = {
                 protocol: 'auto' | 'https' | 'ssh';
             }[];
             query: null | {
-                timeZoneOffsetMinutes: number;
                 granularity: 'day' | 'hour' | 'month' | 'week';
+                timeZoneOffsetMinutes: number;
                 includeSeries: boolean;
                 topLimit: number;
                 period: {
@@ -5716,8 +5716,8 @@ export type AccountProfileActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -5725,8 +5725,8 @@ export type AccountProfileActionResultById = {
                 protocol: 'auto' | 'https' | 'ssh';
             }[];
             query: null | {
-                timeZoneOffsetMinutes: number;
                 granularity: 'day' | 'hour' | 'month' | 'week';
+                timeZoneOffsetMinutes: number;
                 includeSeries: boolean;
                 topLimit: number;
                 period: {

@@ -9,8 +9,8 @@ export type MessagingActionInputById = {
         sessionId: SessionTargetV1<true>;
         message: string;
         wait?: boolean | undefined;
-        timeoutSeconds?: number | undefined;
         reply?: 'none' | 'return' | 'wait' | undefined;
+        timeoutSeconds?: number | undefined;
         recipient?: undefined | {
             kind: 'agent_team_broadcast';
             teamId: string;
@@ -73,6 +73,7 @@ export type MessagingActionInputById = {
             toolCallId: string;
         };
     } | {
+        sessionId: SessionTargetV1<true>;
         kind: 'sessionSubagentCommand';
         command: {
             [x: string]: unknown;
@@ -85,7 +86,6 @@ export type MessagingActionInputById = {
             memberId: string;
             memberLabel?: string | undefined;
         };
-        sessionId: SessionTargetV1<true>;
         idempotencyKey: string;
     } | {
         sessionId: SessionTargetV1<true>;

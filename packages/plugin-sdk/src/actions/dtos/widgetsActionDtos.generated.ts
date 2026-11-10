@@ -2396,9 +2396,9 @@ export type WidgetsActionInputById = {
                     kind: 'viewer';
                     purpose: string;
                 }> | undefined;
+                titleKey?: string | undefined;
                 frameStyle?: 'card' | 'plain' | undefined;
                 dividers?: 'hairline' | 'none' | undefined;
-                titleKey?: string | undefined;
             };
             description?: string | undefined;
             origin?: undefined | {
@@ -2639,9 +2639,9 @@ export type WidgetsActionInputById = {
                     kind: 'viewer';
                     purpose: string;
                 }> | undefined;
+                titleKey?: string | undefined;
                 frameStyle?: 'card' | 'plain' | undefined;
                 dividers?: 'hairline' | 'none' | undefined;
-                titleKey?: string | undefined;
             };
             origin?: undefined | {
                 kind: 'corePage' | 'home' | 'pluginArea' | 'project';
@@ -13736,6 +13736,7 @@ export type WidgetsActionResultById = {
     readonly "widgets.definition.list": {
         definitions: {
             name: string;
+            inputSchema: PluginJsonSchemaV2;
             inputs: {
                 fields: readonly {
                     path: string;
@@ -13799,7 +13800,6 @@ export type WidgetsActionResultById = {
                 description?: string | undefined;
                 submitLabel?: string | undefined;
             };
-            inputSchema: PluginJsonSchemaV2;
             sizeDeclaration: {
                 sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
                 defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';

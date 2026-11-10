@@ -93,7 +93,6 @@ export type InternalTasksActionInputById = {
                 title?: string | undefined;
             }[];
             labels?: string[] | undefined;
-            dueAt?: number | undefined;
             notes?: string | undefined;
             blockedBy?: (Readonly<{
                 source: Readonly<{
@@ -105,6 +104,7 @@ export type InternalTasksActionInputById = {
                 entryId: string;
             }> | string)[] | undefined;
             createdBy?: string | undefined;
+            dueAt?: number | undefined;
             parentId?: Readonly<{
                 source: Readonly<{
                     pluginId: string;

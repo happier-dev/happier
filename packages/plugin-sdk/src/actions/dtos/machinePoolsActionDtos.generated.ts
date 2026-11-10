@@ -324,6 +324,8 @@ export type MachinePoolsActionResultById = {
                     options?: string | undefined;
                     power?: string | undefined;
                     rebuild?: string | undefined;
+                    resize?: string | undefined;
+                    snapshot?: string | undefined;
                     renew?: string | undefined;
                 };
                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
@@ -338,6 +340,54 @@ export type MachinePoolsActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
                 browserReachable?: boolean | undefined;
+                resize?: undefined | {
+                    cpuCores: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    memoryBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    diskBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                };
+                snapshot?: undefined | {
+                    coverage: {
+                        rootDisk: boolean;
+                        attachedVolumes: boolean;
+                    };
+                    cost: {
+                        kind: 'billed';
+                        source: string;
+                        price?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    };
+                };
                 nativeDurationInput?: undefined | {
                     path: string;
                     unit: 'milliseconds' | 'seconds';
@@ -546,6 +596,8 @@ export type MachinePoolsActionResultById = {
                         options?: string | undefined;
                         power?: string | undefined;
                         rebuild?: string | undefined;
+                        resize?: string | undefined;
+                        snapshot?: string | undefined;
                         renew?: string | undefined;
                     };
                     enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
@@ -560,6 +612,54 @@ export type MachinePoolsActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                     browserReachable?: boolean | undefined;
+                    resize?: undefined | {
+                        cpuCores: {
+                            kind: 'supported';
+                            requiresRestart: boolean;
+                            changes: 'any' | 'grow-only';
+                        } | {
+                            kind: 'unsupported';
+                            code: string;
+                        };
+                        memoryBytes: {
+                            kind: 'supported';
+                            requiresRestart: boolean;
+                            changes: 'any' | 'grow-only';
+                        } | {
+                            kind: 'unsupported';
+                            code: string;
+                        };
+                        diskBytes: {
+                            kind: 'supported';
+                            requiresRestart: boolean;
+                            changes: 'any' | 'grow-only';
+                        } | {
+                            kind: 'unsupported';
+                            code: string;
+                        };
+                    };
+                    snapshot?: undefined | {
+                        coverage: {
+                            rootDisk: boolean;
+                            attachedVolumes: boolean;
+                        };
+                        cost: {
+                            kind: 'billed';
+                            source: string;
+                            price?: undefined | {
+                                amount: string;
+                                currency: string;
+                                unit: string;
+                                source: string;
+                                observedAt: number;
+                                label?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        };
+                    };
                     nativeDurationInput?: undefined | {
                         path: string;
                         unit: 'milliseconds' | 'seconds';
@@ -606,6 +706,8 @@ export type MachinePoolsActionResultById = {
                 }[];
                 localResources?: undefined | {
                     observedAt: number;
+                    totalCpuCores?: number | undefined;
+                    allocatedCpuCores?: number | undefined;
                     availableCpuCores?: number | undefined;
                     availableMemoryBytes?: number | undefined;
                     availableDiskBytes?: number | undefined;

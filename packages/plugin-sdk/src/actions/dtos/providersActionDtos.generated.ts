@@ -1765,6 +1765,24 @@ export type ProvidersActionResultById = {
                 };
             }[];
         }[];
+        unavailableFamilies?: undefined | {
+            contributionKey: string;
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            purpose: string;
+            unavailableReason: string | {
+                key: string;
+                fallback: string;
+                params?: Record<string, number | string> | undefined;
+            };
+            title?: string | undefined | {
+                key: string;
+                fallback: string;
+                params?: Record<string, number | string> | undefined;
+            };
+        }[];
     };
     readonly "providers.connections.describe": {
         status: 'error';

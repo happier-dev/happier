@@ -30,6 +30,7 @@ export type SessionAgentTransitionActionInputById = {
             localId: string;
             meta?: Record<string, unknown> | undefined;
         };
+        sessionId: string;
         selection: {
             v: 1;
             agentId: string;
@@ -47,7 +48,6 @@ export type SessionAgentTransitionActionInputById = {
                 }>;
             };
         };
-        sessionId: string;
         expectedCurrentAgentId: string;
     };
 };

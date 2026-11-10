@@ -18,8 +18,8 @@ export type ClientFilesActionInputById = {
             kind: 'deploymentLog';
             reference: {
                 kind: 'build';
-                serverId: string;
                 machineId: string;
+                serverId: string;
                 environmentId: string;
                 targetLinkId: string;
                 deploymentId: string;

@@ -1606,6 +1606,7 @@ export type DiscoveryActionResultById = {
                             }> | undefined;
                         }[];
                         kind: 'sshd';
+                        publicHostKeyEvidence?: true | undefined;
                     } | {
                         jails: Record<string, {
                             maxRetry: number | {
@@ -1763,6 +1764,7 @@ export type DiscoveryActionResultById = {
                             }> | undefined;
                         }[];
                         kind: 'sshd';
+                        publicHostKeyEvidence?: true | undefined;
                     } | {
                         jails: Record<string, {
                             maxRetry: number | {
@@ -3521,6 +3523,7 @@ export type DiscoveryActionResultById = {
                             }> | undefined;
                         }[];
                         kind: 'sshd';
+                        publicHostKeyEvidence?: true | undefined;
                     } | {
                         jails: Record<string, {
                             maxRetry: number | {
@@ -3678,6 +3681,7 @@ export type DiscoveryActionResultById = {
                             }> | undefined;
                         }[];
                         kind: 'sshd';
+                        publicHostKeyEvidence?: true | undefined;
                     } | {
                         jails: Record<string, {
                             maxRetry: number | {

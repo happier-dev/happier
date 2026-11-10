@@ -1017,21 +1017,6 @@ export type ManagedMachinesActionInputById = {
                 sourceMessageId: string;
             };
             roleId?: string | undefined;
-            capabilitySelection?: undefined | {
-                mcp?: undefined | {
-                    v?: 1 | undefined;
-                    managedServersEnabled?: boolean | undefined;
-                    happierToolsEnabled?: boolean | undefined;
-                    forceIncludeServerIds?: string[] | undefined;
-                    forceExcludeServerIds?: string[] | undefined;
-                };
-                skills?: undefined | {
-                    v?: 1 | undefined;
-                    forceIncludeSkillIds?: string[] | undefined;
-                    forceExcludeSkillIds?: string[] | undefined;
-                    excludeNativeSkillNames?: string[] | undefined;
-                };
-            };
             modelSelection?: undefined | {
                 v: 1;
                 ref: {
@@ -1046,20 +1031,7 @@ export type ManagedMachinesActionInputById = {
                 updatedAt: number;
             };
             permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
-            placementOrigin?: undefined | {
-                kind: 'machine_pool';
-                poolId: string;
-            };
             approvalProfileId?: null | string | undefined;
-            secretReferenceOverlay?: undefined | {
-                v: 1;
-                bindings: Record<string, {
-                    ref: string;
-                    revision?: number | undefined;
-                }>;
-            };
-            agentModeId?: string | undefined;
-            unlistedTools?: 'ask' | 'deny' | undefined;
             connectedServices?: undefined | {
                 v: 1;
                 bindingsByServiceId: Record<string, {
@@ -1120,6 +1092,34 @@ export type ManagedMachinesActionInputById = {
                         accountId: string;
                     };
                 }> | undefined;
+            };
+            placementOrigin?: undefined | {
+                kind: 'machine_pool';
+                poolId: string;
+            };
+            secretReferenceOverlay?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
+            agentModeId?: string | undefined;
+            unlistedTools?: 'ask' | 'deny' | undefined;
+            capabilitySelection?: undefined | {
+                mcp?: undefined | {
+                    v?: 1 | undefined;
+                    managedServersEnabled?: boolean | undefined;
+                    happierToolsEnabled?: boolean | undefined;
+                    forceIncludeServerIds?: string[] | undefined;
+                    forceExcludeServerIds?: string[] | undefined;
+                };
+                skills?: undefined | {
+                    v?: 1 | undefined;
+                    forceIncludeSkillIds?: string[] | undefined;
+                    forceExcludeSkillIds?: string[] | undefined;
+                    excludeNativeSkillNames?: string[] | undefined;
+                };
             };
             transcriptStorage?: 'direct' | 'persisted' | undefined;
             checkoutCreationDraft?: null | undefined | {
@@ -1190,6 +1190,43 @@ export type ManagedMachinesActionInputById = {
                     providerTicket: string;
                 };
             })[] | undefined;
+            sourceContext?: undefined | {
+                v: 1;
+                kind: 'session_replay';
+                sourceSessionId: string;
+                forkPoint: {
+                    type: 'latest';
+                } | {
+                    type: 'seq';
+                    upToSeqInclusive: number;
+                };
+            };
+            promptStack?: undefined | {
+                id: string;
+                ref: {
+                    kind: 'bundle' | 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                enabled?: boolean | undefined;
+                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+                skillMigrationV1?: true | undefined;
+                plan?: true | undefined;
+            }[];
+            managedCreation?: undefined | {
+                homeId: string;
+                managedId: string;
+                controller?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                };
+            };
+            discussionParticipant?: undefined | {
+                discussionId: string;
+                participantSlotId: string;
+            };
             creationKey?: string | undefined;
             machineSetupPlanInput?: undefined | {
                 homeId: string;
@@ -1354,32 +1391,6 @@ export type ManagedMachinesActionInputById = {
                     instanceKey?: string | undefined;
                 };
             };
-            managedCreation?: undefined | {
-                homeId: string;
-                managedId: string;
-                controller?: undefined | {
-                    machineId: string;
-                    installationId: string;
-                };
-            };
-            discussionParticipant?: undefined | {
-                discussionId: string;
-                participantSlotId: string;
-            };
-            promptStack?: undefined | {
-                id: string;
-                ref: {
-                    kind: 'bundle' | 'doc';
-                    artifactId: string;
-                    serverId?: string | undefined;
-                };
-                enabled?: boolean | undefined;
-                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
-                maxChars?: number | undefined;
-                required?: boolean | undefined;
-                skillMigrationV1?: true | undefined;
-                plan?: true | undefined;
-            }[];
             initialTriggers?: undefined | {
                 trigger: {
                     kind: 'ciFailed' | 'prComment';
@@ -1946,17 +1957,6 @@ export type ManagedMachinesActionInputById = {
                 id: string;
                 revision: number;
             }> | undefined;
-            sourceContext?: undefined | {
-                v: 1;
-                kind: 'session_replay';
-                sourceSessionId: string;
-                forkPoint: {
-                    type: 'latest';
-                } | {
-                    type: 'seq';
-                    upToSeqInclusive: number;
-                };
-            };
         };
         reviewedFacts?: undefined | {
             launch: {
@@ -2134,6 +2134,8 @@ export type ManagedMachinesActionInputById = {
                     options?: string | undefined;
                     power?: string | undefined;
                     rebuild?: string | undefined;
+                    resize?: string | undefined;
+                    snapshot?: string | undefined;
                     renew?: string | undefined;
                 };
                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
@@ -2148,6 +2150,54 @@ export type ManagedMachinesActionInputById = {
                     params?: Record<string, number | string> | undefined;
                 };
                 browserReachable?: boolean | undefined;
+                resize?: undefined | {
+                    cpuCores: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    memoryBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    diskBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                };
+                snapshot?: undefined | {
+                    coverage: {
+                        rootDisk: boolean;
+                        attachedVolumes: boolean;
+                    };
+                    cost: {
+                        kind: 'billed';
+                        source: string;
+                        price?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    };
+                };
                 nativeDurationInput?: undefined | {
                     path: string;
                     unit: 'milliseconds' | 'seconds';
@@ -2194,6 +2244,8 @@ export type ManagedMachinesActionInputById = {
             }[];
             localResources?: undefined | {
                 observedAt: number;
+                totalCpuCores?: number | undefined;
+                allocatedCpuCores?: number | undefined;
                 availableCpuCores?: number | undefined;
                 availableMemoryBytes?: number | undefined;
                 availableDiskBytes?: number | undefined;
@@ -3192,21 +3244,6 @@ export type ManagedMachinesActionInputById = {
                 sourceMessageId: string;
             };
             roleId?: string | undefined;
-            capabilitySelection?: undefined | {
-                mcp?: undefined | {
-                    v?: 1 | undefined;
-                    managedServersEnabled?: boolean | undefined;
-                    happierToolsEnabled?: boolean | undefined;
-                    forceIncludeServerIds?: string[] | undefined;
-                    forceExcludeServerIds?: string[] | undefined;
-                };
-                skills?: undefined | {
-                    v?: 1 | undefined;
-                    forceIncludeSkillIds?: string[] | undefined;
-                    forceExcludeSkillIds?: string[] | undefined;
-                    excludeNativeSkillNames?: string[] | undefined;
-                };
-            };
             modelSelection?: undefined | {
                 v: 1;
                 ref: {
@@ -3221,20 +3258,7 @@ export type ManagedMachinesActionInputById = {
                 updatedAt: number;
             };
             permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
-            placementOrigin?: undefined | {
-                kind: 'machine_pool';
-                poolId: string;
-            };
             approvalProfileId?: null | string | undefined;
-            secretReferenceOverlay?: undefined | {
-                v: 1;
-                bindings: Record<string, {
-                    ref: string;
-                    revision?: number | undefined;
-                }>;
-            };
-            agentModeId?: string | undefined;
-            unlistedTools?: 'ask' | 'deny' | undefined;
             connectedServices?: undefined | {
                 v: 1;
                 bindingsByServiceId: Record<string, {
@@ -3295,6 +3319,34 @@ export type ManagedMachinesActionInputById = {
                         accountId: string;
                     };
                 }> | undefined;
+            };
+            placementOrigin?: undefined | {
+                kind: 'machine_pool';
+                poolId: string;
+            };
+            secretReferenceOverlay?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
+            agentModeId?: string | undefined;
+            unlistedTools?: 'ask' | 'deny' | undefined;
+            capabilitySelection?: undefined | {
+                mcp?: undefined | {
+                    v?: 1 | undefined;
+                    managedServersEnabled?: boolean | undefined;
+                    happierToolsEnabled?: boolean | undefined;
+                    forceIncludeServerIds?: string[] | undefined;
+                    forceExcludeServerIds?: string[] | undefined;
+                };
+                skills?: undefined | {
+                    v?: 1 | undefined;
+                    forceIncludeSkillIds?: string[] | undefined;
+                    forceExcludeSkillIds?: string[] | undefined;
+                    excludeNativeSkillNames?: string[] | undefined;
+                };
             };
             transcriptStorage?: 'direct' | 'persisted' | undefined;
             checkoutCreationDraft?: null | undefined | {
@@ -3365,6 +3417,43 @@ export type ManagedMachinesActionInputById = {
                     providerTicket: string;
                 };
             })[] | undefined;
+            sourceContext?: undefined | {
+                v: 1;
+                kind: 'session_replay';
+                sourceSessionId: string;
+                forkPoint: {
+                    type: 'latest';
+                } | {
+                    type: 'seq';
+                    upToSeqInclusive: number;
+                };
+            };
+            promptStack?: undefined | {
+                id: string;
+                ref: {
+                    kind: 'bundle' | 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                enabled?: boolean | undefined;
+                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+                skillMigrationV1?: true | undefined;
+                plan?: true | undefined;
+            }[];
+            managedCreation?: undefined | {
+                homeId: string;
+                managedId: string;
+                controller?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                };
+            };
+            discussionParticipant?: undefined | {
+                discussionId: string;
+                participantSlotId: string;
+            };
             creationKey?: string | undefined;
             machineSetupPlanInput?: undefined | {
                 homeId: string;
@@ -3529,32 +3618,6 @@ export type ManagedMachinesActionInputById = {
                     instanceKey?: string | undefined;
                 };
             };
-            managedCreation?: undefined | {
-                homeId: string;
-                managedId: string;
-                controller?: undefined | {
-                    machineId: string;
-                    installationId: string;
-                };
-            };
-            discussionParticipant?: undefined | {
-                discussionId: string;
-                participantSlotId: string;
-            };
-            promptStack?: undefined | {
-                id: string;
-                ref: {
-                    kind: 'bundle' | 'doc';
-                    artifactId: string;
-                    serverId?: string | undefined;
-                };
-                enabled?: boolean | undefined;
-                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
-                maxChars?: number | undefined;
-                required?: boolean | undefined;
-                skillMigrationV1?: true | undefined;
-                plan?: true | undefined;
-            }[];
             initialTriggers?: undefined | {
                 trigger: {
                     kind: 'ciFailed' | 'prComment';
@@ -4121,17 +4184,6 @@ export type ManagedMachinesActionInputById = {
                 id: string;
                 revision: number;
             }> | undefined;
-            sourceContext?: undefined | {
-                v: 1;
-                kind: 'session_replay';
-                sourceSessionId: string;
-                forkPoint: {
-                    type: 'latest';
-                } | {
-                    type: 'seq';
-                    upToSeqInclusive: number;
-                };
-            };
         };
         reviewedFacts?: undefined | {
             launch: {
@@ -4309,6 +4361,8 @@ export type ManagedMachinesActionInputById = {
                     options?: string | undefined;
                     power?: string | undefined;
                     rebuild?: string | undefined;
+                    resize?: string | undefined;
+                    snapshot?: string | undefined;
                     renew?: string | undefined;
                 };
                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
@@ -4323,6 +4377,54 @@ export type ManagedMachinesActionInputById = {
                     params?: Record<string, number | string> | undefined;
                 };
                 browserReachable?: boolean | undefined;
+                resize?: undefined | {
+                    cpuCores: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    memoryBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    diskBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                };
+                snapshot?: undefined | {
+                    coverage: {
+                        rootDisk: boolean;
+                        attachedVolumes: boolean;
+                    };
+                    cost: {
+                        kind: 'billed';
+                        source: string;
+                        price?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    };
+                };
                 nativeDurationInput?: undefined | {
                     path: string;
                     unit: 'milliseconds' | 'seconds';
@@ -4369,6 +4471,8 @@ export type ManagedMachinesActionInputById = {
             }[];
             localResources?: undefined | {
                 observedAt: number;
+                totalCpuCores?: number | undefined;
+                allocatedCpuCores?: number | undefined;
                 availableCpuCores?: number | undefined;
                 availableMemoryBytes?: number | undefined;
                 availableDiskBytes?: number | undefined;
@@ -4525,6 +4629,7 @@ export type ManagedMachinesActionInputById = {
                 serverId: string;
                 whenBusy?: 'refuse' | 'supersede' | undefined;
                 onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+                services?: string[] | undefined;
                 pendingDeploy?: undefined | {
                     t: 'encrypted';
                     c: string;
@@ -4540,6 +4645,13 @@ export type ManagedMachinesActionInputById = {
                                 profiles: string[];
                                 services: string[];
                                 path: string;
+                                augmentation?: undefined | {
+                                    document: string;
+                                    publicFiles?: undefined | {
+                                        path: string;
+                                        content: string;
+                                    }[];
+                                };
                                 primaryService?: string | undefined;
                             };
                             pullRequestHead?: undefined | {
@@ -4563,6 +4675,7 @@ export type ManagedMachinesActionInputById = {
                         actionOperationId: string;
                         sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                         onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+                        services?: string[] | undefined;
                         triggerOccurrence?: undefined | {
                             automationId: string;
                             triggerId: string;
@@ -5003,6 +5116,10 @@ export type ManagedMachinesActionInputById = {
                         teamId: string;
                     };
                 };
+                appMappingCorrection?: undefined | {
+                    document: string;
+                    template?: string | undefined;
+                };
                 intent?: 'add' | undefined;
                 managedRetention?: 'keep' | 'until-delete' | undefined;
                 generatedSecretAudience?: undefined | {
@@ -5017,6 +5134,10 @@ export type ManagedMachinesActionInputById = {
                 domainBindings?: undefined | {
                     templateDomainId: string;
                     hostname: string;
+                }[];
+                volumeBindings?: undefined | {
+                    templateVolumeId: string;
+                    source: string;
                 }[];
                 deploy?: undefined | {
                     requestKey: string;
@@ -5059,6 +5180,7 @@ export type ManagedMachinesActionInputById = {
                     serverId: string;
                     whenBusy?: 'refuse' | 'supersede' | undefined;
                     onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+                    services?: string[] | undefined;
                     pendingDeploy?: undefined | {
                         t: 'encrypted';
                         c: string;
@@ -5074,6 +5196,13 @@ export type ManagedMachinesActionInputById = {
                                     profiles: string[];
                                     services: string[];
                                     path: string;
+                                    augmentation?: undefined | {
+                                        document: string;
+                                        publicFiles?: undefined | {
+                                            path: string;
+                                            content: string;
+                                        }[];
+                                    };
                                     primaryService?: string | undefined;
                                 };
                                 pullRequestHead?: undefined | {
@@ -5097,6 +5226,7 @@ export type ManagedMachinesActionInputById = {
                             actionOperationId: string;
                             sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                             onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+                            services?: string[] | undefined;
                             triggerOccurrence?: undefined | {
                                 automationId: string;
                                 triggerId: string;
@@ -5537,6 +5667,10 @@ export type ManagedMachinesActionInputById = {
                             teamId: string;
                         };
                     };
+                    appMappingCorrection?: undefined | {
+                        document: string;
+                        template?: string | undefined;
+                    };
                     intent?: 'add' | undefined;
                     managedRetention?: 'keep' | 'until-delete' | undefined;
                     generatedSecretAudience?: undefined | {
@@ -5551,6 +5685,10 @@ export type ManagedMachinesActionInputById = {
                     domainBindings?: undefined | {
                         templateDomainId: string;
                         hostname: string;
+                    }[];
+                    volumeBindings?: undefined | {
+                        templateVolumeId: string;
+                        source: string;
                     }[];
                     deploy?: undefined | {
                         requestKey: string;
@@ -6252,6 +6390,7 @@ export type ManagedMachinesActionInputById = {
                                 address: string;
                                 expected?: Record<string, string> | undefined;
                             }[];
+                            publicHostKeyEvidence?: true | undefined;
                         } | {
                             kind: 'sudoers';
                         };
@@ -6281,6 +6420,7 @@ export type ManagedMachinesActionInputById = {
                                 address: string;
                                 expected?: Record<string, string> | undefined;
                             }[];
+                            publicHostKeyEvidence?: true | undefined;
                         } | {
                             kind: 'sudoers';
                         };
@@ -7143,6 +7283,7 @@ export type ManagedMachinesActionInputById = {
                                 address: string;
                                 expected?: Record<string, string> | undefined;
                             }[];
+                            publicHostKeyEvidence?: true | undefined;
                         } | {
                             kind: 'sudoers';
                         };
@@ -7172,6 +7313,7 @@ export type ManagedMachinesActionInputById = {
                                 address: string;
                                 expected?: Record<string, string> | undefined;
                             }[];
+                            publicHostKeyEvidence?: true | undefined;
                         } | {
                             kind: 'sudoers';
                         };
@@ -7361,6 +7503,7 @@ export type ManagedMachinesActionInputById = {
                     serverId: string;
                     whenBusy?: 'refuse' | 'supersede' | undefined;
                     onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+                    services?: string[] | undefined;
                     pendingDeploy?: undefined | {
                         t: 'encrypted';
                         c: string;
@@ -7376,6 +7519,13 @@ export type ManagedMachinesActionInputById = {
                                     profiles: string[];
                                     services: string[];
                                     path: string;
+                                    augmentation?: undefined | {
+                                        document: string;
+                                        publicFiles?: undefined | {
+                                            path: string;
+                                            content: string;
+                                        }[];
+                                    };
                                     primaryService?: string | undefined;
                                 };
                                 pullRequestHead?: undefined | {
@@ -7399,6 +7549,7 @@ export type ManagedMachinesActionInputById = {
                             actionOperationId: string;
                             sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                             onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+                            services?: string[] | undefined;
                             triggerOccurrence?: undefined | {
                                 automationId: string;
                                 triggerId: string;
@@ -7839,6 +7990,10 @@ export type ManagedMachinesActionInputById = {
                             teamId: string;
                         };
                     };
+                    appMappingCorrection?: undefined | {
+                        document: string;
+                        template?: string | undefined;
+                    };
                     intent?: 'add' | undefined;
                     managedRetention?: 'keep' | 'until-delete' | undefined;
                     generatedSecretAudience?: undefined | {
@@ -7853,6 +8008,10 @@ export type ManagedMachinesActionInputById = {
                     domainBindings?: undefined | {
                         templateDomainId: string;
                         hostname: string;
+                    }[];
+                    volumeBindings?: undefined | {
+                        templateVolumeId: string;
+                        source: string;
                     }[];
                     deploy?: undefined | {
                         requestKey: string;
@@ -8547,6 +8706,7 @@ export type ManagedMachinesActionInputById = {
                             address: string;
                             expected?: Record<string, string> | undefined;
                         }[];
+                        publicHostKeyEvidence?: true | undefined;
                     } | {
                         kind: 'sudoers';
                     };
@@ -8576,6 +8736,7 @@ export type ManagedMachinesActionInputById = {
                             address: string;
                             expected?: Record<string, string> | undefined;
                         }[];
+                        publicHostKeyEvidence?: true | undefined;
                     } | {
                         kind: 'sudoers';
                     };
@@ -9440,6 +9601,7 @@ export type ManagedMachinesActionInputById = {
                         address: string;
                         expected?: Record<string, string> | undefined;
                     }[];
+                    publicHostKeyEvidence?: true | undefined;
                 } | {
                     kind: 'sudoers';
                 };
@@ -9469,6 +9631,7 @@ export type ManagedMachinesActionInputById = {
                         address: string;
                         expected?: Record<string, string> | undefined;
                     }[];
+                    publicHostKeyEvidence?: true | undefined;
                 } | {
                     kind: 'sudoers';
                 };
@@ -9662,6 +9825,15 @@ export type ManagedMachinesActionInputById = {
         reviewedEffectDigest: string;
         homeId: string;
     };
+    readonly "machines.managed.resize": {
+        size: {
+            cpuCores?: number | undefined;
+            memoryBytes?: number | undefined;
+            diskBytes?: number | undefined;
+        };
+        homeId: string;
+        managedId: string;
+    };
     readonly "machines.managed.retention.update": {
         expectedIntentRevision: number;
         creationScopeRetention: null | {
@@ -9799,6 +9971,8 @@ export type ManagedMachinesActionResultById = {
                     options?: string | undefined;
                     power?: string | undefined;
                     rebuild?: string | undefined;
+                    resize?: string | undefined;
+                    snapshot?: string | undefined;
                     renew?: string | undefined;
                 };
                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
@@ -9813,6 +9987,54 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
                 browserReachable?: boolean | undefined;
+                resize?: undefined | {
+                    cpuCores: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    memoryBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    diskBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                };
+                snapshot?: undefined | {
+                    coverage: {
+                        rootDisk: boolean;
+                        attachedVolumes: boolean;
+                    };
+                    cost: {
+                        kind: 'billed';
+                        source: string;
+                        price?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    };
+                };
                 nativeDurationInput?: undefined | {
                     path: string;
                     unit: 'milliseconds' | 'seconds';
@@ -9885,7 +10107,7 @@ export type ManagedMachinesActionResultById = {
             fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
         } | {
             localCause: 'native_command_failed';
-            command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+            command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
             exitCode: null | number;
             stderr?: string | undefined;
             stderrTruncated?: true | undefined;
@@ -9935,6 +10157,8 @@ export type ManagedMachinesActionResultById = {
         }[];
         localResources?: undefined | {
             observedAt: number;
+            totalCpuCores?: number | undefined;
+            allocatedCpuCores?: number | undefined;
             availableCpuCores?: number | undefined;
             availableMemoryBytes?: number | undefined;
             availableDiskBytes?: number | undefined;
@@ -10662,7 +10886,7 @@ export type ManagedMachinesActionResultById = {
             fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
         } | {
             localCause: 'native_command_failed';
-            command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+            command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
             exitCode: null | number;
             stderr?: string | undefined;
             stderrTruncated?: true | undefined;
@@ -11122,6 +11346,8 @@ export type ManagedMachinesActionResultById = {
                         options?: string | undefined;
                         power?: string | undefined;
                         rebuild?: string | undefined;
+                        resize?: string | undefined;
+                        snapshot?: string | undefined;
                         renew?: string | undefined;
                     };
                     enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
@@ -11136,6 +11362,54 @@ export type ManagedMachinesActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                     browserReachable?: boolean | undefined;
+                    resize?: undefined | {
+                        cpuCores: {
+                            kind: 'supported';
+                            requiresRestart: boolean;
+                            changes: 'any' | 'grow-only';
+                        } | {
+                            kind: 'unsupported';
+                            code: string;
+                        };
+                        memoryBytes: {
+                            kind: 'supported';
+                            requiresRestart: boolean;
+                            changes: 'any' | 'grow-only';
+                        } | {
+                            kind: 'unsupported';
+                            code: string;
+                        };
+                        diskBytes: {
+                            kind: 'supported';
+                            requiresRestart: boolean;
+                            changes: 'any' | 'grow-only';
+                        } | {
+                            kind: 'unsupported';
+                            code: string;
+                        };
+                    };
+                    snapshot?: undefined | {
+                        coverage: {
+                            rootDisk: boolean;
+                            attachedVolumes: boolean;
+                        };
+                        cost: {
+                            kind: 'billed';
+                            source: string;
+                            price?: undefined | {
+                                amount: string;
+                                currency: string;
+                                unit: string;
+                                source: string;
+                                observedAt: number;
+                                label?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        };
+                    };
                     nativeDurationInput?: undefined | {
                         path: string;
                         unit: 'milliseconds' | 'seconds';
@@ -11182,6 +11456,8 @@ export type ManagedMachinesActionResultById = {
                 }[];
                 localResources?: undefined | {
                     observedAt: number;
+                    totalCpuCores?: number | undefined;
+                    allocatedCpuCores?: number | undefined;
                     availableCpuCores?: number | undefined;
                     availableMemoryBytes?: number | undefined;
                     availableDiskBytes?: number | undefined;
@@ -11493,6 +11769,11 @@ export type ManagedMachinesActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                 }[];
+                size?: undefined | {
+                    cpuCores?: number | undefined;
+                    memoryBytes?: number | undefined;
+                    diskBytes?: number | undefined;
+                };
                 nativeExpiry?: number | undefined;
                 deletionNotices?: undefined | {
                     kind: 'stopped-storage';
@@ -11512,7 +11793,7 @@ export type ManagedMachinesActionResultById = {
                     fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                 } | {
                     localCause: 'native_command_failed';
-                    command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+                    command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                     exitCode: null | number;
                     stderr?: string | undefined;
                     stderrTruncated?: true | undefined;
@@ -11792,6 +12073,8 @@ export type ManagedMachinesActionResultById = {
                     options?: string | undefined;
                     power?: string | undefined;
                     rebuild?: string | undefined;
+                    resize?: string | undefined;
+                    snapshot?: string | undefined;
                     renew?: string | undefined;
                 };
                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
@@ -11806,6 +12089,54 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
                 browserReachable?: boolean | undefined;
+                resize?: undefined | {
+                    cpuCores: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    memoryBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    diskBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                };
+                snapshot?: undefined | {
+                    coverage: {
+                        rootDisk: boolean;
+                        attachedVolumes: boolean;
+                    };
+                    cost: {
+                        kind: 'billed';
+                        source: string;
+                        price?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    };
+                };
                 nativeDurationInput?: undefined | {
                     path: string;
                     unit: 'milliseconds' | 'seconds';
@@ -11852,6 +12183,8 @@ export type ManagedMachinesActionResultById = {
             }[];
             localResources?: undefined | {
                 observedAt: number;
+                totalCpuCores?: number | undefined;
+                allocatedCpuCores?: number | undefined;
                 availableCpuCores?: number | undefined;
                 availableMemoryBytes?: number | undefined;
                 availableDiskBytes?: number | undefined;
@@ -12163,6 +12496,11 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
             }[];
+            size?: undefined | {
+                cpuCores?: number | undefined;
+                memoryBytes?: number | undefined;
+                diskBytes?: number | undefined;
+            };
             nativeExpiry?: number | undefined;
             deletionNotices?: undefined | {
                 kind: 'stopped-storage';
@@ -12182,7 +12520,7 @@ export type ManagedMachinesActionResultById = {
                 fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
             } | {
                 localCause: 'native_command_failed';
-                command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+                command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
@@ -12493,6 +12831,8 @@ export type ManagedMachinesActionResultById = {
                         options?: string | undefined;
                         power?: string | undefined;
                         rebuild?: string | undefined;
+                        resize?: string | undefined;
+                        snapshot?: string | undefined;
                         renew?: string | undefined;
                     };
                     enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
@@ -12507,6 +12847,54 @@ export type ManagedMachinesActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                     browserReachable?: boolean | undefined;
+                    resize?: undefined | {
+                        cpuCores: {
+                            kind: 'supported';
+                            requiresRestart: boolean;
+                            changes: 'any' | 'grow-only';
+                        } | {
+                            kind: 'unsupported';
+                            code: string;
+                        };
+                        memoryBytes: {
+                            kind: 'supported';
+                            requiresRestart: boolean;
+                            changes: 'any' | 'grow-only';
+                        } | {
+                            kind: 'unsupported';
+                            code: string;
+                        };
+                        diskBytes: {
+                            kind: 'supported';
+                            requiresRestart: boolean;
+                            changes: 'any' | 'grow-only';
+                        } | {
+                            kind: 'unsupported';
+                            code: string;
+                        };
+                    };
+                    snapshot?: undefined | {
+                        coverage: {
+                            rootDisk: boolean;
+                            attachedVolumes: boolean;
+                        };
+                        cost: {
+                            kind: 'billed';
+                            source: string;
+                            price?: undefined | {
+                                amount: string;
+                                currency: string;
+                                unit: string;
+                                source: string;
+                                observedAt: number;
+                                label?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        };
+                    };
                     nativeDurationInput?: undefined | {
                         path: string;
                         unit: 'milliseconds' | 'seconds';
@@ -12553,6 +12941,8 @@ export type ManagedMachinesActionResultById = {
                 }[];
                 localResources?: undefined | {
                     observedAt: number;
+                    totalCpuCores?: number | undefined;
+                    allocatedCpuCores?: number | undefined;
                     availableCpuCores?: number | undefined;
                     availableMemoryBytes?: number | undefined;
                     availableDiskBytes?: number | undefined;
@@ -12864,6 +13254,11 @@ export type ManagedMachinesActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                 }[];
+                size?: undefined | {
+                    cpuCores?: number | undefined;
+                    memoryBytes?: number | undefined;
+                    diskBytes?: number | undefined;
+                };
                 nativeExpiry?: number | undefined;
                 deletionNotices?: undefined | {
                     kind: 'stopped-storage';
@@ -12883,7 +13278,7 @@ export type ManagedMachinesActionResultById = {
                     fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                 } | {
                     localCause: 'native_command_failed';
-                    command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+                    command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                     exitCode: null | number;
                     stderr?: string | undefined;
                     stderrTruncated?: true | undefined;
@@ -13214,6 +13609,8 @@ export type ManagedMachinesActionResultById = {
                         options?: string | undefined;
                         power?: string | undefined;
                         rebuild?: string | undefined;
+                        resize?: string | undefined;
+                        snapshot?: string | undefined;
                         renew?: string | undefined;
                     };
                     enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
@@ -13228,6 +13625,54 @@ export type ManagedMachinesActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                     browserReachable?: boolean | undefined;
+                    resize?: undefined | {
+                        cpuCores: {
+                            kind: 'supported';
+                            requiresRestart: boolean;
+                            changes: 'any' | 'grow-only';
+                        } | {
+                            kind: 'unsupported';
+                            code: string;
+                        };
+                        memoryBytes: {
+                            kind: 'supported';
+                            requiresRestart: boolean;
+                            changes: 'any' | 'grow-only';
+                        } | {
+                            kind: 'unsupported';
+                            code: string;
+                        };
+                        diskBytes: {
+                            kind: 'supported';
+                            requiresRestart: boolean;
+                            changes: 'any' | 'grow-only';
+                        } | {
+                            kind: 'unsupported';
+                            code: string;
+                        };
+                    };
+                    snapshot?: undefined | {
+                        coverage: {
+                            rootDisk: boolean;
+                            attachedVolumes: boolean;
+                        };
+                        cost: {
+                            kind: 'billed';
+                            source: string;
+                            price?: undefined | {
+                                amount: string;
+                                currency: string;
+                                unit: string;
+                                source: string;
+                                observedAt: number;
+                                label?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        };
+                    };
                     nativeDurationInput?: undefined | {
                         path: string;
                         unit: 'milliseconds' | 'seconds';
@@ -13274,6 +13719,8 @@ export type ManagedMachinesActionResultById = {
                 }[];
                 localResources?: undefined | {
                     observedAt: number;
+                    totalCpuCores?: number | undefined;
+                    allocatedCpuCores?: number | undefined;
                     availableCpuCores?: number | undefined;
                     availableMemoryBytes?: number | undefined;
                     availableDiskBytes?: number | undefined;
@@ -13585,6 +14032,11 @@ export type ManagedMachinesActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                 }[];
+                size?: undefined | {
+                    cpuCores?: number | undefined;
+                    memoryBytes?: number | undefined;
+                    diskBytes?: number | undefined;
+                };
                 nativeExpiry?: number | undefined;
                 deletionNotices?: undefined | {
                     kind: 'stopped-storage';
@@ -13604,7 +14056,7 @@ export type ManagedMachinesActionResultById = {
                     fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                 } | {
                     localCause: 'native_command_failed';
-                    command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+                    command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                     exitCode: null | number;
                     stderr?: string | undefined;
                     stderrTruncated?: true | undefined;
@@ -13907,6 +14359,8 @@ export type ManagedMachinesActionResultById = {
                     options?: string | undefined;
                     power?: string | undefined;
                     rebuild?: string | undefined;
+                    resize?: string | undefined;
+                    snapshot?: string | undefined;
                     renew?: string | undefined;
                 };
                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
@@ -13921,6 +14375,54 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
                 browserReachable?: boolean | undefined;
+                resize?: undefined | {
+                    cpuCores: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    memoryBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    diskBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                };
+                snapshot?: undefined | {
+                    coverage: {
+                        rootDisk: boolean;
+                        attachedVolumes: boolean;
+                    };
+                    cost: {
+                        kind: 'billed';
+                        source: string;
+                        price?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    };
+                };
                 nativeDurationInput?: undefined | {
                     path: string;
                     unit: 'milliseconds' | 'seconds';
@@ -13967,6 +14469,8 @@ export type ManagedMachinesActionResultById = {
             }[];
             localResources?: undefined | {
                 observedAt: number;
+                totalCpuCores?: number | undefined;
+                allocatedCpuCores?: number | undefined;
                 availableCpuCores?: number | undefined;
                 availableMemoryBytes?: number | undefined;
                 availableDiskBytes?: number | undefined;
@@ -14278,6 +14782,11 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
             }[];
+            size?: undefined | {
+                cpuCores?: number | undefined;
+                memoryBytes?: number | undefined;
+                diskBytes?: number | undefined;
+            };
             nativeExpiry?: number | undefined;
             deletionNotices?: undefined | {
                 kind: 'stopped-storage';
@@ -14297,7 +14806,7 @@ export type ManagedMachinesActionResultById = {
                 fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
             } | {
                 localCause: 'native_command_failed';
-                command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+                command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
@@ -15079,6 +15588,7 @@ export type ManagedMachinesActionResultById = {
                             address: string;
                             expected?: Record<string, string> | undefined;
                         }[];
+                        publicHostKeyEvidence?: true | undefined;
                     } | {
                         kind: 'sudoers';
                     };
@@ -15108,6 +15618,7 @@ export type ManagedMachinesActionResultById = {
                             address: string;
                             expected?: Record<string, string> | undefined;
                         }[];
+                        publicHostKeyEvidence?: true | undefined;
                     } | {
                         kind: 'sudoers';
                     };
@@ -15974,6 +16485,7 @@ export type ManagedMachinesActionResultById = {
                             address: string;
                             expected?: Record<string, string> | undefined;
                         }[];
+                        publicHostKeyEvidence?: true | undefined;
                     } | {
                         kind: 'sudoers';
                     };
@@ -16003,6 +16515,7 @@ export type ManagedMachinesActionResultById = {
                             address: string;
                             expected?: Record<string, string> | undefined;
                         }[];
+                        publicHostKeyEvidence?: true | undefined;
                     } | {
                         kind: 'sudoers';
                     };
@@ -16176,6 +16689,32 @@ export type ManagedMachinesActionResultById = {
                 selectedCheckIds?: string[] | undefined;
             };
         }[];
+        backupReceivers?: ({
+            status: 'ready';
+            endpoint: {
+                host: string;
+                port: number;
+            };
+            username: string;
+            path: string;
+            hostKey: string;
+            fingerprint: string;
+            sourceIndex: number;
+            itemIndex: number;
+            machineId: string;
+            installationId: string;
+        } | {
+            status: 'unavailable';
+            reason: 'host_key_invalid' | 'host_key_unreadable' | 'receiver_inputs_unavailable' | 'ssh_configuration_unavailable';
+            sourceIndex: number;
+            itemIndex: number;
+            machineId: string;
+            installationId: string;
+            endpoint?: undefined | {
+                host: string;
+                port: number;
+            };
+        })[] | undefined;
         appChildren?: ({
             sourceIndex: number;
             itemIndex: number;
@@ -16192,6 +16731,7 @@ export type ManagedMachinesActionResultById = {
                 serverId: string;
                 whenBusy?: 'refuse' | 'supersede' | undefined;
                 onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+                services?: string[] | undefined;
                 pendingDeploy?: undefined | {
                     t: 'encrypted';
                     c: string;
@@ -16207,6 +16747,13 @@ export type ManagedMachinesActionResultById = {
                                 profiles: string[];
                                 services: string[];
                                 path: string;
+                                augmentation?: undefined | {
+                                    document: string;
+                                    publicFiles?: undefined | {
+                                        path: string;
+                                        content: string;
+                                    }[];
+                                };
                                 primaryService?: string | undefined;
                             };
                             pullRequestHead?: undefined | {
@@ -16230,6 +16777,7 @@ export type ManagedMachinesActionResultById = {
                         actionOperationId: string;
                         sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                         onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+                        services?: string[] | undefined;
                         triggerOccurrence?: undefined | {
                             automationId: string;
                             triggerId: string;
@@ -16670,6 +17218,10 @@ export type ManagedMachinesActionResultById = {
                         teamId: string;
                     };
                 };
+                appMappingCorrection?: undefined | {
+                    document: string;
+                    template?: string | undefined;
+                };
                 intent?: 'add' | undefined;
                 managedRetention?: 'keep' | 'until-delete' | undefined;
                 generatedSecretAudience?: undefined | {
@@ -16684,6 +17236,10 @@ export type ManagedMachinesActionResultById = {
                 domainBindings?: undefined | {
                     templateDomainId: string;
                     hostname: string;
+                }[];
+                volumeBindings?: undefined | {
+                    templateVolumeId: string;
+                    source: string;
                 }[];
                 deploy?: undefined | {
                     requestKey: string;
@@ -16805,11 +17361,45 @@ export type ManagedMachinesActionResultById = {
                         retainPreviousDeployments: number;
                         buildMachineId?: string | undefined;
                         controllerMachineId?: string | undefined;
+                        previewMachineId?: string | undefined;
+                        previewDatabase?: 'branch' | 'none' | 'own' | undefined;
+                        backupDestination?: null | undefined | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        backupSchedule?: null | undefined | {
+                            kind: 'cron';
+                            scheduleExpr: string;
+                            everyMs: null;
+                            timezone: null | string;
+                        } | {
+                            kind: 'interval';
+                            scheduleExpr: null;
+                            everyMs: number;
+                            timezone: null | string;
+                        } | {
+                            kind: 'once';
+                            scheduledAt: number;
+                        };
+                        backupRetention?: undefined | {
+                            kind: 'keep';
+                            last?: number | undefined;
+                            daily?: number | undefined;
+                            weekly?: number | undefined;
+                            monthly?: number | undefined;
+                        } | {
+                            kind: 'keepEverything';
+                        };
                     };
                     sources: {
                         buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                         controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                         retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                        previewMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                        previewDatabase?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                        backupDestination?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                        backupSchedule?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                        backupRetention?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     };
                 };
                 creationDefaultsBasis?: undefined | {
@@ -17558,6 +18148,7 @@ export type ManagedMachinesActionResultById = {
                             address: string;
                             expected?: Record<string, string> | undefined;
                         }[];
+                        publicHostKeyEvidence?: true | undefined;
                     } | {
                         kind: 'sudoers';
                     };
@@ -17587,6 +18178,7 @@ export type ManagedMachinesActionResultById = {
                             address: string;
                             expected?: Record<string, string> | undefined;
                         }[];
+                        publicHostKeyEvidence?: true | undefined;
                     } | {
                         kind: 'sudoers';
                     };
@@ -18521,6 +19113,7 @@ export type ManagedMachinesActionResultById = {
                                     address: string;
                                     expected?: Record<string, string> | undefined;
                                 }[];
+                                publicHostKeyEvidence?: true | undefined;
                             } | {
                                 kind: 'sudoers';
                             };
@@ -18550,6 +19143,7 @@ export type ManagedMachinesActionResultById = {
                                     address: string;
                                     expected?: Record<string, string> | undefined;
                                 }[];
+                                publicHostKeyEvidence?: true | undefined;
                             } | {
                                 kind: 'sudoers';
                             };
@@ -19416,6 +20010,7 @@ export type ManagedMachinesActionResultById = {
                                     address: string;
                                     expected?: Record<string, string> | undefined;
                                 }[];
+                                publicHostKeyEvidence?: true | undefined;
                             } | {
                                 kind: 'sudoers';
                             };
@@ -19445,6 +20040,7 @@ export type ManagedMachinesActionResultById = {
                                     address: string;
                                     expected?: Record<string, string> | undefined;
                                 }[];
+                                publicHostKeyEvidence?: true | undefined;
                             } | {
                                 kind: 'sudoers';
                             };
@@ -19618,6 +20214,32 @@ export type ManagedMachinesActionResultById = {
                         selectedCheckIds?: string[] | undefined;
                     };
                 }[];
+                backupReceivers?: ({
+                    status: 'ready';
+                    endpoint: {
+                        host: string;
+                        port: number;
+                    };
+                    username: string;
+                    path: string;
+                    hostKey: string;
+                    fingerprint: string;
+                    sourceIndex: number;
+                    itemIndex: number;
+                    machineId: string;
+                    installationId: string;
+                } | {
+                    status: 'unavailable';
+                    reason: 'host_key_invalid' | 'host_key_unreadable' | 'receiver_inputs_unavailable' | 'ssh_configuration_unavailable';
+                    sourceIndex: number;
+                    itemIndex: number;
+                    machineId: string;
+                    installationId: string;
+                    endpoint?: undefined | {
+                        host: string;
+                        port: number;
+                    };
+                })[] | undefined;
                 appChildren?: ({
                     sourceIndex: number;
                     itemIndex: number;
@@ -19634,6 +20256,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         whenBusy?: 'refuse' | 'supersede' | undefined;
                         onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+                        services?: string[] | undefined;
                         pendingDeploy?: undefined | {
                             t: 'encrypted';
                             c: string;
@@ -19649,6 +20272,13 @@ export type ManagedMachinesActionResultById = {
                                         profiles: string[];
                                         services: string[];
                                         path: string;
+                                        augmentation?: undefined | {
+                                            document: string;
+                                            publicFiles?: undefined | {
+                                                path: string;
+                                                content: string;
+                                            }[];
+                                        };
                                         primaryService?: string | undefined;
                                     };
                                     pullRequestHead?: undefined | {
@@ -19672,6 +20302,7 @@ export type ManagedMachinesActionResultById = {
                                 actionOperationId: string;
                                 sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                                 onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+                                services?: string[] | undefined;
                                 triggerOccurrence?: undefined | {
                                     automationId: string;
                                     triggerId: string;
@@ -20112,6 +20743,10 @@ export type ManagedMachinesActionResultById = {
                                 teamId: string;
                             };
                         };
+                        appMappingCorrection?: undefined | {
+                            document: string;
+                            template?: string | undefined;
+                        };
                         intent?: 'add' | undefined;
                         managedRetention?: 'keep' | 'until-delete' | undefined;
                         generatedSecretAudience?: undefined | {
@@ -20126,6 +20761,10 @@ export type ManagedMachinesActionResultById = {
                         domainBindings?: undefined | {
                             templateDomainId: string;
                             hostname: string;
+                        }[];
+                        volumeBindings?: undefined | {
+                            templateVolumeId: string;
+                            source: string;
                         }[];
                         deploy?: undefined | {
                             requestKey: string;
@@ -20247,11 +20886,45 @@ export type ManagedMachinesActionResultById = {
                                 retainPreviousDeployments: number;
                                 buildMachineId?: string | undefined;
                                 controllerMachineId?: string | undefined;
+                                previewMachineId?: string | undefined;
+                                previewDatabase?: 'branch' | 'none' | 'own' | undefined;
+                                backupDestination?: null | undefined | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                backupSchedule?: null | undefined | {
+                                    kind: 'cron';
+                                    scheduleExpr: string;
+                                    everyMs: null;
+                                    timezone: null | string;
+                                } | {
+                                    kind: 'interval';
+                                    scheduleExpr: null;
+                                    everyMs: number;
+                                    timezone: null | string;
+                                } | {
+                                    kind: 'once';
+                                    scheduledAt: number;
+                                };
+                                backupRetention?: undefined | {
+                                    kind: 'keep';
+                                    last?: number | undefined;
+                                    daily?: number | undefined;
+                                    weekly?: number | undefined;
+                                    monthly?: number | undefined;
+                                } | {
+                                    kind: 'keepEverything';
+                                };
                             };
                             sources: {
                                 buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                                 controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                                 retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                                previewMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                                previewDatabase?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                                backupDestination?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                                backupSchedule?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                                backupRetention?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                             };
                         };
                         creationDefaultsBasis?: undefined | {
@@ -21000,6 +21673,7 @@ export type ManagedMachinesActionResultById = {
                                     address: string;
                                     expected?: Record<string, string> | undefined;
                                 }[];
+                                publicHostKeyEvidence?: true | undefined;
                             } | {
                                 kind: 'sudoers';
                             };
@@ -21029,6 +21703,7 @@ export type ManagedMachinesActionResultById = {
                                     address: string;
                                     expected?: Record<string, string> | undefined;
                                 }[];
+                                publicHostKeyEvidence?: true | undefined;
                             } | {
                                 kind: 'sudoers';
                             };
@@ -21219,6 +21894,7 @@ export type ManagedMachinesActionResultById = {
                     serverId: string;
                     whenBusy?: 'refuse' | 'supersede' | undefined;
                     onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+                    services?: string[] | undefined;
                     pendingDeploy?: undefined | {
                         t: 'encrypted';
                         c: string;
@@ -21234,6 +21910,13 @@ export type ManagedMachinesActionResultById = {
                                     profiles: string[];
                                     services: string[];
                                     path: string;
+                                    augmentation?: undefined | {
+                                        document: string;
+                                        publicFiles?: undefined | {
+                                            path: string;
+                                            content: string;
+                                        }[];
+                                    };
                                     primaryService?: string | undefined;
                                 };
                                 pullRequestHead?: undefined | {
@@ -21257,6 +21940,7 @@ export type ManagedMachinesActionResultById = {
                             actionOperationId: string;
                             sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                             onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+                            services?: string[] | undefined;
                             triggerOccurrence?: undefined | {
                                 automationId: string;
                                 triggerId: string;
@@ -21697,6 +22381,10 @@ export type ManagedMachinesActionResultById = {
                             teamId: string;
                         };
                     };
+                    appMappingCorrection?: undefined | {
+                        document: string;
+                        template?: string | undefined;
+                    };
                     intent?: 'add' | undefined;
                     managedRetention?: 'keep' | 'until-delete' | undefined;
                     generatedSecretAudience?: undefined | {
@@ -21711,6 +22399,10 @@ export type ManagedMachinesActionResultById = {
                     domainBindings?: undefined | {
                         templateDomainId: string;
                         hostname: string;
+                    }[];
+                    volumeBindings?: undefined | {
+                        templateVolumeId: string;
+                        source: string;
                     }[];
                     deploy?: undefined | {
                         requestKey: string;
@@ -21736,16 +22428,94 @@ export type ManagedMachinesActionResultById = {
         operationId: string;
         terminalId?: string | undefined;
         runId?: string | undefined;
+        backupReceivers?: ({
+            status: 'ready';
+            endpoint: {
+                host: string;
+                port: number;
+            };
+            username: string;
+            path: string;
+            hostKey: string;
+            fingerprint: string;
+            sourceIndex: number;
+            itemIndex: number;
+            machineId: string;
+            installationId: string;
+        } | {
+            status: 'unavailable';
+            reason: 'host_key_invalid' | 'host_key_unreadable' | 'receiver_inputs_unavailable' | 'ssh_configuration_unavailable';
+            sourceIndex: number;
+            itemIndex: number;
+            machineId: string;
+            installationId: string;
+            endpoint?: undefined | {
+                host: string;
+                port: number;
+            };
+        })[] | undefined;
     };
     readonly "machines.setup.remove": {
         operationId: string;
         terminalId?: string | undefined;
         runId?: string | undefined;
+        backupReceivers?: ({
+            status: 'ready';
+            endpoint: {
+                host: string;
+                port: number;
+            };
+            username: string;
+            path: string;
+            hostKey: string;
+            fingerprint: string;
+            sourceIndex: number;
+            itemIndex: number;
+            machineId: string;
+            installationId: string;
+        } | {
+            status: 'unavailable';
+            reason: 'host_key_invalid' | 'host_key_unreadable' | 'receiver_inputs_unavailable' | 'ssh_configuration_unavailable';
+            sourceIndex: number;
+            itemIndex: number;
+            machineId: string;
+            installationId: string;
+            endpoint?: undefined | {
+                host: string;
+                port: number;
+            };
+        })[] | undefined;
     };
     readonly "machines.setup.updates.apply": {
         operationId: string;
         terminalId?: string | undefined;
         runId?: string | undefined;
+        backupReceivers?: ({
+            status: 'ready';
+            endpoint: {
+                host: string;
+                port: number;
+            };
+            username: string;
+            path: string;
+            hostKey: string;
+            fingerprint: string;
+            sourceIndex: number;
+            itemIndex: number;
+            machineId: string;
+            installationId: string;
+        } | {
+            status: 'unavailable';
+            reason: 'host_key_invalid' | 'host_key_unreadable' | 'receiver_inputs_unavailable' | 'ssh_configuration_unavailable';
+            sourceIndex: number;
+            itemIndex: number;
+            machineId: string;
+            installationId: string;
+            endpoint?: undefined | {
+                host: string;
+                port: number;
+            };
+        })[] | undefined;
     };
     readonly "machines.managed.power.set": {
         kind: 'accepted';
@@ -21778,6 +22548,152 @@ export type ManagedMachinesActionResultById = {
     } | {
         kind: 'refused';
         code: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'pool_no_available_machine' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
+    };
+    readonly "machines.managed.resize": {
+        result: {
+            kind: 'confirmed';
+        } | {
+            kind: 'refused';
+            code: string;
+            nativeCause?: {
+                grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+            } | {
+                httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+                fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
+            } | {
+                localCause: 'native_command_failed';
+                command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                exitCode: null | number;
+                stderr?: string | undefined;
+                stderrTruncated?: true | undefined;
+            } | {
+                localCause: 'native_configure_refused' | 'native_delete_refused';
+                httpStatus: 400;
+            } | {
+                localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
+            } | {
+                localCause: 'native_route_not_found';
+                route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+                httpStatus: 404;
+            } | {
+                localCause: 'ssh_keyscan_failed';
+                resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
+            } | {
+                sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+            };
+        } | {
+            kind: 'unknown';
+            code?: string;
+            nativeCause?: {
+                grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+            } | {
+                httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+                fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
+            } | {
+                localCause: 'native_command_failed';
+                command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                exitCode: null | number;
+                stderr?: string | undefined;
+                stderrTruncated?: true | undefined;
+            } | {
+                localCause: 'native_configure_refused' | 'native_delete_refused';
+                httpStatus: 400;
+            } | {
+                localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
+            } | {
+                localCause: 'native_route_not_found';
+                route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+                httpStatus: 404;
+            } | {
+                localCause: 'ssh_keyscan_failed';
+                resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
+            } | {
+                sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+            };
+        } | {
+            kind: 'unsupported';
+            dimension: 'cpuCores' | 'diskBytes' | 'memoryBytes';
+            code: string;
+        };
+        observation?: undefined | {
+            observedAt: number;
+            availability: 'absent' | 'present' | 'unavailable';
+            power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+            storage?: 'lost' | 'retained' | 'unknown' | undefined;
+            billing?: undefined | {
+                location: 'cloud' | 'local' | 'unknown';
+                stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                storageCharges?: undefined | {
+                    amount: string;
+                    currency: string;
+                    unit: string;
+                    source: string;
+                    observedAt: number;
+                    label?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                }[];
+            };
+            prices?: undefined | {
+                amount: string;
+                currency: string;
+                unit: string;
+                source: string;
+                observedAt: number;
+                label?: string | undefined | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, number | string> | undefined;
+                };
+            }[];
+            size?: undefined | {
+                cpuCores?: number | undefined;
+                memoryBytes?: number | undefined;
+                diskBytes?: number | undefined;
+            };
+            nativeExpiry?: number | undefined;
+            deletionNotices?: undefined | {
+                kind: 'stopped-storage';
+                rule: {
+                    kind: 'after-stop';
+                    afterMs: number;
+                };
+                consequence: 'disk-deleted';
+                at?: number | undefined;
+            }[];
+            reason?: string | undefined;
+            nativeCause?: undefined | {
+                grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+            } | {
+                httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+                fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
+            } | {
+                localCause: 'native_command_failed';
+                command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                exitCode: null | number;
+                stderr?: string | undefined;
+                stderrTruncated?: true | undefined;
+            } | {
+                localCause: 'native_configure_refused' | 'native_delete_refused';
+                httpStatus: 400;
+            } | {
+                localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
+            } | {
+                localCause: 'native_route_not_found';
+                route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+                httpStatus: 404;
+            } | {
+                localCause: 'ssh_keyscan_failed';
+                resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
+            } | {
+                sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+            };
+        };
     };
     readonly "machines.managed.retention.update": {
         id: string;
@@ -22033,6 +22949,8 @@ export type ManagedMachinesActionResultById = {
                     options?: string | undefined;
                     power?: string | undefined;
                     rebuild?: string | undefined;
+                    resize?: string | undefined;
+                    snapshot?: string | undefined;
                     renew?: string | undefined;
                 };
                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
@@ -22047,6 +22965,54 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
                 browserReachable?: boolean | undefined;
+                resize?: undefined | {
+                    cpuCores: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    memoryBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    diskBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                };
+                snapshot?: undefined | {
+                    coverage: {
+                        rootDisk: boolean;
+                        attachedVolumes: boolean;
+                    };
+                    cost: {
+                        kind: 'billed';
+                        source: string;
+                        price?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    };
+                };
                 nativeDurationInput?: undefined | {
                     path: string;
                     unit: 'milliseconds' | 'seconds';
@@ -22093,6 +23059,8 @@ export type ManagedMachinesActionResultById = {
             }[];
             localResources?: undefined | {
                 observedAt: number;
+                totalCpuCores?: number | undefined;
+                allocatedCpuCores?: number | undefined;
                 availableCpuCores?: number | undefined;
                 availableMemoryBytes?: number | undefined;
                 availableDiskBytes?: number | undefined;
@@ -22404,6 +23372,11 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
             }[];
+            size?: undefined | {
+                cpuCores?: number | undefined;
+                memoryBytes?: number | undefined;
+                diskBytes?: number | undefined;
+            };
             nativeExpiry?: number | undefined;
             deletionNotices?: undefined | {
                 kind: 'stopped-storage';
@@ -22423,7 +23396,7 @@ export type ManagedMachinesActionResultById = {
                 fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
             } | {
                 localCause: 'native_command_failed';
-                command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+                command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
@@ -22775,6 +23748,8 @@ export type ManagedMachinesActionResultById = {
                     options?: string | undefined;
                     power?: string | undefined;
                     rebuild?: string | undefined;
+                    resize?: string | undefined;
+                    snapshot?: string | undefined;
                     renew?: string | undefined;
                 };
                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
@@ -22789,6 +23764,54 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
                 browserReachable?: boolean | undefined;
+                resize?: undefined | {
+                    cpuCores: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    memoryBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    diskBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                };
+                snapshot?: undefined | {
+                    coverage: {
+                        rootDisk: boolean;
+                        attachedVolumes: boolean;
+                    };
+                    cost: {
+                        kind: 'billed';
+                        source: string;
+                        price?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    };
+                };
                 nativeDurationInput?: undefined | {
                     path: string;
                     unit: 'milliseconds' | 'seconds';
@@ -22835,6 +23858,8 @@ export type ManagedMachinesActionResultById = {
             }[];
             localResources?: undefined | {
                 observedAt: number;
+                totalCpuCores?: number | undefined;
+                allocatedCpuCores?: number | undefined;
                 availableCpuCores?: number | undefined;
                 availableMemoryBytes?: number | undefined;
                 availableDiskBytes?: number | undefined;
@@ -23146,6 +24171,11 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
             }[];
+            size?: undefined | {
+                cpuCores?: number | undefined;
+                memoryBytes?: number | undefined;
+                diskBytes?: number | undefined;
+            };
             nativeExpiry?: number | undefined;
             deletionNotices?: undefined | {
                 kind: 'stopped-storage';
@@ -23165,7 +24195,7 @@ export type ManagedMachinesActionResultById = {
                 fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
             } | {
                 localCause: 'native_command_failed';
-                command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+                command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
@@ -23444,6 +24474,8 @@ export type ManagedMachinesActionResultById = {
                     options?: string | undefined;
                     power?: string | undefined;
                     rebuild?: string | undefined;
+                    resize?: string | undefined;
+                    snapshot?: string | undefined;
                     renew?: string | undefined;
                 };
                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
@@ -23458,6 +24490,54 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
                 browserReachable?: boolean | undefined;
+                resize?: undefined | {
+                    cpuCores: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    memoryBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                    diskBytes: {
+                        kind: 'supported';
+                        requiresRestart: boolean;
+                        changes: 'any' | 'grow-only';
+                    } | {
+                        kind: 'unsupported';
+                        code: string;
+                    };
+                };
+                snapshot?: undefined | {
+                    coverage: {
+                        rootDisk: boolean;
+                        attachedVolumes: boolean;
+                    };
+                    cost: {
+                        kind: 'billed';
+                        source: string;
+                        price?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                    };
+                };
                 nativeDurationInput?: undefined | {
                     path: string;
                     unit: 'milliseconds' | 'seconds';
@@ -23504,6 +24584,8 @@ export type ManagedMachinesActionResultById = {
             }[];
             localResources?: undefined | {
                 observedAt: number;
+                totalCpuCores?: number | undefined;
+                allocatedCpuCores?: number | undefined;
                 availableCpuCores?: number | undefined;
                 availableMemoryBytes?: number | undefined;
                 availableDiskBytes?: number | undefined;
@@ -23815,6 +24897,11 @@ export type ManagedMachinesActionResultById = {
                     params?: Record<string, number | string> | undefined;
                 };
             }[];
+            size?: undefined | {
+                cpuCores?: number | undefined;
+                memoryBytes?: number | undefined;
+                diskBytes?: number | undefined;
+            };
             nativeExpiry?: number | undefined;
             deletionNotices?: undefined | {
                 kind: 'stopped-storage';
@@ -23834,7 +24921,7 @@ export type ManagedMachinesActionResultById = {
                 fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
             } | {
                 localCause: 'native_command_failed';
-                command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+                command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;

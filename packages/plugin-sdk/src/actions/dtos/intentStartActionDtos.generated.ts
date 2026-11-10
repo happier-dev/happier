@@ -489,8 +489,8 @@ export type IntentStartActionInputById = {
         reviewRunIds?: string[] | undefined;
     };
     readonly "review.explain_findings": {
-        expectedRevision: number;
         cwd: string;
+        expectedRevision: number;
         resultId: string;
         findingIds: {
             runId: string;

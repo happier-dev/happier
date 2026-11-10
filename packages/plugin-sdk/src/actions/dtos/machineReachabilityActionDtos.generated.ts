@@ -1057,6 +1057,7 @@ export type MachineReachabilityActionInputById = {
                                 address: string;
                                 expected?: Record<string, string> | undefined;
                             }[];
+                            publicHostKeyEvidence?: true | undefined;
                         } | {
                             kind: 'sudoers';
                         };
@@ -1086,6 +1087,7 @@ export type MachineReachabilityActionInputById = {
                                 address: string;
                                 expected?: Record<string, string> | undefined;
                             }[];
+                            publicHostKeyEvidence?: true | undefined;
                         } | {
                             kind: 'sudoers';
                         };
@@ -2434,6 +2436,7 @@ export type MachineReachabilityActionResultById = {
                                     address: string;
                                     expected?: Record<string, string> | undefined;
                                 }[];
+                                publicHostKeyEvidence?: true | undefined;
                             } | {
                                 kind: 'sudoers';
                             };
@@ -2463,6 +2466,7 @@ export type MachineReachabilityActionResultById = {
                                     address: string;
                                     expected?: Record<string, string> | undefined;
                                 }[];
+                                publicHostKeyEvidence?: true | undefined;
                             } | {
                                 kind: 'sudoers';
                             };

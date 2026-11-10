@@ -65,14 +65,14 @@ export type PromptLibraryActionInputById = {
         intent: {
             kind: 'attach';
             entry: {
+                id: string;
                 ref: {
                     kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
-                id: string;
-                enabled?: boolean | undefined;
                 required?: boolean | undefined;
+                enabled?: boolean | undefined;
                 maxChars?: number | undefined;
                 placement?: 'system_append' | undefined;
             };

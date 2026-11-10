@@ -44,12 +44,12 @@ export type FilesystemActionInputById = {
             sha256: string;
         } | {
             path: string;
-            serverId: string;
             machineId: string;
+            serverId: string;
             rootPath: string;
+            sourceId: string;
             sizeBytes: number;
             sha256: string;
-            sourceId: string;
             kind: 'entry_tree';
             entryTree: {
                 operationId: string;

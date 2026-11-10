@@ -166,6 +166,13 @@ export type AccountApiTokensActionInputById = {
                     profiles: string[];
                     services: string[];
                     path: string;
+                    augmentation?: undefined | {
+                        document: string;
+                        publicFiles?: undefined | {
+                            path: string;
+                            content: string;
+                        }[];
+                    };
                     primaryService?: string | undefined;
                 };
                 pullRequestHead?: undefined | {
@@ -187,6 +194,7 @@ export type AccountApiTokensActionInputById = {
             sourceMethod?: 'gitIntegration' | 'upload' | undefined;
             whenBusy?: 'refuse' | 'supersede' | undefined;
             onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+            services?: string[] | undefined;
         };
     };
     readonly "account.apiTokens.list": {
@@ -345,6 +353,13 @@ export type AccountApiTokensActionInputById = {
                     profiles: string[];
                     services: string[];
                     path: string;
+                    augmentation?: undefined | {
+                        document: string;
+                        publicFiles?: undefined | {
+                            path: string;
+                            content: string;
+                        }[];
+                    };
                     primaryService?: string | undefined;
                 };
                 pullRequestHead?: undefined | {
@@ -366,6 +381,7 @@ export type AccountApiTokensActionInputById = {
             sourceMethod?: 'gitIntegration' | 'upload' | undefined;
             whenBusy?: 'refuse' | 'supersede' | undefined;
             onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+            services?: string[] | undefined;
         };
     };
     readonly "account.apiTokens.revoke": {

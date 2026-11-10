@@ -9,10 +9,27 @@ export type DeploymentsActionInputById = {
         content: {
             hostname: string;
             target: {
+                kind: 'provider';
+                service?: undefined;
+                containerPort?: undefined;
+                path?: undefined;
+                redirectTo?: undefined;
+            } | {
                 service: string;
                 containerPort: number;
+                kind?: 'native' | undefined;
                 path?: string | undefined;
                 redirectTo?: string | undefined;
+            };
+            providerObservation?: undefined | {
+                v: 1;
+                hostname: string;
+                state: 'active' | 'failed' | 'pending' | 'removed';
+                dns: {
+                    type: string;
+                    name: string;
+                    value: string;
+                }[];
             };
             healthCheck?: undefined | {
                 path: string;
@@ -195,10 +212,43 @@ export type DeploymentsActionInputById = {
                 teamId: string;
             };
         };
+        appMappingCorrection?: undefined | {
+            document: string;
+            template?: string | undefined;
+        };
         explicit?: undefined | {
             buildMachineId?: string | undefined;
             controllerMachineId?: string | undefined;
             retainPreviousDeployments?: number | undefined;
+            previewMachineId?: string | undefined;
+            previewDatabase?: 'branch' | 'none' | 'own' | undefined;
+            backupDestination?: null | undefined | {
+                pluginId: string;
+                localId: string;
+            };
+            backupSchedule?: null | undefined | {
+                kind: 'cron';
+                scheduleExpr: string;
+                everyMs: null;
+                timezone: null | string;
+            } | {
+                kind: 'interval';
+                scheduleExpr: null;
+                everyMs: number;
+                timezone: null | string;
+            } | {
+                kind: 'once';
+                scheduledAt: number;
+            };
+            backupRetention?: undefined | {
+                kind: 'keep';
+                last?: number | undefined;
+                daily?: number | undefined;
+                weekly?: number | undefined;
+                monthly?: number | undefined;
+            } | {
+                kind: 'keepEverything';
+            };
         };
     };
     readonly "deployments.templates.instantiate": {
@@ -300,6 +350,10 @@ export type DeploymentsActionInputById = {
                 teamId: string;
             };
         };
+        appMappingCorrection?: undefined | {
+            document: string;
+            template?: string | undefined;
+        };
         intent?: 'add' | undefined;
         managedRetention?: 'keep' | 'until-delete' | undefined;
         generatedSecretAudience?: undefined | {
@@ -315,8 +369,165 @@ export type DeploymentsActionInputById = {
             templateDomainId: string;
             hostname: string;
         }[];
+        volumeBindings?: undefined | {
+            templateVolumeId: string;
+            source: string;
+        }[];
         deploy?: undefined | {
             requestKey: string;
+        };
+    };
+    readonly "deployments.environments.moveToRepository": {
+        mode: 'apply' | 'preview';
+        serverId: string;
+        environmentId: string;
+        definition: {
+            contentRevision: number;
+            composeDigest: string;
+        };
+        path: string;
+        repository?: undefined | {
+            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+            deployment: string;
+            repository: string;
+        };
+        createRepository?: undefined | {
+            owner: string;
+            remoteName: unknown;
+            visibility: 'internal' | 'private' | 'public';
+            providerKind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+            repositoryName: string;
+            description?: string | undefined;
+            providerId?: string | undefined;
+            providerBaseUrl?: string | undefined;
+            ownerKind?: 'org' | 'user' | undefined;
+            remoteUrlKind?: 'https' | 'ssh' | undefined;
+            remoteConflictStrategy?: 'fail' | 'set-url' | undefined;
+            pushCurrentBranch?: boolean | undefined;
+        };
+        baseCommit?: string | undefined;
+        baseBranch?: string | undefined;
+        workspace?: undefined | {
+            kind: 'workspace-ref';
+            serverId: string;
+            id: string;
+        };
+        selectors?: undefined | {
+            profiles: string[];
+            services: string[];
+            primaryService?: string | undefined;
+        };
+        continuation?: undefined | {
+            pullRequest: {
+                [x: string]: unknown;
+                provider: unknown;
+                title: string;
+                url: string;
+                baseBranch: string;
+                headBranch: string;
+                state: 'closed' | 'draft' | 'merged' | 'open' | 'unknown';
+                number?: null | number | undefined;
+                providerNativeId?: string | undefined;
+                headRepositoryNameWithOwner?: string | undefined;
+                isCrossRepository?: boolean | undefined;
+                headSha?: null | string | undefined;
+                baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
+                createdAtMs?: number | undefined;
+                closedAtMs?: number | undefined;
+                mergedAtMs?: number | undefined;
+                isDraft?: boolean | undefined;
+                author?: undefined | {
+                    [x: string]: unknown;
+                    login?: string | undefined;
+                    displayName?: string | undefined;
+                    url?: string | undefined;
+                };
+                checks?: undefined | {
+                    [x: string]: unknown;
+                    state: 'failure' | 'pending' | 'success' | 'unknown';
+                    description?: string | undefined;
+                };
+            };
+            headCommit: string;
+            document: string;
+            definition: {
+                contentRevision: number;
+                composeDigest: string;
+            };
+            source: {
+                id: string;
+                revision: number;
+            };
+            path: string;
+            publicFiles?: undefined | {
+                path: string;
+                content: string;
+            }[];
+            selectors?: undefined | {
+                profiles: string[];
+                services: string[];
+                primaryService?: string | undefined;
+            };
+        };
+        repositoryWork?: undefined | {
+            kind: 'partial';
+            stage: 'cleanup' | 'commit' | 'pullRequest' | 'worktree' | 'write';
+            errorCode: string;
+            worktree?: undefined | {
+                path: string;
+                branchName: string;
+            };
+            headCommit?: string | undefined;
+            writtenPaths?: string[] | undefined;
+            pullRequest?: undefined | {
+                [x: string]: unknown;
+                provider: unknown;
+                title: string;
+                url: string;
+                baseBranch: string;
+                headBranch: string;
+                state: 'closed' | 'draft' | 'merged' | 'open' | 'unknown';
+                number?: null | number | undefined;
+                providerNativeId?: string | undefined;
+                headRepositoryNameWithOwner?: string | undefined;
+                isCrossRepository?: boolean | undefined;
+                headSha?: null | string | undefined;
+                baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
+                createdAtMs?: number | undefined;
+                closedAtMs?: number | undefined;
+                mergedAtMs?: number | undefined;
+                isDraft?: boolean | undefined;
+                author?: undefined | {
+                    [x: string]: unknown;
+                    login?: string | undefined;
+                    displayName?: string | undefined;
+                    url?: string | undefined;
+                };
+                checks?: undefined | {
+                    [x: string]: unknown;
+                    state: 'failure' | 'pending' | 'success' | 'unknown';
+                    description?: string | undefined;
+                };
+            };
+        };
+        useMergedVersion?: undefined | {
+            currentDefinition: {
+                contentRevision: number;
+                composeDigest: string;
+            };
+            currentDocument: string;
+            mergedCommit: string;
+            mergedDocument: string;
+            currentPublicFiles?: undefined | {
+                path: string;
+                content: string;
+            }[];
+            mergedPublicFiles?: undefined | {
+                path: string;
+                content: string;
+            }[];
         };
     };
     readonly "deployments.prepare": {
@@ -422,6 +633,18 @@ export type DeploymentsActionInputById = {
             sourceRevision: string;
             token: string;
         };
+    };
+    readonly "deployments.data.query": {
+        sql: string;
+        params: Record<string, string>;
+        serverId: string;
+        environmentId: string;
+        expectedRevision: number;
+        deploymentId: string;
+        targetLinkId: string;
+        machineId: string;
+        installationId: string;
+        service: string;
     };
     readonly "deployments.environments.create": {
         protection: 'nonProduction' | 'production';
@@ -844,6 +1067,13 @@ export type DeploymentsActionInputById = {
                 profiles: string[];
                 services: string[];
                 path: string;
+                augmentation?: undefined | {
+                    document: string;
+                    publicFiles?: undefined | {
+                        path: string;
+                        content: string;
+                    }[];
+                };
                 primaryService?: string | undefined;
             };
         } | {
@@ -1109,58 +1339,14 @@ export type DeploymentsActionInputById = {
                 kind: 'edgeCaddy';
                 edgeMachineId: string;
             };
-            backup?: undefined | {
-                configRevision: number;
-                destinationRef: {
-                    pluginId: string;
-                    localId: string;
-                };
-                occurrenceId: string;
-                config: unknown;
-                credentialBindings: {
-                    purpose: 'backupDestination';
-                    configKey: 'destination';
-                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
-                }[];
-                sources: ({
-                    kind: 'dump';
-                    sourceId: string;
-                    service: string;
-                    consistency: 'logical';
-                } | {
-                    kind: 'volume';
-                    sourceId: string;
-                    service: string;
-                    volume: string;
-                    consistency: 'stopDuringCopy';
-                })[];
-                ownership: {
-                    environmentId: string;
-                    prefix: string;
-                };
-                retention: {
-                    kind: 'keep';
-                    last?: number | undefined;
-                    daily?: number | undefined;
-                    weekly?: number | undefined;
-                    monthly?: number | undefined;
-                } | {
-                    kind: 'keepEverything';
-                };
-            };
-            backupRetention?: undefined | {
-                configRevision: number;
-                retention: {
-                    kind: 'keep';
-                    last?: number | undefined;
-                    daily?: number | undefined;
-                    weekly?: number | undefined;
-                    monthly?: number | undefined;
-                } | {
-                    kind: 'keepEverything';
-                };
-            };
             ownServer?: undefined | {
+                migration?: null | undefined | {
+                    service: string;
+                    argv: string[];
+                    pendingCheck?: undefined | {
+                        argv: string[];
+                    };
+                };
                 serviceExports?: undefined | {
                     key: string;
                     service: string;
@@ -1172,6 +1358,8 @@ export type DeploymentsActionInputById = {
                         kind: 'iroh';
                     };
                 }[];
+                backupBeforeMigration?: boolean | undefined;
+                migrationFailurePolicy?: 'ask' | 'restoreBackupAndRollbackCode' | 'rollbackCodeOnly' | undefined;
                 rollout?: 'recreate' | 'startFirst' | undefined;
                 autoRestorePreviousRelease?: boolean | undefined;
             };
@@ -1391,9 +1579,101 @@ export type DeploymentsActionInputById = {
                     connectTo?: undefined | {
                         service: string;
                     };
+                    copyFrom?: undefined | {
+                        environmentId: string;
+                        targetLinkId: string;
+                        deploymentId: string;
+                    };
+                    destinationBackup?: undefined | {
+                        configuration: {
+                            config: unknown;
+                            occurrenceId: string;
+                            sources: ({
+                                kind: 'dump';
+                                sourceId: string;
+                                service: string;
+                                consistency: 'logical';
+                            } | {
+                                kind: 'volume';
+                                sourceId: string;
+                                service: string;
+                                volume: string;
+                                consistency: 'stopDuringCopy';
+                            })[];
+                            retention: {
+                                kind: 'keep';
+                                last?: number | undefined;
+                                daily?: number | undefined;
+                                weekly?: number | undefined;
+                                monthly?: number | undefined;
+                            } | {
+                                kind: 'keepEverything';
+                            };
+                            configRevision: number;
+                            destinationRef: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            credentialBindings: {
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            }[];
+                        };
+                        prefix: string;
+                        bindings: {
+                            source: {
+                                kind: 'secret';
+                                ref: 'person_selects';
+                            } | {
+                                ref: string;
+                                resourceRevision: number;
+                                kind: 'secret';
+                            };
+                            purpose: 'backupDestination';
+                            configKey: 'destination';
+                            role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                        }[];
+                    };
                 })[];
             };
             buildMachineId?: string | undefined;
+        };
+        mode?: 'preview' | undefined;
+        defaultsFor?: 'backupSchedule' | 'backups' | 'previews' | undefined;
+        creationDefaults?: undefined | {
+            buildMachineId?: string | undefined;
+            controllerMachineId?: string | undefined;
+            retainPreviousDeployments?: number | undefined;
+            previewMachineId?: string | undefined;
+            previewDatabase?: 'branch' | 'none' | 'own' | undefined;
+            backupDestination?: null | undefined | {
+                pluginId: string;
+                localId: string;
+            };
+            backupSchedule?: null | undefined | {
+                kind: 'cron';
+                scheduleExpr: string;
+                everyMs: null;
+                timezone: null | string;
+            } | {
+                kind: 'interval';
+                scheduleExpr: null;
+                everyMs: number;
+                timezone: null | string;
+            } | {
+                kind: 'once';
+                scheduledAt: number;
+            };
+            backupRetention?: undefined | {
+                kind: 'keep';
+                last?: number | undefined;
+                daily?: number | undefined;
+                weekly?: number | undefined;
+                monthly?: number | undefined;
+            } | {
+                kind: 'keepEverything';
+            };
         };
     };
     readonly "deployments.environments.controller.set": {
@@ -1589,6 +1869,12 @@ export type DeploymentsActionInputById = {
                     rootDirectory?: string | undefined;
                 };
             };
+            ownedVariables?: undefined | {
+                key: string;
+                providerId: string;
+                desiredRevision: number;
+                providerRevision?: string | undefined;
+            }[];
         };
         managedRetention?: 'keep' | 'until-delete' | undefined;
         machineId?: string | undefined;
@@ -1627,6 +1913,7 @@ export type DeploymentsActionInputById = {
         serverId: string;
         whenBusy?: 'refuse' | 'supersede' | undefined;
         onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+        services?: string[] | undefined;
         pendingDeploy?: undefined | {
             t: 'encrypted';
             c: string;
@@ -1642,6 +1929,13 @@ export type DeploymentsActionInputById = {
                         profiles: string[];
                         services: string[];
                         path: string;
+                        augmentation?: undefined | {
+                            document: string;
+                            publicFiles?: undefined | {
+                                path: string;
+                                content: string;
+                            }[];
+                        };
                         primaryService?: string | undefined;
                     };
                     pullRequestHead?: undefined | {
@@ -1665,6 +1959,7 @@ export type DeploymentsActionInputById = {
                 actionOperationId: string;
                 sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                 onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+                services?: string[] | undefined;
                 triggerOccurrence?: undefined | {
                     automationId: string;
                     triggerId: string;
@@ -1688,6 +1983,13 @@ export type DeploymentsActionInputById = {
                 profiles: string[];
                 services: string[];
                 path: string;
+                augmentation?: undefined | {
+                    document: string;
+                    publicFiles?: undefined | {
+                        path: string;
+                        content: string;
+                    }[];
+                };
                 primaryService?: string | undefined;
             };
             pullRequestHead?: undefined | {
@@ -1709,6 +2011,7 @@ export type DeploymentsActionInputById = {
         sourceMethod?: 'gitIntegration' | 'upload' | undefined;
         whenBusy?: 'refuse' | 'supersede' | undefined;
         onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+        services?: string[] | undefined;
     };
     readonly "deployments.rollback": {
         deploymentId: string;
@@ -1755,18 +2058,27 @@ export type DeploymentsActionInputById = {
         installationId: string;
         targetLinkId: string;
         deploymentId: string;
-        restoreBackupId: string;
         expectedRevision: number;
-        backupOperationId?: string | undefined;
-        copy?: undefined | {
-            source: {
+        source: {
+            kind: 'repository';
+            snapshotId: string;
+            backupOperationId?: string | undefined;
+            origin?: undefined | {
                 environmentId: string;
                 targetLinkId: string;
             };
-            destination: {
-                service: string;
-                database: string;
-            };
+        } | {
+            kind: 'upload';
+            transferId: string;
+        };
+        destination?: undefined | {
+            kind: 'database';
+            service: string;
+            database: string;
+        } | {
+            kind: 'volume';
+            service: string;
+            volume: string;
         };
     } | {
         mode: 'prepare';
@@ -1776,17 +2088,347 @@ export type DeploymentsActionInputById = {
         installationId: string;
         targetLinkId: string;
         deploymentId: string;
-        restoreBackupId: string;
         expectedRevision: number;
-        backupOperationId?: string | undefined;
-        copy?: undefined | {
-            source: {
+        source: {
+            kind: 'repository';
+            snapshotId: string;
+            backupOperationId?: string | undefined;
+            origin?: undefined | {
                 environmentId: string;
                 targetLinkId: string;
             };
-            destination: {
+        } | {
+            kind: 'upload';
+            transferId: string;
+        };
+        destination?: undefined | {
+            kind: 'database';
+            service: string;
+            database: string;
+        } | {
+            kind: 'volume';
+            service: string;
+            volume: string;
+        };
+    };
+    readonly "deployments.backups.configure": {
+        intent: 'initializeAndSave';
+        configuration: {
+            config: unknown;
+            occurrenceId: string;
+            sources: ({
+                kind: 'dump';
+                sourceId: string;
                 service: string;
-                database: string;
+                consistency: 'logical';
+            } | {
+                kind: 'volume';
+                sourceId: string;
+                service: string;
+                volume: string;
+                consistency: 'stopDuringCopy';
+            })[];
+            configRevision: number;
+            destinationRef: {
+                pluginId: string;
+                localId: string;
+            };
+            credentialBindings: {
+                purpose: 'backupDestination';
+                configKey: 'destination';
+                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+            }[];
+            ownership: {
+                environmentId: string;
+                prefix: string;
+            };
+            retention?: undefined | {
+                kind: 'keep';
+                last?: number | undefined;
+                daily?: number | undefined;
+                weekly?: number | undefined;
+                monthly?: number | undefined;
+            } | {
+                kind: 'keepEverything';
+            };
+        };
+        serverId: string;
+        environmentId: string;
+        expectedRevision: number;
+        explicit?: undefined | {
+            backupDestination?: null | undefined | {
+                pluginId: string;
+                localId: string;
+            };
+            backupSchedule?: null | undefined | {
+                kind: 'cron';
+                scheduleExpr: string;
+                everyMs: null;
+                timezone: null | string;
+            } | {
+                kind: 'interval';
+                scheduleExpr: null;
+                everyMs: number;
+                timezone: null | string;
+            } | {
+                kind: 'once';
+                scheduledAt: number;
+            };
+            backupRetention?: undefined | {
+                kind: 'keep';
+                last?: number | undefined;
+                daily?: number | undefined;
+                weekly?: number | undefined;
+                monthly?: number | undefined;
+            } | {
+                kind: 'keepEverything';
+            };
+        };
+        backupBindings?: undefined | {
+            source: {
+                kind: 'secret';
+                ref: 'person_selects';
+            } | {
+                ref: string;
+                resourceRevision: number;
+                kind: 'secret';
+            };
+            purpose: 'backupDestination';
+            configKey: 'destination';
+            role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+        }[];
+        destinationSetup?: undefined | {
+            kind: 'anotherMachine';
+            machineId: string;
+            expectedInstallationId: string;
+            receiverInputs: Record<string, unknown>;
+            senderIdentity?: undefined | {
+                publicKey: string;
+                sshPrivateKey: {
+                    ref: string;
+                    resourceRevision: number;
+                    kind: 'secret';
+                };
+                repositoryPassword?: undefined | {
+                    ref: string;
+                    resourceRevision: number;
+                    kind: 'secret';
+                };
+            };
+        };
+    } | {
+        intent: 'markNotNeeded';
+        serverId: string;
+        environmentId: string;
+        expectedRevision: number;
+    } | {
+        intent: 'save';
+        configuration: {
+            config: unknown;
+            occurrenceId: string;
+            sources: ({
+                kind: 'dump';
+                sourceId: string;
+                service: string;
+                consistency: 'logical';
+            } | {
+                kind: 'volume';
+                sourceId: string;
+                service: string;
+                volume: string;
+                consistency: 'stopDuringCopy';
+            })[];
+            configRevision: number;
+            destinationRef: {
+                pluginId: string;
+                localId: string;
+            };
+            credentialBindings: {
+                purpose: 'backupDestination';
+                configKey: 'destination';
+                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+            }[];
+            ownership: {
+                environmentId: string;
+                prefix: string;
+            };
+            retention?: undefined | {
+                kind: 'keep';
+                last?: number | undefined;
+                daily?: number | undefined;
+                weekly?: number | undefined;
+                monthly?: number | undefined;
+            } | {
+                kind: 'keepEverything';
+            };
+        };
+        serverId: string;
+        environmentId: string;
+        expectedRevision: number;
+        explicit?: undefined | {
+            backupDestination?: null | undefined | {
+                pluginId: string;
+                localId: string;
+            };
+            backupSchedule?: null | undefined | {
+                kind: 'cron';
+                scheduleExpr: string;
+                everyMs: null;
+                timezone: null | string;
+            } | {
+                kind: 'interval';
+                scheduleExpr: null;
+                everyMs: number;
+                timezone: null | string;
+            } | {
+                kind: 'once';
+                scheduledAt: number;
+            };
+            backupRetention?: undefined | {
+                kind: 'keep';
+                last?: number | undefined;
+                daily?: number | undefined;
+                weekly?: number | undefined;
+                monthly?: number | undefined;
+            } | {
+                kind: 'keepEverything';
+            };
+        };
+        backupBindings?: undefined | {
+            source: {
+                kind: 'secret';
+                ref: 'person_selects';
+            } | {
+                ref: string;
+                resourceRevision: number;
+                kind: 'secret';
+            };
+            purpose: 'backupDestination';
+            configKey: 'destination';
+            role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+        }[];
+        destinationSetup?: undefined | {
+            kind: 'anotherMachine';
+            machineId: string;
+            expectedInstallationId: string;
+            receiverInputs: Record<string, unknown>;
+            senderIdentity?: undefined | {
+                publicKey: string;
+                sshPrivateKey: {
+                    ref: string;
+                    resourceRevision: number;
+                    kind: 'secret';
+                };
+                repositoryPassword?: undefined | {
+                    ref: string;
+                    resourceRevision: number;
+                    kind: 'secret';
+                };
+            };
+        };
+    } | {
+        intent: 'test';
+        configuration: {
+            config: unknown;
+            occurrenceId: string;
+            sources: ({
+                kind: 'dump';
+                sourceId: string;
+                service: string;
+                consistency: 'logical';
+            } | {
+                kind: 'volume';
+                sourceId: string;
+                service: string;
+                volume: string;
+                consistency: 'stopDuringCopy';
+            })[];
+            configRevision: number;
+            destinationRef: {
+                pluginId: string;
+                localId: string;
+            };
+            credentialBindings: {
+                purpose: 'backupDestination';
+                configKey: 'destination';
+                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+            }[];
+            ownership: {
+                environmentId: string;
+                prefix: string;
+            };
+            retention?: undefined | {
+                kind: 'keep';
+                last?: number | undefined;
+                daily?: number | undefined;
+                weekly?: number | undefined;
+                monthly?: number | undefined;
+            } | {
+                kind: 'keepEverything';
+            };
+        };
+        serverId: string;
+        environmentId: string;
+        expectedRevision: number;
+        explicit?: undefined | {
+            backupDestination?: null | undefined | {
+                pluginId: string;
+                localId: string;
+            };
+            backupSchedule?: null | undefined | {
+                kind: 'cron';
+                scheduleExpr: string;
+                everyMs: null;
+                timezone: null | string;
+            } | {
+                kind: 'interval';
+                scheduleExpr: null;
+                everyMs: number;
+                timezone: null | string;
+            } | {
+                kind: 'once';
+                scheduledAt: number;
+            };
+            backupRetention?: undefined | {
+                kind: 'keep';
+                last?: number | undefined;
+                daily?: number | undefined;
+                weekly?: number | undefined;
+                monthly?: number | undefined;
+            } | {
+                kind: 'keepEverything';
+            };
+        };
+        backupBindings?: undefined | {
+            source: {
+                kind: 'secret';
+                ref: 'person_selects';
+            } | {
+                ref: string;
+                resourceRevision: number;
+                kind: 'secret';
+            };
+            purpose: 'backupDestination';
+            configKey: 'destination';
+            role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+        }[];
+        destinationSetup?: undefined | {
+            kind: 'anotherMachine';
+            machineId: string;
+            expectedInstallationId: string;
+            receiverInputs: Record<string, unknown>;
+            senderIdentity?: undefined | {
+                publicKey: string;
+                sshPrivateKey: {
+                    ref: string;
+                    resourceRevision: number;
+                    kind: 'secret';
+                };
+                repositoryPassword?: undefined | {
+                    ref: string;
+                    resourceRevision: number;
+                    kind: 'secret';
+                };
             };
         };
     };
@@ -2235,6 +2877,20 @@ export type DeploymentsActionResultById = {
                     contentBodyVersion: number;
                 };
             }[];
+            provider?: true | undefined;
+            providerPlacement?: undefined | {
+                serverId: string;
+                accountId: string;
+                environmentId: string;
+                targetLinkId: string;
+                domainId: string;
+                controller: {
+                    machineId: string;
+                    installationId: string;
+                };
+                actionOperationId: string;
+                requestId: string;
+            };
             operationAddress?: undefined | {
                 serverId: string;
                 machineId: string;
@@ -2408,6 +3064,20 @@ export type DeploymentsActionResultById = {
                     contentBodyVersion: number;
                 };
             }[];
+            provider?: true | undefined;
+            providerPlacement?: undefined | {
+                serverId: string;
+                accountId: string;
+                environmentId: string;
+                targetLinkId: string;
+                domainId: string;
+                controller: {
+                    machineId: string;
+                    installationId: string;
+                };
+                actionOperationId: string;
+                requestId: string;
+            };
             operationAddress?: undefined | {
                 serverId: string;
                 machineId: string;
@@ -2581,6 +3251,20 @@ export type DeploymentsActionResultById = {
                     contentBodyVersion: number;
                 };
             }[];
+            provider?: true | undefined;
+            providerPlacement?: undefined | {
+                serverId: string;
+                accountId: string;
+                environmentId: string;
+                targetLinkId: string;
+                domainId: string;
+                controller: {
+                    machineId: string;
+                    installationId: string;
+                };
+                actionOperationId: string;
+                requestId: string;
+            };
             operationAddress?: undefined | {
                 serverId: string;
                 machineId: string;
@@ -2754,6 +3438,20 @@ export type DeploymentsActionResultById = {
                     contentBodyVersion: number;
                 };
             }[];
+            provider?: true | undefined;
+            providerPlacement?: undefined | {
+                serverId: string;
+                accountId: string;
+                environmentId: string;
+                targetLinkId: string;
+                domainId: string;
+                controller: {
+                    machineId: string;
+                    installationId: string;
+                };
+                actionOperationId: string;
+                requestId: string;
+            };
             operationAddress?: undefined | {
                 serverId: string;
                 machineId: string;
@@ -2927,6 +3625,20 @@ export type DeploymentsActionResultById = {
                     contentBodyVersion: number;
                 };
             }[];
+            provider?: true | undefined;
+            providerPlacement?: undefined | {
+                serverId: string;
+                accountId: string;
+                environmentId: string;
+                targetLinkId: string;
+                domainId: string;
+                controller: {
+                    machineId: string;
+                    installationId: string;
+                };
+                actionOperationId: string;
+                requestId: string;
+            };
             operationAddress?: undefined | {
                 serverId: string;
                 machineId: string;
@@ -3261,11 +3973,45 @@ export type DeploymentsActionResultById = {
                 retainPreviousDeployments: number;
                 buildMachineId?: string | undefined;
                 controllerMachineId?: string | undefined;
+                previewMachineId?: string | undefined;
+                previewDatabase?: 'branch' | 'none' | 'own' | undefined;
+                backupDestination?: null | undefined | {
+                    pluginId: string;
+                    localId: string;
+                };
+                backupSchedule?: null | undefined | {
+                    kind: 'cron';
+                    scheduleExpr: string;
+                    everyMs: null;
+                    timezone: null | string;
+                } | {
+                    kind: 'interval';
+                    scheduleExpr: null;
+                    everyMs: number;
+                    timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
+                };
+                backupRetention?: undefined | {
+                    kind: 'keep';
+                    last?: number | undefined;
+                    daily?: number | undefined;
+                    weekly?: number | undefined;
+                    monthly?: number | undefined;
+                } | {
+                    kind: 'keepEverything';
+                };
             };
             sources: {
                 buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                 controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                 retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                previewMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                previewDatabase?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                backupDestination?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                backupSchedule?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                backupRetention?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
             };
         };
         creationDefaultsBasis?: undefined | {
@@ -3306,6 +4052,17 @@ export type DeploymentsActionResultById = {
             environmentId: string;
             revision: number;
             environmentRemoved?: true | undefined;
+            previewCleanup?: undefined | {
+                machines: string[];
+                volumes: ({
+                    name: string;
+                    disposition: 'delete';
+                    confirmation: string;
+                } | {
+                    name: string;
+                    disposition: 'keep';
+                })[];
+            };
         } | {
             kind: 'pending';
             actionOperationId: string;
@@ -3409,6 +4166,17 @@ export type DeploymentsActionResultById = {
             environmentId: string;
             revision: number;
             environmentRemoved?: true | undefined;
+            previewCleanup?: undefined | {
+                machines: string[];
+                volumes: ({
+                    name: string;
+                    disposition: 'delete';
+                    confirmation: string;
+                } | {
+                    name: string;
+                    disposition: 'keep';
+                })[];
+            };
         } | {
             kind: 'pending';
             actionOperationId: string;
@@ -3988,11 +4756,45 @@ export type DeploymentsActionResultById = {
                     retainPreviousDeployments: number;
                     buildMachineId?: string | undefined;
                     controllerMachineId?: string | undefined;
+                    previewMachineId?: string | undefined;
+                    previewDatabase?: 'branch' | 'none' | 'own' | undefined;
+                    backupDestination?: null | undefined | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    backupSchedule?: null | undefined | {
+                        kind: 'cron';
+                        scheduleExpr: string;
+                        everyMs: null;
+                        timezone: null | string;
+                    } | {
+                        kind: 'interval';
+                        scheduleExpr: null;
+                        everyMs: number;
+                        timezone: null | string;
+                    } | {
+                        kind: 'once';
+                        scheduledAt: number;
+                    };
+                    backupRetention?: undefined | {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
                 };
                 sources: {
                     buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    previewMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    previewDatabase?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupDestination?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupSchedule?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupRetention?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                 };
             };
             creationDefaultsBasis?: undefined | {
@@ -4022,6 +4824,392 @@ export type DeploymentsActionResultById = {
             document?: string | undefined;
             primaryService?: string | undefined;
         };
+    };
+    readonly "deployments.environments.moveToRepository": {
+        kind: 'conflict' | 'refused';
+        reason: string;
+        continuation?: undefined | {
+            pullRequest: {
+                [x: string]: unknown;
+                provider: {
+                    [x: string]: unknown;
+                    id: string;
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                    displayName: string;
+                    baseUrl: string;
+                    urlSafety: {
+                        [x: string]: unknown;
+                        allowedSchemes: string[];
+                    };
+                    nameWithOwner?: string | undefined;
+                    repositoryWebUrl?: string | undefined;
+                    remoteName?: string | undefined;
+                };
+                title: string;
+                url: string;
+                baseBranch: string;
+                headBranch: string;
+                state: 'closed' | 'draft' | 'merged' | 'open' | 'unknown';
+                number?: null | number | undefined;
+                providerNativeId?: string | undefined;
+                headRepositoryNameWithOwner?: string | undefined;
+                isCrossRepository?: boolean | undefined;
+                headSha?: null | string | undefined;
+                baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
+                createdAtMs?: number | undefined;
+                closedAtMs?: number | undefined;
+                mergedAtMs?: number | undefined;
+                isDraft?: boolean | undefined;
+                author?: undefined | {
+                    [x: string]: unknown;
+                    login?: string | undefined;
+                    displayName?: string | undefined;
+                    url?: string | undefined;
+                };
+                checks?: undefined | {
+                    [x: string]: unknown;
+                    state: 'failure' | 'pending' | 'success' | 'unknown';
+                    description?: string | undefined;
+                };
+            };
+            headCommit: string;
+            document: string;
+            definition: {
+                contentRevision: number;
+                composeDigest: string;
+            };
+            source: {
+                id: string;
+                revision: number;
+            };
+            path: string;
+            publicFiles?: undefined | {
+                path: string;
+                content: string;
+            }[];
+            selectors?: undefined | {
+                profiles: string[];
+                services: string[];
+                primaryService?: string | undefined;
+            };
+        };
+    } | {
+        kind: 'partial';
+        errorCode: string;
+        phase: string;
+        repositoryWork?: undefined | {
+            kind: 'partial';
+            stage: 'cleanup' | 'commit' | 'pullRequest' | 'worktree' | 'write';
+            errorCode: string;
+            worktree?: undefined | {
+                path: string;
+                branchName: string;
+            };
+            headCommit?: string | undefined;
+            writtenPaths?: string[] | undefined;
+            pullRequest?: undefined | {
+                [x: string]: unknown;
+                provider: {
+                    [x: string]: unknown;
+                    id: string;
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                    displayName: string;
+                    baseUrl: string;
+                    urlSafety: {
+                        [x: string]: unknown;
+                        allowedSchemes: string[];
+                    };
+                    nameWithOwner?: string | undefined;
+                    repositoryWebUrl?: string | undefined;
+                    remoteName?: string | undefined;
+                };
+                title: string;
+                url: string;
+                baseBranch: string;
+                headBranch: string;
+                state: 'closed' | 'draft' | 'merged' | 'open' | 'unknown';
+                number?: null | number | undefined;
+                providerNativeId?: string | undefined;
+                headRepositoryNameWithOwner?: string | undefined;
+                isCrossRepository?: boolean | undefined;
+                headSha?: null | string | undefined;
+                baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
+                createdAtMs?: number | undefined;
+                closedAtMs?: number | undefined;
+                mergedAtMs?: number | undefined;
+                isDraft?: boolean | undefined;
+                author?: undefined | {
+                    [x: string]: unknown;
+                    login?: string | undefined;
+                    displayName?: string | undefined;
+                    url?: string | undefined;
+                };
+                checks?: undefined | {
+                    [x: string]: unknown;
+                    state: 'failure' | 'pending' | 'success' | 'unknown';
+                    description?: string | undefined;
+                };
+            };
+        };
+        continuation?: undefined | {
+            pullRequest: {
+                [x: string]: unknown;
+                provider: {
+                    [x: string]: unknown;
+                    id: string;
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                    displayName: string;
+                    baseUrl: string;
+                    urlSafety: {
+                        [x: string]: unknown;
+                        allowedSchemes: string[];
+                    };
+                    nameWithOwner?: string | undefined;
+                    repositoryWebUrl?: string | undefined;
+                    remoteName?: string | undefined;
+                };
+                title: string;
+                url: string;
+                baseBranch: string;
+                headBranch: string;
+                state: 'closed' | 'draft' | 'merged' | 'open' | 'unknown';
+                number?: null | number | undefined;
+                providerNativeId?: string | undefined;
+                headRepositoryNameWithOwner?: string | undefined;
+                isCrossRepository?: boolean | undefined;
+                headSha?: null | string | undefined;
+                baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
+                createdAtMs?: number | undefined;
+                closedAtMs?: number | undefined;
+                mergedAtMs?: number | undefined;
+                isDraft?: boolean | undefined;
+                author?: undefined | {
+                    [x: string]: unknown;
+                    login?: string | undefined;
+                    displayName?: string | undefined;
+                    url?: string | undefined;
+                };
+                checks?: undefined | {
+                    [x: string]: unknown;
+                    state: 'failure' | 'pending' | 'success' | 'unknown';
+                    description?: string | undefined;
+                };
+            };
+            headCommit: string;
+            document: string;
+            definition: {
+                contentRevision: number;
+                composeDigest: string;
+            };
+            source: {
+                id: string;
+                revision: number;
+            };
+            path: string;
+            publicFiles?: undefined | {
+                path: string;
+                content: string;
+            }[];
+            selectors?: undefined | {
+                profiles: string[];
+                services: string[];
+                primaryService?: string | undefined;
+            };
+        };
+    } | {
+        kind: 'preview';
+        review: {
+            document: string;
+            repository: {
+                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                deployment: string;
+                repository: string;
+            };
+            path: string;
+            baseCommit: string;
+            baseBranch: string;
+            workspace: {
+                kind: 'workspace-ref';
+                serverId: string;
+                id: string;
+            };
+            source: {
+                id: string;
+                revision: number;
+            };
+            before: null | string;
+            selectors?: undefined | {
+                profiles: string[];
+                services: string[];
+                primaryService?: string | undefined;
+            };
+            files?: undefined | {
+                path: string;
+                before: null | string;
+                content: string;
+            }[];
+        };
+    } | {
+        kind: 'pullRequest';
+        continuation: {
+            pullRequest: {
+                [x: string]: unknown;
+                provider: {
+                    [x: string]: unknown;
+                    id: string;
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                    displayName: string;
+                    baseUrl: string;
+                    urlSafety: {
+                        [x: string]: unknown;
+                        allowedSchemes: string[];
+                    };
+                    nameWithOwner?: string | undefined;
+                    repositoryWebUrl?: string | undefined;
+                    remoteName?: string | undefined;
+                };
+                title: string;
+                url: string;
+                baseBranch: string;
+                headBranch: string;
+                state: 'closed' | 'draft' | 'merged' | 'open' | 'unknown';
+                number?: null | number | undefined;
+                providerNativeId?: string | undefined;
+                headRepositoryNameWithOwner?: string | undefined;
+                isCrossRepository?: boolean | undefined;
+                headSha?: null | string | undefined;
+                baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
+                createdAtMs?: number | undefined;
+                closedAtMs?: number | undefined;
+                mergedAtMs?: number | undefined;
+                isDraft?: boolean | undefined;
+                author?: undefined | {
+                    [x: string]: unknown;
+                    login?: string | undefined;
+                    displayName?: string | undefined;
+                    url?: string | undefined;
+                };
+                checks?: undefined | {
+                    [x: string]: unknown;
+                    state: 'failure' | 'pending' | 'success' | 'unknown';
+                    description?: string | undefined;
+                };
+            };
+            headCommit: string;
+            document: string;
+            definition: {
+                contentRevision: number;
+                composeDigest: string;
+            };
+            source: {
+                id: string;
+                revision: number;
+            };
+            path: string;
+            publicFiles?: undefined | {
+                path: string;
+                content: string;
+            }[];
+            selectors?: undefined | {
+                profiles: string[];
+                services: string[];
+                primaryService?: string | undefined;
+            };
+        };
+    } | {
+        kind: 'reviewMerged';
+        review: {
+            currentDefinition: {
+                contentRevision: number;
+                composeDigest: string;
+            };
+            currentDocument: string;
+            mergedCommit: string;
+            mergedDocument: string;
+            currentPublicFiles?: undefined | {
+                path: string;
+                content: string;
+            }[];
+            mergedPublicFiles?: undefined | {
+                path: string;
+                content: string;
+            }[];
+        };
+        continuation: {
+            pullRequest: {
+                [x: string]: unknown;
+                provider: {
+                    [x: string]: unknown;
+                    id: string;
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                    displayName: string;
+                    baseUrl: string;
+                    urlSafety: {
+                        [x: string]: unknown;
+                        allowedSchemes: string[];
+                    };
+                    nameWithOwner?: string | undefined;
+                    repositoryWebUrl?: string | undefined;
+                    remoteName?: string | undefined;
+                };
+                title: string;
+                url: string;
+                baseBranch: string;
+                headBranch: string;
+                state: 'closed' | 'draft' | 'merged' | 'open' | 'unknown';
+                number?: null | number | undefined;
+                providerNativeId?: string | undefined;
+                headRepositoryNameWithOwner?: string | undefined;
+                isCrossRepository?: boolean | undefined;
+                headSha?: null | string | undefined;
+                baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
+                createdAtMs?: number | undefined;
+                closedAtMs?: number | undefined;
+                mergedAtMs?: number | undefined;
+                isDraft?: boolean | undefined;
+                author?: undefined | {
+                    [x: string]: unknown;
+                    login?: string | undefined;
+                    displayName?: string | undefined;
+                    url?: string | undefined;
+                };
+                checks?: undefined | {
+                    [x: string]: unknown;
+                    state: 'failure' | 'pending' | 'success' | 'unknown';
+                    description?: string | undefined;
+                };
+            };
+            headCommit: string;
+            document: string;
+            definition: {
+                contentRevision: number;
+                composeDigest: string;
+            };
+            source: {
+                id: string;
+                revision: number;
+            };
+            path: string;
+            publicFiles?: undefined | {
+                path: string;
+                content: string;
+            }[];
+            selectors?: undefined | {
+                profiles: string[];
+                services: string[];
+                primaryService?: string | undefined;
+            };
+        };
+    } | {
+        kind: 'switched';
+        environmentId: string;
+        revision: number;
+        commitSha: string;
     };
     readonly "deployments.prepare": {
         kind: 'conflict' | 'refused';
@@ -4520,6 +5708,92 @@ export type DeploymentsActionResultById = {
         };
         effectAttempted?: false | undefined;
     };
+    readonly "deployments.data.query": {
+        error: 'quota_exceeded';
+        budget: 'account' | 'document';
+        limitBytes: number;
+        usedBytes: number;
+        ok: false;
+    } | {
+        errorCode: 'unsupported_action';
+        error: 'unsupported_action';
+        effectAttempted: false;
+        details: {
+            reason: string;
+            remedy: string;
+            requiredFact?: string | undefined;
+        };
+        failureCause: ActionFailureCauseV1;
+        ok: false;
+        requestId?: string | undefined;
+        goalControlFailure?: undefined | {
+            phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+        };
+    } | {
+        ok: false;
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+    } | {
+        ok: false;
+        error: 'deployment_access_denied' | 'deployment_unavailable' | 'unsupported_action';
+        diagnostic: {
+            code: string;
+        };
+    } | {
+        ok: false;
+        error: 'deployment_in_progress';
+        deploymentId: string;
+        href: string;
+    } | {
+        ok: false;
+        error: 'deployment_invalid';
+        diagnostic?: undefined | {
+            step: 'target_link.associate' | 'target_link.environment_read' | 'target_link.provider_links_read';
+            field: string;
+            rule: 'constraint' | 'invalid_type' | 'invalid_value' | 'path_mismatch' | 'unrecognized_keys';
+        };
+    } | {
+        ok: false;
+        error: 'machine_unavailable';
+        role: 'build' | 'controller' | 'target';
+        machineIds: string[];
+        nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
+        diagnostic?: undefined | {
+            reason: 'machine_installation_missing';
+            requiredFact: 'machine_installation';
+            remedy: 'register_machine';
+        } | {
+            reason: 'machine_offline';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_replaced';
+            requiredFact: 'current_machine';
+            remedy: 'select_current_machine';
+        } | {
+            reason: 'machine_revoked';
+            requiredFact: 'machine_registration';
+            remedy: 'register_machine';
+        } | {
+            reason: 'machine_setup_requires_manage';
+            requiredFact: 'machine_manage_role';
+            remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'source_machine_access_missing';
+            requiredFact: 'source_machine_use';
+            remedy: 'share_machine_with_source_owner';
+        };
+        effectAttempted?: false | undefined;
+    } | {
+        ok: true;
+        columns: {
+            name: string;
+        }[];
+        rows: (boolean | null | number | string)[][];
+        complete: boolean;
+        diagnostic?: undefined | {
+            code: string;
+        };
+    };
     readonly "deployments.environments.create": {
         error: 'quota_exceeded';
         budget: 'account' | 'document';
@@ -4964,6 +6238,13 @@ export type DeploymentsActionResultById = {
                     profiles: string[];
                     services: string[];
                     path: string;
+                    augmentation?: undefined | {
+                        document: string;
+                        publicFiles?: undefined | {
+                            path: string;
+                            content: string;
+                        }[];
+                    };
                     primaryService?: string | undefined;
                 };
             } | {
@@ -5215,11 +6496,45 @@ export type DeploymentsActionResultById = {
                     retainPreviousDeployments: number;
                     buildMachineId?: string | undefined;
                     controllerMachineId?: string | undefined;
+                    previewMachineId?: string | undefined;
+                    previewDatabase?: 'branch' | 'none' | 'own' | undefined;
+                    backupDestination?: null | undefined | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    backupSchedule?: null | undefined | {
+                        kind: 'cron';
+                        scheduleExpr: string;
+                        everyMs: null;
+                        timezone: null | string;
+                    } | {
+                        kind: 'interval';
+                        scheduleExpr: null;
+                        everyMs: number;
+                        timezone: null | string;
+                    } | {
+                        kind: 'once';
+                        scheduledAt: number;
+                    };
+                    backupRetention?: undefined | {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
                 };
                 sources: {
                     buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    previewMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    previewDatabase?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupDestination?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupSchedule?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupRetention?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                 };
             };
             creationDefaultsBasis?: undefined | {
@@ -5343,11 +6658,45 @@ export type DeploymentsActionResultById = {
                         retainPreviousDeployments: number;
                         buildMachineId?: string | undefined;
                         controllerMachineId?: string | undefined;
+                        previewMachineId?: string | undefined;
+                        previewDatabase?: 'branch' | 'none' | 'own' | undefined;
+                        backupDestination?: null | undefined | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        backupSchedule?: null | undefined | {
+                            kind: 'cron';
+                            scheduleExpr: string;
+                            everyMs: null;
+                            timezone: null | string;
+                        } | {
+                            kind: 'interval';
+                            scheduleExpr: null;
+                            everyMs: number;
+                            timezone: null | string;
+                        } | {
+                            kind: 'once';
+                            scheduledAt: number;
+                        };
+                        backupRetention?: undefined | {
+                            kind: 'keep';
+                            last?: number | undefined;
+                            daily?: number | undefined;
+                            weekly?: number | undefined;
+                            monthly?: number | undefined;
+                        } | {
+                            kind: 'keepEverything';
+                        };
                     };
                     sources: {
                         buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                         controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                         retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                        previewMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                        previewDatabase?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                        backupDestination?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                        backupSchedule?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                        backupRetention?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     };
                 };
                 creationDefaultsBasis?: undefined | {
@@ -5443,6 +6792,10 @@ export type DeploymentsActionResultById = {
             targetLinkId: string;
             targetLinkRevision: number;
         }[];
+        previewNativeData?: undefined | {
+            service: string;
+            database: string;
+        }[];
     };
     readonly "deployments.environments.update": {
         error: 'quota_exceeded';
@@ -5518,6 +6871,52 @@ export type DeploymentsActionResultById = {
         environmentId: string;
         revision: number;
         projectSourceId?: string | undefined;
+        creationDefaults?: undefined | {
+            values: {
+                retainPreviousDeployments: number;
+                buildMachineId?: string | undefined;
+                controllerMachineId?: string | undefined;
+                previewMachineId?: string | undefined;
+                previewDatabase?: 'branch' | 'none' | 'own' | undefined;
+                backupDestination?: null | undefined | {
+                    pluginId: string;
+                    localId: string;
+                };
+                backupSchedule?: null | undefined | {
+                    kind: 'cron';
+                    scheduleExpr: string;
+                    everyMs: null;
+                    timezone: null | string;
+                } | {
+                    kind: 'interval';
+                    scheduleExpr: null;
+                    everyMs: number;
+                    timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
+                };
+                backupRetention?: undefined | {
+                    kind: 'keep';
+                    last?: number | undefined;
+                    daily?: number | undefined;
+                    weekly?: number | undefined;
+                    monthly?: number | undefined;
+                } | {
+                    kind: 'keepEverything';
+                };
+            };
+            sources: {
+                buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                previewMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                previewDatabase?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                backupDestination?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                backupSchedule?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                backupRetention?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+            };
+        };
         previewEnrollment?: undefined | {
             status: 'disabled';
         } | {
@@ -5607,6 +7006,10 @@ export type DeploymentsActionResultById = {
             templateDataTargetLinkId: string;
             targetLinkId: string;
             targetLinkRevision: number;
+        }[];
+        previewNativeData?: undefined | {
+            service: string;
+            database: string;
         }[];
     };
     readonly "deployments.targets.link": {
@@ -5946,6 +7349,17 @@ export type DeploymentsActionResultById = {
         environmentId: string;
         revision: number;
         environmentRemoved?: true | undefined;
+        previewCleanup?: undefined | {
+            machines: string[];
+            volumes: ({
+                name: string;
+                disposition: 'delete';
+                confirmation: string;
+            } | {
+                name: string;
+                disposition: 'keep';
+            })[];
+        };
     } | {
         error: 'quota_exceeded';
         budget: 'account' | 'document';
@@ -6035,6 +7449,17 @@ export type DeploymentsActionResultById = {
         environmentId: string;
         revision: number;
         environmentRemoved?: true | undefined;
+        previewCleanup?: undefined | {
+            machines: string[];
+            volumes: ({
+                name: string;
+                disposition: 'delete';
+                confirmation: string;
+            } | {
+                name: string;
+                disposition: 'keep';
+            })[];
+        };
     } | {
         error: 'quota_exceeded';
         budget: 'account' | 'document';
@@ -6182,6 +7607,392 @@ export type DeploymentsActionResultById = {
             id: 'health' | 'restore' | 'safety' | 'start' | 'stop';
             status: 'completed' | 'failed' | 'running' | 'skipped';
         }[];
+    };
+    readonly "deployments.backups.configure": {
+        kind: 'configured';
+        environmentId: string;
+        revision: number;
+        configuration: {
+            configRevision: number;
+            destinationRef: {
+                pluginId: string;
+                localId: string;
+            };
+            occurrenceId: string;
+            config: Record<string, JsonValue>;
+            credentialBindings: {
+                purpose: 'backupDestination';
+                configKey: 'destination';
+                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+            }[];
+            sources: ({
+                kind: 'dump';
+                sourceId: string;
+                service: string;
+                consistency: 'logical';
+            } | {
+                kind: 'volume';
+                sourceId: string;
+                service: string;
+                volume: string;
+                consistency: 'stopDuringCopy';
+            })[];
+            ownership: {
+                environmentId: string;
+                prefix: string;
+            };
+            retention: {
+                kind: 'keep';
+                last?: number | undefined;
+                daily?: number | undefined;
+                weekly?: number | undefined;
+                monthly?: number | undefined;
+            } | {
+                kind: 'keepEverything';
+            };
+        };
+        review?: undefined | {
+            creationDefaults?: undefined | {
+                values: {
+                    retainPreviousDeployments: number;
+                    buildMachineId?: string | undefined;
+                    controllerMachineId?: string | undefined;
+                    previewMachineId?: string | undefined;
+                    previewDatabase?: 'branch' | 'none' | 'own' | undefined;
+                    backupDestination?: null | undefined | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    backupSchedule?: null | undefined | {
+                        kind: 'cron';
+                        scheduleExpr: string;
+                        everyMs: null;
+                        timezone: null | string;
+                    } | {
+                        kind: 'interval';
+                        scheduleExpr: null;
+                        everyMs: number;
+                        timezone: null | string;
+                    } | {
+                        kind: 'once';
+                        scheduledAt: number;
+                    };
+                    backupRetention?: undefined | {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
+                };
+                sources: {
+                    buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    previewMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    previewDatabase?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupDestination?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupSchedule?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupRetention?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                };
+            };
+        };
+    } | {
+        kind: 'needsBinding';
+        configuration: {
+            configRevision: number;
+            destinationRef: {
+                pluginId: string;
+                localId: string;
+            };
+            occurrenceId: string;
+            config: Record<string, JsonValue>;
+            credentialBindings: {
+                purpose: 'backupDestination';
+                configKey: 'destination';
+                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+            }[];
+            sources: ({
+                kind: 'dump';
+                sourceId: string;
+                service: string;
+                consistency: 'logical';
+            } | {
+                kind: 'volume';
+                sourceId: string;
+                service: string;
+                volume: string;
+                consistency: 'stopDuringCopy';
+            })[];
+            ownership: {
+                environmentId: string;
+                prefix: string;
+            };
+            retention: {
+                kind: 'keep';
+                last?: number | undefined;
+                daily?: number | undefined;
+                weekly?: number | undefined;
+                monthly?: number | undefined;
+            } | {
+                kind: 'keepEverything';
+            };
+        };
+        missingRoles: string[];
+        review?: undefined | {
+            creationDefaults?: undefined | {
+                values: {
+                    retainPreviousDeployments: number;
+                    buildMachineId?: string | undefined;
+                    controllerMachineId?: string | undefined;
+                    previewMachineId?: string | undefined;
+                    previewDatabase?: 'branch' | 'none' | 'own' | undefined;
+                    backupDestination?: null | undefined | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    backupSchedule?: null | undefined | {
+                        kind: 'cron';
+                        scheduleExpr: string;
+                        everyMs: null;
+                        timezone: null | string;
+                    } | {
+                        kind: 'interval';
+                        scheduleExpr: null;
+                        everyMs: number;
+                        timezone: null | string;
+                    } | {
+                        kind: 'once';
+                        scheduledAt: number;
+                    };
+                    backupRetention?: undefined | {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
+                };
+                sources: {
+                    buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    previewMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    previewDatabase?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupDestination?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupSchedule?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupRetention?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                };
+            };
+        };
+    } | {
+        kind: 'notNeeded';
+        environmentId: string;
+        revision: number;
+        review?: undefined | {
+            creationDefaults?: undefined | {
+                values: {
+                    retainPreviousDeployments: number;
+                    buildMachineId?: string | undefined;
+                    controllerMachineId?: string | undefined;
+                    previewMachineId?: string | undefined;
+                    previewDatabase?: 'branch' | 'none' | 'own' | undefined;
+                    backupDestination?: null | undefined | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    backupSchedule?: null | undefined | {
+                        kind: 'cron';
+                        scheduleExpr: string;
+                        everyMs: null;
+                        timezone: null | string;
+                    } | {
+                        kind: 'interval';
+                        scheduleExpr: null;
+                        everyMs: number;
+                        timezone: null | string;
+                    } | {
+                        kind: 'once';
+                        scheduledAt: number;
+                    };
+                    backupRetention?: undefined | {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
+                };
+                sources: {
+                    buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    previewMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    previewDatabase?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupDestination?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupSchedule?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupRetention?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                };
+            };
+        };
+    } | {
+        kind: 'setupIncomplete';
+        destinationSetup: {
+            kind: 'anotherMachine';
+            machineId: string;
+            expectedInstallationId: string;
+            receiverInputs: Record<string, JsonValue>;
+            senderIdentity?: undefined | {
+                publicKey: string;
+                sshPrivateKey: {
+                    ref: string;
+                    resourceRevision: number;
+                    kind: 'secret';
+                };
+                repositoryPassword?: undefined | {
+                    ref: string;
+                    resourceRevision: number;
+                    kind: 'secret';
+                };
+            };
+        };
+        errorCode: string;
+        review?: undefined | {
+            creationDefaults?: undefined | {
+                values: {
+                    retainPreviousDeployments: number;
+                    buildMachineId?: string | undefined;
+                    controllerMachineId?: string | undefined;
+                    previewMachineId?: string | undefined;
+                    previewDatabase?: 'branch' | 'none' | 'own' | undefined;
+                    backupDestination?: null | undefined | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    backupSchedule?: null | undefined | {
+                        kind: 'cron';
+                        scheduleExpr: string;
+                        everyMs: null;
+                        timezone: null | string;
+                    } | {
+                        kind: 'interval';
+                        scheduleExpr: null;
+                        everyMs: number;
+                        timezone: null | string;
+                    } | {
+                        kind: 'once';
+                        scheduledAt: number;
+                    };
+                    backupRetention?: undefined | {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
+                };
+                sources: {
+                    buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    previewMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    previewDatabase?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupDestination?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupSchedule?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupRetention?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                };
+            };
+        };
+        setupOperation?: undefined | {
+            operationId: string;
+            runId?: string | undefined;
+            terminalId?: string | undefined;
+        };
+    } | {
+        kind: 'tested';
+        test: {
+            kind: 'failed';
+            step: 'repository';
+            reason: 'cancelled' | 'outcome_unknown';
+            remedy: 'retry';
+        } | {
+            kind: 'failed';
+            step: 'repository';
+            reason: 'native_failed' | 'repository_missing';
+            nativeExitCode: number;
+            remedy: 'review_destination';
+        } | {
+            kind: 'failed';
+            step: 'repository';
+            reason: 'repository_locked';
+            nativeExitCode: 11;
+            remedy: 'retry_after_operation';
+        } | {
+            kind: 'failed';
+            step: 'repository';
+            reason: 'repository_password_incorrect';
+            nativeExitCode: 12;
+            remedy: 'review_credentials';
+        } | {
+            kind: 'reachable';
+            repositoryId: string;
+        };
+        review?: undefined | {
+            creationDefaults?: undefined | {
+                values: {
+                    retainPreviousDeployments: number;
+                    buildMachineId?: string | undefined;
+                    controllerMachineId?: string | undefined;
+                    previewMachineId?: string | undefined;
+                    previewDatabase?: 'branch' | 'none' | 'own' | undefined;
+                    backupDestination?: null | undefined | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    backupSchedule?: null | undefined | {
+                        kind: 'cron';
+                        scheduleExpr: string;
+                        everyMs: null;
+                        timezone: null | string;
+                    } | {
+                        kind: 'interval';
+                        scheduleExpr: null;
+                        everyMs: number;
+                        timezone: null | string;
+                    } | {
+                        kind: 'once';
+                        scheduledAt: number;
+                    };
+                    backupRetention?: undefined | {
+                        kind: 'keep';
+                        last?: number | undefined;
+                        daily?: number | undefined;
+                        weekly?: number | undefined;
+                        monthly?: number | undefined;
+                    } | {
+                        kind: 'keepEverything';
+                    };
+                };
+                sources: {
+                    buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    previewMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    previewDatabase?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupDestination?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupSchedule?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                    backupRetention?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
+                };
+            };
+        };
     };
     readonly "deployments.backups.test": {
         kind: 'failed';
@@ -6400,6 +8211,17 @@ export type DeploymentsActionResultById = {
         environmentId: string;
         revision: number;
         environmentRemoved?: true | undefined;
+        previewCleanup?: undefined | {
+            machines: string[];
+            volumes: ({
+                name: string;
+                disposition: 'delete';
+                confirmation: string;
+            } | {
+                name: string;
+                disposition: 'keep';
+            })[];
+        };
     } | {
         error: 'quota_exceeded';
         budget: 'account' | 'document';
@@ -6489,6 +8311,17 @@ export type DeploymentsActionResultById = {
         environmentId: string;
         revision: number;
         environmentRemoved?: true | undefined;
+        previewCleanup?: undefined | {
+            machines: string[];
+            volumes: ({
+                name: string;
+                disposition: 'delete';
+                confirmation: string;
+            } | {
+                name: string;
+                disposition: 'keep';
+            })[];
+        };
     } | {
         error: 'quota_exceeded';
         budget: 'account' | 'document';
@@ -6578,6 +8411,17 @@ export type DeploymentsActionResultById = {
         environmentId: string;
         revision: number;
         environmentRemoved?: true | undefined;
+        previewCleanup?: undefined | {
+            machines: string[];
+            volumes: ({
+                name: string;
+                disposition: 'delete';
+                confirmation: string;
+            } | {
+                name: string;
+                disposition: 'keep';
+            })[];
+        };
     } | {
         error: 'quota_exceeded';
         budget: 'account' | 'document';
@@ -6870,6 +8714,13 @@ export type DeploymentsActionResultById = {
                         profiles: string[];
                         services: string[];
                         path: string;
+                        augmentation?: undefined | {
+                            document: string;
+                            publicFiles?: undefined | {
+                                path: string;
+                                content: string;
+                            }[];
+                        };
                         primaryService?: string | undefined;
                     };
                     pullRequestHead?: undefined | {
@@ -6893,6 +8744,7 @@ export type DeploymentsActionResultById = {
                 actionOperationId: string;
                 sourceMethod?: 'gitIntegration' | 'upload' | undefined;
                 onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
+                services?: string[] | undefined;
                 triggerOccurrence?: undefined | {
                     automationId: string;
                     triggerId: string;
@@ -7037,6 +8889,17 @@ export type DeploymentsActionResultById = {
         environmentId: string;
         revision: number;
         environmentRemoved?: true | undefined;
+        previewCleanup?: undefined | {
+            machines: string[];
+            volumes: ({
+                name: string;
+                disposition: 'delete';
+                confirmation: string;
+            } | {
+                name: string;
+                disposition: 'keep';
+            })[];
+        };
     } | {
         error: 'quota_exceeded';
         budget: 'account' | 'document';

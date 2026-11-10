@@ -65,6 +65,10 @@ export type RegistriesActionInputById = {
         sourceId: string;
         itemId: string;
         version?: string | undefined;
+        appMappingCorrection?: undefined | {
+            document: string;
+            template?: string | undefined;
+        };
     };
 };
 export type RegistriesActionResultById = {
@@ -681,6 +685,10 @@ export type RegistriesActionResultById = {
                     field: string;
                     reason: string;
                 }[];
+                reviewSource?: undefined | {
+                    document: string;
+                    template?: string | undefined;
+                };
             } | {
                 kind: 'app';
                 state: 'ready';

@@ -58,8 +58,8 @@ export type ScmRepositoryActionInputById = {
             };
             repository: {
                 nameWithOwner: string;
-                visibility?: 'internal' | 'private' | 'public' | undefined;
                 defaultBranch?: null | string | undefined;
+                visibility?: 'internal' | 'private' | 'public' | undefined;
                 webUrl?: string | undefined;
                 cloneUrl?: string | undefined;
                 sshUrl?: string | undefined;
@@ -701,6 +701,7 @@ export type ScmRepositoryActionResultById = {
                     isCrossRepository?: boolean | undefined;
                     headSha?: null | string | undefined;
                     baseSha?: null | string | undefined;
+                    mergeCommitSha?: string | undefined;
                     createdAtMs?: number | undefined;
                     closedAtMs?: number | undefined;
                     mergedAtMs?: number | undefined;
@@ -1656,6 +1657,7 @@ export type ScmRepositoryActionResultById = {
                     isCrossRepository?: boolean | undefined;
                     headSha?: null | string | undefined;
                     baseSha?: null | string | undefined;
+                    mergeCommitSha?: string | undefined;
                     createdAtMs?: number | undefined;
                     closedAtMs?: number | undefined;
                     mergedAtMs?: number | undefined;
@@ -2613,6 +2615,7 @@ export type ScmRepositoryActionResultById = {
                     isCrossRepository?: boolean | undefined;
                     headSha?: null | string | undefined;
                     baseSha?: null | string | undefined;
+                    mergeCommitSha?: string | undefined;
                     createdAtMs?: number | undefined;
                     closedAtMs?: number | undefined;
                     mergedAtMs?: number | undefined;
@@ -2671,8 +2674,8 @@ export type ScmRepositoryActionResultById = {
             };
             repository: {
                 nameWithOwner: string;
-                visibility?: 'internal' | 'private' | 'public' | undefined;
                 defaultBranch?: null | string | undefined;
+                visibility?: 'internal' | 'private' | 'public' | undefined;
                 webUrl?: string | undefined;
                 cloneUrl?: string | undefined;
                 sshUrl?: string | undefined;
@@ -4059,6 +4062,7 @@ export type ScmRepositoryActionResultById = {
                     isCrossRepository?: boolean | undefined;
                     headSha?: null | string | undefined;
                     baseSha?: null | string | undefined;
+                    mergeCommitSha?: string | undefined;
                     createdAtMs?: number | undefined;
                     closedAtMs?: number | undefined;
                     mergedAtMs?: number | undefined;

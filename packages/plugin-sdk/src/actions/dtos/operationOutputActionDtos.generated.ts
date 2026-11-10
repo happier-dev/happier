@@ -11,6 +11,10 @@ export type OperationOutputActionInputById = {
         states?: ('accepted' | 'cancelled' | 'failed' | 'running' | 'succeeded')[] | undefined;
         sessionId?: string | undefined;
         cursor?: string | undefined;
+        requestIdentity?: undefined | {
+            actionId: string;
+            requestId: string;
+        };
         managed?: undefined | {
             homeId: string;
             managedId: string;
@@ -353,7 +357,7 @@ export type OperationOutputActionResultById = {
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                     } | {
                         localCause: 'native_command_failed';
-                        command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
@@ -497,6 +501,17 @@ export type OperationOutputActionResultById = {
                         environmentId: string;
                         revision: number;
                         environmentRemoved?: true | undefined;
+                        previewCleanup?: undefined | {
+                            machines: string[];
+                            volumes: ({
+                                name: string;
+                                disposition: 'delete';
+                                confirmation: string;
+                            } | {
+                                name: string;
+                                disposition: 'keep';
+                            })[];
+                        };
                     } | {
                         kind: 'pending';
                         actionOperationId: string;
@@ -1019,6 +1034,17 @@ export type OperationOutputActionResultById = {
                     environmentId: string;
                     revision: number;
                     environmentRemoved?: true | undefined;
+                    previewCleanup?: undefined | {
+                        machines: string[];
+                        volumes: ({
+                            name: string;
+                            disposition: 'delete';
+                            confirmation: string;
+                        } | {
+                            name: string;
+                            disposition: 'keep';
+                        })[];
+                    };
                 } | {
                     requiredFact: 'deploymentActionResult';
                     remedy: string;
@@ -1764,7 +1790,7 @@ export type OperationOutputActionResultById = {
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                     } | {
                         localCause: 'native_command_failed';
-                        command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
@@ -1908,6 +1934,17 @@ export type OperationOutputActionResultById = {
                         environmentId: string;
                         revision: number;
                         environmentRemoved?: true | undefined;
+                        previewCleanup?: undefined | {
+                            machines: string[];
+                            volumes: ({
+                                name: string;
+                                disposition: 'delete';
+                                confirmation: string;
+                            } | {
+                                name: string;
+                                disposition: 'keep';
+                            })[];
+                        };
                     } | {
                         kind: 'pending';
                         actionOperationId: string;
@@ -2430,6 +2467,17 @@ export type OperationOutputActionResultById = {
                     environmentId: string;
                     revision: number;
                     environmentRemoved?: true | undefined;
+                    previewCleanup?: undefined | {
+                        machines: string[];
+                        volumes: ({
+                            name: string;
+                            disposition: 'delete';
+                            confirmation: string;
+                        } | {
+                            name: string;
+                            disposition: 'keep';
+                        })[];
+                    };
                 } | {
                     requiredFact: 'deploymentActionResult';
                     remedy: string;

@@ -537,6 +537,7 @@ export type ScmPullRequestActionResultById = {
             isCrossRepository?: boolean | undefined;
             headSha?: null | string | undefined;
             baseSha?: null | string | undefined;
+            mergeCommitSha?: string | undefined;
             createdAtMs?: number | undefined;
             closedAtMs?: number | undefined;
             mergedAtMs?: number | undefined;
@@ -588,6 +589,7 @@ export type ScmPullRequestActionResultById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -1013,6 +1015,7 @@ export type ScmPullRequestActionResultById = {
             isCrossRepository?: boolean | undefined;
             headSha?: null | string | undefined;
             baseSha?: null | string | undefined;
+            mergeCommitSha?: string | undefined;
             createdAtMs?: number | undefined;
             closedAtMs?: number | undefined;
             mergedAtMs?: number | undefined;
@@ -1064,6 +1067,7 @@ export type ScmPullRequestActionResultById = {
                 isCrossRepository?: boolean | undefined;
                 headSha?: null | string | undefined;
                 baseSha?: null | string | undefined;
+                mergeCommitSha?: string | undefined;
                 createdAtMs?: number | undefined;
                 closedAtMs?: number | undefined;
                 mergedAtMs?: number | undefined;
@@ -1503,6 +1507,7 @@ export type ScmPullRequestActionResultById = {
             isCrossRepository?: boolean | undefined;
             headSha?: null | string | undefined;
             baseSha?: null | string | undefined;
+            mergeCommitSha?: string | undefined;
             createdAtMs?: number | undefined;
             closedAtMs?: number | undefined;
             mergedAtMs?: number | undefined;
@@ -2968,6 +2973,7 @@ export type ScmPullRequestActionResultById = {
             isCrossRepository?: boolean | undefined;
             headSha?: null | string | undefined;
             baseSha?: null | string | undefined;
+            mergeCommitSha?: string | undefined;
             createdAtMs?: number | undefined;
             closedAtMs?: number | undefined;
             mergedAtMs?: number | undefined;
@@ -3714,6 +3720,7 @@ export type ScmPullRequestActionResultById = {
             isCrossRepository?: boolean | undefined;
             headSha?: null | string | undefined;
             baseSha?: null | string | undefined;
+            mergeCommitSha?: string | undefined;
             createdAtMs?: number | undefined;
             closedAtMs?: number | undefined;
             mergedAtMs?: number | undefined;
@@ -4527,6 +4534,7 @@ export type ScmPullRequestActionResultById = {
             isCrossRepository?: boolean | undefined;
             headSha?: null | string | undefined;
             baseSha?: null | string | undefined;
+            mergeCommitSha?: string | undefined;
             createdAtMs?: number | undefined;
             closedAtMs?: number | undefined;
             mergedAtMs?: number | undefined;

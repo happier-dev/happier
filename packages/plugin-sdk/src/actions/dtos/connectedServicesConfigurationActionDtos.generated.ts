@@ -5404,14 +5404,14 @@ export type ConnectedServicesConfigurationActionResultById = {
                 status: 'estimated' | 'ok' | 'unavailable';
                 unit: 'count' | 'credits' | 'requests' | 'tokens' | 'unknown' | 'usd';
                 meterId: string;
-                modelId?: null | string | undefined;
                 source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                 scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
+                modelId?: null | string | undefined;
                 providerLimitId?: string | undefined;
                 confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                 currency?: string | undefined;
-                resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
                 windowDurationMs?: number | undefined;
+                resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
                 isExhausted?: boolean | undefined;
                 isSoftLimited?: boolean | undefined;
                 isCapacityLimited?: boolean | undefined;
@@ -5856,6 +5856,11 @@ export type ConnectedServicesConfigurationActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                 }[];
+                size?: undefined | {
+                    cpuCores?: number | undefined;
+                    memoryBytes?: number | undefined;
+                    diskBytes?: number | undefined;
+                };
                 nativeExpiry?: number | undefined;
                 deletionNotices?: undefined | {
                     kind: 'stopped-storage';
@@ -5875,7 +5880,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                 } | {
                     localCause: 'native_command_failed';
-                    command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+                    command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                     exitCode: null | number;
                     stderr?: string | undefined;
                     stderrTruncated?: true | undefined;

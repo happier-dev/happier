@@ -153,6 +153,11 @@ export type AccountPluginDataActionResultById = {
                             params?: Record<string, number | string> | undefined;
                         };
                     }[];
+                    size?: undefined | {
+                        cpuCores?: number | undefined;
+                        memoryBytes?: number | undefined;
+                        diskBytes?: number | undefined;
+                    };
                     nativeExpiry?: number | undefined;
                     deletionNotices?: undefined | {
                         kind: 'stopped-storage';
@@ -172,7 +177,7 @@ export type AccountPluginDataActionResultById = {
                         fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                     } | {
                         localCause: 'native_command_failed';
-                        command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+                        command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
@@ -281,6 +286,11 @@ export type AccountPluginDataActionResultById = {
                         params?: Record<string, number | string> | undefined;
                     };
                 }[];
+                size?: undefined | {
+                    cpuCores?: number | undefined;
+                    memoryBytes?: number | undefined;
+                    diskBytes?: number | undefined;
+                };
                 nativeExpiry?: number | undefined;
                 deletionNotices?: undefined | {
                     kind: 'stopped-storage';
@@ -300,7 +310,7 @@ export type AccountPluginDataActionResultById = {
                     fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                 } | {
                     localCause: 'native_command_failed';
-                    command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+                    command: 'create' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                     exitCode: null | number;
                     stderr?: string | undefined;
                     stderrTruncated?: true | undefined;

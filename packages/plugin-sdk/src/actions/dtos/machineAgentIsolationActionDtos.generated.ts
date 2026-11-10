@@ -488,6 +488,54 @@ export type MachineAgentIsolationActionResultById = {
         kind: 'failed';
         code: 'cancelled' | 'denied' | 'invalid' | 'locked' | 'outcome_unknown' | 'unavailable';
         operationId?: string | undefined;
+        setup?: undefined | {
+            outcome: 'not_applied';
+            reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
+            failure?: undefined | {
+                kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                stepId?: string | undefined;
+                phase?: 'apply' | 'check' | undefined;
+                requiredFact?: string | undefined;
+                remedy?: string | undefined;
+                nativeCommand?: undefined | {
+                    command: 'apt-get';
+                    phase: 'install' | 'update';
+                    exitCode: null | number;
+                    category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
+                };
+            };
+            recovery?: undefined | {
+                kind: 'configure_admin_access';
+                mode: 'preauthorized';
+            } | {
+                kind: 'install_managed_cli';
+                executablePath: string;
+            };
+            restoration?: undefined | {
+                status: 'verified';
+                recovery: {
+                    rules: {
+                        kind: 'absent';
+                    } | {
+                        kind: 'file';
+                        content: string;
+                    };
+                    unit: {
+                        kind: 'absent';
+                    } | {
+                        kind: 'file';
+                        content: string;
+                    };
+                    table: null | string;
+                    boot: {
+                        present: boolean;
+                        enabled: boolean;
+                        running: boolean;
+                    };
+                };
+            };
+        };
     } | {
         kind: 'plan_changed';
         current: {

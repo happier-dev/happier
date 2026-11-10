@@ -7,9 +7,9 @@ import type { PluginActionWorkflowBlockV1 } from './pluginActionDtoSupport.gener
 export type UsageActionInputById = {
     readonly "usage.history.read": {
         query: {
-            timeZoneOffsetMinutes?: number | undefined;
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
@@ -67,9 +67,9 @@ export type UsageActionInputById = {
     };
     readonly "usage.recap.private.deliver": {
         query: {
-            timeZoneOffsetMinutes?: number | undefined;
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
@@ -122,9 +122,9 @@ export type UsageActionInputById = {
     readonly "usage.prices.refresh": Record<string, never>;
     readonly "usage.calendar.export": {
         query: {
-            timeZoneOffsetMinutes?: number | undefined;
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
@@ -198,9 +198,9 @@ export type UsageActionInputById = {
     };
     readonly "usage.recap.private.export": {
         query: {
-            timeZoneOffsetMinutes?: number | undefined;
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
@@ -258,9 +258,9 @@ export type UsageActionInputById = {
     };
     readonly "usage.recap.private.compose": {
         query: {
-            timeZoneOffsetMinutes?: number | undefined;
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
@@ -308,9 +308,9 @@ export type UsageActionInputById = {
     };
     readonly "usage.query": {
         queries: {
-            timeZoneOffsetMinutes?: number | undefined;
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
@@ -354,9 +354,9 @@ export type UsageActionInputById = {
     };
     readonly "usage.export": {
         query: {
-            timeZoneOffsetMinutes?: number | undefined;
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
@@ -402,9 +402,9 @@ export type UsageActionInputById = {
     };
     readonly "usage.coach.apply": {
         query: {
-            timeZoneOffsetMinutes?: number | undefined;
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
@@ -451,9 +451,9 @@ export type UsageActionInputById = {
     };
     readonly "usage.coach.undo": {
         query: {
-            timeZoneOffsetMinutes?: number | undefined;
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
@@ -646,9 +646,9 @@ export type UsageActionInputById = {
     };
     readonly "usage.coach.dismiss": {
         query: {
-            timeZoneOffsetMinutes?: number | undefined;
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
@@ -696,9 +696,9 @@ export type UsageActionInputById = {
     };
     readonly "usage.coach.snooze": {
         query: {
-            timeZoneOffsetMinutes?: number | undefined;
-            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
             population?: 'all_personal_history' | 'public_eligible_personal' | undefined;
+            granularity?: 'day' | 'hour' | 'month' | 'week' | undefined;
+            timeZoneOffsetMinutes?: number | undefined;
             includeSeries?: boolean | undefined;
             includeInsights?: boolean | undefined;
             includeActivity?: boolean | undefined;
@@ -774,12 +774,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -820,31 +820,31 @@ export type UsageActionResultById = {
             };
             facts: {
                 tokens?: undefined | {
-                    input: number;
-                    output: number;
-                    reasoning: number;
-                    cacheRead: number;
-                    cacheWrite: number;
-                    total: number;
+                    input: null | number;
+                    output: null | number;
+                    reasoning: null | number;
+                    cacheRead: null | number;
+                    cacheWrite: null | number;
+                    total: null | number;
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
                     longestDays: number;
                 };
                 modelMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
                 cache?: undefined | {
-                    readTokens: number;
-                    writeTokens: number;
+                    readTokens: null | number;
+                    writeTokens: null | number;
                 };
                 rhythm?: undefined | {
                     calendarDays: {
@@ -886,7 +886,7 @@ export type UsageActionResultById = {
                     kind: 'observed_peak';
                     bucketStartMs: number;
                     bucketEndMs: number;
-                    tokens: number;
+                    tokens: null | number;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -900,12 +900,12 @@ export type UsageActionResultById = {
                         currency: string;
                         amountUsd: null | number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -1145,12 +1145,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -1191,31 +1191,31 @@ export type UsageActionResultById = {
             };
             facts: {
                 tokens?: undefined | {
-                    input: number;
-                    output: number;
-                    reasoning: number;
-                    cacheRead: number;
-                    cacheWrite: number;
-                    total: number;
+                    input: null | number;
+                    output: null | number;
+                    reasoning: null | number;
+                    cacheRead: null | number;
+                    cacheWrite: null | number;
+                    total: null | number;
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
                     longestDays: number;
                 };
                 modelMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
                 cache?: undefined | {
-                    readTokens: number;
-                    writeTokens: number;
+                    readTokens: null | number;
+                    writeTokens: null | number;
                 };
                 rhythm?: undefined | {
                     calendarDays: {
@@ -1257,7 +1257,7 @@ export type UsageActionResultById = {
                     kind: 'observed_peak';
                     bucketStartMs: number;
                     bucketEndMs: number;
-                    tokens: number;
+                    tokens: null | number;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -1271,12 +1271,12 @@ export type UsageActionResultById = {
                         currency: string;
                         amountUsd: null | number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -1516,12 +1516,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -1562,31 +1562,31 @@ export type UsageActionResultById = {
             };
             facts: {
                 tokens?: undefined | {
-                    input: number;
-                    output: number;
-                    reasoning: number;
-                    cacheRead: number;
-                    cacheWrite: number;
-                    total: number;
+                    input: null | number;
+                    output: null | number;
+                    reasoning: null | number;
+                    cacheRead: null | number;
+                    cacheWrite: null | number;
+                    total: null | number;
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
                     longestDays: number;
                 };
                 modelMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
                 cache?: undefined | {
-                    readTokens: number;
-                    writeTokens: number;
+                    readTokens: null | number;
+                    writeTokens: null | number;
                 };
                 rhythm?: undefined | {
                     calendarDays: {
@@ -1628,7 +1628,7 @@ export type UsageActionResultById = {
                     kind: 'observed_peak';
                     bucketStartMs: number;
                     bucketEndMs: number;
-                    tokens: number;
+                    tokens: null | number;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -1642,12 +1642,12 @@ export type UsageActionResultById = {
                         currency: string;
                         amountUsd: null | number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -1889,12 +1889,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -1935,31 +1935,31 @@ export type UsageActionResultById = {
             };
             facts: {
                 tokens?: undefined | {
-                    input: number;
-                    output: number;
-                    reasoning: number;
-                    cacheRead: number;
-                    cacheWrite: number;
-                    total: number;
+                    input: null | number;
+                    output: null | number;
+                    reasoning: null | number;
+                    cacheRead: null | number;
+                    cacheWrite: null | number;
+                    total: null | number;
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
                     longestDays: number;
                 };
                 modelMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
                 cache?: undefined | {
-                    readTokens: number;
-                    writeTokens: number;
+                    readTokens: null | number;
+                    writeTokens: null | number;
                 };
                 rhythm?: undefined | {
                     calendarDays: {
@@ -2001,7 +2001,7 @@ export type UsageActionResultById = {
                     kind: 'observed_peak';
                     bucketStartMs: number;
                     bucketEndMs: number;
-                    tokens: number;
+                    tokens: null | number;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -2015,12 +2015,12 @@ export type UsageActionResultById = {
                         currency: string;
                         amountUsd: null | number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -2262,12 +2262,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -2308,31 +2308,31 @@ export type UsageActionResultById = {
             };
             facts: {
                 tokens?: undefined | {
-                    input: number;
-                    output: number;
-                    reasoning: number;
-                    cacheRead: number;
-                    cacheWrite: number;
-                    total: number;
+                    input: null | number;
+                    output: null | number;
+                    reasoning: null | number;
+                    cacheRead: null | number;
+                    cacheWrite: null | number;
+                    total: null | number;
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
                     longestDays: number;
                 };
                 modelMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
                 cache?: undefined | {
-                    readTokens: number;
-                    writeTokens: number;
+                    readTokens: null | number;
+                    writeTokens: null | number;
                 };
                 rhythm?: undefined | {
                     calendarDays: {
@@ -2374,7 +2374,7 @@ export type UsageActionResultById = {
                     kind: 'observed_peak';
                     bucketStartMs: number;
                     bucketEndMs: number;
-                    tokens: number;
+                    tokens: null | number;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -2388,12 +2388,12 @@ export type UsageActionResultById = {
                         currency: string;
                         amountUsd: null | number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -2633,12 +2633,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -2679,31 +2679,31 @@ export type UsageActionResultById = {
             };
             facts: {
                 tokens?: undefined | {
-                    input: number;
-                    output: number;
-                    reasoning: number;
-                    cacheRead: number;
-                    cacheWrite: number;
-                    total: number;
+                    input: null | number;
+                    output: null | number;
+                    reasoning: null | number;
+                    cacheRead: null | number;
+                    cacheWrite: null | number;
+                    total: null | number;
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
                     longestDays: number;
                 };
                 modelMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
                 cache?: undefined | {
-                    readTokens: number;
-                    writeTokens: number;
+                    readTokens: null | number;
+                    writeTokens: null | number;
                 };
                 rhythm?: undefined | {
                     calendarDays: {
@@ -2745,7 +2745,7 @@ export type UsageActionResultById = {
                     kind: 'observed_peak';
                     bucketStartMs: number;
                     bucketEndMs: number;
-                    tokens: number;
+                    tokens: null | number;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -2759,12 +2759,12 @@ export type UsageActionResultById = {
                         currency: string;
                         amountUsd: null | number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -3004,12 +3004,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -3050,31 +3050,31 @@ export type UsageActionResultById = {
             };
             facts: {
                 tokens?: undefined | {
-                    input: number;
-                    output: number;
-                    reasoning: number;
-                    cacheRead: number;
-                    cacheWrite: number;
-                    total: number;
+                    input: null | number;
+                    output: null | number;
+                    reasoning: null | number;
+                    cacheRead: null | number;
+                    cacheWrite: null | number;
+                    total: null | number;
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
                     longestDays: number;
                 };
                 modelMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
                 cache?: undefined | {
-                    readTokens: number;
-                    writeTokens: number;
+                    readTokens: null | number;
+                    writeTokens: null | number;
                 };
                 rhythm?: undefined | {
                     calendarDays: {
@@ -3116,7 +3116,7 @@ export type UsageActionResultById = {
                     kind: 'observed_peak';
                     bucketStartMs: number;
                     bucketEndMs: number;
-                    tokens: number;
+                    tokens: null | number;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -3130,12 +3130,12 @@ export type UsageActionResultById = {
                         currency: string;
                         amountUsd: null | number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -3377,12 +3377,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -3423,31 +3423,31 @@ export type UsageActionResultById = {
             };
             facts: {
                 tokens?: undefined | {
-                    input: number;
-                    output: number;
-                    reasoning: number;
-                    cacheRead: number;
-                    cacheWrite: number;
-                    total: number;
+                    input: null | number;
+                    output: null | number;
+                    reasoning: null | number;
+                    cacheRead: null | number;
+                    cacheWrite: null | number;
+                    total: null | number;
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
                     longestDays: number;
                 };
                 modelMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
                 cache?: undefined | {
-                    readTokens: number;
-                    writeTokens: number;
+                    readTokens: null | number;
+                    writeTokens: null | number;
                 };
                 rhythm?: undefined | {
                     calendarDays: {
@@ -3489,7 +3489,7 @@ export type UsageActionResultById = {
                     kind: 'observed_peak';
                     bucketStartMs: number;
                     bucketEndMs: number;
-                    tokens: number;
+                    tokens: null | number;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -3503,12 +3503,12 @@ export type UsageActionResultById = {
                         currency: string;
                         amountUsd: null | number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -3798,12 +3798,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -3844,31 +3844,31 @@ export type UsageActionResultById = {
             };
             facts: {
                 tokens?: undefined | {
-                    input: number;
-                    output: number;
-                    reasoning: number;
-                    cacheRead: number;
-                    cacheWrite: number;
-                    total: number;
+                    input: null | number;
+                    output: null | number;
+                    reasoning: null | number;
+                    cacheRead: null | number;
+                    cacheWrite: null | number;
+                    total: null | number;
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
                     longestDays: number;
                 };
                 modelMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
                 cache?: undefined | {
-                    readTokens: number;
-                    writeTokens: number;
+                    readTokens: null | number;
+                    writeTokens: null | number;
                 };
                 rhythm?: undefined | {
                     calendarDays: {
@@ -3910,7 +3910,7 @@ export type UsageActionResultById = {
                     kind: 'observed_peak';
                     bucketStartMs: number;
                     bucketEndMs: number;
-                    tokens: number;
+                    tokens: null | number;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -3924,12 +3924,12 @@ export type UsageActionResultById = {
                         currency: string;
                         amountUsd: null | number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -4178,12 +4178,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -4224,31 +4224,31 @@ export type UsageActionResultById = {
             };
             facts: {
                 tokens?: undefined | {
-                    input: number;
-                    output: number;
-                    reasoning: number;
-                    cacheRead: number;
-                    cacheWrite: number;
-                    total: number;
+                    input: null | number;
+                    output: null | number;
+                    reasoning: null | number;
+                    cacheRead: null | number;
+                    cacheWrite: null | number;
+                    total: null | number;
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
                     longestDays: number;
                 };
                 modelMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
                 cache?: undefined | {
-                    readTokens: number;
-                    writeTokens: number;
+                    readTokens: null | number;
+                    writeTokens: null | number;
                 };
                 rhythm?: undefined | {
                     calendarDays: {
@@ -4290,7 +4290,7 @@ export type UsageActionResultById = {
                     kind: 'observed_peak';
                     bucketStartMs: number;
                     bucketEndMs: number;
-                    tokens: number;
+                    tokens: null | number;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -4304,12 +4304,12 @@ export type UsageActionResultById = {
                         currency: string;
                         amountUsd: null | number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -4550,12 +4550,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -4596,31 +4596,31 @@ export type UsageActionResultById = {
             };
             facts: {
                 tokens?: undefined | {
-                    input: number;
-                    output: number;
-                    reasoning: number;
-                    cacheRead: number;
-                    cacheWrite: number;
-                    total: number;
+                    input: null | number;
+                    output: null | number;
+                    reasoning: null | number;
+                    cacheRead: null | number;
+                    cacheWrite: null | number;
+                    total: null | number;
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
                     longestDays: number;
                 };
                 modelMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
                 cache?: undefined | {
-                    readTokens: number;
-                    writeTokens: number;
+                    readTokens: null | number;
+                    writeTokens: null | number;
                 };
                 rhythm?: undefined | {
                     calendarDays: {
@@ -4662,7 +4662,7 @@ export type UsageActionResultById = {
                     kind: 'observed_peak';
                     bucketStartMs: number;
                     bucketEndMs: number;
-                    tokens: number;
+                    tokens: null | number;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -4676,12 +4676,12 @@ export type UsageActionResultById = {
                         currency: string;
                         amountUsd: null | number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -4930,12 +4930,12 @@ export type UsageActionResultById = {
             coverage: {
                 accounting: null | {
                     status: 'complete' | 'partial' | 'unknown';
-                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     range: {
                         complete: boolean;
                         startMs?: number | undefined;
                         endMs?: number | undefined;
                     };
+                    reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                     missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                     ranked: {
                         dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -4976,31 +4976,31 @@ export type UsageActionResultById = {
             };
             facts: {
                 tokens?: undefined | {
-                    input: number;
-                    output: number;
-                    reasoning: number;
-                    cacheRead: number;
-                    cacheWrite: number;
-                    total: number;
+                    input: null | number;
+                    output: null | number;
+                    reasoning: null | number;
+                    cacheRead: null | number;
+                    cacheWrite: null | number;
+                    total: null | number;
                 };
                 activeDays?: number | undefined;
                 streak?: undefined | {
                     longestDays: number;
                 };
                 modelMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                 }[];
                 agentMix?: undefined | {
-                    tokens: number;
+                    tokens: null | number;
                     events: number;
                     name?: string | undefined;
                     agentId?: string | undefined;
                 }[];
                 cache?: undefined | {
-                    readTokens: number;
-                    writeTokens: number;
+                    readTokens: null | number;
+                    writeTokens: null | number;
                 };
                 rhythm?: undefined | {
                     calendarDays: {
@@ -5042,7 +5042,7 @@ export type UsageActionResultById = {
                     kind: 'observed_peak';
                     bucketStartMs: number;
                     bucketEndMs: number;
-                    tokens: number;
+                    tokens: null | number;
                 })[] | undefined;
                 dollars?: undefined | {
                     basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -5056,12 +5056,12 @@ export type UsageActionResultById = {
                         currency: string;
                         amountUsd: null | number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -5300,12 +5300,12 @@ export type UsageActionResultById = {
         coverage: {
             accounting: null | {
                 status: 'complete' | 'partial' | 'unknown';
-                reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                 range: {
                     complete: boolean;
                     startMs?: number | undefined;
                     endMs?: number | undefined;
                 };
+                reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                 missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                 ranked: {
                     dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -5346,31 +5346,31 @@ export type UsageActionResultById = {
         };
         facts: {
             tokens?: undefined | {
-                input: number;
-                output: number;
-                reasoning: number;
-                cacheRead: number;
-                cacheWrite: number;
-                total: number;
+                input: null | number;
+                output: null | number;
+                reasoning: null | number;
+                cacheRead: null | number;
+                cacheWrite: null | number;
+                total: null | number;
             };
             activeDays?: number | undefined;
             streak?: undefined | {
                 longestDays: number;
             };
             modelMix?: undefined | {
-                tokens: number;
+                tokens: null | number;
                 events: number;
                 name?: string | undefined;
             }[];
             agentMix?: undefined | {
-                tokens: number;
+                tokens: null | number;
                 events: number;
                 name?: string | undefined;
                 agentId?: string | undefined;
             }[];
             cache?: undefined | {
-                readTokens: number;
-                writeTokens: number;
+                readTokens: null | number;
+                writeTokens: null | number;
             };
             rhythm?: undefined | {
                 calendarDays: {
@@ -5412,7 +5412,7 @@ export type UsageActionResultById = {
                 kind: 'observed_peak';
                 bucketStartMs: number;
                 bucketEndMs: number;
-                tokens: number;
+                tokens: null | number;
             })[] | undefined;
             dollars?: undefined | {
                 basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -5426,12 +5426,12 @@ export type UsageActionResultById = {
                     currency: string;
                     amountUsd: null | number;
                     tokens: {
-                        input: number;
-                        output: number;
-                        reasoning: number;
-                        cacheRead: number;
-                        cacheWrite: number;
-                        total: number;
+                        input: null | number;
+                        output: null | number;
+                        reasoning: null | number;
+                        cacheRead: null | number;
+                        cacheWrite: null | number;
+                        total: null | number;
                     };
                     eventCount: number;
                     asOfMs: number;
@@ -5669,12 +5669,12 @@ export type UsageActionResultById = {
         coverage: {
             accounting: null | {
                 status: 'complete' | 'partial' | 'unknown';
-                reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                 range: {
                     complete: boolean;
                     startMs?: number | undefined;
                     endMs?: number | undefined;
                 };
+                reasons: ('ambiguous_overlap' | 'counter_discontinuity' | 'incomplete_history' | 'missing_baseline' | 'ranked_truncation' | 'unattributed_model' | 'unknown_source' | 'unknown_token_categories' | 'unpriced_tokens')[];
                 missingDimensions: ('agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace')[];
                 ranked: {
                     dimension: 'agent' | 'backendMode' | 'machine' | 'model' | 'project' | 'session' | 'source' | 'workspace';
@@ -5715,31 +5715,31 @@ export type UsageActionResultById = {
         };
         facts: {
             tokens?: undefined | {
-                input: number;
-                output: number;
-                reasoning: number;
-                cacheRead: number;
-                cacheWrite: number;
-                total: number;
+                input: null | number;
+                output: null | number;
+                reasoning: null | number;
+                cacheRead: null | number;
+                cacheWrite: null | number;
+                total: null | number;
             };
             activeDays?: number | undefined;
             streak?: undefined | {
                 longestDays: number;
             };
             modelMix?: undefined | {
-                tokens: number;
+                tokens: null | number;
                 events: number;
                 name?: string | undefined;
             }[];
             agentMix?: undefined | {
-                tokens: number;
+                tokens: null | number;
                 events: number;
                 name?: string | undefined;
                 agentId?: string | undefined;
             }[];
             cache?: undefined | {
-                readTokens: number;
-                writeTokens: number;
+                readTokens: null | number;
+                writeTokens: null | number;
             };
             rhythm?: undefined | {
                 calendarDays: {
@@ -5781,7 +5781,7 @@ export type UsageActionResultById = {
                 kind: 'observed_peak';
                 bucketStartMs: number;
                 bucketEndMs: number;
-                tokens: number;
+                tokens: null | number;
             })[] | undefined;
             dollars?: undefined | {
                 basis: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
@@ -5795,12 +5795,12 @@ export type UsageActionResultById = {
                     currency: string;
                     amountUsd: null | number;
                     tokens: {
-                        input: number;
-                        output: number;
-                        reasoning: number;
-                        cacheRead: number;
-                        cacheWrite: number;
-                        total: number;
+                        input: null | number;
+                        output: null | number;
+                        reasoning: null | number;
+                        cacheRead: null | number;
+                        cacheWrite: null | number;
+                        total: null | number;
                     };
                     eventCount: number;
                     asOfMs: number;
@@ -6027,8 +6027,8 @@ export type UsageActionResultById = {
         results: {
             key: string;
             requestedQuery: {
-                timeZoneOffsetMinutes: number;
                 granularity: 'day' | 'hour' | 'month' | 'week';
+                timeZoneOffsetMinutes: number;
                 includeSeries: boolean;
                 topLimit: number;
                 period: {
@@ -6071,8 +6071,8 @@ export type UsageActionResultById = {
                 includeCoach?: boolean | undefined;
             };
             shownQuery: {
-                timeZoneOffsetMinutes: number;
                 granularity: 'day' | 'hour' | 'month' | 'week';
+                timeZoneOffsetMinutes: number;
                 includeSeries: boolean;
                 topLimit: number;
                 period: {
@@ -6132,22 +6132,22 @@ export type UsageActionResultById = {
                 totals: {
                     eventCount: number;
                     tokens: {
-                        input: number;
-                        output: number;
-                        reasoning: number;
-                        cacheRead: number;
-                        cacheWrite: number;
-                        total: number;
+                        input: null | number;
+                        output: null | number;
+                        reasoning: null | number;
+                        cacheRead: null | number;
+                        cacheWrite: null | number;
+                        total: null | number;
                     };
                     cost: {
-                        reportedUsd: number;
-                        estimatedUsd: number;
+                        reportedUsd: null | number;
+                        estimatedUsd: null | number;
                         currency: string;
                         apiEquivalentUsd?: number | undefined;
                         pricingSource?: string | undefined;
                         reportedTotalId?: string | undefined;
                         reportedTotalContributionIds?: string[] | undefined;
-                        invoiceUsd?: number | undefined;
+                        invoiceUsd?: null | number | undefined;
                         billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                         costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                         breakdown?: undefined | {
@@ -6174,22 +6174,22 @@ export type UsageActionResultById = {
                     bucketEndMs: number;
                     eventCount: number;
                     tokens: {
-                        input: number;
-                        output: number;
-                        reasoning: number;
-                        cacheRead: number;
-                        cacheWrite: number;
-                        total: number;
+                        input: null | number;
+                        output: null | number;
+                        reasoning: null | number;
+                        cacheRead: null | number;
+                        cacheWrite: null | number;
+                        total: null | number;
                     };
                     cost: {
-                        reportedUsd: number;
-                        estimatedUsd: number;
+                        reportedUsd: null | number;
+                        estimatedUsd: null | number;
                         currency: string;
                         apiEquivalentUsd?: number | undefined;
                         pricingSource?: string | undefined;
                         reportedTotalId?: string | undefined;
                         reportedTotalContributionIds?: string[] | undefined;
-                        invoiceUsd?: number | undefined;
+                        invoiceUsd?: null | number | undefined;
                         billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                         costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                         breakdown?: undefined | {
@@ -6216,22 +6216,22 @@ export type UsageActionResultById = {
                         key: string;
                         eventCount: number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost: {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -6260,22 +6260,22 @@ export type UsageActionResultById = {
                         key: string;
                         eventCount: number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost: {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -6304,22 +6304,22 @@ export type UsageActionResultById = {
                         key: string;
                         eventCount: number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost: {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -6348,22 +6348,22 @@ export type UsageActionResultById = {
                         key: string;
                         eventCount: number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost: {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -6392,22 +6392,22 @@ export type UsageActionResultById = {
                         key: string;
                         eventCount: number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost: {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -6436,22 +6436,22 @@ export type UsageActionResultById = {
                         key: string;
                         eventCount: number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost: {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -6480,22 +6480,22 @@ export type UsageActionResultById = {
                         key: string;
                         eventCount: number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost: {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -6524,22 +6524,22 @@ export type UsageActionResultById = {
                         key: string;
                         eventCount: number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost: {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -6607,22 +6607,22 @@ export type UsageActionResultById = {
                         eventCount: number;
                         label?: string | undefined;
                         tokens?: undefined | {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost?: undefined | {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -6644,22 +6644,22 @@ export type UsageActionResultById = {
                             source: string;
                             eventCount: number;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -6682,22 +6682,22 @@ export type UsageActionResultById = {
                         eventCount: number;
                         label?: string | undefined;
                         tokens?: undefined | {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost?: undefined | {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -6719,22 +6719,22 @@ export type UsageActionResultById = {
                             source: string;
                             eventCount: number;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -6757,22 +6757,22 @@ export type UsageActionResultById = {
                         eventCount: number;
                         label?: string | undefined;
                         tokens?: undefined | {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost?: undefined | {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -6794,22 +6794,22 @@ export type UsageActionResultById = {
                             source: string;
                             eventCount: number;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -6832,22 +6832,22 @@ export type UsageActionResultById = {
                         eventCount: number;
                         label?: string | undefined;
                         tokens?: undefined | {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost?: undefined | {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -6869,22 +6869,22 @@ export type UsageActionResultById = {
                             source: string;
                             eventCount: number;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -6907,22 +6907,22 @@ export type UsageActionResultById = {
                         eventCount: number;
                         label?: string | undefined;
                         tokens?: undefined | {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost?: undefined | {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -6944,22 +6944,22 @@ export type UsageActionResultById = {
                             source: string;
                             eventCount: number;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -6982,22 +6982,22 @@ export type UsageActionResultById = {
                         eventCount: number;
                         label?: string | undefined;
                         tokens?: undefined | {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost?: undefined | {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -7019,22 +7019,22 @@ export type UsageActionResultById = {
                             source: string;
                             eventCount: number;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -7061,22 +7061,22 @@ export type UsageActionResultById = {
                         eventCount: number;
                         label?: string | undefined;
                         tokens?: undefined | {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost?: undefined | {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -7098,22 +7098,22 @@ export type UsageActionResultById = {
                             source: string;
                             eventCount: number;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -7140,22 +7140,22 @@ export type UsageActionResultById = {
                         eventCount: number;
                         label?: string | undefined;
                         tokens?: undefined | {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost?: undefined | {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -7177,22 +7177,22 @@ export type UsageActionResultById = {
                             source: string;
                             eventCount: number;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -7226,12 +7226,12 @@ export type UsageActionResultById = {
                     currency: string;
                     amountUsd: null | number;
                     tokens: {
-                        input: number;
-                        output: number;
-                        reasoning: number;
-                        cacheRead: number;
-                        cacheWrite: number;
-                        total: number;
+                        input: null | number;
+                        output: null | number;
+                        reasoning: null | number;
+                        cacheRead: null | number;
+                        cacheWrite: null | number;
+                        total: null | number;
                     };
                     eventCount: number;
                     asOfMs: number;
@@ -7270,22 +7270,22 @@ export type UsageActionResultById = {
                     workspaceId: null | string;
                     source: null | string;
                     tokens: {
-                        input: number;
-                        output: number;
-                        reasoning: number;
-                        cacheRead: number;
-                        cacheWrite: number;
-                        total: number;
+                        input: null | number;
+                        output: null | number;
+                        reasoning: null | number;
+                        cacheRead: null | number;
+                        cacheWrite: null | number;
+                        total: null | number;
                     };
                     cost: {
-                        reportedUsd: number;
-                        estimatedUsd: number;
+                        reportedUsd: null | number;
+                        estimatedUsd: null | number;
                         currency: string;
                         apiEquivalentUsd?: number | undefined;
                         pricingSource?: string | undefined;
                         reportedTotalId?: string | undefined;
                         reportedTotalContributionIds?: string[] | undefined;
-                        invoiceUsd?: number | undefined;
+                        invoiceUsd?: null | number | undefined;
                         billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                         costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                         breakdown?: undefined | {
@@ -7323,12 +7323,12 @@ export type UsageActionResultById = {
                         execution: 'happier' | 'outside' | 'unknown';
                     };
                     tokenCategories?: undefined | {
-                        input: number;
-                        output: number;
-                        reasoning: number;
-                        cacheRead: number;
-                        cacheWrite: number;
-                        total: number;
+                        input: null | number;
+                        output: null | number;
+                        reasoning: null | number;
+                        cacheRead: null | number;
+                        cacheWrite: null | number;
+                        total: null | number;
                     };
                 }[];
                 sessionIds?: string[] | undefined;
@@ -7355,7 +7355,7 @@ export type UsageActionResultById = {
                             };
                             contributionCount: number;
                             pricedContributionCount: number;
-                            apiEquivalentUsd: number;
+                            apiEquivalentUsd: null | number;
                             pricingSources: string[];
                         }[];
                     };
@@ -7364,7 +7364,7 @@ export type UsageActionResultById = {
                         totalTokens: null | number;
                         groups: {
                             execution: 'happier' | 'outside' | 'unknown';
-                            tokens: number;
+                            tokens: null | number;
                             share: null | number;
                         }[];
                     };
@@ -7376,26 +7376,26 @@ export type UsageActionResultById = {
                         groups: {
                             modelId: null | string;
                             categories: null | {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             categoryUnits: Record<string, {
                                 units: string;
                                 scale: number;
                             }>;
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -7416,12 +7416,12 @@ export type UsageActionResultById = {
                                 scale: number;
                             }>;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             contributionCount: number;
                             eventCount: number;
@@ -7439,12 +7439,12 @@ export type UsageActionResultById = {
                         value: {
                             key: string;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             eventCount: number;
                             label?: string | undefined;
@@ -7460,26 +7460,26 @@ export type UsageActionResultById = {
                             groups: {
                                 modelId: null | string;
                                 categories: null | {
-                                    input: number;
-                                    output: number;
-                                    reasoning: number;
-                                    cacheRead: number;
-                                    cacheWrite: number;
-                                    total: number;
+                                    input: null | number;
+                                    output: null | number;
+                                    reasoning: null | number;
+                                    cacheRead: null | number;
+                                    cacheWrite: null | number;
+                                    total: null | number;
                                 };
                                 categoryUnits: Record<string, {
                                     units: string;
                                     scale: number;
                                 }>;
                                 cost: {
-                                    reportedUsd: number;
-                                    estimatedUsd: number;
+                                    reportedUsd: null | number;
+                                    estimatedUsd: null | number;
                                     currency: string;
                                     apiEquivalentUsd?: number | undefined;
                                     pricingSource?: string | undefined;
                                     reportedTotalId?: string | undefined;
                                     reportedTotalContributionIds?: string[] | undefined;
-                                    invoiceUsd?: number | undefined;
+                                    invoiceUsd?: null | number | undefined;
                                     billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                     costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                     breakdown?: undefined | {
@@ -7500,12 +7500,12 @@ export type UsageActionResultById = {
                                     scale: number;
                                 }>;
                                 tokens: {
-                                    input: number;
-                                    output: number;
-                                    reasoning: number;
-                                    cacheRead: number;
-                                    cacheWrite: number;
-                                    total: number;
+                                    input: null | number;
+                                    output: null | number;
+                                    reasoning: null | number;
+                                    cacheRead: null | number;
+                                    cacheWrite: null | number;
+                                    total: null | number;
                                 };
                                 contributionCount: number;
                                 eventCount: number;
@@ -7523,40 +7523,40 @@ export type UsageActionResultById = {
                                 path: 'legacy' | 'native' | 'runtime' | 'unknown';
                                 source: string;
                                 tokens: {
-                                    input: number;
-                                    output: number;
-                                    reasoning: number;
-                                    cacheRead: number;
-                                    cacheWrite: number;
-                                    total: number;
+                                    input: null | number;
+                                    output: null | number;
+                                    reasoning: null | number;
+                                    cacheRead: null | number;
+                                    cacheWrite: null | number;
+                                    total: null | number;
                                 };
-                                eventCount: number;
                                 execution: 'happier' | 'outside' | 'unknown';
+                                eventCount: number;
                             };
                             population: {
                                 groups: {
                                     modelId: null | string;
                                     categories: null | {
-                                        input: number;
-                                        output: number;
-                                        reasoning: number;
-                                        cacheRead: number;
-                                        cacheWrite: number;
-                                        total: number;
+                                        input: null | number;
+                                        output: null | number;
+                                        reasoning: null | number;
+                                        cacheRead: null | number;
+                                        cacheWrite: null | number;
+                                        total: null | number;
                                     };
                                     categoryUnits: Record<string, {
                                         units: string;
                                         scale: number;
                                     }>;
                                     cost: {
-                                        reportedUsd: number;
-                                        estimatedUsd: number;
+                                        reportedUsd: null | number;
+                                        estimatedUsd: null | number;
                                         currency: string;
                                         apiEquivalentUsd?: number | undefined;
                                         pricingSource?: string | undefined;
                                         reportedTotalId?: string | undefined;
                                         reportedTotalContributionIds?: string[] | undefined;
-                                        invoiceUsd?: number | undefined;
+                                        invoiceUsd?: null | number | undefined;
                                         billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                         costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                         breakdown?: undefined | {
@@ -7577,12 +7577,12 @@ export type UsageActionResultById = {
                                         scale: number;
                                     }>;
                                     tokens: {
-                                        input: number;
-                                        output: number;
-                                        reasoning: number;
-                                        cacheRead: number;
-                                        cacheWrite: number;
-                                        total: number;
+                                        input: null | number;
+                                        output: null | number;
+                                        reasoning: null | number;
+                                        cacheRead: null | number;
+                                        cacheWrite: null | number;
+                                        total: null | number;
                                     };
                                     contributionCount: number;
                                     eventCount: number;
@@ -8121,26 +8121,26 @@ export type UsageActionResultById = {
                             groups: {
                                 modelId: null | string;
                                 categories: null | {
-                                    input: number;
-                                    output: number;
-                                    reasoning: number;
-                                    cacheRead: number;
-                                    cacheWrite: number;
-                                    total: number;
+                                    input: null | number;
+                                    output: null | number;
+                                    reasoning: null | number;
+                                    cacheRead: null | number;
+                                    cacheWrite: null | number;
+                                    total: null | number;
                                 };
                                 categoryUnits: Record<string, {
                                     units: string;
                                     scale: number;
                                 }>;
                                 cost: {
-                                    reportedUsd: number;
-                                    estimatedUsd: number;
+                                    reportedUsd: null | number;
+                                    estimatedUsd: null | number;
                                     currency: string;
                                     apiEquivalentUsd?: number | undefined;
                                     pricingSource?: string | undefined;
                                     reportedTotalId?: string | undefined;
                                     reportedTotalContributionIds?: string[] | undefined;
-                                    invoiceUsd?: number | undefined;
+                                    invoiceUsd?: null | number | undefined;
                                     billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                     costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                     breakdown?: undefined | {
@@ -8161,12 +8161,12 @@ export type UsageActionResultById = {
                                     scale: number;
                                 }>;
                                 tokens: {
-                                    input: number;
-                                    output: number;
-                                    reasoning: number;
-                                    cacheRead: number;
-                                    cacheWrite: number;
-                                    total: number;
+                                    input: null | number;
+                                    output: null | number;
+                                    reasoning: null | number;
+                                    cacheRead: null | number;
+                                    cacheWrite: null | number;
+                                    total: null | number;
                                 };
                                 contributionCount: number;
                                 eventCount: number;
@@ -9310,12 +9310,12 @@ export type UsageActionResultById = {
                     };
                 };
                 tokenCategories?: undefined | {
-                    input: number;
-                    output: number;
-                    reasoning: number;
-                    cacheRead: number;
-                    cacheWrite: number;
-                    total: number;
+                    input: null | number;
+                    output: null | number;
+                    reasoning: null | number;
+                    cacheRead: null | number;
+                    cacheWrite: null | number;
+                    total: null | number;
                 };
                 coverage?: undefined | {
                     status: 'complete' | 'partial' | 'unknown';
@@ -9354,12 +9354,12 @@ export type UsageActionResultById = {
                 currency: string;
                 amountUsd: null | number;
                 tokens: {
-                    input: number;
-                    output: number;
-                    reasoning: number;
-                    cacheRead: number;
-                    cacheWrite: number;
-                    total: number;
+                    input: null | number;
+                    output: null | number;
+                    reasoning: null | number;
+                    cacheRead: null | number;
+                    cacheWrite: null | number;
+                    total: null | number;
                 };
                 eventCount: number;
                 asOfMs: number;
@@ -9813,14 +9813,14 @@ export type UsageActionResultById = {
                         status: 'estimated' | 'ok' | 'unavailable';
                         unit: 'count' | 'credits' | 'requests' | 'tokens' | 'unknown' | 'usd';
                         meterId: string;
-                        modelId?: null | string | undefined;
                         source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                         scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
+                        modelId?: null | string | undefined;
                         providerLimitId?: string | undefined;
                         confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                         currency?: string | undefined;
-                        resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
                         windowDurationMs?: number | undefined;
+                        resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
                         isExhausted?: boolean | undefined;
                         isSoftLimited?: boolean | undefined;
                         isCapacityLimited?: boolean | undefined;
@@ -10333,8 +10333,8 @@ export type UsageActionResultById = {
             };
             comparison?: undefined | {
                 query: {
-                    timeZoneOffsetMinutes: number;
                     granularity: 'day' | 'hour' | 'month' | 'week';
+                    timeZoneOffsetMinutes: number;
                     includeSeries: boolean;
                     topLimit: number;
                     period: {
@@ -10393,22 +10393,22 @@ export type UsageActionResultById = {
                     totals: {
                         eventCount: number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost: {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -10435,22 +10435,22 @@ export type UsageActionResultById = {
                         bucketEndMs: number;
                         eventCount: number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost: {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -10477,22 +10477,22 @@ export type UsageActionResultById = {
                             key: string;
                             eventCount: number;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -10521,22 +10521,22 @@ export type UsageActionResultById = {
                             key: string;
                             eventCount: number;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -10565,22 +10565,22 @@ export type UsageActionResultById = {
                             key: string;
                             eventCount: number;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -10609,22 +10609,22 @@ export type UsageActionResultById = {
                             key: string;
                             eventCount: number;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -10653,22 +10653,22 @@ export type UsageActionResultById = {
                             key: string;
                             eventCount: number;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -10697,22 +10697,22 @@ export type UsageActionResultById = {
                             key: string;
                             eventCount: number;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -10741,22 +10741,22 @@ export type UsageActionResultById = {
                             key: string;
                             eventCount: number;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -10785,22 +10785,22 @@ export type UsageActionResultById = {
                             key: string;
                             eventCount: number;
                             tokens: {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost: {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -10868,22 +10868,22 @@ export type UsageActionResultById = {
                             eventCount: number;
                             label?: string | undefined;
                             tokens?: undefined | {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost?: undefined | {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -10905,22 +10905,22 @@ export type UsageActionResultById = {
                                 source: string;
                                 eventCount: number;
                                 tokens: {
-                                    input: number;
-                                    output: number;
-                                    reasoning: number;
-                                    cacheRead: number;
-                                    cacheWrite: number;
-                                    total: number;
+                                    input: null | number;
+                                    output: null | number;
+                                    reasoning: null | number;
+                                    cacheRead: null | number;
+                                    cacheWrite: null | number;
+                                    total: null | number;
                                 };
                                 cost: {
-                                    reportedUsd: number;
-                                    estimatedUsd: number;
+                                    reportedUsd: null | number;
+                                    estimatedUsd: null | number;
                                     currency: string;
                                     apiEquivalentUsd?: number | undefined;
                                     pricingSource?: string | undefined;
                                     reportedTotalId?: string | undefined;
                                     reportedTotalContributionIds?: string[] | undefined;
-                                    invoiceUsd?: number | undefined;
+                                    invoiceUsd?: null | number | undefined;
                                     billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                     costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                     breakdown?: undefined | {
@@ -10943,22 +10943,22 @@ export type UsageActionResultById = {
                             eventCount: number;
                             label?: string | undefined;
                             tokens?: undefined | {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost?: undefined | {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -10980,22 +10980,22 @@ export type UsageActionResultById = {
                                 source: string;
                                 eventCount: number;
                                 tokens: {
-                                    input: number;
-                                    output: number;
-                                    reasoning: number;
-                                    cacheRead: number;
-                                    cacheWrite: number;
-                                    total: number;
+                                    input: null | number;
+                                    output: null | number;
+                                    reasoning: null | number;
+                                    cacheRead: null | number;
+                                    cacheWrite: null | number;
+                                    total: null | number;
                                 };
                                 cost: {
-                                    reportedUsd: number;
-                                    estimatedUsd: number;
+                                    reportedUsd: null | number;
+                                    estimatedUsd: null | number;
                                     currency: string;
                                     apiEquivalentUsd?: number | undefined;
                                     pricingSource?: string | undefined;
                                     reportedTotalId?: string | undefined;
                                     reportedTotalContributionIds?: string[] | undefined;
-                                    invoiceUsd?: number | undefined;
+                                    invoiceUsd?: null | number | undefined;
                                     billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                     costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                     breakdown?: undefined | {
@@ -11018,22 +11018,22 @@ export type UsageActionResultById = {
                             eventCount: number;
                             label?: string | undefined;
                             tokens?: undefined | {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost?: undefined | {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -11055,22 +11055,22 @@ export type UsageActionResultById = {
                                 source: string;
                                 eventCount: number;
                                 tokens: {
-                                    input: number;
-                                    output: number;
-                                    reasoning: number;
-                                    cacheRead: number;
-                                    cacheWrite: number;
-                                    total: number;
+                                    input: null | number;
+                                    output: null | number;
+                                    reasoning: null | number;
+                                    cacheRead: null | number;
+                                    cacheWrite: null | number;
+                                    total: null | number;
                                 };
                                 cost: {
-                                    reportedUsd: number;
-                                    estimatedUsd: number;
+                                    reportedUsd: null | number;
+                                    estimatedUsd: null | number;
                                     currency: string;
                                     apiEquivalentUsd?: number | undefined;
                                     pricingSource?: string | undefined;
                                     reportedTotalId?: string | undefined;
                                     reportedTotalContributionIds?: string[] | undefined;
-                                    invoiceUsd?: number | undefined;
+                                    invoiceUsd?: null | number | undefined;
                                     billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                     costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                     breakdown?: undefined | {
@@ -11093,22 +11093,22 @@ export type UsageActionResultById = {
                             eventCount: number;
                             label?: string | undefined;
                             tokens?: undefined | {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost?: undefined | {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -11130,22 +11130,22 @@ export type UsageActionResultById = {
                                 source: string;
                                 eventCount: number;
                                 tokens: {
-                                    input: number;
-                                    output: number;
-                                    reasoning: number;
-                                    cacheRead: number;
-                                    cacheWrite: number;
-                                    total: number;
+                                    input: null | number;
+                                    output: null | number;
+                                    reasoning: null | number;
+                                    cacheRead: null | number;
+                                    cacheWrite: null | number;
+                                    total: null | number;
                                 };
                                 cost: {
-                                    reportedUsd: number;
-                                    estimatedUsd: number;
+                                    reportedUsd: null | number;
+                                    estimatedUsd: null | number;
                                     currency: string;
                                     apiEquivalentUsd?: number | undefined;
                                     pricingSource?: string | undefined;
                                     reportedTotalId?: string | undefined;
                                     reportedTotalContributionIds?: string[] | undefined;
-                                    invoiceUsd?: number | undefined;
+                                    invoiceUsd?: null | number | undefined;
                                     billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                     costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                     breakdown?: undefined | {
@@ -11168,22 +11168,22 @@ export type UsageActionResultById = {
                             eventCount: number;
                             label?: string | undefined;
                             tokens?: undefined | {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost?: undefined | {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -11205,22 +11205,22 @@ export type UsageActionResultById = {
                                 source: string;
                                 eventCount: number;
                                 tokens: {
-                                    input: number;
-                                    output: number;
-                                    reasoning: number;
-                                    cacheRead: number;
-                                    cacheWrite: number;
-                                    total: number;
+                                    input: null | number;
+                                    output: null | number;
+                                    reasoning: null | number;
+                                    cacheRead: null | number;
+                                    cacheWrite: null | number;
+                                    total: null | number;
                                 };
                                 cost: {
-                                    reportedUsd: number;
-                                    estimatedUsd: number;
+                                    reportedUsd: null | number;
+                                    estimatedUsd: null | number;
                                     currency: string;
                                     apiEquivalentUsd?: number | undefined;
                                     pricingSource?: string | undefined;
                                     reportedTotalId?: string | undefined;
                                     reportedTotalContributionIds?: string[] | undefined;
-                                    invoiceUsd?: number | undefined;
+                                    invoiceUsd?: null | number | undefined;
                                     billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                     costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                     breakdown?: undefined | {
@@ -11243,22 +11243,22 @@ export type UsageActionResultById = {
                             eventCount: number;
                             label?: string | undefined;
                             tokens?: undefined | {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost?: undefined | {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -11280,22 +11280,22 @@ export type UsageActionResultById = {
                                 source: string;
                                 eventCount: number;
                                 tokens: {
-                                    input: number;
-                                    output: number;
-                                    reasoning: number;
-                                    cacheRead: number;
-                                    cacheWrite: number;
-                                    total: number;
+                                    input: null | number;
+                                    output: null | number;
+                                    reasoning: null | number;
+                                    cacheRead: null | number;
+                                    cacheWrite: null | number;
+                                    total: null | number;
                                 };
                                 cost: {
-                                    reportedUsd: number;
-                                    estimatedUsd: number;
+                                    reportedUsd: null | number;
+                                    estimatedUsd: null | number;
                                     currency: string;
                                     apiEquivalentUsd?: number | undefined;
                                     pricingSource?: string | undefined;
                                     reportedTotalId?: string | undefined;
                                     reportedTotalContributionIds?: string[] | undefined;
-                                    invoiceUsd?: number | undefined;
+                                    invoiceUsd?: null | number | undefined;
                                     billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                     costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                     breakdown?: undefined | {
@@ -11322,22 +11322,22 @@ export type UsageActionResultById = {
                             eventCount: number;
                             label?: string | undefined;
                             tokens?: undefined | {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost?: undefined | {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -11359,22 +11359,22 @@ export type UsageActionResultById = {
                                 source: string;
                                 eventCount: number;
                                 tokens: {
-                                    input: number;
-                                    output: number;
-                                    reasoning: number;
-                                    cacheRead: number;
-                                    cacheWrite: number;
-                                    total: number;
+                                    input: null | number;
+                                    output: null | number;
+                                    reasoning: null | number;
+                                    cacheRead: null | number;
+                                    cacheWrite: null | number;
+                                    total: null | number;
                                 };
                                 cost: {
-                                    reportedUsd: number;
-                                    estimatedUsd: number;
+                                    reportedUsd: null | number;
+                                    estimatedUsd: null | number;
                                     currency: string;
                                     apiEquivalentUsd?: number | undefined;
                                     pricingSource?: string | undefined;
                                     reportedTotalId?: string | undefined;
                                     reportedTotalContributionIds?: string[] | undefined;
-                                    invoiceUsd?: number | undefined;
+                                    invoiceUsd?: null | number | undefined;
                                     billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                     costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                     breakdown?: undefined | {
@@ -11401,22 +11401,22 @@ export type UsageActionResultById = {
                             eventCount: number;
                             label?: string | undefined;
                             tokens?: undefined | {
-                                input: number;
-                                output: number;
-                                reasoning: number;
-                                cacheRead: number;
-                                cacheWrite: number;
-                                total: number;
+                                input: null | number;
+                                output: null | number;
+                                reasoning: null | number;
+                                cacheRead: null | number;
+                                cacheWrite: null | number;
+                                total: null | number;
                             };
                             cost?: undefined | {
-                                reportedUsd: number;
-                                estimatedUsd: number;
+                                reportedUsd: null | number;
+                                estimatedUsd: null | number;
                                 currency: string;
                                 apiEquivalentUsd?: number | undefined;
                                 pricingSource?: string | undefined;
                                 reportedTotalId?: string | undefined;
                                 reportedTotalContributionIds?: string[] | undefined;
-                                invoiceUsd?: number | undefined;
+                                invoiceUsd?: null | number | undefined;
                                 billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                 costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                 breakdown?: undefined | {
@@ -11438,22 +11438,22 @@ export type UsageActionResultById = {
                                 source: string;
                                 eventCount: number;
                                 tokens: {
-                                    input: number;
-                                    output: number;
-                                    reasoning: number;
-                                    cacheRead: number;
-                                    cacheWrite: number;
-                                    total: number;
+                                    input: null | number;
+                                    output: null | number;
+                                    reasoning: null | number;
+                                    cacheRead: null | number;
+                                    cacheWrite: null | number;
+                                    total: null | number;
                                 };
                                 cost: {
-                                    reportedUsd: number;
-                                    estimatedUsd: number;
+                                    reportedUsd: null | number;
+                                    estimatedUsd: null | number;
                                     currency: string;
                                     apiEquivalentUsd?: number | undefined;
                                     pricingSource?: string | undefined;
                                     reportedTotalId?: string | undefined;
                                     reportedTotalContributionIds?: string[] | undefined;
-                                    invoiceUsd?: number | undefined;
+                                    invoiceUsd?: null | number | undefined;
                                     billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                     costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                     breakdown?: undefined | {
@@ -11487,12 +11487,12 @@ export type UsageActionResultById = {
                         currency: string;
                         amountUsd: null | number;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         eventCount: number;
                         asOfMs: number;
@@ -11531,22 +11531,22 @@ export type UsageActionResultById = {
                         workspaceId: null | string;
                         source: null | string;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost: {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -11584,12 +11584,12 @@ export type UsageActionResultById = {
                             execution: 'happier' | 'outside' | 'unknown';
                         };
                         tokenCategories?: undefined | {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                     }[];
                     sessionIds?: string[] | undefined;
@@ -11616,7 +11616,7 @@ export type UsageActionResultById = {
                                 };
                                 contributionCount: number;
                                 pricedContributionCount: number;
-                                apiEquivalentUsd: number;
+                                apiEquivalentUsd: null | number;
                                 pricingSources: string[];
                             }[];
                         };
@@ -11625,7 +11625,7 @@ export type UsageActionResultById = {
                             totalTokens: null | number;
                             groups: {
                                 execution: 'happier' | 'outside' | 'unknown';
-                                tokens: number;
+                                tokens: null | number;
                                 share: null | number;
                             }[];
                         };
@@ -11637,26 +11637,26 @@ export type UsageActionResultById = {
                             groups: {
                                 modelId: null | string;
                                 categories: null | {
-                                    input: number;
-                                    output: number;
-                                    reasoning: number;
-                                    cacheRead: number;
-                                    cacheWrite: number;
-                                    total: number;
+                                    input: null | number;
+                                    output: null | number;
+                                    reasoning: null | number;
+                                    cacheRead: null | number;
+                                    cacheWrite: null | number;
+                                    total: null | number;
                                 };
                                 categoryUnits: Record<string, {
                                     units: string;
                                     scale: number;
                                 }>;
                                 cost: {
-                                    reportedUsd: number;
-                                    estimatedUsd: number;
+                                    reportedUsd: null | number;
+                                    estimatedUsd: null | number;
                                     currency: string;
                                     apiEquivalentUsd?: number | undefined;
                                     pricingSource?: string | undefined;
                                     reportedTotalId?: string | undefined;
                                     reportedTotalContributionIds?: string[] | undefined;
-                                    invoiceUsd?: number | undefined;
+                                    invoiceUsd?: null | number | undefined;
                                     billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                     costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                     breakdown?: undefined | {
@@ -11677,12 +11677,12 @@ export type UsageActionResultById = {
                                     scale: number;
                                 }>;
                                 tokens: {
-                                    input: number;
-                                    output: number;
-                                    reasoning: number;
-                                    cacheRead: number;
-                                    cacheWrite: number;
-                                    total: number;
+                                    input: null | number;
+                                    output: null | number;
+                                    reasoning: null | number;
+                                    cacheRead: null | number;
+                                    cacheWrite: null | number;
+                                    total: null | number;
                                 };
                                 contributionCount: number;
                                 eventCount: number;
@@ -11700,12 +11700,12 @@ export type UsageActionResultById = {
                             value: {
                                 key: string;
                                 tokens: {
-                                    input: number;
-                                    output: number;
-                                    reasoning: number;
-                                    cacheRead: number;
-                                    cacheWrite: number;
-                                    total: number;
+                                    input: null | number;
+                                    output: null | number;
+                                    reasoning: null | number;
+                                    cacheRead: null | number;
+                                    cacheWrite: null | number;
+                                    total: null | number;
                                 };
                                 eventCount: number;
                                 label?: string | undefined;
@@ -11721,26 +11721,26 @@ export type UsageActionResultById = {
                                 groups: {
                                     modelId: null | string;
                                     categories: null | {
-                                        input: number;
-                                        output: number;
-                                        reasoning: number;
-                                        cacheRead: number;
-                                        cacheWrite: number;
-                                        total: number;
+                                        input: null | number;
+                                        output: null | number;
+                                        reasoning: null | number;
+                                        cacheRead: null | number;
+                                        cacheWrite: null | number;
+                                        total: null | number;
                                     };
                                     categoryUnits: Record<string, {
                                         units: string;
                                         scale: number;
                                     }>;
                                     cost: {
-                                        reportedUsd: number;
-                                        estimatedUsd: number;
+                                        reportedUsd: null | number;
+                                        estimatedUsd: null | number;
                                         currency: string;
                                         apiEquivalentUsd?: number | undefined;
                                         pricingSource?: string | undefined;
                                         reportedTotalId?: string | undefined;
                                         reportedTotalContributionIds?: string[] | undefined;
-                                        invoiceUsd?: number | undefined;
+                                        invoiceUsd?: null | number | undefined;
                                         billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                         costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                         breakdown?: undefined | {
@@ -11761,12 +11761,12 @@ export type UsageActionResultById = {
                                         scale: number;
                                     }>;
                                     tokens: {
-                                        input: number;
-                                        output: number;
-                                        reasoning: number;
-                                        cacheRead: number;
-                                        cacheWrite: number;
-                                        total: number;
+                                        input: null | number;
+                                        output: null | number;
+                                        reasoning: null | number;
+                                        cacheRead: null | number;
+                                        cacheWrite: null | number;
+                                        total: null | number;
                                     };
                                     contributionCount: number;
                                     eventCount: number;
@@ -11784,40 +11784,40 @@ export type UsageActionResultById = {
                                     path: 'legacy' | 'native' | 'runtime' | 'unknown';
                                     source: string;
                                     tokens: {
-                                        input: number;
-                                        output: number;
-                                        reasoning: number;
-                                        cacheRead: number;
-                                        cacheWrite: number;
-                                        total: number;
+                                        input: null | number;
+                                        output: null | number;
+                                        reasoning: null | number;
+                                        cacheRead: null | number;
+                                        cacheWrite: null | number;
+                                        total: null | number;
                                     };
-                                    eventCount: number;
                                     execution: 'happier' | 'outside' | 'unknown';
+                                    eventCount: number;
                                 };
                                 population: {
                                     groups: {
                                         modelId: null | string;
                                         categories: null | {
-                                            input: number;
-                                            output: number;
-                                            reasoning: number;
-                                            cacheRead: number;
-                                            cacheWrite: number;
-                                            total: number;
+                                            input: null | number;
+                                            output: null | number;
+                                            reasoning: null | number;
+                                            cacheRead: null | number;
+                                            cacheWrite: null | number;
+                                            total: null | number;
                                         };
                                         categoryUnits: Record<string, {
                                             units: string;
                                             scale: number;
                                         }>;
                                         cost: {
-                                            reportedUsd: number;
-                                            estimatedUsd: number;
+                                            reportedUsd: null | number;
+                                            estimatedUsd: null | number;
                                             currency: string;
                                             apiEquivalentUsd?: number | undefined;
                                             pricingSource?: string | undefined;
                                             reportedTotalId?: string | undefined;
                                             reportedTotalContributionIds?: string[] | undefined;
-                                            invoiceUsd?: number | undefined;
+                                            invoiceUsd?: null | number | undefined;
                                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                             breakdown?: undefined | {
@@ -11834,12 +11834,12 @@ export type UsageActionResultById = {
                                             scale: number;
                                         }>;
                                         tokens: {
-                                            input: number;
-                                            output: number;
-                                            reasoning: number;
-                                            cacheRead: number;
-                                            cacheWrite: number;
-                                            total: number;
+                                            input: null | number;
+                                            output: null | number;
+                                            reasoning: null | number;
+                                            cacheRead: null | number;
+                                            cacheWrite: null | number;
+                                            total: null | number;
                                         };
                                         contributionCount: number;
                                         eventCount: number;
@@ -12378,26 +12378,26 @@ export type UsageActionResultById = {
                                 groups: {
                                     modelId: null | string;
                                     categories: null | {
-                                        input: number;
-                                        output: number;
-                                        reasoning: number;
-                                        cacheRead: number;
-                                        cacheWrite: number;
-                                        total: number;
+                                        input: null | number;
+                                        output: null | number;
+                                        reasoning: null | number;
+                                        cacheRead: null | number;
+                                        cacheWrite: null | number;
+                                        total: null | number;
                                     };
                                     categoryUnits: Record<string, {
                                         units: string;
                                         scale: number;
                                     }>;
                                     cost: {
-                                        reportedUsd: number;
-                                        estimatedUsd: number;
+                                        reportedUsd: null | number;
+                                        estimatedUsd: null | number;
                                         currency: string;
                                         apiEquivalentUsd?: number | undefined;
                                         pricingSource?: string | undefined;
                                         reportedTotalId?: string | undefined;
                                         reportedTotalContributionIds?: string[] | undefined;
-                                        invoiceUsd?: number | undefined;
+                                        invoiceUsd?: null | number | undefined;
                                         billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                                         costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                                         breakdown?: undefined | {
@@ -12418,12 +12418,12 @@ export type UsageActionResultById = {
                                         scale: number;
                                     }>;
                                     tokens: {
-                                        input: number;
-                                        output: number;
-                                        reasoning: number;
-                                        cacheRead: number;
-                                        cacheWrite: number;
-                                        total: number;
+                                        input: null | number;
+                                        output: null | number;
+                                        reasoning: null | number;
+                                        cacheRead: null | number;
+                                        cacheWrite: null | number;
+                                        total: null | number;
                                     };
                                     contributionCount: number;
                                     eventCount: number;
@@ -13261,12 +13261,12 @@ export type UsageActionResultById = {
                         };
                     };
                     tokenCategories?: undefined | {
-                        input: number;
-                        output: number;
-                        reasoning: number;
-                        cacheRead: number;
-                        cacheWrite: number;
-                        total: number;
+                        input: null | number;
+                        output: null | number;
+                        reasoning: null | number;
+                        cacheRead: null | number;
+                        cacheWrite: null | number;
+                        total: null | number;
                     };
                     coverage?: undefined | {
                         status: 'complete' | 'partial' | 'unknown';
@@ -13301,12 +13301,12 @@ export type UsageActionResultById = {
                     currency: string;
                     amountUsd: null | number;
                     tokens: {
-                        input: number;
-                        output: number;
-                        reasoning: number;
-                        cacheRead: number;
-                        cacheWrite: number;
-                        total: number;
+                        input: null | number;
+                        output: null | number;
+                        reasoning: null | number;
+                        cacheRead: null | number;
+                        cacheWrite: null | number;
+                        total: null | number;
                     };
                     eventCount: number;
                     asOfMs: number;
@@ -13328,22 +13328,22 @@ export type UsageActionResultById = {
                         workspaceId: null | string;
                         source: null | string;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost: {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -13381,12 +13381,12 @@ export type UsageActionResultById = {
                             execution: 'happier' | 'outside' | 'unknown';
                         };
                         tokenCategories?: undefined | {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                     };
                     outcome: null | {
@@ -13419,6 +13419,7 @@ export type UsageActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -13473,6 +13474,7 @@ export type UsageActionResultById = {
                             isCrossRepository?: boolean | undefined;
                             headSha?: null | string | undefined;
                             baseSha?: null | string | undefined;
+                            mergeCommitSha?: string | undefined;
                             createdAtMs?: number | undefined;
                             closedAtMs?: number | undefined;
                             mergedAtMs?: number | undefined;
@@ -13535,6 +13537,7 @@ export type UsageActionResultById = {
                         isCrossRepository?: boolean | undefined;
                         headSha?: null | string | undefined;
                         baseSha?: null | string | undefined;
+                        mergeCommitSha?: string | undefined;
                         createdAtMs?: number | undefined;
                         closedAtMs?: number | undefined;
                         mergedAtMs?: number | undefined;
@@ -13566,22 +13569,22 @@ export type UsageActionResultById = {
                         workspaceId: null | string;
                         source: null | string;
                         tokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         cost: {
-                            reportedUsd: number;
-                            estimatedUsd: number;
+                            reportedUsd: null | number;
+                            estimatedUsd: null | number;
                             currency: string;
                             apiEquivalentUsd?: number | undefined;
                             pricingSource?: string | undefined;
                             reportedTotalId?: string | undefined;
                             reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: number | undefined;
+                            invoiceUsd?: null | number | undefined;
                             billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
                             costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
                             breakdown?: undefined | {
@@ -13619,12 +13622,12 @@ export type UsageActionResultById = {
                             execution: 'happier' | 'outside' | 'unknown';
                         };
                         tokenCategories?: undefined | {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                     };
                     branch: null | {
@@ -13702,8 +13705,8 @@ export type UsageActionResultById = {
             };
             publicProfileEvidence?: undefined | {
                 facts: {
-                    peakParallel?: number | undefined;
                     mergedPrs?: number | undefined;
+                    peakParallel?: number | undefined;
                     weeklyPeakParallel?: undefined | {
                         peak: number;
                         coverage: {
@@ -13738,8 +13741,8 @@ export type UsageActionResultById = {
                 lenses: {
                     execution: 'happier' | 'outside';
                     facts: {
-                        peakParallel?: number | undefined;
                         mergedPrs?: number | undefined;
+                        peakParallel?: number | undefined;
                         weeklyPeakParallel?: undefined | {
                             peak: number;
                             coverage: {
@@ -13945,12 +13948,12 @@ export type UsageActionResultById = {
                     emissionsGCo2e: null;
                     coverage: {
                         accountedTokens: {
-                            input: number;
-                            output: number;
-                            reasoning: number;
-                            cacheRead: number;
-                            cacheWrite: number;
-                            total: number;
+                            input: null | number;
+                            output: null | number;
+                            reasoning: null | number;
+                            cacheRead: null | number;
+                            cacheWrite: null | number;
+                            total: null | number;
                         };
                         estimatedTokenCount: 0;
                     };
@@ -15235,8 +15238,8 @@ export type UsageActionResultById = {
                     kind: 'recurring_automation';
                     queryKey: string;
                     query: {
-                        timeZoneOffsetMinutes: number;
                         granularity: 'day' | 'hour' | 'month' | 'week';
+                        timeZoneOffsetMinutes: number;
                         includeSeries: boolean;
                         topLimit: number;
                         period: {
