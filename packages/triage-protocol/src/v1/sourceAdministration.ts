@@ -9,6 +9,7 @@ import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/mani
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from './bounds.js';
 import { TriageSourceInstanceIdV1Schema, TriageTextV1ProtocolSchema } from './identity.js';
 import { TriageSourceInstanceDraftV1Schema } from './instances.js';
+import type { TriageSourceDescriptorV1 } from './descriptor.js';
 
 /** The Action's target-local id. */
 export const TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1 = 'sources/administer-v1';
@@ -31,6 +32,19 @@ export const TriageConfigureSourceOfferV1Schema = defineProtocolObject({
     kindNames: defineProtocolArray(TriageTextV1ProtocolSchema),
 }, { policy: 'closed' });
 export type TriageConfigureSourceOfferV1 = ReturnType<typeof TriageConfigureSourceOfferV1Schema.parse>;
+
+/** The admitted contributor qualifies its own declared page. */
+export function createTriageConfigureSourceOfferV1(
+    contributorPluginId: string,
+    descriptor: TriageSourceDescriptorV1,
+): TriageConfigureSourceOfferV1 | undefined {
+    if (descriptor.settingsPageId === undefined) return undefined;
+    return Object.freeze({
+        destination: Object.freeze({ pluginId: contributorPluginId, localId: descriptor.settingsPageId }),
+        displayName: descriptor.displayName,
+        kindNames: Object.freeze(descriptor.kinds.map(kind => kind.pluralDisplayName ?? kind.displayName)),
+    });
+}
 
 /**
  * The one caller-bound source-administration ABI.

@@ -98,9 +98,13 @@ The ordinary Automation Event authoring route carries the watched `subject`
 from `setupInput.subject` into the native renderer's `initialInput.subject`;
 observer selection remains independent. Opening setup does not enroll a check
 or execute a service effect.
-Reopening a saved Event passes its existing `sourceConfig` as the same renderer's
-`initialInput`. The plugin interprets that configuration and returns setup Action
-input through the existing form owner; the host does not assume those shapes match.
+Reopening a saved Event merges its existing `sourceConfig` with the renderer launch
+intent in `initialInput`. The exact subject's canonical source id makes page and
+Machine entries reopen that same source. Domain setup intent names its Domain and
+target link; the renderer asks for cadence before returning complete saved checks.
+Launch intent stays outside the setup Action's input. The plugin returns complete
+Action input through the existing form owner, which validates it and resolves its
+connected Account; the host does not assume saved, launch and Action shapes match.
 
 ## Cold Bot template declarations (unreleased 0.3)
 
@@ -264,7 +268,18 @@ TCP, DNS and heartbeat owners. Qualified contributed kinds validate their saved
 configuration against the admitted declaration and invoke its finite Action
 through ordinary Action dispatch. `services.healthChecks.listKinds({ signal })`
 projects that same admitted catalog; `readSource({ sourceInstanceId }, { signal })`
-reads the current adopted source of the Machine-services observer. A contributed
+reads the current adopted source of the Machine-services observer. Configure uses
+that same `health/setup` Action with `mode: 'preview'` before saving. Its readonly
+branch returns a draft with effective P40 Account/Project alert defaults only when
+the alert leaf is absent; explicit empty channels remain Off. It enrolls no
+endpoints, writes no source and sends no notification. An optional `testContext`
+contains only a real saved source revision and its current service owner or
+Environment controller, addressed through the invoking Home profile; changed
+alert choices do not borrow that saved selector. Full Save retains the existing
+validation and capability enrollment. Manifest admission retains the exact
+canonical Save result branch and accepts a disjoint strict `mode: preview` branch
+only with the corresponding readonly Action predicate. Event enrollment still
+parses only the canonical Save result. A contributed
 producer uses that source to resolve its exact saved `checkId`, rather than
 accepting replacement endpoint or monitor configuration from the caller. P30 admits
 the live service reference and the existing HTTP owner retains network/cancel
@@ -305,8 +320,11 @@ In development source, adopted Event catalogs refresh on initial need or the
 existing Event-source invalidation/reconnect push. Provider observation deadlines
 reuse the adopted catalog. After a catalog failure, observers pass their existing
 provider retry deadline to the occurrence-local adopted owner; subscribers share
-one pending retry and its result. A relevant push expedites that wait. No observer
-adds its own catalog retry timer. Healthy empty scans publish source status only
+one pending retry and its result. The observer also reaches its existing wait
+before retrying, so transports that fail immediately cannot bypass the deadline.
+One expired-deadline retry may run immediately; if it fails with another expired
+deadline, the observer waits for invalidation/reconnect. A relevant push expedites
+the wait. Healthy empty scans publish source status only
 when its acknowledged semantic state changes; successful probe deadlines are
 liveness rather than durable retry state. Failed status reports remain eligible
 for publication on the next natural provider cycle.
@@ -865,19 +883,27 @@ construction/finalization must consume this owner contract; the facade alone is
 not proof of that integration.
 
 This is an unpublished V1 author contract, separate from package SemVer.
-An admitted daemon `uploadDeploy` role can acquire its exact receipt's source with
+An admitted daemon `uploadDeploy` role, or a runtime effect role with captured
+execution placement and workload admission, can acquire its exact receipt's source with
 `context.services.deploymentSource.materialize({ environmentId, deploymentId },
 { signal: context.signal })`. The host consumes the existing role admission's
-captured Environment, receipt and selected controller, then uses the exact-commit
+captured Environment, receipt and selected execution placement, then uses the exact-commit
 source producer; plugins supply neither a source path nor admission credentials.
 Further acquisition ends with that invocation. Uncommitted custody is cleaned
 up by the existing invocation cleanup owner; native committed-release retention
 is unchanged. Upload handlers leave custody uncommitted so cleanup removes the
 temporary source. Trusted plugins are not sandboxed by checking their saved
 handles: retaining a root path does not create a separate access-control boundary.
-Other roles, including portable Account invocations, receive an unavailable
-service. Provider upload integration remains separate work; this projection is
-not evidence that a provider has implemented upload. See the [author example](../apps/docs/content/docs/plugins/services/exec.mdx#deployment-environment-custody-03-development-source).
+The runtime effect role can prepare that same source through
+`context.services.deploymentExecEnv.prepare({ source, phase: 'runtime' },
+{ signal: context.signal })` and pass the opaque attachment as `deploymentEnv`
+to SDK Exec. Admission selects the Machine, installation and phase; the plugin
+receives no binding-value map. These custody services remain unavailable for
+observe, cancel and portable Account invocations. Existing build jobs retain their receipt-provided
+execution port. Runtime service references reuse the existing forward custody;
+invocation cleanup awaits its release, while synchronous disposal uses its
+caught retirement path. Provider upload behavior is established by each adapter,
+separately from this host capability. See the [author example](../apps/docs/content/docs/plugins/services/exec.mdx#deployment-environment-custody-03-development-source).
 
 For checkout-backed acquisition, the shared deployment source reader consumes
 the physical host's existing `isHostRequesterUnrestrictedOwner` decision. Verified
@@ -1234,6 +1260,19 @@ Descriptor-owned `fieldHints` use the canonical input hints schema. The closed S
 `BackupDestinationOpenV1` result contains a repository locator, canonical
 credential-binding identities and optional transport facts: S3 region/addressing,
 SFTP endpoint/user/pinned OpenSSH host-key line, or an executing-Machine directory.
+The SDK's `BackupDestinationOpenInputV1` carries `config`, selected
+`credentialRoles` and optional `ownershipPrefix`. The shared host opener supplies
+the captured ownership prefix unchanged; each provider joins it inside its own
+authored repository namespace once. Empty or omitted ownership preserves the
+authored location. Bundled destinations require exact relative ownership segments
+with forward slashes, without empty/dot segments, absolute paths or control characters;
+authored configuration retains its existing transport grammar.
+Scoped local output retains the final host `path`, optional
+existing-base `mountPath`, and the joined repository locator inside the fixed
+container mount. Native custody mounts the base without creating the final
+directory; restic's explicit initialization creates the repository. The bundled
+receiver composition selects `SFTP_BACKUP_DESTINATION_REF_V1`, rather than an
+arbitrary contributed SFTP configuration schema.
 The own-server host invokes
 the configured descriptor's Action from its retained registry, then P42 resolves
 the exact database binding and lends destination credentials through its existing
@@ -11803,6 +11842,9 @@ The unreleased 0.3 hosting-provider descriptor also accepts
 `{repository}` and returning that repository with independent `ci` and
 `security` facts (`status` and `reason`). These facts describe current source
 presence, rather than successful CI runs or an absence of security findings.
+Providers compose these facts with the SCM owner's
+`ScmHostingProjectReadinessSourceFactV1ProtocolSchema` from the SDK's `/protocol`
+facade; the Project readiness composite derives its base fields from that owner.
 An optional `setupSurface` is the provider's existing native destination;
 GitHub offers its Project Actions page and its Triage source-settings page.
 The provider owns its private source configuration and credential access.

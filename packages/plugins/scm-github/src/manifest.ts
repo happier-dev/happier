@@ -53,6 +53,8 @@ import { GITHUB_CI_ACTION_BINDINGS_V1 } from './actions/contribution.js';
 import { githubCiBranchCountsResourceV1 } from './actions/branchCounts.js';
 import { GITHUB_OVERVIEW_TARGET_ACTIONS_V1 } from './actions/overview.js';
 import { GITHUB_OVERVIEW_TARGET_ACTION_ID } from './actions/overviewContracts.js';
+import { GITHUB_PROJECT_READINESS_ACTIONS_V1 } from './actions/projectReadiness.js';
+import { GITHUB_PROJECT_READINESS_ACTION_ID_V1 } from './actions/actionIds.js';
 import { ForgeCiMountedIntentInputV1Schema, ForgeCiMountedIntentResultV1Schema } from '@happier-dev/triage-protocol/ci/v1';
 import { githubConnectedAccountRuntime } from './auth/connectedAccountRuntime.js';
 import {
@@ -149,7 +151,7 @@ import {
   GithubPullRequestHeadBranchDeleteInputV1Schema,
   GithubPullRequestHeadBranchDeleteResultV1Schema,
   GithubPullRequestCloseInputV1Schema,
-  GithubPullRequestPreviewStatusInputV1Schema,
+  GithubPullRequestPreviewStatusActionInputV1Schema,
   GithubPullRequestPreviewStatusResultV1Schema,
   GithubPullRequestMarkReadyInputV1Schema,
   GithubPullRequestMarkReadyActionResultV1Schema,
@@ -395,7 +397,7 @@ const GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_RESULT_SCHEMA = {
 
 /** Named schema references retain exact Action payloads in portable declarations. */
 type GithubActionSchemas = {
-  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus]: readonly [typeof GithubPullRequestPreviewStatusInputV1Schema.jsonSchema, typeof GithubPullRequestPreviewStatusResultV1Schema.jsonSchema];
+  readonly [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus]: readonly [typeof GithubPullRequestPreviewStatusActionInputV1Schema.jsonSchema, typeof GithubPullRequestPreviewStatusResultV1Schema.jsonSchema];
   readonly 'ui/ci-view-v1': readonly [typeof ForgeCiMountedIntentInputV1Schema, typeof ForgeCiMountedIntentResultV1Schema];
   readonly [GITHUB_TRIAGE_ACTION_IDS_V1.linkSession]: readonly [typeof TriageSourceCredentialInputsV1.linkSession.jsonSchema, typeof TriageSourcesContributionProtocolV1.operations.linkSession.declaration.resultSchema.jsonSchema];
   readonly [GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace]: readonly [typeof TriageSourceCredentialInputsV1.prepareReviewWorkspace.jsonSchema, typeof TriageSourcesContributionProtocolV1.operations.prepareReviewWorkspace.declaration.resultSchema.jsonSchema];
@@ -485,7 +487,7 @@ type GithubActionDeclarations = {
     readonly inputSchema: GithubActionSchemas[TLocalId][0];
     readonly resultSchema: GithubActionSchemas[TLocalId][1];
   };
-} & typeof GITHUB_LOCAL_ACT_ACTIONS_V1 & typeof GITHUB_ACCOUNT_READ_ACTIONS & typeof GITHUB_CI_ACTION_BINDINGS_V1 & typeof GITHUB_OVERVIEW_TARGET_ACTIONS_V1 & typeof GITHUB_RELEASE_ACTIONS_V1 & typeof GITHUB_DEPLOYMENT_ACTIONS_V1 & typeof GITHUB_DEPLOYMENT_MONITORING_ACTIONS_V1;
+} & typeof GITHUB_LOCAL_ACT_ACTIONS_V1 & typeof GITHUB_ACCOUNT_READ_ACTIONS & typeof GITHUB_CI_ACTION_BINDINGS_V1 & typeof GITHUB_OVERVIEW_TARGET_ACTIONS_V1 & typeof GITHUB_PROJECT_READINESS_ACTIONS_V1 & typeof GITHUB_RELEASE_ACTIONS_V1 & typeof GITHUB_DEPLOYMENT_ACTIONS_V1 & typeof GITHUB_DEPLOYMENT_MONITORING_ACTIONS_V1;
 
 type GithubPlugin = DefinedPlugin<
   typeof GITHUB_PLUGIN_ID,
@@ -795,10 +797,10 @@ function createGithubPlugin(): GithubPlugin {
       dangerLevel: 'writesRemote',
       confirmation: { title: 'Publish preview status?' },
       confirmationWhen: { presentUserUi: false },
-      inputSchema: GithubPullRequestPreviewStatusInputV1Schema.jsonSchema,
+      inputSchema: GithubPullRequestPreviewStatusActionInputV1Schema.jsonSchema,
       resultSchema: GithubPullRequestPreviewStatusResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      connectedAccountPurposeBindings: [{ ...TRIAGE_INSTANCE_ACCOUNT_BINDINGS[0], alternativePaths: ['sourceConfig.credentialRef'] }],
       run: async (input, context) => (await import('./triage/mutations/previewStatusAdmission.js')).publishGithubPullRequestPreviewStatusAction(input, context),
     },
     ...GITHUB_LOCAL_ACT_ACTIONS_V1,
@@ -806,6 +808,7 @@ function createGithubPlugin(): GithubPlugin {
     ...GITHUB_NATIVE_READ_ACTIONS,
     ...GITHUB_CI_ACTION_BINDINGS_V1,
     ...GITHUB_OVERVIEW_TARGET_ACTIONS_V1,
+    ...GITHUB_PROJECT_READINESS_ACTIONS_V1,
     'ui/ci-view-v1': {
       title: 'Control the mounted Actions view',
       description: 'Applies typed selection, filters, trigger draft and log controls to one current mount. It never mounts a page or performs a provider write.',
@@ -2053,7 +2056,10 @@ function createGithubPlugin(): GithubPlugin {
           eligible: true,
           source: {
             sourceContractVersion: GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION,
-            ...(event.kind === 'pullRequestLifecycle' ? { scmPullRequestLifecycle: { providerKind: 'github' } } : {}),
+            ...(event.kind === 'pullRequestLifecycle' ? { scmPullRequestLifecycle: { providerKind: 'github',
+              previewStatusActionRef: { pluginId: GITHUB_PLUGIN_ID,
+                localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus },
+            } } : {}),
             supportedObservationTransports: isGithubChecksEvent(event.localId) ? ['checkpointedPull'] : ['checkpointedPull', 'durablePush'],
             ...(isGithubChecksEvent(event.localId) ? {} : { webhookContributionRef: {
               pluginId: GITHUB_PLUGIN_ID,
@@ -2094,6 +2100,7 @@ function createGithubPlugin(): GithubPlugin {
         capabilities: ['detect', 'clone', 'fetch', 'push', 'pullRequest'],
         authService: GITHUB_CONNECTED_ACCOUNT_ID,
         resolveRefAction: GITHUB_OVERVIEW_TARGET_ACTION_ID,
+        projectReadinessAction: GITHUB_PROJECT_READINESS_ACTION_ID_V1,
       },
       runtime: {
         adapter: Object.freeze({

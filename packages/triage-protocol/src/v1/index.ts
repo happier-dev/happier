@@ -213,6 +213,7 @@ export {
     TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1,
     TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1,
     TriageConfigureSourceOfferV1Schema,
+    createTriageConfigureSourceOfferV1,
     TriageSourceAdministrationActionInputV1Schema,
     TriageSourceAdministrationActionResultV1Schema,
 } from './sourceAdministration.js';

@@ -29,7 +29,8 @@ import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-pro
 import { ProjectAccountRowMutationRequestV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { DeploymentBindingsSetStorageInputV1Schema, DeploymentDomainContentV1Schema, readDeploymentDomainArtifactV1,
     computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionBodyV1Schema,
-    EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretClientBindingsInputV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema, MachineConnectorSecretGrantInputV1Schema,
+    EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretClientBindingsInputV1Schema,
+    EnvironmentSecretLaunchAdmissionResultV1Schema, MachineConnectorSecretGrantInputV1Schema,
     readDeploymentEnvironmentArtifactV1, captureDeploymentBindingSavedSecretRevisionsV1,
     type EnvironmentSecretBindingV1, type MachineConnectorSecretGrantBodyV1 } from '@happier-dev/deployment-protocol';
 import { API_TOKEN_FULL_GRANT_V1, ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, sealSavedSecretResourceStoredContentV1,
@@ -1967,14 +1968,11 @@ describe('deployment children retain their controller Action authority', () => {
             }
             const codecPath = `/v1/machines/${encodeURIComponent(f.controller.id)}`;
             const codecPacket = packetFor();
-            const codecRefusalPhases: string[] = [];
-            const codecRead = await verifyExternalActionDomainExecutionRequest({ authorizationToken: issued.authorization.token,
+            expect(await verifyExternalActionDomainExecutionRequest({ authorizationToken: issued.authorization.token,
                 effectActionId: actionId, encodedTarget: encodeExternalActionResolvedTargetV1(target), method: 'GET', path: codecPath,
                 deploymentChildExecution: createDeploymentChildExecutionProofV1(codecPacket),
                 machineSignature: snapshotHeaders('GET', codecPath, undefined, codecPacket, f.member)[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER],
-                onRefusal: phase => { codecRefusalPhases.push(phase); },
-            });
-            expect(codecRead, JSON.stringify({ contentMode, codecRefusalPhases })).not.toBeNull();
+            })).not.toBeNull();
             await db.managedMachine.update({ where: { id: managed.id }, data: { intentRevision: managed.intentRevision + 1 } });
             expect((await app.inject({ method: 'POST', url: getPath, payload: getBody,
                 headers: snapshotHeaders('POST', getPath, getBody) })).statusCode).toBe(401);
@@ -2263,7 +2261,7 @@ describe('deployment children retain their controller Action authority', () => {
         const actionId = 'projects.readiness.read' as const;
         const target = { kind: 'machine' as const, machineId: f.controller.id };
         const input = { serverId, machineId: f.controller.id, projectId: f.environment.projectSourceId,
-            environments: [{ environmentId: f.environment.id, expectedRevision: f.environment.revision }] };
+            environments: [{ environmentId: f.environment.id, expectedRevision: f.environmentRevision }] };
         const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
         const mint = (selectedInput = input) => auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id,
             serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
@@ -2279,7 +2277,7 @@ describe('deployment children retain their controller Action authority', () => {
         if (!otherSource.ok) throw new Error(otherSource.error);
         await expect(mint({ ...input, projectId: otherSource.source.id })).rejects.toMatchObject({ code: 'credential_scope_denied' });
         await expect(mint({ ...input, projectId: crypto.randomUUID() })).rejects.toMatchObject({ code: 'credential_scope_denied' });
-        await expect(mint({ ...input, environments: [{ ...input.environments[0], expectedRevision: f.environment.revision + 1 }] }))
+        await expect(mint({ ...input, environments: [{ ...input.environments[0], expectedRevision: f.environmentRevision + 1 }] }))
             .rejects.toMatchObject({ code: 'credential_scope_denied' });
         const request = (effectActionId: 'projects.sources.read' | 'deployments.environments.get' | 'deployments.domains.list' | typeof actionId, id: string) => {
             const path = effectActionId === 'projects.sources.read'
@@ -3099,18 +3097,18 @@ describe('deployment children retain their controller Action authority', () => {
         const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
         await db.machine.update({ where: { id: f.controller.id }, data: { operationProtocolCapabilitiesRevision: 1,
             operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
-        let root: ExternalActionExecutionAuthorizationV1 | undefined;
+        const dispatched: { authorization?: ExternalActionExecutionAuthorizationV1 } = {};
         const dispatch = createExternalActionDaemonDispatcher({ io: createSocketRoomDiscoveryHarness(async () => []),
             forwardRpc: async ({ callParams }) => {
                 const request = callParams as ExternalActionDaemonDispatchRequest;
-                root = request.executionAuthorization;
+                dispatched.authorization = request.executionAuthorization;
                 return { ok: true, result: createExternalActionDaemonDispatchResponse(prepareExternalActionResponseEnvelopeV1({
                     v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result: { accepted: true } } })) };
             } });
         expect(await dispatch({ actionId, envelope, principal: { accountId: f.account.id,
             authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch }, authority: 'present_user' } })).toMatchObject({ kind: 'response' });
-        if (!root) throw new Error('Expected public dispatch authorization');
-        const dispatchedRoot = root;
+        const dispatchedRoot = dispatched.authorization;
+        if (!dispatchedRoot) throw new Error('Expected public dispatch authorization');
         const token = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
         const credentials = { token, encryption: null };
         const channel = await createRequesterCurrentnessSocketHarness();

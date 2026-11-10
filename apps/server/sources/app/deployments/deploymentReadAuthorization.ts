@@ -2,6 +2,7 @@ import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev
 import type { DeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { DeploymentRestartNativeAdmissionV1, DeploymentRestoreNativeAdmissionV1, DeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import { isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { PROJECT_READINESS_ACTION_IDS_V1, type ProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
@@ -64,7 +65,7 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
     if (admission.actionId !== binding.actionId || binding.target.kind !== 'machine'
         || binding.target.machineId !== binding.machineId || admission.machineId !== binding.machineId
         || 'installationId' in admission && admission.installationId !== binding.installationId) return null;
-    if (admission.actionId === 'projects.readiness.read') {
+    if (admission.actionId === PROJECT_READINESS_ACTION_IDS_V1[0]) {
         const source = await resolveProjectSourceAccessInTx(tx, binding.accountId, admission.projectId, authentication);
         if (!source.ok) return null;
         const contents = await Promise.all(admission.environments.map(async demand => {
@@ -90,7 +91,7 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
     environment: Readonly<{ id: string; deletedAt: Date | null; runtimeTargetLinkId: string | null;
         controllerMachineId: string | null; revision: number; contentArtifactId: string;
         contentHeaderVersion: number; contentBodyVersion: number }>,
-    admission: Exclude<DeploymentReadAdmissionV1, { actionId: 'projects.readiness.read' }> | DeploymentRestartNativeAdmissionV1
+    admission: Exclude<DeploymentReadAdmissionV1, { actionId: ProjectReadinessActionIdV1 }> | DeploymentRestartNativeAdmissionV1
         | DeploymentRestoreNativeAdmissionV1 | Omit<DeploymentRestoreNativeAdmissionV1, 'expectedRevision'> | DeploymentBackupNativeAdmissionV1,
     contentAdmission?: Readonly<{ actorAccountId: string; owner: ProjectSourceOwnerV1 }>,
 ): Promise<Readonly<{ artifactIds: readonly string[] }> | null> {
@@ -146,7 +147,7 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
 
 /** An admitted Project read selects current content membership without repeating Source authority. */
 export async function readAdmittedProjectReadinessScopeInTx(tx: Tx,
-    admission: Extract<DeploymentReadAdmissionV1, { actionId: 'projects.readiness.read' }>,
+    admission: Extract<DeploymentReadAdmissionV1, { actionId: ProjectReadinessActionIdV1 }>,
 ): Promise<Readonly<{ artifactContents: readonly DeploymentContentReference[] }>> {
     const artifactContents: DeploymentContentReference[] = [];
     for (const ids of portableQueryChunks({ values: admission.environments.map(item => item.environmentId), bindingsPerValue: 1,

@@ -12,6 +12,7 @@ describe('SCM hosting-provider plugin contribution schema', () => {
       capabilities: ['detect', 'clone', 'pullRequest'],
       authService: { pluginId: 'com.acme.accounts', localId: 'acme' },
       resolveRefAction: 'repository/resolve-ref',
+      projectReadinessAction: 'repository/read-readiness',
       metadata: { tier: 'enterprise', hosted: true },
     })).toEqual({
       id: 'acme-forge',
@@ -21,6 +22,7 @@ describe('SCM hosting-provider plugin contribution schema', () => {
       capabilities: ['detect', 'clone', 'pullRequest'],
       authService: { pluginId: 'com.acme.accounts', localId: 'acme' },
       resolveRefAction: 'repository/resolve-ref',
+      projectReadinessAction: 'repository/read-readiness',
       metadata: { tier: 'enterprise', hosted: true },
     });
   });

@@ -6,6 +6,7 @@ import { DeploymentHealthReadInputV1Schema, DeploymentHealthCurrentInputV1Schema
 
 import { isDeploymentReadAdmissionActionIdV1 } from './deploymentActionIdsV1.js';
 import { ProjectReadinessReadInputV1Schema } from '../projects/readinessInputV1.js';
+import { PROJECT_READINESS_ACTION_IDS_V1 } from '../actions/projectReadinessActionIdsV1.js';
 import { DeploymentDataQueryInputV1Schema } from './deploymentReadsV1.js';
 export { isDeploymentReadActionIdV1, isDeploymentNativeReadActionIdV1, isDeploymentReadAdmissionActionIdV1 } from './deploymentActionIdsV1.js';
 
@@ -13,7 +14,7 @@ const references = { environmentId: id, deploymentId: id, targetLinkId: id, mach
 
 /** Non-content purpose only; the signed binding owns Home and the sealed input owns service identity. */
 export const DeploymentReadAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
-  z.strictObject({ actionId: z.literal('projects.readiness.read'), projectId: id, machineId: id,
+  z.strictObject({ actionId: z.literal(PROJECT_READINESS_ACTION_IDS_V1[0]), projectId: id, machineId: id,
     environments: z.array(z.strictObject({ environmentId: id, expectedRevision: revision })) }),
   z.strictObject({ actionId: z.literal('deployments.health.current'), environmentId: id, targetLinkId: id, machineId: id }),
   z.strictObject({ actionId: z.literal('deployments.health.read'), ...references }),
@@ -25,7 +26,7 @@ export type DeploymentReadAdmissionV1 = z.infer<typeof DeploymentReadAdmissionV1
 
 export function projectDeploymentReadAdmissionV1(actionId: string, input: unknown): DeploymentReadAdmissionV1 | undefined {
   if (!isDeploymentReadAdmissionActionIdV1(actionId)) return undefined;
-  if (actionId === 'projects.readiness.read') {
+  if (actionId === PROJECT_READINESS_ACTION_IDS_V1[0]) {
     const { projectId, machineId, environments } = ProjectReadinessReadInputV1Schema.parse(input);
     return { actionId, projectId, machineId,
       environments: environments.map(({ environmentId, expectedRevision }) => ({ environmentId, expectedRevision })) };

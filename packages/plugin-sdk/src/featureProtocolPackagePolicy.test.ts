@@ -107,6 +107,7 @@ const FEATURE_PROTOCOL_PROTOCOL_AUTHORING_IMPORT_AUDIENCE = Object.freeze({
     // Current Channels/Triage wire facts use these canonical portable owners;
     // no service, host admission, or operational validator is admitted here.
     ScmHostingRepositoryIdentityV1ProtocolSchema: 'feature-protocol',
+    ScmHostingProjectReadinessSourceFactV1ProtocolSchema: 'feature-protocol',
     FileDownloadDestinationV1ProtocolSchema: 'feature-protocol',
     FileDownloadResultV1ProtocolSchema: 'feature-protocol',
     TriageSourceInstanceIdV1Schema: 'feature-protocol',

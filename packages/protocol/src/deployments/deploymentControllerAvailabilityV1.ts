@@ -1,5 +1,6 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { isMachineOnlineV1, type MachinePresenceV1 } from '../machines/machineReachabilityV1.js';
 import { DeploymentIdentifierV1Schema } from './deploymentIdentifiersV1.js';
 
@@ -9,6 +10,7 @@ export const DeploymentControllerAvailabilityV1Schema = lazyZodSchema(() => z.st
     state: z.enum(['available', 'paused', 'unknown']),
 }));
 export type DeploymentControllerAvailabilityV1 = z.infer<typeof DeploymentControllerAvailabilityV1Schema>;
+export const DeploymentControllerAvailabilityV1ProtocolSchema = projectZodProtocolSchema(DeploymentControllerAvailabilityV1Schema);
 
 /** Reads and pushed Machine consumers share the existing presence decision, without another timer. */
 export function projectDeploymentControllerAvailabilityV1(

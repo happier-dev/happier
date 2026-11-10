@@ -10,3 +10,4 @@ export const GITHUB_CI_ACTION_IDS_V1 = Object.freeze({
   forceCancelRun: 'github/actions/run-force-cancel', approveForkRun: 'github/actions/fork-run-approve', listDeployments: 'github/actions/deployments-list',
   readDeploymentHistory: 'github/actions/deployment-history-read', approveDeployment: 'github/actions/deployment-approve', rejectDeployment: 'github/actions/deployment-reject', readFailureContext: 'github/actions/failure-context-read',
 } satisfies Record<ForgeCiOperationIdV1, string>);
+export const GITHUB_PROJECT_READINESS_ACTION_ID_V1 = 'github/actions/project-readiness-read';

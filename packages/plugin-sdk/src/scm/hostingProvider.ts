@@ -29,6 +29,14 @@ export type HostingProviderContribution = {
      * the requester's Account executor and verifies repository/ref provenance.
      */
     resolveRefAction?: string;
+    /**
+     * Safe, read-only Account Action accepting `{ repository }` and returning
+     * `{ repository, ci, security }`, with each fact carrying `status` and `reason`.
+     * A fact may offer an existing native `setupSurface` contribution identity.
+     * The provider owns current source presence; the host invokes it through the
+     * requester's Account executor and verifies the exact repository echo.
+     */
+    projectReadinessAction?: string;
     metadata?: Record<string, PluginJsonValueV2>;
 };
 

@@ -2,9 +2,9 @@ import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
-import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
+import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginContributionReferenceV2Schema, PluginJsonValueV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
-import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
+import { asProtocolZod, projectZodProtocolSchema } from "../actions/internalProtocolZodAdapter.js";
 
 export const PluginScmOperationV2Schema = lazyZodSchema(() => z.enum(['detect', 'clone', 'fetch', 'status', 'diff', 'commit', 'push', 'pullRequest']));
 export const PluginScmOperationsV2Schema = lazyZodSchema(() => z.array(PluginScmOperationV2Schema).check(z.minLength(1, 'SCM contributions must declare at least one operation.'), z.superRefine((operations, ctx) => {
@@ -20,6 +20,15 @@ export const PluginScmOperationsV2Schema = lazyZodSchema(() => z.array(PluginScm
       seen.add(operation);
     });
   })));
+/** Current source presence, independently projected by the repository's hosting provider. */
+export const ScmHostingProjectReadinessSourceFactV1Schema = lazyZodSchema(() => z.strictObject({
+  status: z.enum(['ready', 'actionNeeded', 'unavailable']),
+  reason: z.string().check(z.minLength(1)),
+  setupSurface: z.optional(asProtocolZod(PluginContributionIdentityV1Schema)),
+}));
+export type ScmHostingProjectReadinessSourceFactV1 = z.infer<typeof ScmHostingProjectReadinessSourceFactV1Schema>;
+export const ScmHostingProjectReadinessSourceFactV1ProtocolSchema = projectZodProtocolSchema(ScmHostingProjectReadinessSourceFactV1Schema);
+
 export const ScmHostingProviderContributionSchema = lazyZodSchema(() => z.strictObject({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
@@ -29,6 +38,8 @@ export const ScmHostingProviderContributionSchema = lazyZodSchema(() => z.strict
   authService: zMini.optional(asProtocolZod(PluginContributionReferenceV2Schema)),
   /** Read-only Action resolving an exact repository ref to immutable commit provenance. */
   resolveRefAction: zMini.optional(asProtocolZod(PluginContributionLocalIdSchema)),
+  /** Safe Account Action projecting current CI and security source presence for an exact repository. */
+  projectReadinessAction: zMini.optional(asProtocolZod(PluginContributionLocalIdSchema)),
   metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
 }));
 export type ScmHostingProviderContribution = z.infer<typeof ScmHostingProviderContributionSchema>;

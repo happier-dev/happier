@@ -2,6 +2,7 @@ import {
     DeploymentPreviewProvenanceV1ProtocolSchema as canonicalProvenance,
     DeploymentSourceIntentV1ProtocolSchema as canonicalSourceIntent,
     DeploymentReceiptOperationV1ProtocolSchema as canonicalReceiptOperation,
+    DeploymentControllerAvailabilityV1ProtocolSchema as canonicalControllerAvailability,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1,
     readDeploymentArtifactJsonBodyV1 as canonicalReadArtifact,
@@ -10,6 +11,7 @@ import type {
     DeploymentPreviewProvenanceV1,
     DeploymentSourceIntentV1,
     DeploymentReceiptHeaderV1,
+    DeploymentControllerAvailabilityV1,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import {
     readDeploymentReceiptArtifactV1 as canonicalReadReceipt,
@@ -38,6 +40,9 @@ export const ProtocolDeploymentSourceIntentV1Schema: ProtocolComposableSchema<De
 
 /** Operation is copied verbatim from the canonical receipt, including rollback and promotion. */
 export const ProtocolDeploymentReceiptOperationV1Schema: ProtocolComposableSchema<DeploymentReceiptHeaderV1['operation']> = canonicalReceiptOperation;
+
+/** Controller reachability remains independent of receipt readiness. */
+export const ProtocolDeploymentControllerAvailabilityV1Schema: ProtocolComposableSchema<DeploymentControllerAvailabilityV1> = canonicalControllerAvailability;
 
 /** The Artifact owner opens bytes; this shared reader checks exact identity, revisions, kind and JSON. */
 export const readDeploymentArtifactJsonBodyV1: (

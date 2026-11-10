@@ -39,6 +39,32 @@ const binding = {
 const randomBytes = (length: number) => new Uint8Array(length).fill(2);
 
 describe('whole external Action encryption', () => {
+  it('binds backup configure admission without disclosing authored destination configuration', () => {
+    const root = { ...binding, actionId: 'deployments.backups.configure' };
+    const input = { serverId: binding.serverIdentityId, environmentId: 'environment', expectedRevision: 2,
+      intent: 'save', configuration: { configRevision: 1,
+        destinationRef: { pluginId: 'happier.backup.local', localId: 'open' }, occurrenceId: 'destination',
+        config: { path: '/private/repository' }, credentialBindings: [],
+        sources: [{ kind: 'dump', sourceId: 'database', service: 'postgres', consistency: 'logical' }],
+        ownership: { environmentId: 'environment', prefix: 'private-owner-prefix' }, retention: { kind: 'keepEverything' } } };
+    const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: root, input, material, randomBytes });
+    expect(envelope.deploymentNativeAdmission).toMatchObject({ kind: 'backupConfigure', actionId: root.actionId,
+      environmentId: input.environmentId, expectedRevision: 2, intent: 'save' });
+    expect(JSON.stringify(envelope)).not.toContain('/private/repository');
+    expect(JSON.stringify(envelope)).not.toContain('private-owner-prefix');
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      envelope, binding: root, material })).toEqual({ input });
+    for (const admission of [undefined,
+      { ...envelope.deploymentNativeAdmission, environmentId: 'foreign' },
+      { ...envelope.deploymentNativeAdmission, expectedRevision: 3 },
+      { ...envelope.deploymentNativeAdmission, intent: 'initializeAndSave' },
+      projectDeploymentNativeAdmissionV1(root.actionId, { ...input, configuration: {
+        ...input.configuration, config: { path: '/substituted/repository' } } })]) {
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+        envelope: { ...envelope, deploymentNativeAdmission: admission }, binding: root, material })).toBeNull();
+    }
+  });
   it('binds Browser Session routing to the sealed operands before execution', () => {
     const browserBinding = { ...binding, actionId: 'browser.view.open' };
     const input = { browserSessionId: 'owner-session', viewId: 'view' };
@@ -591,6 +617,25 @@ describe('whole external Action encryption', () => {
       const { deploymentReadAdmission: _admission, ...missing } = request;
       expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: missing, binding: readBinding, material })).toBeNull();
     });
+  it('binds Project readiness scope to encrypted input without widening Project or Environment reads', () => {
+    const input = { serverId: binding.serverIdentityId, machineId: binding.target.machineId,
+      projectId: 'selected-project', environments: [{ environmentId: 'environment', expectedRevision: 3 }] };
+    const readBinding = { ...binding, actionId: 'projects.readiness.read' };
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: readBinding, input, material, randomBytes });
+    expect(request.deploymentReadAdmission).toEqual({ actionId: readBinding.actionId, machineId: input.machineId,
+      projectId: input.projectId, environments: input.environments });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      envelope: request, binding: readBinding, material })).toEqual({ input });
+    for (const replacement of [undefined, { ...request.deploymentReadAdmission, projectId: 'another-project' },
+      { ...request.deploymentReadAdmission, machineId: 'another-controller' },
+      { ...request.deploymentReadAdmission, environments: [] },
+      { ...request.deploymentReadAdmission, environments: [{ environmentId: 'another-environment', expectedRevision: 3 }] },
+      { ...request.deploymentReadAdmission, environments: [{ environmentId: 'environment', expectedRevision: 4 }] }]) {
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+        envelope: { ...request, deploymentReadAdmission: replacement }, binding: readBinding, material })).toBeNull();
+    }
+  });
   it('binds current edge routing to encrypted input without accepting caller-supplied proof', () => {
     const input = { serverId: binding.serverIdentityId, environmentId: 'environment', targetLinkId: 'runtime',
       machineId: binding.target.machineId };

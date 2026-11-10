@@ -94,6 +94,7 @@ export type { FileDownloadDestinationV1, FileDownloadResultV1 } from './fileDown
 export { FileDownloadDestinationV1ProtocolSchema, FileDownloadResultV1ProtocolSchema } from './fileDownload.js';
 /** SCM owns the types on `/scm`; these are its composable schema projections. */
 export { ScmHostingRepositoryIdentityV1ProtocolSchema } from './hostingRepositoryIdentity.js';
+export { ScmHostingProjectReadinessSourceFactV1ProtocolSchema } from './hostingRepositoryIdentity.js';
 export { ScmHostingPullRequestLifecycleV1ProtocolSchema, ScmHostingPullRequestLifecycleActionV1ProtocolSchema } from './pullRequestLifecycle.js';
 export { ScmPullRequestSummaryProtocolSchema } from './scmPullRequest.js';
 export { PluginUiResourceIntentV1Schema, type PluginUiResourceIntentV1 } from './resourceIntent.js';
@@ -111,6 +112,7 @@ export {
     ProtocolDeploymentPreviewProvenanceV1Schema,
     ProtocolDeploymentSourceIntentV1Schema,
     ProtocolDeploymentReceiptOperationV1Schema,
+    ProtocolDeploymentControllerAvailabilityV1Schema,
     readDeploymentArtifactJsonBodyV1,
     readDeploymentReceiptArtifactV1,
     readDeploymentTargetLinkArtifactV1,

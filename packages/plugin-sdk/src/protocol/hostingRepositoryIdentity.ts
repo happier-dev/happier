@@ -1,4 +1,5 @@
 import { ScmHostingRepositoryIdentityV1ProtocolSchema as canonicalIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
+import { ScmHostingProjectReadinessSourceFactV1ProtocolSchema as canonicalSourceFact } from '@happier-dev/protocol/plugins/contributions/scmHostingProviders';
 
 export type ProtocolScmHostingProviderKind = ScmHostingProviderRef['kind'];
 
@@ -34,3 +35,6 @@ export const ScmHostingRepositoryIdentityV1ProtocolSchema: ProtocolComposableSch
     deployment: string;
     repository: string;
 }>> = canonicalIdentity;
+
+/** The hosting provider's canonical current source presence and native setup offer. */
+export const ScmHostingProjectReadinessSourceFactV1ProtocolSchema: ProtocolComposableSchema<ReturnType<typeof canonicalSourceFact.parse>> = canonicalSourceFact;
