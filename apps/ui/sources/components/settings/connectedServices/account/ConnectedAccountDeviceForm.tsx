@@ -38,6 +38,27 @@ function useCodeExpiry(expiresAtMs: number | undefined): number | null {
 }
 
 /**
+ * The waiting line and the code's deadline: the only part of the form that ticks. It tells the form once,
+ * when the code runs out, so the code, its controls and the steps stay still while the seconds count down.
+ */
+const DeviceCodeWaitingLine = React.memo(function DeviceCodeWaitingLine(props: Readonly<{
+    expiresAtMs: number | undefined;
+    onExpired: (expiresAtMs: number) => void;
+}>) {
+    const { expiresAtMs, onExpired } = props;
+    const msLeft = useCodeExpiry(expiresAtMs);
+    const expired = msLeft !== null && msLeft <= 0;
+    React.useEffect(() => {
+        if (expired && expiresAtMs !== undefined) onExpired(expiresAtMs);
+    }, [expired, expiresAtMs, onExpired]);
+    return (
+        <Text style={stylesheet.waitingText} numberOfLines={1}>{msLeft !== null
+            ? t('connectedServicesSettings.deviceWaitingApprovalExpires', { time: formatExpiry(msLeft) })
+            : t('connectedServicesSettings.deviceWaitingApproval')}</Text>
+    );
+});
+
+/**
  * Signing in with a code (lab `csvc` A2): the code is the hero, beside Copy and the one primary
  * action — open the page where it is entered. Underneath, the present: waiting for approval, and how
  * long the code lasts. Happier checks at the provider's cadence; a service without a cadence keeps
@@ -66,8 +87,10 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
     const phone = useDeviceType() === 'phone';
     const openUrl = props.verificationUriComplete ?? props.verificationUri ?? '';
     const where = props.verificationUri ? props.verificationUri.replace(/^https?:\/\//, '') : null;
-    const msLeft = useCodeExpiry(props.expiresAtMs);
-    const expired = msLeft !== null && msLeft <= 0;
+    // The deadline that has run out; a new code (a new deadline) is live again until its own runs out.
+    const [expiredAtMs, setExpiredAtMs] = React.useState<number | null>(null);
+    const expired = props.expiresAtMs !== undefined
+        && (expiredAtMs === props.expiresAtMs || props.expiresAtMs <= Date.now());
     const [copied, setCopied] = React.useState(false);
     const writeClipboard = useClipboardWrite(undefined, { enabled: Boolean(props.userCode) });
     const service = props.serviceTitle ?? null;
@@ -124,9 +147,7 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
                     <>
                         <View style={styles.waitDot} />
                         {/* One status line, never wrapped: the wait and its deadline, the time in tabular figures. */}
-                        <Text style={styles.waitingText} numberOfLines={1}>{msLeft !== null
-                            ? t('connectedServicesSettings.deviceWaitingApprovalExpires', { time: formatExpiry(msLeft) })
-                            : t('connectedServicesSettings.deviceWaitingApproval')}</Text>
+                        <DeviceCodeWaitingLine expiresAtMs={props.expiresAtMs} onExpired={setExpiredAtMs} />
                     </>
                 )}
             </View>

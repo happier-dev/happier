@@ -17,7 +17,7 @@ const { ConnectedAccountDeviceForm } = await import('./ConnectedAccountDeviceFor
 const { SetupSteps } = await import('@/components/ui/setupBlocks/SetupSteps');
 const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
 
-it.fails('muse.experience.pc1 commits only the expiry leaf for 60 ticks and leaves static controls quiet', async () => {
+it('muse.experience.pc1 commits only the expiry leaf for 60 ticks and leaves static controls quiet', async () => {
     vi.useFakeTimers();
     const restoreAuth = installSignedOutAuthForTest();
     const container = document.createElement('div');
