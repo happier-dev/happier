@@ -751,6 +751,10 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
             // File-environment values keep their selected Agent paths when native
             // environment projection adds its separately owned home.
             Object.assign(agentEnvironment, launchEnvironment.agentLaunchMaterials?.environment);
+            // A shared source root belongs to the controller UID. The selected
+            // native identity owns its state alongside its credential home.
+            const stateRootKey = stateSharingDescriptor.state.rootEnvironmentKey;
+            if (stateRootKey) agentEnvironment[stateRootKey] = agentNativeHome;
             agentSelectedMaterials.push(...Object.entries(nativeHomeFiles).map(([fileId, contents]) => Object.freeze({
               relativePath: `${AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH}/${fileId}`, contentBase64: Buffer.from(contents).toString('base64'),
             })));

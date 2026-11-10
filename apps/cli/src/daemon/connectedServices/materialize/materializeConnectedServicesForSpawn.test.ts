@@ -1240,6 +1240,39 @@ describe('materializeConnectedServicesForSpawn', () => {
     }
   });
 
+  it.each(['shared', 'isolated'] as const)('projects Codex SQLite into the selected native home in %s state mode', async stateMode => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-native-sqlite-'));
+    let result: Awaited<ReturnType<typeof materializeConnectedServicesForSpawn>> = null;
+    try {
+      const sourceHome = join(root, 'controller', '.codex');
+      await mkdir(sourceHome, { recursive: true });
+      const record = buildConnectedServiceCredentialRecord({
+        now: 10, serviceId: 'openai-codex', profileId: 'work', kind: 'oauth', expiresAt: 100000,
+        oauth: { accessToken: 'fixture-access', refreshToken: 'fixture-refresh', idToken: 'fixture-id',
+          scope: null, tokenType: null, providerAccountId: 'fixture-account', providerEmail: null },
+      });
+      const runtimeHome = join(root, 'selected-uid', 'codex');
+      result = await materializeConnectedServicesForSpawn({
+        agentId: 'codex', materializationKey: 'shared-uid-sqlite', activeServerDir: join(root, 'server'),
+        baseDir: join(root, 'materialized'), recordsByServiceId: new Map([['openai-codex', record]]),
+        processEnv: { HOME: join(root, 'controller'), CODEX_HOME: sourceHome, CODEX_SQLITE_HOME: sourceHome },
+        agentLaunchTarget: { runtimeHome },
+        accountSettings: { connectedServicesProviderStateSharingSettingsV1: {
+          v: 1, defaults: { configMode: 'isolated', stateMode }, byAgentId: {}, acknowledgedRisksByAgentId: {},
+        } },
+      });
+      const nativeHome = join(runtimeHome, 'native-home');
+      expect(result?.agentLaunchMaterials?.environment).toMatchObject({
+        CODEX_HOME: nativeHome, CODEX_SQLITE_HOME: nativeHome,
+      });
+      // The same-UID projection retains the selected sharing policy.
+      expect(result?.env.CODEX_SQLITE_HOME).toBe(stateMode === 'shared' ? sourceHome : result?.env.CODEX_HOME);
+    } finally {
+      await result?.cleanupOnExit?.();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     { agentId: 'codex', serviceId: 'openai-codex', environmentKey: 'CODEX_HOME', stateEntry: 'sessions' },
     { agentId: 'claude', serviceId: 'claude-subscription', environmentKey: 'CLAUDE_CONFIG_DIR', stateEntry: 'projects' },

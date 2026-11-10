@@ -1034,7 +1034,11 @@ Codex's descriptor declares `CODEX_SQLITE_HOME` as its state-root environment
 key for materialized homes. The canonical descriptor application selects
 the native source's configured SQLite root in shared mode, falling back
 to its native `CODEX_HOME`. Isolated, probe and degraded launches select their
-own materialized home. Complete `sessions`
+own materialized home. When launching under a selected native UID, the daemon's
+materialization owner binds the descriptor-declared state-root environment key
+to that UID's selected native home, alongside its credential-home environment
+key. Controller-owned shared SQLite paths cannot carry into that projection.
+Complete `sessions`
 and `archived_sessions` trees remain linked in shared mode; live SQLite files
 and their WAL/SHM companions are never copied or linked. This matches 0.2's
 native shared-home contract and avoids rebuilding the same history index for
