@@ -50,6 +50,8 @@ import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNa
 import { getInstalledPluginUiClientExecutableComposition, resolvePluginUiClientActionRegistration } from '@/components/plugins/reactNative/clientExecutableContributions';
 import { resolveProjectedPluginUiClientExecutables } from '@/components/plugins/reactNative/clientExecutableProjection';
 import { dispatchPluginSurfaceAction } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import { createPluginSurfaceHostApi } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
+import { createCanonicalPluginReactNativeHostApiAdapter } from '@/components/plugins/reactNative/hostApi';
 import type {
     PluginReactNativeExecutableExport,
     PluginReactNativeLoaderBackend,
@@ -2719,8 +2721,9 @@ describe('current UI context Voice tool port', () => {
         expect(daemonRequests).toEqual([]);
     });
 
-    it('retains outcome_unknown and sends correlated cancellation when an already-dispatched non-safe daemon Action retires', async () => {
+    it.each(['retirement', 'caller cancellation'] as const)('keeps an admitted daemon Action settlement distinct from %s', async cancellation => {
         const retirement = new AbortController();
+        const attempt = new AbortController();
         let current: CurrentUiContextResolvedCommand | null = {
             id: COMMAND_ID,
             command: {
@@ -2732,13 +2735,14 @@ describe('current UI context Voice tool port', () => {
         };
         let rpcStarted!: () => void;
         const rpcStartedPromise = new Promise<void>((resolve) => { rpcStarted = resolve; });
-        let resolveRpc = (_result: Readonly<{ ok: false; code: string }>): void => {
+        type Reply = Readonly<{ ok: false; code: string }> | Readonly<{ ok: true; result: { ticketId: string } }>;
+        let resolveRpc = (_result: Reply): void => {
             throw new Error('daemon Action RPC did not start');
         };
         let observedSignal: AbortSignal | undefined;
         daemonReply.mockReset();
         daemonReply.mockImplementation((input: Readonly<{ signal?: AbortSignal }>) => (
-            new Promise<Readonly<{ ok: false; code: string }>>((resolve) => {
+            new Promise<Reply>((resolve) => {
                 observedSignal = input.signal;
                 resolveRpc = resolve;
                 rpcStarted();
@@ -2756,19 +2760,26 @@ describe('current UI context Voice tool port', () => {
         });
 
         let pending!: Promise<CurrentUiContextVoiceInvocationOutcome>;
-        await act(async () => { pending = requireCommandInvoker(port)({ commandId: COMMAND_ID }); });
+        await act(async () => { pending = requireCommandInvoker(port)({ commandId: COMMAND_ID, signal: attempt.signal }); });
         await vi.waitFor(() => expect(modalScreen.findByTestId('app-shell-confirmation-confirm')).not.toBeNull());
         expect(daemonRequests).toEqual([]);
         await modalScreen.pressByTestIdAsync('app-shell-confirmation-confirm');
         await rpcStartedPromise;
         current = null;
-        await act(async () => { retirement.abort(new Error('the exact command retired while confirmation was pending')); });
+        await act(async () => {
+            if (cancellation === 'retirement') retirement.abort(new Error('the presenting command retired'));
+            else attempt.abort(new Error('the caller cancelled its dispatched Action'));
+        });
         try {
-            expect(observedSignal?.aborted).toBe(true);
+            expect(observedSignal?.aborted).toBe(cancellation === 'caller cancellation');
         } finally {
-            resolveRpc({ ok: false, code: 'plugin_action_aborted' });
+            resolveRpc(cancellation === 'caller cancellation'
+                ? { ok: false, code: 'plugin_action_aborted' }
+                : { ok: true, result: { ticketId: 'T-126' } });
         }
-        await expect(pending).resolves.toEqual({ ok: false, code: 'outcome_unknown' });
+        await expect(pending).resolves.toEqual(cancellation === 'caller cancellation'
+            ? { ok: false, code: 'outcome_unknown' }
+            : { ok: true, result: { ticketId: 'T-126' } });
         const calls = transportSockets.flatMap(socket => vi.mocked(socket.emitWithAck).mock.calls);
         const dispatched = calls.find(([event, payload]) => event === SOCKET_RPC_EVENTS.CALL
             && payload && typeof payload === 'object' && 'method' in payload
@@ -2778,7 +2789,7 @@ describe('current UI context Voice tool port', () => {
         const cancellations = transportSockets.flatMap(socket => vi.mocked(socket.emit).mock.calls)
             .filter(([event]) => event === SOCKET_RPC_EVENTS.CANCEL)
             .map(([, payload]) => SocketRpcCancellationPayloadSchema.parse(payload));
-        expect(cancellations.map(receipt => receipt.requestId)).toEqual([requestId]);
+        expect(cancellations.map(receipt => receipt.requestId)).toEqual(cancellation === 'caller cancellation' ? [requestId] : []);
     });
 
     it.each(['action', 'command'] as const)('admits a Session-scoped client %s using only the host current Session binding', async (entryPoint) => {
@@ -2932,7 +2943,7 @@ describe('current UI context Voice tool port', () => {
         }
     });
 
-    it('projects a retirement after a client handler begins as outcome_unknown', async () => {
+    it('projects explicit caller withdrawal after a client handler begins as outcome_unknown', async () => {
         let handlerEntered!: () => void;
         const handlerEnteredPromise = new Promise<void>((resolve) => { handlerEntered = resolve; });
         const handler = vi.fn(() => {
@@ -2969,7 +2980,7 @@ describe('current UI context Voice tool port', () => {
                     signal: attempt.signal,
                 });
                 await handlerEnteredPromise;
-                retirement.abort(new Error('the exact current command retired after its client Action entered'));
+                attempt.abort(new Error('the caller withdrew after its client Action entered'));
                 await expect(pending).resolves.toEqual({ ok: false, code: 'outcome_unknown' });
             } finally {
                 restoreAbortSignalAny();
@@ -2980,16 +2991,47 @@ describe('current UI context Voice tool port', () => {
         }
     });
 
-    it('retains a known client settlement when the exact current command retires afterward', async () => {
-        let handlerReturned!: () => void;
-        const handlerReturnedPromise = new Promise<void>((resolve) => { handlerReturned = resolve; });
-        const handler = vi.fn(() => {
-            handlerReturned();
-            return { committed: true };
-        });
-        const fixture = createCurrentUiClientActionFixture({ handler });
+    it('retains the client result when settling ephemeral input closes its publishing modal', async () => {
         const retirement = new AbortController();
         const attempt = new AbortController();
+        const selectionAttempt = new AbortController();
+        let modalOpen = true;
+        let selectedInput: unknown;
+        const requestSurface = {
+            pluginId: CLIENT_ACTION_ID.pluginId, contributionId: 'comparison-picker',
+            surfaceId: 'comparison-picker-modal', placement: 'ephemeralSurface' as const,
+            platform: 'ios' as const, channel: 'internal' as const, resourceScope: [], diagnostics: [],
+        };
+        const host = createPluginSurfaceHostApi({
+            surfaceContext: requestSurface,
+            isCurrent: () => modalOpen,
+            handlers: { settleEphemeralInput: request => {
+                selectedInput = request.payload;
+                modalOpen = false;
+                retirement.abort();
+                // Closing the modal also runs the mounted selection's cleanup.
+                selectionAttempt.abort();
+                return null;
+            } },
+        });
+        const carrier = createCanonicalPluginReactNativeHostApiAdapter({
+            surface: {
+                mount: { kind: 'destination', destination: { pluginId: CLIENT_ACTION_ID.pluginId, localId: 'comparison-picker' }, container: 'modal' },
+                target: { kind: 'app' }, platform: 'ios', locale: 'en', direction: 'ltr',
+                colorScheme: 'light', contrast: 'normal', textScale: 1, reducedMotion: false,
+                screenReaderEnabled: false, safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 }, translations: {},
+                targetedContributions: { target: { pluginId: CLIENT_ACTION_ID.pluginId, immutableGenerationId: 'generation' }, points: [] },
+            },
+            requestSurface,
+            handleRequest: host.handleRequest,
+            installedMethods: host.admissionMethods,
+            isCurrent: () => modalOpen,
+        });
+        const handler = vi.fn(async () => {
+            await carrier.api.settleEphemeralInput({ kind: 'completed', input: { pullRequestNumber: 63 } }, { signal: selectionAttempt.signal });
+            return { status: 'applied' };
+        });
+        const fixture = createCurrentUiClientActionFixture({ handler });
         const current: CurrentUiContextResolvedCommand = {
             id: COMMAND_ID,
             command: {
@@ -3001,7 +3043,7 @@ describe('current UI context Voice tool port', () => {
         const port = createCurrentUiContextVoiceToolPort({
             reader: {
                 readCurrentUiContext: () => null,
-                resolveCurrentUiCommand: (id) => id === COMMAND_ID ? current : null,
+                resolveCurrentUiCommand: (id) => modalOpen && id === COMMAND_ID ? current : null,
                 subscribe: () => () => {},
             },
             readProjection: () => fixture.projection,
@@ -3012,19 +3054,41 @@ describe('current UI context Voice tool port', () => {
             await fixture.composition.reconcile([fixture.activation]);
             const restoreAbortSignalAny = withoutAbortSignalAny();
             try {
-                const pending = requireCommandInvoker(port)({
+                await expect(requireCommandInvoker(port)({
                     commandId: COMMAND_ID,
                     signal: attempt.signal,
-                });
-                await handlerReturnedPromise;
-                retirement.abort(new Error('the exact current command retired after the client Action settled'));
-                await expect(pending).resolves.toEqual({ ok: true, result: { committed: true } });
+                })).resolves.toEqual({ ok: true, result: { status: 'applied' } });
+                expect(modalOpen).toBe(false);
+                expect(selectedInput).toEqual({ kind: 'completed', input: { pullRequestNumber: 63 } });
             } finally {
                 restoreAbortSignalAny();
             }
             expect(handler).toHaveBeenCalledTimes(1);
         } finally {
+            carrier.dispose();
+            host.dispose?.();
             await fixture.composition.unload();
         }
+    });
+
+    it.each([undefined, { mountId: 'bound', operation: { kind: 'refresh' } }])('uses caller JSON only for an opaque Action with no authored input (%j)', async authoredInput => {
+        const callerInput = { mountId: 'picker', operation: { kind: 'search', query: 'PR 63' } };
+        const fixture = createCurrentUiClientActionFixture({ handler: async input => ({ received: input }) });
+        const current: CurrentUiContextResolvedCommand = {
+            id: COMMAND_ID,
+            command: { kind: 'executeAction', action: CLIENT_ACTION_ID, ...(authoredInput === undefined ? {} : { input: authoredInput }) },
+            retirementSignal: new AbortController().signal,
+        };
+        const port = createCurrentUiContextVoiceToolPort({
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: id => id === COMMAND_ID ? current : null, subscribe: () => () => {} },
+            readProjection: () => fixture.projection, readNavigationBinding: () => null,
+        });
+        await fixture.composition.unload();
+        try {
+            await fixture.composition.reconcile([fixture.activation]);
+            await expect(requireCommandInvoker(port)({ commandId: COMMAND_ID, input: callerInput })).resolves.toEqual({
+                ok: true, result: { received: authoredInput ?? callerInput },
+            });
+        } finally { await fixture.composition.unload(); }
     });
 });

@@ -250,7 +250,7 @@ export type PluginSurfaceActionExecutorContext = ActionExecutorContext & Readonl
         caller: Pick<DispatchPluginSurfaceActionInput, 'callerPluginId' | 'callerContributionLocalId'
             | 'callerBinding' | 'callerSourceCustody' | 'targetSourceCustody' | 'invocation' | 'actionRequestId' | 'onDaemonActionOperationAdmitted'
             | 'targetedOperation' | 'selectedActionInput' | 'isMachineAvailable' | 'isContributedActionAvailable' | 'onPreInvocationUnavailable'
-            | 'requiredReadOnly' | 'readObservation' | 'actionAccountLifetime'>;
+            | 'requiredReadOnly' | 'readObservation' | 'actionAccountLifetime' | 'onInvocationAdmitted'>;
         contributedAction?: PluginSurfaceContributedActionBinding;
         clientAction?: PluginSurfaceClientActionBinding;
         signal?: AbortSignal;
@@ -419,6 +419,8 @@ export type DispatchPluginSurfaceActionInput = Readonly<{
     machineAvailability?: ActionExecutionOptions['machineAvailability'];
     /** Exact local refusal phase; never inherited by an entered caller's nested Action. */
     onPreInvocationUnavailable?: () => void;
+    /** Host-private admission notification: finite work no longer borrows its presenting command's lifetime. */
+    onInvocationAdmitted?: () => void;
     signal?: AbortSignal;
     isCurrent?: () => boolean;
     /** Exact target-scoped admission handle retained host-private after form selection. */
@@ -1362,6 +1364,7 @@ async function prepareContributedActionInvocation(
             isContributedActionAvailable: input.isContributedActionAvailable, onPreInvocationUnavailable: input.onPreInvocationUnavailable,
             requiredReadOnly: input.requiredReadOnly, readObservation: input.readObservation,
             actionAccountLifetime: input.actionAccountLifetime,
+            onInvocationAdmitted: input.onInvocationAdmitted,
         } },
         ...(input.resourceCaller ? { resourceActionInvocation: {
             resourceCaller: input.resourceCaller, requiredReadOnly: input.requiredReadOnly,
@@ -1558,6 +1561,7 @@ async function executeClientContributedAction(
             return null;
         },
         handler: ({ input: actionInput, signal: handlerSignal }) => {
+            input.onInvocationAdmitted?.();
             // The invocation parser releases its temporary links on settlement.
             // An observer retains a separate link until its subscription ends.
             const observationController = input.readObservation ? new AbortController() : null;
@@ -2374,6 +2378,7 @@ async function executeContributedAction(
     const originSurface = readActionOriginSurface(input);
     if (!originSurface) return failure('unavailable', 'plugin_action_origin_unavailable');
     const execute = binding.execute ?? machinePluginStructuredMessageActionExecute;
+    input.onInvocationAdmitted?.();
     // Every invocation retains the host's request identity for diagnostics and
     // approval custody. Only declared operations establish progress observation.
     const admittedOperation = input.readObservation ? undefined : projectedAction.operation;

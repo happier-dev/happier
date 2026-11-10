@@ -106,7 +106,12 @@ async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIden
   mounted.push(fixture);
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Refresh' })); });
   if (!options.skipSelect) await act(async () => { await fixture.press(await fixture.getByRole('button', { name: native.detailInput.observation.snapshot.title })); });
-  const invoke = async (operation: unknown, signal = new AbortController().signal) => {
+  const readMountId = () => {
+    const detail = published?.detail;
+    const address = detail && typeof detail === 'object' && !Array.isArray(detail) ? detail.mountedAction : undefined;
+    return address && typeof address === 'object' && !Array.isArray(address) ? address.mountId : undefined;
+  };
+  const invokeInput = async (input: unknown, signal = new AbortController().signal) => {
     const declaration = PLUGIN_MANIFEST.contributes.actions.find(item => item.id === TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1);
     if (declaration?.execution.target !== 'client') throw new Error('Missing mounted Action');
     const client = await createPluginClientTestkit({ manifest: PLUGIN_MANIFEST,
@@ -114,11 +119,8 @@ async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIden
     clients.push(client);
     const handler = client.registration('actions', declaration.id);
     if (!handler) throw new Error('Missing mounted Action registration');
-    const detail = published?.detail;
-    const address = detail && typeof detail === 'object' && !Array.isArray(detail) ? detail.mountedAction : undefined;
-    const mountId = address && typeof address === 'object' && !Array.isArray(address) ? address.mountId : undefined;
     let result;
-    await act(async () => { result = await handler(TriageMountedUiInputV1Schema.parse({ mountId, operation }), {
+    await act(async () => { result = await handler(TriageMountedUiInputV1Schema.parse(input), {
       plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
       contribution: { id: declaration.id, qualifiedId: `${PLUGIN_MANIFEST.id}/actions/${declaration.id}` },
       invocationSurface: 'agent', signal,
@@ -126,7 +128,16 @@ async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIden
     }); });
     return TriageMountedUiResultV1Schema.parse(result);
   };
-  return { fixture, settlements, getInputs, native, comparison, invoke, reads };
+  const invoke = (operation: unknown, signal?: AbortSignal) => invokeInput({ mountId: readMountId(), operation }, signal);
+  const invokeCommand = (title: string, operation?: unknown) => {
+    const command = published?.commands?.find(item => item.title === title)?.command;
+    expect(command?.kind).toBe('executeAction');
+    if (command?.kind !== 'executeAction') throw new Error('Missing advertised Action');
+    expect(command.action).toBe(TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1);
+    return invokeInput(command.input ?? { mountId: readMountId(), operation });
+  };
+  return { fixture, settlements, getInputs, native, comparison, invoke, invokeCommand, reads,
+    readCommands: () => published?.commands ?? [] };
 }
 
 describe('mounted Triage comparison picker', () => {
@@ -144,15 +155,28 @@ describe('mounted Triage comparison picker', () => {
     expect(settlements).toEqual([{ kind: 'completed', input: comparison }]);
   });
   it.each(['person', 'agent'] as const)('appends the shared corpus continuation through the %s path', async path => {
-    const { fixture, invoke } = await mountPicker({ paged: true, skipSelect: true });
+    const { fixture, invoke, invokeCommand, readCommands } = await mountPicker({ paged: true, skipSelect: true });
     if (path === 'person') {
       await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Load more' })); });
     } else {
-      expect(await invoke({ kind: 'loadMore', section: 'entries' })).toEqual({ status: 'applied' });
+      expect(await invokeCommand('Load more')).toEqual({ status: 'applied' });
     }
     expect(await invoke({ kind: 'setPickerQuery', query: 'Later pull request' })).toEqual({ status: 'applied' });
     expect(await fixture.getByRole('button', { name: 'Later pull request' })).toBeDefined();
+    expect(readCommands().some(command => command.title === 'Load more')).toBe(false);
     expect(await invoke({ kind: 'loadMore', section: 'entries' })).toEqual({ status: 'unavailable' });
+  });
+  it('advertises executable search and refresh controls alongside its current rows', async () => {
+    const { fixture, invokeCommand, reads, readCommands, native } = await mountPicker({ skipSelect: true });
+    expect(readCommands().map(command => command.title)).toEqual(expect.arrayContaining(['Search pull requests', 'Refresh']));
+    const before = { ...reads };
+    expect(await invokeCommand('Search pull requests', { kind: 'setPickerQuery', query: 'no matching pull request' }))
+      .toEqual({ status: 'applied' });
+    expect(reads).toEqual(before);
+    expect(await fixture.queryByRole('button', { name: native.detailInput.observation.snapshot.title })).toBeUndefined();
+    expect(await invokeCommand('Search pull requests', { kind: 'setPickerQuery', query: '' })).toEqual({ status: 'applied' });
+    expect(await invokeCommand('Refresh')).toEqual({ status: 'applied' });
+    expect(reads.scans).toBeGreaterThan(before.scans);
   });
   it('chooses through the registered mounted Action and keeps search local to the shared corpus', async () => {
     const { settlements, native, comparison, invoke, reads } = await mountPicker({ skipSelect: true });

@@ -5874,6 +5874,12 @@ while its provider-result redactor omits private command data. Null is therefore
 a successful empty payload, not an instruction to read the context again.
 Unknown or retired commands, disabled Actions and unavailable clients return
 their existing typed refusals; callers must inspect the transport's settlement.
+An `executeAction` command keeps its authored input bound. When it has no authored
+input, invocation JSON reaches the Action as described by the mounted command.
+Command retirement cancels pending admission, including confirmation. Once the
+finite Action is admitted, closing or replacing its publishing surface preserves
+the Action's settlement. Explicit caller cancellation and executable-generation
+retirement retain their own cancellation behavior.
 Read and invoke share the current-context reverse-RPC address and the socket/focus
 selection rule above. A Session caller does not select a different room. The
 answering App's command owner resolves the opaque id and refuses a retired

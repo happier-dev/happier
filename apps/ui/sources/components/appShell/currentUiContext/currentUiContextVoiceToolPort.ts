@@ -266,6 +266,7 @@ export function createCurrentUiContextVoiceToolPort(
         isCallerCurrent: () => boolean,
         includeCurrentUiContext: boolean,
         readObservation?: DispatchPluginSurfaceActionInput['readObservation'],
+        onInvocationAdmitted?: DispatchPluginSurfaceActionInput['onInvocationAdmitted'],
     ): Promise<CurrentUiContextVoiceInvocationOutcome> => {
         if (request.signal?.aborted) return unavailable();
         // One-shot catalog reads can arrive before their Account executable.
@@ -341,6 +342,7 @@ export function createCurrentUiContextVoiceToolPort(
                     ? { managedBootstrapCredential: input.hostAction.context.invocationServices.managedBootstrapCredential } : {}),
                 ...(request.input === undefined ? {} : { input: request.input }),
                 ...retainedInvocation?.caller,
+                ...(onInvocationAdmitted ? { onInvocationAdmitted } : {}),
                 ...(resource ? { resourceCaller: resource.resourceCaller,
                     callerPluginId: resource.resourceCaller?.pluginId,
                     requiredReadOnly: resource.requiredReadOnly, readObservation: resource.readObservation } : {}),
@@ -483,15 +485,22 @@ export function createCurrentUiContextVoiceToolPort(
         }
 
         if (resolved.command.kind === 'executeAction') {
-            const mergedSignal = mergeAbortSignals([resolved.retirementSignal, request.signal]);
+            const admission = new AbortController();
+            const retire = () => admission.abort(resolved.retirementSignal.reason);
+            const releaseRetirement = () => resolved.retirementSignal.removeEventListener('abort', retire);
+            resolved.retirementSignal.addEventListener('abort', retire, { once: true });
+            if (resolved.retirementSignal.aborted) retire();
+            const mergedSignal = mergeAbortSignals([admission.signal, request.signal]);
             try {
+                const actionInput = resolved.command.input === undefined ? request.input : resolved.command.input;
                 return await invokeProjectedAction({
                     action: resolved.command.action,
                     ...(request.spokenActionRequest ? { spokenActionRequest: request.spokenActionRequest } : {}),
-                    ...(resolved.command.input === undefined ? {} : { input: resolved.command.input }),
+                    ...(actionInput === undefined ? {} : { input: actionInput }),
                     signal: mergedSignal.signal,
-                }, isCurrent, true);
+                }, isCurrent, true, undefined, releaseRetirement);
             } finally {
+                releaseRetirement();
                 mergedSignal.dispose();
             }
         }
