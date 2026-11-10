@@ -1,3 +1,4 @@
+import { observeSourceRuntimeDependencies } from '@happier-dev/cli-common/sourceRuntimeEntries';
 import { combineRecordingStorageOwners, type RecordingStorageOwner } from './recording/service';
 import { randomUUID } from 'node:crypto';
 import { writeSync } from 'node:fs';
@@ -423,6 +424,7 @@ export async function startDaemon(
   const { waitForAuthEnabled, waitForAuthTimeoutMs } = resolveWaitForAuthConfig(process.env);
 
   let daemonLockHandle: Awaited<ReturnType<typeof acquireDaemonLock>> = null;
+  let stopObservingDependencies = () => {};
   let daemonStateOwner: Parameters<typeof writeDaemonStateForLockOwner>[1] | null = null;
   let machineVitals: MachineVitalsSampler | null = null;
   let machineVitalsAlerts: ReturnType<typeof createMachineVitalsAlerts> | null = null;
@@ -3319,6 +3321,19 @@ export async function startDaemon(
       stopDirectPeerServer,
       stopTailscaleTransferServeLifecycle,
     } = runtimeBootstrap;
+    stopObservingDependencies = observeSourceRuntimeDependencies(
+      process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT ?? '', status => {
+        if (admissionDrain.isPublicationQuiescing()) return;
+        if (fileState.sourceRuntimeReloadRequired?.subtype === status?.subtype) return;
+        if (status) fileState.sourceRuntimeReloadRequired = status;
+        else delete fileState.sourceRuntimeReloadRequired;
+        if (!publishDaemonStateForCurrentOwner({ ...daemonStateOwner!,
+          sourceRuntimeReloadRequired: fileState.sourceRuntimeReloadRequired })) {
+          requestShutdown('exception', 'daemon_state_publication_ownership_lost');
+        }
+      },
+    );
+    void resolvesWhenShutdownRequested.then(stopObservingDependencies);
     transferActivityOwner = transferLiveWorkProducer;
     transferActivity.notifyChanged();
     resumeQuiescedTransferStatePublication = async () => {
@@ -4463,6 +4478,7 @@ export async function startDaemon(
     await cleanupAndShutdown(shutdownRequest.source, shutdownRequest.errorMessage);
     releaseMachineAdmissionTransport();
   } catch (error) {
+    stopObservingDependencies();
     homeTransportCancellation.abort();
     await shutdownProviderAccountSettings();
     await publicProfileRefreshHandle?.stop().catch(stopError =>

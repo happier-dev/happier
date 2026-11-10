@@ -1,3 +1,4 @@
+import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 /**
  * Minimal persistence functions for Happier CLI
@@ -355,6 +356,7 @@ export interface DaemonLocallyPersistedState {
    * fact (older daemon, or no heartbeat yet): unknown, never unhealthy.
    */
   machineControlReady?: boolean;
+  sourceRuntimeReloadRequired?: import("@happier-dev/cli-common/sourceRuntimeEntries").SourceRuntimeDependencyStatus;
   daemonLogPath?: string;
   controlToken?: string;
 }
@@ -375,6 +377,10 @@ const DaemonLocallyPersistedStateSchemaV2 = lazyZodSchema(() => z.object({
   accountId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   lastHeartbeatAt: z.optional(z.number().check(z.int(), z.nonnegative())),
   machineControlReady: z.optional(z.boolean()),
+  sourceRuntimeReloadRequired: z.optional(z.object({
+    code: z.literal('SOURCE_RUNTIME_RELOAD_REQUIRED'),
+    subtype: z.nonoptional(SessionSpawnLaunchErrorV1Schema.shape.subtype),
+  })),
   daemonLogPath: z.optional(z.string()),
   controlToken: z.optional(z.string()),
 }).check(z.refine(state => state.httpPort > 0 || (

@@ -363,7 +363,7 @@ async function defaultWaitForDaemonReady({
     signal?.throwIfAborted();
     let authState = 'starting';
     if (result?.code === 2) {
-      try { if (JSON.parse(result.out).state === 'sign-in-required') authState = 'sign-in-required'; } catch {}
+      try { authState = JSON.parse(result.out).state ?? 'starting'; } catch {}
     }
     onAuthState?.(authState);
     if (result?.code === 0) return;
@@ -374,7 +374,7 @@ async function defaultWaitForDaemonReady({
   // before this target entered its readiness phase.
   const changes = on(readiness.events, 'change', { signal });
   const ready = value => {
-    onAuthState?.(value.state === 'sign-in-required' ? value.state : 'starting');
+    onAuthState?.(value.state);
     return value.state === 'running';
   };
   try {
@@ -1294,6 +1294,7 @@ export async function startStackDevTargets(
         let daemonReady = !services.daemon;
         let daemonAuthState = 'starting';
         const readinessPhase = () => {
+          if (daemonAuthState === 'reload-required') return 'reload-required';
           if (serverReady && companionPreparationReady && daemonAuthState === 'sign-in-required') return 'credentials';
           const preparation = sourcePreparationsByTarget.get(target.name);
           if (preparation && preparation.phase !== 'prepared') return preparation.phase;

@@ -492,6 +492,7 @@ export async function checkDaemonStatePingAware(cliHomeDir, options = {}) {
       processInstanceFingerprint: ping.processInstanceFingerprint ?? null,
       distClosureFingerprint: ping.distClosureFingerprint ?? null,
       runtimeEntrypoint: ping.state?.startedWithRuntimeEntrypoint ?? null,
+      sourceRuntimeReloadRequired: ping.state?.sourceRuntimeReloadRequired ?? null,
     };
   }
   return {

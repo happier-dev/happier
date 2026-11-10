@@ -1609,6 +1609,15 @@ consumer selected and pending records retain adoption, independently of producer
 updates. An unavailable producer reports a typed failure with its reason and next
 action. It never falls back to a consumer compiler.
 
+In 0.3 development, a daemon dependency admission refusal is published as
+`sourceRuntimeReloadRequired` in its existing local status record. Stack info,
+remote status, daemon participants, and dev-target readiness consume that fact.
+The source identity projection reports `reloadRequired` and clears `loaded` for
+that component, so equal retained identities cannot claim readiness after a
+`closure_changed` refusal. Human info prints `reload-required`. A later successful
+admission clears the fact; an explicit source reload replaces the daemon record.
+Status observation performs no dependency detection or polling.
+
 Remote source reload workers preload the canonical source resolver before their
 static Stack tooling imports. Their existing source-test preparation path does
 not commission an emitted workspace closure. Installed dependencies still use

@@ -3,7 +3,7 @@ import { readSourceRuntimeCompletionMetadata } from './source_bundle_record.mjs'
 
 /** Project loaded identities from the caller's existing lifecycle observations. */
 export function projectLoadedSourceRuntimeIdentities({ runtimeState, sourceSnapshot, runtimeLifecycleLive,
-  serverRunning, uiRunning, daemonRunning }) {
+  serverRunning, uiRunning, daemonRunning, daemonReloadRequired }) {
   if (!sourceSnapshot) return null;
   const recorded = { ...runtimeState?.sourceRuntimeIdentities };
   for (const component of ['server', 'daemon']) {
@@ -16,10 +16,11 @@ export function projectLoadedSourceRuntimeIdentities({ runtimeState, sourceSnaps
       component === 'server' || component === 'daemon' ? component : 'expo');
     const remoteCustodyUnconfirmed = observation.target && !['stopped', 'not-running'].includes(observation.status);
     const localRunning = component === 'server' ? serverRunning : component === 'ui' ? uiRunning : daemonRunning;
-    const loaded = remoteCustodyUnconfirmed || (runtimeLifecycleLive && localRunning) ? identity.loaded : null;
+    const reloadRequired = component === 'daemon' ? (remoteCustodyUnconfirmed ? identity.reloadRequired : daemonRunning ? daemonReloadRequired : null) : null;
+    const loaded = reloadRequired ? null : remoteCustodyUnconfirmed || (runtimeLifecycleLive && localRunning) ? identity.loaded : null;
     const sourceTime = loaded && typeof identity.sourceTime === 'string' && Number.isFinite(Date.parse(identity.sourceTime))
       ? new Date(identity.sourceTime).toISOString() : null;
-    return [component, { selected: identity.selected, loaded, ...(sourceTime ? { sourceTime } : {}),
+    return [component, { selected: identity.selected, loaded, ...(reloadRequired ? { reloadRequired } : {}), ...(sourceTime ? { sourceTime } : {}),
       ...(component === 'daemon' && loaded && identity.guestPayload ? { guestPayload: identity.guestPayload } : {}) }];
   }));
 }

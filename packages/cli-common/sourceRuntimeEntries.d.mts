@@ -9,6 +9,8 @@ export class SourceRuntimeReloadRequiredError extends Error {
   readonly entryGraph: string;
   constructor(component?: string, subtype?: SourceRuntimeReloadRequiredError['subtype']);
 }
+export type SourceRuntimeDependencyStatus = Readonly<Pick<SourceRuntimeReloadRequiredError, 'code' | 'subtype'>>;
+export function observeSourceRuntimeDependencies(entrypoint: string, listener: (status: SourceRuntimeDependencyStatus | null) => void): () => void;
 export function assertSourceRuntimeDependenciesCurrent(options: Readonly<{
   entrypoint?: string;
   record?: unknown;

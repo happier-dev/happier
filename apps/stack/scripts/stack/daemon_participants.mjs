@@ -24,7 +24,8 @@ export async function readStackDaemonParticipants({ stackName, stackBaseDir, run
       ? await readSourceRuntimeBundleRecord(entrypoint).catch(() => null) : null;
     const loaded = record && record.entrypoint === entrypoint ? record.identity ?? null : null;
     const sourceTime = await readSourceRuntimeSourceTime({ stackBaseDir, component: 'daemon', identity: loaded, entrypoint });
-    const reason = observation?.status !== 'running' ? 'participant_unavailable'
+    const reason = observation?.sourceRuntimeReloadRequired ? 'daemon_reload_required'
+      : observation?.status !== 'running' ? 'participant_unavailable'
       : desiredState === 'stopped' ? 'daemon_stop_incomplete'
       : !selected || !loaded || !sourceTime ? 'participant_source_unknown'
       : loaded !== selected ? 'participant_source_stale' : null;

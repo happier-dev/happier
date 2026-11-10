@@ -1854,6 +1854,9 @@ async function cmdInfo({ rootDir, argv }) {
   if (out.runtime?.components?.daemon?.status === 'stopped-by-owner') {
     console.log('- daemon stopped by owner');
   }
+  if (out.runtime?.components?.daemon?.status === 'reload-required') {
+    console.log(`- daemon: reload-required (${out.runtime.components.daemon.reloadRequired.subtype})`);
+  }
   if (out.runtime?.components?.daemon?.status === 'sign-in-required') {
     console.log('- daemon: sign-in required');
   }

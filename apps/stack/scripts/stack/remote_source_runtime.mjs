@@ -44,6 +44,7 @@ export async function observeRemoteSourceRuntime({ stackName, baseDir, runtimeSt
       sourceRuntimeIdentities[component] = {
         selected: typeof identity?.selected === 'string' ? identity.selected
           : sourceRuntimeIdentities[component]?.selected ?? runtimeState.sourceRuntimeIdentities?.[component]?.selected ?? null,
+        ...(identity?.reloadRequired ? { reloadRequired: identity.reloadRequired } : {}),
         loaded: status === 'running' && typeof identity?.loaded === 'string' ? identity.loaded : null,
         ...(status === 'running' && typeof identity?.sourceTime === 'string' && Number.isFinite(Date.parse(identity.sourceTime))
           ? { sourceTime: new Date(identity.sourceTime).toISOString() } : {}),

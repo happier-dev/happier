@@ -9,7 +9,7 @@ import { readSourceRuntimeDependencyIdentity } from './source_author_inputs.mjs'
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { withBuildInputDependencies, withSingleTrailingBuildPass } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { resolveInstalledRuntimePackage } from '../../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
-import { assertSourceRuntimeDependenciesCurrent } from '../../../../packages/cli-common/sourceRuntimeDependencies.mjs';
+import { assertSourceRuntimeDependenciesCurrent, observeSourceRuntimeDependencies } from '../../../../packages/cli-common/sourceRuntimeDependencies.mjs';
 import { readDependencyPublicationState, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath, withDependencyRefresh } from '../utils/proc/dependency_refresh.mjs';
 
 test('CLI and daemon admission follows their real closure across UI-only, runtime and failed publications', async t => {
@@ -82,8 +82,15 @@ test('CLI and daemon admission follows their real closure across UI-only, runtim
   await withDependencyRefresh({ installDir: repoDir, env, force: true }, async () => {
     await writeFile(`${dependency}/index.cjs`, 'exports.value = 2;');
   });
+  const decisions = [];
+  const stop = observeSourceRuntimeDependencies(fixture.path('runtime/apps/cli/src/index.mjs'), status => decisions.push(status));
+  t.after(stop);
   for (const component of ['cli', 'daemon']) await assert.rejects(admission(component),
     { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'closure_changed' }, 'a changed runtime dependency still requires reload');
+  assert.deepEqual(decisions, [
+    { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'closure_changed' },
+    { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'closure_changed' },
+  ]);
 });
 
 test('source dependency refusals distinguish missing closure evidence from a failed check', async t => {

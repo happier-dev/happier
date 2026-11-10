@@ -11,7 +11,7 @@ export function buildRuntimeSnapshotObservationExpression({ target, paths, servi
     `for (const component of ${JSON.stringify(components)}) {`,
     '  sourceRuntimeIdentities[component] = info.runtime.sourceRuntimeIdentities?.[component] ?? null;',
     '  const state = info.runtime.components[component];',
-    "  serviceStatus[component] = state.running ? 'running' : state.status ?? (state.ownershipStatus === 'unknown' ? 'unknown' : 'not-running');",
+    "  serviceStatus[component] = state.status === 'reload-required' ? state.status : state.running ? 'running' : state.status ?? (state.ownershipStatus === 'unknown' ? 'unknown' : 'not-running');",
     '}',
     databaseOnly ? 'process.stdout.write(JSON.stringify(info.database));'
       : `process.stdout.write(JSON.stringify({ sourceRuntimeIdentities, serviceStatus${services.server ? ', database: info.database' : ''}${services.daemon ? ', managedCli: info.runtime.managedCli, daemonEntry: info.runtime.daemonEntry, daemonParticipants: info.runtime.daemonParticipants' : ''} }));`,

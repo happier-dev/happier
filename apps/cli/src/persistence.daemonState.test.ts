@@ -5,6 +5,19 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
 describe('readDaemonState', () => {
+    it('retains the dependency owners reload refusal through the persisted status schema', async () => {
+        await withTempDir('happier-cli-daemon-dependency-status-', async homeDir => {
+            envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined });
+            const { reloadConfiguration } = await import('./configuration');
+            reloadConfiguration();
+            const { readDaemonState, writeDaemonState } = await import('./persistence');
+            const state = { pid: process.pid, httpPort: 1, startedAt: Date.now(), startedWithCliVersion: 'test',
+                sourceRuntimeReloadRequired: { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED' as const, subtype: 'closure_changed' as const } };
+            writeDaemonState(state);
+            expect((await readDaemonState())?.sourceRuntimeReloadRequired).toEqual(state.sourceRuntimeReloadRequired);
+        });
+    });
+
     it('reads an owned startup publication before the control server has a port', async () => {
         await withTempDir('happier-cli-daemon-startup-state-', async homeDir => {
             envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined });

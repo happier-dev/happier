@@ -1,7 +1,7 @@
 import { createReadStream, watch } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { once } from 'node:events';
-import { basename, dirname, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { isPidAlive } from '../proc/pids.mjs';
@@ -28,6 +28,7 @@ export async function observeRemoteStackRuntime(runtimeStatePath, { output = pro
   let logIdentity;
   let position = 0;
   let daemonReadiness;
+  let daemonStateWatched = false;
   let serverReadiness;
   let signIn;
   const drain = async () => {
@@ -65,6 +66,17 @@ export async function observeRemoteStackRuntime(runtimeStatePath, { output = pro
     const activeServerId = env.HAPPIER_ACTIVE_SERVER_ID;
     // Server-only workers have no local daemon enrollment to report on.
     if (cliHomeDir && activeServerId && (state.placement?.daemon ?? 'local') === 'local') {
+      if (!daemonStateWatched) {
+        const stateDir = join(cliHomeDir, 'servers', activeServerId);
+        try {
+          const watcher = watch(stateDir, (_event, file) => {
+            if (!file || String(file) === 'daemon.state.json') enqueue(inspect);
+          });
+          watcher.on('error', settle);
+          watchers.push(watcher);
+          daemonStateWatched = true;
+        } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      }
       const readiness = await readDaemonReadiness({ cliHomeDir, activeServerId, env });
       if (readiness.state === 'sign-in-required' && !signIn) {
         // Login is an independent producer: a retained daemon may already be

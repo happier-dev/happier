@@ -481,7 +481,11 @@ export async function readStackInfoSnapshot({
   );
   const loadedSnapshotId = projectLoadedRuntimeSnapshotId({ runtimeState, sourceSnapshot, runtimeLifecycleLive });
   const sourceRuntimeIdentities = await readLoadedSourceRuntimeIdentities({ stackBaseDir: baseDir, runtimeState, sourceSnapshot,
-    runtimeLifecycleLive, serverRunning, uiRunning, daemonRunning });
+    runtimeLifecycleLive, serverRunning, uiRunning, daemonRunning,
+    daemonReloadRequired: observedDaemon.daemonState?.sourceRuntimeReloadRequired });
+  const daemonReloadRequired = sourceRuntimeIdentities?.daemon?.reloadRequired
+    ?? (daemonRunning ? observedDaemon.daemonState?.sourceRuntimeReloadRequired : null);
+  if (daemonReloadRequired) healthIssues.push('daemon_reload_required');
   const pendingSourceIdentity = sourceSnapshot && Object.values(sourceRuntimeIdentities ?? {})
     .some(identity => identity.selected && identity.selected !== identity.loaded);
   const database = await readStackDatabaseIdentity({ stackName, env: stackEnv, runtimeState,
@@ -570,7 +574,8 @@ export async function readStackInfoSnapshot({
           running: daemonRunning || remoteDaemonRunning,
           pidAlive: daemonPidAlive,
           desiredState: daemonDesiredState,
-          status: daemonDesiredState === 'stopped' && !daemonPidAlive && !daemonRunning && !remoteDaemonRunning ? 'stopped-by-owner'
+          ...(daemonReloadRequired ? { reloadRequired: daemonReloadRequired } : {}),
+          status: daemonReloadRequired ? 'reload-required' : daemonDesiredState === 'stopped' && !daemonPidAlive && !daemonRunning && !remoteDaemonRunning ? 'stopped-by-owner'
             : remoteDaemon.target ? (remoteDaemonUnknown ? 'unknown' : remoteDaemon.status) : observedDaemon.status,
           ...(remoteDaemon.target ? { lifecycleStatus: remoteDaemon.status,
             phase: remoteTargets[remoteDaemon.target]?.phase ?? null } : {}),

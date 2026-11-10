@@ -194,6 +194,13 @@ test('stack info shares daemon transport observation within a snapshot and refre
   assert.equal(first.runtime.components.daemon.status, 'running');
   assert.deepEqual(first.runtime.daemonEntry, { selected: null, loaded: '/source/cli/src/index.mjs' });
   assert.equal(requests, 1, 'one snapshot must not repeat the daemon transport probe');
+  await writeFile(statePath, JSON.stringify({ ...JSON.parse(await readFile(statePath, 'utf8')),
+    sourceRuntimeReloadRequired: { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'closure_changed' } }));
+  const stale = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
+  assert.equal(stale.runtime.components.daemon.status, 'reload-required');
+  assert.equal(stale.runtime.components.daemon.reloadRequired.subtype, 'closure_changed');
+  assert.ok(stale.runtime.health.issues.includes('daemon_reload_required'));
+  requests = 1;
   reachable = false;
   const second = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
   assert.equal(second.runtime.components.daemon.status, 'unreachable');
@@ -1769,4 +1776,56 @@ test('readStackInfoSnapshot treats running target-hosted Expo and daemon service
     await metroListener.close();
     await rm(tmp, { recursive: true, force: true });
   }
+});
+
+
+test('stack info JSON, human output and READY reject the daemon published closure refusal', async t => {
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'closure-refusal' });
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.storageDir });
+  await writeFile(join(fixture.stackDir, 'env'), 'HAPPIER_STACK_RUNTIME_MODE=source-snapshot\nHAPPIER_STACK_DAEMON=1\nHAPPIER_STACK_SERVE_UI=0\n');
+  const reloadRequired = { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'closure_changed' };
+  await writeFile(join(fixture.stackDir, 'stack.runtime.json'), JSON.stringify({ stackName: fixture.stackName,
+    sourceRuntimeIdentities: {}, placement: { daemon: 'worker' }, remoteTargets: { worker: {
+      services: { daemon: true }, status: 'running', serviceStatus: { daemon: 'running' },
+      sourceRuntimeIdentities: { daemon: { selected: 'same', loaded: 'same', reloadRequired } },
+    } } }));
+  const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
+  assert.equal(out.runtime.components.daemon.status, 'reload-required');
+  assert.deepEqual(out.runtime.sourceRuntimeIdentities.daemon, { selected: 'same', loaded: null, reloadRequired });
+  const { projectStackReloadVerification } = await import('./stack/reload_verdict.mjs');
+  const verdictInfo = { ...out, runtime: { ...out.runtime, running: true, valid: true,
+    sourceRuntimeIdentities: { server: { selected: 'server', loaded: 'server' }, ...out.runtime.sourceRuntimeIdentities } } };
+  assert.equal(projectStackReloadVerification({ info: verdictInfo }).check, 'identity:daemon');
+  const info = await promisify(execFile)(process.execPath,
+    [fileURLToPath(new URL('./stack_commands.mjs', import.meta.url)), 'info', fixture.stackName], {
+      signal: t.signal,
+      env: buildStackFixtureEnv({ stripStackEnv: true, homeDir: join(fixture.storageDir, 'home'), storageDir: fixture.storageDir,
+        extraEnv: { HAPPIER_STACK_REPO_DIR: process.cwd(), HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES: '0',
+          HAPPIER_STACK_UPDATE_CHECK: '0', HAPPIER_STACK_SKIP_REFRESH_DEPS: '1', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '1' } }),
+    });
+  assert.match(info.stdout, /daemon: reload-required/);
+});
+
+
+test('live remote status preserves the target daemon reload decision', async t => {
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'remote-closure-refusal' });
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.storageDir });
+  const target = { name: 'worker', platform: 'posix', ssh: 'fixture-ssh', repoDir: process.cwd(),
+    cliHomeDir: join(fixture.stackDir, 'worker-home') };
+  await writeFile(join(fixture.stackDir, 'dev-targets.json'), JSON.stringify({ version: 3, targets: [target] }));
+  await writeFile(join(fixture.stackDir, 'env'), 'HAPPIER_STACK_RUNTIME_MODE=source-snapshot\nHAPPIER_STACK_DAEMON=1\nHAPPIER_STACK_SERVE_UI=0\n');
+  await writeFile(join(fixture.stackDir, 'stack.runtime.json'), JSON.stringify({ stackName: fixture.stackName,
+    sourceRuntimeIdentities: {}, placement: { daemon: 'worker' }, remoteTargets: { worker: {
+      runtimeMode: 'source-snapshot', services: { daemon: true }, status: 'running', serviceStatus: { daemon: 'running' },
+      sourceRuntimeIdentities: { daemon: { selected: 'same', loaded: 'same' } },
+    } } }));
+  const reloadRequired = { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'closure_changed' };
+  // SSH is the process/network boundary; the real status parser and projection run beneath it.
+  const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName,
+    observeRemoteSourceRuntime: true, runRemoteProcessImpl: async () => ({ code: 0, out: JSON.stringify({
+      serviceStatus: { daemon: 'reload-required' },
+      sourceRuntimeIdentities: { daemon: { selected: 'same', loaded: null, reloadRequired } },
+    }) }) });
+  assert.equal(out.runtime.components.daemon.status, 'reload-required');
+  assert.deepEqual(out.runtime.sourceRuntimeIdentities.daemon, { selected: 'same', loaded: null, reloadRequired });
 });

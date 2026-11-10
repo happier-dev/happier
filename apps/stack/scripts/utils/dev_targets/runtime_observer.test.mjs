@@ -33,6 +33,8 @@ test('generated attachment owns scoped readiness without inherited Stack environ
       await ended;
     });
     const states = [];
+    let reload;
+    const reloadRequired = new Promise(resolve => { reload = resolve; });
     let ready;
     const running = new Promise(resolve => { ready = resolve; });
     let pending = '';
@@ -44,6 +46,7 @@ test('generated attachment owns scoped readiness without inherited Stack environ
         const fact = parseDaemonReadinessLine(line);
         if (fact) states.push(fact.state);
         if (fact?.state === 'running') ready();
+        if (fact?.state === 'reload-required') reload();
       }
     });
     await Promise.race([
@@ -61,6 +64,11 @@ test('generated attachment owns scoped readiness without inherited Stack environ
     await writeFile(join(serverDir, 'access.key'), randomBytes(32));
     await Promise.race([running, ended.then(() => { throw new Error('attachment ended before native daemon readiness'); })]);
     assert.deepEqual(states, ['sign-in-required', 'running']);
+    await writeFile(join(serverDir, 'daemon.state.json.next'), JSON.stringify({ pid: process.pid,
+      sourceRuntimeReloadRequired: { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'closure_changed' } }));
+    await rename(join(serverDir, 'daemon.state.json.next'), join(serverDir, 'daemon.state.json'));
+    await Promise.race([reloadRequired, ended.then(() => { throw new Error('attachment ended before dependency refusal'); })]);
+    assert.deepEqual(states, ['sign-in-required', 'running', 'reload-required']);
     child.kill('SIGTERM');
     await ended;
   }

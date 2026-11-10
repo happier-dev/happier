@@ -5,6 +5,18 @@ import { pathToFileURL } from 'node:url';
 // Retained entrypoints re-read their capture on each launch. Keep a successful
 // closure decision at this owner until the installed publication changes.
 const validatedRuntimeDependencies = new Map();
+const dependencyObservers = new Map();
+
+/** Observe admission decisions; this never performs a dependency check. */
+export function observeSourceRuntimeDependencies(entrypoint, listener) {
+  const listeners = dependencyObservers.get(entrypoint) ?? new Set();
+  dependencyObservers.set(entrypoint, listeners);
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+    if (!listeners.size) dependencyObservers.delete(entrypoint);
+  };
+}
 
 /** Completed artifacts retain their marker identity, not a future writer generation. */
 export function buildInputDependencyIdentityMatches(left, right) {
@@ -41,7 +53,7 @@ function readOptionalJson(path) {
 /** A retained graph shares the installed dependency tree. Check its existing
  * publication identity at launch demand, before any child links absolute imports.
  * Installed runtimes have no source-bundle record and keep their own lifecycle. */
-export async function assertSourceRuntimeDependenciesCurrent({ entrypoint, record, component = 'daemon', env = process.env, signal }) {
+async function checkSourceRuntimeDependenciesCurrent({ entrypoint, record, component = 'daemon', env = process.env, signal }) {
   signal?.throwIfAborted();
   if (!entrypoint) return;
   try {
@@ -97,5 +109,19 @@ export async function assertSourceRuntimeDependenciesCurrent({ entrypoint, recor
     if (error instanceof SourceRuntimeReloadRequiredError) throw error;
     // Filesystem/JSON diagnostics contain local paths, not useful recovery facts.
     throw new SourceRuntimeReloadRequiredError(component);
+  }
+}
+
+export async function assertSourceRuntimeDependenciesCurrent(options) {
+  let status = null;
+  try {
+    await checkSourceRuntimeDependenciesCurrent(options);
+  } catch (error) {
+    if (error instanceof SourceRuntimeReloadRequiredError) status = { code: error.code, subtype: error.subtype };
+    throw error;
+  } finally {
+    if (!options.signal?.aborted) {
+      for (const listener of dependencyObservers.get(options.entrypoint) ?? []) listener(status);
+    }
   }
 }

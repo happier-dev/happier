@@ -5,7 +5,7 @@ import { daemonStartGate } from '../auth/daemon_gate.mjs';
 import { isPidAlive } from '../proc/pids.mjs';
 
 const readinessPrefix = 'HSTACK_DAEMON_READINESS=';
-const readinessStates = new Set(['starting', 'sign-in-required', 'running']);
+const readinessStates = new Set(['starting', 'sign-in-required', 'running', 'reload-required']);
 
 export function formatDaemonReadinessLine(readiness) {
   if (!readinessStates.has(readiness?.state)) throw new Error('invalid daemon readiness state');
@@ -32,5 +32,6 @@ export async function readDaemonReadiness({ cliHomeDir, activeServerId, env = pr
     if (error.code === 'ENOENT') return { state: 'starting' };
     throw error;
   }
+  if (state.sourceRuntimeReloadRequired && isPidAlive(state.pid)) return { state: 'reload-required' };
   return { state: Number.isInteger(state.pid) && state.pid > 1 && isPidAlive(state.pid) ? 'running' : 'starting' };
 }
