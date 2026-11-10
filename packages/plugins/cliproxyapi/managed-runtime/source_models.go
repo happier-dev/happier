@@ -19,6 +19,21 @@ type sourceModel struct {
 	Name string `json:"name,omitempty"`
 }
 
+// Native capability discovery may reject the registration sentinel. The host's
+// compatibility catalog remains available until an admitted observation replaces
+// it; static compatibility never claims account entitlement.
+func managedCompatibilityModels(entry AuthEntry) []*cliproxy.ModelInfo {
+	models := cliproxy.GlobalModelRegistry().GetModelsForClient(entry.ID)
+	if len(models) > 0 {
+		return models
+	}
+	for _, model := range managedStaticModels[entry.Provider] {
+		models = append(models, &cliproxy.ModelInfo{ID: model.ID, DisplayName: model.Name,
+			Object: "model", Type: string(entry.Provider), OwnedBy: string(entry.Provider), UserDefined: true})
+	}
+	return models
+}
+
 type sourceModelCatalog struct {
 	Purpose        QualifiedPurpose `json:"purpose"`
 	SourceRevision string           `json:"sourceRevision"`
@@ -82,18 +97,22 @@ func managedEntryForAuth(entries map[string]AuthEntry, auth *coreauth.Auth) (Aut
 }
 
 func consumerAdmitsAuth(access consumerAccess, entry AuthEntry, auth *coreauth.Auth) bool {
-	if !access.admits(entry.Purpose) {
-		return false
-	}
+	return access.admits(entry.Purpose) && auth.ID == consumerAuthID(access, entry)
+}
+
+func consumerAuthID(access consumerAccess, entry AuthEntry) string {
 	if _, observed := access.modelCatalog(entry.Purpose); observed {
-		return auth.ID == sourceModelClientID(access.Token, entry.ID)
+		return sourceModelClientID(access.Token, entry.ID)
 	}
-	return auth.ID == entry.ID
+	if _, supplied := access.authFacts(entry.Purpose); supplied {
+		return sourceModelClientID(access.Token, entry.ID)
+	}
+	return entry.ID
 }
 
 // Registration follows the existing consumer admission/settlement lock and
-// lifetime. It is not an observation cache: immutable clients are installed
-// once per admitted consumer, and removed after its admitted work finishes
+// lifetime. Model observations remain immutable; changed materialization facts
+// update the same consumer client at its next admission. Clients are removed after work finishes
 // during settlement, including finite work retained after withdrawal.
 type consumerModelRegistrations struct {
 	entries    []AuthEntry
@@ -104,40 +123,91 @@ type consumerModelRegistrations struct {
 type consumerModelRegistration struct {
 	ids      []string
 	catalogs []sourceModelCatalog
+	facts    []sourceAuthFacts
 }
 
 func (r *consumerModelRegistrations) install(access consumerAccess) error {
-	if installed, exists := r.registered[access.Token]; exists {
+	installed, exists := r.registered[access.Token]
+	if exists {
 		if !reflect.DeepEqual(installed.catalogs, access.ModelCatalogs) {
 			return fmt.Errorf("consumer model observation changed")
 		}
-		return nil
+		if reflect.DeepEqual(installed.facts, access.AuthFacts) {
+			return nil
+		}
 	}
-	ids := make([]string, 0, len(access.ModelCatalogs))
+	// Validate binding facts once at admission before any registered auth changes.
+	// A missing project/device/mode must never invoke native acquisition instead.
+	for _, entry := range r.entries {
+		if !access.admits(entry.Purpose) {
+			continue
+		}
+		facts, _ := access.authFacts(entry.Purpose)
+		family, _ := managedFamilyForProvider(entry.Provider)
+		validFact := func(key string) bool {
+			value, present := facts[key]
+			if text, ok := value.(string); ok {
+				return strings.TrimSpace(text) != ""
+			}
+			return present && value != nil
+		}
+		for key := range family.FactAttributes {
+			if !validFact(key) {
+				return fmt.Errorf("consumer auth facts are unavailable")
+			}
+		}
+		for key := range family.FactMetadata {
+			if _, checked := family.FactAttributes[key]; !checked && !validFact(key) {
+				return fmt.Errorf("consumer auth facts are unavailable")
+			}
+		}
+	}
+	ids := append([]string(nil), installed.ids...)
 	for _, entry := range r.entries {
 		catalog, observed := access.modelCatalog(entry.Purpose)
-		if !observed {
+		facts, supplied := access.authFacts(entry.Purpose)
+		if !observed && !supplied {
 			continue
+		}
+		if supplied {
+			entry.Facts = facts
 		}
 		auth := managedRuntimeAuth(entry)
 		auth.ID = sourceModelClientID(access.Token, entry.ID)
 		auth.Attributes[sourceEntryAttribute] = entry.ID
 		auth.Attributes[sourceConsumerAttribute] = sourceConsumerID(access.Token)
-		if _, err := r.manager.Register(coreauth.WithSkipPersist(context.Background()), auth); err != nil {
+		_, updating := r.manager.GetByID(auth.ID)
+		previousFacts, previouslySupplied := (consumerAccess{AuthFacts: installed.facts}).authFacts(entry.Purpose)
+		if updating && previouslySupplied == supplied && reflect.DeepEqual(previousFacts, facts) {
+			continue
+		}
+		var err error
+		if updating {
+			_, err = r.manager.Update(coreauth.WithSkipPersist(context.Background()), auth)
+		} else {
+			_, err = r.manager.Register(coreauth.WithSkipPersist(context.Background()), auth)
+		}
+		if err != nil {
 			r.registered[access.Token] = consumerModelRegistration{ids: ids}
 			r.release(access.Token)
 			return fmt.Errorf("consumer model registration is unavailable")
 		}
-		models := make([]*cliproxy.ModelInfo, 0, len(catalog.Models))
-		for _, model := range catalog.Models {
-			models = append(models, &cliproxy.ModelInfo{ID: model.ID, DisplayName: model.Name,
-				Object: "model", Type: string(entry.Provider), OwnedBy: string(entry.Provider), UserDefined: true})
+		if observed {
+			models := make([]*cliproxy.ModelInfo, 0, len(catalog.Models))
+			for _, model := range catalog.Models {
+				models = append(models, &cliproxy.ModelInfo{ID: model.ID, DisplayName: model.Name,
+					Object: "model", Type: string(entry.Provider), OwnedBy: string(entry.Provider), UserDefined: true})
+			}
+			cliproxy.GlobalModelRegistry().RegisterClient(auth.ID, string(entry.Provider), models)
+		} else if !updating {
+			cliproxy.GlobalModelRegistry().RegisterClient(auth.ID, string(entry.Provider), managedCompatibilityModels(entry))
 		}
-		cliproxy.GlobalModelRegistry().RegisterClient(auth.ID, string(entry.Provider), models)
 		r.manager.RefreshSchedulerEntry(auth.ID)
-		ids = append(ids, auth.ID)
+		if !updating {
+			ids = append(ids, auth.ID)
+		}
 	}
-	r.registered[access.Token] = consumerModelRegistration{ids: ids, catalogs: access.ModelCatalogs}
+	r.registered[access.Token] = consumerModelRegistration{ids: ids, catalogs: access.ModelCatalogs, facts: access.AuthFacts}
 	return nil
 }
 
@@ -158,10 +228,7 @@ func consumerModelList(access consumerAccess, entries []AuthEntry) []map[string]
 		}
 		purposes := make([]QualifiedPurpose, 0)
 		for _, entry := range entries {
-			clientID := entry.ID
-			if _, observed := access.modelCatalog(entry.Purpose); observed {
-				clientID = sourceModelClientID(access.Token, entry.ID)
-			}
+			clientID := consumerAuthID(access, entry)
 			if access.admits(entry.Purpose) && cliproxy.GlobalModelRegistry().ClientSupportsModel(clientID, id) {
 				purposes = append(purposes, entry.Purpose)
 			}

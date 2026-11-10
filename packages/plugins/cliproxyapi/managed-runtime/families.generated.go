@@ -4,11 +4,13 @@ package managedruntime
 
 type managedFamilyDescriptor struct {
 	ID               string
+	StaticCatalog    bool
 	Provider         Provider
 	Origins          []string
 	HeaderNames      []string
 	StripHeaderNames []string
-	Adapter          string
+	FactAttributes   map[string]string
+	FactMetadata     map[string]string
 	SeedAttributes   map[string]string
 	SeedMetadata     map[string]any
 }
@@ -19,15 +21,21 @@ func managedFamilyForProvider(provider Provider) (managedFamilyDescriptor, bool)
 }
 
 const (
-	ProviderCodex  Provider = "codex"
-	ProviderClaude Provider = "claude"
-	ProviderMeta   Provider = "meta"
-	ProviderGemini Provider = "gemini"
+	ProviderCodex       Provider = "codex"
+	ProviderClaude      Provider = "claude"
+	ProviderMeta        Provider = "meta"
+	ProviderGemini      Provider = "gemini"
+	ProviderAntigravity Provider = "antigravity"
+	ProviderKimi        Provider = "kimi"
+	ProviderXai         Provider = "xai"
 )
 
 var managedFamilies = map[Provider]managedFamilyDescriptor{
-	"codex":  {ID: "codex", Provider: "codex", Origins: []string{"https://chatgpt.com"}, HeaderNames: []string{"authorization", "chatgpt-account-id"}, StripHeaderNames: []string{"authorization", "chatgpt-account-id"}, Adapter: "late-headers", SeedAttributes: map[string]string{"plan_type": "pro", "websockets": "false"}, SeedMetadata: map[string]interface{}{"access_token": "happier-registration-sentinel"}},
-	"claude": {ID: "claude", Provider: "claude", Origins: []string{"https://api.anthropic.com"}, HeaderNames: []string{"authorization"}, StripHeaderNames: []string{"authorization", "x-api-key", "x-claude-code-session-id"}, Adapter: "late-headers", SeedAttributes: map[string]string{"websockets": "false"}, SeedMetadata: map[string]interface{}{"access_token": "sk-ant-oat01-happier-registration-sentinel", "skip_account_profile": true}},
-	"meta":   {ID: "meta", Provider: "meta", Origins: []string{"https://api.meta.ai"}, HeaderNames: []string{"authorization", "x-api-version"}, StripHeaderNames: []string{"authorization", "x-api-version"}, Adapter: "late-headers", SeedAttributes: map[string]string{"api_key": "happier-registration-sentinel", "websockets": "false"}, SeedMetadata: map[string]interface{}{}},
-	"gemini": {ID: "gemini", Provider: "gemini", Origins: []string{"https://generativelanguage.googleapis.com"}, HeaderNames: []string{"x-goog-api-key"}, StripHeaderNames: []string{"authorization", "x-goog-api-key"}, Adapter: "late-headers", SeedAttributes: map[string]string{"api_key": "happier-registration-sentinel", "websockets": "false"}, SeedMetadata: map[string]interface{}{}},
+	"codex":       {ID: "codex", StaticCatalog: false, Provider: "codex", Origins: []string{"https://chatgpt.com"}, HeaderNames: []string{"authorization", "chatgpt-account-id"}, StripHeaderNames: []string{"authorization", "chatgpt-account-id"}, FactAttributes: map[string]string(nil), FactMetadata: map[string]string(nil), SeedAttributes: map[string]string{"plan_type": "pro", "websockets": "false"}, SeedMetadata: map[string]interface{}{"access_token": "happier-registration-sentinel"}},
+	"claude":      {ID: "claude", StaticCatalog: false, Provider: "claude", Origins: []string{"https://api.anthropic.com"}, HeaderNames: []string{"authorization"}, StripHeaderNames: []string{"authorization", "x-api-key", "x-claude-code-session-id"}, FactAttributes: map[string]string(nil), FactMetadata: map[string]string(nil), SeedAttributes: map[string]string{"websockets": "false"}, SeedMetadata: map[string]interface{}{"access_token": "sk-ant-oat01-happier-registration-sentinel", "skip_account_profile": true}},
+	"meta":        {ID: "meta", StaticCatalog: false, Provider: "meta", Origins: []string{"https://api.meta.ai"}, HeaderNames: []string{"authorization", "x-api-version"}, StripHeaderNames: []string{"authorization", "x-api-version"}, FactAttributes: map[string]string(nil), FactMetadata: map[string]string(nil), SeedAttributes: map[string]string{"api_key": "happier-registration-sentinel", "websockets": "false"}, SeedMetadata: map[string]interface{}{}},
+	"gemini":      {ID: "gemini", StaticCatalog: false, Provider: "gemini", Origins: []string{"https://generativelanguage.googleapis.com"}, HeaderNames: []string{"x-goog-api-key"}, StripHeaderNames: []string{"authorization", "x-goog-api-key"}, FactAttributes: map[string]string(nil), FactMetadata: map[string]string(nil), SeedAttributes: map[string]string{"api_key": "happier-registration-sentinel", "websockets": "false"}, SeedMetadata: map[string]interface{}{}},
+	"antigravity": {ID: "antigravity", StaticCatalog: true, Provider: "antigravity", Origins: []string{"https://daily-cloudcode-pa.googleapis.com", "https://cloudcode-pa.googleapis.com", "https://daily-cloudcode-pa.sandbox.googleapis.com"}, HeaderNames: []string{"authorization"}, StripHeaderNames: []string{"authorization", "x-api-key"}, FactAttributes: map[string]string(nil), FactMetadata: map[string]string{"projectId": "project_id"}, SeedAttributes: map[string]string{"websockets": "false"}, SeedMetadata: map[string]interface{}{"access_token": "happier-registration-sentinel", "expires_at": "9999-12-31T23:59:59Z"}},
+	"kimi":        {ID: "kimi", StaticCatalog: false, Provider: "kimi", Origins: []string{"https://api.kimi.com", "https://api.kimi.ai"}, HeaderNames: []string{"authorization", "x-msh-device-id"}, StripHeaderNames: []string{"authorization", "x-msh-device-id", "x-api-key"}, FactAttributes: map[string]string{"deviceId": "header:X-Msh-Device-Id"}, FactMetadata: map[string]string{"deviceId": "device_id", "domain": "domain"}, SeedAttributes: map[string]string{"websockets": "false"}, SeedMetadata: map[string]interface{}{"access_token": "happier-registration-sentinel"}},
+	"xai":         {ID: "xai", StaticCatalog: false, Provider: "xai", Origins: []string{"https://api.x.ai", "https://cli-chat-proxy.grok.com"}, HeaderNames: []string{"authorization", "x-xai-token-auth"}, StripHeaderNames: []string{"authorization", "x-xai-token-auth", "x-api-key"}, FactAttributes: map[string]string{"base": "base_url"}, FactMetadata: map[string]string{"usingApi": "using_api"}, SeedAttributes: map[string]string{"websockets": "false"}, SeedMetadata: map[string]interface{}{"access_token": "happier-registration-sentinel"}},
 }

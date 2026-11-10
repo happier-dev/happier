@@ -27,6 +27,21 @@ type consumerAccess struct {
 	CapabilityPath string               `json:"capabilityPath"`
 	Purposes       []QualifiedPurpose   `json:"purposes"`
 	ModelCatalogs  []sourceModelCatalog `json:"modelCatalogs,omitempty"`
+	AuthFacts      []sourceAuthFacts    `json:"authFacts,omitempty"`
+}
+
+type sourceAuthFacts struct {
+	Purpose QualifiedPurpose `json:"purpose"`
+	Facts   map[string]any   `json:"facts"`
+}
+
+func (a consumerAccess) authFacts(purpose QualifiedPurpose) (map[string]any, bool) {
+	for _, source := range a.AuthFacts {
+		if source.Purpose == purpose {
+			return source.Facts, true
+		}
+	}
+	return nil, false
 }
 
 type consumerAccessDocument struct {
@@ -77,6 +92,16 @@ func readConsumerAccess(path string) ([]consumerAccess, error) {
 		}
 		if err := consumer.validateModelCatalogs(); err != nil {
 			return nil, err
+		}
+		factsSeen := make(map[QualifiedPurpose]struct{}, len(consumer.AuthFacts))
+		for _, source := range consumer.AuthFacts {
+			if !consumer.admits(source.Purpose) || validateRequestAuthFacts(source.Facts) != nil {
+				return nil, fmt.Errorf("consumer auth facts are invalid")
+			}
+			if _, duplicate := factsSeen[source.Purpose]; duplicate {
+				return nil, fmt.Errorf("consumer auth facts purpose is duplicated")
+			}
+			factsSeen[source.Purpose] = struct{}{}
 		}
 	}
 	return document.Consumers, nil

@@ -27,13 +27,15 @@ type familyRow struct {
 	SDK struct {
 		StripHeaderNames []string `json:"stripHeaderNames"`
 		Catalog          struct {
-			Getter string `json:"getter"`
+			Getter     string `json:"getter"`
+			StaticOnly bool   `json:"staticOnly"`
 		} `json:"catalog"`
 		Seed struct {
 			Attributes map[string]string `json:"attributes"`
 			Metadata   map[string]any    `json:"metadata"`
 		} `json:"seed"`
-		Adapter string `json:"adapter"`
+		FactAttributes map[string]string `json:"factAttributes"`
+		FactMetadata   map[string]string `json:"factMetadata"`
 	} `json:"sdk"`
 }
 
@@ -48,9 +50,6 @@ func readFamilies(reader io.Reader) ([]familyRow, error) {
 			return nil, fmt.Errorf("invalid or duplicate managed family %q", family.AuthEntry.Provider)
 		}
 		seen[family.AuthEntry.Provider] = true
-		if family.SDK.Adapter != "late-headers" && family.SDK.Adapter != "request-local-auth" {
-			return nil, fmt.Errorf("unsupported managed adapter %q", family.SDK.Adapter)
-		}
 	}
 	if len(families) == 0 {
 		return nil, fmt.Errorf("managed family rows are empty")
@@ -64,11 +63,13 @@ func generateFamilies(families []familyRow) ([]byte, error) {
 	fmt.Fprintln(&output, `
 type managedFamilyDescriptor struct {
  ID string
+ StaticCatalog bool
  Provider Provider
  Origins []string
  HeaderNames []string
  StripHeaderNames []string
- Adapter string
+ FactAttributes map[string]string
+ FactMetadata map[string]string
  SeedAttributes map[string]string
  SeedMetadata map[string]any
 }
@@ -83,7 +84,7 @@ func managedFamilyForProvider(provider Provider) (managedFamilyDescriptor, bool)
 	}
 	fmt.Fprintln(&output, ")\nvar managedFamilies = map[Provider]managedFamilyDescriptor{")
 	for _, family := range families {
-		fmt.Fprintf(&output, "%q: {ID:%q, Provider:%q, Origins:%#v, HeaderNames:%#v, StripHeaderNames:%#v, Adapter:%q, SeedAttributes:%#v, SeedMetadata:%#v},\n", family.AuthEntry.Provider, family.AuthEntry.ID, family.AuthEntry.Provider, family.Origins, family.RequestAuth.Materialization.HeaderNames, family.SDK.StripHeaderNames, family.SDK.Adapter, family.SDK.Seed.Attributes, family.SDK.Seed.Metadata)
+		fmt.Fprintf(&output, "%q: {ID:%q, StaticCatalog:%t, Provider:%q, Origins:%#v, HeaderNames:%#v, StripHeaderNames:%#v, FactAttributes:%#v, FactMetadata:%#v, SeedAttributes:%#v, SeedMetadata:%#v},\n", family.AuthEntry.Provider, family.AuthEntry.ID, family.SDK.Catalog.StaticOnly, family.AuthEntry.Provider, family.Origins, family.RequestAuth.Materialization.HeaderNames, family.SDK.StripHeaderNames, family.SDK.FactAttributes, family.SDK.FactMetadata, family.SDK.Seed.Attributes, family.SDK.Seed.Metadata)
 	}
 	fmt.Fprintln(&output, "}")
 	return format.Source(output.Bytes())

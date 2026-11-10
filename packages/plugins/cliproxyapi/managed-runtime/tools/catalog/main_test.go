@@ -23,7 +23,7 @@ func TestGeneratedCatalogMatchesPinnedSDKSource(t *testing.T) {
 	if err := json.Unmarshal(data, &module); err != nil {
 		t.Fatal(err)
 	}
-	familyJSON, err := exec.Command("node", "--experimental-strip-types", "../../../tools/catalog/generate.mjs", "--print-families").Output()
+	familyJSON, err := exec.Command("node", "--conditions=happier-source", "--experimental-strip-types", "../../../tools/catalog/generate.mjs", "--print-families").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,6 +138,21 @@ func TestGeneratedCatalogMatchesPinnedSDKSource(t *testing.T) {
 	}
 	if !bytes.Equal(gotFamilies, wantFamilies) {
 		t.Fatal("managed family output is stale: run node --experimental-strip-types ./tools/catalog/generate.mjs from the plugin root")
+	}
+	rowsForRuntime, err := generateRows(module.Dir, families)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRuntime, err := generateRuntimeModels(rowsForRuntime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotRuntime, err := os.ReadFile("../../static_models.generated.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotRuntime, wantRuntime) {
+		t.Fatal("managed runtime static models are stale: run node --conditions=happier-source --experimental-strip-types ./tools/catalog/generate.mjs from the plugin root")
 	}
 	families[0].SDK.Catalog.Getter = "GetMissingManagedCatalog"
 	if _, err := generate(module.Dir, module.Version, families); err == nil || !strings.Contains(err.Error(), "GetMissingManagedCatalog") {

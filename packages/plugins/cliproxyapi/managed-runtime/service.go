@@ -158,7 +158,12 @@ func managedModelsRegistered(config Config) bool {
 		return true
 	}
 	for _, entry := range config.AuthEntries {
-		if len(cliproxy.GlobalModelRegistry().GetAvailableModelsByProvider(string(entry.Provider))) == 0 {
+		models := cliproxy.GlobalModelRegistry().GetAvailableModelsByProvider(string(entry.Provider))
+		family, _ := managedFamilyForProvider(entry.Provider)
+		if config.ConsumerAccessPath != "" && family.StaticCatalog {
+			models = managedCompatibilityModels(entry)
+		}
+		if len(models) == 0 {
 			return false
 		}
 	}
@@ -198,7 +203,7 @@ func (g *Gateway) Catalog() []CatalogModel {
 	}
 	models := make([]CatalogModel, 0)
 	for _, entry := range g.config.AuthEntries {
-		for _, model := range cliproxy.GlobalModelRegistry().GetAvailableModelsByProvider(string(entry.Provider)) {
+		for _, model := range managedCompatibilityModels(entry) {
 			if model == nil || model.ID == "" {
 				continue
 			}
@@ -277,6 +282,16 @@ func managedRuntimeAuth(entry AuthEntry) *coreauth.Auth {
 	}
 	for key, value := range family.SeedMetadata {
 		metadata[key] = value
+	}
+	for fact, name := range family.FactAttributes {
+		if value, exists := entry.Facts[fact]; exists {
+			attributes[name] = fmt.Sprint(value)
+		}
+	}
+	for fact, name := range family.FactMetadata {
+		if value, exists := entry.Facts[fact]; exists {
+			metadata[name] = value
+		}
 	}
 	return &coreauth.Auth{
 		ID:         entry.ID,

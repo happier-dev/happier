@@ -30,6 +30,7 @@ type AuthEntry struct {
 	Provider            Provider         `json:"provider"`
 	Purpose             QualifiedPurpose `json:"purpose"`
 	AllowedHTTPSOrigins []string         `json:"allowedHttpsOrigins"`
+	Facts               map[string]any   `json:"facts,omitempty"`
 }
 
 type Config struct {
@@ -112,6 +113,11 @@ func (entry AuthEntry) validate() error {
 	}
 	if err := entry.Purpose.validate(); err != nil {
 		return fmt.Errorf("purpose: %w", err)
+	}
+	if entry.Facts != nil {
+		if err := validateRequestAuthFacts(entry.Facts); err != nil {
+			return err
+		}
 	}
 	if len(entry.AllowedHTTPSOrigins) == 0 {
 		return fmt.Errorf("allowed HTTPS origins are missing")

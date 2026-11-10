@@ -311,15 +311,8 @@ func validateRequestAuthHeaders(lease RequestAuthHeaders, now time.Time) error {
 	if lease.Headers == nil {
 		return fmt.Errorf("request-auth headers are missing")
 	}
-	if lease.Facts == nil {
-		return fmt.Errorf("request-auth facts are missing")
-	}
-	for _, value := range lease.Facts {
-		switch value.(type) {
-		case string, bool, float64:
-		default:
-			return fmt.Errorf("request-auth fact must be scalar")
-		}
+	if err := validateRequestAuthFacts(lease.Facts); err != nil {
+		return err
 	}
 	if lease.ExpiresAt < 0 {
 		return fmt.Errorf("request-auth lease expiry is invalid")
@@ -370,6 +363,20 @@ func validateRequestAuthHeaders(lease RequestAuthHeaders, now time.Time) error {
 	if fingerprint := context.FailingAccessTokenFingerprint; fingerprint != "" &&
 		!tokenFingerprintPattern.MatchString(fingerprint) {
 		return fmt.Errorf("request-auth lease token fingerprint is invalid")
+	}
+	return nil
+}
+
+func validateRequestAuthFacts(facts map[string]any) error {
+	if facts == nil {
+		return fmt.Errorf("request-auth facts are missing")
+	}
+	for _, value := range facts {
+		switch value.(type) {
+		case string, bool, float64:
+		default:
+			return fmt.Errorf("request-auth fact must be scalar")
+		}
 	}
 	return nil
 }
