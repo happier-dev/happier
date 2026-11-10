@@ -319,6 +319,30 @@ test('dependency publication rejects source completion before writing or selecti
   await assert.rejects(readFile(join(outputDir, 'source-bundle.json')), { code: 'ENOENT' });
 });
 
+test('dependency drift preserves its refusal while removing read-only captured author packages', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-runtime-readonly-refusal-', registerCleanup: false });
+  t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+  const repoDir = await createReloadDaemonRepo(fixture, 'export const ready = true;');
+  const native = await installSourceAdmissionFixture(fixture.root);
+  const env = { ...process.env, ...native.env, HAPPIER_STACK_HOME_DIR: fixture.path('home') };
+  const generationPath = `${resolveDependencyRefreshLockPath(repoDir, env)}.generation`;
+  await mkdir(dirname(generationPath), { recursive: true });
+  await writeFile(generationPath, JSON.stringify({ generation: 'initial', completedGeneration: 'initial' }));
+  const outputDir = fixture.path('runtime');
+  const authorPackage = join(outputDir, 'apps/cli/authoring/node_modules/@happier-dev/brand/dist');
+  // The real runtime probe observes an installed-input writer after compilation.
+  await writeFile(join(repoDir, 'apps/cli/src/index.ts'), `import { writeFileSync, mkdirSync, chmodSync } from 'node:fs';
+    const root = ${JSON.stringify(authorPackage)};
+    mkdirSync(root + '/.happier-source', { recursive: true });
+    writeFileSync(root + '/.happier-source/input.ts', 'export const captured = true;');
+    chmodSync(root + '/.happier-source', 0o555); chmodSync(root, 0o555);
+    const generation = 'changed-' + Date.now();
+    writeFileSync(${JSON.stringify(generationPath)}, JSON.stringify({ generation, completedGeneration: generation }));
+    export const ready = true;`);
+  await assert.rejects(native.build({ repoDir, outputDir, component: 'daemon', env, waitForSourceChanges: false }), { code: 'BUILD_INPUTS_CHANGED' });
+  await assert.rejects(access(outputDir), { code: 'ENOENT' });
+});
+
 test('source runtime reload rebuilds a dependency capture after published content changes', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-runtime-refresh-recovery-', registerCleanup: false });
   t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
@@ -4000,11 +4024,7 @@ test('concurrent stacks share one read-only source bundle and retain selected bu
   await installSourcePreparationInputs(repoDir, 'daemon');
   const native = process.platform === 'linux' ? await installSourceAdmissionFixture(root) : null;
   const build = native?.build ?? buildSourceRuntimeBundle;
-  const buildEnv = {...(native ? buildNativeAdmissionFixtureEnv() : process.env)};
-  if(native) {
-    buildEnv.PATH = native.env.PATH;
-    buildEnv.HAPPIER_DEV_TARGET_EXECUTION = native.env.HAPPIER_DEV_TARGET_EXECUTION;
-  }
+  const buildEnv = { ...(native?.env ?? process.env) };
   const runtimeUrl = native ? pathToFileURL(native.runtimePath).href : new URL('./build_source_runtime.mjs',import.meta.url).href;
   const script = `import {buildSourceRuntimeBundle} from ${JSON.stringify(runtimeUrl)}; console.log(JSON.stringify(await buildSourceRuntimeBundle({repoDir:process.argv[1],stackBaseDir:process.argv[2],component:'daemon'})));`;
   const results = await Promise.all(stacks.map(async stackBaseDir => {

@@ -35,7 +35,7 @@ test('dependency publication web export discards a spanned candidate and returns
   const env = { ...process.env, EXPO_PUBLIC_DEBUG: '0' };
   const generationPath = `${resolveDependencyRefreshLockPath(repoDir, env)}.generation`;
   await mkdir(dirname(generationPath), { recursive: true });
-  await writeFile(generationPath, JSON.stringify({ generation: 'before' }));
+  await writeFile(generationPath, JSON.stringify({ generation: 'before', completedGeneration: 'before' }));
   let attempts = 0;
   const built = await exportSourceWebUi({ repoDir, baseDir: fixture.path('state'), outputDir: fixture.path('export'), env,
     runImpl: async (_command, args) => {
@@ -44,7 +44,7 @@ test('dependency publication web export discards a spanned candidate and returns
       await mkdir(web);
       await writeFile(join(web, 'index.html'), '<script src="./app.js"></script>');
       await writeFile(join(web, 'app.js'), `globalThis.pass = ${attempt};`);
-      if (attempt === 1) await writeFile(generationPath, JSON.stringify({ generation: 'after-failed-writer' }));
+      if (attempt === 1) await writeFile(generationPath, JSON.stringify({ generation: 'after-writer', completedGeneration: 'after-writer' }));
     } });
   assert.equal(attempts, 2);
   assert.equal(await readFile(join(built.uiDir, 'app.js'), 'utf8'), 'globalThis.pass = 2;');

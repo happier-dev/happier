@@ -6,7 +6,7 @@ function makeOwnedDirectoriesWritable(path) {
   let entry;
   try { entry = lstatSync(path); }
   catch (error) { if (error.code === 'ENOENT') return; throw error; }
-  // Go's module cache deliberately uses read-only directories. Only repair
+  // Source captures and Go module caches use read-only directories. Only repair
   // directories owned by this user, never symlink targets or hardlinked files.
   if (!entry.isDirectory()) return;
   if (typeof process.getuid === 'function' && entry.uid !== process.getuid()) {
