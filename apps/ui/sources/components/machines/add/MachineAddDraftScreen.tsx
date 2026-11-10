@@ -15,7 +15,7 @@ import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedC
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { resolveHomeDisplayName } from '@/components/settings/server/homeDisplayName';
-import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -38,7 +38,9 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
     const router = useRouter();
     const navigation = useNavigation();
     const returnToHost = useNewSessionPickerReturnHost();
-    const params = useLocalSearchParams<{ path?: string | string[]; draftId?: string; newSessionHostDraftId?: string }>();
+    const params = useLocalSearchParams<{ path?: string | string[]; serverId?: string | string[]; draftId?: string; newSessionHostDraftId?: string }>();
+    const routePath = readMachineAddRoutePath(params.path);
+    const requestedServerId = Array.isArray(params.serverId) ? params.serverId[0] : params.serverId;
     const returning = hasNewSessionPickerContinuation(params);
     const focused = useIsFocused();
     const returnToComposer = React.useCallback((machine?: Readonly<{ machineId: string; serverId: string }>) => {
@@ -50,8 +52,10 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
                 machinePoolId: undefined, directory: undefined, path: undefined } : {},
         });
     }, [navigation, router, returnToHost, params]);
-    // The machine joins the Home this device uses (the flow's default target).
-    const serverId = useMachineAddFlowServerId();
+    // Create addresses its own Home; an existing connection task keeps its admitted Home.
+    const connectionServerId = useMachineAddFlowServerId();
+    const serverId = routePath === 'create' && requestedServerId ? requestedServerId : connectionServerId;
+    const separateCreateHome = routePath === 'create' && !areServerProfileIdentifiersEquivalent(serverId, connectionServerId);
     const homeName = resolveHomeDisplayName(getServerProfileById(serverId));
     // One read of the Account's opt-out serves the header's promise and the form's Create one.
     const accountScope = useServerCredentialAccountScopeBinding(serverId);
@@ -60,7 +64,6 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
     // `?path=create` (Home's Machines widget, "Create one in the cloud") opens Create one, as its tab would. Without
     // a path, a phone or a browser opens on it too (58d §D2), unless a setup is already running from this draft.
     const pathParam = Array.isArray(params.path) ? params.path[0] : params.path;
-    const routePath = readMachineAddRoutePath(params.path);
     const initialPath = routePath === 'create' ? undefined : routePath;
     // A phone's pushed way is titled by it; Back (the settings registry's parent) returns to the ways.
     const pushesWays = useMachineAddPushesWays();
@@ -69,7 +72,8 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
         : pathParam || !machineAddLeadsWithCreate(readMachineAddDevice()) ? false
         : !accountSettings.settings && !accountSettings.error && (accountScope.resolution.kind === 'resolving' || accountScope.resolution.kind === 'bound') ? null
         : canCreate;
-    const flow = useMachineAddFlow({ serverId, initialPath, initialCreating, connectionPathVisible: !pushesWays || Boolean(routePath) });
+    const flow = useMachineAddFlow({ serverId: connectionServerId, initialPath, initialCreating,
+        connectionPathVisible: !separateCreateHome && (!pushesWays || Boolean(routePath)) });
     const navigate = React.useCallback((href: unknown, tag: string, replace: boolean) => {
         const result = runGuardedNavigation(() => (replace ? router.replace(href as never) : router.push(href as never)));
         if (result !== true) fireAndForget(result, { tag });
@@ -77,14 +81,14 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
     // A phone pushes the chosen way as its own page; that page's `path` says which (58d §D2 phone push).
     const openWay = React.useCallback((way: MachineAddRoutePath) => navigate(returning
         ? buildNewSessionPickerSubflowHref('/settings/machines/add', params, { path: way })
-        : buildMachineAddHref({ path: way }), 'MachineAddDraftScreen.openWay', false), [navigate, returning, params]);
+        : buildMachineAddHref({ path: way, serverId: requestedServerId }), 'MachineAddDraftScreen.openWay', false), [navigate, returning, params, requestedServerId]);
     const leave = React.useCallback(() => {
         if (returning) returnToComposer();
         else navigate(MACHINES_COLLECTION_ROOT, 'MachineAddDraftScreen.leave', true);
     }, [navigate, returning, returnToComposer]);
     const discard = React.useCallback(async () => {
-        if (await flow.discard()) leave();
-    }, [flow.discard, leave]);
+        if (separateCreateHome || await flow.discard()) leave();
+    }, [flow.discard, leave, separateCreateHome]);
     const startSession = React.useCallback((machine: Readonly<{ machineId: string; serverId: string }>) => {
         if (returning) { returnToComposer(machine); return; }
         const lifetime = captureActiveServerAccountScopeLifetime();
@@ -125,11 +129,12 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
                         testID="settings.machines.draft.form"
                         initialPath={initialPath}
                         canCreate={canCreate}
+                        creationServerId={serverId}
                         openedWay={routePath}
                         onOpenWay={openWay}
                         onClose={discard}
                         onStartSession={startSession}
-                        onArrived={returning && focused ? returnToComposer : undefined}
+                        onArrived={returning && focused && !separateCreateHome ? returnToComposer : undefined}
                         onSelectProvisioner={returning ? selection => navigate(buildNewSessionPickerSubflowHref(
                             buildManagedMachineConfigurationRoute(selection), params,
                         ), 'MachineAddDraftScreen.configure', false) : undefined}

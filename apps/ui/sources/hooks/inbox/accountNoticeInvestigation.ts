@@ -16,9 +16,15 @@ import { readOwnedNoticeArtifactV1, ACCOUNT_NOTICE_ARTIFACT_KIND_V1,
     type AccountNoticeRecoveryChoiceV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { sameStrictJsonValue, StrictJsonValueSchema, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { HealthNoticeInvestigationPlacement } from '@/components/inbox/detail/healthNoticeInvestigation';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 /** Native failure surfaces and Inbox use the same configured handoff/recovery owner. */
 export type FailureInvestigationSubject = AccountNoticeArtifact | TriageFailureSubjectV1;
+export type FailureInvestigationExecutionOptions = Readonly<{
+    signal?: AbortSignal;
+    externalActionTarget?: ActionExecutorContext['externalActionTarget'];
+    placement?: HealthNoticeInvestigationPlacement;
+}>;
 
 export const failureInvestigationSubjectKey = (entry: FailureInvestigationSubject) => 'artifact' in entry ? entry.artifact.id
     : JSON.stringify(triageFailureSubjectEntryV1(entry).entryRef);
@@ -35,7 +41,9 @@ export function createAccountNoticeInvestigation(input: Readonly<{
 }>) {
     // Triage owns these opaque identities; the mounted Account owner only
     // carries them across drawer lifetimes and independent notice presses.
-    type Operation = { handoff: TriageSessionHandoffInputV1; recovery?: JsonValue; pending?: Promise<ActionExecuteResult> };
+    type Operation = { handoff: TriageSessionHandoffInputV1; recovery?: JsonValue; pending?: Promise<ActionExecuteResult>;
+        placementRequired?: true;
+        externalActionTarget?: ActionExecutorContext['externalActionTarget'] };
     const operations = new Map<string, Operation>();
     const read = (entry: FailureInvestigationSubject) => {
         if (!input.scope || !input.isCurrent()) { operations.clear(); return null; }
@@ -59,11 +67,13 @@ export function createAccountNoticeInvestigation(input: Readonly<{
         if (!areServerProfileIdentifiersEquivalent(home, input.scope.serverId)) return null;
         return { kind: 'healthAlert' as const, notice: { kind: 'host' as const, artifactId: entry.artifact.id, source: header.source }, target: header.page };
     };
-    const context = (signal?: AbortSignal) => {
+    const context = (options?: FailureInvestigationExecutionOptions) => {
         const isCurrent = input.captureCurrent?.() ?? input.isCurrent;
         return { surface: 'ui' as const, authority: 'present_user' as const,
         serverId: input.scope?.serverId, expectedAccountId: input.scope?.accountId,
-        verifyMachineAdmissionCurrent: async () => isCurrent() && input.isCurrent(), ...(signal ? { signal } : {}) };
+        verifyMachineAdmissionCurrent: async () => isCurrent() && input.isCurrent(),
+        ...(options?.signal ? { signal: options.signal } : {}),
+        ...(options?.externalActionTarget ? { externalActionTarget: options.externalActionTarget } : {}) };
     };
     const unavailable = (): ActionExecuteResult => ({ ok: false,
         errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' });
@@ -77,7 +87,7 @@ export function createAccountNoticeInvestigation(input: Readonly<{
                     action: { pluginId: 'happier.triage', localId: 'sessions/run-configured-v1' },
                     input: { v: 1, handoff: operation.handoff,
                         ...(operation.recovery === undefined ? {} : { resumeStart: operation.recovery }) },
-                }, context(signal));
+                }, context({ signal, externalActionTarget: operation.externalActionTarget }));
                 if (!input.isCurrent()) { operations.clear(); return unavailable(); }
                 if (operations.get(artifactId) !== operation) return result;
                 if (!result.ok) {
@@ -92,7 +102,8 @@ export function createAccountNoticeInvestigation(input: Readonly<{
                     if (ActionApprovalRequestCreatedResultSchema.safeParse(value).success) operations.delete(artifactId);
                     return result;
                 }
-                if (handoff.data.kind === 'composed' || handoff.data.kind === 'sendResult') operations.delete(artifactId);
+                if (handoff.data.kind === 'placement_choice_required') operation.placementRequired = true;
+                else if (handoff.data.kind === 'composed' || handoff.data.kind === 'sendResult') operations.delete(artifactId);
                 else if (value && typeof value === 'object' && 'recovery' in value && value.recovery !== undefined) {
                     const recovery = StrictJsonValueSchema.safeParse(value.recovery);
                     if (recovery.success) operation.recovery = recovery.data;
@@ -107,11 +118,22 @@ export function createAccountNoticeInvestigation(input: Readonly<{
         void pending.then(() => { if (operation.pending === pending) operation.pending = undefined; });
         return pending;
     };
-    const resume = (entry: FailureInvestigationSubject, options?: Readonly<{ signal?: AbortSignal }>): Promise<ActionExecuteResult> | null => {
+    const resume = (entry: FailureInvestigationSubject, options?: FailureInvestigationExecutionOptions): Promise<ActionExecuteResult> | null => {
         if (!read(entry) || options?.signal?.aborted) return Promise.resolve(unavailable());
         const operation = operations.get(failureInvestigationSubjectKey(entry));
         if (!operation) return null;
         if (operation.pending) return operation.pending;
+        if (operation.placementRequired) {
+            if (options?.placement) {
+                const { agentTargetKey, ...placement } = options.placement;
+                operation.handoff = TriageSessionHandoffInputV1Schema.parse({ ...operation.handoff,
+                    ...(agentTargetKey ? { agentChoice: { kind: 'target', targetKey: agentTargetKey } } : {}),
+                    context: operation.handoff.context.kind === 'entry' ? operation.handoff.context
+                        : { ...operation.handoff.context, ...placement } });
+            }
+            operation.placementRequired = undefined;
+            return executeOperation(failureInvestigationSubjectKey(entry), operation, options?.signal);
+        }
         return operation.recovery === undefined ? Promise.resolve(outcomeUnknown())
             : executeOperation(failureInvestigationSubjectKey(entry), operation, options?.signal);
     };
@@ -130,12 +152,12 @@ export function createAccountNoticeInvestigation(input: Readonly<{
         resume,
         /** Relationship truth comes from Triage's existing persisted entry link,
          * never from the transient admission/recovery custody above. */
-        async readLinkedSession(subject: TriageFailureSubjectV1, options?: Readonly<{ signal?: AbortSignal }>) {
+        async readLinkedSession(subject: TriageFailureSubjectV1, options?: FailureInvestigationExecutionOptions) {
             if (!read(subject) || options?.signal?.aborted) return null;
             const result = await input.execute('action.invoke', {
                 action: { pluginId: 'happier.triage', localId: TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1 },
                 input: { v: 1, entryRef: triageFailureSubjectEntryV1(subject).entryRef },
-            }, context(options?.signal));
+            }, context(options));
             if (!input.isCurrent() || options?.signal?.aborted || !result.ok) return null;
             const links = TriageReadSourceSessionLinksResultV1Schema.safeParse(result.result);
             if (!links.success) return null;
@@ -145,10 +167,10 @@ export function createAccountNoticeInvestigation(input: Readonly<{
         },
         readRecoveryChoices: recoveryChoices,
         async runRecoveryChoice(entry: AccountNoticeArtifact, index: number,
-            options?: Readonly<{ signal?: AbortSignal }>): Promise<ActionExecuteResult> {
+            options?: FailureInvestigationExecutionOptions): Promise<ActionExecuteResult> {
             const choice = Number.isInteger(index) && index >= 0 ? recoveryChoices(entry)[index] : undefined;
             if (!choice || options?.signal?.aborted || !input.scope) return unavailable();
-            const opened = await input.execute('artifact.get', { artifactId: entry.artifact.id }, context(options?.signal));
+            const opened = await input.execute('artifact.get', { artifactId: entry.artifact.id }, context(options));
             if (!opened.ok) return opened;
             if (!input.isCurrent() || options?.signal?.aborted) return unavailable();
             const parsed = ArtifactActionOutputSchemasV1['artifact.get'].safeParse(opened.result);
@@ -162,27 +184,27 @@ export function createAccountNoticeInvestigation(input: Readonly<{
                 return { ok: false, errorCode: 'usage_notice_changed', error: 'usage_notice_changed' };
             }
             return input.execute(choice.actionId, choice.actionId === 'inbox.notice.dismiss'
-                ? { ...choice.input, expectedRevision: current.revision } : choice.input, context(options?.signal));
+                ? { ...choice.input, expectedRevision: current.revision } : choice.input, context(options));
         },
         readOutcomeSubject(entry: FailureInvestigationSubject) {
             const context = read(entry);
             return context?.kind === 'failure' ? context.subject : context;
         },
         isEligible(entry: FailureInvestigationSubject): boolean { return read(entry) !== null; },
-        async readChoices(entry: FailureInvestigationSubject, options?: Readonly<{ signal?: AbortSignal }>): Promise<TriageSessionHandoffChoicesV1> {
+        async readChoices(entry: FailureInvestigationSubject, options?: FailureInvestigationExecutionOptions): Promise<TriageSessionHandoffChoicesV1> {
             const missing = { v: 1, kind: 'unavailable', reason: 'catalogUnavailable' } as const;
             if (options?.signal?.aborted || !read(entry)) return missing;
             const subject = 'artifact' in entry ? undefined : triageFailureSubjectActionSubjectV1(entry);
             const result = await input.execute('action.invoke', {
                 action: { pluginId: 'happier.triage', localId: 'actions/read-v1' },
                 input: { v: 1, projection: 'sessionHandoff', task: 'investigate', ...(subject === undefined ? {} : { subject }) },
-            }, context(options?.signal));
+            }, context(options));
             if (!result.ok || !input.isCurrent() || options?.signal?.aborted) return missing;
             const choices = TriageSessionHandoffChoicesV1Schema.safeParse(result.result);
             return choices.success ? choices.data : missing;
         },
         async run(entry: FailureInvestigationSubject, selection: TriageSessionHandoffSelectionV1,
-            options?: Readonly<{ signal?: AbortSignal;
+            options?: FailureInvestigationExecutionOptions & Readonly<{
                 placement?: HealthNoticeInvestigationPlacement;
             }>): Promise<ActionExecuteResult> {
             const notice = read(entry);
@@ -197,7 +219,7 @@ export function createAccountNoticeInvestigation(input: Readonly<{
                 context: notice.kind === 'entry' ? notice : { ...notice, ...placement },
                 evidence: [notice.kind === 'entry' ? { kind: 'alertEntry', entry: notice.entry }
                     : notice.kind === 'failure' ? { kind: 'failure', subject: notice.subject } : { kind: 'alert', notice: notice.notice }] });
-            const operation = { handoff };
+            const operation = { handoff, externalActionTarget: options?.externalActionTarget };
             operations.set(failureInvestigationSubjectKey(entry), operation);
             return executeOperation(failureInvestigationSubjectKey(entry), operation, options?.signal);
         },

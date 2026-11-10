@@ -291,12 +291,13 @@ describe('useHealthNoticeInvestigate', () => {
 
   it('retains placement selection requirements and sends only the explicit Machine/workspace on retry', async () => {
     const calls: unknown[] = [];
+    let currentChoices = offered;
     const choice = { kind: 'placement_choice_required', reason: 'controller_required', candidates: [], agents: [] };
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({
       invokeContributedAction: async request => {
-        if (request.action.localId === 'actions/read-v1') return { ok: true, result: offered };
+        if (request.action.localId === 'actions/read-v1') return { ok: true, result: currentChoices };
         calls.push(request.input);
-        return { ok: true, result: { v: 1, handoff: calls.length === 1
+        return { ok: true, result: { v: 1, handoff: calls.length <= 2
           ? choice
           : { kind: 'composed', destination: { kind: 'newSessionDraft' } } } };
       },
@@ -314,10 +315,10 @@ describe('useHealthNoticeInvestigate', () => {
     const entry = { artifact, header: readAccountNoticeArtifactHeader(artifact, scope.accountId)! };
     const bound = {
       readChoices: (options: Parameters<typeof model.readChoices>[1]) => model.readChoices(entry, options),
-      resume: (options: { signal: AbortSignal }) => model.resume(entry, options),
+      resume: (options: { signal: AbortSignal; placement?: import('./healthNoticeInvestigation').HealthNoticeInvestigationPlacement }) => model.resume(entry, options),
       run: (selection: Parameters<typeof model.run>[1], options: Parameters<typeof model.run>[2]) => model.run(entry, selection, options),
     };
-    const hook = await renderHook(() => useHealthNoticeInvestigate(bound));
+    let hook = await renderHook(() => useHealthNoticeInvestigate(bound));
     try {
       expect(calls).toHaveLength(0);
       await act(async () => { await hook.getCurrent().investigate(); });
@@ -327,9 +328,19 @@ describe('useHealthNoticeInvestigate', () => {
       const placement = { machine: { serverId: scope.serverId, machineId: 'chosen-machine' },
         workspace: { serverId: scope.serverId, workspaceId: 'chosen-workspace', machineId: 'chosen-machine', rootPath: '/workspaces/project' } };
       const agentTargetKey = 'agent:happier.agent.codex/codex';
-      await act(async () => { await hook.getCurrent().investigateWithPlacement({ ...placement, agentTargetKey }); });
+      // Create a cloud Machine navigates away. The Account owner, rather than this
+      // mounted failure surface, retains the exact configured handoff while away.
+      await hook.unmount();
+      currentChoices = { ...offered, defaultActionId: 'another-investigation', actions: [{ ...offered.actions[0]!,
+        selection: { ...investigate, configuredActionId: 'another-investigation' } }] };
+      hook = await renderHook(() => useHealthNoticeInvestigate(bound));
+      await act(async () => { await hook.getCurrent().investigate(); });
+      expect(hook.getCurrent().outcome).toEqual(choice);
       expect(calls).toHaveLength(2);
-      expect(calls[1]).toMatchObject({ handoff: { context: { kind: 'healthAlert', ...placement,
+      expect(calls[1]).toEqual(calls[0]);
+      await act(async () => { await hook.getCurrent().investigateWithPlacement({ ...placement, agentTargetKey }); });
+      expect(calls).toHaveLength(3);
+      expect(calls[2]).toMatchObject({ handoff: { configuredActionId: 'investigate', context: { kind: 'healthAlert', ...placement,
         target: entry.header.page }, agentChoice: { kind: 'target', targetKey: agentTargetKey },
         evidence: [{ kind: 'alert', notice: { artifactId: artifact.id } }] } });
       expect(hook.getCurrent().outcome).toEqual({ kind: 'started', handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } });

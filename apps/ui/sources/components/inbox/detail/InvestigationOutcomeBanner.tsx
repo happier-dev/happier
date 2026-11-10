@@ -33,7 +33,7 @@ export function InvestigationOutcomeBanner(props: Readonly<{
   const openEditor = useOpenTriageActionEditor();
   if (outcome.kind === 'started') return null;
   if (outcome.kind === 'placement_choice_required') return <InvestigationPlacementChooser choice={outcome}
-    pending={props.pending} onChoose={props.onChoosePlacement} testID={`${testID}.placement`} />;
+    serverId={props.serverId} pending={props.pending} onChoose={props.onChoosePlacement} testID={`${testID}.placement`} />;
   if (outcome.kind === 'approval') return <HealthNoticeApprovalNotice artifactId={outcome.artifactId} serverId={props.serverId} testID={`${testID}.approval`} />;
   const copy = outcome.kind === 'selectionRequired'
       ? { tone: 'warning' as const, title: t('inbox.work.healthNotice.selectionTitle'), description: t('inbox.work.healthNotice.selectionBody') }

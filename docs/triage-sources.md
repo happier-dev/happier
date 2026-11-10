@@ -411,6 +411,17 @@ through `agents.backends.list.defaultTargetKey`; Triage consumes it. A complete
 admitted placement and Agent can start directly. Investigate does not wait for
 managed-service inventory or unrelated service establishment.
 
+When Triage asks for placement, the Account investigation owner retains the
+original configured Action and evidence across route unmounts. An explicit retry
+resumes that handoff through Triage's placement owner without reading a
+replacement catalog default. A Machine, workspace or Agent selection applies
+to that same handoff. If no Machine is reachable, the existing chooser opens Create one in
+the cloud on the failure's Home. The Machine Add page keeps that Create Home
+separate from any retained connection task's admitted Home. Returning to the
+failure still requires an explicit placement choice; acquisition does not start
+an investigation. This development-source continuation awaits loaded-runtime
+verification.
+
 Workflow Run failures reach this same handoff from the invocation recovery card
 in both Activity and Flow views. The Workflows owner declares its configurable
 `workflows.investigate-run` action in the shared subject-action catalog. The
@@ -847,8 +858,14 @@ native attach retains its origin requirement for execution routing. The Session 
 warnings and exposes diagnostic codes and Request IDs in Details. A setup refusal
 that invoked no source Action uses the host read's existing Action request identity;
 an invoked source failure retains its original request identity. Account Action
-contexts expose that optional host identity as `invocationId`, without granting
-authority or creating a second operation.
+contexts expose the originating host-issued identity as optional `requestId`,
+without granting authority or changing the independent `invocationId`. The
+canonical `TriageSourceFailureV1` carries that optional identity at its producer,
+including failures embedded in a healthy cold-opening result. Strict native
+read schemas preserve it; the shared read-failure disclosure shows Code, Reason
+and Request ID. A mounted read may also retain its existing issued envelope ID
+in successful execution metadata when the provider returned a typed failure.
+Neither projection creates an identity when no request was issued.
 
 ### Error-source writes (0.3 development source)
 

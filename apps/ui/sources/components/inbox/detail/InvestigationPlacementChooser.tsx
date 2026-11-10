@@ -5,10 +5,13 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { FieldSelect } from '@/components/workflows/triggers/TriggerPopover';
 import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { unnamedMachineName } from '@/utils/sessions/machineDisplayNames';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
 
 import type {
   HealthNoticeInvestigationOutcome,
@@ -27,12 +30,14 @@ type PlacementChoice = Extract<
 export function InvestigationPlacementChooser(
   props: Readonly<{
     choice: PlacementChoice;
+    serverId: string;
     pending: boolean;
     onChoose: (placement: HealthNoticeInvestigationPlacement) => void;
     testID: string;
   }>,
 ) {
   const { theme } = useUnistyles();
+  const router = useRouter();
   const { candidates, agents, reason } = props.choice;
   const machineIds = React.useMemo(
     () => candidates.map((candidate) => candidate.machine.machineId),
@@ -45,8 +50,10 @@ export function InvestigationPlacementChooser(
   const [picked, setPicked] = React.useState(firstReachable);
   const [agent, setAgent] = React.useState<string | null>(agents[0]?.targetKey ?? null);
   const candidate = picked >= 0 ? candidates[picked] : undefined;
+  const needsMachine = reason === 'controller_required' || reason === 'machine_unreachable';
+  const createMachine = needsMachine && firstReachable < 0;
   const ready =
-    (candidates.length === 0 || candidate !== undefined) &&
+    (!needsMachine && candidates.length === 0 || candidate?.reachable === true) &&
     (agents.length === 0 || agent !== null);
   const confirm = () =>
     props.onChoose({
@@ -55,13 +62,20 @@ export function InvestigationPlacementChooser(
       ...(agent ? { agentTargetKey: agent } : {}),
     });
   return (
+    <ListPresentationProvider value="page">
     <ItemGroup
       testID={props.testID}
       title={t('inbox.work.healthNotice.placementTitle')}
       description={t(`inbox.work.healthNotice.placementReason.${reason}`)}
       accessibilityRole={candidates.length > 0 ? 'radiogroup' : undefined}
       action={
-        <RoundButton
+        createMachine ? <RoundButton
+          testID={`${props.testID}.createMachine`}
+          size="small"
+          title={t('machines.widgets.body.fleet.firstRun.createTitle')}
+          disabled={props.pending}
+          onPress={() => router.push(buildMachineAddHref({ path: 'create', serverId: props.serverId }) as never)}
+        /> : <RoundButton
           testID={`${props.testID}.confirm`}
           size="small"
           title={t('inbox.work.healthNotice.placementConfirm')}
@@ -116,5 +130,6 @@ export function InvestigationPlacementChooser(
         />
       ) : null}
     </ItemGroup>
+    </ListPresentationProvider>
   );
 }

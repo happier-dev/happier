@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 
+const { routerPush } = vi.hoisted(() => ({ routerPush: vi.fn() }));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router'))
+  .createExpoRouterMock({ router: { push: routerPush } }).module);
+
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } =
     await import('@/dev/testkit/mocks/reactNative');
@@ -19,6 +23,7 @@ vi.mock('@/text', async () => {
 
 afterEach(() => {
   standardCleanup();
+  routerPush.mockClear();
 });
 
 const { InvestigationOutcomeBanner } =
@@ -39,6 +44,17 @@ function render(code: string) {
 }
 
 describe('Investigation outcome banner', () => {
+  it('offers cloud acquisition in the notice Home when no Machine is available, without starting another investigation', async () => {
+    const choose = vi.fn();
+    const screen = await renderScreen(<InvestigationOutcomeBanner serverId="notice-home"
+      outcome={{ kind: 'placement_choice_required', reason: 'controller_required', candidates: [], agents: [] }}
+      onChoosePlacement={choose} pending={false} />);
+    const create = screen.findByTestId('inbox.notice.investigate.placement.createMachine');
+    expect(create).not.toBeNull();
+    await act(async () => { create!.props.onPress(); });
+    expect(routerPush).toHaveBeenCalledWith('/settings/machines/add?path=create&serverId=notice-home');
+    expect(choose).not.toHaveBeenCalled();
+  });
   it('tells the person the catalog could not be reached, not that nothing is set up', async () => {
     // `catalogUnavailable` is the read that did not answer (for example while the Account reconnects).
     const screen = await render('catalogUnavailable');

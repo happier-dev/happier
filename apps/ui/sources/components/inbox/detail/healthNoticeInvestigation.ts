@@ -52,7 +52,7 @@ export type HealthNoticeInvestigationPlacement = Partial<Pick<
 
 export type BoundHealthNoticeInvestigation = Readonly<{
   readChoices(options: Readonly<{ signal: AbortSignal }>): Promise<TriageSessionHandoffChoicesV1>;
-  resume(options: Readonly<{ signal: AbortSignal }>): Promise<ActionExecuteResult> | null;
+  resume(options: Readonly<{ signal: AbortSignal; placement?: HealthNoticeInvestigationPlacement }>): Promise<ActionExecuteResult> | null;
   run(selection: TriageSessionHandoffSelectionV1, options: Readonly<{
     signal: AbortSignal; placement?: HealthNoticeInvestigationPlacement;
   }>): Promise<ActionExecuteResult>;
@@ -149,7 +149,7 @@ export function useHealthNoticeInvestigate(
     setPending(true);
     setOutcome(null);
     try {
-      const retained = investigation.resume({ signal: own.signal });
+      const retained = investigation.resume({ signal: own.signal, placement });
       if (retained) {
         const result = await retained;
         if (!own.signal.aborted) setOutcome(readHealthNoticeInvestigationOutcome(result));
