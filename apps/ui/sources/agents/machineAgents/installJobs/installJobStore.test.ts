@@ -124,15 +124,17 @@ describe('agent install job owner', () => {
         expect(boundary.rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START)).toBe(false);
     });
 
-    it.each(['completed', 'missing'] as const)('retains an admitted job but settles a refused observation until the person retries (%s)', async recovery => {
+    it.each(['completed', 'missing', 'refused-discovery'] as const)('retains an admitted job but settles a refused observation until the person retries (%s)', async recovery => {
         vi.useFakeTimers();
-        const server = await addJobHome({ serverUrl: `https://refused-observation-${recovery}.example.test` });
+        const server = await addJobHome({ serverUrl: `https://observation-${recovery}.example.test` });
         const target = { serverId: server.id, accountId: 'store-account', machineId: `refused-observation-${recovery}`, agentId: 'codex' };
         let refused = true;
         const missingRead = createDeferred<{ ok: false; errorCode: 'job_not_found'; error: string }>();
         boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
             if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START) return { ok: true, jobId: 'refused-observation-job' };
-            if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST) return { ok: true, jobs: !refused && recovery === 'missing' ? [] : [wireJob('codex', 'refused-observation-job')] };
+            if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST) return !refused && recovery === 'refused-discovery'
+                ? { ok: false, errorCode: 'invalid_request', error: 'The discovery request was refused.' }
+                : { ok: true, jobs: !refused && recovery === 'missing' ? [] : [wireJob('codex', 'refused-observation-job')] };
             if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ) return refused
                 ? { ok: false, errorCode: 'install_unavailable', error: 'Configured Agent jobs require current Account admission.' }
                 : recovery === 'missing' ? missingRead.promise
@@ -149,6 +151,12 @@ describe('agent install job owner', () => {
         await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
         expect(reads()).toBe(before);
         refused = false;
+        if (recovery === 'refused-discovery') {
+            await act(async () => { await expect(observer.getCurrent().refresh()).rejects.toMatchObject({ code: 'invalid_request' }); });
+            expect(observer.getCurrent().job).toMatchObject({ jobId: 'refused-observation-job', outcome: null, readFailure: 'invalid_request' });
+            await observer.unmount();
+            return;
+        }
         await act(async () => { await observer.getCurrent().refresh(); });
         if (recovery === 'missing') {
             // An empty discovery is not a terminal outcome or proof that this admitted job disappeared.

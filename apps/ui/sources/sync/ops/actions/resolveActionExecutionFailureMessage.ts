@@ -1,6 +1,7 @@
 import { isActionTurnedOffErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/api';
 import { MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 import { t } from '@/text';
 import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
@@ -93,7 +94,8 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     if (code === 'setting_not_bound' || code === 'action_account_scope_changed'
         || code === 'account_settings_mutation_conflict') return t('settings.writeContextChanged');
     if (code === 'action_forbidden' || code === 'credential_scope_denied' || code === 'artifact_access_forbidden' || code === 'artifact_kind_internal'
-        || code === 'project_account_access_denied' || code === 'forbidden') return t('errors.permissionDenied');
+        || code === 'project_account_access_denied' || code === 'forbidden'
+        || code === RPC_ERROR_CODES.FORBIDDEN) return t('errors.permissionDenied');
     if (code === 'version_mismatch' || code === 'version-mismatch') return t('artifacts.browser.conflict.title');
     if (code === 'artifact_not_found' || code === 'not_found') return t('artifacts.notFound');
     if (typeof code === 'string' && code.startsWith('project_account_')) return t('widgetAdd.refusals.areaUnavailable');

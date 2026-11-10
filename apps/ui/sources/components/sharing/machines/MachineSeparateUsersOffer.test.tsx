@@ -10,6 +10,7 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 
 const baseline = storage.getState();
 afterEach(() => {
@@ -28,15 +29,78 @@ vi.mock('react-native', async () => {
 });
 
 describe('separate users reviewed setup', () => {
-    it('explains a missing ACL tool when the reviewed Apply is refused', async () => {
-        const remedy = 'Install the acl package on this Machine, then try again.';
+    it.each(['preview', 'apply'] as const)('preserves a Machine admission refusal through the mounted $0', async (stage) => {
+        const preview = { kind: 'ready', policy: { enabled: false }, metadataVersion: 1, status: { kind: 'disabled' },
+            plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0, requiresAdmin: true, planDigest: 'reviewed' } } as const;
+        const execute = createFrontDoorActionExecute(createActionExecutor({ presentUserActionConfirmation: async () => true,
+            machineAgentIsolationAction: async ({ actionId }) => {
+            if (stage === 'apply' && actionId === 'machines.agentIsolation.preview') return preview;
+            throw new RpcError('Private Machine admission detail', RPC_ERROR_CODES.FORBIDDEN);
+        } }));
+        let change!: ReturnType<typeof useSeparateUsersChange>;
+        function Surface() {
+            const guestExecution = useMachineGuestExecution({ machineId: 'machine', scope: { serverId: 'home', accountId: 'owner' },
+                canManage: true, execute });
+            change = useSeparateUsersChange({ machine: 'Devbox', guestExecution, target: 'member' });
+            return <SeparateUsersChangeStep change={change} machine="Devbox" testID="machine-security-separate-users" />;
+        }
+        const screen = await renderScreen(<Surface />);
+        try {
+            await act(async () => { await change.review(); });
+            if (stage === 'apply') await screen.pressByTestIdAsync('machine-security-separate-users-confirm');
+            expect(screen.getTextContent()).toContain(t('errors.permissionDenied'));
+            expect(screen.getTextContent()).not.toContain('Private Machine admission detail');
+            expect(screen.findAllByTestId('machine-security-separate-users-confirm')).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
+    it('rechecks an unconfirmed Apply without replaying it', async () => {
+        const preview: MachineAgentIsolationPreviewResultV1 = { kind: 'ready', policy: { enabled: false },
+            metadataVersion: 1, status: { kind: 'disabled' }, plan: { roots: [], ancestorAcls: [],
+                sessionsToReplace: 0, requiresAdmin: true, planDigest: 'reviewed' } };
+        let reads = 0, writes = 0;
+        const execute = createFrontDoorActionExecute(createActionExecutor({ presentUserActionConfirmation: async () => true,
+            machineAgentIsolationAction: async ({ actionId }) => {
+                if (actionId === 'machines.agentIsolation.preview') { reads++; return preview; }
+                writes++;
+                return { kind: 'failed', code: 'outcome_unknown', operationId: 'unconfirmed-isolation' };
+            } }));
+        let change!: ReturnType<typeof useSeparateUsersChange>;
+        function Surface() {
+            const guestExecution = useMachineGuestExecution({ machineId: 'machine', scope: { serverId: 'home', accountId: 'owner' },
+                canManage: true, execute });
+            change = useSeparateUsersChange({ machine: 'Devbox', guestExecution, target: 'member' });
+            return <SeparateUsersChangeStep change={change} machine="Devbox" testID="machine-security-separate-users" />;
+        }
+        const screen = await renderScreen(<Surface />);
+        try {
+            await act(async () => { await change.review(); });
+            await screen.pressByTestIdAsync('machine-security-separate-users-confirm');
+            expect(screen.getTextContent()).toContain(t('machines.sharing.fallback.unknown', { machine: 'Devbox' }));
+            expect(screen.getTextContent()).toContain(t('common.close'));
+            expect(screen.findAllByTestId('machine-security-separate-users-confirm')).toHaveLength(0);
+            await screen.pressByTestIdAsync('machine-security-separate-users-result-action');
+            expect(reads).toBe(2);
+            expect(writes).toBe(1);
+            expect(change.phase.kind).toBe('review');
+        } finally { await screen.unmount(); }
+    });
+    it.each([
+        { setup: { outcome: 'not_applied', reasonCode: 'native_effect_failed', failure: {
+            kind: 'native_effect_failed', reason: 'required_fact_unavailable', requiredFact: 'commandExecutable',
+            remedy: 'Install the acl package on this Machine, then try again.' } },
+            message: () => 'Install the acl package on this Machine, then try again.' },
+        { setup: { outcome: 'not_applied', reasonCode: 'mode_none' },
+            message: () => t('machines.sharing.fallback.adminDisabled') },
+        { setup: { outcome: 'not_applied', reasonCode: 'not_preauthorized' },
+            message: () => t('machines.sharing.fallback.adminCheckRequired') },
+        { setup: { outcome: 'not_applied', reasonCode: 'managed_cli_unavailable' },
+            message: () => t('machines.sharing.fallback.managedCliRequired') },
+    ] as const)('explains the setup prerequisite when the reviewed Apply is refused: $setup.reasonCode', async ({ setup, message }) => {
         const preview = { kind: 'ready', policy: { enabled: false }, metadataVersion: 1, status: { kind: 'disabled' },
             plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0, requiresAdmin: true, planDigest: 'reviewed' } } as const;
         const execute = createFrontDoorActionExecute(createActionExecutor({ presentUserActionConfirmation: async () => true,
             machineAgentIsolationAction: async ({ actionId }) => actionId === 'machines.agentIsolation.preview' ? preview
-                : { kind: 'failed', code: 'denied', operationId: 'missing-acl', setup: { outcome: 'not_applied',
-                    reasonCode: 'native_effect_failed', failure: { kind: 'native_effect_failed',
-                        reason: 'required_fact_unavailable', requiredFact: 'commandExecutable', remedy } } },
+                : { kind: 'failed', code: 'denied', operationId: 'missing-prerequisite', setup },
         }));
         let change!: ReturnType<typeof useSeparateUsersChange>;
         function Surface() {
@@ -49,7 +113,7 @@ describe('separate users reviewed setup', () => {
         try {
             await act(async () => { await change.review(); });
             await screen.pressByTestIdAsync('machine-security-separate-users-confirm');
-            await vi.waitFor(() => expect(screen.getTextContent()).toContain(remedy));
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain(message()));
         } finally { await screen.unmount(); }
     });
     it('finishes confirmed setup when its policy publication retires the offer', async () => {

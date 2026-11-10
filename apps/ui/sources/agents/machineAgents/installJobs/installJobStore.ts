@@ -75,6 +75,15 @@ function publish(target: AgentInstallJobTarget, job: MachineAgentJob | null): vo
     for (const listener of state.listeners) listener();
 }
 
+function retainObservationFailure(record: JobRecord, error: unknown): boolean {
+    if (record.job.outcome || !(error instanceof AgentInstallJobRpcError) || error.code === 'request_failed') return false;
+    if (record.job.readFailure !== error.code) {
+        record.job = { ...record.job, readFailure: error.code };
+        publish(record.target, record.job);
+    }
+    return true;
+}
+
 export function readAgentInstallJob(target: AgentInstallJobTarget): MachineAgentJob | null {
     return machine(target).jobs.get(buildMachineAgentInventoryKey(target)) ?? null;
 }
@@ -88,7 +97,7 @@ function hasReaders(state: MachineJobs, record: JobRecord): boolean {
 }
 
 function updatePolling(state: MachineJobs, record: JobRecord): void {
-    if (hasReaders(state, record)) {
+    if (hasReaders(state, record) && !record.job.readFailure) {
         if (!record.timer) void poll(record.target, record);
     } else if (record.timer) {
         clearTimeout(record.timer);
@@ -186,13 +195,14 @@ async function poll(target: AgentInstallJobTarget, record: JobRecord): Promise<v
             }
             throw new AgentInstallJobRpcError(response.errorCode, response.error);
         }
-        let next = applyEvents(record.job, response.events);
+        let next = applyEvents(record.job.readFailure ? { ...record.job, readFailure: undefined } : record.job, response.events);
         if (response.outcome && JSON.stringify(next.outcome) !== JSON.stringify(response.outcome)) next = { ...next, outcome: response.outcome };
         record.cursor = response.nextCursor;
         record.job = next;
         publish(target, next);
         if (response.done) return;
-    } catch {
+    } catch (error) {
+        if (!state.controller.signal.aborted && state.records.get(targetKey) === record && retainObservationFailure(record, error)) return;
         // A disconnected presenter cannot establish a daemon outcome. Keep the job and cursor;
         // the next read resumes it, and job_not_found handles a daemon restart.
     } finally {
@@ -238,7 +248,7 @@ export function ensureMachineAgentInstallJobs(target: MachineAgentInstallJobTarg
                 const previous = state.records.get(targetKey);
                 // A start response names the admitted job even when an older list arrives later.
                 if (previous && !previous.hydrated && previous.job.jobId !== wire.jobId) continue;
-                if (previous?.job.jobId === wire.jobId && previous.hydrated) continue;
+                if (previous?.job.jobId === wire.jobId && previous.hydrated && !previous.job.readFailure) continue;
                 if (wire.done && previous && previous.job.jobId !== wire.jobId && previous.job.startedAtMs > wire.startedAt) continue;
                 if (previous?.timer) clearTimeout(previous.timer);
                 const agentTarget = { ...target, agentId: wire.agentId, definitionId: wire.definitionId };
@@ -247,9 +257,21 @@ export function ensureMachineAgentInstallJobs(target: MachineAgentInstallJobTarg
                 publish(agentTarget, record.job);
                 if (!wire.done) void poll(agentTarget, record);
             }
-        })().finally(() => {
+        })().catch(error => {
+            if (!controller.signal.aborted) {
+                for (const record of state.records.values()) retainObservationFailure(record, error);
+            }
+            throw error;
+        }).finally(() => {
             state.controller.signal.removeEventListener('abort', retire);
             if (state.loading?.controller === controller) state.loading = undefined;
+        }).then(() => {
+            // Discovery may omit a job after a daemon restart. Only its authenticated
+            // cursor read can retire the retained projection through job_not_found.
+            // Clear loading first: that read can itself request fresh discovery.
+            for (const record of state.records.values()) {
+                if (record.job.readFailure) void poll(record.target, record);
+            }
         });
         state.loading = { controller, promise, readers: 0 };
     }
@@ -351,6 +373,9 @@ export function waitForAgentInstallJob(target: AgentInstallJobTarget): Promise<N
             } else if (job.outcome) {
                 unsubscribe();
                 resolve(job.outcome);
+            } else if (job.readFailure) {
+                unsubscribe();
+                reject(new AgentInstallJobRpcError(job.readFailure));
             }
         };
         const unsubscribe = subscribeAgentInstallJob(target, inspect);

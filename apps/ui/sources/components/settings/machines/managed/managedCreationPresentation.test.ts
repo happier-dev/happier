@@ -45,6 +45,36 @@ const machine = {
 } satisfies ManagedMachineV1;
 
 describe('managed creation presentation', () => {
+  it.each(['missing', 'failed', 'unavailable', 'projection-unavailable'] as const)('offers Reconnect for retained bootstrap credential refusal with %s operation history', history => {
+    const refused: ManagedMachineV1 = { ...machine,
+      observation: { observedAt: 3, availability: 'unavailable', reason: 'bootstrap.credential_unavailable' } };
+    const operation: ActionOperationProjection | undefined = history !== 'missing' ? {
+      serverId: machine.homeId, observation: history === 'unavailable' ? 'unavailable' : 'available',
+      isUnavailableProjection: history === 'projection-unavailable',
+      snapshot: { version: 1, operationId: 'bootstrap', revision: 2, actionId: 'machines.managed.bootstrap.retry', state: 'failed',
+        scope: { accountId: machine.custodianAccountId, machineId: 'controller' }, title: 'Install', createdAt: 1, settledAt: 4,
+        cancellation: 'supported', domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller: machine.controller },
+        error: { errorCode: 'credential_unavailable', error: 'Credential unavailable' } },
+    } : undefined;
+    if (operation) {
+      expect(managedCreationState(refused, { operation: { ...operation, observation: 'available', isUnavailableProjection: false,
+        snapshot: { ...operation.snapshot, state: 'running', error: undefined } } })).toEqual({ kind: 'observationUnavailable' });
+    }
+    expect(describeManagedCreation(refused, { operation }).actions).toContain('reconnect');
+    expect(canRetryManagedInstallation(refused, operation)).toBe(false);
+    expect(managedCreationState({ ...refused, observation: { observedAt: 5, availability: 'unavailable', reason: 'transport' } },
+      { operation })).toEqual({ kind: 'observationUnavailable' });
+    expect(managedCreationState({ ...refused, allocation: 'confirmed-absent' }, { operation }).kind).toBe('absent');
+    expect(managedCreationState({ ...refused, observation: { observedAt: 5, availability: 'present', storage: 'lost' } },
+      { operation }).kind).toBe('volumeLost');
+  });
+  it('offers provider installation for an unavailable bootstrap observation after the provider is removed', () => {
+    const refused: ManagedMachineV1 = { ...machine,
+      observation: { observedAt: 3, availability: 'unavailable', reason: 'bootstrap.provider_unavailable' } };
+    expect(describeManagedCreation(refused, { providerAvailable: false }).actions).toContain('reinstall');
+    expect(managedCreationState({ ...refused, observation: { observedAt: 5, availability: 'unavailable', reason: 'transport' } },
+      { providerAvailable: false })).toEqual({ kind: 'observationUnavailable' });
+  });
   it('names the unreachable guest Home in the shared creation failure message', () => {
     const homeOrigin = 'https://home.example.test:9443';
     const failure = describeManagedInstallationFailure({ errorCode: 'home_not_guest_reachable',

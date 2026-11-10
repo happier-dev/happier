@@ -13,6 +13,8 @@ const transport = vi.hoisted(() => vi.fn<(input: { machineId: string; method: st
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () =>
   (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(transport));
 installDisconnectedServerSocketBoundary();
+const { AgentInstallJobRpcError } = await import('@/agents/machineAgents/installJobs/api');
+const { presentAgentInstallJobRpcFailure } = await import('@/agents/machineAgents/installJobs/presentAgentInstallJobFailure');
 const { AgentAddingProgress } = await import('./AgentAddingProgress');
 const { storage } = await import('@/sync/domains/state/storage');
 
@@ -35,6 +37,7 @@ it('keeps accepted progress and sends only the failed machine to the Add retry o
     throw new Error(`Unexpected daemon request ${method}`);
   });
   const installed: string[] = [];
+  const retryRefusal = new AgentInstallJobRpcError('in_use');
   function Progress() {
     const [failures, setFailures] = React.useState([{ machineId: 'refused', errorCode: 'install_unavailable' }]);
     return <AgentAddingProgress name="Junie" definitionId={definitionId} serverId={home.home.id} testID="progress"
@@ -42,7 +45,7 @@ it('keeps accepted progress and sends only the failed machine to the Add retry o
       installOn={['accepted', 'refused']} failures={failures}
       onRetryInstall={async (machineId: string) => {
         starts.push(machineId);
-        if (starts.length === 1) throw new Error('Registry is unavailable');
+        if (starts.length === 1) throw retryRefusal;
         installed.push(`job-${machineId}`);
         setFailures(previous => previous.filter(failure => failure.machineId !== machineId));
       }} />;
@@ -56,7 +59,8 @@ it('keeps accepted progress and sends only the failed machine to the Add retry o
     await vi.waitFor(() => expect(starts).toEqual(['refused']));
     expect(installed).toEqual([]);
     expect(screen.findByTestId('progress.machine.refused.retry')).not.toBeNull();
-    expect(screen.getTextContent()).toContain('Registry is unavailable');
+    expect(screen.getTextContent()).toContain(presentAgentInstallJobRpcFailure(retryRefusal).body);
+    expect(screen.getTextContent()).not.toContain(retryRefusal.message);
     await screen.pressByTestIdAsync('progress.machine.refused.retry');
     await vi.waitFor(() => expect(installed).toEqual(['job-refused']));
     expect(starts).toEqual(['refused', 'refused']);

@@ -76,15 +76,26 @@ export function managedCreationState(machine: ManagedMachineV1, context: Managed
         return classifyManagedMachineAllocationV1(machine, acquire) === 'creating'
             ? { kind: 'creating', name: machine.launch.name } : { kind: 'mayExist', name: machine.launch.name };
     }
-    if (machine.observation?.availability === 'unavailable') return { kind: 'observationUnavailable' };
+    const operation = currentManagedCreationOperation(machine, context.operation, context);
+    const observedOperation = operation?.observation === 'available' && !operation.isUnavailableProjection ? operation.snapshot : null;
+    const credentialRefused = observedOperation?.state === 'failed' && observedOperation.error?.errorCode === 'credential_unavailable';
+    if (machine.observation?.availability === 'unavailable') {
+        // Bootstrap retains its typed failure on the resource when operation history is unavailable.
+        // A newer native read failure still owns the unavailable state.
+        if (isManagedMachineBootstrapIncomplete(machine)) {
+            if (context.providerAvailable === false) return { kind: 'providerRemoved', provider: context.provider ?? t('common.machine') };
+            if (credentialRefused || !observedOperation && machine.observation.reason === 'bootstrap.credential_unavailable') {
+                return { kind: 'credentialRefused' };
+            }
+        }
+        return { kind: 'observationUnavailable' };
+    }
     if (isManagedMachineResourceAbsent(machine)) return { kind: 'absent' };
     if (machine.observation?.storage === 'lost') return { kind: 'volumeLost' };
     if (context.providerAvailable === false) return { kind: 'providerRemoved', provider: context.provider ?? t('common.machine') };
-    const operation = currentManagedCreationOperation(machine, context.operation, context);
-    if (operation?.observation === 'available' && !operation.isUnavailableProjection && operation.snapshot.state === 'failed'
-        && operation.snapshot.error?.errorCode === 'credential_unavailable') return { kind: 'credentialRefused' };
-    if (operation?.observation === 'available' && !operation.isUnavailableProjection && operation.snapshot.state === 'running') {
-        switch (operation.snapshot.progress?.kind === 'phase' ? operation.snapshot.progress.phase : undefined) {
+    if (credentialRefused) return { kind: 'credentialRefused' };
+    if (observedOperation?.state === 'running') {
+        switch (observedOperation.progress?.kind === 'phase' ? observedOperation.progress.phase : undefined) {
             case 'managed.intent.busy': return { kind: 'busy' };
             case 'managed.intent.activity-unknown': return { kind: 'activityUnknown' };
             case 'managed.intent.draining': return { kind: 'draining' };
@@ -165,10 +176,11 @@ export function managedReceiptPowerIntents(machine: Pick<ManagedMachineV1, 'obse
 /** Retained resources whose installation is incomplete remain recoverable when controller history is lost. */
 export function canRetryManagedInstallation(machine: ManagedMachineV1, operation?: ActionOperationProjection | null,
     context: Pick<ManagedCreationContext, 'providerAvailable' | 'enrolledMachine'> = {}): boolean {
-    const lifecycle = managedCreationState(machine);
+    const lifecycle = managedCreationState(machine, { ...context, operation });
     if (context.providerAvailable === false || machine.creationState !== 'active' || machine.archivedAt !== undefined || machine.desired === 'delete'
         || machine.allocation !== 'bound' || !machine.resource || machine.cleanup
-        || lifecycle.kind === 'cleanupPending' || lifecycle.kind === 'absent' || lifecycle.kind === 'volumeLost') return false;
+        || lifecycle.kind === 'cleanupPending' || lifecycle.kind === 'absent' || lifecycle.kind === 'volumeLost'
+        || lifecycle.kind === 'credentialRefused') return false;
     const needsInstallation = !machine.enrolledMachineId || isManagedMachineBootstrapIncomplete(machine);
     if (!operation) return needsInstallation;
     operation = currentManagedCreationOperation(machine, operation, context);

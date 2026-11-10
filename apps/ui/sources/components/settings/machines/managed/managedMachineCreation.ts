@@ -132,23 +132,24 @@ export async function runManagedMachineCreation(input: Readonly<{
         });
     const executeApproved = withActionDispatch(execute);
     const executeConfirmed = withActionDispatch(execute.confirmed);
+    let readFailureCode = 'managed_read_failed';
     const read = async (): Promise<ManagedMachineV1 | null> => {
         if (!acquisition.managedId || !current()) return null;
         const result = await execute('machines.managed.get', { homeId: acquisition.selection.homeId, managedId: acquisition.managedId }, context);
         if (!current()) return null;
         const outcome = classifyHomeActionOutcome(result);
         if (outcome.kind !== 'completed') {
-            fail(outcome.kind === 'failed' ? homeDomainFailureCode(outcome.failure) : 'approval_required');
+            readFailureCode = outcome.kind === 'failed' ? homeDomainFailureCode(outcome.failure) : 'approval_required';
             return null;
         }
         const machine = ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(outcome.result);
         if (machine.id !== acquisition.managedId || machine.homeId !== acquisition.selection.homeId
-            || controller && !sameStrictJsonValue(machine.controller, controller)) { fail('managed_response_invalid'); return null; }
+            || controller && !sameStrictJsonValue(machine.controller, controller)) { readFailureCode = 'managed_response_invalid'; return null; }
         return machine;
     };
     const alreadyAdmitted = acquisition.managedId ? await read() : null;
     if (!current()) return fail('continuation_retired');
-    if (acquisition.managedId && !alreadyAdmitted) return { kind: 'failed', code: 'managed_read_failed' };
+    if (acquisition.managedId && !alreadyAdmitted) return fail(readFailureCode);
     if (alreadyAdmitted?.creationState !== undefined && alreadyAdmitted.creationState !== 'active') return fail('enrollment_retired');
     if (!alreadyAdmitted?.enrolledMachineId && (!acquisition.managedId || input.retryInstallation)) {
         if (!acquisition.managedId && acquisition.selection.kind === 'preset') {
@@ -208,7 +209,7 @@ export async function runManagedMachineCreation(input: Readonly<{
     // admitted row rather than selecting again or requiring a controller grant.
     const scopedMachine = alreadyAdmitted ?? (acquisition.operation && acquisition.selection.kind === 'preset' ? await read() : null);
     if (!current()) return fail('continuation_retired');
-    if (acquisition.operation && acquisition.selection.kind === 'preset' && !scopedMachine) return { kind: 'failed', code: 'managed_read_failed' };
+    if (acquisition.operation && acquisition.selection.kind === 'preset' && !scopedMachine) return fail(readFailureCode);
     controller ??= scopedMachine?.controller;
     if (controller && acquisition.operation && (!alreadyAdmitted?.enrolledMachineId || awaitingSetupWithoutGuestOperation)) {
         const requesterMachine = scopedMachine && scopedMachine.enrollmentAccountId === input.scope.accountId
@@ -266,7 +267,7 @@ export async function runManagedMachineCreation(input: Readonly<{
     }
     let machine = await read();
     if (!current()) return fail('continuation_retired');
-    if (!machine) return { kind: 'failed', code: 'managed_read_failed' };
+    if (!machine) return fail(readFailureCode);
     if (machine.creationState !== 'active' || machine.allocation === 'confirmed-absent') return fail('enrollment_retired');
     setupMachine = machine;
     if (operationFailure) return fail(machine.machineSetup?.state === 'failed' ? machine.machineSetup.errorCode ?? operationFailure : operationFailure,
@@ -291,7 +292,7 @@ export async function runManagedMachineCreation(input: Readonly<{
         if (!confirmed) return fail(setup.errorCode ?? 'setup_failed');
         const currentMachine = await read();
         if (!current()) return fail('continuation_retired');
-        if (!currentMachine) return { kind: 'failed', code: 'managed_read_failed' };
+        if (!currentMachine) return fail(readFailureCode);
         const deleteInput = buildReviewedManagedMachineDeleteInput(currentMachine, review);
         if (!deleteInput) return fail('intent_changed');
         const deleted = await executeConfirmed('machines.managed.delete', deleteInput, currentMachine.controller?.machineId);
@@ -331,7 +332,7 @@ export async function runManagedMachineCreation(input: Readonly<{
             const acceptedOperation = { operationId: setupResult.operationId };
             const observed = await read();
             if (!current()) return fail('continuation_retired');
-            if (!observed) return { kind: 'failed', code: 'managed_read_failed' };
+            if (!observed) return fail(readFailureCode);
             if (observed.creationState !== 'active' || observed.allocation === 'confirmed-absent'
                 || observed.enrolledMachineId !== enrolledMachineId) return fail('enrollment_retired');
             machine = observed;
@@ -362,7 +363,7 @@ export async function runManagedMachineCreation(input: Readonly<{
     if (input.setupRecovery || setup?.operation) {
         machine = await read();
         if (!current()) return fail('continuation_retired');
-        if (!machine) return { kind: 'failed', code: 'managed_read_failed' };
+        if (!machine) return fail(readFailureCode);
         if (machine.creationState !== 'active' || machine.allocation === 'confirmed-absent'
             || machine.enrolledMachineId !== enrolledMachineId) return fail('enrollment_retired');
         setupMachine = machine;

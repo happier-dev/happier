@@ -2249,7 +2249,11 @@ reads per Agent/definition target, using the inventory's canonical tuple key. St
 retain the exact `definitionId`; list hydration and cancellation keep separate definitions'
 jobs isolated. Each definition-qualified start reaches daemon admission, which owns joining
 under the captured Account/definition/version; a newly changed pin cannot join an older
-pending start in the client. The store discovers jobs with `list` when reconnecting or reloading. A daemon restart loses
+pending start in the client. A refused or unsupported status read retains the actual job
+outcome and exposes an observation failure through the existing Retry control; completion
+waiters receive that typed read failure. Transport loss retains progress and resumes cursor
+reads. Explicit Retry or discovery can resume a refused read after repair.
+The store discovers jobs with `list` when reconnecting or reloading. A daemon restart loses
 job state; re-detect installed software to recover rather than treating the missing job as
 proof of success or failure. Cancellation stops the active operation and cleans its partial
 staging; software installed by a completed step and vendor-script side effects may remain.
@@ -2354,6 +2358,9 @@ an old request cannot close a replacement process. They use the same authenticat
 machine transport and Action admission as Start. In the app, Actions and presenters
 share `agents/machineAgents/signIn/useAgentSignIn.ts`'s Account-scoped custody.
 Closing a presenter does not transfer process ownership to its terminal renderer.
+An app Start refusal before terminal acquisition settles as a failed sign-in with
+its typed cause. Check again retries Start in that case; an acquired terminal
+continues to use the existing status check and exact-terminal cancellation.
 This is current development behavior, not a released availability claim.
 
 ### Checklist id conventions

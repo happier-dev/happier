@@ -5,7 +5,8 @@ import { buildMachineUpdateFactsRequest } from '@/capabilities/requests';
 import { prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
 import { createMachineUpdateFactsCacheInputKey, MACHINE_UPDATE_FACTS_CACHE_SALT } from './machineUpdateFacts';
 import { machineCapabilitiesInvoke, type MachineCapabilitiesInvokeResult } from '@/sync/ops/capabilities';
-import { startAgentInstallJob, waitForAgentInstallJob, type AgentInstallJobStartOptions } from '@/agents/machineAgents/installJobs/installJobStore';
+import { ensureMachineAgentInstallJobs, readAgentInstallJob, startAgentInstallJob, waitForAgentInstallJob, type AgentInstallJobStartOptions } from '@/agents/machineAgents/installJobs/installJobStore';
+import { AgentInstallJobRpcError } from '@/agents/machineAgents/installJobs/api';
 import type { MachineAgentJob } from '@/agents/machineAgents/machineAgentTypes';
 import { presentAgentInstallJobFailure, presentAgentInstallJobRpcFailure } from '@/agents/machineAgents/installJobs/presentAgentInstallJobFailure';
 import { MACHINE_RPC_POLL_INTERVAL_MS } from '@/sync/ops/machineRpcPollInterval';
@@ -381,7 +382,15 @@ export async function startMachineAgentItemUpdate(item: UpdateItem, scope: Serve
     const target = { ...scope, machineId: item.machineId, agentId: item.subject.agentId };
     setRecord(scope.serverId, item.id, { status: 'running' });
     try {
-        const job = await startAgentInstallJob(target, 'update', options);
+        const previous = readAgentInstallJob(target);
+        let job: MachineAgentJob;
+        if (previous?.readFailure && !previous.outcome) {
+            // Retry observation of the admitted job; its installer may already have finished.
+            await ensureMachineAgentInstallJobs(target);
+            const recovered = readAgentInstallJob(target);
+            if (!recovered) throw new AgentInstallJobRpcError('job_not_found');
+            job = recovered;
+        } else job = await startAgentInstallJob(target, 'update', options);
         // The Action returns the real job id immediately. The existing store keeps settlement
         // observable when the row closes, and the batch can wait on that very same admitted job.
         void (async () => {

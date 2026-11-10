@@ -52,6 +52,7 @@ export function presentAgentInstallProgress(
       ? { phase: 'cancelled' }
       : { phase: 'failed', message: job.outcome.message };
   }
+  if (job?.readFailure) return { phase: 'failed', message: presentAgentInstallJobRpcFailure(new AgentInstallJobRpcError(job.readFailure)).body };
   if (!job) {
     if (input.offline) return { phase: 'offline' };
     return input.installingNow ? { phase: 'waiting' } : { phase: 'firstUse' };
@@ -152,7 +153,7 @@ function AgentInstallProgressRow(
     testID: string;
   }>,
 ): React.ReactElement {
-  const { job, cancel } = useAgentInstallJob({
+  const { job, cancel, refresh } = useAgentInstallJob({
     serverId: props.serverId ?? '',
     machineId: props.machine.machineId,
     agentId: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.localId,
@@ -179,9 +180,10 @@ function AgentInstallProgressRow(
         setRetryFailure(null);
         void (async () => {
           try {
-            await props.onRetryInstall(props.machine.machineId);
+            if (job?.readFailure) await refresh();
+            else await props.onRetryInstall(props.machine.machineId);
           } catch (error) {
-            setRetryFailure(error instanceof Error ? error.message : presentAgentInstallJobRpcFailure(error).body);
+            setRetryFailure(presentAgentInstallJobRpcFailure(error).body);
           }
           finally { setRetrying(false); }
         })();

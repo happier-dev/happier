@@ -231,13 +231,18 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
     if ((operation === 'cancel' || operation === 'restart') && !entry.terminalId && entry.opening) await entry.opening;
     const terminalId = entry.terminalId;
     if (operation === 'cancel' && !terminalId) return;
-    const actionOperation = operation === 'restart' && !terminalId ? 'start' : operation;
+    const actionOperation = !terminalId && (operation === 'restart' || operation === 'status' && entry.state.phase === 'failed') ? 'start' : operation;
     if (!boundTarget.lifetime.isCurrent()) return;
-    return await execute(`machines.agents.signIn.${actionOperation}`, {
+    const result = await execute(`machines.agents.signIn.${actionOperation}`, {
       machineId: boundTarget.machineId, agentId: boundTarget.agentId,
       ...(actionOperation === 'start' ? { method: 'native' } : {}),
       ...((actionOperation === 'cancel' || actionOperation === 'restart') ? { terminalId } : {}),
     });
+    if (!result.ok && actionOperation === 'start' && boundTarget.lifetime.isCurrent() && !entry.terminalId) {
+      stopPolling(entry);
+      publish(entry, { phase: 'failed', failure: result.errorCode });
+    }
+    return result;
   }, [boundTarget, entry, execute]);
   const actions = React.useMemo(() => ({
     start: () => executeIntent('start'),

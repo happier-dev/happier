@@ -346,6 +346,7 @@ describe('New managed durable workflow continuation', () => {
 
 function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promise<void>; enrolled?: boolean; failed?: boolean; setupFails?: boolean; setupSucceeds?: boolean; custodianAccountId?: string; denyCrossMachine?: boolean; preset?: ManagedMachinePresetV1; accountExecution?: boolean;
     requesterConsent?: boolean; trustBeforeConsent?: boolean; administratorAsk?: boolean; serverId?: string; homeId?: string;
+    unreadableMachine?: boolean;
     agentStartFailure?: { code: string; machineId: string; agentId: string };
     agentUpdate?: import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1').SessionAgentUpdateNoticeV1;
     createConfirmation?: boolean; pairingReview?: 'admitted' | 'absent' | 'forged' | 'unrelated';
@@ -413,7 +414,7 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
         machineManagedInstallationRespond: createManagedMachineInstallationRespond(),
         managedMachineAction: async request => {
             actions.push(request);
-            if (request.actionId === 'machines.managed.get') return machine;
+            if (request.actionId === 'machines.managed.get') return input.unreadableMachine ? null : machine;
             if (request.actionId === 'machines.managed.delete') return {
                 kind: 'accepted', managedId: machine.id, intentRevision: machine.intentRevision + 1,
                 operation: { operationId: 'delete' }, machineReferences: {
@@ -593,6 +594,13 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
 }
 
 describe('ordinary managed creation continuation', () => {
+    it.each([false, true])('keeps the managed read refusal in both result and progress (retained=%s)', async retained => {
+        const boundary = transport({ unreadableMachine: true });
+        const result = await boundary.run(retained ? { acquisition: { ...initial, managedId: baseMachine.id } } : {});
+        expect(boundary.progress.at(-1)).toMatchObject({ kind: 'failed', code: 'invalid_action_output' });
+        expect(result).toMatchObject({ kind: 'failed', code: 'invalid_action_output' });
+        expect(boundary.getAcquisition().managedId ?? (retained ? baseMachine.id : undefined)).toBe(baseMachine.id);
+    });
     it('retains the actual enrolled Agent setup target and names its owner for setup refusal', async () => {
         const { presentMachineAgentStartRefusal } = await import('@/components/machines/agents/presentMachineAgentStartRefusal');
         const { machineCollectionHref } = await import('@/components/settings/machines/collection/machineCollectionModel');

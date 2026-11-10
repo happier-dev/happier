@@ -92,7 +92,10 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
 
     const handlers = React.useMemo((): AgentSetupFormHandlers => ({
         onInstall: () => install('install'),
-        onRetry: () => install(agentRef.current?.job?.intent ?? 'install'),
+        onRetry: () => {
+            if (agentRef.current?.job?.readFailure) fireAndForget(installJob.refresh(), { tag: 'AgentSetupForm.refreshJob' });
+            else install(agentRef.current?.job?.intent ?? 'install');
+        },
         onCancelInstall: () => { fireAndForget(installJob.cancel(), { tag: 'AgentSetupForm.cancel' }); },
         onCheckAgain: () => { fireAndForget(signIn.checkAgain(), { tag: 'AgentSetupForm.checkAgain' }); },
         onOpenGuide: (url) => { fireAndForget(openExternalUrl(url), { tag: 'AgentSetupForm.guide' }); },

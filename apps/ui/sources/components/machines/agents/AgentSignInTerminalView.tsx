@@ -4,6 +4,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierBodyEdgeContext, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import type { MachineAgentSignInSession } from '@/agents/machineAgents/machineAgentTypes';
+import { formatApprovalDecisionFailureLabel } from '@/components/approvals/approvalStatusLabel';
+import { resolveTerminalErrorCopy } from '@/components/sessions/terminal/terminalErrorCopy';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -86,7 +88,7 @@ function SidePanel(props: AgentSignInTerminalViewProps) {
             {session.phase !== 'failed' || session.authUrl ? <Text style={styles.lead}>{t('machineAgents.panelLead')}</Text> : null}
             {session.authUrl ? <AuthUrl url={session.authUrl} onOpen={handlers.onOpenUrl} testID={testID} /> : null}
             {session.phase === 'failed' ? (
-                <SignInFailureLine failure={session.failure} onCheckAgain={handlers.onCheckAgain} testID={testID} />
+                <SignInFailureLine agentTitle={props.agentTitle} failure={session.failure} onCheckAgain={handlers.onCheckAgain} testID={testID} />
             ) : (
                 <>
                     <WaitingLine startedAtMs={session.startedAtMs} />
@@ -126,12 +128,12 @@ function SignInSheet(props: AgentSignInTerminalViewProps) {
                 </>
             ) : (
                 <>
-                    <Text style={styles.sheetLead}>{t('machineAgents.phoneLead', { agent: props.agentTitle, machine: props.machineName })}</Text>
+                    {session.phase !== 'failed' || session.authUrl ? <Text style={styles.sheetLead}>{t('machineAgents.phoneLead', { agent: props.agentTitle, machine: props.machineName })}</Text> : null}
                     {session.authUrl ? (
                         <RoundButton testID={`${testID}.openUrl`} title={t('machineAgents.openSignInPage')} onPress={() => handlers.onOpenUrl(session.authUrl!)} />
                     ) : null}
                     {session.phase === 'failed'
-                        ? <SignInFailureLine failure={session.failure} onCheckAgain={handlers.onCheckAgain} testID={testID} />
+                        ? <SignInFailureLine agentTitle={props.agentTitle} failure={session.failure} onCheckAgain={handlers.onCheckAgain} testID={testID} />
                         : <WaitingLine startedAtMs={session.startedAtMs} />}
                 </>
             )}
@@ -151,14 +153,31 @@ function SignInSheet(props: AgentSignInTerminalViewProps) {
 }
 
 /** One cause, one line, one next step, on the panel's own text edge. */
-function SignInFailureLine(props: Readonly<{ failure: string | null | undefined; onCheckAgain: () => void; testID: string }>) {
+function SignInFailureLine(props: Readonly<{ agentTitle: string; failure: string | null | undefined; onCheckAgain: () => void; testID: string }>) {
+    const message = (() => {
+        const decision = props.failure ? formatApprovalDecisionFailureLabel(props.failure) : null;
+        if (decision) return decision;
+        const terminalFailure = resolveTerminalErrorCopy(props.failure);
+        if (terminalFailure) return t(terminalFailure.bodyKey);
+        switch (props.failure) {
+            case 'action_disabled': return t('common.disabled');
+            case 'agent_login_unsupported': return t('machineAgents.noNativeLogin', { agent: props.agentTitle });
+            case 'connected_service_unsupported': return t('machineAgents.signInServiceUnsupported');
+            case 'sign_in_cancelled': return t('machineAgents.signInCancelled');
+            case 'sign_in_terminal_changed': return t('machineAgents.signInChanged');
+            case 'sign_in_unavailable':
+            case 'sign_in_status_unavailable': return t('machineAgents.signInUnavailable');
+            case 'agent_login_not_confirmed': return t('machineAgents.needsSignIn');
+            default: return props.failure ?? t('machineAgents.unknown');
+        }
+    })();
     return (
         <HappierBodyEdgeContext.Provider value>
             <SurfaceStateCard
                 testID={`${props.testID}.failure`}
                 size="line"
                 kind="error"
-                title={props.failure ?? t('machineAgents.unknown')}
+                title={message}
                 action={{ label: t('machineAgents.checkAgain'), onPress: props.onCheckAgain, testID: `${props.testID}.checkAgain` }}
             />
         </HappierBodyEdgeContext.Provider>

@@ -14,6 +14,7 @@ export function resolveMachineAgentState(input: Pick<MachineAgent, 'installed' |
     const prerequisite = resolveMachineAgentExecutionStateV1(input);
     // Optional update progress remains visible on the job without revoking a runnable installation.
     if (input.job?.intent !== 'update' || prerequisite !== 'ready') {
+        if (input.job?.readFailure && !input.job.outcome) return 'unknown';
         if (input.job?.outcome === null) return 'installing';
         if (input.job?.outcome?.kind === 'failed' && input.job.outcome.code !== 'cancelled') return 'failed';
     }

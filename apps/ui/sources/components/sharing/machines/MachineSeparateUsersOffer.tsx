@@ -8,6 +8,7 @@ import {
   type MachineAgentIsolationPreviewResultV1,
 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { MachineElevatedNotAppliedResultV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 
 import {
   RoundButton,
@@ -31,6 +32,14 @@ type ReadyPreview = Extract<
   MachineAgentIsolationPreviewResultV1,
   { kind: 'ready' }
 >;
+
+function setupFailureMessage(setup: MachineElevatedNotAppliedResultV1 | undefined, fallback: string): string {
+  if (setup?.reasonCode === 'mode_none') return t('machines.sharing.fallback.adminDisabled');
+  if (setup?.reasonCode === 'not_preauthorized') return t('machines.sharing.fallback.adminCheckRequired');
+  if (setup?.reasonCode === 'managed_cli_unavailable') return t('machines.sharing.fallback.managedCliRequired');
+  return setup ? resolveActionExecutionErrorMessage({ code: setup.reasonCode, failure: setup.failure }, fallback) : fallback;
+}
+
 type Phase = Readonly<
   | { kind: 'offer' }
   | { kind: 'previewing' }
@@ -106,19 +115,14 @@ export function useSeparateUsersChange(
     else if (preview?.success && preview.data.kind === 'unavailable') {
       const { status, setup } = preview.data;
       const fallback = t(`machines.sharing.fallback.prerequisites.${status.code}`);
-      const message = setup?.reasonCode === 'mode_none'
-        ? t('machines.sharing.fallback.adminDisabled')
-        : setup?.reasonCode === 'not_preauthorized'
-          ? t('machines.sharing.fallback.adminCheckRequired')
-          : setup?.reasonCode === 'managed_cli_unavailable'
-            ? t('machines.sharing.fallback.managedCliRequired')
-            : setup ? resolveActionExecutionErrorMessage({ code: setup.reasonCode, failure: setup.failure }, fallback) : fallback;
+      const message = setupFailureMessage(setup, fallback);
       setPhase({ kind: 'settled', tone: 'unavailable', message });
     } else
       setPhase({
         kind: 'settled',
         tone: 'unavailable',
-        message: t('machines.sharing.fallback.unavailable', { machine }),
+        message: resolveActionExecutionErrorMessage(result,
+          t('machines.sharing.fallback.unavailable', { machine })),
       });
   }, [guestExecution, machine, target]);
 
@@ -134,7 +138,7 @@ export function useSeparateUsersChange(
         .applySeparateUsers(preview, undefined, target)
         .catch(() => null);
       if (!result?.ok) {
-        setPhase({ kind: 'settled', tone: 'error', message: failed });
+        setPhase({ kind: 'settled', tone: 'error', message: resolveActionExecutionErrorMessage(result, failed) });
         return;
       }
       const approval = ActionApprovalRequestCreatedResultSchema.safeParse(
@@ -182,12 +186,13 @@ export function useSeparateUsersChange(
         setPhase({
           kind: 'settled',
           tone: value.code === 'outcome_unknown' ? 'warning' : 'error',
+          reviewAgain: value.code === 'outcome_unknown',
           message:
             value.code === 'outcome_unknown'
               ? t('machines.sharing.fallback.unknown', { machine })
               : value.code === 'locked'
                 ? t('machines.sharing.fallback.locked', { machine })
-                : value.setup ? resolveActionExecutionErrorMessage({ code: value.setup.reasonCode, failure: value.setup.failure }, failed) : failed,
+                : setupFailureMessage(value.setup, failed),
         });
     },
     [guestExecution, machine, member, target],
@@ -315,7 +320,7 @@ export function SeparateUsersChangeStep(
             },
           }
         : {})}
-      {...(phase.tone === 'success' || phase.tone === 'unavailable' || phase.tone === 'error'
+      {...(phase.reviewAgain || phase.tone === 'success' || phase.tone === 'unavailable' || phase.tone === 'error'
         ? { secondaryAction: { label: t('common.close'), onPress: change.reset } }
         : {})}
     />,

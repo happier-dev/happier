@@ -78,6 +78,7 @@ function isSignInOpen(session: MachineAgentSignInSession | null | undefined): bo
 }
 
 export function resolveAgentSetupPhase(agent: MachineAgent, session?: MachineAgentSignInSession | null): AgentSetupPhase {
+    if (agent.job?.readFailure && !agent.job.outcome) return 'unknown';
     if (isJobRunning(agent)) return 'installing';
     if (jobFailure(agent)) return 'installFailed';
     if (!agent.platform.supported || agent.state === 'unsupported') return 'unsupported';
@@ -118,8 +119,9 @@ export function resolveMachineAgentRowAction(
             return agent.state === 'updateAvailable' && agent.update?.supported === true ? { kind: 'update' } : null;
         case 'unsupported':
         case 'checking':
-        case 'unknown':
             return null;
+        case 'unknown':
+            return agent.job?.readFailure ? { kind: 'retry' } : null;
     }
 }
 
@@ -216,7 +218,7 @@ export function resolveMachineAgentPickerPlacement(
         case 'checking':
         case 'unknown':
             // Just installed: the pane stays on its steps while the Machine reads the sign-in.
-            return isMachineAgentInstalledBySetup(agent)
+            return isMachineAgentInstalledBySetup(agent) || agent.job?.readFailure
                 ? { group: 'onMachine', marker: phase === 'checking' ? 'installing' : 'none', opensSetup }
                 : { group: 'onMachine', marker: 'none', opensSetup: false };
         case 'ready':

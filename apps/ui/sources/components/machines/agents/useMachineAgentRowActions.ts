@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import { withAgentInstallJobFailureFeedback } from '@/agents/machineAgents/installJobs/installJobActionFeedback';
+import { ensureMachineAgentInstallJobs } from '@/agents/machineAgents/installJobs/installJobStore';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -32,6 +33,11 @@ export function useMachineAgentRowActions(input: Readonly<{
             case 'retry':
             case 'update': {
                 if (!binding?.isCurrent()) return;
+                if (action.kind === 'retry' && agent.job?.readFailure) {
+                    fireAndForget(ensureMachineAgentInstallJobs({ ...target, ...binding.scope }), { tag: 'machineAgentRowAction.refreshJob' });
+                    onOpenForm(agent);
+                    return;
+                }
                 const intent = action.kind === 'retry' ? agent.job?.intent ?? 'install' : action.kind;
                 fireAndForget(withAgentInstallJobFailureFeedback(execute(intent === 'uninstall' ? 'machines.agents.uninstall' : 'machines.agents.install', {
                     machineId, agentId: agent.agentId, ...(agent.definitionId === undefined ? {} : { definitionId: agent.definitionId }),

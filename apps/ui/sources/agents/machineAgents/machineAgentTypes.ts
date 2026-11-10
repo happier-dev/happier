@@ -111,6 +111,8 @@ export type MachineAgentJob = Readonly<{
     /** The last short log line (a file name and byte count), when the daemon reports one. */
     logLine: string | null;
     outcome: AgentInstallJobOutcome | null;
+    /** A refused observation is not an installer outcome; the existing Retry resumes reading. */
+    readFailure?: string;
 }>;
 
 export type MachineAgent = Readonly<{

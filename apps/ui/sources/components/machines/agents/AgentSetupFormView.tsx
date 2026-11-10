@@ -19,7 +19,8 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 
-import { presentAgentInstallJobFailure } from '@/agents/machineAgents/installJobs/presentAgentInstallJobFailure';
+import { presentAgentInstallJobFailure, presentAgentInstallJobRpcFailure } from '@/agents/machineAgents/installJobs/presentAgentInstallJobFailure';
+import { AgentInstallJobRpcError } from '@/agents/machineAgents/installJobs/api';
 import { AGENT_INSTALL_JOB_VERIFY_STEP_ID, buildAgentInstallJobCliStepId } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { isMachineAgentInstalledBySetup, resolveAgentSetupPhase, type AgentSetupPhase } from './machineAgentPresentation';
 
@@ -176,6 +177,11 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
     const { agent, handlers, machineName: machine, compact, testID } = props;
     // Installed by this setup: the step list carries the flow on into sign-in.
     const installedHere = isMachineAgentInstalledBySetup(agent);
+    if (agent.job?.readFailure && !agent.job.outcome) {
+        const failure = presentAgentInstallJobRpcFailure(new AgentInstallJobRpcError(agent.job.readFailure));
+        return <AttentionBanner testID={`${testID}.failure`} title={failure.title} description={failure.body}
+            action={{ label: t('machineAgents.actionRetry'), onPress: handlers.onRetry, testID: `${testID}.retry` }} announce="alert" />;
+    }
     switch (props.phase) {
         case 'install':
             return (
@@ -222,8 +228,8 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
             );
         case 'installFailed': {
             const outcome = agent.job?.outcome?.kind === 'failed' ? agent.job.outcome : null;
-            const failure = outcome ? presentAgentInstallJobFailure(outcome) : null;
-            const guideUrl = failure?.recovery.guideUrl ?? agent.install.guideUrl;
+            const guideUrl = outcome?.guideUrl ?? agent.install.guideUrl;
+            const failure = outcome ? presentAgentInstallJobFailure({ ...outcome, guideUrl: guideUrl ?? undefined }) : null;
             return (
                 <>
                     {agent.job?.intent === 'install' ? (
@@ -235,9 +241,13 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
                     <AttentionBanner
                         testID={`${testID}.failure`}
                         title={failure?.title ?? t('machineAgents.unknown')}
-                        description={[failure?.code === 'rate_limited' ? failure.body : outcome?.message ?? failure?.body, t('machineAgents.failedKept')].filter(Boolean).join(' ')}
+                        description={[failure?.body, t('machineAgents.failedKept')].filter(Boolean).join(' ')}
                         action={failure?.recovery.kind === 'guide' && guideUrl
                             ? { label: failure.recovery.label, onPress: () => handlers.onOpenGuide(guideUrl), testID: `${testID}.failure.guide` }
+                            : failure?.recovery.kind === 'chooseAgent'
+                                ? handlers.onSetUpAnother
+                                    ? { label: failure.recovery.label, onPress: handlers.onSetUpAnother, testID: `${testID}.chooseAgent` }
+                                    : undefined
                             : { label: failure?.recovery.label ?? t('machineAgents.actionRetry'), onPress: handlers.onRetry, testID: `${testID}.retry` }}
                         announce="alert"
                     />

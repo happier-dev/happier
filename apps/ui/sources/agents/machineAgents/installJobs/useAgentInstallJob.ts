@@ -41,5 +41,8 @@ export function useAgentInstallJob({ serverId, machineId, agentId, definitionId 
             ? withAgentInstallJobFailureFeedback(execute('machines.agents.install.cancel', { machineId, jobId: current.jobId }), isCurrent)
             : Promise.resolve();
     }, [binding, execute, isCurrent, machineId, target]);
-    return { job, start, cancel };
+    const refresh = React.useCallback(() => target && binding?.isCurrent()
+        ? ensureMachineAgentInstallJobs(target)
+        : Promise.reject(new AgentInstallJobRpcError('scope_retired')), [binding, target]);
+    return { job, start, cancel, refresh };
 }
