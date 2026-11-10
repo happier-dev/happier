@@ -93,6 +93,13 @@ export const StorageVolumeRefV1Schema = lazyZodSchema(() => z.strictObject({
   volumeId: z.string().check(z.minLength(1)), mountPath: z.string().check(z.minLength(1)), label: z.string(),
 }));
 export type StorageVolumeRefV1 = z.infer<typeof StorageVolumeRefV1Schema>;
+/** Demand-read filesystem presentation, independent of scan or retention policy. */
+export const StoragePathCapacityV1Schema = lazyZodSchema(() => z.union([
+  z.object({ status: z.literal('known'), path: z.string(), freeBytes: bytes(), observedAt: time(),
+    volume: z.optional(StorageVolumeRefV1Schema) }),
+  z.object({ status: z.literal('unknown'), path: z.string(), reason: z.string().check(z.minLength(1)) }),
+]));
+export type StoragePathCapacityV1 = z.infer<typeof StoragePathCapacityV1Schema>;
 export const StorageSizeV1Schema = lazyZodSchema(() => z.object({
   allocatedBytes: bytes(), freesBytes: bytes(), freesUpToBytes: z.optional(bytes()), sharedBytes: bytes(),
   sharedExtentsUnmeasured: z.boolean(), atLeast: z.boolean(),

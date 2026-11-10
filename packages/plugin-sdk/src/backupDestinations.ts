@@ -4,7 +4,7 @@ import type { ReadonlyAuthorDeclaration } from './definePlugin.js';
 import type { BackupDestinationContributionV1 as CanonicalBackupDestinationContributionV1 } from '@happier-dev/protocol/plugins/contributions/backupDestinations';
 import { DeploymentBackupDestinationBindingIdentityV1ProtocolSchema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import {
-  defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion,
+  defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion,
   defineProtocolUniqueArray, type ProtocolSchemaOutput,
 } from './protocol/protocolFacade.js';
 
@@ -15,6 +15,13 @@ export const BackupDestinationCredentialBindingV1ProtocolSchema = DeploymentBack
 export const BackupDestinationOpenV1ProtocolSchema = defineProtocolObject({
   repository: defineProtocolString({ minLength: 1 }),
   credentialBindings: defineProtocolUniqueArray(BackupDestinationCredentialBindingV1ProtocolSchema),
+  local: defineProtocolObject({ path: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' }).optional(),
+  sftp: defineProtocolObject({
+    host: defineProtocolString({ minLength: 1 }),
+    port: defineProtocolNumber({ integer: true, minimum: 1, maximum: 65535 }).optional(),
+    username: defineProtocolString({ minLength: 1 }),
+    hostKey: defineProtocolString({ minLength: 1 }),
+  }, { policy: 'closed' }).optional(),
   s3: defineProtocolObject({
     region: defineProtocolString({ minLength: 1 }).optional(),
     addressing: defineProtocolUnion([
@@ -28,6 +35,7 @@ export type BackupDestinationOpenV1 = ProtocolSchemaOutput<typeof BackupDestinat
 export type BackupDestinationContributionV1 = Readonly<{
   id: string;
   title: PluginLocalizedStringV2;
+  fieldHints?: CanonicalBackupDestinationContributionV1['fieldHints'];
   configSchema: ReadonlyAuthorDeclaration<PluginJsonSchema>;
   credentialRoles: readonly Readonly<CanonicalBackupDestinationContributionV1['credentialRoles'][number]>[];
   resticTransport: 's3' | 'sftp' | 'local';

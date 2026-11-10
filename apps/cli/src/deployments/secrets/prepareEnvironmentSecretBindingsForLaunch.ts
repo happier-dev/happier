@@ -10,6 +10,7 @@ import { createEnvironmentBackupDestinationConfigForHost } from './environmentBa
 import type { DeploymentReferenceAddressV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { listMissingProjectSecretRequirements, type ProjectSecretReferenceEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
 import type { DeploymentMissingRequiredSecretsV1 } from '@happier-dev/deployment-protocol';
+import type { BackupDestinationOpenV1 } from '@happier-dev/plugin-sdk';
 
 function missing(): never {
     throw new PluginError({ code: 'secret_missing', message: 'An exact current Environment binding is unavailable' });
@@ -35,8 +36,9 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
     registryUses?: readonly Extract<EnvironmentSecretBindingV1, { purpose: 'registry' }>[];
     /** Host-owned finite-operation scratch, never a Docker global config directory. */
     registryConfigBaseDir?: string;
-    /** Exact roles from one current host-admitted S3 destination configuration. */
+    /** Exact roles from one current host-admitted destination configuration. */
     backupDestinationUses?: readonly Extract<EnvironmentSecretBindingV1, { purpose: 'backupDestination' }>[];
+    backupDestinationSftp?: BackupDestinationOpenV1['sftp'];
     /** One nonsecret runtime database name, acquired with its backup credentials.
      * The host removes this operand before lending the restic environment. */
     backupDatabaseBinding?: Extract<EnvironmentSecretBindingV1, { purpose: 'variable' }>;
@@ -76,8 +78,10 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
             return use.purpose === 'backupDestination' ? use : missing();
         });
         const roles = new Set(uses.map(use => use.role));
-        if (roles.size !== uses.length || !roles.has('repositoryPassword') || !roles.has('accessKeyId')
-            || !roles.has('secretAccessKey') || roles.has('sshPrivateKey')) return missing();
+        const s3 = roles.has('accessKeyId') || roles.has('secretAccessKey') || roles.has('sessionToken');
+        if (roles.size !== uses.length || !roles.has('repositoryPassword')
+            || s3 && (!roles.has('accessKeyId') || !roles.has('secretAccessKey') || roles.has('sshPrivateKey'))
+            || input.backupDestinationSftp && !roles.has('sshPrivateKey')) return missing();
         const database = input.backupDatabaseBinding;
         if (database && (database.purpose !== 'variable' || database.phase !== 'runtime' || database.source.kind === 'secret'
             || !bindings.some(binding => isDeepStrictEqual(binding, database)))) return missing();
@@ -219,8 +223,11 @@ export async function prepareEnvironmentSecretBindingsForLaunch(input: Readonly<
         try {
             backupConfig = await createEnvironmentBackupDestinationConfigForHost({
                 baseDir: input.backupConfigBaseDir ?? join(configuration.happyHomeDir, 'deployments', 'backup-configs'),
-                repositoryPassword: credential('repositoryPassword'), accessKeyId: credential('accessKeyId'),
-                secretAccessKey: credential('secretAccessKey'),
+                repositoryPassword: credential('repositoryPassword'),
+                ...(selected.some(binding => binding.purpose === 'backupDestination' && binding.role === 'accessKeyId')
+                    ? { accessKeyId: credential('accessKeyId'), secretAccessKey: credential('secretAccessKey') } : {}),
+                ...(selected.some(binding => binding.purpose === 'backupDestination' && binding.role === 'sshPrivateKey')
+                    ? { sshPrivateKey: credential('sshPrivateKey'), sftp: input.backupDestinationSftp } : {}),
                 ...(selected.some(binding => binding.purpose === 'backupDestination' && binding.role === 'sessionToken')
                     ? { sessionToken: credential('sessionToken') } : {}),
             });

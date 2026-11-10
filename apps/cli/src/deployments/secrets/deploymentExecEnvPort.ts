@@ -2,6 +2,9 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import type { DeploymentExecEnvAttachmentV1, DeploymentExecEnvPortV1 } from '@happier-dev/plugin-sdk/exec';
 import type { ResticAccessV1 } from '@happier-dev/deployments';
+import type { BackupDestinationOpenV1 } from '@happier-dev/plugin-sdk';
+import { isAbsolute } from 'node:path';
+import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
 import { prepareEnvironmentSecretBindingsForLaunch } from './prepareEnvironmentSecretBindingsForLaunch';
 
@@ -44,11 +47,15 @@ function refuse(): never {
         details: { reason: 'deployment_attachment_unavailable' } });
 }
 
-function backupAccess(input: Readonly<{ repository: string; s3?: ResticAccessV1['s3'] }>,
+function backupAccess(input: Pick<BackupDestinationOpenV1, 'repository' | 's3' | 'sftp' | 'local'>,
     material: Awaited<ReturnType<typeof prepareEnvironmentSecretBindingsForLaunch>>): ResticAccessV1 {
     const password = material.credentialFiles.find(file => file.hostPath === material.env.RESTIC_PASSWORD_FILE);
     if (!password) return refuse();
-    return { repository: input.repository, ...(input.s3 ? { s3: input.s3 } : {}), passwordFilePath: password.containerPath,
+    const localPath = input.local ? expandHomeDirPath(input.local.path) : undefined;
+    if (localPath && !isAbsolute(localPath)) return refuse();
+    return { repository: input.repository, ...(input.s3 ? { s3: input.s3 } : {}),
+        ...(input.sftp ? { sftp: { configFilePath: '/run/happier/backup/ssh-config' as const } } : {}),
+        ...(localPath ? { local: { path: localPath } } : {}), passwordFilePath: password.containerPath,
         credentialFiles: material.credentialFiles,
         environmentVariableNames: Object.keys(material.env).filter((name): name is ResticAccessV1['environmentVariableNames'][number] =>
             name === 'AWS_ACCESS_KEY_ID' || name === 'AWS_SECRET_ACCESS_KEY' || name === 'AWS_SESSION_TOKEN') };
@@ -59,6 +66,8 @@ function backupAccess(input: Readonly<{ repository: string; s3?: ResticAccessV1[
 export function createDeploymentBackupEnvironmentForHost(input: Readonly<{
     repository: string;
     s3?: ResticAccessV1['s3'];
+    sftp?: BackupDestinationOpenV1['sftp'];
+    local?: BackupDestinationOpenV1['local'];
     signal: AbortSignal;
     isCurrent(): boolean;
     preparation: Omit<Parameters<typeof prepareEnvironmentSecretBindingsForLaunch>[0],
@@ -69,7 +78,7 @@ export function createDeploymentBackupEnvironmentForHost(input: Readonly<{
     let access: ResticAccessV1 | undefined;
     const execEnv = createDeploymentExecEnvPortForHost({ signal: input.signal, isCurrent: input.isCurrent,
         backupDestination: { configKey: 'destination' }, async prepare() {
-            const material = await prepareEnvironmentSecretBindingsForLaunch(input.preparation);
+            const material = await prepareEnvironmentSecretBindingsForLaunch({ ...input.preparation, backupDestinationSftp: input.sftp });
             try {
                 access = backupAccess(input, material);
                 return material;
@@ -89,7 +98,8 @@ export async function prepareDeploymentBackupEnvironmentForHost(input: Parameter
         || databaseBinding.source.kind === 'secret') throw new PluginError({ code: 'secret_missing',
         message: 'A nonsecret runtime database binding is required' });
     input.signal.throwIfAborted();
-    const material = await prepareEnvironmentSecretBindingsForLaunch({ ...input.preparation, backupDatabaseBinding: databaseBinding });
+    const material = await prepareEnvironmentSecretBindingsForLaunch({ ...input.preparation, backupDatabaseBinding: databaseBinding,
+        backupDestinationSftp: input.sftp });
     let current = true;
     let attachment: DeploymentExecEnvAttachmentV1 | undefined;
     try {

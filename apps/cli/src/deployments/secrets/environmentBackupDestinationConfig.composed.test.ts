@@ -9,10 +9,57 @@ import { createDeploymentExecEnvPortForHost } from './deploymentExecEnvPort';
 import { authorizePluginExecLaunchForHost, createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { prepareEnvironmentSecretBindingsV1 } from '@happier-dev/deployments';
+import { createEnvironmentBackupDestinationConfigForHost } from './environmentBackupDestinationConfig';
 
 const seed = new Uint8Array(32).fill(47);
 const roles = ['repositoryPassword', 'accessKeyId', 'secretAccessKey', 'sessionToken'] as const;
 const values = ['repository-secret-sentinel', 'access-id-sentinel', 'access-secret-sentinel', 'session-sentinel'];
+
+it('refuses a host-key pin for another endpoint and retires the protected scratch', async () => {
+    await withTempDir('backup-destination-pin-', async baseDir => {
+        await expect(createEnvironmentBackupDestinationConfigForHost({ baseDir,
+            repositoryPassword: values[0], sshPrivateKey: 'private-key-sentinel',
+            sftp: { host: 'archive.example.test', port: 2222, username: 'backup',
+                hostKey: '[other.example.test]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJXmQhNPw7NtvqN7BA5pjk3OmlG6GgD2uXfMWLNa7z5h' },
+        })).rejects.toMatchObject({ data: { code: 'invalid_input' } });
+        expect(await readdir(baseDir)).toEqual([]);
+    });
+});
+
+it('opens only the selected local or SFTP role group and keeps the SSH identity in protected files', async () => {
+    await withTempDir('backup-destination-transports-', async root => {
+        const request = input(root);
+        const privateKey = 'ssh-private-key-sentinel';
+        const sshBinding: Extract<EnvironmentSecretBindingV1, { purpose: 'backupDestination' }> = {
+            purpose: 'backupDestination', configKey: 'destination', role: 'sshPrivateKey',
+            source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('sshPrivateKey'), resourceRevision: 2 },
+        };
+        const grant = sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: 'environment',
+            machineId: 'runtime', installationId: 'installed', resourceId: 'sshPrivateKey', resourceRevision: 2 },
+            installationPublicKey: nacl.sign.keyPair.fromSeed(seed).publicKey, content: { kind: 'secret', value: privateKey } });
+        for (const uses of [[request.bindings[0]], [request.bindings[0], sshBinding]]) {
+            const material = await prepareEnvironmentSecretBindingsForLaunch({ ...request,
+                bindings: [...request.bindings, sshBinding], grants: [...request.grants, grant], backupDestinationUses: uses,
+                ...(uses.length === 2 ? { backupDestinationSftp: { host: 'archive.example.test', port: 2222, username: 'backup',
+                    hostKey: '[archive.example.test]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJXmQhNPw7NtvqN7BA5pjk3OmlG6GgD2uXfMWLNa7z5h' } } : {}) });
+            try {
+                expect(Object.keys(material.env)).toEqual(['RESTIC_PASSWORD_FILE']);
+                expect(material.secretValues).not.toContain(values[1]);
+                if (uses.length === 2) {
+                    const key = material.credentialFiles.find(file => file.containerPath === '/run/happier/backup/ssh-key')!;
+                    expect(await readFile(key.hostPath, 'utf8')).toBe(privateKey);
+                    expect((await stat(key.hostPath)).mode & 0o777).toBe(0o600);
+                    expect(key.readOnly).toBe(true);
+                    const config = material.credentialFiles.find(file => file.containerPath === '/run/happier/backup/ssh-config')!;
+                    expect(await readFile(config.hostPath, 'utf8')).toContain('StrictHostKeyChecking yes');
+                    expect(await readFile(config.hostPath, 'utf8')).toContain('IdentityAgent none');
+                    expect(material.credentialFiles.some(file => file.containerPath === '/run/happier/backup/known-hosts')).toBe(true);
+                }
+            } finally { material.dispose(); }
+        }
+        expect(await readdir(root)).toEqual([]);
+    });
+});
 
 function input(baseDir: string) {
     const uses = roles.map((role): Extract<EnvironmentSecretBindingV1, { purpose: 'backupDestination' }> => ({

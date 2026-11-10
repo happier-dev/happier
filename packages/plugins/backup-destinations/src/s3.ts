@@ -9,9 +9,12 @@ import {
   ProtocolValidationError,
 } from '@happier-dev/plugin-sdk/protocol';
 
+export const S3_DESTINATION_ADDRESSING_OPTIONS = [
+  { value: 'auto', label: 'Automatic' }, { value: 'dns', label: 'Virtual hosted' }, { value: 'path', label: 'Path style' },
+] as const;
 export type S3DestinationConfig = {
   endpoint: string; bucket: string; prefix: string;
-  region?: string; addressing?: 'auto' | 'dns' | 'path';
+  region?: string; addressing?: typeof S3_DESTINATION_ADDRESSING_OPTIONS[number]['value'];
 };
 /** Nonsecret restic 0.19.1 S3 settings; credentials belong to Environment bindings. */
 export const S3DestinationConfigSchema = defineProtocolObject({
@@ -20,7 +23,9 @@ export const S3DestinationConfigSchema = defineProtocolObject({
   prefix: defineProtocolString(),
   region: defineProtocolString({ minLength: 1 }).optional(),
   addressing: defineProtocolUnion([
-    defineProtocolLiteral('auto'), defineProtocolLiteral('dns'), defineProtocolLiteral('path'),
+    defineProtocolLiteral(S3_DESTINATION_ADDRESSING_OPTIONS[0].value),
+    defineProtocolLiteral(S3_DESTINATION_ADDRESSING_OPTIONS[1].value),
+    defineProtocolLiteral(S3_DESTINATION_ADDRESSING_OPTIONS[2].value),
   ]).optional(),
 }, { policy: 'closed' });
 

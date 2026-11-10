@@ -6,11 +6,13 @@ import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } f
 import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
 import { isRecursivelyClosedPluginJsonSchemaV2 } from './jsonSchema.js';
 import { DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
+import { InputHintsSchema } from '../../inputs/inputFields.js';
 
 /** Storage declarations only. Probe/open execution remains with ordinary qualified Actions. */
 export const BackupDestinationContributionV1Schema = lazyZodSchema(() => z.strictObject({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
+  fieldHints: z.optional(InputHintsSchema),
   configSchema: PluginJsonSchemaV2Schema.check(z.superRefine((schema, context) => {
     try {
       normalizePluginJsonSchema(schema);

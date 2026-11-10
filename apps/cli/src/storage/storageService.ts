@@ -32,6 +32,7 @@ import type { MachineStorageDockerPruneInputV1 } from '@happier-dev/protocol/sto
 import type { createStorageDockerPruneForHost } from './dockerPrune';
 import type { createStorageDockerForHost } from './dockerStorage';
 import { storagePermissionReadIssue } from './categories/filesystem';
+import { readStoragePathCapacity, storageVolumeForPath, type StorageFilesystemCapacityReader } from './pathCapacity';
 
 export type StorageEnvironmentProtectionFacts = Pick<StorageProtectionFacts,
     'platform' | 'systemPaths' | 'personalFolders' | 'knownFolders' | 'env' | 'browserProfileRoots' | 'cloudSyncedFolders'>;
@@ -56,6 +57,7 @@ export type StorageServiceDeps = Readonly<{
     readVolumes: () => readonly Readonly<{ id: string; label: string; mount: string; totalBytes: number; availableBytes: number;
         reservedBytes?: number; apfsContainerId?: string; availableIncludingPurgeableBytes?: number }>[];
     readVolumesReported?: () => boolean;
+    readFilesystemCapacity?: StorageFilesystemCapacityReader;
     subscribeChanges?: (listener: () => void) => () => void;
     nowMs?: () => number;
     machineId?: string;
@@ -258,9 +260,7 @@ export function createStorageService(deps: StorageServiceDeps) {
         assertActive(signal);
         const projected = await timeWebLatencyPhase('storage.summary.projection', () => operations.projectCatalogItems(candidates.map(item => ({ ...item, size: emptySize() })), inUse));
         const volumeFacts = deps.readVolumes();
-        const volumeFor = (path: string) => volumeFacts.filter(volume => canonicalAbsolutePathsEqual(path, volume.mount)
-            || isCanonicalAbsolutePathInsideRoot(volume.mount, path, { platform: process.platform }))
-            .sort((left, right) => right.mount.length - left.mount.length)[0];
+        const volumeFor = (path: string) => storageVolumeForPath(volumeFacts, path);
         // The recognizer/protection owners decide eligible sets before native sizing.
         // Missing native facts remove that root from the union rather than granting eligibility.
         const provisionalSuggestions = await timeWebLatencyPhase('storage.summary.provisional-suggestions', () => operations.readSuggestionInventory(projected, inUse));
@@ -498,6 +498,7 @@ export function createStorageService(deps: StorageServiceDeps) {
     }) : undefined;
     return {
         ...operations,
+        capacityForPath: (path: string) => readStoragePathCapacity(path, deps),
         protectedAdd: protectedFolders.add,
         protectedRemove: protectedFolders.remove,
         async initialize() { await scans(); await maintenance?.start(); },
@@ -525,8 +526,7 @@ export function createStorageService(deps: StorageServiceDeps) {
             const nodes = project(result.nodes);
             const target = result.state?.target;
             const insightVolume = target && ('volumeId' in target ? target.volumeId
-                : [...deps.readVolumes()].sort((left, right) => right.mount.length - left.mount.length)
-                    .find(volume => storagePathContains(volume.mount, target.folderPath))?.id);
+                : storageVolumeForPath(deps.readVolumes(), target.folderPath)?.id);
             const incomplete: StorageReadIssueV1[] = [];
             const insights = result.insights ? { ...result.insights,
                 largestDistinct: project(result.insights.largestDistinct),

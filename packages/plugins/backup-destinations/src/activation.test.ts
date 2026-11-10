@@ -8,6 +8,35 @@ const config = {
 };
 
 describe('installed S3 destination Actions', () => {
+  it('opens local and SFTP destinations through the installed family with transport-specific custody', async () => {
+    const fixture = await createPluginTestkit({ manifest: destinations.manifest, module: destinations });
+    try {
+      const all = destinations.manifest.contributes?.backupDestinations ?? [];
+      expect(all.map(item => item.id).sort()).toEqual(['local', 's3', 'sftp']);
+      for (const [id, config, repository, roles] of [
+        ['local', { path: '/srv/recovery' }, '/run/happier/backup/repository', ['repositoryPassword']],
+        ['sftp', { host: '2001:db8::1', port: 2222, username: 'archive', path: '/repository/é folder',
+          hostKey: '[2001:db8::1]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJXmQhNPw7NtvqN7BA5pjk3OmlG6GgD2uXfMWLNa7z5h' },
+          'sftp://archive@[2001:db8::1]:2222//repository/%C3%A9%20folder', ['repositoryPassword', 'sshPrivateKey']],
+      ] as const) {
+        const descriptor = all.find(item => item.id === id)!;
+        const opened = await fixture.invokeAction(descriptor.actions.open.localId, { config, credentialRoles: roles });
+        expect(opened).toMatchObject({ repository, credentialBindings: roles.map(role => ({ purpose: 'backupDestination', configKey: 'destination', role })) });
+        expect(opened).toHaveProperty(id, id === 'local' ? config : { host: config.host, port: config.port,
+          username: config.username, hostKey: config.hostKey });
+        await expect(fixture.invokeAction(descriptor.actions.open.localId, { config,
+          credentialRoles: [...roles, 'accessKeyId'] })).rejects.toThrow();
+      }
+      const sftp = all.find(item => item.id === 'sftp')!;
+      for (const [path, username, repository] of [['/', 'archive', 'sftp://archive@receiver//'],
+        ['~/backups/', 'archive', 'sftp://archive@receiver/backups/'],
+        ['/backups', 'DOMAIN\\archive', 'sftp://DOMAIN%5Carchive@receiver//backups']] as const) {
+        expect(await fixture.invokeAction(sftp.actions.open.localId, { config: { host: 'receiver', username, path,
+          hostKey: 'receiver ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJXmQhNPw7NtvqN7BA5pjk3OmlG6GgD2uXfMWLNa7z5h' } }))
+          .toMatchObject({ repository });
+      }
+    } finally { await fixture.dispose(); }
+  });
   it('opens the selected descriptor through ordinary activation without materializing credentials', async () => {
     const fixture = await createPluginTestkit({ manifest: destinations.manifest, module: destinations });
     try {

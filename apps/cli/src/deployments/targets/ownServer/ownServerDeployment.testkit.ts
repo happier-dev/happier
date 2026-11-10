@@ -136,6 +136,18 @@ const loadNativeModel = (file, noInterpolate = false) => {
         model = yaml.parse(fs.readFileSync(included.path, 'utf8'));
         model = resolveEnvironment(noInterpolate ? model : interpolate(model, environment), environment);
     } else model = resolveEnvironment(noInterpolate ? model : interpolate(model), nativeEnvironment);
+    for (const [key, definition] of Object.entries(model.volumes || {})) {
+        const volume = definition || {};
+        if (volume.name === undefined) {
+            if (volume.external) volume.name = typeof volume.external === 'object' && volume.external.name || key;
+            else {
+                const project = nativeEnvironment.COMPOSE_PROJECT_NAME || model.name;
+                if (!project) throw new Error('fixture_volume_project_unavailable');
+                volume.name = project + '_' + key;
+            }
+        }
+        model.volumes[key] = volume;
+    }
     return model;
 };
 if (args[0] === 'system' && args[1] === 'dial-stdio') {
@@ -294,6 +306,17 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         process.exit(1);
     }
     const model = loadNativeModel(files[0], args.includes('--no-interpolate'));
+    if (!args.includes('--no-normalize')) {
+        for (const service of Object.values(model.services || {})) {
+            service.volumes = (service.volumes || []).map(mount => {
+                if (typeof mount !== 'string') return mount;
+                const parts = mount.split(':');
+                if (parts.length < 2 || parts.length > 3) throw new Error('fixture_mount_syntax_unavailable');
+                return { type: parts[0].startsWith('/') || parts[0].startsWith('.') ? 'bind' : 'volume',
+                    source: parts[0], target: parts[1], read_only: parts[2] === 'ro' };
+            });
+        }
+    }
     // Real Compose 5.6 rejects the image-free intermediate review model unless
     // this read-only query explicitly skips full project consistency.
     const incomplete = Object.values(model.services || {}).some(service => !service.image && !service.build);
@@ -371,6 +394,14 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         }
         fs.writeFileSync(args[args.indexOf('--metadata-file') + 1], JSON.stringify(metadata));
     }
+} else if (args[0] === 'compose' && args.includes('start')) {
+    const project = args[args.indexOf('--project-name') + 1];
+    const services = args.slice(args.indexOf('start') + 1).filter(value => !value.startsWith('--'));
+    for (const row of state.containers) if (row.Config.Labels['com.docker.compose.project'] === project
+        && services.includes(row.Config.Labels['com.docker.compose.service'])) row.State.Status = 'running';
+    save();
+    if (state.containers.some(row => row.Config.Labels['com.docker.compose.project'] === project
+        && services.includes(row.Config.Labels['com.docker.compose.service']) && row.State.Health?.Status === 'unhealthy')) process.exit(1);
 } else if (args[0] === 'compose' && args.includes('up')) {
     if (!args.includes('--no-build') || args[args.indexOf('--pull') + 1] !== 'never') throw new Error('fixture_unpinned_activation');
     if (state.activationCommandFailure === true) {
@@ -384,7 +415,9 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         const image = imageFor(definition.image);
         if (!image || definition.build !== undefined || definition.pull_policy !== 'never') throw new Error('fixture_unpinned_image');
         return Array.from({ length: definition.deploy?.replicas ?? 1 }, (_, replica) => {
-            const id = hash(project + '/' + service + '/' + definition.image + (replica ? '/'+replica : ''));
+            const volumeIdentity = (definition.volumes || []).filter(mount => mount.type === 'volume')
+                .map(mount => model.volumes[mount.source].name).join('/');
+            const id = hash(project + '/' + service + '/' + definition.image + (replica ? '/'+replica : '') + volumeIdentity);
             const previous = state.containers.find(row => row.Id === id);
             return { Id: id, Name: '/' + project + '-' + service + '-' + (replica + 1), Image: image.nativeId,
             Config: { Labels: { 'com.docker.compose.project': project, 'com.docker.compose.service': service,
@@ -395,18 +428,29 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
                     : Number(String(definition.stop_grace_period).replace(/s$/, '')) },
             HostConfig: { RestartPolicy: { Name: definition.restart || 'no', MaximumRetryCount: 0 },
                 Memory: 0, CpuShares: 0 },
-            State: { Status: 'running', ExitCode: 0,
+            State: { Status: args.includes('--no-start') ? 'created' : 'running', ExitCode: 0,
                 Health: definition.healthcheck?.disable ? undefined
                     : { Status: state.imageHealth[image.image.configDigest] || state.health[service] || 'healthy' } },
             Mounts: (definition.volumes || []).filter(mount => mount.type === 'volume').map(mount => ({
-                Type: 'volume', Name: model.volumes[mount.source].name, Destination: mount.target, RW: mount.read_only !== true })),
+                Type: 'volume', Name: model.volumes[mount.source].name,
+                Source: '/var/lib/docker/volumes/' + model.volumes[mount.source].name + '/_data',
+                Destination: mount.target, RW: mount.read_only !== true })),
             RestartCount: previous?.RestartCount ?? 0, NetworkSettings: { Ports: Object.fromEntries(
                 [...new Set((definition.ports || []).map(port => String(port.target) + '/' + (port.protocol || 'tcp')))]
                     .map(key => [key, definition.ports.filter(port => String(port.target) + '/' + (port.protocol || 'tcp') === key)
                         .map(port => ({ HostIp: port.host_ip || '0.0.0.0', HostPort: String(port.published) }))])),
                 Networks: { [project + '_default']: {} } } };
         });
-    })]; save();
+    })];
+    // Compose creates a project-labelled named volume when it starts the first
+    // service that mounts it. Native cleanup reads this Docker inventory.
+    for (const definition of Object.values(model.services)) for (const mount of definition.volumes || []) {
+        if (mount.type !== 'volume') continue;
+        const volume = model.volumes[mount.source];
+        if (volume.external || state.volumes.some(row => row.name === volume.name)) continue;
+        state.volumes.push({ name: volume.name, project });
+    }
+    save();
     if (state.activationCommandFailure === 'afterCreate') {
         process.stderr.write('OCI runtime create failed: exec: /private-missing-entrypoint-sentinel: no such file or directory\n');
         process.exit(1);
@@ -442,8 +486,11 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         const equals = field.indexOf('='); return equals < 0 ? [field, true] : [field.slice(0, equals), field.slice(equals + 1)];
     }))] : []);
     for (const mount of mounts) {
-        if (mount.readonly !== true) throw new Error('fixture_writable_backup_mount');
-        if (mount.type === 'bind' && !fs.statSync(mount.source).isFile()) throw new Error('fixture_missing_bind_source');
+        const repository = mount.type === 'bind' && mount.target === '/run/happier/backup/repository';
+        if (!repository && mount.readonly !== true) throw new Error('fixture_writable_backup_mount');
+        if (mount.type === 'bind' && !(repository ? fs.statSync(mount.source).isDirectory() : fs.statSync(mount.source).isFile())) {
+            throw new Error('fixture_missing_bind_source');
+        }
     }
     const environment = Object.fromEntries(args.flatMap((arg, index) => arg === '--env' ? [args[index + 1]] : []).map(entry => {
         const equal = entry.indexOf('='); return equal < 0 ? [entry, process.env[entry]] : [entry.slice(0, equal), entry.slice(equal + 1)];
@@ -573,6 +620,10 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         return separator < 0 ? Object.hasOwn(row.Config.Labels, label)
             : row.Config.Labels[label.slice(0, separator)] === label.slice(separator + 1);
     })).map(row => row.Id).join('\n'));
+} else if (args[0] === 'volume' && args[1] === 'create') {
+    const name = args.at(-1);
+    if (state.volumes.some(row => row.name === name)) throw new Error('fixture_volume_already_exists');
+    state.volumes.push({ name, project: undefined }); save(); write(name);
 } else if (args[0] === 'volume' && args[1] === 'ls') {
     const project = args.find(arg => arg.startsWith('label=com.docker.compose.project='))?.slice('label=com.docker.compose.project='.length);
     write(state.volumes.filter(row => !project || row.project === project).map(row => row.name).join('\n'));
@@ -633,6 +684,22 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         const watcher = fs.watch(__dirname, (_, file) => { if (String(file) === 'docker-state.json') release(); });
         release();
     } else emit();
+} else if (args[0] === 'exec') {
+    // The SQL client is the external native boundary. Keep the production
+    // service selection, process supervision, role setup and query parser real.
+    const script = fs.readFileSync(0, 'utf8');
+    const container = state.containers.find(row => row.Id === args[2]);
+    if (!container || typeof state.readOnlyQueryOutput !== 'string') throw new Error('fixture_data_query_unconfigured');
+    if (script.includes('ALTER ROLE happier_ro')) {
+        if (state.expectedReadRolePassword && !script.includes(Buffer.from(state.expectedReadRolePassword).toString('base64'))) {
+            throw new Error('fixture_data_role_password_mismatch');
+        }
+        state.readRoleBootstrapCount = (state.readRoleBootstrapCount || 0) + 1; save();
+    } else {
+        if (!script.includes('happier_ro')) throw new Error('fixture_data_query_requires_dedicated_role');
+        if (state.expectedReadRolePassword && !script.includes(state.expectedReadRolePassword)) throw new Error('fixture_data_query_password_mismatch');
+        write(state.readOnlyQueryOutput);
+    }
 } else if (args[0] === 'logs') {
     const emit = () => {
         const current = JSON.parse(fs.readFileSync(statePath, 'utf8'));
@@ -843,6 +910,14 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
             const state = JSON.parse(await readFile(statePath, 'utf8')) as { volumes: Array<{ name: string }> };
             return state.volumes.map(volume => volume.name).sort();
         },
+        async setVolumeMountSource(name: string, source: string) {
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as {
+                containers: Array<{ Mounts: Array<{ Type: string; Name?: string; Source?: string }> }> };
+            for (const container of state.containers) for (const mount of container.Mounts) {
+                if (mount.Type === 'volume' && mount.Name === name) mount.Source = source;
+            }
+            await writeState(state);
+        },
         async setStageOutputEnvironmentKey(name: string) {
             const state = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>;
             state.stageOutputEnvironmentKey = name;
@@ -878,6 +953,16 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
             const state = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>;
             state.commandOutcome = outcome;
             await writeState(state);
+        },
+        async setReadOnlyQueryOutput(stdout: string, expectedPassword?: string) {
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>;
+            state.readOnlyQueryOutput = stdout;
+            state.expectedReadRolePassword = expectedPassword;
+            await writeState(state);
+        },
+        async readReadRoleBootstrapCount(): Promise<number> {
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as { readRoleBootstrapCount?: number };
+            return state.readRoleBootstrapCount ?? 0;
         },
         /** Test verifier reads actual finite native-boundary evidence, not an admission stub. */
         async readCommandConfigurations(): Promise<readonly Readonly<{ imageConfigDigest?: string; environmentMatchesExpected?: boolean }>[]> {

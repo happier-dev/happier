@@ -28,7 +28,7 @@ import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/s
 import { spawnAuthorizedHostExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
 import type { MachineNativeEffectOperation } from './machineNativeEffectAdmission';
 import { access } from 'node:fs/promises';
-import { RESTIC_RUNTIME_V1, buildResticRequestV1, type ResticRequestV1 } from '@happier-dev/deployments';
+import { RESTIC_RUNTIME_V1, RESTIC_VOLUME_SOURCE_PATH_V1, buildResticRequestV1, type ResticRequestV1 } from '@happier-dev/deployments';
 import type { EnvironmentSecretBindingV1, DeploymentImageV1 } from '@happier-dev/deployment-protocol';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createDeploymentBackupEnvironmentForHost } from '@/deployments/secrets/deploymentExecEnvPort';
@@ -247,8 +247,8 @@ describe('admitted finite Compose command', () => {
             }
         });
     });
-    it.each(['complete', 'numericHostname', 'loopback', 'loopbackIpv6', 'loopbackLocalhost', 'loopbackDesktop', 'loopbackUnknown', 'cancelBeforeCreate', 'metadataSequence', 'rawReadback'] as const)('admits P45 restic on the selected named volume through real source, image proof, P42 custody and the existing command owner: %s', async outcome => {
-        const hostNetwork = outcome === 'loopback' || outcome === 'loopbackIpv6' || outcome === 'loopbackLocalhost';
+    it.each(['complete', 'numericHostname', 'loopback', 'loopbackIpv6', 'loopbackLocalhost', 'loopbackSftp', 'loopbackDesktop', 'loopbackUnknown', 'cancelBeforeCreate', 'metadataSequence', 'rawReadback', 'localRepository', 'localSourceOverlap'] as const)('admits P45 restic on the selected named volume through real source, image proof, P42 custody and the existing command owner: %s', async outcome => {
+        const hostNetwork = outcome === 'loopback' || outcome === 'loopbackIpv6' || outcome === 'loopbackLocalhost' || outcome === 'loopbackSftp';
         await withFiniteComposeFixture(async ({ project, docker, source, root, exec }) => {
             await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
             // Native registry/process boundary is substituted; the actual
@@ -281,7 +281,8 @@ describe('admitted finite Compose command', () => {
             }));
             const controller = new AbortController();
             const destination = createDeploymentBackupEnvironmentForHost({ signal: controller.signal, isCurrent: () => true,
-                repository: outcome === 'loopbackIpv6' ? 's3:http://[::1]:33025/backup'
+                repository: outcome === 'loopbackSftp' ? 'sftp://backup@localhost/repository'
+                    : outcome === 'loopbackIpv6' ? 's3:http://[::1]:33025/backup'
                     : outcome === 'loopbackLocalhost' ? 's3:http://localhost:33025/backup'
                         : outcome.startsWith('loopback') ? 's3:http://127.0.0.1:33025/backup'
                             : outcome === 'numericHostname' ? 's3:https://127.example.test/backup' : 's3:https://fixture.invalid/backup',
@@ -294,7 +295,7 @@ describe('admitted finite Compose command', () => {
             const passwordPath = resticAccess.credentialFiles[0].hostPath;
             const request = buildResticRequestV1({ environmentId: source.environmentId,
                 access: resticAccess,
-                command: { kind: 'backupPaths', sourceId: 'worker-data', paths: ['/data'] } });
+                command: { kind: 'backupPaths', sourceId: 'worker-data', paths: [RESTIC_VOLUME_SOURCE_PATH_V1] } });
             type Admitted = Parameters<typeof nativeCompose.executeAdmittedServiceCommand>[0];
             type Input = Readonly<{ render: nativeCompose.NativeComposeProjectRender; context: MachineNativeEffectContext;
                 runtimeImage: DeploymentImageV1; request: ResticRequestV1; destinationAttachment: typeof attachment; signal?: AbortSignal;
@@ -311,6 +312,28 @@ describe('admitted finite Compose command', () => {
                             .rejects.toMatchObject({ code: 'service_admission_unavailable',
                                 details: { reason: 'backup_destination_host_network_unavailable' } });
                         expect((await docker.readInvocations()).filter(row => row.args[0] === 'create')).toEqual([]);
+                        return;
+                    }
+                    if (outcome === 'localRepository' || outcome === 'localSourceOverlap') {
+                        const localRequest = buildResticRequestV1({ environmentId: source.environmentId,
+                            access: { ...resticAccess, repository: '/run/happier/backup/repository', local: { path: root } },
+                            command: { kind: 'config' } });
+                        await docker.stopCurrentContainers();
+                        const selector = { kind: 'volume' as const, sourceId: 'worker-data', service: 'worker',
+                            volume: 'data', consistency: 'stopDuringCopy' as const };
+                        if (outcome === 'localSourceOverlap') {
+                            await docker.setVolumeMountSource('fixture-physical-data', root);
+                            await expect(project.admitResticCommand({ render, context, runtimeImage, request: localRequest,
+                                selector, destinationAttachment: attachment })).rejects.toMatchObject({ code: 'service_admission_unavailable' });
+                            expect((await docker.readInvocations()).filter(row => row.args[0] === 'create')).toEqual([]);
+                            return;
+                        }
+                        const result = await nativeCompose.executeAdmittedServiceCommand(await project.admitResticCommand({
+                            render, context, runtimeImage, request: localRequest, selector, destinationAttachment: attachment }));
+                        expect(result).toMatchObject({ kind: 'completed', exitCode: 0 });
+                        const create = (await docker.readInvocations()).find(row => row.args[0] === 'create');
+                        expect(create?.args).toContain(`type=bind,source=${root},target=/run/happier/backup/repository`);
+                        expect(create?.args).toContain(`type=volume,source=fixture-physical-data,target=${RESTIC_VOLUME_SOURCE_PATH_V1},readonly,volume-nocopy`);
                         return;
                     }
                     if (outcome === 'metadataSequence' || outcome === 'rawReadback') {
@@ -393,7 +416,7 @@ describe('admitted finite Compose command', () => {
                 await access(passwordPath); // Job, not the completed child, owns the preparation.
             } finally {
                 attachment.dispose(); controller.abort();
-                await expect(access(passwordPath)).rejects.toMatchObject({ code: 'ENOENT' });
+                await expect.soft(access(passwordPath)).rejects.toMatchObject({ code: 'ENOENT' });
                 await activated.dispose();
             }
         }, { namedVolume: true, nativeExecutableIo: true,
@@ -848,7 +871,7 @@ describe('admitted finite Compose command', () => {
         await withFiniteComposeFixture(async ({ project, docker }) => {
             // Runtime discovery uses the local image. Builder-only planOnly
             // would instead demand registry authority before this assertion.
-            const images = await project.prepareImages({ platforms: ['linux/amd64'] });
+            const { images } = await project.prepareImages({ platforms: ['linux/amd64'] });
             expect(images).toHaveLength(1);
             const config = (await docker.readInvocations()).filter(row => row.args.includes('config'));
             expect(config.length).toBeGreaterThan(1);

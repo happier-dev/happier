@@ -5,6 +5,12 @@ import { definePlugin } from './definePlugin.js';
 import { parsePluginManifest } from './manifest.js';
 import { defineProtocolObject, defineProtocolString } from './protocol/protocolFacade.js';
 
+// Runtime import keeps example source outside the SDK declaration program.
+// Resolve the source graph during collection, before the Action's test budget.
+const examplePath = fileURLToPath(new URL('../examples/public-authoring/index.ts', import.meta.url));
+const { backupDestinationAuthoring: publicAuthorExample } = await import(pathToFileURL(examplePath).href);
+const { createPluginTestkit } = await import('@happier-dev/plugin-sdk/testing');
+
 const pluginId = 'acme.backups';
 const configSchema = { type: 'object', properties: { directory: { type: 'string' } }, required: ['directory'], additionalProperties: false } as const;
 const destination = {
@@ -93,10 +99,7 @@ describe('public backup destination declarations', () => {
   });
 
   it('binds the maintained public author example without claiming native transport availability', async () => {
-    // Runtime import keeps example source outside the SDK declaration program.
-    const examplePath = fileURLToPath(new URL('../examples/public-authoring/index.ts', import.meta.url));
-    const { backupDestinationAuthoring: example } = await import(pathToFileURL(examplePath).href);
-    const { createPluginTestkit } = await import('@happier-dev/plugin-sdk/testing');
+    const example = publicAuthorExample;
     const parsed = parsePluginManifest(example.manifest);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) throw new Error('Public destination example manifest is invalid');
