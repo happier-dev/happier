@@ -1,4 +1,5 @@
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import * as z from 'zod/mini';
 import { isProjectWorkspaceSyncPreparationActionV1, isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
@@ -1281,7 +1282,11 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     return { result: await retained.execution.callTargetPhase({ machineId: target.machineId,
       method: phase === 'dependencies' ? RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES
         : phase === 'inspect' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT : RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE,
-      request, ...(retirementContext?.callerInputAuthorization ? { callerInputAuthorization: retirementContext.callerInputAuthorization } : {}),
+      // Forward the current approved proof, not its in-process Account executor.
+      // Native cleanup keeps the installed SOURCE's separate transport authority.
+      request, ...(retirementContext?.callerInputAuthorization ? {
+        callerInputAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse(retirementContext.callerInputAuthorization),
+      } : {}),
       routing: { v: 1, phase, operationId: retained.input.operationId, accountServerId: semanticServerId,
         targetMachineId: target.machineId, targetRootPath: workspace.rootPath }, ...(signal ? { signal } : {}) }) };
   };

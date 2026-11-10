@@ -6,6 +6,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
+import { readWorkspaceSyncFinalReadyFactAtPath, type WorkspaceSyncRequesterCopyCustody } from './workspaceSyncFinalReadyFact';
 
 import {
   removeWorkspaceSyncCommittedCopy,
@@ -937,20 +939,40 @@ describe('workspaceSyncTargetBootstrap', () => {
     await rm(fixture, { recursive: true, force: true });
   });
 
-  it('rehydrates restart custody from settings intent and the canonical materialization receipt owner', async () => {
+  it.each([1, 2] as const)('rehydrates installed-owner restart custody and preserves READY V%s on publication', async version => {
     const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-bootstrap-'));
     const targetA = join(fixture, 'target-a');
     const staging = join(fixture, 'staging');
-    const first = await workspaceSyncTargetBootstrap(input({ rootPath: targetA, materializationDirectory: staging, createIfMissing: true, targetBootstrap: 'materialize_from_source_workspace', materializeSeed: async () => {} }));
+    const content = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const policyDigest = computeWorkspaceSyncPolicyDigest(content);
+    const binding: WorkspaceSyncRequesterCopyCustody = {
+      accountServerId: 'server-1', actorAccountId: 'requester-a',
+      sourceWriter: { machineId: 'machine-a', installationId: 'source-installation' },
+      sourceWorkspace: { id: 'workspace-alpha', machineId: 'machine-a', rootPath: join(fixture, 'source') },
+      target: { machineId: 'machine-b', installationId: 'target-installation' },
+      relationship: { v: 1, relationshipId: 'relationship-1', controllerMachineId: 'machine-a',
+        alphaWorkspaceRefId: 'workspace-alpha', betaWorkspaceRefId: 'workspace-beta', mode: 'keep_synced',
+        contentPolicy: { ...content, policyDigest }, provenance: { kind: 'worker_clean_copy',
+          sourceWorkspaceRefId: 'workspace-alpha', targetWorkspaceRefId: 'workspace-beta' },
+        enabled: true, createdAtMs: 1, updatedAtMs: 1 },
+    };
+    const first = await workspaceSyncTargetBootstrap(input({ rootPath: targetA, materializationDirectory: staging,
+      createIfMissing: true, policyDigest, ...(version === 2 ? { requesterCopyCustody: binding } : {}),
+      targetBootstrap: 'materialize_from_source_workspace', materializeSeed: async () => {} }));
     await first.publishReady();
     await first.materializationCustody?.commit();
     await first.release();
     const exact = await rehydrateWorkspaceSyncTargetBootstrap({
       rootPath: targetA, relationshipId: 'relationship-1', endpointRole: 'beta',
-      targetWorkspaceRefId: 'workspace-beta', policyDigest: 'a'.repeat(64), contentSelection: 'all_files',
+      targetWorkspaceRefId: 'workspace-beta', policyDigest, contentSelection: 'all_files',
       materializationDirectory: staging, rootOwnershipManager,
     });
     expect(exact).not.toBeNull();
+    await exact?.publishReady();
+    const readyName = (await readdir(staging)).find(name => name.endsWith('.ready.json'))!;
+    const ready = await readWorkspaceSyncFinalReadyFactAtPath(join(staging, readyName));
+    expect(ready?.v).toBe(version);
+    if (version === 2) expect(ready).toMatchObject({ requesterCopyCustody: binding });
     await exact?.release();
     await rm(fixture, { recursive: true, force: true });
   });

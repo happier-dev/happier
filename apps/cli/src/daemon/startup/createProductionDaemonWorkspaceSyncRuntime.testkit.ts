@@ -416,6 +416,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
   } }));
   const productions: Awaited<ReturnType<typeof createProductionDaemonWorkspaceSyncRuntime>>[] = [];
+  let targetMaterializationDirectory: string | undefined;
   const daemonRuntimes = new Map<string, DaemonWorkspaceSyncRuntime>();
   const nativeCarrierRuntimes = new Map<string, DaemonMachineIrohRuntime>();
   let parentManagedWorkspaceSync: DaemonWorkspaceSyncRuntime['managedWorkspaceSync'] | undefined;
@@ -738,6 +739,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
         // on-demand blob authorization and file materialization remain real.
         openMachineCarrierTunnel: options.nativeCarrierRefusal || options.nativeCarrierHome ? openFixtureTunnel : openSeedTunnel,
       } : {}) };
+    if (machineId === targetRef.machineId) targetMaterializationDirectory = join(productionInput.activeServerDir, 'workspace-sync', 'materialization');
     const production = await runWithServerHttpBaseUrl(localHomeTarget.applicationUrl, async () => {
       if (options.projectRowsFromHttp) {
         options.onCompositionPhase?.(`Project row read for ${machineId}`);
@@ -777,7 +779,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   await registerSeedExport(registrar);
   registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: registrar, service: parent.workspaceSync });
   const child = await compose(childRef.machineId);
-  const targetParent = options.separateTargetParent && !options.ordinaryTarget ? await compose(targetRef.machineId) : undefined;
+  let targetParent = options.separateTargetParent && !options.ordinaryTarget ? await compose(targetRef.machineId) : undefined;
   const targetChild = options.withTargetChildRuntime ? await compose(targetChildRef.machineId) : undefined;
   const physicalTarget = targetParent ?? (options.ordinaryTarget ? targetChild : undefined);
   if (physicalTarget) registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: { registerHandler(method, handler) {
@@ -817,7 +819,18 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
       await Promise.all([...daemonRuntimes.values()].map(runtime => runtime.whenProjectsSettled()));
     },
     sourceRef, childRef, childInstallationId, targetRef, projection, managedChild, callWorkspaceSourcePhase, parentRpcHandlers: handlers,
-    targetParent, targetChild, targetParentRpcHandlers: targetParentHandlers, targetChildRef, targetChildInstallationId, targetProjection, managedTargetChild,
+    get targetParent() { return targetParent; },
+    targetMaterializationDirectory,
+    restartTargetParent: async () => {
+      if (!targetParent) throw new Error('Physical target runtime is unavailable');
+      await targetParent.stop();
+      targetParent = await compose(targetRef.machineId);
+      targetParentHandlers.clear();
+      registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: { registerHandler(method, handler) {
+        targetParentHandlers.set(method, (raw, context) => handler(raw as Parameters<typeof handler>[0], context));
+      } }, service: targetParent.workspaceSync });
+    },
+    targetChild, targetParentRpcHandlers: targetParentHandlers, targetChildRef, targetChildInstallationId, targetProjection, managedTargetChild,
     credentials, targetCredentials, serverId, parentServerId, managedHomeId, controller: managedChild.controller,
     projectRowsFromHttp: options.projectRowsFromHttp === true, registerSeedExport, seedExportFailures,
     // External enrollment/socket/native boundaries now report the replacement

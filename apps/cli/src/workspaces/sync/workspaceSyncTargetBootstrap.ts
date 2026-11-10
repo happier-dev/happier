@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, readFile, readdir, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import { dirname, join, normalize, resolve } from 'node:path';
 
 import { getPathRemainderWithinBase } from '@/session/handoff/paths/sessionHandoffPathNormalization';
-import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { realpathWithAbsentSuffix } from '@/utils/path/physicalAncestorPath';
 import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
 import { realizeWorkspaceCheckoutWithScmWorkspace } from '@/scm/workspace/workspaceCheckoutOperations';
@@ -28,6 +27,14 @@ import {
   computeWorkspaceSyncRootFingerprint,
   readWorkspaceSyncRootObjectIdentity,
 } from './workspaceSyncRootIdentity';
+import {
+  matchesWorkspaceSyncFinalReadyFact,
+  readWorkspaceSyncFinalReadyFactAtPath,
+  writeWorkspaceSyncFinalReadyFact as writeReadyFact,
+  type WorkspaceSyncFinalReadyFactInput,
+  type WorkspaceSyncRequesterCopyCustody,
+} from './workspaceSyncFinalReadyFact';
+export type { WorkspaceSyncFinalReadyFact } from './workspaceSyncFinalReadyFact';
 
 export type WorkspaceSyncTargetBootstrapInput = Readonly<{
   rootPath: string;
@@ -40,6 +47,7 @@ export type WorkspaceSyncTargetBootstrapInput = Readonly<{
   contentSelection: 'git_worktree' | 'all_files';
   /** Receiving target's current persisted Home definition; never a caller's transient marker. */
   workerCopyCreation?: WorkspaceTargetMaterializationWorkerCopyCreation;
+  requesterCopyCustody?: WorkspaceSyncRequesterCopyCustody;
   /** Host-private Action approval, reinspected at this target under root custody. */
   targetReplacementApproval?: HandoffTargetReplacementApprovalV1;
   /** Owner-local proof binding the unchanged chosen child root to this physical root. */
@@ -88,6 +96,7 @@ export type WorkspaceSyncTargetBootstrapResult = Readonly<{
   materializationCustody?: WorkspaceExportMaterializationCustody;
   /** True only when the exact durable READY fact was already observed or published. */
   readyPublished: boolean;
+  requesterCopyCustody?: WorkspaceSyncRequesterCopyCustody;
   publishReady(): Promise<void>;
   release(): Promise<void>;
 }>;
@@ -155,48 +164,18 @@ function finalReadyPath(materializationDirectory: string, relationshipId: string
   return join(resolve(materializationDirectory), `${bootstrapOperationKey(relationshipId, endpointRole)}.ready.json`);
 }
 
-export type WorkspaceSyncFinalReadyFact = Readonly<{
-  v: 1;
-  relationshipId: string;
-  endpointRole: 'alpha' | 'beta';
-  targetWorkspaceRefId: string;
-  canonicalRoot: string;
-  rootFingerprint: string;
-  policyDigest: string;
-  completedAtMs: number;
-}>;
-
 export type WorkspaceSyncTargetBootstrapDependencies = Readonly<{
-  writeReadyFact?(path: string, fact: Omit<WorkspaceSyncFinalReadyFact, 'completedAtMs'>): Promise<void>;
+  writeReadyFact?(path: string, fact: WorkspaceSyncFinalReadyFactInput): Promise<void>;
   rehydrateMaterializationFromReceiptPath?: typeof rehydrateWorkspaceTargetMaterializationFromReceiptPath;
 }>;
 
-function isExactReadyFact(value: unknown, expected: Omit<WorkspaceSyncFinalReadyFact, 'completedAtMs'>): value is WorkspaceSyncFinalReadyFact {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return record.v === expected.v
-    && record.relationshipId === expected.relationshipId
-    && record.endpointRole === expected.endpointRole
-    && record.targetWorkspaceRefId === expected.targetWorkspaceRefId
-    && record.canonicalRoot === expected.canonicalRoot
-    && record.rootFingerprint === expected.rootFingerprint
-    && record.policyDigest === expected.policyDigest
-    && typeof record.completedAtMs === 'number'
-    && Number.isFinite(record.completedAtMs);
+export async function readWorkspaceSyncFinalReadyFact(materializationDirectory: string, relationshipId: string, endpointRole: 'alpha' | 'beta') {
+  return await readWorkspaceSyncFinalReadyFactAtPath(finalReadyPath(materializationDirectory, relationshipId, endpointRole));
 }
 
-async function writeReadyFact(path: string, fact: Omit<WorkspaceSyncFinalReadyFact, 'completedAtMs'>): Promise<void> {
-  await writeJsonAtomic(path, { ...fact, completedAtMs: Date.now() });
-}
-
-async function hasExactReadyFact(path: string, expected: Omit<WorkspaceSyncFinalReadyFact, 'completedAtMs'>): Promise<boolean> {
-  const raw = await readFile(path, 'utf8').catch(() => null);
-  if (raw === null) return false;
-  try {
-    return isExactReadyFact(JSON.parse(raw) as unknown, expected);
-  } catch {
-    return false;
-  }
+async function hasExactReadyFact(path: string, expected: WorkspaceSyncFinalReadyFactInput): Promise<boolean> {
+  const fact = await readWorkspaceSyncFinalReadyFactAtPath(path);
+  return fact !== null && matchesWorkspaceSyncFinalReadyFact(fact, expected);
 }
 
 function bootstrapError(code: string, message: string): Error {
@@ -330,6 +309,7 @@ export async function rehydrateWorkspaceSyncTargetBootstrap(input: Readonly<{
   policyDigest: string;
   contentSelection: 'git_worktree' | 'all_files';
   workerCopyCreation?: WorkspaceTargetMaterializationWorkerCopyCreation;
+  requesterCopyCustody?: WorkspaceSyncRequesterCopyCustody;
   materializationDirectory: string;
   rootOwnershipManager: WorkspaceRootOwnershipManager;
   /** Restart cleanup probe: do nothing unless the finite receipt exists. */
@@ -413,14 +393,16 @@ export async function rehydrateWorkspaceSyncTargetBootstrap(input: Readonly<{
           rootFingerprint: fingerprint,
           policyDigest: input.policyDigest,
         } as const;
-    exactReady = readyFact !== null && await hasExactReadyFact(readyPath, readyFact);
+    const persistedReady = await readWorkspaceSyncFinalReadyFactAtPath(readyPath);
+    exactReady = readyFact !== null && persistedReady !== null && matchesWorkspaceSyncFinalReadyFact(persistedReady,
+      { ...readyFact, ...(input.requesterCopyCustody ? { requesterCopyCustody: input.requesterCopyCustody } : {}) });
     if (materializationCustody && !exactReady) {
       await materializationCustody.abort();
       materializationSettled = true;
       await ownership.release();
       return null;
     }
-    if (!exactReady || readyFact === null) {
+    if (!exactReady || readyFact === null || persistedReady === null) {
       if (currentRoot === null && !materializationCustody) {
         throw bootstrapError('root_changed', 'Workspace sync target root is unavailable');
       }
@@ -456,7 +438,8 @@ export async function rehydrateWorkspaceSyncTargetBootstrap(input: Readonly<{
       ownershipHandles: [ownership],
       ...(materializationCustody ? { materializationCustody } : {}),
       readyPublished: true,
-      publishReady: async (): Promise<void> => await writeReadyFact(readyPath, readyFact),
+      ...(persistedReady.v === 2 ? { requesterCopyCustody: persistedReady.requesterCopyCustody } : {}),
+      publishReady: async (): Promise<void> => await writeReadyFact(readyPath, persistedReady),
       release: ownership.release,
     };
   } catch (error) {
@@ -556,7 +539,7 @@ export async function workspaceSyncTargetBootstrap(
         : null;
       const restartReadyFact = restartRoot === canonicalRoot && restartFingerprint !== null
         ? {
-          v: 1,
+          ...(input.requesterCopyCustody ? { v: 2 as const, requesterCopyCustody: input.requesterCopyCustody } : { v: 1 as const }),
           relationshipId: input.relationshipId,
           endpointRole: input.endpointRole,
           targetWorkspaceRefId: input.targetWorkspaceRefId,
@@ -740,7 +723,7 @@ export async function workspaceSyncTargetBootstrap(
     const verifiedFingerprint = await computeWorkspaceSyncRootFingerprint(await realpath(requested));
     if (verifiedFingerprint !== fingerprint) throw bootstrapError('root_changed', 'workspace sync target root changed during bootstrap');
     const publishReady = async (): Promise<void> => await persistReadyFact(readyPath, {
-      v: 1,
+      ...(input.requesterCopyCustody ? { v: 2 as const, requesterCopyCustody: input.requesterCopyCustody } : { v: 1 as const }),
       relationshipId: input.relationshipId,
       endpointRole: input.endpointRole,
       targetWorkspaceRefId: input.targetWorkspaceRefId,

@@ -631,6 +631,18 @@ settles failed commands with unknown engine status, or completed observations
 without an engine session, as unavailable instead of leaving a loading label.
 A refused command preserves an already known engine status.
 
+The native target's final READY record uses V2 for requester-owned copies. It
+retains the original requester and installed SOURCE writer identities with the
+exact relationship and Workspace binding, alongside the existing physical root
+identity. It stores no credentials or signed admission envelope. After a WORKER
+restart, the existing target authority consumes that binding and native receipt
+for copy inspection and reviewed retirement. V1 records remain readable for
+installed-owner recovery; a foreign copy without the original binding remains
+refused. Fresh requester-owned copies need the matching daemon build before
+creation. These Sync target paths are absent from the inspected `../0.2`
+frontier at `7b37d65ca75e58560f8f3ca850958ac5407d2e75`; no released migration or
+rollback adapter is introduced.
+
 ## Shared-Machine native Agent sign-in status (unreleased 0.3)
 
 Machine Use can read the existing sign-in status RPC. The daemon omits identity

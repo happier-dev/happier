@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
@@ -10,6 +10,7 @@ import { ApprovalRequestV2Schema, decodePlainArtifactStoredContent, FeaturesResp
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { WorkspaceSyncSeedExportPrepareV1Schema, WorkspaceSyncTargetConflictRecoverResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { WorkspaceSyncCommittedCopyPreviewResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ExternalActionDaemonDispatchRequestSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import type { RpcRequest } from '@/api/rpc/types';
@@ -30,6 +31,7 @@ import { writeStoredCredentialsForServerId } from '@/persistence';
 import { logger } from '@/ui/logger';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { createRequesterWorkspaceSyncFixture } from '@/daemon/startup/createRequesterWorkspaceSyncFixture.testkit';
+import { readWorkspaceSyncFinalReadyFactAtPath } from '@/workspaces/sync/workspaceSyncFinalReadyFact';
 import { workspaceCheckoutNativeBoundary as native } from '@/workspaces/activation/workspaceCheckoutNative.testkit';
 import { createExternalMcpServer } from './createExternalMcpServer';
 import { db } from '../../../server/sources/storage/db';
@@ -312,7 +314,7 @@ it.skipIf(process.platform !== 'linux').each(['create', 'recover', 'retire', 're
       requestId: setup.request.operationId, target: { kind: 'machine', machineId: setup.installed.machineId },
       credentials: { ...setup.credentials, token: requesterToken }, serverHttpBaseUrl: setup.installed.serverHttpBaseUrl,
       serverIdentityId: setup.installed.homeServerIdentityId,
-      invocation: { surface: 'ui', authority: 'present_user', caller: { kind: 'host' } }, authority: 'present_user',
+      invocation: { surface: 'mcp', authority: 'present_user', caller: { kind: 'host' } }, authority: 'present_user',
       onRequesterSessionCredentialDisclosure: () => true,
     }) : null;
     const reply = CallToolResultSchema.parse(seeded ? { content: [{ type: 'text', text: JSON.stringify(
@@ -418,7 +420,66 @@ it.skipIf(process.platform !== 'linux').each(['create', 'recover', 'retire', 're
       const [nextServer, nextTransport] = InMemoryTransport.createLinkedPair();
       await next.mcp.connect(nextServer); await nextClient.connect(nextTransport);
       try {
-        const reply = CallToolResultSchema.parse(await nextClient.callTool({ name: 'action_execute', arguments: { actionId, input } }));
+        let inspectedRootFingerprint: string | undefined;
+        if (cleanup === 'retire') {
+          // Recreate the actual installed WORKER owner from its existing files,
+          // with B's unrelated Account graph, before A observes or retires its copy.
+          await setup.restartTargetParent();
+          const inspect = async () => {
+            const reply = CallToolResultSchema.parse(await nextClient.callTool({ name: 'action_execute', arguments: {
+            actionId: 'projects.worker.copy.inspect', input: { kind: 'preview', workspace: {
+              serverId: setup.installed.homeServerIdentityId, refId: setup.sourceRef.id },
+              machineId: setup.installed.machineId, expectedRelationship: relationship,
+              targetMachineId: setup.targetRef.machineId, targetWorkspaceRefId: setup.targetRef.id },
+            } }));
+            const body = reply.content.find(entry => entry.type === 'text');
+            return body?.type === 'text' ? JSON.parse(body.text) as unknown : null;
+          };
+          const directory = setup.fixture.targetMaterializationDirectory;
+          if (!directory) throw new Error('Native target materialization directory is unavailable');
+          const readyFiles = (await readdir(directory)).filter(name => name.endsWith('.ready.json'));
+          expect(readyFiles).toHaveLength(1);
+          const readyPath = join(directory, readyFiles[0]!);
+          const readyBytes = await readFile(readyPath, 'utf8');
+          const ready = await readWorkspaceSyncFinalReadyFactAtPath(readyPath);
+          if (ready?.v !== 2) throw new Error('Admitted requester copy must publish READY V2');
+          const { requesterCopyCustody: binding, ...legacy } = ready;
+          // Mutate only the persistent filesystem boundary. Each call still takes
+          // the real public MCP -> Account Action -> signed SOURCE -> TARGET path.
+          for (const fact of [
+            { ...ready, requesterCopyCustody: { ...binding, actorAccountId: 'another-account' } },
+            { ...ready, requesterCopyCustody: { ...binding, sourceWriter: { ...binding.sourceWriter, installationId: 'another-source-installation' } } },
+            { ...ready, requesterCopyCustody: { ...binding, target: { ...binding.target, installationId: 'another-target-installation' } } },
+            { ...legacy, v: 1 },
+          ]) {
+            await writeFile(readyPath, JSON.stringify(fact));
+            try { expect(await inspect()).toMatchObject({ errorCode: 'forbidden' }); }
+            finally { await writeFile(readyPath, readyBytes); }
+          }
+          const displacedRoot = `${setup.targetPath}-replaced`;
+          await rename(setup.targetPath, displacedRoot);
+          try {
+            await mkdir(setup.targetPath);
+            await writeFile(join(setup.targetPath, 'replacement.txt'), 'unrelated replacement');
+            expect(await inspect()).toMatchObject({ errorCode: 'target_bootstrap_required' });
+            expect(await readFile(join(setup.targetPath, 'replacement.txt'), 'utf8')).toBe('unrelated replacement');
+          } finally {
+            await rm(setup.targetPath, { recursive: true, force: true });
+            await rename(displacedRoot, setup.targetPath);
+          }
+          const inspected = await inspect();
+          expect(inspected, JSON.stringify({ inspected, target: setup.targetRpcDiagnostics.slice(-8) }))
+            .toMatchObject({ ok: true, preview: { workspaceRefId: setup.targetRef.id } });
+          const parsedPreview = WorkspaceSyncCommittedCopyPreviewResultV1Schema.parse(inspected);
+          if (!parsedPreview.ok) throw new Error('Restarted copy preview was refused');
+          inspectedRootFingerprint = parsedPreview.preview.rootFingerprint;
+          // Retirement must restore dependency custody independently, rather
+          // than relying on the preceding preview to populate the target owner.
+          await setup.restartTargetParent();
+        }
+        const reply = CallToolResultSchema.parse(await nextClient.callTool({ name: 'action_execute', arguments: { actionId,
+          input: { ...input, ...(inspectedRootFingerprint ? { removeTargetCopy: {
+            workspaceRefId: setup.targetRef.id, rootFingerprint: inspectedRootFingerprint } } : {}) } } }));
         const body = reply.content.find(entry => entry.type === 'text');
         const proposal = body?.type === 'text' ? JSON.parse(body.text) : null;
         expect(proposal, JSON.stringify({ reply, homeResponses, homeMachineCalls })).toMatchObject({ kind: 'approval_request_created', artifactId: expect.any(String) });
@@ -432,7 +493,8 @@ it.skipIf(process.platform !== 'linux').each(['create', 'recover', 'retire', 're
           surface: 'cli', authority: 'present_user', serverId: setup.installed.serverId,
           actionCaller: { kind: 'host' }, actionRequestId: `approve-${cleanup}` });
         expect(decision, JSON.stringify({ decision, input, rowRequests: setup.requesterRowRequests.slice(-5),
-          diagnostics: setup.rpcDiagnostics })).toMatchObject({ ok: true,
+          diagnostics: setup.rpcDiagnostics, target: setup.targetRpcDiagnostics.slice(-10), homeResponses: homeResponses.slice(-8),
+          homeMachineCalls: homeMachineCalls.slice(-8) })).toMatchObject({ ok: true,
           result: { status: 'executed', execution: { ok: true, result: cleanup !== 'terminate'
             ? { status: 'retired' } : { terminated: true, relationshipId: relationship.relationshipId } } } });
         const after = await readProjectAccountRows({ credentials: setup.credentials,
@@ -441,8 +503,9 @@ it.skipIf(process.platform !== 'linux').each(['create', 'recover', 'retire', 're
         expect(after.relationships).toEqual([]);
         const statuses = await setup.fixture.parent.workspaceSync.controller.list();
         expect(statuses.filter(status => status.relationshipId === relationship.relationshipId && status.state === 'watching')).toEqual([]);
-        // A retired durable link cannot be reused merely because its old native
-        // copy still exists. Enter Move through MCP, as in the live continuation.
+        if (cleanup === 'retire') await expect(readdir(setup.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
+        // Enter Move through MCP after retirement. A foreign SOURCE first needs
+        // deliberate credential disclosure; an own SOURCE reaches missing-copy resolution.
         const workspace = { serverId: setup.installed.homeServerIdentityId, refId: setup.sourceRef.id };
         const destination = { kind: 'workers', destination: { kind: 'machine', machineId: 'target-parent' } };
         const moveReply = CallToolResultSchema.parse(await nextClient.callTool({ name: 'action_execute', arguments: {
@@ -454,7 +517,7 @@ it.skipIf(process.platform !== 'linux').each(['create', 'recover', 'retire', 're
               expectedRevision: 'absent', expected: { kind: 'absent' }, value: { runsOn: destination, unavailable: 'fail' } } } } }));
         const moveBody = moveReply.content.find(entry => entry.type === 'text');
         expect(moveBody?.type === 'text' ? JSON.parse(moveBody.text) : null, JSON.stringify(moveReply))
-          .toMatchObject({ errorCode: 'worker_copy_missing' });
+          .toMatchObject({ errorCode: sourceCustodian === 'member-a' ? 'worker_copy_missing' : 'requester_credential_disclosure_required' });
         if (sourceCustodian !== 'member-a') expect(setup.custodianRows).toEqual(setup.custodianBefore);
         expect(setup.targetAccountRows).toEqual(targetRowsBefore);
       } finally { await nextClient.close(); await next.mcp.close(); }

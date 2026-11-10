@@ -860,6 +860,11 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     return result;
   };
   return { installed, fixture, identity, member, rows, custodianRows, custodianRef, custodianBefore,
+    restartTargetParent: async () => {
+      await fixture.restartTargetParent();
+      if (!targetRpc || !fixture.targetParent) throw new Error('Physical target RPC is unavailable');
+      registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: targetRpc, service: fixture.targetParent.workspaceSync });
+    },
     sourcePath, targetPath, sourceRef: fixture.sourceRef, targetRef,
     request, account, authorization, credentials, wire, envelope, prepareInvocation, prepareActionIngress, executeRelationshipAction, executeApprovalDecision, homeActionRequests, adoptHomeAuthorization, rpc, targetRpc, targetMachine, targetInstallation, targetResource, sourceResource, sourceResourceMode, accountMode,
     memberReads: () => memberReads, requesterProjectionReads: () => requesterProjectionReads, requesterRowRequests, requesterMachineAuthorityReads, rpcDiagnostics, targetRpcDiagnostics, approvalArtifacts,
