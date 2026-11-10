@@ -1,3 +1,4 @@
+import { buildProviderAccountUsageIdentityFromQualifiedAccount } from '../accountUsage/qualifiedAccountIdentity';
 import type { ProviderAccountUsageUsageIdentityResolver } from '../accountUsage/hydration';
 import type { ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
 import type { ConnectedServiceRefreshCoordinator } from '../refresh/ConnectedServiceRefreshCoordinator';
@@ -296,22 +297,10 @@ export function buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota
     usageIdentity?: PluginConnectedAccountDescriptorContributionV2['usageIdentity'];
   }>,
 ): ProviderAccountUsageSnapshotV1 {
-  const providerId = input.usageIdentity?.providerId ?? buildQualifiedPluginContributionKey(
-    input.profile.ref.service,
-  );
-  const providerAccountId =
-    input.profile.providerIdentity?.accountId?.trim() ?? '';
-  const accountSubjectId =
-    providerAccountId || input.profile.ref.accountId;
-  const providerOrganizationId = input.quota.providerOrganizationId?.trim();
-  const recordKey: ProviderAccountUsageRecordKeyV1 = {
-    providerId,
-    accountSubjectId,
-    subjectKind: providerAccountId ? 'account' : 'unknown',
-    quotaScope: providerOrganizationId ? 'organization' : 'account',
-    ...(providerOrganizationId ? { quotaScopeId: providerOrganizationId } : {}),
-  };
-  const recordId = buildProviderAccountUsageRecordId(recordKey);
+  const identity = buildProviderAccountUsageIdentityFromQualifiedAccount({
+    ref: input.profile.ref, providerIdentity: input.profile.providerIdentity,
+    usageIdentity: input.usageIdentity, providerOrganizationId: input.quota.providerOrganizationId,
+  });
   const observedAtMs = Math.trunc(input.quota.observedAtMs);
   const meters = input.quota.limits.map((limit) => {
     const used =
@@ -371,16 +360,7 @@ export function buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota
   });
   return ProviderAccountUsageSnapshotV1Schema.parse({
     v: 1,
-    recordId,
-    recordKey,
-    providerId,
-    accountSubject: providerAccountId
-      ? { kind: 'providerSubject', id: accountSubjectId }
-      : {
-          kind: 'provisionalLocalSubject',
-          id: accountSubjectId,
-          mergeKey: qualifiedAccountQuotaKey(input.profile.ref),
-        },
+    ...identity,
     observedAtMs,
     fetchedAtMs: observedAtMs,
     staleAfterMs: Math.max(1, Math.trunc(input.staleAfterMs)),

@@ -1,3 +1,4 @@
+import type { QualifiedProviderAccountUsageIdentity } from './qualifiedAccountIdentity';
 import { mergeProviderAccountSubscription } from '@happier-dev/protocol/connect/accountSubscription';
 import { ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import type { ConnectedServiceUsageSourceV1, ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
@@ -68,6 +69,8 @@ export async function recordProviderAccountUsageSnapshotForSession(input: Readon
     resolveAuthoritativeSource?: (
         source: ConnectedServiceUsageSourceV1,
     ) => Promise<ConnectedServiceUsageSourceV1 | null>;
+    /** Identity-free native usage borrows the already-selected account's host-owned identity. */
+    resolveRuntimeSourceIdentity?: (source: ConnectedServiceUsageSourceV1) => Promise<QualifiedProviderAccountUsageIdentity | null>;
     /**
      * The runtime source owner resolves the exact V4 account/group relation and
      * current credential/configuration basis after source qualification. This
@@ -85,7 +88,7 @@ export async function recordProviderAccountUsageSnapshotForSession(input: Readon
     const tracked = findTrackedSession(input.getChildren(), input.sessionId);
     if (!tracked) return { status: 'session_not_found' };
 
-    const snapshot = ProviderAccountUsageSnapshotV1Schema.parse(input.snapshot);
+    let snapshot = ProviderAccountUsageSnapshotV1Schema.parse(input.snapshot);
     const claimedSources = input.observation?.sources?.length
         ? input.observation.sources
         : null;
@@ -96,6 +99,23 @@ export async function recordProviderAccountUsageSnapshotForSession(input: Readon
     let sourceQualificationMismatch = Boolean(claimedSources && !globalIdentityQualified && !input.sourceProviderAccountId);
     let qualifiedSources: readonly ConnectedServiceUsageSourceV1[] | null = null;
     let verifiedLocalSource: ConnectedServiceUsageSourceV1 | undefined;
+    if (claimedSources?.length === 1 && input.credentialFingerprint === undefined
+        && snapshot.source === 'runtimeSignal' && snapshot.accountSubject.kind === 'provisionalLocalSubject'
+        && input.resolveRuntimeSourceIdentity && input.resolveAuthoritativeSource) {
+        const claimed = claimedSources[0]!;
+        const current = await input.resolveAuthoritativeSource(claimed);
+        const matches = current && current.serviceId === claimed.serviceId && current.profileId === claimed.profileId
+            && current.bindingKind === claimed.bindingKind
+            && (current.bindingKind !== 'group_member' || (claimed.bindingKind === 'group_member'
+                && current.groupId === claimed.groupId && current.groupGeneration === claimed.groupGeneration));
+        const identity = matches ? await input.resolveRuntimeSourceIdentity(current) : null;
+        if (identity && (!input.requiresProviderOrganizationId
+            || (identity.recordKey.quotaScope === 'organization' && Boolean(identity.recordKey.quotaScopeId?.trim())))) {
+            snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ ...snapshot, ...identity });
+            qualifiedSources = [current!];
+            sourceQualificationMismatch = false;
+        }
+    }
     if (input.credentialFingerprint !== undefined) {
         const credentialFingerprint = normalizeConnectedServiceAccessTokenFingerprint(input.credentialFingerprint);
         if (claimedSources && credentialFingerprint && input.verifyCredentialFingerprint && observedProviderAccountId

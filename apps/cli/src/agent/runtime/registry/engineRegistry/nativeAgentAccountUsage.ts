@@ -1,6 +1,7 @@
 import { normalizeConnectedAccountAccessTokenFingerprint } from '@happier-dev/plugin-sdk/connected-accounts';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageRecordKeyV1Schema, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { ConnectedAccountServiceKeyIngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { buildQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedServiceUsageSourceV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ConnectedAccountServiceKey, ConnectedServiceUsageSourceV1, ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
 import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -120,6 +121,7 @@ function snapshotPendingKey(request: SnapshotRequest): string {
 }
 
 export function createNativeAgentAccountUsageService(params: Readonly<{
+    pluginId?: string;
     sessionId: string;
     session: Pick<ApiSessionClient, 'getMetadataSnapshot'>;
     signal: AbortSignal;
@@ -257,7 +259,12 @@ export function createNativeAgentAccountUsageService(params: Readonly<{
         env: Readonly<Record<string, string | undefined>> | null;
     }> | null => {
         if (!isRecord(value)) return null;
-        const serviceId = ConnectedAccountServiceKeyIngressSchema.safeParse(readTrimmedString(value.serviceId));
+        const address = readTrimmedString(value.serviceId);
+        const canonical = ConnectedAccountServiceKeyIngressSchema.safeParse(address);
+        const serviceId = canonical.success || !address || !params.pluginId ? canonical
+            : ConnectedAccountServiceKeyIngressSchema.safeParse(buildQualifiedPluginContributionKey(
+                qualifyPluginContributionReferenceV1(address, params.pluginId),
+            ));
         if (!serviceId.success) return null;
         const serializedSelection = isRecord(value.env)
             ? readTrimmedString(value.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY])

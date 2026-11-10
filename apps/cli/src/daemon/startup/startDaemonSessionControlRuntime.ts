@@ -1,3 +1,5 @@
+import { buildProviderAccountUsageIdentityFromQualifiedAccount, buildProviderAccountUsagePersistenceTargetFromQualifiedCredential } from '../connectedServices/accountUsage/qualifiedAccountIdentity';
+import { resolveProviderAccountUsageAuthoritativeSource } from '../connectedServices/accountUsage/runtimeSource';
 import { createRequesterPluginSettingsSource } from '@/daemon/sessionEncryption/requesterPluginSettings';
 import { createDaemonSessionAccountActionAuthorizationPreparer } from './createDaemonSessionAccountActionAuthorizationPreparer';
 import { resolveGroupRequiredModelIds } from '../connectedServices/runtimeRegistry/resolveGroupRequiredModelIds';
@@ -701,7 +703,6 @@ import {
 } from '../connectedServices/runtimeAuth/handleConnectedServiceRuntimeAuthFailureForSession';
 import { resolveCurrentRuntimeAuthFailureSource } from '../connectedServices/runtimeAuth/resolveCurrentRuntimeAuthFailureSource';
 import { resolveRuntimeAuthFailureSourceProfile } from '../connectedServices/runtimeAuth/resolveRuntimeAuthFailureSourceProfile';
-import { readConnectedServiceCredentialProviderAccountId } from '../connectedServices/shared/connectedServiceCredentialRecord';
 import { resolveProviderAccountUsageSourceProfile } from '../connectedServices/accountUsage/resolveProviderAccountUsageSourceProfile';
 import { createConnectedServiceSessionAuthSwitchCore } from '../connectedServices/runtimeAuth/connectedServiceSessionAuthSwitchCore';
 import { shouldCommitAutomaticGroupApplySessionEvent } from '../connectedServices/runtimeAuth/automaticGroupApplySessionEvents';
@@ -2351,11 +2352,6 @@ export async function startDaemonSessionControlRuntime(
               binding.serviceId,
             );
           if (!service) continue;
-          const legacyServiceId =
-            resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
-              binding.serviceId,
-            );
-          if (!legacyServiceId) continue;
           const serviceKey = `${service.pluginId}\u0000${service.localId}`;
           let listed = listedAccountsByService.get(serviceKey);
           if (listed === undefined) {
@@ -2377,48 +2373,26 @@ export async function startDaemonSessionControlRuntime(
               candidate.providerIdentity?.accountId === providerAccountId,
           );
           if (!profile || profile.revisionSemantics !== 'revisioned') continue;
-          const resolutions = await resolveConnectedServiceCredentialResolutions({
-            credentials:
-              accountContext?.bootstrap.credentials ?? params.credentials,
-            api: accountContext?.api ?? params.api,
-            bindings: [
-              {
-                serviceId: legacyServiceId,
-                profileId: binding.profileId,
-              },
-            ],
+          const material = await readQualifiedConnectedAccountCredentialMaterial({
+            credentials: accountContext?.bootstrap.credentials ?? params.credentials,
+            account: profile.ref,
+            requestPurpose: 'connected-accounts:usage-persistence',
+            getAccountEncryptionMode: (signal) => resolveConnectedServiceAccountMode(accountContext?.api ?? params.api, { signal }),
           }).catch((error: unknown) => {
             if (axios.isCancel(error) || (error instanceof Error && error.name === 'AbortError')) throw error;
             throw new ProviderAccountUsageSourceQualificationError('credential_resolution_failed', error);
           });
-          const resolution = resolutions.get(legacyServiceId) ?? null;
-          if (
-            !resolution ||
-            resolution.revisionSemantics !== 'revisioned' ||
-            resolution.credentialRevision !== profile.credentialRevision ||
-            readConnectedServiceCredentialProviderAccountId(resolution.record) !==
-              providerAccountId
-          )
-            continue;
-          const source =
-            binding.groupId === null
-              ? {
-                  ref: profile.ref,
-                  bindingKind: 'account' as const,
-                }
-              : {
-                  ref: profile.ref,
-                  bindingKind: 'group_member' as const,
-                  groupId: binding.groupId,
-                  ...(binding.groupGeneration === null
-                    ? {}
-                    : { groupGeneration: binding.groupGeneration }),
-                };
-          targets.push({
-            source,
-            expectedCredentialRevision: profile.credentialRevision,
-            expectedConfigurationRevision: profile.configurationRevision,
-          });
+          if (!material || material.snapshot.credentialRevision !== profile.credentialRevision
+            || material.snapshot.metadata.providerIdentity?.accountId?.trim() !== providerAccountId
+            || (input.snapshot.recordKey.quotaScope === 'organization'
+              && material.snapshot.metadata.providerIdentity?.organizationId?.trim() !== input.snapshot.recordKey.quotaScopeId)) continue;
+          targets.push(buildProviderAccountUsagePersistenceTargetFromQualifiedCredential({
+            snapshot: material.snapshot,
+            source: binding.groupId === null
+              ? { serviceId: binding.serviceId, profileId: binding.profileId, bindingKind: 'profile' }
+              : { serviceId: binding.serviceId, profileId: binding.profileId, bindingKind: 'group_member', groupId: binding.groupId,
+                  ...(binding.groupGeneration === null ? {} : { groupGeneration: binding.groupGeneration }) },
+          }));
         }
         await assertSessionAccountCurrent(input.sessionId, accountContext);
         return targets;
@@ -3730,38 +3704,6 @@ export async function startDaemonSessionControlRuntime(
   let queueHostedWebStaticAssetSync: (
     reason: HostedWebStaticAssetSyncReason,
   ) => Promise<void> = async () => {};
-  const persistedConnectedServiceSwitchSessionMetadataBySessionId = new Map<
-    string,
-    Promise<Record<string, unknown> | null>
-  >();
-  const forgetPersistedConnectedServiceSwitchSessionMetadata = (
-    sessionIdRaw: string,
-  ): void => {
-    const sessionId = normalizeOptionalString(sessionIdRaw);
-    if (!sessionId) return;
-    persistedConnectedServiceSwitchSessionMetadataBySessionId.delete(sessionId);
-  };
-  const rememberPersistedConnectedServiceSwitchSessionMetadata = (
-    sessionIdRaw: string,
-    metadataRaw: unknown,
-  ): void => {
-    const sessionId = normalizeOptionalString(sessionIdRaw);
-    if (!sessionId) return;
-    if (
-      !metadataRaw ||
-      typeof metadataRaw !== 'object' ||
-      Array.isArray(metadataRaw)
-    ) {
-      persistedConnectedServiceSwitchSessionMetadataBySessionId.delete(
-        sessionId,
-      );
-      return;
-    }
-    persistedConnectedServiceSwitchSessionMetadataBySessionId.set(
-      sessionId,
-      Promise.resolve(metadataRaw as Record<string, unknown>),
-    );
-  };
   const disconnectedTerminalHostCandidates = [
     ...(params.startupTerminalRecovery?.disconnectedTerminalHostCandidates ??
       []),
@@ -4082,44 +4024,11 @@ export async function startDaemonSessionControlRuntime(
           await assertSessionAccountCurrent(sessionId, accountContext);
           return metadata;
         });
-      const existing =
-        persistedConnectedServiceSwitchSessionMetadataBySessionId.get(sessionId);
-      if (existing) return await existing;
-
-      const promise = resolvePersistedConnectedServiceSwitchSessionState({
+      return await resolvePersistedConnectedServiceSwitchSessionState({
         token: params.credentials.token,
         credentials: params.credentials,
         sessionId,
       }).then(state => state.metadata);
-      persistedConnectedServiceSwitchSessionMetadataBySessionId.set(
-        sessionId,
-        promise,
-      );
-      try {
-        const metadata = await promise;
-        if (
-          !metadata &&
-          persistedConnectedServiceSwitchSessionMetadataBySessionId.get(
-            sessionId,
-          ) === promise
-        ) {
-          persistedConnectedServiceSwitchSessionMetadataBySessionId.delete(
-            sessionId,
-          );
-        }
-        return metadata;
-      } catch (error) {
-        if (
-          persistedConnectedServiceSwitchSessionMetadataBySessionId.get(
-            sessionId,
-          ) === promise
-        ) {
-          persistedConnectedServiceSwitchSessionMetadataBySessionId.delete(
-            sessionId,
-          );
-        }
-        throw error;
-      }
     });
   };
 
@@ -4577,29 +4486,15 @@ export async function startDaemonSessionControlRuntime(
                   connectedServicePredictiveSwitchGuard ??
                   undefined,
                 repairMissingConnectedServiceMaterializationIdentityForSpawn:
-                  async (input) => {
-                    const repair =
-                      await repairMissingConnectedServiceMaterializationIdentityForSpawn(
-                        {
-                          token: spawnParams.credentials.token,
-                          credentials: spawnParams.credentials,
-                          sessionId: input.sessionId,
-                          agentId: input.agentId,
-                          connectedServices: input.connectedServices,
-                          vendorResumeId: input.vendorResumeId,
-                        },
-                      );
-                    if (!repair) return null;
-                    return {
-                      identity: repair.identity,
-                      persistAfterMaterialization: async () => {
-                        await repair.persistAfterMaterialization();
-                        forgetPersistedConnectedServiceSwitchSessionMetadata(
-                          input.sessionId,
-                        );
-                      },
-                    };
-                  },
+                  (input) =>
+                    repairMissingConnectedServiceMaterializationIdentityForSpawn({
+                      token: spawnParams.credentials.token,
+                      credentials: spawnParams.credentials,
+                      sessionId: input.sessionId,
+                      agentId: input.agentId,
+                      connectedServices: input.connectedServices,
+                      vendorResumeId: input.vendorResumeId,
+                    }),
                 pidToTrackedSession: spawnParams.pidToTrackedSession,
                 pidToAwaiter: spawnParams.pidToAwaiter,
                 pidToSpawnResultResolver: spawnParams.pidToSpawnResultResolver,
@@ -6273,7 +6168,6 @@ export async function startDaemonSessionControlRuntime(
                         )
                       : connectedServiceMaterializationIdentityV1,
                 });
-                forgetPersistedConnectedServiceSwitchSessionMetadata(sessionId);
               },
               recoverAfterRuntimeAuthSwitch:
                 createSelectionPostSwitchRecoveryHandler(),
@@ -10437,7 +10331,6 @@ export async function startDaemonSessionControlRuntime(
               return sessionRuntimeRegistry.getBySessionId(pending.sessionId) === settledRuntimeTarget;
             },
           });
-          forgetPersistedConnectedServiceSwitchSessionMetadata(pending.sessionId);
         } catch (error) {
           logger.warn('[ConnectedServices] Applied account metadata publication failed', {
             sessionId: pending.sessionId, error: serializeAxiosErrorForLog(error),
@@ -12678,10 +12571,6 @@ export async function startDaemonSessionControlRuntime(
           void queueHostedWebStaticAssetSync('session_webhook');
           const normalizedSessionId = normalizeOptionalString(sessionId);
           if (!normalizedSessionId) return;
-          rememberPersistedConnectedServiceSwitchSessionMetadata(
-            normalizedSessionId,
-            sessionMetadata,
-          );
           const tracked = [...params.pidToTrackedSession.values()].find(
             (candidate) =>
               normalizeOptionalString(candidate.happySessionId) ===
@@ -12844,7 +12733,6 @@ export async function startDaemonSessionControlRuntime(
                     isCurrent: async () => registry.getBySessionId(sessionId) === observed
                       && getCurrentProviderSessionId() === observation.nativeSessionId && await isCurrent(),
                   });
-                  forgetPersistedConnectedServiceSwitchSessionMetadata(sessionId);
                 },
               });
               return { ok: true as const, result: { kind: 'connected_account.identity.observed' as const } };
@@ -14596,7 +14484,6 @@ export async function startDaemonSessionControlRuntime(
                         )
                       : connectedServiceMaterializationIdentityV1,
                 });
-                forgetPersistedConnectedServiceSwitchSessionMetadata(sessionId);
               },
               continueAfterRuntimeAuthSwitch:
                 createConnectedServiceContinuationHandler({
@@ -15061,8 +14948,15 @@ export async function startDaemonSessionControlRuntime(
               });
             }
             const capturedClaimedSource = claimedSource;
+            const sourceUsageIdentity = capturedClaimedSource
+              ? await resolveConnectedAccountUsageIdentity(capturedClaimedSource.serviceId) : null;
+            const runtimeSourceIdentityRequested = Boolean(capturedClaimedSource
+              && input.deriveCredentialFingerprintFromSource === true && input.credentialFingerprint === undefined
+              && input.snapshot.source === 'runtimeSignal' && input.snapshot.accountSubject.kind === 'provisionalLocalSubject');
+            const usageRuntimeBindings = connectedServiceRuntimeRegistry.getBySessionId(input.sessionId)?.activeBindings ?? [];
+            let runtimeSourcePersistenceTarget: QualifiedProviderAccountUsagePersistenceTarget | null = null;
             const shouldResolveSourceCredential =
-              capturedClaimedSource &&
+              capturedClaimedSource && !runtimeSourceIdentityRequested &&
               (input.deriveCredentialFingerprintFromSource === true ||
                 input.credentialFingerprint !== undefined);
             const sourceForCredential = shouldResolveSourceCredential
@@ -15094,7 +14988,7 @@ export async function startDaemonSessionControlRuntime(
               sourceCredentialResolution?.revisionSemantics === 'revisioned'
                 ? sourceCredentialResolution.record
                 : null;
-            const credentialFingerprint =
+            const credentialFingerprint = runtimeSourceIdentityRequested ? undefined :
               capturedClaimedSource &&
               input.deriveCredentialFingerprintFromSource === true &&
               input.credentialFingerprint === undefined
@@ -15117,8 +15011,7 @@ export async function startDaemonSessionControlRuntime(
                 : {}),
               credentialFingerprint,
               sourceProviderAccountId: input.sourceProviderAccountId,
-              requiresProviderOrganizationId: input.source
-                ? (await resolveConnectedAccountUsageIdentity(input.source.serviceId))?.requiredContext === 'organization' : false,
+              requiresProviderOrganizationId: sourceUsageIdentity?.requiredContext === 'organization',
               verifyCredentialFingerprint: async (candidate) => {
                 const serviceId = ConnectedAccountServiceKeySchema.safeParse(
                   readBuiltInLegacyConnectedAccountServiceKeyIngress(
@@ -15147,36 +15040,28 @@ export async function startDaemonSessionControlRuntime(
                   } : null,
                 });
               },
-              resolveAuthoritativeSource: async (source) => {
-                const currentBinding =
-                  connectedServiceRuntimeRegistry
-                    .getBySessionId(input.sessionId)
-                    ?.activeBindings.find(
-                      (binding) => binding.serviceId === source.serviceId,
-                    ) ?? null;
-                if (
-                  !currentBinding ||
-                  currentBinding.profileId !== source.profileId
-                )
-                  return null;
-                return currentBinding.groupId === null
-                    ? {
-                        serviceId: currentBinding.serviceId,
-                        profileId: currentBinding.profileId,
-                        bindingKind: 'profile',
-                      }
-                    : currentBinding.groupGeneration === null
-                      ? null
-                      : {
-                          serviceId: currentBinding.serviceId,
-                          profileId: currentBinding.profileId,
-                          bindingKind: 'group_member',
-                          groupId: currentBinding.groupId,
-                          groupGeneration: currentBinding.groupGeneration,
-                        };
-              },
-              resolvePersistenceTargets:
-                resolveQualifiedProviderAccountUsagePersistenceTargets,
+              resolveAuthoritativeSource: async (source) => resolveProviderAccountUsageAuthoritativeSource({ source, activeBindings: usageRuntimeBindings }),
+              ...(runtimeSourceIdentityRequested ? { resolveRuntimeSourceIdentity: async (source: ConnectedServiceUsageSourceV1) => {
+                const binding = usageRuntimeBindings.find(candidate => candidate.serviceId === source.serviceId);
+                const service = resolveQualifiedConnectedAccountServiceForIngressServiceId(source.serviceId);
+                if (!service || !binding?.credentialRevision) return null;
+                const material = await readQualifiedConnectedAccountCredentialMaterial({
+                  credentials: accountContext?.bootstrap.credentials ?? params.credentials,
+                  account: { service, accountId: source.profileId }, requestPurpose: 'connected-accounts:usage-persistence',
+                  getAccountEncryptionMode: (signal) => resolveConnectedServiceAccountMode(accountContext?.api ?? params.api, { signal }),
+                });
+                // Native samples have no identity proof: use only the credential already materialized for this runtime.
+                if (!material || material.snapshot.credentialRevision !== binding.credentialRevision) return null;
+                const identity = buildProviderAccountUsageIdentityFromQualifiedAccount({
+                  ref: material.snapshot.ref, providerIdentity: material.snapshot.metadata.providerIdentity,
+                  providerOrganizationId: material.snapshot.metadata.providerIdentity?.organizationId,
+                  usageIdentity: sourceUsageIdentity ?? undefined,
+                });
+                runtimeSourcePersistenceTarget = buildProviderAccountUsagePersistenceTargetFromQualifiedCredential({ source, snapshot: material.snapshot });
+                return identity;
+              } } : {}),
+              resolvePersistenceTargets: async (targetInput) => runtimeSourcePersistenceTarget
+                ? [runtimeSourcePersistenceTarget] : await resolveQualifiedProviderAccountUsagePersistenceTargets(targetInput),
               publishRecordId: async ({ sessionId, recordId }) => {
                 await assertSessionAccountCurrent(sessionId, accountContext);
                 return await publishProviderAccountUsageRecordIdToSessionMetadata(
@@ -15205,7 +15090,7 @@ export async function startDaemonSessionControlRuntime(
                   input.sessionId,
                   accountContext,
                 );
-                let sourceIsExactlyCurrent = false;
+                let sourceIsExactlyCurrent = runtimeSourcePersistenceTarget !== null;
                 let quotaProof: Readonly<{
                   sessionId: string;
                   proofKind: 'quota_probe_fresh';

@@ -1,3 +1,4 @@
+import type { ConnectedServiceUsageSourceV1 } from '@happier-dev/protocol';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { PassThrough } from 'node:stream';
 import * as accountUsageControlTransport from '@/daemon/controlClient';
@@ -14395,6 +14396,78 @@ describe('startDaemonSessionControlRuntime', () => {
         }
     });
 
+    it.each(['profile', 'group', 'foreign', 'stale', 'replaced'] as const)('publishes identity-free native allowance from the selected qualified source (%s)', async variant => {
+        const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' } as const;
+        const serviceId = buildQualifiedPluginContributionKey(service);
+        const sessionId = 'native-allowance-session';
+        const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+        const group = variant === 'group' || variant === 'stale';
+        let credentialReads = 0;
+        const readCredential = vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path !== '/v4/connect/qualified/credential') throw new Error(`Unexpected native allowance read: ${path}`);
+            credentialReads += 1;
+            return { status: 200, data: QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+                ref: { service, accountId: 'work' }, authenticationModeId: 'device', configurationRevision: null,
+                revisionSemantics: 'revisioned', credentialRevision: variant === 'replaced' ? 'csr_aaaaaaaaaaaaaaaaaaaaaa' : credentialRevision,
+                metadata: { providerIdentity: { accountId: 'native-account' }, scopes: [] },
+                content: { t: 'plain', v: { v: 1, values: { accessToken: 'synthetic-native-token' } } },
+            }) };
+        });
+        const writeUsage = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { success: true } });
+        const registry = new ConnectedServiceRuntimeRegistry();
+        const bindings = { v: 2 as const, bindingsByServiceId: { [serviceId]: group
+            ? { source: 'connected' as const, selection: 'group' as const, groupId: 'pool' }
+            : { source: 'connected' as const, selection: 'profile' as const, profileId: 'work' } } };
+        const environment = { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([group
+            ? { kind: 'group', serviceId, groupId: 'pool', activeProfileId: 'work', fallbackProfileId: 'work', generation: 4, credentialRevision }
+            : { kind: 'profile', serviceId, profileId: 'work', credentialRevision }]) };
+        const runtime = await startDaemonSessionControlRuntime({ machineId: 'native-allowance-machine',
+            credentials: { token: 'native-allowance-account', encryption: null },
+            api: { getAccountEncryptionMode: async () => 'plain' } as never,
+            connectedServicesMaterializationBaseDir: '/tmp/native-allowance', getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            pidToTrackedSession: new Map<number, TrackedSession>([[1234, { startedBy: 'daemon', pid: 1234, happySessionId: sessionId,
+                spawnOptions: { directory: '/tmp/project', connectedServices: bindings, environmentVariables: environment } }]]),
+            pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+            getApiMachineForSessions: () => null, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+            connectedServicesRestartRequestedPids: new Set(), connectedServiceRuntimeRegistry: registry,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised', beforeShutdown: async () => {}, onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
+        });
+        registry.registerTarget({ pid: 1234, sessionId, agentId: 'muse', connectedServicesBindingsRaw: bindings,
+            connectedServiceSelectionsEnv: environment });
+        const recordKey = { providerId: 'meta', accountSubjectId: sessionId, subjectKind: 'unknown', quotaScope: 'account' } as const;
+        const snapshot: ProviderAccountUsageSnapshotV1 = { v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+            providerId: 'meta', accountSubject: { kind: 'provisionalLocalSubject', id: sessionId },
+            observedAtMs: 1000, fetchedAtMs: 1000, staleAfterMs: 60000, source: 'runtimeSignal', confidence: 'confirmed', state: 'loaded_data',
+            meters: [{ meterId: 'weekly', label: 'Weekly', used: 20, limit: 100, unit: 'unknown', utilizationPct: 20,
+                remainingPct: 80, resetsAt: null, status: 'ok', details: {} }] };
+        const source: ConnectedServiceUsageSourceV1 = group
+            ? { serviceId, profileId: 'work', bindingKind: 'group_member', groupId: 'pool', groupGeneration: variant === 'stale' ? 3 : 4 }
+            : { serviceId, profileId: variant === 'foreign' ? 'another' : 'work', bindingKind: 'profile' };
+        try {
+            const input = vi.mocked(startDaemonControlServer).mock.calls.at(-1)![0];
+            const result = await input.handleProviderAccountUsageSnapshot!({ sessionId, snapshot, source, deriveCredentialFingerprintFromSource: true });
+            const accepted = variant === 'profile' || variant === 'group';
+            expect(result).toMatchObject({ status: accepted ? 'snapshot_advanced' : 'credential_fingerprint_mismatch' });
+            if (accepted) {
+                expect(result).toMatchObject({ persisted: true, qualifiedSource: source });
+                expect(runtime.providerAccountUsageStore.resolveBySource(source)).toMatchObject({
+                    providerId: serviceId, accountSubject: { kind: 'providerSubject', id: 'native-account' }, observedAtMs: 1000,
+                    recordKey: { accountSubjectId: 'native-account', subjectKind: 'account' },
+                });
+                await vi.waitFor(() => expect(writeUsage).toHaveBeenCalledWith(expect.stringContaining('/v4/connect/qualified/provider-account-usage'),
+                    expect.objectContaining({ source: expect.objectContaining({ ref: { service, accountId: 'work' } }),
+                        expectedCredentialRevision: credentialRevision, expectedConfigurationRevision: null }), expect.anything()));
+                expect(credentialReads).toBe(1);
+            } else {
+                expect(runtime.providerAccountUsageStore.resolveBySource(source)).toBeNull();
+                expect(writeUsage).not.toHaveBeenCalled();
+            }
+            expect(runtime.providerAccountUsageStore.resolveRecordId(snapshot.recordId)).toBeNull();
+        } finally { readCredential.mockRestore(); writeUsage.mockRestore(); await runtime.stopControlServer(); }
+    });
+
     it.each([
         { unbound: false, token: 'current-access', user: 'provider-user', bindingProfile: 'work', org: undefined, accepted: true },
         { unbound: false, token: 'old-access', user: 'provider-user', bindingProfile: 'work', org: undefined, accepted: false },
@@ -14477,16 +14550,16 @@ describe('startDaemonSessionControlRuntime', () => {
                 } } },
             });
             const source = { serviceId, profileId: 'work', bindingKind: 'profile' as const };
+            await vi.waitFor(() => expect(intakeResult).toBeDefined());
             expect(intakeResult).toMatchObject({ status: accepted || unbound ? 'snapshot_advanced' : 'credential_fingerprint_mismatch' });
             if (unbound) expect(transport.mock.calls[0]?.[0]).not.toHaveProperty('credentialFingerprint');
             if (accepted) {
                 await vi.waitFor(() => expect(runtimeStore.getSnapshotEntry({ serviceId, profileId: 'work' })).toMatchObject({
                     verifiedCredentialFingerprint: computeConnectedServiceAccessTokenFingerprint('current-access'),
-                    snapshot: { serviceId, activeAccountId: 'provider-user', ...(org ? { providerOrganizationId: org } : {}) },
+                    snapshot: { serviceId: 'claude-subscription', activeAccountId: 'provider-user', ...(org ? { providerOrganizationId: org } : {}) },
                 }));
                 const snapshot = runtimeStore.getSnapshotEntry({ serviceId, profileId: 'work' })!.snapshot;
-                // The proof port is typed by the legacy service id; this fixture keeps its qualified key value.
-                const proofServiceId = serviceId as Parameters<typeof coordinator.resolveQuotaProbeFreshProof>[0]['serviceId'];
+                const proofServiceId = 'claude-subscription' as const;
                 const identity = { serviceId: proofServiceId, profileId: 'work', groupId: null, groupGeneration: null,
                     providerAccountId: 'provider-user', materialFingerprint: computeConnectedServiceAccessTokenFingerprint('current-access') };
                 expect(coordinator.resolveQuotaProbeFreshProof({ serviceId: proofServiceId, profileId: 'work',
@@ -21046,7 +21119,7 @@ describe('startDaemonSessionControlRuntime', () => {
         await runtime.stopControlServer();
     });
 
-    it('refreshes persisted runtime state after a session metadata webhook', async () => {
+    it('reads later persisted resume state instead of retaining the initial session webhook snapshot', async () => {
         vi.mocked(callSessionRpc).mockImplementation(async (raw) => {
             if (raw.method.endsWith(SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_CAPABILITY_GET_V1)) {
                 return { ok: true, capability: 'pending_queue_wake_v1', protocolVersion: 1, method: 'session.pendingQueue.wake.v1' };
@@ -21129,7 +21202,9 @@ describe('startDaemonSessionControlRuntime', () => {
             metadataVersion: 2,
         };
         const controlServerInput = vi.mocked(startDaemonControlServer).mock.calls.at(-1)?.[0];
-        controlServerInput?.onHappySessionWebhook('sess-live-runtime-webhook', JSON.parse(rawSession.metadata));
+        await controlServerInput?.onHappySessionWebhook('sess-live-runtime-webhook', {
+            flavor: 'codex', path: '/tmp/project',
+        });
 
         await expect(runtime.spawnSession({
             directory: '/tmp/project',

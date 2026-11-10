@@ -1,3 +1,5 @@
+import { resolveProviderAccountUsageAuthoritativeSource } from './runtimeSource';
+import { buildProviderAccountUsageIdentityFromQualifiedAccount } from './qualifiedAccountIdentity';
 import {
     buildProviderAccountUsageRecordId,
     openSealedProviderAccountUsageSnapshot,
@@ -123,6 +125,37 @@ function createPersistence(): ProviderAccountUsagePersistenceScheduler {
 }
 
 describe('recordProviderAccountUsageSnapshotForSession', () => {
+    it('qualifies identity-free native allowance at the selected account and rejects foreign or stale sources', async () => {
+        const store = createProviderAccountUsageStore();
+        const provisional = createSnapshot(createRecordKey('provisional:native-session'));
+        const source = { serviceId: 'acme.agent/native-account', profileId: 'selected', bindingKind: 'group_member',
+            groupId: 'pool', groupGeneration: 4 } as const;
+        const identity = buildProviderAccountUsageIdentityFromQualifiedAccount({
+            ref: { service: { pluginId: 'acme.agent', localId: 'native-account' }, accountId: 'selected' },
+            providerIdentity: { accountId: 'native-owner' }, usageIdentity: { providerId: 'acme' },
+        });
+        // Identity is the selected credential HTTP response's metadata, never native event data.
+        const record = (claimed: ConnectedServiceUsageSourceV1 = source, credentialFingerprint?: string | null) =>
+            recordProviderAccountUsageSnapshotForSession({
+                getChildren: () => [{ happySessionId: 'sess_1' }], store, persistence: null,
+                sessionId: 'sess_1', snapshot: provisional, observation: { sources: [claimed] },
+                ...(credentialFingerprint === undefined ? {} : { credentialFingerprint }),
+                resolveAuthoritativeSource: async claimed => resolveProviderAccountUsageAuthoritativeSource({ source: claimed,
+                    activeBindings: [{ serviceId: source.serviceId, profileId: source.profileId, groupId: source.groupId,
+                        groupGeneration: source.groupGeneration, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS' }] }),
+                resolveRuntimeSourceIdentity: async () => identity,
+            });
+        expect(await record()).toMatchObject({ status: 'snapshot_advanced', recordId: identity.recordId, qualifiedSource: source });
+        expect(store.resolveBySource(source)?.accountSubject).toEqual({ kind: 'providerSubject', id: 'native-owner' });
+        expect(store.resolveRecordId(provisional.recordId)).toBeNull();
+        expect(await record()).toMatchObject({ status: 'duplicate', recordId: identity.recordId });
+        expect(await record({ ...source, profileId: 'foreign' })).toMatchObject({ status: 'credential_fingerprint_mismatch' });
+        expect(await record({ ...source, groupGeneration: 3 })).toMatchObject({ status: 'credential_fingerprint_mismatch' });
+        expect(await record(source, null)).toMatchObject({ status: 'credential_fingerprint_mismatch' });
+        expect(store.resolveBySource({ ...source, profileId: 'foreign' })).toBeNull();
+    });
+
+
     it.each(['plain', 'e2ee'] as const)('recovers unchanged %s usage after six transient Home write failures through the session recorder and quota reader', async mode => {
         vi.useFakeTimers();
         vi.setSystemTime(1_500);

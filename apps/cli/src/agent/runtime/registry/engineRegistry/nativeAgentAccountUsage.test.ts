@@ -74,6 +74,28 @@ function createAdoption(): ProviderAccountUsageAdoptionV1 {
 }
 
 describe('native Agent account-usage host owner', () => {
+    it.each([
+        ['muse-account', 'happier.agent.muse/muse-account'],
+        ['acme.account/usage', 'acme.account/usage'],
+        ['openai-codex', 'happier.agent.codex/openai-codex'],
+        ['anthropic', 'happier.agent.claude/anthropic'],
+    ])('resolves and publishes the selected account for local, qualified and released service address %s', async (address, serviceId) => {
+        notifySnapshot.mockResolvedValue({ ok: true, result: { status: 'snapshot_advanced' } });
+        const service = createNativeAgentAccountUsageService({
+            pluginId: 'happier.agent.muse', sessionId: 'session-1', signal: new AbortController().signal,
+            session: { getMetadataSnapshot: () => ({ path: '/workspace', host: 'test-host', homeDir: '/home/test',
+                happyHomeDir: '/home/test/.happier', happyLibDir: '/home/test/.happier/lib', happyToolsDir: '/home/test/.happier/tools' }) },
+        });
+        const source = { serviceId: address, env: {
+            HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{ kind: 'profile', serviceId, profileId: 'selected' }]),
+        } };
+        expect(await service.resolveSourceContext(source)).toEqual({ serviceId, profileId: 'selected', bindingKind: 'profile' });
+        expect(await service.recordSnapshot({ sessionId: 'session-1', snapshot: createSnapshot(), source })).toEqual({ status: 'recorded' });
+        expect(notifySnapshot).toHaveBeenCalledWith(expect.objectContaining({
+            source: { serviceId, profileId: 'selected', bindingKind: 'profile' }, deriveCredentialFingerprintFromSource: true,
+        }), expect.anything());
+    });
+
     it('preserves recovery presentation while retaining action inventory and rejecting malformed details', () => {
         const recoveryCreditDetails = { grant: { remainingCount: 2, appliesToProviderLimitIds: ['weekly'], unavailableReason: 'cooldown' as const } };
         const recoveryCredits = { availableCount: 0, credits: [{ id: 'grant', kind: 'usage_limit_reset' as const, status: 'unknown' as const }] };

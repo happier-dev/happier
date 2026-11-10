@@ -542,6 +542,7 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
         sessionId: params.sessionId,
     });
     const accountUsage = createNativeAgentAccountUsageService({
+        pluginId: params.identity.pluginId,
         sessionId: params.sessionId,
         session: params.hostSession.session,
         signal: params.signal,
