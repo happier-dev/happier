@@ -41,7 +41,8 @@ export async function sourceAuthoringDeclarationPackageRoot(): Promise<string> {
     return root;
 }
 
-export async function compileExternalProtocolAuthoringConsumer(source: string, name: string): Promise<void> {
+export async function compileExternalProtocolAuthoringConsumer(source: string, name: string,
+    options: Readonly<{ types?: readonly string[] }> = {}): Promise<void> {
     const root = await declarationRoot();
     const consumer = join(root, 'dist', `${name}.ts`);
     await mkdir(dirname(consumer), { recursive: true });
@@ -50,7 +51,7 @@ export async function compileExternalProtocolAuthoringConsumer(source: string, n
     await writeFile(config, JSON.stringify({
         compilerOptions: { strict: true, noEmit: true, skipLibCheck: false,
             target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext',
-            lib: ['ES2022', 'DOM'], types: [] },
+            lib: ['ES2022', 'DOM'], types: options.types ?? [] },
         files: [consumer],
     }));
     await runBoundedFixtureCommand('External Protocol authoring declaration consumer', packageRoot, [compilerRunner, '-p', config]);

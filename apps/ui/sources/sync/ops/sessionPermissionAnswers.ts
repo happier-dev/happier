@@ -39,7 +39,7 @@ export function resolveSessionPermissionBehavior(input: Readonly<{
     // C6: old occurrences did not save their policy. Freeze their
     // predecessor interpretation here so removing live declarations cannot
     // reinterpret retained requests. Native offers bypass this reader entirely.
-    if (input.agentId === 'claude' || input.agentId === 'muse') return { promptProtocol: 'claude', footer: {
+    if (input.agentId === 'claude') return { promptProtocol: 'claude', footer: {
         usePermissionUpdates: true, forceReadOnlyAfterStop: true,
         supportsExecPolicyAmendment: false, stopHandling: 'denyAndAbortRun',
     } };

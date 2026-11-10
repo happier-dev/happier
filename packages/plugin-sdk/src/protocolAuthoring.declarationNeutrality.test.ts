@@ -106,6 +106,37 @@ function validatorTypeReferences(path: string, text: string): readonly string[] 
 }
 
 describe('public protocol-authoring declaration neutrality', () => {
+    it('keeps emitted Agent UI behavior declarations aligned with the canonical grammar', async () => {
+        await compileExternalProtocolAuthoringConsumer(`
+            import type {
+                AgentUiBehaviorDeclarationV1, AgentUiComponentsDeclarationV1,
+                AgentUiMessageDeclarationV1, AgentUiSessionDeclarationV1,
+            } from './manifest/index.js';
+            import type {
+                AgentUiBehaviorDeclarationV1 as CanonicalBehavior,
+                AgentUiComponentsDeclarationV1 as CanonicalComponents,
+                AgentUiMessageDeclarationV1 as CanonicalMessage,
+                AgentUiSessionDeclarationV1 as CanonicalSession,
+            } from '@happier-dev/protocol/plugins/manifest';
+
+            type Assert<T extends true> = T;
+            type Equal<L, R> = (<T>() => T extends L ? 1 : 2) extends
+                (<T>() => T extends R ? 1 : 2) ? true : false;
+            type BehaviorMatches = Assert<Equal<AgentUiBehaviorDeclarationV1, CanonicalBehavior>>;
+            type ComponentsMatch = Assert<Equal<AgentUiComponentsDeclarationV1, CanonicalComponents>>;
+            type MessageMatches = Assert<Equal<AgentUiMessageDeclarationV1, CanonicalMessage>>;
+            type SessionMatches = Assert<Equal<AgentUiSessionDeclarationV1, CanonicalSession>>;
+
+            export const behavior = {
+                accountingSourcePresentation: [{ sourceId: 'native', title: 'Native usage' }],
+            } satisfies AgentUiBehaviorDeclarationV1;
+            const retired: AgentUiBehaviorDeclarationV1 = {
+                // @ts-expect-error Retired permission policy is not a live Agent UI declaration.
+                permissions: { promptProtocol: 'claude' },
+            };
+            void retired;
+        `, 'agent-ui-behavior-parity', { types: ['node'] });
+    }, 0);
     it('distinguishes schema types from permitted diagnostic error-class strings', () => {
         expect(validatorTypeReferences('example.d.ts', "export type Name = 'ZodError' | '$ZodError';")).toEqual([]);
         expect(validatorTypeReferences('example.d.ts', "import type { ZodType } from 'zod'; export type Schema = ZodType;")).not.toEqual([]);

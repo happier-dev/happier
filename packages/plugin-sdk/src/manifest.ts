@@ -177,6 +177,7 @@ export type AgentUiExternalSessionsSourceV1 = { [key: string]: unknown; kind: st
 
 export type AgentUiBehaviorDeclarationV1 = {
   descriptorId?: string;
+  accountingSourcePresentation?: { sourceId: string; title: PluginLocalizedStringV2 }[];
   connectedServices?: {
     poolSettings: {
       id: string;
@@ -190,21 +191,6 @@ export type AgentUiBehaviorDeclarationV1 = {
   attachedSessionTerminal?: { supported?: boolean };
   pendingDelivery?: { custodyLabelKey?: string; interruptAndRun?: boolean };
   guidance?: { includeInSessionGettingStartedCliExamples?: boolean };
-  permissions?: {
-    /**
-     * Which permission-prompt conversation this Agent speaks. It selects the
-     * footer's whole semantic action model — button set, handlers and terminal
-     * decision reading — not just its wording. Absent means the neutral,
-     * fail-closed rejecting action.
-     */
-    promptProtocol?: 'claude' | 'codexDecision';
-    footer?: {
-      usePermissionUpdates?: boolean;
-      forceReadOnlyAfterStop?: boolean;
-      supportsExecPolicyAmendment?: boolean;
-      stopHandling?: 'denyOnly' | 'denyAndAbortRun';
-    };
-  };
   workState?: {
     editableGoals?: {
       capabilityDriven?: boolean;
