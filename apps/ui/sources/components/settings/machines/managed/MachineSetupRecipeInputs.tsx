@@ -23,9 +23,10 @@ export function MachineSetupRecipeInputs(props: Readonly<{
     onChange: (setup: MachineSetupV1) => void;
     testID: string;
     scope?: ServerAccountScope | null;
+    suppliedInputKeys?: readonly string[];
 }>) {
     const localize = usePluginLocalizedTextResolver({ projection: props.projection });
-    const state = readMachineSetupRecipeInputState(props.setup, props.projection);
+    const state = readMachineSetupRecipeInputState(props.setup, props.projection, { suppliedInputKeys: props.suppliedInputKeys });
     const pickerContext = React.useMemo(() => props.scope ? { serverId: props.scope.serverId } : undefined, [props.scope?.serverId]);
     return <>{state.rows.filter(row => row.fields.length > 0).map(row => <ItemGroup key={row.index}
         title={localize(row.recipe.pluginId, row.recipe.definition.title)}>

@@ -12,6 +12,23 @@ const recipe = { id: 'example.host/journal', pluginId: ref.pluginId, pluginVersi
 const projection = { ...EMPTY_PLUGIN_UI_PROJECTION, machineRecipesById: { [recipe.id]: recipe } };
 
 describe('selected setup recipe input review', () => {
+    it('reviews user fields without requesting a host-supplied credential or mutating the recipe declaration', () => {
+        const suppliedRecipe = { ...recipe, definition: MachineRecipeV1Schema.parse({ ...recipe.definition,
+            inputSchema: { type: 'object', properties: { maximumUse: { type: 'string', minLength: 1 }, senderPublicKey: { type: 'string', minLength: 1 } },
+                required: ['maximumUse', 'senderPublicKey'], additionalProperties: false },
+            inputHints: { fields: [{ path: 'maximumUse', title: 'Maximum disk use', widget: 'text', required: true },
+                { path: 'senderPublicKey', title: 'Sender public key', widget: 'text', required: true }] },
+        }) };
+        const suppliedProjection = { ...projection, machineRecipesById: { [recipe.id]: suppliedRecipe } };
+        const setup = { items: [{ kind: 'setupRecipe' as const, selection: { ref, inputs: { maximumUse: '2G' } } }] };
+        const state = readMachineSetupRecipeInputState(setup, suppliedProjection, { suppliedInputKeys: ['senderPublicKey'] });
+        expect(state.valid).toBe(true);
+        expect(state.rows[0]?.fields.map(field => field.path)).toEqual(['maximumUse']);
+        expect(readMachineSetupRecipeInputState({ items: [{ ...setup.items[0]!, selection: { ref, inputs: {} } }] },
+            suppliedProjection, { suppliedInputKeys: ['senderPublicKey'] }).valid).toBe(false);
+        expect(readMachineSetupRecipeInputState(setup, suppliedProjection).valid).toBe(false);
+    });
+
     it('uses the selected pinned recipe schema to require explicit input before planning, without seeding values', () => {
         const setup = { items: [{ kind: 'setupRecipe' as const, selection: { ref, inputs: {} } }] };
         const state = readMachineSetupRecipeInputState(setup, projection);
