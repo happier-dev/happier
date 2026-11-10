@@ -1,6 +1,7 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
-import { AccessibleMachineAccessV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { AccessibleMachineAccessV1Schema, type MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import { MachineKeyBasisV1Schema, MachinePublishedRowWireV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { PluginProjectionV2Schema, type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { MachineAgentInventoryItemSchema, type CapabilitiesDetectResponse } from '@happier-dev/protocol/capabilities';
@@ -127,4 +128,26 @@ export function createPlainMachineRowFixture(input: Readonly<{ id: string; accou
         access: AccessibleMachineAccessV1Schema.parse(machine.access ?? { custodian: { accountId: input.accountId, displayName: 'Test Account' },
             role: 'manage', resourceMode: 'plain', accessState: 'ready' }),
     };
+}
+
+/** Ready Plain recipient wire: no opening key; the custodian's write basis stays explicit. */
+export function createPlainSharedMachineRowFixture(input: Readonly<{
+    id: string;
+    custodianAccountId: string;
+    role?: MachineAccessRoleV1;
+    machine?: Machine;
+}>): FetchedMachineRow {
+    const owner = createPlainMachineRowFixture({ id: input.id, accountId: input.custodianAccountId, machine: input.machine });
+    const row = {
+        ...owner,
+        storageMode: 'plain' as const,
+        dataEncryptionKey: null,
+        keyBasis: MachineKeyBasisV1Schema.parse({ dataEncryptionKey: owner.dataEncryptionKey,
+            metadataVersion: owner.metadataVersion, daemonStateVersion: owner.daemonStateVersion }),
+        access: AccessibleMachineAccessV1Schema.parse({ ...owner.access,
+            custodian: { accountId: input.custodianAccountId, displayName: 'Owner' },
+            role: input.role ?? 'use', resourceMode: 'plain', accessState: 'ready' }),
+    };
+    MachinePublishedRowWireV1Schema.parse(row);
+    return row;
 }

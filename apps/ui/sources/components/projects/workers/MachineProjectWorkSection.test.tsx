@@ -13,7 +13,7 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture, createPlainSharedMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { storage } from '@/sync/domains/state/storage';
 import { apiSocket } from '@/sync/api/session/apiSocket';
@@ -108,6 +108,10 @@ async function setup(
     machineHttp.gate = new Promise<void>((resolve) => {
       releasePolicyRead = resolve;
     });
+  const sharedRow = options.role ? createPlainSharedMachineRowFixture({
+    id: 'm1', custodianAccountId: 'owner', role: options.role,
+    machine: createMachineFixture({ id: 'm1', metadataVersion: 4 }),
+  }) : null;
   const machine = createMachineFixture({
     id: 'm1',
     // A Machine that is answering; an offline one is covered by its own case.
@@ -117,8 +121,8 @@ async function setup(
     metadataVersion: 4,
     dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
     isShared: options.role !== undefined,
-    ...(options.role ? { access: { custodian: { accountId: 'artifact-account', displayName: 'Test Account' },
-      role: options.role, resourceMode: 'plain' as const, accessState: 'ready' as const } } : {}),
+    ...(sharedRow ? { access: sharedRow.access, keyBasis: sharedRow.keyBasis,
+      dataEncryptionKey: sharedRow.dataEncryptionKey, installationId: sharedRow.installationId } : {}),
   });
   let metadata: Record<string, unknown> = { ...machine.metadata };
   let version = 4;
@@ -144,10 +148,9 @@ async function setup(
     new Response(
       JSON.stringify({
         machine: {
-          ...createPlainMachineRowFixture({ id: 'm1', accountId: 'artifact-account' }),
+          ...(sharedRow ?? createPlainMachineRowFixture({ id: 'm1', accountId: 'artifact-account' })),
           metadata: encodePlainMachineStoredContent(metadata),
           metadataVersion: version,
-          dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
         },
       }),
       { headers: { 'Content-Type': 'application/json' } },
