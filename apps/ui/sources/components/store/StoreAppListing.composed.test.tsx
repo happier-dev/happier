@@ -69,7 +69,7 @@ const { createUiDeploymentActionDeps } = await import('@/sync/api/deployments/de
 const { StoreListingBody } = await import('./StoreListing');
 const { StoreKindSurface } = await import('./StoreKindSurface');
 const { useStoreAppListing } = await import('./useStoreAppListing');
-beforeEach(() => { homes.reset(); viewport.width = 1440; viewport.height = 900; });
+beforeEach(async () => { await homes.reset(); viewport.width = 1440; viewport.height = 900; });
 afterEach(standardCleanup);
 
 let sequence = 0;
@@ -430,7 +430,7 @@ async function nameIt(
 const hasProjectChoice = (screen: Parameters<typeof projectSelect>[0], id: string) =>
   ((projectSelect(screen)?.props.items ?? []) as readonly { id: string }[]).some((item) => item.id === id);
 
-it.each(['applied', 'domain-failure'] as const)('retains a confirmed install and its $0 result across review remounts', async outcome => {
+it.each(['applied', 'domain-failure', 'lost-root-reply'] as const)('retains a confirmed install and its $0 result across review remounts', async outcome => {
   const { showStoreAppPreparation } = await import('./StoreAppPreparation');
   const { Modal } = await import('@/modal');
   const fixture = await createFixture();
@@ -441,6 +441,35 @@ it.each(['applied', 'domain-failure'] as const)('retains a confirmed install and
     errorCode: 'native_effect_failed', environmentId: 'status-page', revision: 4, targetLinkId: 'target-link', savedSecrets: [],
     definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
     deployment: { ok: true, environmentId: 'status-page', revision: 4, deploymentId: 'deployed', deploymentRevision: 11, state: 'succeeded' } });
+  let admitted: ReturnType<typeof DeploymentTemplateInstantiateInputV1Schema.parse> | undefined;
+  const applied = { kind: 'applied', environmentId: 'status-page', revision: 4,
+    targetLinkId: 'target-link', savedSecrets: [], definition: partial.definition };
+  const operationReads: string[] = [];
+  const { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
+  const { readDeploymentTemplateCreationOperationRequestIdV1 } = await import('@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1');
+  const rpc = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+  const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+  // Only the lost HTTP reply case supplies the daemon's RPC replies; observation and its schemas stay real.
+  const operationTransport = outcome === 'lost-root-reply' ? vi.spyOn(rpc, 'machineRpcWithServerScope').mockImplementation(
+    createServerScopedMachineRpcBoundaryMock(async request => {
+      if (!admitted) throw new Error('Expected an admitted install before operation observation');
+      const requestId = readDeploymentTemplateCreationOperationRequestIdV1(admitted);
+      const operation = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'retained-install', revision: 1,
+        requestId, actionId: 'deployments.templates.instantiate', state: 'running',
+        scope: { accountId: fixture.lifetime.scope.accountId, machineId: 'target' },
+        title: 'Install App', createdAt: 1, startedAt: 1, cancellation: 'unsupported' });
+      operationReads.push(request.method);
+      if (request.method === ACTION_OPERATION_RPC_METHODS_V2.list) {
+        expect(request.payload).toMatchObject({ requestIdentity: { actionId: operation.actionId, requestId } });
+        return { items: [operation], nextCursor: null };
+      }
+      if (request.method === ACTION_OPERATION_RPC_METHODS_V2.get) {
+        expect(request.payload).toMatchObject({ operationId: operation.operationId, waitForTerminal: true });
+        return { kind: 'found', operation: { ...operation, revision: 2, state: 'succeeded', settledAt: 2, result: applied } };
+      }
+      throw new Error(`Unexpected operation RPC: ${request.method}`);
+    }).machineRpcWithServerScope,
+  ) : undefined;
   await answerExternalActionAccountForHome(homes, fixture.lifetime.scope.serverId, {
     actionId: 'deployments.templates.instantiate', machineId: 'target', installationId: 'installed', tokenEpoch: 0,
     failure: result => ActionExecuteFailureSchema.safeParse(result).data ?? null,
@@ -449,9 +478,10 @@ it.each(['applied', 'domain-failure'] as const)('retains a confirmed install and
       if (input.mode === 'preview') return { kind: 'preview', review: { templateRef: input.templateRef,
         profiles: [], services: ['kuma'], bindings: [], generatedSecrets: [], domains: [], deploy: { requestKey: 'install-deploy' } } };
       installs.push(input);
+      admitted = input;
       await pending;
-      return outcome === 'domain-failure' ? partial : { kind: 'applied', environmentId: 'status-page', revision: 4,
-        targetLinkId: 'target-link', savedSecrets: [], definition: partial.definition };
+      return outcome === 'lost-root-reply' ? { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' }
+        : outcome === 'domain-failure' ? partial : applied;
     },
   });
   let open: (() => void) | undefined;
@@ -487,9 +517,11 @@ it.each(['applied', 'domain-failure'] as const)('retains a confirmed install and
     await review.pressByTestIdAsync('store.app.prepare.confirm');
     expect(installs).toHaveLength(1);
     await act(async () => { finish!(); });
-    if (outcome === 'applied') {
+    if (outcome !== 'domain-failure') {
       await waitForHomeGovernance(() => expect(closed).toHaveBeenCalledOnce());
       expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith(expect.stringContaining('deploymentEnvironment=status-page'));
+      if (outcome === 'lost-root-reply') expect(operationReads).toContain(ACTION_OPERATION_RPC_METHODS_V2.get);
+      expect(installs).toHaveLength(1);
     } else {
       await waitForHomeGovernance(() => expect(review!.findHostByTestId('store.app.prepare.progress')).toBeTruthy());
       await review.update(tree('wide-result'));
@@ -505,6 +537,7 @@ it.each(['applied', 'domain-failure'] as const)('retains a confirmed install and
     finish?.();
     await review?.unmount();
     await listing.unmount();
+    operationTransport?.mockRestore();
     await fixture.dispose();
   }
 });
@@ -1225,6 +1258,10 @@ it.each([
   const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
   const fixture = await createFixture();
   const serverId = fixture.lifetime.scope.serverId;
+  const rpc = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+  const { ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
+  // Observe the genuine RPC boundary: a returned partial must use its recovery, not join another root operation.
+  const rootObservation = vi.spyOn(rpc, 'machineRpcWithServerScope');
   const partial = DeploymentTemplateInstantiationPartialV1Schema.parse({ kind: 'partial', phase: scenario.phase, errorCode: scenario.code,
     environmentId: 'status-page', revision: 4, targetLinkId: 'target-link', savedSecrets: [],
     definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
@@ -1263,7 +1300,10 @@ it.each([
     await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.prepare.confirm')).toBeTruthy());
     await screen.pressByTestIdAsync('store.app.prepare.confirm');
     await waitForHomeGovernance(() => expect(installs).toHaveLength(1));
-    await waitForHomeGovernance(() => expect(screen.findAll(node => node.props.loading === true && node.props.testID === 'store.app.prepare.confirm')).toHaveLength(0));
+    await waitForHomeGovernance(() => {
+      expect(rootObservation.mock.calls.filter(([request]) => request.method === ACTION_OPERATION_RPC_METHODS_V2.list)).toHaveLength(0);
+      expect(screen.findAll(node => node.props.loading === true && node.props.testID === 'store.app.prepare.confirm')).toHaveLength(0);
+    });
     expect(screen.findHostByTestId('store.app.prepare.progress')).toBeTruthy();
     expect(screen.getTextContent()).toContain(t('projects.deployments.environmentCreated'));
     expect(screen.getTextContent()).toContain(t(scenario.state === 'succeeded' ? 'projects.deployments.stateSucceeded' : 'projects.deployments.stateUnknown'));
@@ -1276,5 +1316,5 @@ it.each([
     await waitForHomeGovernance(() => expect(pushed).toHaveLength(1));
     expect(new URL(String(pushed[0]), 'https://ui.test').searchParams.get('deploymentTab')).toBe(scenario.tab);
     expect(installs).toHaveLength(1);
-  } finally { await screen.unmount(); await fixture.dispose(); }
+  } finally { await screen.unmount(); rootObservation.mockRestore(); await fixture.dispose(); }
 });

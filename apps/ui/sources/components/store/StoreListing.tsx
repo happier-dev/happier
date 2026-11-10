@@ -110,15 +110,17 @@ export function StoreListingPaneHost(
   const paneTitle = useStoreListingPaneTitleOverride(key);
   const listingTitle = paneTitle.title ?? identity?.title ?? (storeOpenItem?.type === 'registryItem' ? storeOpenItem.itemId : props.title);
   const besidePage = useDetailsPaneAvailable();
-  // A selection that arrives where no pane fits (a phone opening a pane link, a window narrowed past the pane) is shown
-  // the phone's way: the listing pushed as its own page with Back, never the desktop pane drawn over the whole screen.
-  // The selection leaves this page first, so Back returns to the page itself.
+  const paneSelectionKey = React.useRef<string | null>(null);
+  const keepInPane = besidePage || (key !== null && key === paneSelectionKey.current);
+  // Fresh phone selections push their own page. A listing already shown beside the directory stays with the shared
+  // pane host across a resize, preserving its open install and letting the host choose the phone presentation.
   React.useEffect(() => {
-    if (besidePage || key === null) return;
+    if (besidePage || key === null) paneSelectionKey.current = key;
+    if (keepInPane || key === null) return;
     openStoreAsPage();
     // `key` names the selection; the callbacks follow it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [besidePage, key]);
+  }, [besidePage, key, keepInPane]);
   // A selection made from the keyboard swaps at once; a pointer's cross-fades (S40 §9).
   const immediate =
     key !== null &&
@@ -126,7 +128,7 @@ export function StoreListingPaneHost(
     typeof document !== 'undefined' &&
     document.querySelector(':focus-visible') !== null;
   const details = React.useMemo(() => {
-    if (!besidePage || (!storeOpenItem && !storeSelectionUnavailable)) return null;
+    if (!keepInPane || (!storeOpenItem && !storeSelectionUnavailable)) return null;
     return {
       header: {
         title: listingTitle,
@@ -169,7 +171,7 @@ export function StoreListingPaneHost(
     // `immediate` is read at the swap; it is not a reason to rebuild the pane.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    besidePage,
+    keepInPane,
     closeStore,
     key,
     openStoreAsPage,

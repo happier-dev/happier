@@ -35,7 +35,7 @@ const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 const sockets = vi.hoisted(() => ({ createUserScopedSocket: vi.fn(), createSessionScopedSocketConnection: vi.fn() }));
 let observationSocket: EventEmitter;
 const rpc = vi.hoisted(() => ({ callSessionRpc: vi.fn() }));
-vi.mock('axios', () => ({ default: { ...http, isAxiosError: () => false } }));
+vi.mock('axios', () => ({ default: { ...http, defaults: {}, isAxiosError: () => false } }));
 vi.mock('@/api/session/sockets', () => sockets);
 vi.mock('@/session/transport/rpc/sessionRpc', () => rpc);
 

@@ -4,7 +4,7 @@ import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/d
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { isActionOutcomeUnknownErrorCodeV1, ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentTemplateInstantiateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+import { readDeploymentTemplateInstantiationPartialV1, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
@@ -33,6 +33,8 @@ export async function recoverUiDeploymentActionResult(params: Readonly<{
     const { account, actionId, input, machineId, requestId, context, execution } = params;
     if (execution.ok || !isActionOutcomeUnknownErrorCodeV1(execution.errorCode)
         || !isDeploymentActionIdV1(actionId)) return execution;
+    // The root returned its failed step and recovery; an uncertain child is not a lost root reply.
+    if (readDeploymentTemplateInstantiationPartialV1(execution)) return execution;
     const spec = getActionSpec(actionId);
     if (!spec.operation || isDeploymentTemplatePreviewInputV1(actionId, input)) return execution;
     try {

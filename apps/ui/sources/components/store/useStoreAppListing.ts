@@ -5,9 +5,8 @@ import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/de
 import { type DeploymentPublishPrepareInputV1, type DeploymentPublishPrepareResultV1 } from '@happier-dev/protocol/deployments/deploymentPublishPreparationV1';
 import { type DeploymentTemplateRefV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult,
-    isActionOutcomeUnknownErrorCodeV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+    type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { readDeploymentTemplateCreationOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { DeploymentTemplateInstantiationPartialV1Schema, DeploymentTemplateInstantiateResultV1Schema,
     type DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -18,8 +17,6 @@ import { useCatalogAppPreparation } from '@/components/projects/deployments/useC
 import { buildCatalogAppTemplateBindings } from '@/sync/ops/actions/deploymentPublishActions';
 import { buildDeploymentEnvironmentHref } from '@/components/projects/deployments/deploymentNavigation';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { withActionAccountRequestSignal } from '@/sync/ops/actions/actionAccountContext';
-import { observeActionOperationByRequestId } from '@/sync/domains/actionOperations/observeActionOperationByRequestId';
 import { randomUUID } from '@/platform/randomUUID';
 import type { StoreDemand } from './catalog/storeKinds';
 import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
@@ -64,7 +61,8 @@ export function useStoreAppListing(input: Readonly<{
     lifetime: ServerAccountScopeLifetime;
     demand: StoreDemand;
 }>): StoreAppListingState {
-    const read = useRegistryItem({ kind: 'app', ...input.selection }, input.demand.presented);
+    const read = useRegistryItem({ kind: 'app', sourceId: input.selection.sourceId,
+        itemId: input.selection.itemId, version: input.selection.version }, input.demand.presented);
     const prepareCatalogApp = useCatalogAppPreparation(input.lifetime);
     // Equal choices on the same prepared review retry the latest attempt, including after a read refresh.
     // A new preparation or changed choices starts another attempt; nothing is persisted.
@@ -194,34 +192,10 @@ export function useStoreAppListing(input: Readonly<{
                         deploy: { requestKey: randomUUID() },
                     };
                 }
-                let result = await execute.confirmed(DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, installInput, {
+                const result = await execute.confirmed(DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, installInput, {
                     surface: 'ui', serverId: input.lifetime.scope.serverId,
                     expectedAccountId: input.lifetime.scope.accountId, signal,
                 });
-                if (!result.ok && isActionOutcomeUnknownErrorCodeV1(result.errorCode)) {
-                    const requestId = readDeploymentTemplateCreationOperationRequestIdV1(installInput);
-                    if (requestId) {
-                        // Observe the admitted install at its controller. Losing its HTTP reply
-                        // does not undo an Environment or justify replaying creation.
-                        try {
-                            const operation = await withActionAccountRequestSignal({ accountLifetime: input.lifetime }, signal,
-                                signal => observeActionOperationByRequestId({
-                                    ...input.lifetime.scope, machineId: controllerMachineId, signal,
-                                    requestIdentity: { actionId: DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, requestId },
-                                }));
-                            if (operation?.state === 'failed' && operation.error) {
-                                result = { ok: false, ...operation.error };
-                            } else if (operation?.state === 'succeeded' && operation.result !== undefined) {
-                                result = { ok: true, result: operation.result };
-                            }
-                        } catch {
-                            // Unavailable observation leaves the original uncertain outcome intact.
-                        }
-                    }
-                    if (!input.lifetime.isCurrent()) return {
-                        ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed',
-                    };
-                }
                 if (!result.ok) return retainFailure(result);
                 const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
                 if (approval.success) return approval.data;

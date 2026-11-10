@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { readDeploymentTemplateInstantiationPartialV1 as readDeploymentPartialResult } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+export { readDeploymentPartialResult };
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
 import { HappyError } from '@/utils/errors/errors';
@@ -23,13 +24,7 @@ export type DeploymentActionOutcome =
       failure?: ActionExecuteFailure;
     }>;
 
-export type DeploymentPartialResult = ReturnType<typeof DeploymentTemplateInstantiationPartialV1Schema.parse>;
-
-/** Read acknowledged steps from the deployment producer, never from current UI state. */
-export function readDeploymentPartialResult(failure: ActionExecuteFailure): DeploymentPartialResult | undefined {
-  const parsed = DeploymentTemplateInstantiationPartialV1Schema.safeParse(failure.details);
-  return parsed.success && parsed.data.errorCode === failure.errorCode ? parsed.data : undefined;
-}
+export type DeploymentPartialResult = NonNullable<ReturnType<typeof readDeploymentPartialResult>>;
 
 /** The failed step opens its existing editor; its completed steps are never replayed here. */
 export function deploymentPartialRecoveryTab(progress: DeploymentPartialResult): DeploymentEnvironmentTabV1 {

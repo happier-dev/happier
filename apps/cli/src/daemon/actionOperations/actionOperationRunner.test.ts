@@ -15,13 +15,32 @@ import { callSocketRpc, type SocketRpcContent } from '@happier-dev/sync-client';
 const scope = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation canonical execution observer', () => {
+  it('preserves strict authored input for an existing fresh bootstrap retry policy', async () => {
+    const store = createActionOperationStore();
+    const spec = getActionSpec('machines.managed.bootstrap.retry');
+    const runner = createActionOperationRunner({ store, resolveAction: () => ({ actionId: spec.id, title: spec.title,
+      operation: spec.operation, operationReentry: spec.operationReentry }) });
+    const input = spec.inputSchema.parse({ homeId: 'home', managedId: 'original-machine', expectedIntentRevision: 0 });
+    const request = { actionId: spec.id, scope, requestId: 'bootstrap-retry', input,
+      execute: async () => ({ ok: false as const, errorCode: 'action_failed', error: 'action_failed', effectAttempted: false }) };
+    await runner.observe(request);
+    let effects = 0;
+    const retry = { ...request, execute: async () => { effects++; return { ok: true as const, result: {} }; } };
+    expect(await runner.observe({ ...retry,
+      input: spec.inputSchema.parse({ homeId: 'home', managedId: 'substituted-machine', expectedIntentRevision: 0 }) }))
+      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+    expect(effects).toBe(0);
+    expect(await runner.observe(retry)).toMatchObject({ ok: true });
+    expect(effects).toBe(1);
+  });
+
   it.each([false, true, undefined] as const)('retries regenerated deployment candidates only after confirmed no effect (%s)', async effectAttempted => {
     const store = createActionOperationStore();
     const spec = getActionSpec('deployments.deploy');
     let sequence = 0;
     const runner = createActionOperationRunner({ store, generateOperationId: () => `deployment-attempt-${sequence++}`,
       resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation,
-        operationReentry: snapshot => snapshot.state === 'failed' ? 'fresh' : 'replay' }) });
+        operationReentry: snapshot => snapshot.state === 'failed' ? 'freshEquivalentInput' : 'replay' }) });
     const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 2, requestKey: 'deploy-request',
       targetLinkId: 'target', expectedTargetLinkRevision: 1, contentArtifactId: 'first-candidate',
       contentHeaderVersion: 3, contentBodyVersion: 3 };

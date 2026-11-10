@@ -39,7 +39,7 @@ export function readDeploymentTemplateDeployIntentV1(input: unknown): z.infer<ty
     ? deploy.parse({ requestKey: environment.requestKey }) : undefined;
 }
 
-/** Reviewed audience only; generation never widens grants or accepts credential bytes. */
+/** Omission keeps generated credentials private to their creator; explicit grants are reviewed. */
 export const DeploymentTemplateGeneratedSecretAudienceV1Schema = lazyZodSchema(() => z.pick(SharedSavedSecretCreateInputV1Schema,
   { accountGrants: true, teamGrants: true, groupGrants: true }));
 
@@ -62,15 +62,20 @@ export const DeploymentTemplateInstantiateInputV1Schema = lazyZodSchema(() => z.
   if (!hasOneDeploymentProjectV1(input.projectSourceId, input.newProject) || input.newProject && input.environment.kind !== 'create') {
     context.addIssue({ code: 'custom', path: ['newProject'], message: 'Select one Project; an existing Environment retains its Source.' });
   }
-  if (input.environment.kind === 'existing' && !('contentRevision' in input.destination)
-    || input.environment.kind === 'create' && ('contentRevision' in input.destination || input.target.kind !== 'new')) {
-    context.addIssue({ code: 'custom', path: ['destination'], message: 'The destination must pin the existing definition or create a new stored definition.' });
-  }
-  if (input.bindings.some(binding => binding.source.kind === 'generated') && input.generatedSecretAudience === undefined) {
-    context.addIssue({ code: 'custom', path: ['generatedSecretAudience'], message: 'Generated credentials require an explicitly reviewed audience.' });
+  if (input.environment.kind === 'create' && ('contentRevision' in input.destination || input.target.kind !== 'new')) {
+    context.addIssue({ code: 'custom', path: ['destination'], message: 'A new Environment creates a new stored definition and target.' });
   }
 })));
 export type DeploymentTemplateInstantiateInputV1 = z.infer<typeof DeploymentTemplateInstantiateInputV1Schema>;
+
+/** Catalog defaults select declared generators and grant no additional access to their Saved Secrets. */
+export function buildCatalogAppTemplateBindings(template: z.infer<typeof DeploymentTemplateV1Schema>): Pick<DeploymentTemplateInstantiateInputV1,
+  'bindings' | 'generatedSecretAudience'> {
+  const bindings: DeploymentTemplateInstantiateInputV1['bindings'] = template.generatedSecrets.map(secret => ({
+    purpose: 'variable', name: secret.key, phase: 'runtime', source: { kind: 'generated', key: secret.key },
+  }));
+  return { bindings, ...(bindings.length ? { generatedSecretAudience: { accountGrants: [], teamGrants: [], groupGrants: [] } } : {}) };
+}
 
 /** A template creation keeps its retained operation identity across transport retries. */
 export function readDeploymentTemplateCreationOperationRequestIdV1(input: DeploymentTemplateInstantiateInputV1): string | undefined {
@@ -153,6 +158,14 @@ export const DeploymentTemplateInstantiateResultV1Schema = lazyZodSchema(() => z
   DeploymentTemplateInstantiationPartialV1Schema,
 ]));
 export type DeploymentTemplateInstantiateResultV1 = z.infer<typeof DeploymentTemplateInstantiateResultV1Schema>;
+
+/** A returned partial settles the root invocation while preserving recovery for its failed step. */
+export function readDeploymentTemplateInstantiationPartialV1(
+  failure: ActionExecuteFailure,
+): z.infer<typeof DeploymentTemplateInstantiationPartialV1Schema> | undefined {
+  const parsed = DeploymentTemplateInstantiationPartialV1Schema.safeParse(failure.details);
+  return parsed.success && parsed.data.errorCode === failure.errorCode ? parsed.data : undefined;
+}
 
 /** Preserve the producer's failure evidence while exposing partial progress as a failure. */
 export function projectDeploymentTemplateInstantiationResultV1(

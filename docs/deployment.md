@@ -90,6 +90,13 @@ Serializable transaction. A confirmed Home rollback reports the missing
 transaction commit, a retry remedy, and a sanitized database cause before native
 dispatch, without increasing retries.
 
+In 0.3 development, the host request-key owner permits a new reviewed deployment
+attempt after a settled failure explicitly records `effectAttempted: false`.
+Fresh preparation may replace the candidate Artifact address; every other prepared
+operand and the requester origin must match. Successful, active and uncertain
+effects retain the existing replay/conflict behavior. This policy is host-local;
+it changes no persisted request identity or wire format.
+
 The global HTTP timeout response carries `transactionOutcome: rolled_back` only
 when the transaction owner established rollback with no earlier ambiguous attempt.
 The shared Home response reader preserves the timeout code and that certainty, so
@@ -100,6 +107,11 @@ the existing dispatch and settlement owner. This is an unreleased 0.3 response
 extension (including optional partial-result recovery fields): reload the matching
 clients and hosts together. Older readers conservatively keep timeout outcomes
 unknown; no stored format or native execution contract changes.
+
+A returned template partial settles its root invocation and retains the failed
+step's recovery, including an uncertain child deploy. The UI deployment API follows
+a missing root outcome through its retained operation. Store uses that shared
+recovery and keeps the open install result across modal remounts and pane resize.
 
 ## Redeploy after teardown (0.3 development)
 
@@ -2219,6 +2231,24 @@ manifest before safety backup or restoration. An unavailable receipt reports
 `backup_required`; a different repository reports `backup_integrity_failed`.
 Select the original repository configuration and retry when its credentials and
 native source are available; the host never substitutes a different snapshot.
+
+The installed daemon retains authored backup run, verification, prune and Restore
+receipts in the operation owner's existing encrypted device-local receipt store,
+partitioned by Home profile, installed custodian Account and Machine. Original
+requester scope, input, manifests and `restoreCaptures` survive restart; the
+target index is rebuilt from those authored records, never from current settings
+or imported history. Successful recovery evidence is exempt from ordinary
+operation-history age/count expiry. Read-only inventory/history/probe results are
+refreshable and retain ordinary history policy. Admission and terminal recovery
+facts are written durably; log/progress revisions do not write receipt files.
+A lost active operation becomes typed `action_outcome_unknown`, without replay.
+Unreadable receipt storage refuses new recovery work before effects and reports
+operation reads unavailable rather than claiming that no captures exist. This
+development-source fix cannot reconstruct captures already lost before retention
+was installed; it does not replace missing evidence with a surviving snapshot.
+The existing local envelope and encryption purpose remain unchanged. A development
+daemon with the older Open-only reader refuses this expanded history as unavailable;
+load the current daemon to read it, without deleting or resetting receipt files.
 
 The development-source `projects.readiness.read` Action composes selected Project
 and Environment facts on demand, without a stored score or background polling.
