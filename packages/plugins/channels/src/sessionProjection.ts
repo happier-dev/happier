@@ -602,6 +602,7 @@ export async function projectConversationSessionTranscriptPage(input: Readonly<{
   actions: ActionsService;
   store: ConversationSessionProjectionStore;
   onSkippedAssistantItem?: (item: ConversationSessionProjectionSkippedAssistantItem) => void;
+  onAcceptedInput?: (input: Readonly<{ localId: string }>) => Promise<void> | void;
   bindingId: string;
   signal: AbortSignal;
   now?: () => number;
@@ -714,6 +715,9 @@ export async function projectConversationSessionTranscriptPage(input: Readonly<{
       return await recoverHistoryGap('projectionRegression');
     }
     previousItemSeq = item.seq;
+    if (item.kind === 'userText' && hasConversationInputOriginFromBinding(item.origin, binding.bindingId)) {
+      await input.onAcceptedInput?.({ localId: item.localId });
+    }
     if (!shouldProjectItem({ binding, item })) {
       if (binding.target.deliveryMode === 'repliesOnly' && item.kind === 'assistantText') {
         input.onSkippedAssistantItem?.({ semanticItemId: item.itemId, turnId: item.turnId,

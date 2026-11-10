@@ -8,22 +8,39 @@ export function createOutwardBindingObservation(
   context: BackgroundServiceContext,
   changed: (bindingIds: readonly string[]) => void,
 ) {
-  const sessions = new Map<string, { bindingIds: Set<string>; dispose(): void }>();
+  const sessions = new Map<string, { bindingIds: Set<string>; activityBindings: Set<string>; activity?: 'active' | 'idle' | 'stopped'; dispose(): void }>();
   const discussions = new Map<string, Set<string>>();
   let discussionObservation: { dispose(): void } | undefined;
   return {
-    async observe(sessionId: string, bindingId: string) {
+    async observe(sessionId: string, bindingId: string, observeActivity = false) {
       const existing = sessions.get(sessionId);
-      if (existing) { existing.bindingIds.add(bindingId); return; }
+      if (existing) {
+        existing.bindingIds.add(bindingId);
+        if (observeActivity) existing.activityBindings.add(bindingId);
+        else existing.activityBindings.delete(bindingId);
+        return;
+      }
       const session = await context.services.sessions.get(sessionId, { signal: context.signal });
       // Bindings can share a Session and complete their lookups concurrently.
       const incumbent = sessions.get(sessionId);
-      if (incumbent) { incumbent.bindingIds.add(bindingId); return; }
+      if (incumbent) {
+        incumbent.bindingIds.add(bindingId);
+        if (observeActivity) incumbent.activityBindings.add(bindingId);
+        return;
+      }
       if (session === null || context.signal.aborted) return;
       const bindingIds = new Set([bindingId]);
+      const activityBindings = new Set(observeActivity ? [bindingId] : []);
       const invalidate = () => changed([...bindingIds]);
       const observation = session.watch(event => {
-        if (event.kind !== 'activity') invalidate();
+        if (event.kind === 'activity') {
+          const current = sessions.get(sessionId);
+          if (current?.activity === event.activity.state) return;
+          if (current) current.activity = event.activity.state;
+          if (activityBindings.size > 0) changed([...activityBindings]);
+          return;
+        }
+        invalidate();
       });
       // Input publication can settle after the Session's transcript arrival.
       // Its producer-set Session selector wakes only the same bound consumers.
@@ -32,8 +49,9 @@ export function createOutwardBindingObservation(
         prefix: [sessionId, CHANNEL_STATE_RECORD_KIND.ingressObligation],
         order: 'asc',
       }, invalidate);
-      sessions.set(sessionId, { bindingIds, dispose() { observation.dispose(); inputs.dispose(); } });
+      sessions.set(sessionId, { bindingIds, activityBindings, dispose() { observation.dispose(); inputs.dispose(); } });
     },
+    activity(sessionId: string) { return sessions.get(sessionId)?.activity; },
     observeDiscussion(discussionId: string, bindingId: string) {
       const bindingIds = discussions.get(discussionId) ?? new Set<string>();
       bindingIds.add(bindingId);
@@ -48,7 +66,10 @@ export function createOutwardBindingObservation(
     reconcile(observedBindings: ReadonlyMap<string, string>, observedDiscussions: ReadonlyMap<string, string>) {
       for (const [sessionId, observation] of sessions) {
         for (const bindingId of observation.bindingIds) {
-          if (observedBindings.get(bindingId) !== sessionId) observation.bindingIds.delete(bindingId);
+          if (observedBindings.get(bindingId) !== sessionId) {
+            observation.bindingIds.delete(bindingId);
+            observation.activityBindings.delete(bindingId);
+          }
         }
         if (observation.bindingIds.size === 0) { observation.dispose(); sessions.delete(sessionId); }
       }

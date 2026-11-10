@@ -2554,6 +2554,8 @@ export type ConversationPermissionWaitMediationSourceReadResult =
     kind: 'ready';
     source: ConversationPermissionWaitMediationSource;
     permissionApprovalsEnabled: boolean;
+    endpoint: ConversationResolvedEndpointV1;
+    connection: ConversationOutwardDeliveryConnectionFacts;
   }>
   | Readonly<{ kind: 'notEligible' }>
   | Readonly<{
@@ -2652,6 +2654,7 @@ async function readCurrentConversationPermissionWaitMediationSource(input: Reado
   return {
     kind: 'ready',
     permissionApprovalsEnabled: hasConversationApprovalPolicyEnabled(target.data),
+    connection,
     source: {
       connectionId: binding.connectionId,
       bindingId: input.bindingId,
@@ -2736,6 +2739,8 @@ export async function readConversationPermissionWaitMediationSource(input: Reado
       kind: 'ready',
       source: current.source,
       permissionApprovalsEnabled: current.permissionApprovalsEnabled,
+      endpoint: current.endpoint,
+      connection: current.connection,
     }
     : current;
 }

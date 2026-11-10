@@ -51,6 +51,9 @@ import {
   projectConversationSessionTranscriptPage,
 } from './sessionProjection.js';
 import { projectConversationDiscussionPage } from './discussionProjection.js';
+import { createSessionStatusProjection, type SessionStatusTarget } from './sessionStatusProjection.js';
+import { publishSessionStatus } from './sessionStatusProviderAction.js';
+import { readCurrentProviderContributionForPersistedSelection } from './providerContributions.js';
 
 const RECONCILIATION_INTERVAL_MS = 1_000;
 const OUTWARD_DELIVERY_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -107,9 +110,11 @@ export type ConversationOutwardDeliveryCycleOptions = Readonly<{
   createAttemptId?: () => string;
   /** Omitted for structural discovery; delivery-only wakes supply an empty list. */
   bindingIds?: readonly string[];
-  observeSession?: (sessionId: string, bindingId: string) => Promise<void>;
+  observeSession?: (sessionId: string, bindingId: string, target?: SessionStatusTarget) => Promise<void>;
   observeDiscussion?: (discussionId: string, bindingId: string) => void;
   observePendingIngress?: (rowId: string) => void;
+  sessionStatus?: ReturnType<typeof createSessionStatusProjection>;
+  sessionActivity?: (sessionId: string) => 'active' | 'idle' | 'stopped' | undefined;
 }>;
 
 export type ConversationOutwardDeliveryCycleResult = Readonly<{
@@ -539,6 +544,7 @@ export async function runConversationOutwardDeliveryCycle(
   }
 
   const permissionMediationsByBindingId = new Map<string, PermissionWaitMediationSnapshot>();
+  const statusTargets = new Map<string, { target: SessionStatusTarget; waitingForApproval: boolean }>();
   const mediateBinding = async (bindingId: string): Promise<void> => {
     if (context.signal.aborted) return;
     const source = await readConversationPermissionWaitMediationSource({
@@ -559,7 +565,7 @@ export async function runConversationOutwardDeliveryCycle(
     }
     if (!await isConversationConnectionPlacedForInvocation(context, source.source.connectionId)) return;
     try {
-      await input.observeSession?.(source.source.sessionId, bindingId);
+      await input.observeSession?.(source.source.sessionId, bindingId, source);
     } catch (error) {
       workFailed('transcript-projection', { error, bindingId });
     }
@@ -582,6 +588,9 @@ export async function runConversationOutwardDeliveryCycle(
       return;
     }
     const pendingRequestKeys = new Set<string>();
+    if (!pending.truncated || pending.requests.some(request => request.kind !== 'user_action')) statusTargets.set(bindingId, {
+      target: source, waitingForApproval: pending.requests.some(request => request.kind !== 'user_action'),
+    });
     for (const request of pending.requests) {
       if (context.signal.aborted) break;
       // AskUserQuestion is a canonical user action, not a permission grant.
@@ -735,6 +744,10 @@ export async function runConversationOutwardDeliveryCycle(
         bindingId,
         signal: context.signal,
         now,
+        onAcceptedInput: async ({ localId }) => {
+          const status = statusTargets.get(bindingId);
+          if (status) await input.sessionStatus?.accepted(status.target, localId);
+        },
         onSkippedAssistantItem: skippedAssistantItem => logOutwardDeliverySupervisorWorkFailure(context, 'transcript-projection', {
           bindingId, skippedAssistantItem,
           outcome: { code: 'channels_projection_repliesOnlyInputNotConsumed', retryable: false, informational: true },
@@ -759,10 +772,19 @@ export async function runConversationOutwardDeliveryCycle(
           if (result.kind === 'retired' || ((result.kind === 'settled' || result.kind === 'suppressed')
             && isConversationDeliveryAutomaticTerminal(result.custody))) {
             await markConversationSessionInputRepliesProjected({ stateCollection, relations, seq: item.seq, signal: context.signal });
+            const status = statusTargets.get(bindingId);
+            if (status && item.kind === 'assistantText'
+              && item.consumedInputs.some(({ origin }) => hasConversationInputOriginFromBinding(origin, binding.bindingId))
+              && input.sessionActivity?.(status.target.source.sessionId) !== 'active') {
+              await input.sessionStatus?.finished(status.target);
+            }
           }
           return result;
         },
       });
+      const status = statusTargets.get(bindingId);
+      if (status) await input.sessionStatus?.activity(status.target,
+        input.sessionActivity?.(status.target.source.sessionId), status.waitingForApproval);
       if (projected.kind === 'advanced' && projected.hasMore) {
         nextBindingIds.add(bindingId);
         noteDeadline(now());
@@ -926,6 +948,23 @@ export function createConversationOutwardDeliverySupervisor(
       for (const bindingId of bindingIds) changedBindingIds.add(bindingId);
       wake.wake();
     });
+    const sessionStatus = createSessionStatusProjection(async (target, status, messageId) => {
+      try {
+        const result = await publishSessionStatus({ ...context, signal: supervisorController.signal }, target, status, messageId);
+        if (result.kind !== 'delivered' && !(result.kind === 'notReady' && result.reason === 'unsupported')) {
+          context.services.logger.warn('[Channels] Session status unavailable', {
+            bindingId: target.source.bindingId, outcome: result.kind,
+            ...(result.kind === 'notReady' ? { reason: result.reason } : {}),
+          });
+        }
+        return result;
+      } catch (error) {
+        context.services.logger.warn('[Channels] Session status unavailable', {
+          bindingId: target.source.bindingId, ...(classifySupervisorFailure(error) ?? {}),
+        });
+        return { kind: 'outcomeUnknown' };
+      }
+    });
     let discoveryInvalidated = false;
     let retentionInvalidated = false;
     const invalidate = () => {
@@ -991,10 +1030,17 @@ export function createConversationOutwardDeliverySupervisor(
             const cycle = await runCycle({
               context: workerContext,
               now: clock.now,
+              sessionStatus,
+              sessionActivity: sessions.activity,
               ...(fullBindingDiscovery ? {} : { bindingIds: [...bindingIds] }),
-              observeSession: async (sessionId, bindingId) => {
+              observeSession: async (sessionId, bindingId, target) => {
                 observedBindings.set(bindingId, sessionId);
-                await sessions.observe(sessionId, bindingId);
+                const provider = target?.connection.providerAction;
+                const contribution = provider === undefined ? undefined : await readCurrentProviderContributionForPersistedSelection({
+                  context: { targetedContributions: context.services.targetedContributions, signal: supervisorController.signal },
+                  providerPluginId: provider.providerPluginId, providerContributionSelection: provider.providerContributionSelection,
+                });
+                await sessions.observe(sessionId, bindingId, contribution?.operations.sessionStatus !== undefined);
               },
               observeDiscussion: (discussionId, bindingId) => {
                 observedDiscussions.set(bindingId, discussionId);
@@ -1029,6 +1075,7 @@ export function createConversationOutwardDeliverySupervisor(
               nextWakeAt = Math.min(nextWakeAt ?? Infinity, retentionSweep.notBefore);
             }
             if (fullBindingDiscovery && cycle.nextBindingIds !== 'all') sessions.reconcile(observedBindings, observedDiscussions);
+            if (fullBindingDiscovery && cycle.nextBindingIds !== 'all') sessionStatus.reconcile(new Set(observedBindings.keys()));
             for (const [rowId, observation] of pendingIngressObservations) {
               if (observedPendingIngress.has(rowId)) continue;
               observation.dispose();

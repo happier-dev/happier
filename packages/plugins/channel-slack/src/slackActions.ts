@@ -7,6 +7,7 @@ import {
   assertConversationChannelsCoreCallerV1, areConversationEndpointIdentitiesEqual, classifyConversationProviderMaterializationFailureV1,
   ConversationConnectionTestInputV1Schema, ConversationConnectionTestResultV1Schema,
   ConversationDeliveryInputV1Schema, ConversationDeliveryResultV1Schema,
+  ConversationSessionStatusInputV1Schema, type ConversationSessionStatusInputV1,
   ConversationEndpointResolveInputV1Schema, ConversationEndpointResolveResultV1Schema,
   ConversationPrincipalResolveInputV1Schema, ConversationPrincipalResolveResultV1Schema, ConversationProviderSetupResultV1Schema,
   type ConversationProviderFailureV1, type ConversationProviderSetupResultV1, type ConversationConnectionTestResultV1,
@@ -188,10 +189,9 @@ function preSendFailure(failure: ConversationProviderFailureV1): ConversationDel
   if (failure.reason === 'rateLimited' && failure.retryAfterMs !== undefined) return { kind: 'notDelivered', retry: 'after', retryAfterMs: failure.retryAfterMs };
   return { kind: 'notDelivered', retry: failure.reason === 'credentialInvalid' || failure.reason === 'permissionMissing' || failure.reason === 'invalidConfiguration' ? 'never' : 'safe' };
 }
-export async function deliverSlackMessage(input: unknown, context: PluginInvocationContext): Promise<ConversationDeliveryResultV1> {
-  assertCore(context);
-  const request = ConversationDeliveryInputV1Schema.parse(input);
-  if (request.newThread !== undefined) return { kind: 'notReady', reason: 'unsupported' };
+async function readyDestination(context: PluginInvocationContext, request: ConnectionInput & Readonly<{ endpoint: ConversationResolvedEndpointV1 }>): Promise<
+  ConversationDeliveryResultV1 | Readonly<{ api: ReturnType<typeof createSlackApi>; selected: NonNullable<ReturnType<typeof readSlackEndpointId>> }>
+> {
   if (context.signal.aborted) return { kind: 'notDelivered', retry: 'safe' };
   const ready = await readyConnection(context, request);
   if ('kind' in ready) return preSendFailure(ready);
@@ -202,6 +202,16 @@ export async function deliverSlackMessage(input: unknown, context: PluginInvocat
   if ('kind' in channel) return preSendFailure(channel);
   if (!areConversationEndpointIdentitiesEqual(endpointFor(ready.identity, channel, selected.threadTs), request.endpoint)) return { kind: 'notDelivered', retry: 'never' };
   if (channel.isArchived) return { kind: 'endpointArchived', recovery: 'ownerMustUnarchiveOrRebind' };
+  return { api: ready.api, selected };
+}
+
+export async function deliverSlackMessage(input: unknown, context: PluginInvocationContext): Promise<ConversationDeliveryResultV1> {
+  assertCore(context);
+  const request = ConversationDeliveryInputV1Schema.parse(input);
+  if (request.newThread !== undefined) return { kind: 'notReady', reason: 'unsupported' };
+  const ready = await readyDestination(context, request);
+  if ('kind' in ready) return ready;
+  const { selected } = ready;
   const reply = request.replyContext;
   const requestedThread = reply && 'threadId' in reply ? reply.threadId : undefined;
   const replyTo = reply && 'replyToMessageId' in reply ? reply.replyToMessageId : undefined;
@@ -214,6 +224,28 @@ export async function deliverSlackMessage(input: unknown, context: PluginInvocat
   catch { return { kind: 'notDelivered', retry: 'never' }; }
   if (context.signal.aborted) return { kind: 'notDelivered', retry: 'safe' };
   return ConversationDeliveryResultV1Schema.parse(await ready.api.postMessage(payload, { signal: context.signal }));
+}
+
+const sessionStatusText = {
+  received: 'Received.',
+  working: 'Received. Working…',
+  waitingForApproval: 'Waiting for approval.',
+  idle: 'Finished.',
+} satisfies Record<ConversationSessionStatusInputV1['status'], string>;
+
+/** Status text is provider-owned and never accepts Session content. */
+export async function updateSlackSessionStatus(input: unknown, context: PluginInvocationContext): Promise<ConversationDeliveryResultV1> {
+  assertCore(context);
+  const request = ConversationSessionStatusInputV1Schema.parse(input);
+  const ready = await readyDestination(context, request);
+  if ('kind' in ready) return ready;
+  const { channelId, threadTs } = ready.selected;
+  const text = sessionStatusText[request.status];
+  const result = request.providerMessageId === undefined
+    ? await ready.api.postMessage(createSlackMessagePayload({ channelId, text,
+      ...(threadTs === undefined ? {} : { threadTs }), linkPreviewPolicy: 'suppress' }), { signal: context.signal })
+    : await ready.api.updateMessage({ channel: channelId, ts: request.providerMessageId, text, as_user: true }, { signal: context.signal });
+  return ConversationDeliveryResultV1Schema.parse(result);
 }
 
 /** Uses the admitted connection and native file IDs; Channels owns materialization and failures. */

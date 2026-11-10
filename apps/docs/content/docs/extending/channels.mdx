@@ -741,6 +741,17 @@ can create a Telegram forum topic or a Discord public thread using the text
 alternative and the router's parent destination. For summaries in an existing
 conversation, use the mirroring setup above.
 
+## Receipt and working feedback
+
+In unreleased 0.3 development source, Slack Session bindings show a short status
+message when input is received. That same message changes to working, waiting
+for approval, or finished when the turn completes, fails or stops. Status text
+contains no transcript content, tool arguments or paths. Other bundled channels
+currently retain their ordinary reply behavior.
+
+Status updates are best effort. A restart or unavailable Slack write can leave
+an older status visible; use the Session itself to check progress in that case.
+
 ## Approvals and questions
 
 An allowlisted person can send `/stop` as an original message to cancel the

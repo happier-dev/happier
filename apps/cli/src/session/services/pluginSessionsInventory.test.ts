@@ -1163,6 +1163,74 @@ describe('plugin sessions inventory public service boundary', () => {
       .resolves.toEqual({ status: 'rejected', code: 'session_input_archived' });
   });
 
+  it.each(['completed', 'failed', 'cancelled'] as const)(
+    'pushes content-free turn activity through a long turn and %s settlement without polling',
+    async (terminalStatus) => {
+      vi.useFakeTimers();
+      const socket = createWatchSocket();
+      socketBoundary.create.mockReturnValue(socket);
+      const sessionId = 'session-activity';
+      let row = rawSession({ id: sessionId, active: true });
+      const fetchById = vi.fn(async () => row);
+      const get = vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+        if (url.endsWith('/v1/account/encryption/currentness')) {
+          return { status: 200, data: plainAccountEncryptionCurrentness };
+        }
+        if (url.includes('/v2/sessions/')) return { status: 200, data: { session: row } };
+        if (new URL(url).pathname.endsWith('/messages')) {
+          return { status: 200, data: { messages: [], nextAfterSeq: 0, hasMore: false } };
+        }
+        throw new Error(`unexpected activity HTTP ${url}`);
+      });
+      const inventory = createTestPluginSessionsInventory({
+        credentials, currentSessionId: sessionId, isCurrent: () => true,
+        fetchById, readStoragePolicy: async () => 'optional',
+      });
+      const events: unknown[] = [];
+      const subscription = inventory.current!.watch((event) => {
+        if (event.kind === 'activity') events.push(event);
+      });
+      const push = async (patch: Partial<RawSessionRecord>) => {
+        row = { ...row, ...patch, seq: row.seq + 1, updatedAt: row.updatedAt + 1 };
+        socket.emit('update', { id: `update-${row.seq}`, seq: row.seq, createdAt: Date.now(),
+          body: { t: 'update-session', id: sessionId, latestTurnStatus: row.latestTurnStatus } });
+        await vi.advanceTimersByTimeAsync(0);
+      };
+
+      await vi.advanceTimersByTimeAsync(0);
+      // A live daemon is idle until the canonical turn projection starts work.
+      expect(events).toEqual([{
+        kind: 'activity', sequence: 1, activity: { state: 'idle', observedAtMs: 20 },
+      }]);
+      await push({ latestTurnId: 'turn-1', latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: 30 });
+      expect(events).toHaveLength(2);
+      expect(events[1]).toEqual({
+        kind: 'activity', sequence: 2, activity: { state: 'active', observedAtMs: 30 },
+      });
+      const readsDuringTurn = [fetchById.mock.calls.length, get.mock.calls.length];
+      logger.flushSync();
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect([fetchById.mock.calls.length, get.mock.calls.length]).toEqual(readsDuringTurn);
+      expect(events).toHaveLength(2);
+
+      await push({ latestTurnStatus: terminalStatus, latestTurnStatusObservedAt: 40 });
+      expect(events[2]).toEqual({
+        kind: 'activity', sequence: 3, activity: { state: 'idle', observedAtMs: 40 },
+      });
+      // Duplicate invalidations and unrelated AgentState updates carry no new activity.
+      await push({ agentStateVersion: 2 });
+      expect(events).toHaveLength(3);
+      await push({ active: false });
+      expect(events[3]).toEqual({
+        kind: 'activity', sequence: 5, activity: { state: 'stopped', observedAtMs: 40 },
+      });
+      subscription.dispose();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(socket.eventNames()).toEqual([]);
+    },
+  );
+
   it('replays and follows the bound Session transcript identically for ordinary and Agent invocations', async () => {
     vi.useFakeTimers();
     const committedText = `${'x'.repeat(50_001)}complete-tail`;
@@ -1250,12 +1318,13 @@ describe('plugin sessions inventory public service boundary', () => {
     const agentChanges: unknown[] = [];
     const ordinarySubscription = ordinary.current!.watch(async (event) => {
       if (event.kind === 'changed') { ordinaryChanges.push(event); return; }
+      if (event.kind !== 'message') return;
       ordinaryEvents.push(event);
       if (ordinaryEvents.length === 1) throw new Error('listener failure must stay isolated');
     });
     const agentSubscription = agent.current!.watch((event) => {
       if (event.kind === 'changed') agentChanges.push(event);
-      else agentEvents.push(event);
+      else if (event.kind === 'message') agentEvents.push(event);
     });
 
     await vi.advanceTimersByTimeAsync(0);
@@ -1395,6 +1464,8 @@ describe('plugin sessions inventory public service boundary', () => {
     let releaseRead: (() => void) | undefined;
     let pageReads = 0;
     let transportSignal: AbortSignal | undefined;
+    let enterReadToAbort: (() => void) | undefined;
+    const readToAbortEntered = new Promise<void>((resolve) => { enterReadToAbort = resolve; });
     const get = vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
       if (url.endsWith('/v1/account/encryption/currentness')) {
         return { status: 200, data: plainAccountEncryptionCurrentness };
@@ -1407,6 +1478,12 @@ describe('plugin sessions inventory public service boundary', () => {
       transportSignal = options?.signal as AbortSignal;
       if (pageReads === 1) await new Promise<void>((resolve) => { releaseRead = resolve; });
       if (pageReads === 3) throw new Error('temporary retained message transport failure');
+      if (pageReads === 5) {
+        await new Promise<never>((_resolve, reject) => {
+          transportSignal!.addEventListener('abort', () => reject(transportSignal!.reason), { once: true });
+          enterReadToAbort?.();
+        });
+      }
       return { status: 200, data: { messages: pageReads === 1 ? [] : [{
         id: 'race-message', seq: 1, createdAt: 1, messageRole: 'agent',
         content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'Committed during read' } } },
@@ -1421,7 +1498,9 @@ describe('plugin sessions inventory public service boundary', () => {
       readStoragePolicy: async () => 'optional',
     });
     const listener = vi.fn();
-    const subscription = inventory.current!.watch(listener);
+    const subscription = inventory.current!.watch((event) => {
+      if (event.kind === 'message') listener(event);
+    });
     await vi.advanceTimersByTimeAsync(0);
     expect(releaseRead).toBeDefined();
     expect(socket.listenerCount('update')).toBe(1);
@@ -1447,6 +1526,13 @@ describe('plugin sessions inventory public service boundary', () => {
     // The log file appender's buffered flush is not a watch poll timer.
     logger.flushSync();
     expect(vi.getTimerCount()).toBe(0);
+    // Completed transcript reads detach their deadline controller. Abort a
+    // newly admitted transport instead of inspecting a completed read's signal.
+    socket.emit('update', { id: 'read-to-abort', seq: 3, createdAt: 3,
+      body: { t: 'update-session', id: sessionId, latestTurnStatus: 'completed' } });
+    await readToAbortEntered;
+    expect(pageReads).toBe(5);
+    expect(transportSignal?.aborted).toBe(false);
     const readsAtAbort = get.mock.calls.length;
     lifetime.abort();
     await vi.advanceTimersByTimeAsync(0);

@@ -43,6 +43,7 @@ import {
 } from './setup.js';
 import { ConversationAttachmentFetchInputV1Schema, ConversationAttachmentFetchResultV1Schema } from './attachments.js';
 import { ConversationProviderDescriptorV1Schema } from './descriptor.js';
+import { ConversationSessionStatusInputV1Schema } from './status.js';
 
 /**
  * The V1 provider presentation and role contract. Its arbitrary provider-local
@@ -116,6 +117,12 @@ export const ConversationProvidersContributionProtocolV1 = defineContributionPro
         messageDeliver: {
             required: true,
             input: { kind: 'protocolDefined', schema: ConversationDeliveryInputV1Schema },
+            resultSchema: ConversationDeliveryResultV1Schema,
+            action: { surfaces: ['plugin'], dangerLevel: 'writesRemote' },
+        },
+        sessionStatus: {
+            required: false,
+            input: { kind: 'protocolDefined', schema: ConversationSessionStatusInputV1Schema },
             resultSchema: ConversationDeliveryResultV1Schema,
             action: { surfaces: ['plugin'], dangerLevel: 'writesRemote' },
         },

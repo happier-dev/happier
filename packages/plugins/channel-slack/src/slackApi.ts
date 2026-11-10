@@ -12,10 +12,11 @@ type JsonRecord = Readonly<Record<string, unknown>>;
 type SlackResponse = Readonly<{
   status: number; headers: Readonly<Record<string, string>>; body: unknown;
 }>;
+type SlackMessageUpdate = Readonly<{ channel: string; ts: string; text: string; as_user?: true }>;
 
 const INVALID_CONFIGURATION: SlackApiFailure = Object.freeze({ kind: 'notReady', reason: 'invalidConfiguration' });
 const CREDENTIAL_ERRORS = new Set(['invalid_auth', 'not_authed', 'token_revoked', 'token_expired', 'account_inactive', 'not_allowed_token_type']);
-const PERMISSION_ERRORS = new Set(['missing_scope', 'no_permission', 'not_in_channel', 'access_denied', 'restricted_action', 'ekm_access_denied', 'team_access_not_granted']);
+const PERMISSION_ERRORS = new Set(['missing_scope', 'no_permission', 'not_in_channel', 'access_denied', 'restricted_action', 'ekm_access_denied', 'team_access_not_granted', 'cant_update_message']);
 const UNCERTAIN_ERRORS = new Set(['internal_error', 'fatal_error', 'service_unavailable']);
 
 function record(value: unknown): value is JsonRecord {
@@ -75,7 +76,7 @@ export function createSlackApi(input: Readonly<{ credentials: SlackCredentials; 
     method: string, parameters: Readonly<Record<string, unknown>>, options?: RequestOptions,
   ): Promise<SlackResponse | null> {
     if (options?.signal?.aborted) return null;
-    const post = method === 'auth.test' || method === 'apps.connections.open' || method === 'chat.postMessage';
+    const post = method === 'auth.test' || method === 'apps.connections.open' || method === 'chat.postMessage' || method === 'chat.update';
     const url = new URL(`https://slack.com/api/${method}`);
     if (!post) for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, String(value));
     try {
@@ -105,6 +106,36 @@ export function createSlackApi(input: Readonly<{ credentials: SlackCredentials; 
     return response && response.status >= 200 && response.status < 300 && record(response.body) && response.body.ok === true
       ? { ok: true as const, body: response.body }
       : { ok: false as const, failure: failure(response) };
+  }
+
+  async function writeMessage(
+    method: 'chat.postMessage' | 'chat.update', payload: SlackMessagePayload | SlackMessageUpdate, options?: RequestOptions,
+  ): Promise<ConversationDeliveryResultV1> {
+    if (options?.signal?.aborted) return { kind: 'notDelivered', retry: 'safe' };
+    const response = await request(method, payload, options);
+    if (!response) return { kind: 'outcomeUnknown' };
+    const body = response.body;
+    const error = record(body) ? body.error : undefined;
+    if (response.status === 429 || error === 'ratelimited') {
+      const delay = retryAfterMs(response.headers);
+      return delay === undefined ? { kind: 'notDelivered', retry: 'safe' }
+        : { kind: 'notDelivered', retry: 'after', retryAfterMs: delay };
+    }
+    if (response.status >= 500 || response.status === 0 || (typeof error === 'string' && UNCERTAIN_ERRORS.has(error))) {
+      return { kind: 'outcomeUnknown' };
+    }
+    if (record(body) && body.ok === false) {
+      if (error === 'is_archived') return { kind: 'endpointArchived', recovery: 'ownerMustUnarchiveOrRebind' };
+      return failure(response);
+    }
+    if (response.status < 200 || response.status >= 300 || !record(body) || body.ok !== true || body.channel !== payload.channel || !messageTs(body.ts)
+      || ('ts' in payload && body.ts !== payload.ts)) {
+      return { kind: 'outcomeUnknown' };
+    }
+    const metadata = record(body.response_metadata) ? body.response_metadata : {};
+    const truncated = body.warning === 'message_truncated'
+      || (Array.isArray(metadata.warnings) && metadata.warnings.includes('message_truncated'));
+    return { kind: truncated ? 'outcomeUnknown' : 'delivered', providerMessageIds: [body.ts] };
   }
 
   return {
@@ -187,30 +218,11 @@ export function createSlackApi(input: Readonly<{ credentials: SlackCredentials; 
       }
     },
     async postMessage(payload: SlackMessagePayload, options?: RequestOptions): Promise<ConversationDeliveryResultV1> {
-      if (options?.signal?.aborted) return { kind: 'notDelivered', retry: 'safe' };
-      const response = await request('chat.postMessage', payload, options);
-      if (!response) return { kind: 'outcomeUnknown' };
-      const body = response.body;
-      const error = record(body) ? body.error : undefined;
-      if (response.status === 429 || error === 'ratelimited') {
-        const delay = retryAfterMs(response.headers);
-        return delay === undefined ? { kind: 'notDelivered', retry: 'safe' }
-          : { kind: 'notDelivered', retry: 'after', retryAfterMs: delay };
-      }
-      if (response.status >= 500 || response.status === 0 || (typeof error === 'string' && UNCERTAIN_ERRORS.has(error))) {
-        return { kind: 'outcomeUnknown' };
-      }
-      if (record(body) && body.ok === false) {
-        if (error === 'is_archived') return { kind: 'endpointArchived', recovery: 'ownerMustUnarchiveOrRebind' };
-        return failure(response);
-      }
-      if (response.status < 200 || response.status >= 300 || !record(body) || body.ok !== true || body.channel !== payload.channel || !messageTs(body.ts)) {
-        return { kind: 'outcomeUnknown' };
-      }
-      const metadata = record(body.response_metadata) ? body.response_metadata : {};
-      const truncated = body.warning === 'message_truncated'
-        || (Array.isArray(metadata.warnings) && metadata.warnings.includes('message_truncated'));
-      return { kind: truncated ? 'outcomeUnknown' : 'delivered', providerMessageIds: [body.ts] };
+      return writeMessage('chat.postMessage', payload, options);
+    },
+    async updateMessage(payload: SlackMessageUpdate, options?: RequestOptions): Promise<ConversationDeliveryResultV1> {
+      if (!messageTs(payload.ts)) return { kind: 'notDelivered', retry: 'never' };
+      return writeMessage('chat.update', payload, options);
     },
   };
 }

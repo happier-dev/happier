@@ -5,6 +5,7 @@ import { ConversationProviderSetupResultV1Schema, createConversationAttachmentId
 import { assertConversationProviderContributionV1 } from '@happier-dev/channels-protocol/testing/v1';
 import { PLUGIN_MANIFEST } from './manifest.js';
 import { setupSlackChannels, testSlackConnection, resolveSlackEndpoint, resolveSlackPrincipal, deliverSlackMessage, fetchSlackAttachments } from './slackActions.js';
+import * as slackActions from './slackActions.js';
 
 const credentialRef = { service: { pluginId: 'happier.channel.slack', localId: 'slack-bot' }, accountId: 'slack-test' };
 const identity = { teamId: 'T1', appId: 'A1', botUserId: 'U1', botId: 'B1', label: 'Happier' };
@@ -22,9 +23,9 @@ function boundary(options: { foreignApp?: boolean; foreignUser?: boolean; direct
       : method === 'conversations.info' ? { ok: true, channel: { id: options.foreignChannel ? 'C2' : options.direct ? 'D1' : 'C1', is_im: options.direct ?? false,
         is_mpim: false, is_private: options.direct ?? false, is_archived: false, name: 'deploys' } }
       : method === 'users.info' ? { ok: true, user: { id: 'U2', team_id: options.foreignUser ? 'T2' : 'T1', is_bot: false, deleted: false, profile: { display_name: 'Alice' } } }
-      : method === 'chat.postMessage' ? { ok: true, channel: 'C1', ts: '1700000000.000002' } : undefined;
+      : method === 'chat.postMessage' || method === 'chat.update' ? { ok: true, channel: 'C1', ts: '1700000000.000002' } : undefined;
     if (!body) throw new Error(`Unexpected Slack request ${method}`);
-    if (method === 'chat.postMessage') effects.push(JSON.parse(new TextDecoder().decode(input.body)));
+    if (method === 'chat.postMessage' || method === 'chat.update') effects.push(JSON.parse(new TextDecoder().decode(input.body)));
     return { status: 200, finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
   });
   const socket: PluginWebSocketConnection = { url: 'wss://wss.slack.com/link', protocol: '', closed: new Promise(() => {}),
@@ -45,6 +46,41 @@ function boundary(options: { foreignApp?: boolean; foreignUser?: boolean; direct
 }
 
 describe('Slack provider Actions', () => {
+  it('posts one content-free Session status and edits that same message for subsequent states', async () => {
+    expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions?.[0]?.operations).toHaveProperty('sessionStatus');
+    const b = boundary();
+    const endpoint = { kind: 'thread', audience: 'shared', id: 'slack:T1:channel:C1:thread:1700000000.000001', parentId: 'slack:T1:channel:C1' };
+    const result = await slackActions.updateSlackSessionStatus({ ...connection, endpoint, status: 'received' }, b.context);
+    expect(result).toEqual({ kind: 'delivered', providerMessageIds: ['1700000000.000002'] });
+    for (const status of ['working', 'waitingForApproval', 'idle']) {
+      expect(await slackActions.updateSlackSessionStatus({ ...connection, endpoint, status,
+        providerMessageId: '1700000000.000002' }, b.context)).toEqual(result);
+    }
+    expect(b.effects).toMatchObject([
+      { channel: 'C1', thread_ts: '1700000000.000001', text: 'Received.' },
+      { channel: 'C1', ts: '1700000000.000002', text: 'Received. Working…', as_user: true },
+      { channel: 'C1', ts: '1700000000.000002', text: 'Waiting for approval.' },
+      { channel: 'C1', ts: '1700000000.000002', text: 'Finished.' },
+    ]);
+    expect(b.request.mock.calls.map(([request]) => new URL(request.url).pathname))
+      .toEqual(['/api/conversations.info', '/api/chat.postMessage', '/api/conversations.info', '/api/chat.update',
+        '/api/conversations.info', '/api/chat.update', '/api/conversations.info', '/api/chat.update']);
+  });
+
+  it('rejects arbitrary status content and foreign or contradictory destinations before a Slack write', async () => {
+    const endpoint = { kind: 'shared', audience: 'shared', id: 'slack:T1:channel:C1' };
+    const b = boundary();
+    await expect(slackActions.updateSlackSessionStatus({ ...connection, endpoint, status: 'working', text: 'private Session text' }, b.context)).rejects.toThrow();
+    expect(b.request).not.toHaveBeenCalled();
+    for (const target of [{ ...endpoint, id: 'slack:T2:channel:C1' }, { ...endpoint, kind: 'direct', audience: 'direct' }]) {
+      expect(await slackActions.updateSlackSessionStatus({ ...connection, endpoint: target, status: 'working' }, b.context))
+        .toMatchObject({ kind: 'notDelivered', retry: 'never' });
+    }
+    expect(await slackActions.updateSlackSessionStatus({ ...connection, endpoint, status: 'working', providerMessageId: 'not-a-slack-ts' }, b.context))
+      .toMatchObject({ kind: 'notDelivered', retry: 'never' });
+    expect(b.effects).toEqual([]);
+  });
+
   it('uses admitted connection identity for ordinary Actions and verifies identity on an explicit connection test', async () => {
     const b = boundary();
     const endpoint = { kind: 'shared', audience: 'shared', id: 'slack:T1:channel:C1' } as const;

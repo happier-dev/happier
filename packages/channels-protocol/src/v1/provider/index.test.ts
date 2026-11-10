@@ -88,6 +88,8 @@ describe('Channels V1 provider barrel', () => {
             'ConversationResolvedEndpointV1Schema',
             'ConversationResolvedPrincipalV1JsonSchema',
             'ConversationResolvedPrincipalV1Schema',
+            'ConversationSessionStatusInputV1JsonSchema',
+            'ConversationSessionStatusInputV1Schema',
             'areConversationEndpointIdentitiesEqual',
             'assertConversationChannelsCoreCallerV1',
             'classifyConversationProviderMaterializationFailureV1',

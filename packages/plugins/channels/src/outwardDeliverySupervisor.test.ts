@@ -97,7 +97,7 @@ const providerDeliveryAction = admittedProviderOperation('messageDeliver');
 const providerDeliveryReconcileAction = admittedProviderOperation('deliveryReconcile');
 
 /** The generic host has already admitted this provider contribution. */
-function targetedProviderDeliveryContributions(): TargetedContributionsService {
+function targetedProviderDeliveryContributions(sessionStatus = false): TargetedContributionsService {
   return Object.freeze({
     observeForSelf<TContribution>(
       _point: TargetedContributionPointRef<TContribution>,
@@ -120,6 +120,7 @@ function targetedProviderDeliveryContributions(): TargetedContributionsService {
               operations: {
                 messageDeliver: providerDeliveryAction,
                 deliveryReconcile: providerDeliveryReconcileAction,
+                ...(sessionStatus ? { sessionStatus: admittedProviderOperation('sessionStatus') } : {}),
               },
             }] as unknown as readonly TContribution[],
           };
@@ -731,6 +732,82 @@ function permissionWaitOutwardObligation(): ConversationOutwardDeliveryObligatio
 }
 
 describe('Channels outward-delivery supervisor', () => {
+  it('composes accepted input, long work, approval wait, completion, failure-idle and stop into content-free native status', async () => {
+    vi.useFakeTimers();
+    const generation = new AbortController();
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await seedProjectionState(state);
+    let changed: (event?: SessionEvent) => void = () => {};
+    let permission = false;
+    let fastReply = false;
+    let finishFastReply = () => {};
+    const fastReplyFinished = new Promise<void>(resolve => { finishFastReply = resolve; });
+    const inputOrigin = { v: 1, producer: 'pluginSession', actor: 'collaborator', sourceAuthority: {
+      mediatorPluginId: 'happier.channels', sourceRef: 'channels:binding:binding-1',
+    } } as const;
+    const statuses: Array<{ status: string; providerMessageId?: string }> = [];
+    const logger = { warn: vi.fn() };
+    const execute = vi.fn(async (action: string, request: { cursor?: string }) => {
+      if (action === 'session.permission.remote.pending.list') return {
+        requests: permission ? [pendingPermissionRequest({ requestId: 'request', turnId: 'turn', createdAtMs: 1, allowedScopes: ['request'] })] : [],
+        truncated: false, nextCursor: null,
+      };
+      if (fastReply) return { ok: true, projection: 'externalShareableV1', sessionId: 'session-1', scannedThroughSeq: 3,
+        nextCursor: '3', hasMore: false, items: request.cursor === '3' ? [] : [
+          { kind: 'userText', sessionId: 'session-1', seq: 2, itemId: 'fast-input', localId: 'fast-input', text: 'PRIVATE /secret/path', origin: inputOrigin },
+          { kind: 'assistantText', sessionId: 'session-1', seq: 3, itemId: 'fast-reply', turnId: 'fast-turn',
+            final: 'completed', text: 'PRIVATE answer', consumedInputs: [{ localId: 'fast-input', origin: inputOrigin }] },
+        ] };
+      return { ok: true, projection: 'externalShareableV1', sessionId: 'session-1', scannedThroughSeq: 1,
+        nextCursor: '1', hasMore: false, items: request.cursor === '1' ? [] : [{
+          kind: 'userText', sessionId: 'session-1', seq: 1, itemId: 'accepted', localId: 'input', text: 'PRIVATE /secret/path',
+          origin: inputOrigin,
+        }] };
+    });
+    const native = vi.fn(async (operation: { identity: { role: string } }, request: { status?: string; providerMessageId?: string }) => {
+      if (operation.identity.role === 'sessionStatus' && request.status) statuses.push({ status: request.status,
+        ...(request.providerMessageId === undefined ? {} : { providerMessageId: request.providerMessageId }) });
+      if (fastReply && request.status === 'idle') finishFastReply();
+      return { result: { kind: 'delivered', providerMessageIds: ['status-message'] }, executionOrigin: providerTransportOrigin };
+    });
+    const context = { ...backgroundContext({ state, deliveries, execute, logger,
+      executeAdmittedTargetedOperationWithExecutionOrigin: native,
+      targetedContributions: targetedProviderDeliveryContributions(true),
+      watchSession: listener => { changed = listener; return { dispose() {} }; },
+    }), signal: generation.signal };
+    const supervisor = createConversationOutwardDeliverySupervisor();
+    const running = supervisor.run(context);
+    const activity = async (status: 'active' | 'idle' | 'stopped') => {
+      changed({ kind: 'activity', sequence: 1, activity: { state: status, observedAtMs: Date.now() } });
+      await vi.advanceTimersByTimeAsync(0);
+    };
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      await activity('idle');
+      expect(statuses.map(item => item.status)).toEqual(['received']);
+      await activity('active');
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+      expect(statuses.map(item => item.status)).toEqual(['received', 'working']);
+      permission = true; changed(); await vi.advanceTimersByTimeAsync(0);
+      expect(statuses.at(-1)?.status).toBe('waitingForApproval');
+      permission = false; changed(); await vi.advanceTimersByTimeAsync(0);
+      await activity('idle');
+      await activity('active'); await activity('idle');
+      await activity('active'); await activity('stopped');
+      expect(statuses.map(item => item.status)).toEqual(['received', 'working', 'waitingForApproval',
+        'working', 'idle', 'working', 'idle', 'working', 'idle']);
+      fastReply = true; changed(); await vi.advanceTimersByTimeAsync(0);
+      await fastReplyFinished;
+      expect(statuses.slice(-2).map(item => item.status), JSON.stringify(logger.warn.mock.calls)).toEqual(['received', 'idle']);
+      expect(statuses.slice(1).every(item => item.providerMessageId === 'status-message')).toBe(true);
+      const statusRequests = native.mock.calls.filter(([operation]) => operation.identity.role === 'sessionStatus').map(([, request]) => request);
+      expect(JSON.stringify(statusRequests)).not.toContain('PRIVATE');
+      expect(JSON.stringify(statusRequests)).not.toContain('/secret/path');
+    } finally {
+      generation.abort(); await running; await supervisor.dispose(); vi.useRealTimers();
+    }
+  });
   it.each(['channel-state', 'channel-deliveries'] as const)(
     'settles collection_update_required for %s without later reads, writes or warning loops', async collectionId => {
       vi.useFakeTimers();

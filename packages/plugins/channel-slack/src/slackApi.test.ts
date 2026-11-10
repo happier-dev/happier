@@ -12,6 +12,35 @@ const identity = { teamId: 'T1', appId: 'A1', botUserId: 'U1', botId: 'B1', labe
 const payload = () => createSlackMessagePayload({ channelId: 'C1', text: 'hello', linkPreviewPolicy: 'suppress' });
 
 describe('Slack Web API boundary', () => {
+  it('updates with the bot credential and treats an uncorrelated update as uncertain without posting a replacement', async () => {
+    const requests: string[] = [];
+    const api = createSlackApi({ credentials, http: { async request(input) {
+      requests.push(new URL(input.url).pathname);
+      expect(input.method).toBe('POST');
+      expect(input.headers?.Authorization).toBe(`Bearer ${credentials.botToken}`);
+      expect(JSON.parse(new TextDecoder().decode(input.body))).toEqual({ channel: 'C1', ts: '123.456', text: 'Working…' });
+      return response({ ok: true, channel: 'C1', ts: '999.999' });
+    } } });
+    expect(await api.updateMessage({ channel: 'C1', ts: '123.456', text: 'Working…' })).toEqual({ kind: 'outcomeUnknown' });
+    expect(requests).toEqual(['/api/chat.update']);
+  });
+
+  it.each([
+    [{ ok: false, error: 'ratelimited' }, 429, { 'Retry-After': '17' }, { kind: 'notDelivered', retry: 'after', retryAfterMs: 17_000 }],
+    [{ ok: false, error: 'cant_update_message' }, 200, {}, { kind: 'notReady', reason: 'permissionMissing' }],
+    [{ ok: false, error: 'is_archived' }, 200, {}, { kind: 'endpointArchived', recovery: 'ownerMustUnarchiveOrRebind' }],
+    [null, 200, {}, { kind: 'outcomeUnknown' }],
+  ] as const)('retains the update effect outcome without retry or replacement (%j)', async (body, status, headers, expected) => {
+    let attempts = 0;
+    const api = createSlackApi({ credentials, http: { async request() {
+      attempts += 1;
+      if (body === null) throw new Error('provider response lost');
+      return response(body, status, headers);
+    } } });
+    expect(await api.updateMessage({ channel: 'C1', ts: '123.456', text: 'Working…' })).toEqual(expected);
+    expect(attempts).toBe(1);
+  });
+
   it('proves correlated bot identity with bot credentials and opens Socket Mode only with the app token', async () => {
     const signal = new AbortController().signal;
     const http: Pick<HttpService, 'request'> = { async request(input, options) {

@@ -84,6 +84,12 @@ export {
     ConversationProviderConnectionStopResultV1JsonSchema,
     ConversationProviderConnectionStopResultV1Schema,
 } from './lifecycle.js';
+
+export {
+    ConversationSessionStatusInputV1Schema,
+    ConversationSessionStatusInputV1JsonSchema,
+} from './status.js';
+export type { ConversationSessionStatusInputV1 } from './status.js';
 export type {
     ConversationConnectionTestInputV1,
     ConversationConnectionTestResultV1,

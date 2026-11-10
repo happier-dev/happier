@@ -36,6 +36,7 @@ import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol
 import { hasPluginSessionAccess, projectPluginSessionAccessIdentity } from '@happier-dev/protocol/sessions/pluginAccess';
 import type { PluginSessionAccess, PluginSessionAccessScope } from '@happier-dev/protocol';
 import { readPluginSessionDestination } from './pluginSessionDestination';
+import { readSessionProjectedTurnStatus } from '@/session/query/detectSessionTurnInFlight';
 import { observePluginSessionInventory, pluginSessionRuntimeAvailability as runtimeAvailability,
   type ObservedPluginSession } from './pluginSessionsInventoryObservation';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -702,6 +703,7 @@ export function createPluginSessionsInventory(
         let cursor = '0';
         let lastDeliveredSequence = -1;
         let previousSnapshot: string | undefined;
+        let previousActivity: Extract<SessionEvent, { kind: 'activity' }>['activity']['state'] | undefined;
         const isWatching = () => !signal.aborted && isOccurrenceCurrent();
         const close = () => { void source?.close().catch(() => undefined); };
         signal.addEventListener('abort', close, { once: true });
@@ -737,6 +739,18 @@ export function createPluginSessionsInventory(
                   emit({ kind: 'changed', sequence: session.raw.seq, summary: session.summary });
                 }
                 previousSnapshot = snapshot;
+                // Liveness alone is not work: only the canonical turn projection
+                // makes a running Session active, including turns without output.
+                const activity = session.summary.state === 'stopped' || session.summary.state === 'archived'
+                  ? 'stopped'
+                  : readSessionProjectedTurnStatus(session.raw.latestTurnStatus) === 'in_progress' ? 'active' : 'idle';
+                if (previousActivity !== activity) {
+                  emit({ kind: 'activity', sequence: session.raw.seq, activity: {
+                    state: activity,
+                    observedAtMs: session.raw.latestTurnStatusObservedAt ?? session.raw.updatedAt,
+                  } });
+                  previousActivity = activity;
+                }
                 let hasMore: boolean;
                 do {
                   const page = await getSessionTranscript({

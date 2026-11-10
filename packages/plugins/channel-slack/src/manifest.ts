@@ -9,7 +9,7 @@ import {
 } from '@happier-dev/channels-protocol/v1';
 import { slackConnectedAccountRuntime } from './auth/connectedAccountRuntime.js';
 import {
-  setupSlackChannels, testSlackConnection, resolveSlackEndpoint, resolveSlackPrincipal, deliverSlackMessage, fetchSlackAttachments,
+  setupSlackChannels, testSlackConnection, resolveSlackEndpoint, resolveSlackPrincipal, deliverSlackMessage, fetchSlackAttachments, updateSlackSessionStatus,
   SLACK_SETUP_INPUT_PROTOCOL_SCHEMA,
 } from './slackActions.js';
 import { createSlackSocketSupervisor } from './slackSocketSupervisor.js';
@@ -113,6 +113,12 @@ function createSlackPlugin() {
         inputSchema: roles.messageDeliver.declaration.input.schema.jsonSchema, resultSchema: roles.messageDeliver.declaration.resultSchema.jsonSchema,
         hostAccess: webAccess, connectedAccountPurposeBindings: credentialBindings, run: deliverSlackMessage,
       },
+      [SLACK_CHANNEL_ACTION_IDS.sessionStatus]: {
+        title: 'Update Slack Session status', description: 'Post or edit a content-free Session work status in its exact Slack conversation.',
+        surfaces: roles.sessionStatus.declaration.surfaces, dangerLevel: roles.sessionStatus.declaration.dangerLevel,
+        inputSchema: roles.sessionStatus.declaration.input.schema.jsonSchema, resultSchema: roles.sessionStatus.declaration.resultSchema.jsonSchema,
+        hostAccess: webAccess, connectedAccountPurposeBindings: credentialBindings, run: updateSlackSessionStatus,
+      },
       [SLACK_SOCKET_WORKER_ATTEMPT_ACTION_ID]: {
         title: 'Run Slack Socket Mode worker', description: 'Run one observer attempt with the exact Connected Account binding.',
         surfaces: ['plugin'], inputSchema: workerInputSchema, hostAccess: socketAccess, connectedAccountPurposeBindings: credentialBindings,
@@ -128,6 +134,7 @@ function createSlackPlugin() {
       setup: roles.setup.bind(SLACK_CHANNEL_ACTION_IDS.setup), connectionTest: roles.connectionTest.bind(SLACK_CHANNEL_ACTION_IDS.connectionTest),
       endpointResolve: roles.endpointResolve.bind(SLACK_CHANNEL_ACTION_IDS.endpointResolve), principalResolve: roles.principalResolve.bind(SLACK_CHANNEL_ACTION_IDS.principalResolve),
       messageDeliver: roles.messageDeliver.bind(SLACK_CHANNEL_ACTION_IDS.messageDeliver),
+      sessionStatus: roles.sessionStatus.bind(SLACK_CHANNEL_ACTION_IDS.sessionStatus),
       attachmentFetch: roles.attachmentFetch.bind(SLACK_CHANNEL_ACTION_IDS.attachmentFetch),
     } }) } } },
     setup() {

@@ -442,6 +442,22 @@ describe('Conversation Session mirror projection', () => {
 });
 
 describe('Conversation Session projection no-history baseline', () => {
+  it('projects a content-free receipt for accepted binding input even in repliesOnly mode', async () => {
+    const onAcceptedInput = vi.fn();
+    await projectConversationSessionTranscriptPage({
+      actions: actions({ ok: true, projection: 'externalShareableV1', sessionId: 'session-1',
+        scannedThroughSeq: 4, nextCursor: '4', hasMore: false, items: [{
+          kind: 'userText', sessionId: 'session-1', seq: 4, itemId: 'accepted', localId: 'input-1',
+          text: 'PRIVATE PATH AND TOOL ARGUMENTS',
+          origin: { v: 1, producer: 'pluginSession', actor: 'collaborator',
+            sourceAuthority: { mediatorPluginId: 'happier.channels', sourceRef: 'channels:binding:binding-1' } },
+        }] }),
+      store: new MemoryProjectionStore(binding('repliesOnly'), frontier()),
+      bindingId: 'binding-1', signal: new AbortController().signal,
+      onAcceptedInput, deliver: async () => delivered(),
+    });
+    expect(onAcceptedInput.mock.calls).toEqual([[{ localId: 'input-1' }]]);
+  });
   it('acquires the host-owned no-history cursor in one read without replaying existing items', async () => {
     const signal = new AbortController().signal;
     const execute = vi.fn()

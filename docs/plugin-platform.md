@@ -1,5 +1,22 @@
 # Plugin platform and SDK ownership
 
+## Channel Session status (unreleased 0.3)
+
+The Channels outward projection consumes accepted input provenance and the
+host's pushed Session activity, alongside the existing pending-permission
+projection. A provider may implement the optional `sessionStatus` operation:
+its closed input carries connection/endpoint facts, a status enum and an
+optional native message id. It never carries transcript text or tool arguments.
+The Slack adapter posts a native message and edits that message for subsequent
+changes, including waiting for approval and terminal idle. Unsupported providers
+retain their existing reply behavior.
+
+This is best-effort presentation within the current activation, with no durable
+job state, activity polling or refresh timer. A restart or uncertain native write
+may leave an older status visible; delivery diagnostics identify unavailable
+status writes without logging conversation content. Session lifecycle and
+permission decisions remain with their existing owners.
+
 ## Connected Account request headers (unreleased 0.3)
 
 `lookupConnectedAccountRequestAuth({ purpose })` returns `RequestAuthHeadersV1`:
@@ -11681,6 +11698,29 @@ Root `AGENTS.md` "Runtime core, plugin platform, and SDK seam" points here.
 Read [runtime ownership](runtime-core.md) before changing runtime core, the plugin platform, or the SDK. These tracked pages own standing architecture guidance. When executing an approved plan, also read that plan and its assigned specialist as the execution contract; plan history, status and evidence do not become standing implementation rules. The older plugin-platform and SDK convergence corpora remain historical/extraction evidence only and cannot supply current status, restart authority, gates, or implementation authority.
 
 - The host runtime owns session/turn lifecycle, prompt custody, transcript writes and work-state; plugins contribute through the single `activate(api)` ABI and the public `packages/plugin-sdk/` seam only.
+
+### Installed update discovery (unreleased 0.3)
+
+The CLI registry update checker includes installed plugins on its existing check
+cadence. The plugin lifecycle's `readInstalledPluginUpdateCandidate` reuses the
+trusted-channel selector and source resolvers used for update preparation. Npm
+checks read metadata; archive checks stage temporary bytes and remove them after
+reading the manifest. Discovery never prepares an installed generation or applies
+an update. Store consumes these finite observations and opens the existing plugin
+update review; installed trust and update policy remain lifecycle-owned.
+
+### Usage observations (unreleased 0.3)
+
+Session and finite-Run usage carriers consume the shared payload in
+`@happier-dev/protocol/runtime/agentUsageObservedPayloadV1`; the SDK derives its
+Session usage type from that payload. A child reports its own witnessed
+`accounting.nativeSessionId`, even when it has no counted prompt or total.
+Omit unavailable measurement objects, or use `null` for unavailable numeric
+fields within a supplied token/cost object. Keep measured raw, output and cache
+categories without adding them into a guessed total. Missing counter semantics
+remain absent. The host retains that source identity separately from parent
+accounting, and Usage presents missing measurements through its existing coverage
+and unpriced-facts paths.
 
 ### Idle compaction (unreleased 0.3)
 
