@@ -334,8 +334,31 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
         } finally { await lifecycle.dispose(); }
     });
 
+    it('presents a safe Session launch cause in the public Voice Action', async () => {
+        const { lifecycle, invoke } = await createHarness(false);
+        const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
+        const { createVoiceMachineError } = await import('@/voice/runtime/machine/voiceMachineError');
+        const { deriveLocalVoiceSessionSnapshot } = await import('@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot');
+        const { t } = await import('@/text');
+        try {
+            setVoiceSessionLifecycleController(null);
+            voiceConversationRuntimeMachine.setError({ controlSessionId: 'session-original',
+                error: createVoiceMachineError({ kind: 'provider_error', reason: 'SPAWN_FAILED', cause: {
+                    failureCause: { phase: 'client_start', failureReason: 'model_selection_required',
+                        code: 'agent_startup_model_reconciliation_failed', providerErrorMessage: 'PRIVATE_LAUNCH_BODY' },
+                } }) });
+            setVoiceSessionSnapshot(deriveLocalVoiceSessionSnapshot('local_conversation', 'local', voiceConversationRuntimeMachine.getSnapshot()));
+            const result = await invoke('ui.voice_global.get', {});
+            expect(result).toMatchObject({ status: 'completed', voice: { presentation: {
+                surfaceState: 'error', failureMessage: t('newSession.selectModelTitle'),
+            } } });
+            expect(VoiceConversationActionOutputSchemas['ui.voice_global.get'].safeParse(result).success).toBe(true);
+            expect(JSON.stringify(result)).not.toContain('PRIVATE_LAUNCH_BODY');
+        } finally { await lifecycle.dispose(); }
+    });
+
     it.each([
-        { reason: 'usage_limit', message: 'Codex usage limit reached. Try another connected account or try again after your limit resets.', recovery: 'open_settings' },
+        { reason: 'usage_limit', message: 'Codex usage limit reached. Try another connected account or try again after your limit resets.', recovery: null },
         { reason: 'acp_turn_failed', message: 'Cannot connect to API. token=PRIVATE_TOKEN /home/alice/private/model', recovery: 'retry' },
     ])('keeps the sanitized $reason cause in public Voice status', async ({ reason, message, recovery }) => {
         const { lifecycle, invoke } = await createHarness(false);
@@ -354,18 +377,11 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
             const result = await invoke('ui.voice_global.get', {});
             expect(result).toMatchObject({ status: 'completed', voice: { presentation: {
                 surfaceState: 'error', failureKind: 'provider_error',
-                failureMessage: snapshot.errorProviderMessage, recovery: { action: recovery },
+                failureMessage: snapshot.errorProviderMessage, recovery: recovery ? { action: recovery } : null,
             } } });
             expect(result.voice.presentation?.failureMessage).toContain(message.split('.')[0]);
             expect(JSON.stringify(result)).not.toMatch(/PRIVATE_TOKEN|\/home\/alice/);
             expect(VoiceConversationActionOutputSchemas['ui.voice_global.get'].safeParse(result).success).toBe(true);
-            if (reason === 'usage_limit') {
-                const navigate = vi.fn();
-                expect(await executeVoiceConversationAction('ui.voice_global.recover', {
-                    expectedAttempt: result.voice.attemptId,
-                }, { navigate })).toMatchObject({ status: 'completed' });
-                expect(navigate).toHaveBeenCalledWith('/settings/voice/conversations?setting=voiceConversations.connectedServices');
-            }
         } finally { await lifecycle.dispose(); }
     });
 

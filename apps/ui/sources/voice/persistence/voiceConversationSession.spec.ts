@@ -791,6 +791,37 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     voiceConversationRuntimeMachine.reset();
   });
 
+  it('presents the safe launch cause from the real Home spawn Action without exposing diagnostic prose', async () => {
+    const failureCause = { phase: 'client_start' as const, failureReason: 'model_selection_required' as const,
+      code: 'agent_startup_model_reconciliation_failed' };
+    spawnResponse.mockResolvedValue({ type: 'error', code: 'spawn_failed', retryable: true,
+      launchError: { kind: 'launch_error', code: 'SPAWN_FAILED', message: 'PRIVATE_LAUNCH_BODY',
+        failureCause: { ...failureCause, providerErrorMessage: 'PRIVATE_PROVIDER_BODY' } } });
+    const { ensureVoiceConversationSessionForVoiceHome } = await loadConversationSession();
+    const error = await ensureVoiceConversationSessionForVoiceHome().then(() => null, (cause: unknown) => cause);
+    expect(error).toMatchObject({ code: 'SPAWN_FAILED', failureCause });
+    const { transitionVoiceRuntimeToIdle } = await import('@/voice/runtime/machine/voiceConversationRuntimeHelpers');
+    const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
+    const { deriveLocalVoiceSessionSnapshot } = await import('@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot');
+    const { projectVoiceAttemptPresentation } = await import('@/components/voice/attempt/projectVoiceAttemptPresentation');
+    const { presentSessionStartupFailureCause } = await import('@/components/sessions/presentation/sessionRuntimeIssuePresentation');
+    transitionVoiceRuntimeToIdle({ controlSessionId: '__voice_agent__', reason: 'SPAWN_FAILED', cause: error });
+    const snapshot = deriveLocalVoiceSessionSnapshot('local_conversation', 'local', voiceConversationRuntimeMachine.getSnapshot());
+    expect(snapshot.errorFailureCause).toEqual(failureCause);
+    const presentation = projectVoiceAttemptPresentation({
+      control: { availability: 'recoverable', live: false, canStart: false, canStop: false, canMute: false,
+        muted: false, capturing: false, primaryAction: 'recover', recoveryAvailable: true,
+        surfaceState: 'error', tone: 'error', stop: 'blush', sessionId: '__voice_agent__', markPose: 'blocked', statusCell: null },
+      attemptId: 'launch-start', ended: false, ...snapshot, recoveryAction: snapshot.errorRecoveryAction ?? null,
+      recoveryContext: { connectRecoveryTarget: { kind: 'unavailable' }, runtimeRecoveryTarget: null,
+        attemptSessionId: '__voice_agent__', startSessionId: null, globalStartAuthorized: true },
+      serviceTitle: 'Voice', agentTitle: 'Codex', agentMachineLabel: 'Computer',
+    });
+    expect(presentation.failureMessage).toBe(presentSessionStartupFailureCause(failureCause.code, undefined, failureCause));
+    expect(JSON.stringify({ error, snapshot, presentation })).not.toMatch(/PRIVATE_LAUNCH_BODY|PRIVATE_PROVIDER_BODY/);
+    voiceConversationRuntimeMachine.reset();
+  });
+
   it.each(['profile', 'group', 'native', 'default'] as const)('uses the persisted Local Voice %s selection for a fresh Home carrier', async selection => {
     const agent = state.settings.voice.providers.local_conversation.config.agent;
     agent.agentSource = 'agent';

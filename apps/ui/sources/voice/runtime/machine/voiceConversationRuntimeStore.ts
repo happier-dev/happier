@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 import type { VoiceConversationRuntimeSnapshot } from './voiceConversationRuntimeTypes';
 
@@ -32,10 +33,7 @@ function areVoiceMachineErrorsEqual(
     }
     return a.kind === b.kind
         && a.reason === b.reason
-        && a.failureCause?.phase === b.failureCause?.phase
-        && a.failureCause?.errorClass === b.failureCause?.errorClass
-        && a.failureCause?.errorCode === b.failureCause?.errorCode
-        && a.failureCause?.httpStatus === b.failureCause?.httpStatus
+        && retainDeep(a.failureCause, b.failureCause) === a.failureCause
         && a.effectAttempted === b.effectAttempted
         && a.phase === b.phase
         && a.retryPolicy === b.retryPolicy

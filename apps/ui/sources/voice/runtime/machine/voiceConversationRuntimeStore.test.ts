@@ -2,6 +2,31 @@ import { describe, expect, it, vi } from 'vitest';
 import { createVoiceMachineError } from './voiceMachineError';
 
 describe('voiceConversationRuntimeStore', () => {
+    it('publishes changed startup causes once and retains equal repeated causes', async () => {
+        const { DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT, setVoiceConversationRuntimeSnapshot,
+            useVoiceConversationRuntimeStore } = await import('./voiceConversationRuntimeStore');
+        const publish = (failureReason: 'unknown' | 'model_selection_required') => setVoiceConversationRuntimeSnapshot({
+            ...DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT, controlSessionId: 's1', error: createVoiceMachineError({
+                kind: 'provider_error', reason: 'SPAWN_FAILED', cause: {
+                    failureCause: { phase: 'client_start', failureReason, code: 'agent_startup_model_reconciliation_failed' },
+                },
+            }),
+        });
+        setVoiceConversationRuntimeSnapshot(DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT);
+        const listener = vi.fn();
+        const unsubscribe = useVoiceConversationRuntimeStore.subscribe(listener);
+        try {
+            publish('unknown');
+            expect(listener).toHaveBeenCalledTimes(1);
+            publish('unknown');
+            expect(listener).toHaveBeenCalledTimes(1);
+            publish('model_selection_required');
+            expect(listener).toHaveBeenCalledTimes(2);
+        } finally {
+            unsubscribe();
+            setVoiceConversationRuntimeSnapshot(DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT);
+        }
+    });
     it('publishes changed operation failure facts and coalesces equivalent parsed diagnostics', async () => {
         const { DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT, setVoiceConversationRuntimeSnapshot,
             useVoiceConversationRuntimeStore } = await import('./voiceConversationRuntimeStore');

@@ -165,6 +165,7 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
             errorProviderMessage: snapshot.errorProviderMessage,
             errorProviderError: snapshot.errorProviderError,
             errorUsageLimit: snapshot.errorUsageLimit,
+            errorFailureCause: snapshot.errorFailureCause,
             recoveryAction, recoveryContext: context,
             serviceTitle: entry ? resolveVoiceServiceTitle(entry, tLoose, createPluginLocalizedTextResolver({ projection: null })) : t('voicePresence.title'),
             agentTitle: agent ? resolveAgentCatalogTitle(agent.localId) : null,

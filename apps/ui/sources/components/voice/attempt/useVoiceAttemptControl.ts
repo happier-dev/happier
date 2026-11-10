@@ -763,8 +763,9 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         errorProviderMessage: snap.errorProviderMessage,
         errorProviderError: snap.errorProviderError,
         errorUsageLimit: snap.errorUsageLimit,
+        errorFailureCause: snap.errorFailureCause,
         serviceTitle, agentTitle, agentMachineLabel,
-    }), [control, expectedAttempt, presentedEnded, snap.errorCode, snap.errorMessage, snap.errorProviderMessage, snap.errorProviderError, snap.errorUsageLimit, snap.errorConnectedServiceDiagnostic, recoveryAction,
+    }), [control, expectedAttempt, presentedEnded, snap.errorCode, snap.errorMessage, snap.errorProviderMessage, snap.errorProviderError, snap.errorUsageLimit, snap.errorFailureCause, snap.errorConnectedServiceDiagnostic, recoveryAction,
         recoveryContext, serviceTitle, agentTitle, agentMachineLabel]);
     const statusPresentation = resolveVoiceSurfaceStatusPresentation(surfaceState);
     const statusOverride = presentedEnded

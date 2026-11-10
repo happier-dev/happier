@@ -12,6 +12,8 @@ import type { ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/conne
 import { resolveConnectedServiceUxDiagnosticPresentation } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { presentProviderError, presentProviderRecoveryAction } from '@/providers/connection/errorPresentation';
+import { presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import type { VoiceRuntimeFailureCause } from '@/voice/runtime/voiceRuntimeFailureCode';
 
 /** One sanitized presenter for host surfaces, public Plugin UI, and the Action read. */
 export function projectVoiceAttemptPresentation(input: Readonly<{
@@ -23,6 +25,7 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
     errorProviderMessage?: string;
     errorProviderError?: ProviderErrorV1;
     errorUsageLimit?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineError['usageLimit'];
+    errorFailureCause?: VoiceRuntimeFailureCause;
     errorConnectedServiceDiagnostic?: ConnectedServiceUxDiagnosticV1;
     recoveryAction: VoiceMachineRecoveryAction | null;
     recoveryContext: VoiceAttemptRecoveryContext;
@@ -49,27 +52,29 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
                 : { label: t('voicePresence.recovery.setUp'), icon: 'gear' as const };
     const failureKind = input.errorCode ? resolveVoiceMachineErrorKind(input.errorCode) : null;
     const statusPresentation = resolveVoiceSurfaceStatusPresentation(control.surfaceState, input.errorMessage);
-    const failureMessage = provider ? t(provider.descriptionKey) : connectedService ? t(connectedService.bodyKey) : failureKind === null ? null
-        : failureKind === 'provider_error' && input.errorMessage === 'usage_limit' ? presentVoiceUsageLimitMessage(input.errorUsageLimit)
-        : failureKind === 'provider_error' && input.errorProviderMessage ? input.errorProviderMessage
+    const sessionCause = input.errorFailureCause && 'failureReason' in input.errorFailureCause ? input.errorFailureCause : undefined;
+    const startupMessage = sessionCause
+        ? presentSessionStartupFailureCause(sessionCause.code ?? input.errorMessage, undefined, sessionCause) : null;
+    const failureMessage = provider ? t(provider.descriptionKey) : connectedService ? t(connectedService.bodyKey)
         : failureKind === 'authentication_required' && input.errorMessage === 'agent_signed_out' && agentTitle && agentMachineLabel
             ? t('settingsVoice.local.machineErrors.agent_signed_out', { agent: agentTitle, machine: agentMachineLabel })
-            : translateVoiceReadiness(resolveVoiceMachineErrorTranslationKey(failureKind, input.errorMessage ?? undefined), { service: input.serviceTitle });
+        : startupMessage ?? (failureKind === null ? null
+        : failureKind === 'provider_error' && input.errorProviderMessage ? input.errorProviderMessage
+        : failureKind === 'provider_error' && input.errorMessage === 'usage_limit' ? presentVoiceUsageLimitMessage(input.errorUsageLimit)
+        : translateVoiceReadiness(resolveVoiceMachineErrorTranslationKey(failureKind, input.errorMessage ?? undefined), { service: input.serviceTitle }));
+    const failureTitle = provider ? t(provider.titleKey)
+        : failureKind === 'provider_error' && input.errorMessage?.toLowerCase() === 'usage_limit'
+            ? translateVoiceReadiness(resolveVoiceMachineErrorTranslationKey(failureKind, input.errorMessage), { service: input.serviceTitle })
+        : failureKind === 'execution_machine_unavailable' || failureKind === 'session_unavailable' ? failureMessage
+        : failureKind === 'provider_error' && statusPresentation.labelKey === 'voiceAssistant.connectionError'
+            ? t(statusPresentation.labelKey) : null;
     return {
         attemptId: input.attemptId, surfaceState: control.surfaceState, live: control.live, muted: control.muted,
         canStart: control.canStart, canStop: control.canStop, canMute: control.canMute,
         canCommitInput: control.canCommitInput === true, canDismissFailedAttempt: control.canDismissFailedAttempt === true,
         canDismissEnded: input.ended, failureKind, failureMessage,
-        ...((failureKind === 'execution_machine_unavailable' || failureKind === 'session_unavailable') && failureMessage
-            ? { failureTitle: failureMessage }
-            : {}),
-        ...(failureKind === 'provider_error' && input.errorMessage?.toLowerCase() === 'usage_limit'
-            ? { failureTitle: translateVoiceReadiness(resolveVoiceMachineErrorTranslationKey(failureKind, input.errorMessage), { service: input.serviceTitle }) }
-            : {}),
-        ...(failureKind === 'provider_error' && statusPresentation.labelKey === 'voiceAssistant.connectionError'
-            ? { failureTitle: t(statusPresentation.labelKey) }
-            : {}),
-        ...(provider ? { failureTitle: t(provider.titleKey), providerError: input.errorProviderError } : {}),
+        ...(failureTitle ? { failureTitle } : {}),
+        ...(provider ? { providerError: input.errorProviderError } : {}),
         recovery: recoveryPresentation ? { ...recoveryPresentation, action: recoveryAction,
             runtimeTarget: recoveryContext.runtimeRecoveryTarget } : null,
     };
