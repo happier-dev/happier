@@ -23,6 +23,24 @@ import { botFaceMomentTurn, type BotFaceChannels } from './botFaceMotionTokens';
 /** The head turn the attention brain adds to a list face (R10 A), radians, on top of the moment's own turn. */
 export type BotFaceTurn = Readonly<{ yaw: number; pitch: number; roll: number }>;
 export type BotFaceRasterImage = Readonly<{ width: number; height: number; data: Uint8ClampedArray<ArrayBuffer>; smooth?: boolean }>;
+
+/** Pixel storage stays opaque to prop inspection; painters still read the original bytes. */
+class BotFaceRasterResource implements BotFaceRasterImage {
+    readonly width: number;
+    readonly height: number;
+    readonly smooth?: boolean;
+    #data: Uint8ClampedArray<ArrayBuffer>;
+
+    constructor(image: BotFaceRasterImage) {
+        this.width = image.width;
+        this.height = image.height;
+        this.smooth = image.smooth;
+        this.#data = image.data;
+    }
+
+    get data(): Uint8ClampedArray<ArrayBuffer> { return this.#data; }
+}
+
 export type BotFaceRasterInput = Readonly<{
     style: 'dither' | 'solid' | 'pixel';
     identity: BotFaceIdentity;
@@ -482,5 +500,5 @@ export function botFaceRasterStep(input: BotFaceRasterInput): number {
 /** One frame of a raster-style face. Pure: the same input always draws the same pixels. */
 export function drawBotFaceRaster(input: BotFaceRasterInput): BotFaceRasterImage {
     const img = input.style === 'dither' ? dither(input) : input.style === 'solid' ? solid(input) : pixel(input);
-    return input.monochrome ? monochrome(img) : img;
+    return new BotFaceRasterResource(input.monochrome ? monochrome(img) : img);
 }

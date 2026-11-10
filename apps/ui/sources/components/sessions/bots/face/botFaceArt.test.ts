@@ -72,6 +72,25 @@ const painted = (style: BotFaceStyle, identity: BotFaceIdentity) =>
       }).data.filter((v, i) => i % 4 === 3 && v > 0).length;
 
 describe('Living Bot identity', () => {
+  it('keeps raster props compact at rail and hero sizes while retaining their paintable pixels', () => {
+    const identity = resolveBotFaceIdentity('raster-resource');
+    const inputs = [
+      { style: 'pixel', size: 16, dpr: 1 },
+      { style: 'pixel', size: 64, dpr: 3 },
+      { style: 'solid', size: 64, dpr: 3, hero: { pose: botFaceHeroPose('quiet', 0, identity.seed, true), t: 0, rest: true } },
+    ] as const;
+    for (const input of inputs) {
+      const image = drawBotFaceRaster({ ...input, identity, theme: 'dark', mood: 'quiet' });
+      const pixels = image.data;
+      expect(image.data).toBe(pixels);
+      expect(pixels).toBeInstanceOf(Uint8ClampedArray);
+      expect(pixels.length).toBe(image.width * image.height * 4);
+      expect(pixels.some((value, index) => index % 4 === 3 && value > 0)).toBe(true);
+      expect(Object.keys(image).filter((key) => !['width', 'height', 'smooth'].includes(key))).toEqual([]);
+      expect({ ...image }).toEqual({ width: image.width, height: image.height, smooth: image.smooth });
+    }
+  });
+
   it('derives one stable identity per seed, so two Bots in one folder differ and a Bot is the same everywhere', () => {
     const a = resolveBotFaceIdentity('session-cmh7a1'),
       b = resolveBotFaceIdentity('session-cmh7b2');
