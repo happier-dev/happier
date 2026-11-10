@@ -36,6 +36,13 @@ export function resolveWorkflowBuiltinInputPresentation(workflowRef: string | nu
                 participants: { title: t('workflows.builtins.patternInputs.participants') },
                 previousRoundContext: { title: t('workflows.builtins.patternInputs.previousRoundContext') },
             };
+        case 'builtin:parallel-implementations':
+            return {
+                request: { title: t('workflows.builtins.planWithAPanel.inputs.request') },
+                first: { title: t('workflows.builtins.parallelImplementations.inputs.first') },
+                second: { title: t('workflows.builtins.parallelImplementations.inputs.second') },
+                third: { title: t('workflows.builtins.parallelImplementations.inputs.third') },
+            };
         case 'builtin:fresh-opinions':
             return {
                 question: { title: t('workflows.builtins.patternInputs.question') },

@@ -147,9 +147,19 @@ waiting for your input is not a definitive failure and does not start a handler.
 
 In current 0.3 development source, **Run…** in a Session or Discussion composer
 opens the same Workflow picker and typed inputs. Choose Fresh opinions,
-Answer + review, Debate, Plan with a panel, Review & converge, or an accessible
+Answer + review, Debate, Plan with a panel, Parallel implementations, Review & converge, or an accessible
 saved or plugin Workflow. Review the question, participants, roles and target
 before starting. Browsing choices does not create a participant Session.
+
+**Parallel implementations** starts with three editable branches. Choose a model
+for each: each Agent implements the same request in a new worktree from the
+project's original committed revision. Uncommitted source changes stay in the
+source checkout. Duplicate the Workflow to add or remove branches and their
+participant inputs. The first model then compares the candidate diffs in a
+read-only step and recommends a result, which waits for your review. Open each
+candidate in the existing SCM review controls to choose and apply the winner.
+Keeping or removing the other worktrees is your choice; the starter never
+deletes them automatically.
 
 A participant can be an existing Session or a model choice. Existing Sessions
 keep their selected Agent and model; model choices use the ordinary Session

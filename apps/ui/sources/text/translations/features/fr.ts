@@ -15774,6 +15774,7 @@ const fr: WorkflowBuiltinTranslations = {
     keepGoing: { title: 'Continuer jusqu’au bout', description: 'Continue jusqu’à atteindre l’objectif' },
     reviewAndConverge: { title: 'Relire et converger', description: 'Réviser jusqu’à l’accord des relecteurs', apply: 'Appliquer', verifyAndFix: 'Vérifier et corriger', verifyOnly: 'Vérifier uniquement', rounds: 'Tours avant l’arrêt', inputs: { engines: "Relecteurs", reviewSession: "Session à relire", useJudge: "Laisser un juge trancher les désaccords", focus: "Sur quoi se concentrer" } },
     planWithAPanel: { title: "Panel", description: 'Plusieurs agents planifient côte à côte, puis le plan attend ta relecture.', inputs: { request: 'Demande', requestPlaceholder: 'Que doit planifier le panel ?', engines: 'Planificateurs' } },
+    parallelImplementations: en.parallelImplementations,
     freshOpinions: { title: 'Avis indépendants', description: 'Des réponses indépendantes à la même question, avec un résumé facultatif.' },
     answerAndReview: { title: 'Réponse + relecture', description: 'Un agent répond, puis un autre relit cette réponse précise.' },
     debate: { title: 'Débat', description: 'Compare les points de vue sur le nombre de tours choisi, avec un résumé après chaque tour.' },

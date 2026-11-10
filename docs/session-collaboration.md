@@ -1533,6 +1533,16 @@ Discussion-local model runner. The executable picker distinguishes that launch
 from a Home-qualified existing Session; a Bot remains its actual Session
 identity. Human invitations remain grants, outside this executable selection.
 
+For a Workflow model participant, an effective workspace selection of `inherit`
+(or no selection) keeps the selected launch directory. An explicit step
+workspace, including a new worktree, determines the fresh Session's working
+directory. The canonical
+`resolveWorkflowSessionLaunch` projector applies that resolved directory and
+the admitted read-only permission narrowing, including its configured permission
+intent, without mutating the frozen model recipe. The launch must still target
+the admitted Home and Machine. Existing participant Sessions keep their actual
+working directory; an incompatible workspace selection is refused.
+
 The existing participant owner reserves a stable `participantSlotId` and launch
 selection. An unresolved start retries that slot rather than selecting another
 creation identity. An unstarted slot selected in the Discussion composer is also

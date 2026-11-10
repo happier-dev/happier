@@ -15706,6 +15706,7 @@ const zhHant: WorkflowBuiltinTranslations = {
     keepGoing: { title: '持續直到完成', description: '持續進行，直到達成目標' },
     reviewAndConverge: { title: '審查並收斂', description: '審查直到審閱者達成共識', apply: '套用', verifyAndFix: '驗證並修復', verifyOnly: '僅驗證', rounds: '停止前的輪數', inputs: { engines: "審閱者", reviewSession: "要審查的工作階段", useJudge: "由裁判解決分歧", focus: "關注重點" } },
     planWithAPanel: { title: "規劃小組", description: '多個代理並行規劃，然後計畫等待你的審查。', inputs: { request: '請求', requestPlaceholder: '小組應規劃什麼？', engines: '規劃者' } },
+    parallelImplementations: en.parallelImplementations,
     freshOpinions: { title: '獨立意見', description: '針對同一問題獨立作答，也可彙整各方回答。' },
     answerAndReview: { title: '回答 + 審閱', description: '由一個代理回答，再由另一個代理審閱該回答。' },
     debate: { title: '辯論', description: '按你選擇的輪數比較觀點，並在每輪結束後彙整。' },

@@ -15706,6 +15706,7 @@ const zhHans: WorkflowBuiltinTranslations = {
     keepGoing: { title: '持续直到完成', description: '持续进行，直到达成目标' },
     reviewAndConverge: { title: '审查并收敛', description: '审查直到审阅者达成一致', apply: '应用', verifyAndFix: '验证并修复', verifyOnly: '仅验证', rounds: '停止前的轮数', inputs: { engines: "审阅者", reviewSession: "要审查的会话", useJudge: "由裁判解决分歧", focus: "关注重点" } },
     planWithAPanel: { title: "规划小组", description: '多个代理并行规划，然后计划等待你的审查。', inputs: { request: '请求', requestPlaceholder: '小组应规划什么？', engines: '规划者' } },
+    parallelImplementations: en.parallelImplementations,
     freshOpinions: { title: '独立意见', description: '针对同一问题独立作答，也可汇总各方回答。' },
     answerAndReview: { title: '回答 + 审阅', description: '由一个代理回答，再由另一个代理审阅该回答。' },
     debate: { title: '辩论', description: '按你选择的轮数比较观点，并在每轮结束后汇总。' },

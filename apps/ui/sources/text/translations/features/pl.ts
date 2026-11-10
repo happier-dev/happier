@@ -15747,6 +15747,7 @@ const pl: WorkflowBuiltinTranslations = {
     keepGoing: { title: 'Kontynuuj do skutku', description: 'Działa, aż cel zostanie osiągnięty' },
     reviewAndConverge: { title: 'Przejrzyj i uzgodnij', description: 'Przeglądaj, aż recenzenci się zgodzą', apply: 'Zastosuj', verifyAndFix: 'Sprawdź i napraw', verifyOnly: 'Tylko sprawdź', rounds: 'Rundy przed zatrzymaniem', inputs: { engines: "Recenzenci", reviewSession: "Sesja do przeglądu", useJudge: "Niech sędzia rozstrzyga spory", focus: "Na czym się skupić" } },
     planWithAPanel: { title: "Panel", description: 'Kilku agentów planuje obok siebie, a plan czeka na twój przegląd.', inputs: { request: 'Prośba', requestPlaceholder: 'Co ma zaplanować panel?', engines: 'Planujący' } },
+    parallelImplementations: en.parallelImplementations,
     freshOpinions: { title: 'Niezależne opinie', description: 'Niezależne odpowiedzi na to samo pytanie, z opcjonalnym podsumowaniem.' },
     answerAndReview: { title: 'Odpowiedź + recenzja', description: 'Jeden agent odpowiada, a drugi recenzuje dokładnie tę odpowiedź.' },
     debate: { title: 'Debata', description: 'Porównuj opinie przez wybraną liczbę rund, z podsumowaniem po każdej rundzie.' },

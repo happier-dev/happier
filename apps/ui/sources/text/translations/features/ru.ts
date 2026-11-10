@@ -15759,6 +15759,7 @@ const ru: WorkflowBuiltinTranslations = {
     keepGoing: { title: 'Продолжать до готовности', description: 'Продолжает, пока цель не достигнута' },
     reviewAndConverge: { title: 'Проверить и свести', description: 'Проверять, пока рецензенты не согласятся', apply: 'Применить', verifyAndFix: 'Проверить и исправить', verifyOnly: 'Только проверить', rounds: 'Раунды до остановки', inputs: { engines: "Рецензенты", reviewSession: "Сессия для проверки", useJudge: "Пусть судья разрешает споры", focus: "На чём сосредоточиться" } },
     planWithAPanel: { title: "Панель", description: 'Несколько агентов планируют параллельно, затем план ждёт вашей проверки.', inputs: { request: 'Запрос', requestPlaceholder: 'Что должна спланировать панель?', engines: 'Планировщики' } },
+    parallelImplementations: en.parallelImplementations,
     freshOpinions: { title: 'Независимые мнения', description: 'Независимые ответы на один вопрос с необязательным обобщением.' },
     answerAndReview: { title: 'Ответ + рецензия', description: 'Один агент отвечает, а другой рецензирует именно этот ответ.' },
     debate: { title: 'Дебаты', description: 'Сравните мнения за выбранное число раундов с обобщением после каждого раунда.' },

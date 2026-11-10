@@ -15215,6 +15215,7 @@ const de: WorkflowBuiltinTranslations = {
     keepGoing: { title: 'Weitermachen bis fertig', description: 'Läuft weiter, bis das Ziel erreicht ist' },
     reviewAndConverge: { title: 'Prüfen & angleichen', description: 'Prüfen, bis die Prüfer sich einig sind', apply: 'Anwenden', verifyAndFix: 'Prüfen und beheben', verifyOnly: 'Nur prüfen', rounds: 'Runden bis zum Stopp', inputs: { engines: "Prüfende Agenten", reviewSession: "Zu prüfende Sitzung", useJudge: "Streitfälle von einem Schiedsrichter klären lassen", focus: "Worauf der Fokus liegt" } },
     planWithAPanel: { title: "Gremium", description: 'Mehrere Agenten planen nebeneinander, dann wartet der Plan auf deine Prüfung.', inputs: { request: 'Anfrage', requestPlaceholder: 'Was soll das Gremium planen?', engines: 'Planende Agenten' } },
+    parallelImplementations: en.parallelImplementations,
     freshOpinions: { title: 'Unabhängige Meinungen', description: 'Unabhängige Antworten auf dieselbe Frage, mit optionaler Zusammenfassung.' },
     answerAndReview: { title: 'Antwort + Prüfung', description: 'Ein Agent antwortet, dann prüft ein anderer genau diese Antwort.' },
     debate: { title: 'Debatte', description: 'Vergleiche Standpunkte über die gewählten Runden, mit einer Zusammenfassung nach jeder Runde.' },

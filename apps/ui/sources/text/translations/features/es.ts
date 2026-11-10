@@ -15776,6 +15776,7 @@ const es: WorkflowBuiltinTranslations = {
     keepGoing: { title: 'Seguir hasta terminar', description: 'Sigue hasta cumplir el objetivo' },
     reviewAndConverge: { title: 'Revisar y converger', description: 'Revisa hasta que los revisores estén de acuerdo', apply: 'Aplicar', verifyAndFix: 'Verificar y corregir', verifyOnly: 'Solo verificar', rounds: 'Rondas antes de parar', inputs: { engines: "Revisores", reviewSession: "Sesión que revisar", useJudge: "Que un juez resuelva las discrepancias", focus: "En qué centrarse" } },
     planWithAPanel: { title: "Panel", description: 'Varios agentes planifican en paralelo y el plan espera tu revisión.', inputs: { request: 'Solicitud', requestPlaceholder: '¿Qué debe planificar el panel?', engines: 'Planificadores' } },
+    parallelImplementations: en.parallelImplementations,
     freshOpinions: { title: 'Opiniones independientes', description: 'Respuestas independientes a la misma pregunta, con un resumen opcional.' },
     answerAndReview: { title: 'Respuesta + revisión', description: 'Un agente responde y otro revisa esa misma respuesta.' },
     debate: { title: 'Debate', description: 'Compara puntos de vista durante las rondas que elijas, con un resumen después de cada una.' },

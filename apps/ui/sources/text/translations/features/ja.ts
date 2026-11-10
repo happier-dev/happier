@@ -15711,6 +15711,7 @@ const ja: WorkflowBuiltinTranslations = {
     keepGoing: { title: '完了まで続ける', description: '目標を達成するまで続けます' },
     reviewAndConverge: { title: 'レビューして収束', description: 'レビュアーが合意するまでレビュー', apply: '適用', verifyAndFix: '検証して修正', verifyOnly: '検証のみ', rounds: '停止までのラウンド数', inputs: { engines: "レビュアー", reviewSession: "レビューするセッション", useJudge: "意見が割れたら審判に判定してもらう", focus: "重点を置く点" } },
     planWithAPanel: { title: "パネル", description: '複数のエージェントが並行して計画し、計画はあなたのレビューを待ちます。', inputs: { request: '依頼内容', requestPlaceholder: 'パネルに何を計画させますか？', engines: '計画するエージェント' } },
+    parallelImplementations: en.parallelImplementations,
     freshOpinions: { title: '独立した意見', description: '同じ質問にそれぞれ独立して回答します。必要に応じて要約も作成します。' },
     answerAndReview: { title: '回答 + レビュー', description: '1人のエージェントが回答し、別のエージェントがその回答をレビューします。' },
     debate: { title: '討論', description: '選んだラウンド数で意見を比較し、各ラウンドの後に要約します。' },

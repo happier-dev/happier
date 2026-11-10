@@ -6,7 +6,7 @@ import { OPEN_A_PULL_REQUEST_WORKFLOW_V1 } from './openAPullRequest.js';
 import { PLAN_WITH_A_PANEL_WORKFLOW_V1 } from './planWithAPanel.js';
 import { KEEP_GOING_WORKFLOW_V1 } from './keepGoing.js';
 import { REVIEW_AND_CONVERGE_WORKFLOW_V1 } from './reviewAndConverge.js';
-import { FRESH_OPINIONS_WORKFLOW_V1 } from './freshOpinions.js';
+import { FRESH_OPINIONS_WORKFLOW_V1, PARALLEL_IMPLEMENTATIONS_WORKFLOW_V1 } from './freshOpinions.js';
 import { ANSWER_AND_REVIEW_WORKFLOW_V1 } from './answerAndReview.js';
 import { DEBATE_WORKFLOW_V1 } from './debate.js';
 
@@ -49,6 +49,9 @@ export const BUILTIN_WORKFLOW_CATALOG_V1 = Object.freeze([
     descriptionKey: 'workflows.builtins.freshOpinions.description', purpose: 'review', requiresOriginSession: false,
     discussionRoundPattern: 'fresh_opinions',
     definition: FRESH_OPINIONS_WORKFLOW_V1 },
+  { id: 'builtin:parallel-implementations', version: 1, titleKey: 'workflows.builtins.parallelImplementations.title',
+    descriptionKey: 'workflows.builtins.parallelImplementations.description', purpose: 'review', requiresOriginSession: false,
+    definition: PARALLEL_IMPLEMENTATIONS_WORKFLOW_V1 },
   { id: 'builtin:answer-and-review', version: 1, titleKey: 'workflows.builtins.answerAndReview.title',
     descriptionKey: 'workflows.builtins.answerAndReview.description', purpose: 'review', requiresOriginSession: false,
     discussionRoundPattern: 'answer_and_review',

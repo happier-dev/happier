@@ -16,6 +16,28 @@ function listBlocks(blocks: readonly WorkflowBlock[]): WorkflowBlock[] {
 }
 
 describe('built-in workflow catalog', () => {
+  it('offers independent implementation worktrees followed by read-only human review', () => {
+    const definition = catalog.resolveBuiltinWorkflowDefinitionV1('parallel-implementations')?.definition;
+    expect(definition).toBeDefined();
+    if (!definition) throw new Error('missing_parallel_implementations');
+    expect(validateWorkflowDefinition(definition).issues).toEqual([]);
+    expect(definition.inputs.filter(input => input.inputType && 'hostType' in input.inputType
+      && input.inputType.hostType === 'agentParticipant'))
+      .toHaveLength(3);
+    const implementations = definition.blocks[0];
+    expect(implementations?.kind).toBe('parallel');
+    if (implementations?.kind !== 'parallel') throw new Error('missing_parallel_branches');
+    expect(implementations.branches).toHaveLength(3);
+    for (const branch of implementations.branches) {
+      expect(branch.blocks).toHaveLength(1);
+      expect(branch.blocks[0]).toMatchObject({ kind: 'step', execution: {
+        participant: { kind: 'input', name: branch.id },
+        workspace: { kind: 'new_worktree', source: { kind: 'original' } },
+      } });
+    }
+    expect(definition.blocks.at(-1)).toMatchObject({ kind: 'step', pauseForReview: true,
+      execution: { permissionMode: 'read-only', workspace: { kind: 'project_checkout' } } });
+  });
   it('binds round presentation only to the accepted catalog version and originating Discussion', () => {
     const resultDelivery = { kind: 'originating_discussion' as const,
       discussion: { serverId: 'home', discussionId: 'discussion' }, messageId: 'question', throughSeq: 1 };
@@ -44,7 +66,7 @@ describe('built-in workflow catalog', () => {
     expect(catalog.getBuiltinWorkflowCatalogV1().map((entry) => entry.id)).toEqual([
       'builtin:keep-going',
       'builtin:review-and-converge', 'builtin:plan-with-a-panel', 'builtin:open-a-pull-request',
-      'builtin:fresh-opinions', 'builtin:answer-and-review', 'builtin:debate',
+      'builtin:fresh-opinions', 'builtin:parallel-implementations', 'builtin:answer-and-review', 'builtin:debate',
     ]);
   });
 
@@ -65,7 +87,7 @@ describe('built-in workflow catalog', () => {
   });
 
   it.each(['keep-going', 'review-and-converge', 'plan-with-a-panel', 'open-a-pull-request',
-    'fresh-opinions', 'answer-and-review', 'debate'])('ships a strict, semantically valid %s definition', (id) => {
+    'fresh-opinions', 'parallel-implementations', 'answer-and-review', 'debate'])('ships a strict, semantically valid %s definition', (id) => {
     const resolved = catalog.resolveBuiltinWorkflowDefinitionV1(id);
     expect(resolved).not.toBeNull();
     expect(WorkflowDefinitionBaseSchema.safeParse(resolved?.definition).success).toBe(true);

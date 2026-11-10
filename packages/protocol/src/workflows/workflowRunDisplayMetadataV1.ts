@@ -20,6 +20,7 @@ export const BUILTIN_WORKFLOW_TITLES_V1 = Object.freeze({
   'builtin:plan-with-a-panel': 'Panel',
   'builtin:open-a-pull-request': 'Open a pull request',
   'builtin:fresh-opinions': 'Fresh opinions',
+  'builtin:parallel-implementations': 'Parallel implementations',
   'builtin:answer-and-review': 'Answer + review',
   'builtin:debate': 'Debate',
 } satisfies Readonly<Record<BuiltinWorkflowIdV1, string>>);

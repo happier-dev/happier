@@ -19,7 +19,11 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { resolveBuiltinWorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import { projectDiscussionModelParticipantLaunchV1 } from '@happier-dev/protocol/discussions/participants';
+import { createTestWorkflowCoordinator, createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
+import { createCoordinatorWorkspaceResolver } from './resolveWorkflowWorkspace';
+import { createGitWorkflowWorkspaceTestDependencies } from './workflowWorkspace.testkit';
 import { statSync } from 'node:fs';
 import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { createSpawnConnectedServicesTeamResourceCatalogResolver } from '@/session/services/spawnConnectedServicesDefaults';
@@ -2971,6 +2975,70 @@ describe('workflow Session step executor', () => {
     expect(launches).toEqual([expect.objectContaining({ directory: worktree })]);
     expect(launch.directory).toEqual({ kind: 'path', path: source });
     expect((await git('git', ['rev-parse', '--show-toplevel'], { cwd: launches[0]!.directory })).stdout.trim()).toBe(worktree);
+  });
+
+  it('runs every parallel implementation starter branch through Session creation in its own real worktree', async () => {
+    const launches = installSessionCreationTransport();
+    vi.mocked(fs.access).mockRestore();
+    vi.mocked(fs.stat).mockRestore();
+    const root = await fs.mkdtemp(join(tmpdir(), 'workflow-race-'));
+    onTestFinished(() => fs.rm(root, { recursive: true, force: true }));
+    const git = promisify(execFile);
+    const source = join(root, 'source');
+    await fs.mkdir(source);
+    await git('git', ['init', source]);
+    await git('git', ['-C', source, '-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'initial']);
+    const revision = (await git('git', ['-C', source, 'rev-parse', 'HEAD'])).stdout.trim();
+    const definition = resolveBuiltinWorkflowDefinitionV1('parallel-implementations')?.definition;
+    if (!definition) throw new Error('missing_starter');
+    const launch = projectDiscussionModelParticipantLaunchV1({ executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+      directory: { kind: 'path' as const, path: source }, connectedServices: { v: 2 as const, bindingsByServiceId: {} },
+      agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } });
+    const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition,
+      context: { source: { kind: 'inline' }, inputs: { request: 'Implement a candidate',
+        first: { kind: 'model', launch }, second: { kind: 'model', launch }, third: { kind: 'model', launch } },
+        machineId: 'machine-1', executionTarget: { kind: 'session' },
+        workspaceTarget: { project: { machineId: 'machine-1', directory: source, checkoutRootPath: source }, originalCommittedRevision: revision },
+        origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
+      admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
+    if (!accepted.ok) throw new Error(JSON.stringify(accepted.error));
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const create = createProductionFreshWorkflowSessionConversation({
+      credentials: { token: 'token', encryption: null }, serverId: 'server-1', machineId: 'machine-1',
+      workDepth: 0, originRunId: 'race', machineAdmissionTransport: vi.fn(),
+    });
+    const directories: string[] = [];
+    const coordinator = createTestWorkflowCoordinator({ store,
+      resolveWorkspace: createCoordinatorWorkspaceResolver({ store, scm: createGitWorkflowWorkspaceTestDependencies(),
+        originalCommittedRevision: revision,
+        projectWorkspace: { machineId: 'machine-1', directory: source, checkoutRootPath: source } }),
+      executeStep: async params => {
+        await params.beforeInputAdmission();
+        if (params.participant?.kind !== 'model') throw new Error('model_required');
+        const conversation = await create({ selection: params.execution, launch: params.participant.launch,
+          workspace: params.workspace, creationKey: `workflow:race:${params.step.id}` });
+        const directory = conversation.directory;
+        if (params.step.id === 'compare') {
+          expect(directory).toBe(source);
+          expect(params.input.text).toContain(directories[0]);
+          for (const candidate of directories) expect(await fs.readFile(join(candidate, 'candidate.txt'), 'utf8')).toBe(candidate);
+          return { kind: 'completed', result: 'Recommend a candidate; await your choice.' };
+        }
+        expect(directory).not.toBe(source);
+        expect((await git('git', ['rev-parse', 'HEAD'], { cwd: directory })).stdout.trim()).toBe(revision);
+        // The native process boundary receives this actual cwd; model work is represented by a file effect there.
+        expect(launches).toContainEqual(expect.objectContaining({ directory }));
+        await fs.writeFile(join(directory, 'candidate.txt'), directory);
+        directories.push(directory);
+        return { kind: 'completed', result: directory };
+      },
+    });
+    expect(await coordinator.run({ ...accepted.snapshot, runId: 'race' })).toMatchObject({ state: 'waiting_for_review' });
+    expect(new Set(directories).size).toBe(3);
+    expect(launches.map(request => request.directory).sort()).toEqual([...directories, source].sort());
+    expect(launches.at(-1)?.permissionMode).toBe('read-only');
+    await expect(fs.access(join(source, 'candidate.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await git('git', ['-C', source, 'status', '--porcelain', '--untracked-files=no'])).stdout).toBe('');
   });
 
   it('refuses a model launch on another Machine before spawn', async () => {
