@@ -1,5 +1,14 @@
 import type { ResolvedPluginEnablement } from '../types';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isDeepStrictEqual } from 'node:util';
+
+/** Admission and catalog projections change when any owning scope fact changes. */
+export function arePluginEnablementsEqual(
+    before: ResolvedPluginEnablement | undefined,
+    after: ResolvedPluginEnablement | undefined,
+): boolean {
+    return isDeepStrictEqual(before, after);
+}
 
 /** Desired scope facts meet once, when bundled declarations are admitted. */
 export function resolveBundledPluginEnablement(params: Readonly<{

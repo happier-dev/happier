@@ -7,6 +7,7 @@ import {
 } from '@/plugins/projection/catalog/installed';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { readCurrentBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/snapshot';
+import { arePluginEnablementsEqual } from '@/plugins/projection/registry/builtIn/enablement';
 import { BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import type { ResolvedPluginEnablement } from '@/plugins/projection/registry/types';
 import { joinInstalledCatalogRuntimeIntrospection } from '@/plugins/projection/introspection/catalogSnapshot';
@@ -35,7 +36,7 @@ function projectCurrentDaemonPluginCatalogEntries(
   // Admit bundled declarations only for an actual catalog projection; the
   // locator owner already retains the immutable process-local admission.
   if (!bundledCatalog || BUNDLED_FIRST_PARTY_PLUGIN_METADATA.some(({ pluginId }) =>
-    bundledCatalog!.enablementById[pluginId]?.enabled !== pluginEnablementById[pluginId]?.enabled)) {
+    !arePluginEnablementsEqual(bundledCatalog!.enablementById[pluginId], pluginEnablementById[pluginId]))) {
     const bundledPlugins = loadCurrentBundledPluginLocatorResult({ pluginEnablementById });
     // Reuse the declaration projection until admission changes. Disabled rows
     // come from generated metadata without acquiring their files.

@@ -1,5 +1,6 @@
 import { createMergedContributionRegistry, selectPluginContributionInputs } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { getResolvedContributionRegistry, readCurrentBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/snapshot';
+import { arePluginEnablementsEqual } from '@/plugins/projection/registry/builtIn/enablement';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { loadPluginsFromState } from '@/plugins/discovery/load/installed';
 import { readGeneratedPluginUiArtifactsManifest } from '@/plugins/install/ui/generatedArtifacts';
@@ -346,10 +347,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
             ])].filter(pluginId => {
               const before = activeRegistry.contributes.pluginEnablementById?.[pluginId];
               const after = candidateContributes.pluginEnablementById?.[pluginId];
-              return before?.accountEnabled !== after?.accountEnabled
-                || before?.machineEnabled !== after?.machineEnabled
-                || before?.enabled !== after?.enabled
-                || before?.unavailableCode !== after?.unavailableCode;
+              return !arePluginEnablementsEqual(before, after);
             })
           : candidate!.changedPluginIds;
       if (candidate?.admissionRefresh && activeRegistry && changedPluginIdList.length === 0) {
