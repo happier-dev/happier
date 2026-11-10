@@ -55,6 +55,8 @@ export type ClassifyPrimarySessionRuntimeIssueInput = Readonly<{
   error?: unknown;
   /** Positive host-loop evidence; absent for unlocated/native failures. */
   beforeProviderDispatch?: boolean;
+  /** Known construction phase; native failure evidence takes precedence. */
+  startupPhase?: NonNullable<SessionRuntimeIssueV1['failureCause']>['phase'];
   occurredAt?: number | null;
   /** Closed host evidence from this exact Session turn, independent of Agent error formatting. */
   teamCredentialDenial?: SessionRuntimeTeamCredentialDenialDetailsV1 | null;
@@ -688,7 +690,9 @@ export function classifyPrimarySessionRuntimeIssue(
     ...(usageLimit === null ? {} : { usageLimit }),
     ...(teamCredential === null ? {} : { teamCredential }),
     ...(temporaryThrottle === null ? {} : { temporaryThrottle }),
-    ...(failureCause.success ? { failureCause: failureCause.data } : {}),
+    ...(failureCause.success ? { failureCause: failureCause.data } : input.startupPhase ? {
+      failureCause: { phase: input.startupPhase, failureReason: 'unclassified_provider_error' },
+    } : {}),
     ...(agentProcessExitAfterSwitch === undefined ? {} : { agentProcessExitAfterSwitch }),
   };
 }

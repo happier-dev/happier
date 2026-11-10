@@ -516,6 +516,7 @@ export async function ensureMergedAgentCommandRegistryLoaded(params: Readonly<{
     const registry = createResolvedContributionRegistry({ agents: [projectManifestAgentContribution({
       ...descriptor.agentDeclaration,
       pluginId: descriptor.pluginId,
+      sessionRuntimeId: descriptor.backendId,
     })] });
     syncAgentCommandRegistryFromCatalogSnapshot(registry, new Set([
       ...dynamicActionCommandKeys, ...BUNDLED_ACTION_CLI_COMMAND_PATHS.map(command => command.path[0]!),

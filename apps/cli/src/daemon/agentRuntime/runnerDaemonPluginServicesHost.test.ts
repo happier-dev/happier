@@ -39,8 +39,10 @@ import {
     authorizeResolvedAgentNativeExecLaunchForHost,
     createStablePluginExecService,
     issueAgentNativeLaunchQualifierForHost,
+    resolveNativeExecutableForHost,
 } from '@/plugins/runtime/invocation/services/exec';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { createPublicAcpManagedDependencies, createPublicAcpSystemTools, resolveAcpTransportLaunch } from '@/agent/acp/runtime/launch/acpTransportLaunch';
 import {
     createPluginInvocationServicesFromDescriptors,
     createUnavailablePluginServices,
@@ -511,7 +513,7 @@ describe('runner daemon PluginServices host', () => {
                     { command: process.execPath, args: ['--version'], env: {}, cwd, release }, undefined, undefined, agentLaunchKind);
             await expect(launch)
                 .rejects.toMatchObject({ code: 'agent_isolation_unavailable', execLaunch: 'notStarted', retryable: false,
-                    data: { details: { reason: process.platform === 'linux' ? 'launch_probe_failed' : 'unsupported_platform', launchKind: agentLaunchKind } } });
+                    data: { details: { reason: process.platform === 'linux' ? 'isolation_not_ready' : 'unsupported_platform', launchKind: agentLaunchKind } } });
             expect(release).toHaveBeenCalledOnce();
             if (agentLaunchKind === 'exec') {
                 const trusted = await runnerServices.exec.run({ executable, args: ['--version'], cwd });
@@ -1865,6 +1867,116 @@ describe('runner daemon PluginServices host', () => {
         finishSecondClientDisposal();
         await expect(close).rejects.toBe(firstFailure);
         expect(disposeInvocationOwner).toHaveBeenCalledOnce();
+    });
+
+    it('resolves runner ACP launches through the daemon exact system-tool tuple', async () => {
+        const unavailable = createUnavailablePluginServices();
+        const lifetime = new AbortController();
+        const resolveSystemTool = vi.fn(async () => ({
+            grantId: 'native-cli-grant', toolId: 'native-cli', displayName: 'Native CLI', source: 'system' as const,
+            executablePath: '/selected/native-cli',
+            launch: { kind: 'binary' as const, executablePath: '/daemon/native-wrapper',
+                args: ['--selected', '/selected/native-cli'], env: { RESOLVED_NATIVE_HOME: '/daemon/native-home' } },
+        }));
+        const exec = createStablePluginExecService({
+            signal: lifetime.signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => { throw new Error('Runner launch must retain the daemon grant'); },
+            resolvePath: async () => { throw new Error('Resolution must not authorize a launch'); },
+            systemTools: { resolve: resolveSystemTool },
+        });
+        const services: PluginServices = { ...unavailable, exec,
+            availability: id => id === 'exec' ? { status: 'available' } : unavailable.availability(id) };
+        const operations: RunnerDaemonPluginServiceOperationV1['kind'][] = [];
+        const host = createRunnerDaemonPluginServicesHost({ async createInvocation() {
+            return { services, resourceDescriptors: {},
+                subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
+                dispose() {}, authorizeOperation: () => true, executeCurrentGlobalAction: services.actions.execute,
+                currentGlobalMcp: services.mcp, currentGlobalExternalSessions: services.sessions.external };
+        } });
+        try {
+            const runnerServices = await prepareRunnerDaemonPluginServices({
+                invocationId: 'runner-acp-launch', signal: lifetime.signal, local: unavailable,
+                readActiveTurnAdmissionWitness: () => witness,
+                dispatch: async (operation, options) => {
+                    operations.push(operation.kind);
+                    const response = await host.dispatch({ ...direct,
+                        operation: RunnerDaemonPluginServiceOperationV1Schema.parse(operation), ...options });
+                    return decodeRunnerDaemonPluginServiceWireValueV1(response.value);
+                },
+            });
+            const launch = await resolveAcpTransportLaunch({
+                pluginId: 'fixture.plugin', purpose: 'Open native ACP Session', cwd: '/workspace/session',
+                transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'native-cli' },
+                    args: ['--acp'], env: { TRANSPORT_MODE: 'acp' }, preferredPath: '/selected/native-cli' },
+                signal: lifetime.signal, systemTools: createPublicAcpSystemTools(runnerServices.exec, 'fixture.plugin'),
+            });
+            expect(launch).toMatchObject({ kind: 'stdio', command: '/daemon/native-wrapper',
+                args: ['--selected', '/selected/native-cli', '--acp'],
+                env: { RESOLVED_NATIVE_HOME: '/daemon/native-home', TRANSPORT_MODE: 'acp' } });
+            expect(resolveSystemTool).toHaveBeenCalledOnce();
+            expect(resolveSystemTool).toHaveBeenCalledWith(expect.objectContaining({
+                toolId: 'native-cli', cwd: '/workspace/session', preferredPath: '/selected/native-cli' }));
+            expect(operations).toEqual(['plugin_services.prepare_v1', 'plugin_exec.system_tools.resolve_v1']);
+        } finally { lifetime.abort(); await host.dispose(); }
+    });
+
+    it.each(['transport', 'invocation', 'native-wrapper'] as const)('releases runner ACP and native executable resolutions with their owning %s', async owner => {
+        const unavailable = createUnavailablePluginServices();
+        const lifetime = new AbortController();
+        const release = vi.fn();
+        const resolveExecutable = vi.fn(async () => ({ command: '/daemon/managed-runtime',
+            args: ['--adapter', '/daemon/codex-acp'], env: { MANAGED_HOME: '/daemon/managed-home' },
+            allowedArguments: ['--stdio'], release }));
+        const exec = createStablePluginExecService({ signal: lifetime.signal, isOccurrenceCurrent: () => true,
+            resolveExecutable, resolvePath: async () => { throw new Error('Resolution must not authorize a launch'); } });
+        const services: PluginServices = { ...unavailable, exec,
+            availability: id => id === 'exec' ? { status: 'available' } : unavailable.availability(id) };
+        const host = createRunnerDaemonPluginServicesHost({ async createInvocation() {
+            return { services, resourceDescriptors: {},
+                subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
+                dispose() {}, authorizeOperation: () => true, executeCurrentGlobalAction: services.actions.execute,
+                currentGlobalMcp: services.mcp, currentGlobalExternalSessions: services.sessions.external };
+        } });
+        try {
+            const runnerServices = await prepareRunnerDaemonPluginServices({
+                invocationId: 'runner-managed-acp-launch', signal: lifetime.signal, local: unavailable,
+                readActiveTurnAdmissionWitness: () => witness,
+                dispatch: async (operation, options) => {
+                    const response = await host.dispatch({ ...direct,
+                        operation: RunnerDaemonPluginServiceOperationV1Schema.parse(operation), ...options });
+                    return decodeRunnerDaemonPluginServiceWireValueV1(response.value);
+                },
+            });
+            if (owner === 'native-wrapper') {
+                const executable = { kind: 'packaged-runtime-binary' as const,
+                    directorySegments: ['fixture'], executableBaseName: 'command' };
+                const resolved = await resolveNativeExecutableForHost(runnerServices.exec, executable, lifetime.signal);
+                expect(resolved).toMatchObject({ command: '/daemon/managed-runtime',
+                    args: ['--adapter', '/daemon/codex-acp'], env: { MANAGED_HOME: '/daemon/managed-home' },
+                    allowedArguments: ['--stdio'] });
+                expect(resolveExecutable).toHaveBeenCalledWith(executable);
+                resolved.release?.();
+                await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
+            } else {
+                const launch = await resolveAcpTransportLaunch({
+                    pluginId: 'fixture.plugin', purpose: 'Open managed ACP Session',
+                    transport: { kind: 'stdio', executable: { kind: 'managedDependency', id: 'codex-acp' }, args: ['--stdio'] },
+                    signal: lifetime.signal, systemTools: createPublicAcpSystemTools(runnerServices.exec, 'fixture.plugin'),
+                    managedDependencies: createPublicAcpManagedDependencies(runnerServices.exec, 'fixture.plugin'),
+                });
+                expect(launch).toMatchObject({ kind: 'stdio', command: '/daemon/managed-runtime',
+                    args: ['--adapter', '/daemon/codex-acp', '--stdio'], env: { MANAGED_HOME: '/daemon/managed-home' } });
+                expect(resolveExecutable).toHaveBeenCalledWith({ kind: 'managedDependency', id: 'codex-acp' });
+                expect(release).not.toHaveBeenCalled();
+                if (owner === 'transport' && launch.kind === 'stdio') {
+                    launch.release?.();
+                    launch.release?.();
+                    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
+                }
+            }
+            await host.dispose();
+            expect(release).toHaveBeenCalledOnce();
+        } finally { lifetime.abort(); await host.dispose(); }
     });
 
     it('retains an exact system-tool resolution across multiple launches in one invocation', async () => {

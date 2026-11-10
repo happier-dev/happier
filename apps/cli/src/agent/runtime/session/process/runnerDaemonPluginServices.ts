@@ -70,6 +70,7 @@ import {
     createStableRunnerPluginExecService,
     authorizeResolvedAgentNativeExecLaunchForHost,
     type HostAuthorizedPluginExecLaunch,
+    type ResolvedPluginExecutable,
 } from '@/plugins/runtime/invocation/services/exec';
 import {
     RunnerDaemonAgentCliReadinessResultV1Schema,
@@ -218,6 +219,7 @@ type RunnerAuthorizedLaunchWire = Readonly<{
     command: string;
     args: readonly string[];
     env: Readonly<Record<string, string>>;
+    allowedArguments?: readonly string[];
     cwd?: string;
     launcherCwd?: string;
     stdin?: string;
@@ -239,6 +241,8 @@ function isRunnerAuthorizedLaunchWire(
         && value.args.every(
             (entry) => typeof entry === 'string',
         )
+        && (value.allowedArguments === undefined || (Array.isArray(value.allowedArguments)
+            && value.allowedArguments.every(entry => typeof entry === 'string')))
         && isRecord(value.env)
         && Object.values(value.env).every(
             (entry) => typeof entry === 'string',
@@ -2619,7 +2623,8 @@ export async function prepareRunnerDaemonPluginServices(
         }
         return value;
     };
-    const readAuthorizedExecLaunch = (raw: Record<string, unknown>): HostAuthorizedPluginExecLaunch => {
+    const readAuthorizedExecLaunch = (raw: Record<string, unknown>): HostAuthorizedPluginExecLaunch
+        & Pick<ResolvedPluginExecutable, 'allowedArguments'> => {
         if (typeof raw.authorizationId !== 'string' || !isRunnerAuthorizedLaunchWire(raw.launch)) {
             throw new PluginError({ code: 'plugin_exec_launch_authorization_invalid',
                 message: 'Daemon returned an invalid process launch authorization' });
@@ -2629,6 +2634,7 @@ export async function prepareRunnerDaemonPluginServices(
         let released = false;
         return Object.freeze({ ...launch,
             args: Object.freeze([...launch.args]), env: Object.freeze({ ...launch.env }),
+            ...(launch.allowedArguments ? { allowedArguments: Object.freeze([...launch.allowedArguments]) } : {}),
             ...(stdin === undefined ? {} : { stdin: new Uint8Array(Buffer.from(stdin, 'base64')) }),
             ...(stdinPreamble === undefined ? {} : { stdinPreamble: new Uint8Array(Buffer.from(stdinPreamble, 'base64')) }),
             release() {
@@ -2725,6 +2731,7 @@ export async function prepareRunnerDaemonPluginServices(
             if (
                 typeof raw.resolutionId !== 'string'
                 || !isRecord(raw.result)
+                || !isRunnerAuthorizedLaunchWire(raw.launch)
             ) {
                 throw new PluginError({
                     code:
@@ -2735,12 +2742,20 @@ export async function prepareRunnerDaemonPluginServices(
             }
             return {
                 resolutionId: raw.resolutionId,
+                launch: { command: raw.launch.command, args: raw.launch.args, env: raw.launch.env },
                 result: raw.result as Awaited<ReturnType<
                     PluginServices['exec']['systemTools'][
                         'resolve'
                     ]
                 >>,
             };
+        },
+        async resolveExecutable(executable, options) {
+            assertAvailable('exec');
+            const raw = parseObjectResult(await dispatch<unknown>({
+                kind: 'plugin_exec.executable.resolve_v1', ...requestBase(), executable,
+            }, options), 'plugin_exec_launch_authorization_invalid', 'Daemon returned an invalid executable resolution');
+            return readAuthorizedExecLaunch(raw);
         },
         async authorizeLaunch(
             request: Parameters<

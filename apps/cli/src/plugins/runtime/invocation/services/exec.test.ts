@@ -1222,9 +1222,11 @@ describe('createStablePluginExecService', () => {
                     };
                 },
             },
+            resolveExecutable: async () => { throw new Error('No host executable resolution expected'); },
             async resolveSystemTool(request) {
                 return {
                     resolutionId: 'resolution-1',
+                    launch: { command: '/daemon/resolved/tool', args: [], env: {} },
                     result: {
                         executable: {
                             kind: 'systemTool',
@@ -1237,9 +1239,10 @@ describe('createStablePluginExecService', () => {
             authorizeLaunch,
         });
 
-        const result = await service.run({
-            executable,
+        const resolved = await resolvePluginExecSystemToolForHost(service, {
+            toolId: 'fixture.node', purpose: 'Open runner ACP Session',
         });
+        const result = await service.run({ executable: resolved.executable });
 
         expect(Buffer.from(result.stdout).toString('utf8'))
             .toBe('runner');
@@ -1247,7 +1250,7 @@ describe('createStablePluginExecService', () => {
         expect(authorizeLaunch).toHaveBeenCalledWith(
             expect.objectContaining({ executable }),
             undefined,
-            undefined,
+            'resolution-1',
         );
         expect(release).toHaveBeenCalledOnce();
     });
@@ -1278,9 +1281,11 @@ describe('createStablePluginExecService', () => {
                     };
                 },
             },
+            resolveExecutable: async () => { throw new Error('No host executable resolution expected'); },
             async resolveSystemTool(request) {
                 return {
                     resolutionId: 'resolution-provider-child',
+                    launch: { command: process.execPath, args: [], env: {} },
                     result: {
                         executable: {
                             kind: 'systemTool',
@@ -1359,9 +1364,11 @@ describe('createStablePluginExecService', () => {
                     };
                 },
             },
+            resolveExecutable: async () => { throw new Error('No host executable resolution expected'); },
             async resolveSystemTool(request) {
                 return {
                     resolutionId: 'resolution-substitution-failure',
+                    launch: { command: process.execPath, args: [], env: {} },
                     result: {
                         executable: {
                             kind: 'systemTool',

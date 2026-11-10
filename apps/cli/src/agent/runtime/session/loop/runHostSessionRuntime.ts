@@ -4219,7 +4219,7 @@ export async function runHostSessionRuntime(
           ...readSessionPreparationFailureDiagnostic(error),
         });
         const startupIssue = !runtimeStopRequested ? classifyPrimarySessionRuntimeIssue({
-          cause: 'session_error', error: startupInputRefusal ?? error, provider: policyAgentId,
+          cause: 'session_error', error: startupInputRefusal ?? error, provider: policyAgentId, startupPhase: 'client_start',
         }) : null;
         // Typed Home admission refusals happen before a provider turn exists.
         // A synthetic failed turn here would replay on a later admitted start.

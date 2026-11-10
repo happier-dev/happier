@@ -70,6 +70,7 @@ function projectManifestAgentStaticCatalogEntry(params: Readonly<{
 
 function projectManifestAgentCatalogEntry(params: Readonly<{
     agentId: string;
+    sessionRuntimeId?: string;
     pluginId: string;
     definition: PluginAgentContributionV2;
     cli: PluginAgentContributionV2['cli'] | null;
@@ -86,6 +87,7 @@ function projectManifestAgentCatalogEntry(params: Readonly<{
     if (!base) return null;
     const cliSessionCommand = projectAgentCliSessionCommandCatalogEntry({
         agentId: params.agentId,
+        ...(params.sessionRuntimeId ? { cliSessionCommand: { sessionRuntimeId: params.sessionRuntimeId } } : {}),
     });
     const staticCatalog = projectManifestAgentStaticCatalogEntry({
         definition: params.definition,
@@ -108,6 +110,8 @@ export function projectManifestAgentContribution(params: Readonly<{
     provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
     pluginId: string;
+    /** The admitted runner's backend identity, when distinct from its manifest-local Agent id. */
+    sessionRuntimeId?: string;
     /**
      * System tools the same plugin declares. The Agent's declared
      * `catalog.agentCliSystemTool` binding is validated against this list by
@@ -127,6 +131,7 @@ export function projectManifestAgentContribution(params: Readonly<{
         ...fields,
         catalogEntry: projectManifestAgentCatalogEntry({
             agentId,
+            sessionRuntimeId: params.sessionRuntimeId,
             pluginId: params.pluginId,
             definition: params.definition,
             cli: cliMetadata,

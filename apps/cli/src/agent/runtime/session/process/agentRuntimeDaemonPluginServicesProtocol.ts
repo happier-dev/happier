@@ -1223,6 +1223,12 @@ export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
         }),
     })),
     lazyZodSchema(() => z.strictObject({
+        kind: z.literal('plugin_exec.executable.resolve_v1'),
+        ...OperationBaseSchema,
+        ...OptionalWitnessSchema,
+        executable: ManagedExecutableRefSchema,
+    })),
+    lazyZodSchema(() => z.strictObject({
         kind: z.literal('plugin_exec.launch.authorize_v1'),
         ...OperationBaseSchema,
         ...OptionalWitnessSchema,

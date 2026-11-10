@@ -47,8 +47,9 @@ export function projectSessionSpawnFailure(input: Readonly<{
       ...(normalized.errorCode === SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT ? { launchError: {
         kind: 'launch_error' as const, code: normalized.errorCode,
         message: 'Sign in to the Agent on the target Machine. If using Connected Accounts, select a Connected Account profile for this Session or recipe, or configure an Account default profile before retrying.',
-        ...(input.requestId ? { failureCause: { phase: 'authentication' as const,
-          failureReason: 'authentication_required' as const, requestId: input.requestId } } : {}),
+        failureCause: { phase: 'authentication' as const,
+          failureReason: 'authentication_required' as const,
+          ...(input.requestId ? { requestId: input.requestId } : {}) },
       } } : {}),
     };
   }

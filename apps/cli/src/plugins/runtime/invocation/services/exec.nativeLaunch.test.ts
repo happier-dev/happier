@@ -320,6 +320,7 @@ describe('host-issued Agent native launch qualifier', () => {
             resolvePath: async () => process.cwd(), systemTools: { resolve: async () => { throw refusal; } },
         }) : createStableRunnerPluginExecService({
             ...common, agentCli: { checkReadiness: async () => ({ launchable: [] }) },
+            resolveExecutable: async () => { throw new Error('No host executable resolution expected'); },
             resolveSystemTool: async () => { throw refusal; },
             authorizeLaunch: async () => { throw new Error('Resolution must refuse before launch'); },
         });

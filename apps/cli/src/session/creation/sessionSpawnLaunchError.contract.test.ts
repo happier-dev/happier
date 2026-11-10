@@ -153,7 +153,7 @@ describe('Session launch cause transport', () => {
         execute: async () => ({ ok: true, result: lateResult }),
       });
       expect(await operations.handlers.getV2({ operationId: 'broker-refusal', waitForTerminal: true }))
-        .toMatchObject({ kind: 'found', operation: { state: 'succeeded', result: {
+        .toMatchObject({ kind: 'found', operation: { state: 'failed', result: {
           type: 'error', retryable: result.retryable, launchError: { code },
         } } });
       expect(projectSessionSpawnFailure({ errorCode: 'SPAWN_VALIDATION_FAILED',
@@ -269,7 +269,8 @@ describe('Session launch cause transport', () => {
       errorMessage: 'upstream-private-auth-diagnostic',
     }));
     expect(result).toMatchObject({ type: 'error', code: 'agent_signed_out', agentId: 'custom-agent',
-      retryable: false, launchError: { kind: 'launch_error', code: 'agent_signed_out' } });
+      retryable: false, launchError: { kind: 'launch_error', code: 'agent_signed_out',
+        failureCause: { phase: 'authentication', failureReason: 'authentication_required' } } });
     if (result.type !== 'error' || result.code !== 'agent_signed_out') throw new Error('Expected signed-out refusal');
     expect(result.launchError?.message).toMatch(/sign in/i);
     expect(result.launchError?.message).toMatch(/select.*connected account profile/i);

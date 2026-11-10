@@ -332,6 +332,7 @@ describe('runner daemon PluginServices proxy', () => {
                     if (operation.kind === 'plugin_services.prepare_v1') return preparedSnapshot();
                     if (operation.kind === 'plugin_exec.system_tools.resolve_v1') return {
                         resolutionId: 'codex-resolution', result: { executable, executablePath: script },
+                        launch: { command: process.execPath, args: [script], env: {} },
                     };
                     if (operation.kind === 'plugin_exec.launch.authorize_v1') {
                         const { stdin, ...request } = operation.request;
@@ -358,8 +359,9 @@ describe('runner daemon PluginServices proxy', () => {
                         const snapshots: unknown[] = [];
                         const context = {
                             signal: controller.signal, services,
-                            session: { id: 'session-1', cwd: root, activity: 'active',
-                                providerSessionId: 'thread-1', connectedAccounts: [] },
+                            session: { id: 'session-1', cwd: root, activity: 'inactive',
+                                providerSessionId: 'thread-1', connectedAccounts: [],
+                                launchEnvironment: { values: launchEnvironment, unset: [] } },
                             goalSource: { publish: async (snapshot: unknown) => {
                                 snapshots.push(snapshot);
                                 return { status: 'applied', revision: 'scope', sourceSequence: snapshots.length };
@@ -1962,11 +1964,11 @@ describe('runner daemon PluginServices proxy', () => {
             call.kind === 'plugin_sessions.external.capabilities_v1',
         )).toHaveLength(1);
         expect(services.managedServices).toBe(reboundManagedServices);
-        expect(bindManagedServices).toHaveBeenCalledWith({
+        expect(bindManagedServices).toHaveBeenCalledWith(expect.objectContaining({
             connectedAccounts: services.connectedAccounts,
             exec: unavailable.exec,
             managedProvider: null,
-        });
+        }));
         expect(services.availability('actions')).toEqual({
             status: 'available',
         });

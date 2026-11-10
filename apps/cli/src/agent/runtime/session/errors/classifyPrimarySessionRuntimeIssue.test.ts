@@ -13,6 +13,29 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { StructuredInputComposerAttachmentResolutionError, StructuredInputComposerAttachmentUnavailableError } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 
 describe('classifyPrimarySessionRuntimeIssue', () => {
+  it.each(['plugin_exec_system_tool_resolution_unavailable', 'plugin_exec_managed_dependency_resolution_unavailable', 'native_adapter_invocation_unavailable'])(
+    'retains the typed %s construction cause without exposing arbitrary PluginError text', code => {
+      const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'copilot',
+        startupPhase: 'client_start', occurredAt: 100,
+        error: new PluginError({ code, message: 'PRIVATE_NATIVE_ENVIRONMENT' }) });
+      expect(issue).toMatchObject({ code, source: 'agent_session_error',
+        failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error' } });
+      expect(issue.sanitizedPreview).toMatch(/executable resolution|native runtime invocation/);
+      expect(JSON.stringify(issue)).not.toContain('PRIVATE_NATIVE_ENVIRONMENT');
+      const republished = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'copilot',
+        occurredAt: 100, error: { code: issue.code, severity: 'error',
+          details: { v: 1, source: issue.source, failureCause: issue.failureCause } } });
+      expect(republished).toEqual(issue);
+    },
+  );
+  it('retains the native failure phase when construction supplies a fallback phase', () => {
+    const failureCause = { code: 'agent_startup_transport_failed', phase: 'thread_open' as const,
+      failureReason: 'unclassified_provider_error' as const };
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start',
+      error: new PluginError({ code: failureCause.code, message: 'PRIVATE_NATIVE_CONTEXT', details: { failureCause } }) });
+    expect(issue.failureCause).toEqual(failureCause);
+    expect(JSON.stringify(issue)).not.toContain('PRIVATE_NATIVE_CONTEXT');
+  });
   it.each(['codex', 'claude', 'opencode'] as const)('keeps %s model refusal out of account recovery metadata', (provider) => {
     const issue = classifyPrimarySessionRuntimeIssue({ provider, cause: 'session_error', occurredAt: 1_000,
       error: { code: 'provider_model_not_found', details: { v: 1, source: 'agent_status_error',

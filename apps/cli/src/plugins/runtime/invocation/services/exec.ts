@@ -363,8 +363,7 @@ export type HostResolvedManagedDependencyExecutable = Readonly<{
     release(): void;
 }>;
 
-export type HostResolvedSystemToolExecutable = Readonly<{
-    executable: ManagedExecutableRef;
+export type HostResolvedSystemToolExecutable = Awaited<ReturnType<PluginSystemToolsService['resolve']>> & Readonly<{
     command: string;
     args?: readonly string[];
     env?: Readonly<Record<string, string>>;
@@ -583,7 +582,12 @@ export function createStableRunnerPluginExecService(
                 PluginSystemToolsService['resolve']
             >>;
             resolutionId: string;
+            launch: ResolvedPluginExecutable;
         }>>;
+        resolveExecutable(
+            executable: ManagedExecutableRef,
+            options?: Readonly<{ signal?: AbortSignal }>,
+        ): Promise<ResolvedPluginExecutable>;
         authorizeLaunch(
             request: Parameters<ExecService['spawn']>[0]
                 & Readonly<{ timeoutMs?: number }>,
@@ -644,21 +648,16 @@ export function createStableRunnerPluginExecService(
             }
             : {}),
     });
+    const resolveSystemTool = async (request: Parameters<PluginSystemToolsService['resolve']>[0]) => {
+        try {
+            const resolved = await params.resolveSystemTool(request);
+            systemToolResolutionIds.set(resolved.result.executable, resolved.resolutionId);
+            return resolved;
+        } catch (error) { throw withExecLaunchNotStarted(error); }
+    };
     const systemTools: PluginSystemToolsService = Object.freeze({
-        async resolve(
-            request: Parameters<
-                PluginSystemToolsService['resolve']
-            >[0],
-        ) {
-            try {
-                const resolved =
-                    await params.resolveSystemTool(request);
-                systemToolResolutionIds.set(
-                    resolved.result.executable,
-                    resolved.resolutionId,
-                );
-                return resolved.result;
-            } catch (error) { throw withExecLaunchNotStarted(error); }
+        async resolve(request: Parameters<PluginSystemToolsService['resolve']>[0]) {
+            return (await resolveSystemTool(request)).result;
         },
     });
     const service: ExecService = Object.freeze({
@@ -666,6 +665,11 @@ export function createStableRunnerPluginExecService(
         agentCli: params.agentCli,
         systemTools,
     });
+    INTERNAL_SYSTEM_TOOL_RESOLVERS.set(service, async request => {
+        const resolved = await resolveSystemTool(request);
+        return Object.freeze({ ...resolved.result, ...resolved.launch });
+    });
+    INTERNAL_EXECUTABLE_RESOLVERS.set(service, params.resolveExecutable);
     INTERNAL_OWNER_REBINDERS.set(service, (owner, signal) => createStableRunnerPluginExecService({ ...params,
         processOwner: owner, signal: signal ? AbortSignal.any([params.signal, signal]) : params.signal }));
     INTERNAL_NATIVE_LAUNCH_QUALIFIERS.set(service, INTERNAL_NATIVE_LAUNCH_QUALIFIERS.get(base)!);
@@ -800,7 +804,7 @@ function validateExecLaunchInput(input: Readonly<{
     }
 }
 
-async function resolveNativeExecutableForHost(
+export async function resolveNativeExecutableForHost(
     service: ExecService,
     executable: ManagedExecutableRef,
     signal: AbortSignal,
@@ -2425,7 +2429,7 @@ export function createStablePluginExecService(params: Readonly<{
             );
         }
         return Object.freeze({
-            executable: resolved.executable,
+            ...resolved,
             command: preResolved.launch.command,
             ...(preResolved.launch.args
                 ? { args: preResolved.launch.args }

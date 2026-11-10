@@ -60,6 +60,8 @@ import {
     authorizePluginExecLaunchForHost,
     authorizeResolvedProjectExecLaunchForHost,
     issueAgentNativeLaunchQualifierForHost,
+    resolveNativeExecutableForHost,
+    resolvePluginExecSystemToolForHost,
     type HostAgentNativeLaunchPreparation,
     type HostAuthorizedPluginExecLaunch,
 } from '@/plugins/runtime/invocation/services/exec';
@@ -2786,7 +2788,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                 );
             case 'plugin_exec.system_tools.resolve_v1': {
                 const resolved =
-                    await services.exec.systemTools.resolve({
+                    await resolvePluginExecSystemToolForHost(services.exec, {
                         ...operation.request,
                         ...operationOptions,
                     });
@@ -2795,10 +2797,23 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                     resolutionId,
                     resolved.executable,
                 );
+                const { command, args, env, ...publicResult } = resolved;
                 return result(operation, {
                     resolutionId,
-                    result: resolved,
+                    result: publicResult,
+                    launch: { command, args: args ?? [], env: env ?? {} },
                 });
+            }
+            case 'plugin_exec.executable.resolve_v1': {
+                const resolved = await resolveNativeExecutableForHost(services.exec, operation.executable,
+                    signal ?? invocation.controller.signal);
+                const authorizationId = randomUUID();
+                invocation.execAuthorizations.set(authorizationId, { ...resolved,
+                    args: resolved.args ?? [], env: resolved.env ?? {}, release: resolved.release ?? (() => undefined) });
+                return result(operation, { authorizationId, launch: {
+                    command: resolved.command, args: resolved.args ?? [], env: resolved.env ?? {},
+                    ...(resolved.allowedArguments ? { allowedArguments: resolved.allowedArguments } : {}),
+                } });
             }
             case 'plugin_exec.launch.authorize_v1':
             case 'plugin_exec.resolved_agent_launch.authorize_v1': {
