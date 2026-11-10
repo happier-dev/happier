@@ -7,6 +7,7 @@ import {
     createWorkflowAccountRunActionOwner} from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import {
     ActionExecuteFailureSchema} from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ExternalActionHttpErrorSchema, bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import {
     WorkflowRunStartRequestV1Schema,
     WorkflowRunGetResultV1Schema,
@@ -62,7 +63,7 @@ afterEach(async () => {
     vi.unstubAllGlobals();
 });
 
-async function harness(outcome: 'admitted' | 'not-sent' | 'unknown' | 'delayed' | 'refused', holdFirstMissingRead = false, anotherRound = false, inlineRound = false, newSession = false, inlineReplay = false) {
+async function harness(outcome: 'admitted' | 'not-sent' | 'unknown' | 'delayed' | 'refused' | 'admission-unavailable' | 'not-admitted', holdFirstMissingRead = false, anotherRound = false, inlineRound = false, newSession = false, inlineReplay = false) {
     vi.stubGlobal('React', React);
     installShippedNativeFrameScheduler();
     await loadSyncSingletonForTests();
@@ -107,9 +108,17 @@ async function harness(outcome: 'admitted' | 'not-sent' | 'unknown' | 'delayed' 
     const account = await restoreServerAccountForTest({ serverUrl, serverIdentityId, accountId,
         credentials: { token: createAccountTokenForTests(accountId, { currentAccount: true }) },
         request: async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (currentOutcome === 'admission-unavailable'
+                && path === bindExternalActionExecutionAuthorizationHttpPathV1('workflow.run.start')) {
+                // An invalid Home authorization reply is rejected before Action dispatch.
+                return json({});
+            }
+            if (currentOutcome === 'not-admitted' && path === '/v1/actions/workflow.run.start') {
+                return json(ExternalActionHttpErrorSchema.parse({ error: 'invalid_request', code: 'action_not_admitted' }), 500);
+            }
             const handled = await external.handle(new URL(String(url)), init);
             if (handled) return handled;
-            const path = new URL(String(url)).pathname;
             if (path === '/health') return json({});
             if (path === '/v1/features') return json({ features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {
                 accountStoredContentCompatibility: { v: 1, minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
@@ -252,7 +261,7 @@ describe('Run start response-loss through the real composer, authenticated HTTP 
     it('retains typed Start diagnostics through the New Session workflow entry', async () => {
         const h = await harness('refused', false, false, false, true);
         await h.selectNewSessionWorkflow();
-        expect(h.screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
+        await vi.waitFor(() => expect(h.screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
         await h.screen.pressByTestIdAsync('workflow-run-inputs-run');
         await vi.waitFor(() => expect(h.counts().dispatches).toBe(1));
         await vi.waitFor(() => expect(h.screen.findByTestId('workflow-run-inputs-start-problem-details.header')).not.toBeNull());
@@ -337,6 +346,20 @@ describe('Run start response-loss through the real composer, authenticated HTTP 
         expect(h.readState()).toBe('idle');
         expect(h.screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
         expect(h.counts()).toEqual({ admissions: 0, reads: 0, dispatches: 1 });
+    });
+    it.each([
+        { outcome: 'admission-unavailable', reason: 'session.startFailure.cause.admission_unavailable' },
+        { outcome: 'not-admitted', reason: 'workflows.contentUnavailable' },
+    ] as const)('does not reconcile or dispatch after a generic known no-admission result ($outcome)', async ({ outcome, reason }) => {
+        const h = await harness(outcome);
+        await h.screen.pressByTestIdAsync('workflow-run-inputs-run');
+        await act(async () => { await h.pending(); });
+        expect(h.opened).not.toHaveBeenCalled();
+        expect(h.readModals()).toEqual([]);
+        expect(h.readState()).toBe('idle');
+        expect(h.screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
+        expect(h.screen.findByTestId('workflow-run-inputs-reason-text')?.props.children).toBe(reason);
+        expect(h.counts()).toEqual({ admissions: 0, reads: 0, dispatches: 0 });
     });
     it('rejoins an absent Start and a delayed original consumes the same canonical admission', async () => {
         const h = await harness('delayed', true);

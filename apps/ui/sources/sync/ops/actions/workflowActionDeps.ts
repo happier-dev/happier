@@ -30,10 +30,11 @@ import {
 } from '@happier-dev/channels-protocol/v1';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isWorkflowHostAdmittedChildActionIdV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 
 import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
 import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
@@ -443,11 +444,12 @@ export function createUiWorkflowAction(params: Readonly<{
         const ordinaryAccountCredential = account.credentialAuthorityKind === 'account' || account.credentialAuthorityKind === 'terminal';
         const restrictedResource = args.context.externalActionTarget && args.context.externalActionTarget.kind !== 'machine';
         const savedOccurrence = args.actionId === 'workflow.trigger.run_now';
+        const startingRun = args.actionId === WORKFLOW_RUN_START_ACTION_ID_V1;
         // Prepared recovery publishes executor rows. A present user's trigger
         // reads and writes are Account data served here; any other caller's
         // trigger or definition write consumes the host's agent-start policy
         // and materializer.
-        const machineOrHostOperation = args.actionId === 'workflow.run.start'
+        const machineOrHostOperation = startingRun
             || args.actionId === 'workflow.run.invocations.retry'
             || (args.actionId === 'workflow.run.resume' && args.input.mode === 'recover')
             || (savedOccurrence && isWorkflowTriggerAgentCallerV1(args.context))
@@ -494,7 +496,7 @@ export function createUiWorkflowAction(params: Readonly<{
             }
         } catch (error) {
             try { account.assertCurrent(); } catch { return unavailable; }
-            if (args.actionId !== 'workflow.run.start') throw error;
+            if (!startingRun) throw error;
             // Only the transport's explicit not-sent witness proves rejection.
             // A missing reply (including timeout) may follow committed admission.
             const code = readRpcRequestDisposition(error) === 'notSent'
@@ -502,6 +504,15 @@ export function createUiWorkflowAction(params: Readonly<{
             return { ok: false, errorCode: code, error: code };
         }
         try { account.assertCurrent(); } catch { return unavailable; }
+        if (startingRun) {
+            const actionFailure = ActionExecuteFailureSchema.safeParse(result);
+            if (actionFailure.success && isActionOutcomeUnknownErrorCodeV1(actionFailure.data.errorCode)) {
+                // HTTP issuance can settle as a typed unknown result as well as a
+                // thrown transport error. Both retain the reviewed Run admission.
+                const { details: _transportDetails, ...failure } = actionFailure.data;
+                return { ...failure, errorCode: 'workflow_outcome_unresolved', error: 'workflow_outcome_unresolved' };
+            }
+        }
         const failure = WorkflowActionFailureV1Schema.safeParse(result);
         if (failure.success) return failure.data;
         if (savedOccurrence) {
