@@ -1,4 +1,5 @@
 import type { AgentPreflightSessionControlsContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 import { prepareOhMyPiQualifiedAccounts } from '../auth/services/preparation.js';
 import { OH_MY_PI_SYSTEM_TOOL_ID } from '../systemTool.js';
 

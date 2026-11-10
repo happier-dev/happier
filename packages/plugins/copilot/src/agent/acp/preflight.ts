@@ -1,4 +1,5 @@
 import type { AgentPreflightSessionControlsContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { projectCopilotPreflightModels } from './modelControls.js';
 import { prepareCopilotConnectedAccount } from '../runtime/connectedAccount.js';
