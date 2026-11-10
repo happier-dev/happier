@@ -136,12 +136,12 @@ type SelectionListOptionBase = Readonly<{
      * is selected. It is mounted as a sibling of the row — outside every
      * Pressable — so the controls it owns (segmented toggles, sliders, chips)
      * activate independently and never nest a button inside the row's button on
-     * web. Use it for per-option controls that only make sense once the option
-     * is chosen; the row itself stays the single activation target.
+     * web. Use it for per-option controls or recovery steps; the row itself
+     * stays the selection target.
      */
     expandedContent?: SelectionListLazyVisual;
-    /** Informational previews may follow focus; per-option controls keep the selected default. */
-    expandedContentVisibility?: 'selected' | 'focused';
+    /** Previews may follow focus; recovery controls can stay visible even on disabled rows. Defaults to selected. */
+    expandedContentVisibility?: 'selected' | 'focused' | 'always';
     /** The active row's detail, shown beside the list when the list declares a `detailPane` and has room. */
     detailContent?: SelectionListLazyVisual;
     /** Hide the compact subtitle while expanded content already shows it. */

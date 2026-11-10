@@ -9,8 +9,10 @@ vi.mock('react-native', async () => {
 });
 
 import { View } from 'react-native';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 
 import { PlanOptionRow } from '../SelectionListOptionRow';
+import { SelectionListA11yPatternContext } from '../SelectionListA11yPatternContext';
 import type { SelectionListLazyVisual, SelectionListOption } from '../_types';
 
 function hasAncestor(node: unknown, possibleAncestor: unknown): boolean {
@@ -35,6 +37,33 @@ function makeOption(expandedContent: SelectionListLazyVisual): SelectionListOpti
 const staticExpanded = <View testID={EXPANDED_TEST_ID} />;
 
 describe('SelectionListOptionRow expandedContent', () => {
+    it.each(['none', 'text'] as const)('keeps an always-visible recovery actionable on a disabled, unfocused row (%s inset)', async (inset) => {
+        const recover = vi.fn();
+        const choose = vi.fn();
+        const option: SelectionListOption = {
+            id: 'missing-copy', label: 'Worker', disabled: true,
+            expandedContentVisibility: 'always', expandedContentInset: inset,
+            expandedContent: () => <TextLinkButton label="Set up copy" testID="copy-recovery" onPress={recover} />,
+        };
+        const screen = await renderScreen(<SelectionListA11yPatternContext.Provider value="grid">
+            <PlanOptionRow option={option} rootTestID="workers" stepId="root"
+                isSelected={false} isFocused={false} onSelect={choose} onPushStep={() => {}} />
+        </SelectionListA11yPatternContext.Provider>);
+        try {
+            const recovery = screen.findByTestId('copy-recovery');
+            expect(recovery).not.toBeNull();
+            let ancestor = recovery?.parent;
+            while (ancestor) {
+                expect(ancestor.props['aria-disabled']).not.toBe(true);
+                expect(ancestor.props.accessibilityState?.disabled).not.toBe(true);
+                ancestor = ancestor.parent;
+            }
+            await screen.pressByTestIdAsync('copy-recovery');
+            expect(recover).toHaveBeenCalledOnce();
+            expect(choose).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); }
+    });
+
     it('shows an opted-in preview on focus without selecting and restores the snippet when focus leaves', async () => {
         const option: SelectionListOption = {
             ...makeOption(staticExpanded),

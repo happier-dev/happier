@@ -241,9 +241,9 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
     [hovered, props.isFocused],
   );
   // Controls follow selection; informational previews may follow the active
-  // row. Resolve either lazily so inactive rows never construct the body.
-  const isExpanded = props.option.expandedContentVisibility === 'focused'
-    ? props.isFocused : isSelected;
+  // row. Recovery controls can remain visible before the option becomes selectable.
+  const isExpanded = props.option.expandedContentVisibility === 'always'
+    || (props.option.expandedContentVisibility === 'focused' ? props.isFocused : isSelected);
   // A disclosure row ends in Item's turning caret and reports whether it is open.
   const disclosureExpanded = props.option.disclosure === true ? isExpanded : undefined;
   const expandedVisual = isExpanded
@@ -333,6 +333,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
   // The cell also contains independent accessory controls. Only the main option is disabled;
   // aria-disabled on their ancestor would override an enabled accessory's own state.
   const cellDisabled = props.option.disabled === true
+    && expandedVisual == null
     && !(rightAccessoryOutsidePressable && rightAccessory !== undefined);
   const wrapperCellAria = buildSelectionListGridCellWrapperA11yProps({
     pattern: a11yPattern,
