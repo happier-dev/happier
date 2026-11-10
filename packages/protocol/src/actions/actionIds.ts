@@ -152,6 +152,12 @@ import { PUBLIC_PROFILE_ACTION_IDS_V1 } from '../account/publicProfileActionIds.
 import { AUTOMATION_OCCURRENCE_ACTION_IDS } from '../automations/occurrenceActionIds.js';
 
 export const WORKFLOW_RUN_START_ACTION_ID_V1 = 'workflow.run.start';
+export const EXTERNAL_SESSION_STATUS_GET_ACTION_ID = 'sessions.external.status.get';
+export const EXTERNAL_SESSION_TAKEOVER_START_ACTION_ID = 'sessions.external.takeover.start';
+export const EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET_ACTION_ID = 'sessions.external.backgroundFollow.set';
+export const EXTERNAL_SESSION_TRANSCRIPT_PAGE_ACTION_ID = 'sessions.external.transcript.page';
+export const EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER_ACTION_ID = 'sessions.external.transcript.readAfter';
+
 export const WORKFLOW_ACTION_IDS_V1 = [
   'workflow.validate', WORKFLOW_RUN_START_ACTION_ID_V1, 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
   'workflow.run.read_state.set',
@@ -575,13 +581,13 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'sessions.external.link.ensure',
     'sessions.external.follow',
     'sessions.external.unfollow',
-    'sessions.external.backgroundFollow.set',
-    'sessions.external.status.get',
-    'sessions.external.transcript.page',
-    'sessions.external.transcript.readAfter',
+    EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET_ACTION_ID,
+    EXTERNAL_SESSION_STATUS_GET_ACTION_ID,
+    EXTERNAL_SESSION_TRANSCRIPT_PAGE_ACTION_ID,
+    EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER_ACTION_ID,
     'sessions.external.takeover',
     'sessions.external.materialize.start',
-    'sessions.external.takeover.start',
+    EXTERNAL_SESSION_TAKEOVER_START_ACTION_ID,
     'sessions.external.operation.status.get',
     'sessions.external.operation.cancel',
     'sessions.external.operation.resume',

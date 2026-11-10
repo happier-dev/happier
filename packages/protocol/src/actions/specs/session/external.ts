@@ -7,7 +7,7 @@ import { ExternalSessionTakeoverInputV1Schema, ExternalSessionTakeoverResultV1Sc
 import type { ActionSurfaceBindingContext, PreNormalizedActionSpec } from '../definition.js';
 import { type ActionInputHints } from '../../metadata.js';
 import { ExternalSessionBackgroundFollowActionResultV1Schema, ExternalSessionFollowPolicySetResponseSchema, ExternalSessionStatusGetResponseSchema, ExternalSessionStatusActionResultV1Schema } from '../../../sessions/external/daemonRpcV1.js';
-import { ExternalSessionMaterializeStartInputV1Schema, ExternalSessionMaterializeActionInputV1Schema, ExternalSessionMaterializeActionResultV1Schema, ExternalSessionOperationActionResultV1Schema, ExternalSessionOperationActionResponseV1Schema, ExternalSessionOperationCancelInputV1Schema, ExternalSessionOperationDiscardInputV1Schema, ExternalSessionOperationResumeInputV1Schema, ExternalSessionOperationRetryInputV1Schema, ExternalSessionOperationStatusInputV1Schema, ExternalSessionOperationTransportReferenceV1Schema, ExternalSessionTakeoverStartInputV1Schema, projectExternalSessionMaterializeActionResultV1, projectExternalSessionOperationActionResultV1 } from '../../../sessions/external/operationActionSchemasV1.js';
+import { ExternalSessionMaterializeStartInputV1Schema, ExternalSessionMaterializeActionInputV1Schema, ExternalSessionMaterializeActionResultV1Schema, ExternalSessionOperationActionResultV1Schema, ExternalSessionOperationActionResponseV1Schema, ExternalSessionOperationCancelInputV1Schema, ExternalSessionOperationDiscardInputV1Schema, ExternalSessionOperationResumeInputV1Schema, ExternalSessionOperationRetryInputV1Schema, ExternalSessionOperationStatusInputV1Schema, ExternalSessionOperationTransportReferenceV1Schema, ExternalSessionTakeoverStartInputV1Schema, ExternalSessionTakeoverActionInputV1Schema, projectExternalSessionMaterializeActionResultV1, projectExternalSessionOperationActionResultV1 } from '../../../sessions/external/operationActionSchemasV1.js';
 import { RPC_METHODS } from '../../../rpc/methods.js';
 
 
@@ -127,7 +127,7 @@ function createExternalSessionOperationActionSpecsV1() {
       voice: false,
       agent: true,
       mcp: true,
-      cli: false,
+      cli: true,
       rpc: true,
     },
     sideEffectClass: 'write',
@@ -145,7 +145,7 @@ function createExternalSessionOperationActionSpecsV1() {
     description: 'Start or converge on the canonical external-session takeover operation.',
     safety: 'danger',
     placements: [],
-    bindings: { rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER_START },
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER_START, mcpToolName: 'sessions_external_takeover_start' },
     surfaceBindings: {
       rpc: {
         inputSchema: ExternalSessionTakeoverStartInputV1Schema,
@@ -155,16 +155,16 @@ function createExternalSessionOperationActionSpecsV1() {
       },
     },
     surfaces: {
-      ui: false,
+      ui: true,
       voice: false,
-      agent: false,
-      mcp: false,
-      cli: false,
+      agent: true,
+      mcp: true,
+      cli: true,
       rpc: true,
     },
     sideEffectClass: 'danger',
-    outputSchema: ExternalSessionOperationActionResponseV1Schema,
-    inputSchema: ExternalSessionTakeoverStartInputV1Schema,
+    outputSchema: ExternalSessionOperationActionResultV1Schema,
+    inputSchema: ExternalSessionTakeoverActionInputV1Schema,
     inputHints: {
       description: 'Start moving a session you began outside Happier into Happier, so you can steer it here.',
       title: 'Start external session takeover',
@@ -195,7 +195,7 @@ function createExternalSessionOperationActionSpecsV1() {
       voice: false,
       agent: true,
       mcp: true,
-      cli: false,
+      cli: true,
       rpc: true,
     },
     sideEffectClass: 'read',
@@ -231,7 +231,7 @@ function createExternalSessionOperationActionSpecsV1() {
       voice: false,
       agent: true,
       mcp: true,
-      cli: false,
+      cli: true,
       rpc: true,
     },
     sideEffectClass: 'write',
@@ -267,7 +267,7 @@ function createExternalSessionOperationActionSpecsV1() {
       voice: false,
       agent: true,
       mcp: true,
-      cli: false,
+      cli: true,
       rpc: true,
     },
     sideEffectClass: 'write',
@@ -303,7 +303,7 @@ function createExternalSessionOperationActionSpecsV1() {
       voice: false,
       agent: true,
       mcp: true,
-      cli: false,
+      cli: true,
       rpc: true,
     },
     sideEffectClass: 'write',
@@ -339,7 +339,7 @@ function createExternalSessionOperationActionSpecsV1() {
       voice: false,
       agent: true,
       mcp: true,
-      cli: false,
+      cli: true,
       rpc: true,
     },
     sideEffectClass: 'danger',
@@ -425,7 +425,7 @@ function createExternalSessionActionSpecs() {
       voice: false,
       agent: true,
       mcp: true,
-      cli: false,
+      cli: true,
       rpc: true,
     },
     sideEffectClass: 'danger',
@@ -606,6 +606,7 @@ function createExternalSessionActionSpecs() {
     placements: [],
     bindings: {
       rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET,
+      mcpToolName: 'sessions_external_status_get',
       rpcMethodAliases: [RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET_LEGACY],
     },
     surfaceBindings: {
@@ -621,11 +622,11 @@ function createExternalSessionActionSpecs() {
       },
     },
     surfaces: {
-      ui: false,
+      ui: true,
       voice: false,
-      agent: false,
-      mcp: false,
-      cli: false,
+      agent: true,
+      mcp: true,
+      cli: true,
       rpc: true,
     },
     sideEffectClass: 'read',
@@ -690,24 +691,27 @@ function createExternalSessionActionSpecs() {
       rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER,
       rpcMethodAliases: [RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER_LEGACY],
       sdkMethod: 'sessions.external.readAfterTranscript',
+      mcpToolName: 'sessions_external_transcript_read_after',
+    },
+    surfaceBindings: {
+      rpc: {
+        inputSchema: lazyZodSchema(() => z.union([ExternalSessionTranscriptReadAfterRequestSchema, ExternalSessionTranscriptRefreshReadAfterRequestV1Schema])),
+        decodeInput: identityActionSurfaceValue,
+        outputSchema: lazyZodSchema(() => z.union([ExternalSessionTranscriptReadAfterResponseSchema, ExternalSessionTranscriptRefreshReadAfterResponseV1Schema])),
+        encodeOutput: identityActionSurfaceValue,
+      },
     },
     surfaces: {
-      ui: false,
+      ui: true,
       voice: false,
-      agent: false,
-      mcp: false,
-      cli: false,
+      agent: true,
+      mcp: true,
+      cli: true,
       rpc: true,
     },
     sideEffectClass: 'read',
-    outputSchema: lazyZodSchema(() => z.union([
-      ExternalSessionTranscriptReadAfterResponseSchema,
-      ExternalSessionTranscriptRefreshReadAfterResponseV1Schema,
-    ])),
-    inputSchema: lazyZodSchema(() => z.union([
-      ExternalSessionTranscriptReadAfterRequestSchema,
-      ExternalSessionTranscriptRefreshReadAfterRequestV1Schema,
-    ])),
+    outputSchema: ExternalSessionTranscriptReadAfterResponseSchema,
+    inputSchema: ExternalSessionTranscriptReadAfterRequestSchema,
     inputHints: {
       description: 'Read what an outside session has said since a point in its conversation.',
       title: 'Read external session transcript after cursor',

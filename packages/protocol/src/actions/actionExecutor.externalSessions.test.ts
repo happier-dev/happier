@@ -1,6 +1,8 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { getActionSpec, listActionSpecsForSurface } from './actionSpecs.js';
+import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import type {
   HostExternalSessionActionId,
   PluginExternalSessionActionId,
@@ -43,6 +45,46 @@ function createDeps(
 }
 
 describe('createActionExecutor (public External Session actions)', () => {
+  it('offers every agent-facing external operation through CLI without exposing viewer leases', () => {
+    for (const spec of listActionSpecsForSurface('agent').filter(spec => spec.id.startsWith('sessions.external.'))) {
+      expect(spec.surfaces.cli, spec.id).toBe(true);
+    }
+    expect(listActionSpecsForSurface('cli').some(spec => spec.id === 'sessions.external.follow')).toBe(false);
+    expect(listActionSpecsForSurface('cli').some(spec => spec.id === 'sessions.external.unfollow')).toBe(false);
+  });
+  it('offers semantic history reads and takeover to agents, MCP and CLI with ordinary Ask defaults', async () => {
+    const takeover = { request: { v: 1, idempotencyKey: 'takeover-1', sessionId: 'session-1',
+      plan: 'takeover', targetStorageMode: 'persisted', targetDirectory: '/workspace', targetRuntimeMode: 'terminal' } };
+    const readAfter = { machineId: 'machine-1', agentId: 'codex', remoteSessionId: 'remote-1',
+      source: { kind: 'codexHome', home: 'user' }, cursor: 'native-cursor' };
+    const unavailable = { ok: false, errorCode: 'agent_unavailable', error: 'agent_unavailable' };
+    const operation = { ok: false, error: { code: 'source_unavailable', message: 'Source is unavailable' } };
+    for (const surface of ['agent', 'mcp', 'cli'] as const) {
+      const catalog = listActionSpecsForSurface(surface);
+      for (const actionId of ['sessions.external.status.get', 'sessions.external.transcript.readAfter', 'sessions.external.takeover.start'] as const) {
+        expect(catalog.some(spec => spec.id === actionId), `${surface}:${actionId}`).toBe(true);
+        const spec = getActionSpec(actionId);
+        expect(resolveActionApprovalRouting({ actionId, spec, context: { surface } }).required)
+          .toBe(actionId === 'sessions.external.takeover.start');
+      }
+      const plugin = vi.fn();
+      const executor = createActionExecutor({ ...createDeps(plugin), hostExternalSessionAction: async ({ actionId }) =>
+        ({ ok: true, result: actionId === 'sessions.external.takeover.start' ? operation : unavailable }) });
+      for (const [actionId, input, result] of [
+        ['sessions.external.status.get', { sessionId: 'session-1' }, unavailable],
+        ['sessions.external.transcript.readAfter', readAfter, unavailable],
+        ['sessions.external.takeover.start', takeover, operation],
+      ] as const) {
+        await expect(executor.execute(actionId, input, { surface, authority: 'account_automation',
+          ...(surface === 'agent' ? { defaultSessionId: 'session-1' } : {}) }))
+          .resolves.toEqual({ ok: true, result });
+      }
+      expect(plugin).not.toHaveBeenCalled();
+    }
+    expect(getActionSpec('sessions.external.follow').surfaces.agent).toBe(false);
+    expect(getActionSpec('sessions.external.unfollow').surfaces.mcp).toBe(false);
+    expect(getActionSpec('sessions.external.takeover').surfaces.agent).toBe(false);
+  });
   it.each(['ui', 'agent', 'mcp', 'cli'] as const)('routes %s background-follow intent through the host owner without plugin provenance', async (surface) => {
     const externalSessionAction = vi.fn();
     const response = { ok: true as const, enabled: true, leaseActive: true, updatedAtMs: 42 };
@@ -50,7 +92,8 @@ describe('createActionExecutor (public External Session actions)', () => {
       hostExternalSessionAction: async () => ({ ok: true, result: response }) });
     await expect(executor.execute('sessions.external.backgroundFollow.set', {
       sessionId: 'session-1', enabled: true,
-    }, { surface, authority: 'account_automation', defaultSessionId: 'session-1' })).resolves.toEqual({ ok: true, result: response });
+    }, { surface, authority: 'account_automation',
+      ...(surface === 'agent' ? { defaultSessionId: 'session-1' } : {}) })).resolves.toEqual({ ok: true, result: response });
     expect(externalSessionAction).not.toHaveBeenCalled();
   });
   it.each(['ui', 'agent', 'mcp'] as const)('routes %s import through the existing host operation without plugin identity', async (surface) => {

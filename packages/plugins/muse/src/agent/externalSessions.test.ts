@@ -17,7 +17,8 @@ import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRu
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
-import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
+import { resolveExternalSessionSourceSurface } from '@/session/actions/externalSessions/providerOpsResolution';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createMuseMspProcessFixture, readMuseMspProcessAudit } from './testkit/mspProcess.js';
 import { readMuseRecord } from './events.js';
 
@@ -95,9 +96,14 @@ it('discovers, links and pages native history through all six admitted callbacks
     const address = http.address();
     if (!address || typeof address === 'string') throw new Error('Expected loopback Account HTTP boundary');
     await runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, async () => {
-    fixture = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: ['happier.agent.muse'],
+    fixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      runtimeOptions: {
       scopedActionRuntime: { credentials: null, actionsSettingsProvider: createActionSettingsProvider() } } });
-    await activateAgentRuntimeContributionOnDemand(fixture.registry, 'muse');
+    expect(fixture.registry.agentRuntimesByAgentId.has('muse')).toBe(false);
+    expect(fixture.registry.contributes.agents.map(agent => agent.id)).toContain('muse');
+    // Exercise product admission before any Session or Run has been opened.
+    const admitted = await resolveExternalSessionSourceSurface('muse', { kind: 'museNative' });
+    expect(admitted).toMatchObject({ ok: true });
     const callbacks = fixture.registry.agentRuntimesByAgentId.get('muse')?.externalSessions;
     if (!callbacks) throw new Error('Admitted external history contribution is unavailable');
     const invocation = { signal: new AbortController().signal, maxSerializedBytes: 16 * 1024 * 1024 };

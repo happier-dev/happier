@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { captureExternalSessionTakeoverStartInputV1 } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import { showExternalSessionTakeoverDialog } from '@/components/sessions/external/takeover/showExternalSessionTakeoverDialog';
@@ -195,20 +196,6 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
         setTakeoverInFlight(mode);
         try {
             const serverId = params.externalSessionRuntime.sessionServerId;
-            const qualifiedIdentity = externalSessionLink.qualifiedIdentity;
-            const linkedAtMs = externalSessionLink.linkedAtMs;
-            if (
-                !qualifiedIdentity
-                || typeof linkedAtMs !== 'number'
-                || !Number.isFinite(linkedAtMs)
-                || linkedAtMs < 0
-            ) {
-                Modal.alert(
-                    t('common.error'),
-                    t('chatFooter.externalSessionStatusUnavailable'),
-                );
-                return false;
-            }
             const existingIdempotencyEntry = takeoverIdempotencyKeysRef.current[mode];
             const idempotencyEntry = existingIdempotencyEntry?.targetDirectory === normalizedTargetDirectory
                 ? existingIdempotencyEntry
@@ -216,20 +203,11 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
                     targetDirectory: normalizedTargetDirectory,
                     idempotencyKey: randomUUID(),
                 };
-            takeoverIdempotencyKeysRef.current[mode] = idempotencyEntry;
-            const takeoverInput = {
-                machineId: externalSessionLink.machineId,
+            const captured = captureExternalSessionTakeoverStartInputV1({
                 request: {
                     v: 1 as const,
                     idempotencyKey: idempotencyEntry.idempotencyKey,
                     sessionId: normalizedSessionId,
-                    source: {
-                        machineId: externalSessionLink.machineId,
-                        remoteSessionId:
-                            externalSessionLink.remoteSessionId,
-                        qualifiedIdentity,
-                        linkGeneration: String(linkedAtMs),
-                    },
                     plan: 'takeover' as const,
                     targetStorageMode: mode === 'persisted'
                         ? 'persisted' as const
@@ -237,7 +215,13 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
                     targetDirectory: normalizedTargetDirectory,
                     targetRuntimeMode: 'terminal' as const,
                 },
-            };
+            }, externalSessionLink);
+            if (!captured) {
+                Modal.alert(t('common.error'), t('chatFooter.externalSessionStatusUnavailable'));
+                return false;
+            }
+            takeoverIdempotencyKeysRef.current[mode] = idempotencyEntry;
+            const takeoverInput = { machineId: externalSessionLink.machineId, ...captured };
             if (!isRequestCurrent()) {
                 return false;
             }

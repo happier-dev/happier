@@ -5,7 +5,7 @@ import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.
 import { SessionIdSchema } from '../idsV1.js';
 import { SpawnSessionTerminalSchema } from '../spawnSession.js';
 import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
-import { LinkedExternalSessionQualifiedIdentityV1Schema } from './linkedSessionMetadata.js';
+import { LinkedExternalSessionQualifiedIdentityV1Schema, type LinkedExternalSessionV1 } from './linkedSessionMetadata.js';
 import {
   ExternalSessionOperationProgressV1Schema,
   ExternalSessionOperationSharedPresentationV1Schema,
@@ -82,6 +82,36 @@ export const ExternalSessionTakeoverStartInputV1Schema = lazyZodSchema(() => z.s
 export type ExternalSessionTakeoverStartInputV1 = z.infer<
   typeof ExternalSessionTakeoverStartInputV1Schema
 >;
+
+/** A person or agent chooses the destination; the host captures the linked source. */
+export const ExternalSessionTakeoverActionInputV1Schema = lazyZodSchema(() => z.strictObject({
+  request: z.strictObject({
+    v: z.literal(1),
+    idempotencyKey: PublicOperationIdSchema,
+    sessionId: PublicOperationSessionIdSchema,
+    plan: z.literal('takeover'),
+    targetStorageMode: z.enum(['external-linked', 'persisted']),
+    targetDirectory: ExternalSessionTakeoverTargetDirectoryV1Schema,
+    targetRuntimeMode: z.literal('terminal'),
+    terminal: z.optional(SpawnSessionTerminalSchema),
+  }),
+}));
+export type ExternalSessionTakeoverActionInputV1 = z.infer<typeof ExternalSessionTakeoverActionInputV1Schema>;
+
+/** Shared host adapter for the linked source used by UI and automated takeover. */
+export function captureExternalSessionTakeoverStartInputV1(
+  input: ExternalSessionTakeoverActionInputV1,
+  link: LinkedExternalSessionV1 | null | undefined,
+): ExternalSessionTakeoverStartInputV1 | null {
+  if (!link?.qualifiedIdentity || typeof link.linkedAtMs !== 'number'
+    || !Number.isFinite(link.linkedAtMs) || link.linkedAtMs < 0) return null;
+  return {
+    request: { ...input.request, source: {
+      machineId: link.machineId, remoteSessionId: link.remoteSessionId,
+      qualifiedIdentity: link.qualifiedIdentity, linkGeneration: String(link.linkedAtMs),
+    } },
+  };
+}
 
 /**
  * Public-safe descriptive reference. The owner machine resolves the private

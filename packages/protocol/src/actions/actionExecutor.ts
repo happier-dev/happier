@@ -39,6 +39,7 @@ import { dispatchWorkspaceSync } from './executor/workspace/sync.js';
 import { dispatchCode } from './executor/code.js';
 import type { CoreInvocation, CoreOptions, PreparedCoreAdmission, PrivatePrepareResult, ActionHomeEquivalence, DispatchFacts, DiscussionPublicationPolicy } from './executor/coreInvocation.js';
 import { DeploymentTemplateInstantiationReviewV1Schema, areDeploymentTemplateReviewFactsEqualV1, projectDeploymentTemplateInstantiationResultV1 } from '../deployments/deploymentTemplateInstantiationV1.js';
+import { deploymentMoveToRepositoryChildRoleV1 } from '../scm/repositoryFilesPullRequestActionIds.js';
 import { DeploymentEnvironmentCreationReviewV1Schema } from '../deployments/deploymentActionsV1.js';
 import { SESSION_TRANSCRIPT_ACTION_ID_SET, delegatesApprovalClassificationToResolvedAction, isPluginExternalSessionActionId, isHostExternalSessionActionId, isSessionPermissionRemoteActionId, isScmActionId, isActionFamilyId } from './executor/actionFamilies.js';
 import { resolveSessionIdFromInput, resolveExecutionRunScope, withoutExecutionRunScope, projectSessionReferenceFailure, resolveServerIdForSession, resolveServerIdForExecutionRunScope } from './executor/sessionScope.js';
@@ -2560,7 +2561,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       || actionId === 'deployments.environments.create' && deps.prepareDeploymentEnvironmentCreate
       || actionId === 'deployments.teardown' && deps.prepareDeploymentTeardown
       || (actionId === 'deployments.deploy' || actionId === 'deployments.rollback' || actionId === 'deployments.promote') && deps.prepareDeploymentAction)) {
-      const prepared = await readDeploymentPreparation(deps, actionId, admittedInput, ctx, retainedDeploymentReview);
+      const prepared = await readDeploymentPreparation(deps, actionId, admittedInput, ctx, retainedDeploymentReview,
+        (id, input) => executeInvocation(id, input, ctx));
       if (prepared) {
         if ('errorCode' in prepared) return prepared;
         if ('observePendingOperation' in prepared) observePendingOperation = prepared.observePendingOperation;
@@ -4011,17 +4013,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           || (
             (ctx.surface === 'ui' || ctx.surface === 'agent' || ctx.surface === 'mcp' || ctx.surface === 'cli')
             && ctx.actionCaller?.kind !== 'plugin'
-            && (actionId === 'sessions.external.candidates.list'
-              || actionId === 'sessions.external.candidate.delete'
-              || actionId === 'sessions.external.link.ensure'
-              || actionId === 'sessions.external.transcript.page'
-              || actionId === 'sessions.external.materialize.start'
-              || actionId === 'sessions.external.backgroundFollow.set'
-              || actionId === 'sessions.external.operation.status.get'
-              || actionId === 'sessions.external.operation.cancel'
-              || actionId === 'sessions.external.operation.resume'
-              || actionId === 'sessions.external.operation.retry'
-              || actionId === 'sessions.external.operation.discard')
           )
         )
       ) {
@@ -5976,6 +5967,21 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
           const result = await deps.deploymentRestore(input, ctx);
           return 'errorCode' in result ? result : { ok: true, result };
+        }
+        if (actionId === 'deployments.environments.moveToRepository') {
+          if (!ctx.serverId || !ctx.runtimeAccountId) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+          if (!deps.deploymentMoveToRepository) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:deployments.environments.moveToRepository' };
+          const input = data as z.infer<(typeof DeploymentActionInputSchemasV1)[typeof actionId]>;
+          if (!isSameHome(input.serverId, ctx.serverId, ctx)
+            || input.workspace && !isSameHome(input.workspace.serverId, ctx.serverId, ctx))
+            return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+          const result = await deps.deploymentMoveToRepository(input, ctx, (childId, childInput) => {
+            const role = deploymentMoveToRepositoryChildRoleV1(childId);
+            if (!role) return Promise.resolve({ ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${childId}` });
+            if (!ctx.hostReviewedChild) return Promise.resolve({ ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' });
+            return ctx.hostReviewedChild.invoke({ action: childId, role, input: projectNativeJsonValueForTransport(childInput) });
+          });
+          return 'ok' in result ? result : { ok: true, result };
         }
         if (actionId === 'deployments.templates.instantiate') {
           if (!ctx.serverId || !ctx.runtimeAccountId) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };

@@ -8,6 +8,18 @@ import { answerSessionPermission, resolveSessionPermissionBehavior } from './ses
 import { createClaudePermissionEngine, type ClaudePermissionContext } from '../../../../../packages/plugins/claude/src/agent/permissions/createClaudePermissionEngine';
 
 describe('Session permission offered choices', () => {
+    it('uses only native offers for Muse and never guesses a Claude grant for an offerless request', () => {
+        const permissionBehavior = resolveSessionPermissionBehavior({ agentId: 'muse', metadata: { flavor: 'muse' }, accountScope: null });
+        expect(resolveSessionPermissionChoices({ toolName: 'Bash', permissionBehavior }))
+            .toEqual([{ id: 'deny', label: 'common.no', response: { approved: false, decision: 'denied' } }]);
+        const nativeChoices = { requirementId: 'muse-approval', source: 'native-agent', choices: [
+            { id: 'muse:once', label: 'Allow once', decision: 'approved' as const, scope: 'once' as const,
+                response: { approved: true } },
+        ] };
+        expect(resolveSessionPermissionChoices({ toolName: 'Bash', permissionBehavior, nativeChoices }))
+            .toEqual([{ id: 'muse:once', label: 'Allow once', decision: 'approved', scope: 'once',
+                response: { nativeChoice: { requirementId: 'muse-approval', choiceId: 'muse:once' } } }]);
+    });
     it('keeps the existing catalog consent reachable for a live external Claude MCP request', async () => {
         // The plugin's host permission service is the external SDK boundary.
         const requestDecision = vi.fn(async (_request: Parameters<ClaudePermissionContext['sessions']['current']['permissions']['requestDecision']>[0],

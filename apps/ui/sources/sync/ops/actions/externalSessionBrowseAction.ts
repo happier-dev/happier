@@ -1,5 +1,6 @@
-import { ExternalSessionBackgroundFollowActionInputV1Schema, ExternalSessionCandidateDeleteRequestSchema, ExternalSessionLinkEnsureRequestSchema, ExternalSessionsCandidatesListRequestSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import { ExternalSessionBackgroundFollowActionInputV1Schema, ExternalSessionCandidateDeleteRequestSchema, ExternalSessionLinkEnsureRequestSchema, ExternalSessionsCandidatesListRequestSchema, ExternalSessionStatusActionInputV1Schema, ExternalSessionTranscriptPageRequestSchema, ExternalSessionTranscriptReadAfterRequestSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET_ACTION_ID, EXTERNAL_SESSION_STATUS_GET_ACTION_ID, EXTERNAL_SESSION_TAKEOVER_START_ACTION_ID, EXTERNAL_SESSION_TRANSCRIPT_PAGE_ACTION_ID, EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER_ACTION_ID } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
@@ -8,6 +9,8 @@ import {
     ExternalSessionOperationReferenceV1Schema,
     projectExternalSessionMaterializeActionResultV1,
     projectExternalSessionOperationActionResultV1,
+    ExternalSessionTakeoverActionInputV1Schema,
+    captureExternalSessionTakeoverStartInputV1,
 } from '@happier-dev/protocol/sessions';
 import {
     machineExternalSessionCandidateDelete,
@@ -20,6 +23,10 @@ import {
     machineExternalSessionOperationRetry,
     machineExternalSessionOperationDiscard,
     machineExternalSessionFollowPolicySet,
+    machineExternalSessionStatusGet,
+    machineExternalSessionTranscriptPage,
+    machineExternalSessionTranscriptReadAfter,
+    machineExternalSessionTakeoverStart,
 } from '@/sync/ops/machineExternalSessions';
 import { storage } from '@/sync/domains/state/storage';
 import { resolveSessionAddressFromLocalState } from '@/sync/domains/session/resolveSessionAddressFromLocalState';
@@ -49,7 +56,33 @@ export const executeExternalSessionBrowseAction = async (
         ...(context.expectedAccountId ? { accountId: context.expectedAccountId } : {}),
         ...(signal ? { signal } : {}) };
     switch (actionId) {
-        case 'sessions.external.backgroundFollow.set': {
+        case EXTERNAL_SESSION_STATUS_GET_ACTION_ID: {
+            const parsed = ExternalSessionStatusActionInputV1Schema.parse(input);
+            const owner = readExternalActionOwnerMetadata(parsed.sessionId, context.serverId);
+            const link = readExternalSessionLink(owner?.metadata);
+            if (!link) return { ok: false, errorCode: 'session_machine_target_unavailable', error: 'Session owner Machine is unavailable' };
+            const response = await machineExternalSessionStatusGet({ ...parsed, machineId: link.machineId,
+                agentId: link.agentId, remoteSessionId: link.remoteSessionId, source: link.source },
+                { ...options, serverId: owner?.serverId });
+            const result = await getActionSpec(actionId).surfaceBindings!.plugin!.projectOutput!(response, {
+                actionId, surface: 'rpc', caller: { kind: 'host' }, input: parsed,
+            });
+            return { ok: true, result };
+        }
+        case EXTERNAL_SESSION_TRANSCRIPT_PAGE_ACTION_ID:
+            return { ok: true, result: await machineExternalSessionTranscriptPage(ExternalSessionTranscriptPageRequestSchema.parse(input), options) };
+        case EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER_ACTION_ID:
+            return { ok: true, result: await machineExternalSessionTranscriptReadAfter(ExternalSessionTranscriptReadAfterRequestSchema.parse(input), options) };
+        case EXTERNAL_SESSION_TAKEOVER_START_ACTION_ID: {
+            const parsed = ExternalSessionTakeoverActionInputV1Schema.parse(input);
+            const owner = readExternalActionOwnerMetadata(parsed.request.sessionId, context.serverId);
+            const captured = captureExternalSessionTakeoverStartInputV1(parsed, readExternalSessionLink(owner?.metadata));
+            if (!captured) return { ok: true, result: { ok: false, error: { code: 'source_unavailable', message: 'Linked session source is unavailable' } } };
+            const response = await machineExternalSessionTakeoverStart({ machineId: captured.request.source.machineId, ...captured },
+                { ...options, serverId: owner?.serverId });
+            return { ok: true, result: projectExternalSessionOperationActionResultV1(response, parsed.request.sessionId) };
+        }
+        case EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET_ACTION_ID: {
             const parsed = ExternalSessionBackgroundFollowActionInputV1Schema.parse(input);
             const owner = readExternalActionOwnerMetadata(parsed.sessionId, context.serverId);
             const link = readExternalSessionLink(owner?.metadata);

@@ -16,8 +16,8 @@ import { executePluginExternalSessionAction } from './pluginExternalSessionActio
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 
 const boundary = vi.hoisted(() => ({ get: vi.fn(), patch: vi.fn(), rpc: vi.fn() }));
-vi.mock('axios', async importOriginal => {
-  const actual = await importOriginal<typeof import('axios')>();
+vi.mock('@/api/client/credentialAxios', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/api/client/credentialAxios')>();
   return { ...actual, default: { ...actual.default, get: boundary.get, patch: boundary.patch } };
 });
 vi.mock('@/persistence', async importOriginal => ({
@@ -35,7 +35,9 @@ const remoteSessionId = '  native\nremote/AB+cd==  ';
 function installSession() {
   const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain', storedContentMode: 'plain',
     agentState: null, metadata: { machineId, externalSessionV1: { v: 1, machineId, agentId: 'codex', remoteSessionId,
-      source: { kind: 'codexHome', home: '/tmp/follow-home' }, linkedAtMs: 1 } } });
+      source: { kind: 'codexHome', home: '/tmp/follow-home' }, linkedAtMs: 1,
+      qualifiedIdentity: { v: 1, agent: { pluginId: 'example.codex', localId: 'codex' },
+        source: { kind: 'codexHome', contractVersion: 1 } } } } });
   const session = createCurrentSessionProjectionRecordFixture({ id: sessionId, encryptionMode: 'plain', share: null,
     metadataLayoutVersion: fields.metadataLayoutVersion, metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata,
     effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
@@ -55,7 +57,7 @@ function installSession() {
   const currentness = AccountEncryptionCurrentnessResponseSchema.parse({ mode: 'plain', version: 1,
     signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
   boundary.get.mockImplementation(async (url: string) => {
-    const path = new URL(url).pathname;
+    const path = new URL(url, 'https://fixture.invalid').pathname;
     if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: response };
     if (path === '/v1/account/encryption/currentness') return { status: 200, data: currentness };
     throw new Error(`unexpected_http:${path}`);
@@ -78,6 +80,30 @@ describe('host External Session follow semantic continuation', () => {
       privateNativeObservation: { path: '/private/native' } });
     expect(await transport()({ actionId: 'sessions.external.backgroundFollow.set', input: { sessionId, enabled: true },
       context: { surface: 'cli' } })).toEqual({ ok: true, result: { ok: true, enabled: true, leaseActive: true, updatedAtMs: 42 } });
+  });
+  it('reads takeover readiness by linked Session id without disclosing private Machine status', async () => {
+    boundary.rpc.mockResolvedValue({ ok: true, machineOnline: true, runnerActive: false, activity: 'idle',
+      canTakeOverDirect: false, canTakeOverPersist: true, canForceStop: false, trustedPid: 42 });
+    expect(await transport()({ actionId: 'sessions.external.status.get', input: { sessionId },
+      context: { surface: 'agent' } })).toEqual({ ok: true, result: { ok: true, machineOnline: true,
+        runnerActive: false, activity: 'idle', canTakeOverDirect: false, canTakeOverPersist: true, canForceStop: false } });
+    expect(boundary.rpc).toHaveBeenCalledWith(expect.objectContaining({ machineId,
+      method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET,
+      request: { sessionId, machineId, agentId: 'codex', remoteSessionId,
+        source: { kind: 'codexHome', home: '/tmp/follow-home' } } }));
+  });
+  it('captures the current linked takeover source and preserves the semantic failure without inventing caller provenance', async () => {
+    const request = { v: 1, idempotencyKey: 'takeover-1', sessionId, plan: 'takeover',
+      targetStorageMode: 'persisted', targetDirectory: '/workspace', targetRuntimeMode: 'terminal' };
+    const failure = { ok: false, error: { code: 'source_unavailable', message: 'Source is unavailable' } };
+    boundary.rpc.mockResolvedValueOnce(failure);
+    expect(await transport()({ actionId: 'sessions.external.takeover.start', input: { request },
+      context: { surface: 'mcp' } })).toEqual({ ok: true, result: failure });
+    expect(boundary.rpc).toHaveBeenCalledWith(expect.objectContaining({ machineId,
+      method: RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER_START,
+      request: { request: { ...request, source: { machineId, remoteSessionId, linkGeneration: '1',
+        qualifiedIdentity: { v: 1, agent: { pluginId: 'example.codex', localId: 'codex' },
+          source: { kind: 'codexHome', contractVersion: 1 } } } } } }));
   });
   it('applies semantic daemon recovery through the real metadata tuple writer and retains raw exact-link refusals', async () => {
     const followLeaseManager = createExternalSessionFollowLeaseManager();
