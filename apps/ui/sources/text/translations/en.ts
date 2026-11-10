@@ -1,3 +1,4 @@
+import type { AgentStartupFailureCode, RequesterSessionRuntimeRefusalCode, SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
@@ -8524,6 +8525,9 @@ const enErrors = {
   connectionTimeout: 'Connection timed out',
   authenticationFailed: 'Authentication failed',
   permissionDenied: 'Permission denied',
+  clientRequired: 'Open this action on a signed-in device, then retry.',
+  secretSaveClientRequired: 'Open this action on a signed-in device with this account’s encryption keys, then retry saving the secret.',
+  secretUseClientRequired: 'Open this action on a signed-in device with this account’s encryption keys, then retry using the secret.',
   machineAdminAccessRequired: 'Set up administrator access for this machine, then try adding the domain again.',
   machineNetworkReviewRequired: "Review this machine’s Network settings, then try adding the domain again.",
   machineManagedCliUnavailable: "Install or update Happier on this machine, then try adding the domain again.",
@@ -9703,6 +9707,14 @@ const enSession = {
       agent_startup_invalid_state: 'Agent startup encountered invalid local runtime state.',
       agent_startup_model_reconciliation_failed: 'The selected model could not be applied during startup. Review the model selection, then retry the session.',
       agent_startup_failed: 'Agent startup failed.',
+      plugin_exec_system_tool_resolution_unavailable: "Happier cannot locate a required system tool on this Machine. Update Happier on the Machine, then try again.",
+      plugin_exec_managed_dependency_resolution_unavailable: "Happier cannot locate a required managed dependency on this Machine. Update Happier on the Machine, then try again.",
+      native_adapter_invocation_unavailable: "The Agent runtime is unavailable on this Machine. Reconnect or update Happier on the Machine, then try again.",
+      requester_session_runtime_owner_unavailable: 'This machine isn’t ready to run your sessions yet. Resume the session once it’s connected.',
+      requester_machine_admission_unavailable: 'This machine’s access for your account couldn’t be confirmed. Check that it’s online, then resume the session.',
+      requester_session_custody_unavailable: 'Your access to this session couldn’t be restored on this machine. Resume the session to try again.',
+      requester_session_bootstrap_mismatch: 'This machine restored access for a different request. Resume the session to start it again.',
+      requester_session_bootstrap_not_current: 'Your access to this session on this machine is no longer current. Resume the session to renew it.',
       database_transaction_timeout: "The server timed out while creating this session. Try starting it again.",
       SOURCE_RUNTIME_RELOAD_REQUIRED: 'This machine needs a Happier reload before the step can start',
       AGENT_RESUME_PROVIDER_STATE_MISSING: 'The native agent state needed to resume is missing.',
@@ -9712,6 +9724,7 @@ const enSession = {
       plugin_services_managed_provider_authority_unavailable: 'Access to the shared provider is unavailable. Check the Gateway and its machine connection, then retry the session.',
       provider_endpoint_unavailable: 'The provider endpoint is unavailable. Check the Gateway and its machine connection, then retry the session.',
       plugin_mcp_preparation_unavailable: 'Plugin MCP preparation is unavailable. Check the target machine, then retry the session.',
+      mcp_tool_catalog_unavailable: "An MCP tool catalog could not be read before Agent startup. Check the selected MCP servers, then retry the session.",
       project_environment_binding_unavailable: 'Required Project environment bindings are unavailable. Review the Project variables and selected profile, then retry the session.',
       agent_cli_not_runnable: "This Agent cannot run as this member. Install its Happier-managed runtime.",
       agent_runtime_daemon_service_generation_not_current: 'The runner agent generation is no longer current. Retry the session on the target machine.',
@@ -9738,7 +9751,9 @@ const enSession = {
       resource_mismatch: "The request does not match the current resource. Review the selection before retrying.",
       action_outcome_unknown: "The external operation could not be confirmed. Check its status before retrying.",
       teamCredential: 'The shared Team credential refused the request.',
-    },
+    } satisfies Record<AgentStartupFailureCode | RequesterSessionRuntimeRefusalCode
+      | Exclude<keyof typeof SESSION_PREPARATION_FAILURE_PREVIEWS,
+        'agent_isolation_unavailable' | 'filesystem_identity_custody_unavailable'>, string> & Record<string, string>,
   },
   agentAuthRequired: {
     message: ({ agent }: { agent: string }) => `Sign in to ${agent} or choose a ${agent} account.`,
@@ -14693,6 +14708,8 @@ const enWorkspaceSync = {
       'Update Happier on the source machine before trying this workspace handoff again. Other session and machine actions are still available.',
     needsAttention:
       'Workspace sync needs attention. Refresh its status, then try again.',
+    requesterAccessUnavailable:
+      'Happier could not restore access to this sync link. Check that you are using the original Account, or ask a Machine manager to check access.',
   },
   start: {
     blocked: {
@@ -17899,6 +17916,7 @@ const enSettingsAccount = {
   deleteAccountCleanupFailed:
     'The Home confirmed deletion, but this device could not finish clearing local data. Reopen Happier, then sign out if this account still appears.',
   encryptionUpdateFailed: 'Failed to update encryption setting',
+  encryptionPluginDataBlocks: "This Account has plugin data that cannot move between encryption modes yet. Nothing was changed. Keep using the current encryption mode until plugin data conversion is supported.",
   encryptionInventoryChanged: "Account data no longer matches this conversion. Refresh and try again.",
   encryptionRequiredByHome: "This Home requires end-to-end encryption.",
   encryptionPlainOnlyHome: "This Home does not allow end-to-end encryption.",
@@ -21972,6 +21990,22 @@ const enProjects = {
       variablesConflictTitle: "Someone changed these variables",
       variablesConflictBody: "Your edits are kept here but weren’t saved. Discard them to see the current variables.",
       variablesReviewBody: "Nothing changes until this is approved. Changes apply on the next deploy.",
+      providerVariablesColumn: "At provider",
+      providerVariablesUnavailable: "Couldn’t read provider variables",
+      providerVariablesPartial: "Some variables need attention",
+      providerVariablesUnpersisted: "Provider changes weren’t saved",
+      providerVariablesUnpersistedBody: "Provider changes may already be applied. Your draft is still here. Refresh and review before saving again.",
+      providerVariablesPresent: "Present",
+      providerVariablesMissing: "Missing",
+      providerVariablesSecret: "Secret (masked)",
+      providerVariablesPlain: "Value",
+      providerVariablesOwned: "Managed by Happier",
+      providerVariablesExternal: "Managed elsewhere",
+      providerVariablesChanged: "Changed at provider",
+      providerVariablesUnknown: "Comparison unavailable",
+      providerVariablesUseOurs: "Use ours",
+      providerVariablesKeepTheirs: "Keep theirs",
+      providerVariablesChoiceBody: "Use ours replaces the provider value. Keep theirs removes this binding from Happier.",
       variablesSaveFailedTitle: "Couldn’t save the variables",
       secretsSealed: ({ count, machine }: { count: number; machine: string }) => `${count} ${plural({ count, singular: 'secret', plural: 'secrets' })} sealed to ${machine} for this environment. Only its daemon can open them, and only while starting a release.`,
       sourceSavedSecret: "Saved secret",

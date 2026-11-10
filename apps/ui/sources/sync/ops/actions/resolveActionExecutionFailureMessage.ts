@@ -80,6 +80,9 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     const discussionCode = typeof code === 'string' && code.startsWith('discussion')
         ? DiscussionErrorCodeV1Schema.safeParse(code) : null;
     if (discussionCode?.success) return discussionFailureLabel(discussionCode.data);
+    if (code === 'client_required') return t('errors.clientRequired');
+    if (code === 'secret_save_client_required') return t('errors.secretSaveClientRequired');
+    if (code === 'secret_use_client_required') return t('errors.secretUseClientRequired');
     if (code === 'machine_admin_access_required') return t('errors.machineAdminAccessRequired');
     if (code === 'machine_network_review_required') return t('errors.machineNetworkReviewRequired');
     if (code === 'managed_cli_unavailable') return t('errors.machineManagedCliUnavailable');

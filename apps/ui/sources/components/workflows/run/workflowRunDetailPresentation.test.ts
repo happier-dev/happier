@@ -296,6 +296,20 @@ describe('managed workflow Run presentation', () => {
         expect(formatWorkflowRunFailureCauseLine({ invocationId: invocation.id, invocationLifecycle: invocation.lifecycle,
             step: null, recovery })).not.toContain(code);
     });
+    it.each(['client_required', 'secret_save_client_required', 'secret_use_client_required'] as const)(
+        'explains the finite signed-in-device failure %s without a retained message', code => {
+            const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
+            const run = createWorkflowRunSummaryFixture({ state: 'failed' });
+            const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'action',
+                invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: invocation.id,
+                reason: { code } });
+            const recovery = projectWorkflowInvocationRecovery({ run, invocation, progress, machineHomeDirectory: null });
+            expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code, message: null,
+                headline: expect.any(String) });
+            expect(formatWorkflowRunFailureCauseLine({ invocationId: invocation.id, invocationLifecycle: invocation.lifecycle,
+                step: null, recovery })).not.toBeNull();
+        });
+
     it.each([undefined, 'FUTURE_STARTUP_REFUSAL'])('leaves an unmapped startup code in technical facts, not the outcome (%s)', message => {
         const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
         const code = 'FUTURE_STARTUP_REFUSAL';
