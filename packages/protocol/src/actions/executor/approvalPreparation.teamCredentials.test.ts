@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { prepareApprovalRequest } from './approvalPreparation.js';
+import { prepareTeamCredentialSources } from '../specs/teamCredentialApproval.js';
 import type { ActionExecutorDeps } from './types.js';
 import { TeamSummaryV1Schema, resolveTeamAdmissionProjectionV1 } from '../../teams/projections.js';
 import { NO_TEAM_CAPABILITIES_V1 } from '../../teams/capabilities.js';
@@ -26,6 +27,14 @@ const input = SessionSpawnNewInputV2Schema.parse({
 const context = { surface: 'mcp', authority: 'account_automation', serverId: 'home' } as const;
 
 describe('Team credential source at existing Action admission', () => {
+  it('keeps each selected Team identity when aggregated references name the same resource', async () => {
+    const source = { teamId: team.id, resourceId: resource.id, teamName: team.name, accountName: resource.displayName };
+    const sources = await prepareTeamCredentialSources({ deps: {}, selection: { serverId: 'home', resources: [
+      { teamId: 'another-team', resourceId: resource.id }, { teamId: team.id, resourceId: resource.id },
+    ] }, context: { ...context, teamCredentialPresentation: { serverId: 'home', sources: [source] } } });
+    expect(sources).toEqual([source]);
+  });
+
   it('retains child source names captured by the existing parent review preparation', async () => {
     const source = { teamId: team.id, resourceId: resource.id, teamName: team.name, accountName: resource.displayName };
     const prepared = await prepareApprovalRequest({ deps: {}, actionId: 'workflow.run.start',

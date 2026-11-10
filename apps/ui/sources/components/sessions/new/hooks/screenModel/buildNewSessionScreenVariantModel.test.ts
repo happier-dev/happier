@@ -8,6 +8,10 @@ import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSess
 import type { NewSessionManagedMachineDraftModel } from '../newSessionScreenModelTypes';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { t } from '@/text';
+import { presentActionApproval } from '@/components/approvals/actionApprovalPresentation';
+import { buildNewSessionAuthoringDraftFromTempData, buildSessionSpawnNewInputV2FromAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
+import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contributionIdentity';
 
 installSettingsViewCommonModuleMocks({ text: async () => vi.importActual<typeof import('@/text')>('@/text') });
 // Positioning belongs to the DOM boundary; keep badge and popover content real.
@@ -36,7 +40,7 @@ const operation: ActionOperationSnapshotV1 = {
     progress: { kind: 'phase', phase: 'native.boot', label: 'Waiting for guest SSH' },
 };
 
-function buildVariant(useEnhancedSessionWizard: boolean, managedMachineDraft: NewSessionManagedMachineDraftModel) {
+function buildVariant(useEnhancedSessionWizard: boolean, managedMachineDraft: NewSessionManagedMachineDraftModel | undefined, extra: Readonly<Record<string, unknown>> = {}) {
     const ordinaryBadge = { key: 'ordinary', label: 'Ordinary status' };
     // Only the projection boundary is under test; unrelated form props are never rendered.
     const params = {
@@ -45,12 +49,53 @@ function buildVariant(useEnhancedSessionWizard: boolean, managedMachineDraft: Ne
         setCheckoutCreationDraft: () => {}, wizardLayoutProps: {}, wizardProfilesProps: {},
         wizardAgentProps: {}, wizardMachineProps: {}, wizardFooterProps: { statusBadges: [ordinaryBadge] },
         managedMachineDraft,
+        ...extra,
     } as unknown as Parameters<typeof buildNewSessionScreenVariantModel>[0];
     const model = buildNewSessionScreenVariantModel(params);
     return model.variant === 'simple' ? model.simpleProps : model.wizardProps.footer;
 }
 
 describe('buildNewSessionScreenVariantModel', () => {
+    it.each([false, true])('discloses only the Team source selected by creation operands (wizard=%s)', (wizard) => {
+        const selectedSource = { teamId: 'team-a', resourceId: 'shared-account', teamName: 'Studio', accountName: 'Build account' };
+        const otherSource = { teamId: 'team-b', resourceId: 'other-account', teamName: 'Other team', accountName: 'Unused account' };
+        const base = buildNewSessionAuthoringDraftFromTempData({
+            directory: '/workspace',
+            executionTarget: { kind: 'machine', target: { serverId: 'home-a', machineId: 'machine-a' } },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            permissionMode: 'default',
+        });
+        const teamBinding = { v: 1, slot: { kind: 'provider_model' }, resourceId: selectedSource.resourceId,
+            expectedResourceRevision: 7, deliveryMode: 'brokered', teamId: selectedSource.teamId,
+        } satisfies NonNullable<SessionAuthoringDraft['teamCredentialBindings']>[number];
+        const presentation = { serverId: 'home-a', sources: [otherSource, selectedSource] };
+        for (const draft of [
+            { ...base, teamCredentialBindings: [teamBinding] },
+            { ...base, connectedServices: { v: 2, bindingsByServiceId: {
+                [buildQualifiedPluginContributionKey({ pluginId: 'example.accounts', localId: 'service' })]: {
+                    source: 'team_resource', resourceId: selectedSource.resourceId, deliveryMode: 'brokered',
+                },
+            } } } satisfies SessionAuthoringDraft,
+        ]) {
+            const actionArgs = buildSessionSpawnNewInputV2FromAuthoringDraft({
+                draft, creationKey: 'manual:review-test', permissionMode: 'default', configurationUpdatedAtMs: 123,
+            });
+            const expected = presentActionApproval({ actionId: 'session.spawn_new', actionArgs,
+                preview: { teamCredentialSources: [selectedSource] } }).summary;
+            const props = buildVariant(wizard, undefined, { creationReview: {
+                draft, serverId: 'home-a', teamCredentialPresentation: presentation,
+            } });
+            expect(props).toHaveProperty('creationReviewSummary', expected);
+            expect(expected).toContain(selectedSource.teamName);
+            expect(expected).toContain(selectedSource.accountName);
+            expect(expected).not.toContain(otherSource.accountName);
+        }
+        for (const [draft, serverId] of [[base, 'home-a'], [{ ...base, teamCredentialBindings: [teamBinding] }, 'home-b']] as const) {
+            const props = buildVariant(wizard, undefined, { creationReview: { draft, serverId, teamCredentialPresentation: presentation } });
+            expect(props).toHaveProperty('creationReviewSummary', null);
+        }
+    });
+
     it.each([false, true])('offers Delete alongside failed-setup recovery without installation retry (wizard=%s)', async (wizard) => {
         const deleteMachine = vi.fn();
         const retrySetup = vi.fn();

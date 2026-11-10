@@ -19,12 +19,22 @@ import type {
     NewSessionInstructionsCreationModel,
 } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
 import { buildNewSessionManagedProgressBadge } from './newSessionManagedProgressBadge';
+import { buildSessionAuthoringCredentialOperands } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
+import { presentActionApproval } from '@/components/approvals/actionApprovalPresentation';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { resolveCapturedTeamCredentialApprovalSources } from '@happier-dev/protocol/actions/specs/teamCredentialApproval';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 
 export function buildNewSessionScreenVariantModel(params: Readonly<{
     useEnhancedSessionWizard: boolean;
     spaceMembership?: NewSessionScreenModel['spaceMembership'];
     setSpaceMembership?: NewSessionScreenModel['setSpaceMembership'];
     requesterIsolation?: NewSessionScreenModel['requesterIsolation'];
+    creationReview?: Readonly<{
+        draft: Parameters<typeof buildSessionAuthoringCredentialOperands>[0];
+        serverId: string | null;
+        teamCredentialPresentation?: ActionExecutorContext['teamCredentialPresentation'];
+    }>;
     popoverBoundaryRef: React.RefObject<View>;
     launchOverlay: React.ReactNode | null;
     temporaryComputerLaunch?: NewSessionTemporaryComputerLaunch;
@@ -46,11 +56,20 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
     wizardMachineProps: NewSessionWizardMachineProps;
     wizardFooterProps: NewSessionWizardFooterProps;
 }>): NewSessionScreenModel {
+    const actionArgs = params.creationReview ? buildSessionAuthoringCredentialOperands(params.creationReview.draft) : null;
+    const selectedSources = params.creationReview ? resolveCapturedTeamCredentialApprovalSources({
+        selection: getActionSpec('session.spawn_new').approvalPresentation?.teamCredentialSources?.(actionArgs),
+        context: { serverId: params.creationReview.serverId, teamCredentialPresentation: params.creationReview.teamCredentialPresentation },
+    }) : [];
+    const creationReviewSummary = selectedSources.length ? presentActionApproval({
+        actionId: 'session.spawn_new', actionArgs, preview: { teamCredentialSources: selectedSources },
+    }).summary : null;
     const managedProgressBadge = buildNewSessionManagedProgressBadge(params.managedMachineDraft);
     // A Bot is an ordinary composer and an ordinary first turn (lab `b-new`): never the wizard.
     if (!params.useEnhancedSessionWizard || params.botCreation) {
         const simpleProps: NewSessionSimpleScreenProps = {
             ...params.simplePanelProps,
+            creationReviewSummary,
             managedMachineDraft: params.managedMachineDraft,
             ...(managedProgressBadge ? { statusBadges: [...(params.simplePanelProps.statusBadges ?? []), managedProgressBadge] } : {}),
             checkoutCreationDraft: params.checkoutCreationDraft,
@@ -103,6 +122,7 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
             // The wizard draws the requester's folder hint with its launch notices, as the composer does.
             footer: {
                 ...params.wizardFooterProps,
+                creationReviewSummary,
                 requesterIsolation: params.requesterIsolation,
                 ...(managedProgressBadge ? { statusBadges: [...(params.wizardFooterProps.statusBadges ?? []), managedProgressBadge] } : {}),
             },

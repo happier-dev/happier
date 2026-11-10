@@ -52,6 +52,20 @@ export function appendTeamCredentialSourceSummary(summary: string, sources: read
   return sources.length ? `${summary}\n\n${sources.map(source => `Uses ${source.teamName}’s shared ${source.accountName}.`).join(' ')}` : summary;
 }
 
+/** Match only selected resources against public names captured on their exact Home. */
+export function resolveCapturedTeamCredentialApprovalSources(params: Readonly<{
+  selection: TeamCredentialSourceSelection | undefined;
+  context: Pick<ActionExecutorContext, 'serverId' | 'teamCredentialPresentation'>;
+}>): readonly TeamCredentialApprovalSource[] {
+  const serverId = params.selection?.serverId ?? params.context.serverId;
+  const presentation = params.context.teamCredentialPresentation;
+  const known = presentation && presentation.serverId === serverId ? presentation.sources : [];
+  return (params.selection?.resources ?? []).flatMap(ref => {
+    const source = known.find(source => source.resourceId === ref.resourceId && (!ref.teamId || source.teamId === ref.teamId));
+    return source ? [source] : [];
+  });
+}
+
 /** Read public source labels before admission. This never selects delivery or acquires material. */
 export async function prepareTeamCredentialSources(params: Readonly<{ deps: Pick<ActionExecutorDeps, 'homeDomainAction'>;
   selection: TeamCredentialSourceSelection | undefined; context: ActionExecutorContext }>): Promise<readonly TeamCredentialApprovalSource[]> {
@@ -59,8 +73,6 @@ export async function prepareTeamCredentialSources(params: Readonly<{ deps: Pick
   const refs = selection?.resources ?? [];
   if (!refs.length) return [];
   const serverId = selection?.serverId ?? params.context.serverId;
-  const presentation = params.context.teamCredentialPresentation;
-  const known = presentation && presentation.serverId === serverId ? presentation.sources : [];
   const sources: TeamCredentialApprovalSource[] = [];
   const teamNames = new Map<string, string>();
   let memberTeamsRead = false;
@@ -70,7 +82,8 @@ export async function prepareTeamCredentialSources(params: Readonly<{ deps: Pick
       context: { ...params.context, ...(serverId ? { serverId } : {}) }, signal: params.context.signal });
   };
   for (const ref of refs) {
-    const captured = known.find(source => source.resourceId === ref.resourceId && (!ref.teamId || source.teamId === ref.teamId));
+    const captured = resolveCapturedTeamCredentialApprovalSources({ context: params.context,
+      selection: { ...selection, resources: [ref] } })[0];
     if (captured) { sources.push(captured); continue; }
     if (!params.deps.homeDomainAction) continue;
     try {

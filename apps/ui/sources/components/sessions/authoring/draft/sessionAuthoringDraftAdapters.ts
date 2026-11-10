@@ -1141,6 +1141,16 @@ export function applySessionServerStartSpawnDraftEdits(params: Readonly<{
     );
 }
 
+/** Credential operands shared by ordinary creation, managed continuation and their inline review. */
+export function buildSessionAuthoringCredentialOperands(
+    draft: Readonly<Pick<SessionAuthoringDraft, 'teamCredentialBindings' | 'connectedServices'>>,
+): Readonly<Partial<Pick<SessionAuthoringDraft, 'teamCredentialBindings' | 'connectedServices'>>> {
+    return {
+        ...(draft.teamCredentialBindings !== undefined ? { teamCredentialBindings: draft.teamCredentialBindings } : {}),
+        ...(draft.connectedServices != null ? { connectedServices: draft.connectedServices } : {}),
+    };
+}
+
 /** The ordinary start and managed continuation share every target-independent authored field. */
 function resolveSessionAuthoringSpawnInput(params: SessionServerStartSpawnDraftFromAuthoringParams) {
     const fields = resolveSharedSessionAuthoringSpawnFields(params.draft);
@@ -1156,7 +1166,7 @@ function resolveSessionAuthoringSpawnInput(params: SessionServerStartSpawnDraftF
         ...(fields.initialSessionFacts === undefined ? {} : { identity: fields.initialSessionFacts }),
         ...(fields.memoryEnabled === undefined ? {} : { memoryEnabled: fields.memoryEnabled }),
         ...(params.draft.primaryTeamId ? { primaryTeamId: params.draft.primaryTeamId } : {}),
-        ...(params.draft.teamCredentialBindings !== undefined ? { teamCredentialBindings: params.draft.teamCredentialBindings } : {}),
+        ...buildSessionAuthoringCredentialOperands(params.draft),
         ...(fields.promptStack === undefined ? {} : { promptStack: fields.promptStack }),
         directory: fields.directory,
         organizationPlacement: normalizeOrganizationPlacement(params.draft.organizationPlacement),
@@ -1182,7 +1192,6 @@ function resolveSessionAuthoringSpawnInput(params: SessionServerStartSpawnDraftF
                 }
                 : {}),
         },
-        ...(fields.connectedServices != null ? { connectedServices: fields.connectedServices } : {}),
         ...(fields.capabilitySelection ? { capabilitySelection: fields.capabilitySelection } : {}),
         ...(fields.transcriptStorage ? { transcriptStorage: fields.transcriptStorage } : {}),
         ...(terminal ? { terminal } : {}),

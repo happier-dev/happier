@@ -4604,6 +4604,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     }), [wizardFooterProps, simplePanelProps.machineName]);
 
     return buildNewSessionScreenVariantModel({
+        creationReview: { draft: effectiveCurrentAuthoringDraft, serverId: targetServerId ?? null, teamCredentialPresentation },
         spaceMembership: organizationPlacementState.spaceMembership,
         setSpaceMembership: organizationPlacementState.setSpaceMembership,
         requesterIsolation: ownIsolation,
