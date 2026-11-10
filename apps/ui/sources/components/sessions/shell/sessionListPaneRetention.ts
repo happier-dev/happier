@@ -6,6 +6,7 @@ import type { SessionListQueryHomeState } from '@/sync/domains/session/listing/s
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { readSessionAddressLookupQueryMembership } from '@/sync/domains/session/resolveSessionAddressFromLocalState';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { SESSION_LIST_SURFACE_OWNER_SIDEBAR, type SessionListSurfaceOwnership } from './surface/sessionListSurfaceOwnership';
 
 export type SessionListNeedsYouProjection = Readonly<{
     count: number;
@@ -40,6 +41,7 @@ export type RetainedSessionListPaneState = Readonly<{
     referenceCorpusActive?: boolean;
     /** Exact Home selection represented by this pane, including ordinary mode. */
     selectedServerIds?: readonly string[];
+    surfaceOwnership?: SessionListSurfaceOwnership;
 }>;
 
 type SessionListPaneRetentionIdentity = Pick<RetainedSessionListPaneState, 'storageKind' | 'pathname' | 'sourceScopeKey'>;
@@ -58,7 +60,12 @@ function activeRetainedPane(): RetainedSessionListPaneState | null {
 }
 
 function publishNeedsYouChange(): void {
-    const retained = activeRetainedPane();
+    // An overlay withholds interaction but leaves the sidebar visible and
+    // data-active. Its displayed shelf is independent of reference focus.
+    const sidebars = [...retainedPaneStateByKey.values()].filter(state => state.queryMembershipActive
+        && state.surfaceOwnership?.ownerKey === SESSION_LIST_SURFACE_OWNER_SIDEBAR
+        && state.surfaceOwnership.visible && state.surfaceOwnership.dataActive);
+    const retained = sidebars.length === 1 ? sidebars[0]! : sidebars.length > 1 ? null : activeRetainedPane();
     const next = retained ? projectSessionListNeedsYou(retained.paneState) : null;
     const previous = needsYouProjection;
     if (next === previous || (next && previous && next.count === previous.count && next.incomplete === previous.incomplete
@@ -156,6 +163,7 @@ export function retainSessionListPaneState(
         || !sameRetainedQueryMembership(previous.paneState.query, state.paneState.query)
     ) publishRetentionChange();
     else if (previous.paneState.visibleSessionListIndex !== state.paneState.visibleSessionListIndex
+        || previous.surfaceOwnership !== state.surfaceOwnership
         || previous.paneState.showLoading !== state.paneState.showLoading
         || previous.paneState.filterResult?.coverage !== state.paneState.filterResult?.coverage) publishNeedsYouChange();
     return state;

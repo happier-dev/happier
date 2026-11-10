@@ -97,6 +97,32 @@ describe('session list pane retention identity', () => {
             expect(shelf.getCurrent()?.items).toMatchObject([{ sessionId: 'replacement' }]);
         } finally { await shelf.unmount(); await query.unmount(); }
     });
+    it('keeps the displayed sidebar shelf available through overlays and late data alongside another active pane', async () => {
+        const identity = { storageKind: 'all' as const, pathname: '/', sourceScopeKey: 'sidebar' };
+        const sidebar = (count: number, interactive: boolean, visible = true) => ({ ...identity,
+            queryMembershipActive: visible, referenceCorpusActive: interactive,
+            surfaceOwnership: { ownerKey: 'sidebar', dataActive: visible, visible, interactive },
+            paneState: { ...paneState(count), filterResult: { matchedCount: count, coverage: 'complete' as const },
+                visibleSessionListIndex: [{ type: 'header' as const, headerKind: 'attention' as const, title: 'Needs you', eligibleCount: count }] },
+        });
+        // Another retained, data-active route has a different corpus. The visible
+        // sidebar keeps painting its shelf even while Settings blocks interaction.
+        retainSessionListPaneState({ storageKind: 'all', pathname: '/sessions', sourceScopeKey: 'route',
+            paneState: paneState(20), queryMembershipActive: true, referenceCorpusActive: false });
+        const shelf = await renderHook(() => useActiveRetainedSessionListNeedsYou());
+        try {
+            await act(async () => { retainSessionListPaneState(sidebar(1, true)); });
+            expect(shelf.getCurrent()?.count).toBe(1);
+            await act(async () => { retainSessionListPaneState(sidebar(1, false)); });
+            expect(shelf.getCurrent()?.count).toBe(1);
+            await act(async () => { retainSessionListPaneState(sidebar(3, false)); });
+            expect(shelf.getCurrent()?.count).toBe(3);
+            await act(async () => { retainSessionListPaneState(sidebar(3, false, false)); });
+            expect(shelf.getCurrent()?.count).toBe(0); // sole remaining active route
+            await act(async () => { releaseRetainedSessionListPaneState({ storageKind: 'all', pathname: '/sessions', sourceScopeKey: 'route' }); });
+            expect(shelf.getCurrent()).toBeNull();
+        } finally { await shelf.unmount(); }
+    });
     it('keeps ordinary rows visible without promoting released GET exhaustion to strict corpus completeness', () => {
         const identity = { storageKind: 'all' as const, pathname: '/', sourceScopeKey: 'account-a' };
         retainSessionListPaneState({

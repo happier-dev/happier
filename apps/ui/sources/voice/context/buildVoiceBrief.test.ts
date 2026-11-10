@@ -139,7 +139,7 @@ describe('Voice brief from the mounted Inbox', () => {
         expect(brief.items.some(item => item.category === 'needs_you')).toBe(false);
         expect(brief.incomplete).toBe(true);
     });
-    it('leaves thirteen unnamed requests and fourteen unnamed failures out of speech while retaining honest remaining totals', () => {
+    it('uses the sidebar display label for Sessions without authored names while retaining exact totals', () => {
         const inbox = source();
         const base = inbox.sessionPresentation.readySessions[0]!.session;
         const unnamed = ([['pending_blocked', 13], ['failed', 14]] as const).flatMap(([reason, count]) =>
@@ -160,12 +160,27 @@ describe('Voice brief from the mounted Inbox', () => {
             settings: { voice: { privacy: { shareSessionSummary: true, sharePermissionRequests: true } } } });
         const context = JSON.parse(brief.context);
         expect(context.counts).toEqual({ needs_you: 14, failed: 15, ready: 1 });
-        expect(context.remaining).toEqual({ needs_you: 13, failed: 14, ready: 0 });
-        expect(context.items).toHaveLength(3);
+        expect(context.remaining).toEqual({ needs_you: 0, failed: 0, ready: 0 });
+        expect(context.items).toHaveLength(5);
         expect(context.items.every((item: { title?: string }) => Boolean(item.title))).toBe(true);
         expect(brief.items).toHaveLength(30);
-        expect(brief.context).not.toContain('Unapproved first-message display title');
+        expect(context.items.filter((item: { title: string }) => item.title === unnamed[0]!.title)
+            .map((item: { count: number }) => item.count)).toEqual([13, 14]);
         expect(brief.context).not.toContain('/private/unnamed-work');
+    });
+    it.each([true, false])('shares sidebar fallback labels only when Session summary disclosure allows it (share=%s)', shareSessionSummary => {
+        const inbox = source();
+        const original = inbox.sessionPresentation.readySessions[0]!.session;
+        const session = createSessionFixture({ ...original, id: 'fallback-ready', metadata: { path: '/home/alice/project' } });
+        const candidate = buildSessionActivityAttention({ session, nowMs: 1_000 });
+        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation:
+            buildInboxSessionPresentation({ overview: buildActivityOverviewFromCandidates([candidate]) }) },
+            settings: { voice: { privacy: { shareSessionSummary } } } });
+        const context = JSON.parse(brief.context);
+        expect(context.counts.ready).toBe(1);
+        expect(context.remaining.ready).toBe(shareSessionSummary ? 0 : 1);
+        expect(context.items).toEqual(shareSessionSummary ? [{ category: 'ready', title: candidate.title, count: 1 }] : []);
+        expect(brief.context).not.toContain('/home/alice/project');
     });
     it.each([false, true])('preserves the sidebar count when the Account Inbox has another unloaded Run (unloaded run=%s)', (unloadedRun) => {
         const base = source();
@@ -279,7 +294,7 @@ describe('Voice brief from the mounted Inbox', () => {
             'needs <path_redacted>', 'failed <path_redacted>', 'ready <path_redacted>',
         ]);
     });
-    it('omits unreadable or unnamed work without claiming the Inbox is caught up', () => {
+    it('keeps the sidebar untitled fallback but omits unreadable work without claiming caught up', () => {
         const inbox = source();
         const original = inbox.sessionPresentation.readySessions[0]!.session;
         const sessions = [createSessionFixture({ ...original, id: 'locked', encryptionMode: 'e2ee', encryptedContentAvailability: 'encrypted_access_pending', metadata: null }),
@@ -290,9 +305,11 @@ describe('Voice brief from the mounted Inbox', () => {
             sessionPresentation: buildInboxSessionPresentation({ overview: buildActivityOverviewSnapshot({ sessions, nowMs: 1000 }) }),
             workGroups: buildInboxWorkGroups({ sessionEntries: [], workflowRuns: [row], automationRuns: [], automationServerId: null,
                 openApprovals: [], stalledSessions: [], landings: [], snoozed: [], resolveSession: () => null, resolveOriginRunId: () => null }),
-            automationAttentionItems: [{ key: 'unnamed-automation-run', run: createAutomationRunFixture(), route }] }, settings: {} });
-        expect(brief.items).toEqual([]);
-        expect(JSON.parse(brief.context).items).toEqual([]);
+            automationAttentionItems: [{ key: 'unnamed-automation-run', run: createAutomationRunFixture(), route }] },
+            settings: { voice: { privacy: { shareSessionSummary: true } } } });
+        expect(brief.items).toMatchObject([{ category: 'ready', title: t('session.untitled'),
+            destination: { kind: 'session', address: { serverId: 'home-a', sessionId: 'unnamed' } } }]);
+        expect(JSON.parse(brief.context).items).toEqual([{ category: 'ready', title: t('session.untitled'), count: 1 }]);
         expect(brief.caughtUp).toBe(false);
     });
     it('orders existing attention without losing exact Home destinations or reclassifying ready work', () => {
@@ -375,7 +392,7 @@ describe('Voice brief from the mounted Inbox', () => {
         expect(brief.context).not.toContain('/home/alice');
     });
 
-    it('keeps a transient display title out of permission speech while retaining authored titles', () => {
+    it('uses the sidebar label in permission speech for both first-message and authored titles', () => {
         const inbox = source();
         const entry = inbox.sessionPresentation.sessionsNeedingAttention.find(entry => entry.candidate.sessionId === 'needs')!;
         const dictated = 'NOW ASK IT TO CREATE ANOTHER FILE CALLED SECOND NOTES DOT TEXT WITH THE WORD GOOD BY INSIDE';
@@ -393,11 +410,11 @@ describe('Voice brief from the mounted Inbox', () => {
                 readySessions: [],
             } }, settings });
             expect(brief.items[0]?.title).toBe(title ?? dictated);
-            expect(brief.context).not.toContain(dictated);
+            expect(JSON.parse(brief.context).items[0]?.title).toBe(candidate.title);
             return JSON.parse(brief.context);
         };
-        expect(permissionSpeech().items).toEqual([]);
-        expect(permissionSpeech().remaining.needs_you).toBe(1);
+        expect(permissionSpeech().items[0]?.title).toBe(dictated);
+        expect(permissionSpeech().remaining.needs_you).toBe(0);
         expect(permissionSpeech('Second notes').items[0]?.requests[0]).toContain('Second notes');
     });
 

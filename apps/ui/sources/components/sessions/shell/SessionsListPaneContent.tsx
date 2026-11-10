@@ -272,9 +272,10 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
             paneState,
             queryMembershipActive: true,
             referenceCorpusActive: surfaceOwnership.interactive && sessionListSurfaceDataActive,
+            surfaceOwnership,
             selectedServerIds: filterController.queryHomes.map((home) => home.serverId),
         }) ?? retainedPaneStateRef.current;
-    }, [filterController.queryHomes, props.pathname, props.surfaceRoutePathname, sessionListSurfaceDataActive, sourceScopeKey, storageKind, surfaceOwnership.interactive]);
+    }, [filterController.queryHomes, props.pathname, props.surfaceRoutePathname, sessionListSurfaceDataActive, sourceScopeKey, storageKind, surfaceOwnership]);
 
     React.useEffect(() => {
         setRetainedSessionListPaneQueryMembershipActive(retentionIdentity, sessionListSurfaceDataActive);

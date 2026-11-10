@@ -16,15 +16,12 @@ import { buildInboxSessionReasonLine } from '@/components/inbox/workGroups/inbox
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
-import { isUntitledSessionName } from '@/utils/sessions/sessionUtils';
 import { buildInboxWorkflowReasonFacts } from '@/components/inbox/workGroups/inboxWorkflowReason';
 import { formatAutomationRunCauseLabel, formatAutomationRunStateLabel } from '@/components/automations/list/automationListFormatting';
 import { automationRunTone } from '@/components/automations/home/latestAutomationRuns';
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { presentExecutionRunFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
-import { resolveVoiceSessionAuthoredLabel } from './resolveVoiceSessionLabel';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import type { InboxItem } from '@/components/inbox/inboxItems';
 import type { SessionListNeedsYouProjection } from '@/components/sessions/shell/sessionListPaneRetention';
 
@@ -71,7 +68,7 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
         // Activity already resolved the exact Home's Session display owner. Keep
         // Brief pure: never reread the ambient store to reconstruct that identity.
         const title = candidate.title;
-        return title.trim() && !isUntitledSessionName(title) ? title : null;
+        return title.trim() ? title : null;
     };
     // Inbox already admits readable request details. Notification-preview policy
     // does not hide those details in the app; speech has its own disclosure below.
@@ -104,7 +101,10 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
         if (resolveVoiceSessionUpdatePolicyV1({ accountSettings: input.settings, includeInVoice, isCurrentAttemptTarget }).level === 'none') return;
         const prefs = getVoiceContextFormatterPrefs({ settings: input.settings, sessionId: address.sessionId, sessionAddress: address,
             includeInVoice, isCurrentAttemptTarget });
-        const label = resolveVoiceSessionAuthoredLabel(readSessionOwnerMetadataView(candidate.presentationSource?.baseSession ?? candidate.session), prefs);
+        // The sidebar and Activity already use the Session display-label owner,
+        // including first-message and untitled fallbacks. Speech shares that
+        // label only within the same Session-summary disclosure policy.
+        const label = prefs.voiceShareSessionSummary ? safeTitle(sessionTitle(candidate) ?? '') : null;
         speechByKey.set(sessionAddressKey(address), {
             ...(label ? { title: label } : {}),
             ...(prefs.voiceSharePermissionRequests ? { requests: requests.map(([kind, id, tool, args]) => summarizeAgentRequestForVoiceHuman(kind, id, tool, args, prefs, label ?? undefined)).filter((value): value is string => Boolean(value)) } : {}),
@@ -177,8 +177,7 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
         if (item.category === 'needs_you') projectedNeedsYou += 1;
         else counts[item.category] += 1;
         const speech = { category: item.category, ...speechByKey.get(item.key) };
-        // A transient display title or a withheld identity is not an authored
-        // speech label. Keep those rows in the total, without an unnamed group.
+        // Withheld identities stay in the total without an invented label.
         if (!speech.title) continue;
         spokenCounts[item.category] += 1;
         const key = JSON.stringify(speech);
