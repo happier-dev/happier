@@ -1441,6 +1441,8 @@ describe('Environment → Settings: checks, backups, previews', () => {
 
   it('authors an unseeded native preview from another Project capture through the existing intent writer', async () => {
     await homes.reset();
+    // The app entry initializes sync before a Saved Secret catalog consumer mounts.
+    await (await import('@/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
     const serverUrl = 'https://native-preview-intent.test';
     const serverIdentityId = 'srv_native_intent';
     const serverId = await homes.addHome({ name: 'Native intent', serverUrl, serverIdentityId,
@@ -1456,10 +1458,12 @@ describe('Environment → Settings: checks, backups, previews', () => {
     const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
     const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
     const { DeploymentActionInputSchemasV1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
-    const { DeploymentBackupActionInputSchemasV1 } = await import('@happier-dev/protocol/deployments/deploymentBackupActionsV1');
+    const { DeploymentBackupActionInputSchemasV1, DeploymentBackupInventoryResultV1Schema } = await import('@happier-dev/protocol/deployments/deploymentBackupActionsV1');
     const { DeploymentBackupConfigurationV1Schema, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
       DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } = await import('@happier-dev/deployment-protocol');
     const { SavedSecretCatalogEntryV1Schema } = await import('@happier-dev/protocol/account/settings/savedSecretCatalogV1');
+    const { SharedSavedSecretListOutputV1Schema } = await import('@happier-dev/protocol/account/settings/savedSecretResourceActionsV1');
+    const { getSavedSecretCatalogSnapshot } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
     const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/backup-destinations/src/manifest');
     const { PluginProjectionV2Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
     const { DaemonContributionRegistryProjectionDescribeResponseSchema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
@@ -1512,9 +1516,9 @@ describe('Environment → Settings: checks, backups, previews', () => {
     const secret = SavedSecretCatalogEntryV1Schema.parse({ ref, source: 'shared_resource', relationship: 'owner',
       name: 'Preview backup password', kind: 'apiKey', encryptionMode: 'plain', ownerAccountId: 'account-owner', revision: 7,
       materialStatus: 'ready', audience: { accounts: [], teams: [], groups: [] }, capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } });
-    homes.answer(serverId, '/v1/account/saved-secrets/resources', { body: { resources: [secret] } });
+    homes.answer(serverId, '/v1/account/saved-secrets/resources', { body: SharedSavedSecretListOutputV1Schema.parse({ resources: [secret] }) });
     const machineId = detail.environment.controllerMachineId;
-    storage.setState({ settingsScope: account.accountLifetime.scope, profileScope: account.accountLifetime.scope });
+    storage.setState({ settingsScope: account.accountLifetime.scope, profileScope: account.accountLifetime.scope, endpointStatus: 'online' });
     storage.getState().activateProfileScope(account.accountLifetime.scope);
     await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: machineId, activeAt: Date.now() })]);
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
@@ -1524,18 +1528,20 @@ describe('Environment → Settings: checks, backups, previews', () => {
           id: `${PLUGIN_MANIFEST.id}/${destination.id}`, pluginId: PLUGIN_MANIFEST.id, pluginVersion: PLUGIN_MANIFEST.version, definition: destination } } } } }) }));
     const snapshotId = 'c'.repeat(64);
     let inventoryReads = 0;
-    await answerExternalActionAccountForHome(homes, serverId, { machineId, actionId: 'deployments.backups.inventory', tokenEpoch: 0,
+    await answerExternalActionAccountForHome(homes, serverId, { machineId, installationId: sourceLink.members[0]!.installationId,
+      actionId: 'deployments.backups.inventory', tokenEpoch: 0,
       execute: raw => {
         const input = DeploymentBackupActionInputSchemasV1['deployments.backups.inventory'].parse(raw);
         expect(input).toMatchObject({ environmentId: sourceDetail.environment.id, targetLinkId: sourceLink.id, deploymentId: 'source-deploy' });
         inventoryReads++;
-        return { kind: 'inventory', environmentId: sourceDetail.environment.id, configRevision: 1, repositoryId: 'a'.repeat(64), snapshots: [
+        return DeploymentBackupInventoryResultV1Schema.parse({ kind: 'inventory', environmentId: sourceDetail.environment.id, configRevision: 1, repositoryId: 'a'.repeat(64), snapshots: [
           { source: { sourceId: 'source-postgres', kind: 'dump' }, snapshot: { snapshotId, treeId: 'd'.repeat(64),
             hostname: 'source', time: '2026-11-09T10:00:00Z', paths: ['dump'], tags: [] },
-            verification: { kind: 'verified', backupOperationId: 'source-capture', configRevision: 1 } } ] };
+            verification: { kind: 'verified', backupOperationId: 'source-capture', configRevision: 1 } } ] });
       } });
     const saved: NonNullable<Detail['content']['previewTemplate']>[] = [];
-    await answerExternalActionAccountForHome(homes, serverId, { machineId, actionId: 'deployments.environments.update', tokenEpoch: 0,
+    await answerExternalActionAccountForHome(homes, serverId, { machineId, installationId: sourceLink.members[0]!.installationId,
+      actionId: 'deployments.environments.update', tokenEpoch: 0,
       execute: raw => {
         const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(raw);
         if (input.mode !== 'preview' && input.patch?.previewTemplate) saved.push(input.patch.previewTemplate);
@@ -1550,6 +1556,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
       rendered: screen.getTextContent().slice(-3500), inventoryReads,
       paths: homes.requests.map(request => request.path).slice(-12),
       failures: screen.findAllByType(SurfaceStateCard).map(node => ({ testID: node.props.testID, code: node.props.diagnosticCode })),
+      secretCatalog: getSavedSecretCatalogSnapshot(account.accountLifetime.scope),
     });
     try {
       expect(await settle(`${id}.data`)).not.toBeNull();
@@ -1574,10 +1581,10 @@ describe('Environment → Settings: checks, backups, previews', () => {
       await act(async () => screen.changeTextByTestId(`${id}.native.backup.path.input`, '/preview-backups'));
       await act(async () => screen.changeTextByTestId(`${id}.native.backup.prefix`, 'pull-requests'));
       await screen.pressByTestIdAsync(`${id}.native.backup.role.repositoryPassword.choose`);
-      expect(await settle(`saved-secret:${ref}`)).not.toBeNull();
+      expect(await settle(`saved-secret:${ref}`), diagnostics()).not.toBeNull();
       await screen.pressByTestIdAsync(`saved-secret:${ref}`);
       await screen.pressByTestIdAsync(`${id}.native.backup.save`);
-      await vi.waitFor(() => expect(saved).toHaveLength(1));
+      await vi.waitFor(() => expect(saved, diagnostics()).toHaveLength(1));
       expect(saved[0]!.data).toEqual([{ kind: 'template', templateRef: expect.objectContaining({ sourceId, itemId: 'postgresql', version: expect.any(String) }),
         dataExportNames: Object.keys(app.exports ?? {}), copyFrom: { environmentId: sourceDetail.environment.id, targetLinkId: sourceLink.id,
           deploymentId: 'source-deploy', snapshotId, backupOperationId: 'source-capture' },
