@@ -57,9 +57,9 @@ describe('native occurrences through the generalized Claude dialog owner', () =>
       await h.handler.observeSessionHook({ hook_event_name: 'ClaudeNativePrompt', session_id: 'native',
         tool_use_id: 'command-shape', tool_name: 'Bash', tool_input: toolInput, happierResponseLocation: 'app_and_terminal' });
       await h.handler.handle(parseClaudeScreenState(screen));
-      expect(h.pending[0]?.request.input).toMatchObject({ questions: [{
-        question: command === null ? context : command + '\n\n' + explanation,
-      }] });
+      expect(h.pending[0]?.request.input).toMatchObject({
+        description: command === null ? context : command + '\n\n' + explanation,
+      });
       expect(h.port.sentKeys).toEqual([]);
     } finally { await h.handler.dispose(); }
   });
@@ -76,10 +76,10 @@ describe('native occurrences through the generalized Claude dialog owner', () =>
       await h.handler.observeSessionHook({ hook_event_name: 'ClaudeNativePrompt', session_id: 'native',
         tool_use_id: 'long-command-1', tool_name: 'Bash', tool_input: { command }, happierResponseLocation: 'app_and_terminal' });
       await h.handler.handle(parseClaudeScreenState(screen));
-      expect(h.pending[0]?.request.input).toMatchObject({ questions: [{
-        question: command + '\n\n' + explanation,
-        options: [{ label: 'Yes', choice: 'option_1' }, { label: 'No', choice: 'option_2' }],
-      }] });
+      expect(h.pending[0]?.request.input).toMatchObject({ command, description: command + '\n\n' + explanation });
+      expect(h.pending[0]?.request.nativeChoices?.choices).toMatchObject([
+        { label: 'Yes', id: 'option_1' }, { label: 'No', id: 'option_2' },
+      ]);
       expect(h.port.sentKeys).toEqual([]);
     } finally { await h.handler.dispose(); }
   });
@@ -225,7 +225,9 @@ describe('native occurrences through the generalized Claude dialog owner', () =>
         tool_use_id: 'permission-1', tool_name: 'Bash', tool_input: { command: 'sleep 600' },
       });
       await h.handler.handle(parseClaudeScreenState(permission));
-      const result = { decision: 'approved' as const, answers: { claudeNativePermission: ['option_1'] } };
+      const result = { decision: 'approved' as const, nativeChoice: {
+        requirementId: h.pending[0]!.request.nativeChoices!.requirementId, choiceId: 'option_1',
+      } };
       await h.pending[0]!.options!.acknowledgeDecisionApplication!(result);
       h.pending[0]!.resolve(result);
       await vi.waitFor(() => expect(h.handler.hasPendingUserAction()).toBe(false));
@@ -389,10 +391,12 @@ describe('native Read scopes through the existing dialog owner', () => {
         tool_name: 'Read', tool_input: { file_path: '/tmp/issue671-native-probe/workspace/outside-read-link-671.txt' },
         happierResponseLocation: 'app_and_terminal' });
       await h.handler.handle(parseClaudeScreenState(initial));
-      expect(h.pending[0]?.request.input).toMatchObject({ questions: [{
-        options: labels.map((label, index) => ({ label, choice: 'option_' + (index + 1) })),
-      }] });
-      const result = { decision: 'approved' as const, answers: { claudeNativePermission: ['option_' + (selected + 1)] } };
+      expect(h.pending[0]?.request.nativeChoices?.choices).toMatchObject(
+        labels.map((label, index) => ({ label, id: 'option_' + (index + 1) })),
+      );
+      const result = { decision: selected === 2 ? 'denied' as const : 'approved' as const, nativeChoice: {
+        requirementId: h.pending[0]!.request.nativeChoices!.requirementId, choiceId: 'option_' + (selected + 1),
+      } };
       await h.pending[0]!.options!.acknowledgeDecisionApplication!(result);
       h.pending[0]!.resolve(result);
       await vi.waitFor(() => expect(h.handler.hasPendingUserAction()).toBe(false));

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { isDeepStrictEqual } from 'node:util';
 import { StructuredQuestionAnswersV1Schema, type StructuredQuestionAnswersV1 } from '@happier-dev/plugin-sdk/sessions';
+import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { isAskUserQuestionToolName, normalizeAskUserQuestionInputForPublication, buildAskUserQuestionAnswersForClaude, normalizeNativeAskUserQuestionAnswers } from '../../../../permissions/askUserQuestion.js';
 import { isSidechainSessionHook, isClaudeSidechainRuntimeEvidence } from '../../../../hooks/sidechain.js';
 import { answerClaudeNativeQuestion, resolveClaudeNativeQuestionWithAnswerState, type ClaudeNativeQuestionAnswerState } from '../tuiControls/nativeQuestion.js';
@@ -120,13 +121,45 @@ function readDecisionAnswers(
   return (result.answers as Readonly<Record<string, unknown>> | undefined) ?? null;
 }
 
+/** The terminal applies these exact visible policies; no hook-only offer is added. */
+function buildNativeTerminalPermissionChoices(
+  dialog: ClaudeUnifiedVisibleNativeToolDialog,
+  requestId: string,
+): NativePermissionChoicesV1 | null {
+  const presentation = dialog.permissionPresentation;
+  const choices: NativePermissionChoicesV1['choices'][number][] = [];
+  for (const [index, option] of dialog.options.entries()) {
+    const feedback = presentation?.feedback?.optionIndex === index;
+    const approved = !feedback && /^Yes\b/u.test(option.label);
+    const persistent = /^Yes, and don[’']t ask again for: .+$/u.test(option.label)
+      || option.label === 'Yes, and keep allowing any reads outside the working directories'
+      || option.label === 'No, and block reads outside the working directories from now on';
+    const once = option.label === 'Yes' || option.label === 'No' || /ask again next time/u.test(option.label);
+    const mode = /^Yes, and (?:use|switch to) auto mode\b/u.test(option.label) ? 'auto'
+      : /^Yes, and switch to BYPASS PERMISSIONS\b/u.test(option.label) ? 'bypassPermissions'
+        : option.label === 'Yes, manually approve edits' ? 'default'
+          : /^Yes, and switch to accept edits\b/u.test(option.label) ? 'acceptEdits' : null;
+    const sessionRead = /^Yes, allow reading from .+ during this session$/u.test(option.label);
+    if (!feedback && !persistent && !once && !mode && !sessionRead) return null;
+    const scope = feedback || once ? 'once' : persistent ? 'localPersistent' : 'session';
+    const decision = approved ? 'approved' : 'denied';
+    choices.push({ id: option.choice, label: option.label, decision, scope,
+      ...(feedback ? { allowsFeedback: true } : {}),
+      response: { approved, decision,
+        ...(mode ? { updatedPermissions: [{ type: 'setMode', mode, destination: 'session' }] } : {}),
+      },
+    });
+  }
+  return { requirementId: requestId, source: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID, choices };
+}
+
 /**
  * The Claude Unified startup dialog resolver. It is registry-driven: for every screen it resolves
  * the single visible dialog from {@link resolveClaudeUnifiedVisibleDialog} and either
  *  - defers to live runtime control while a slash-control run owns the dialog, or
  *  - auto-answers an orphan effort/model dialog from the launch runtime config during startup, or
- *  - publishes the dialog as an `AskUserQuestion` needs-attention request and answers the terminal
- *    with the user's selected option (the recipe from the registry), or
+ *  - publishes native tool permissions with their offered choices and other dialogs as questions,
+ *    then answers the terminal with the user's selected option (the recipe from the registry), or
  *  - fail-closed publishes an `open_terminal` notice for a dialog it does NOT recognize.
  * There is exactly ONE publisher and ONE answer table (the registry) so startup never
  * double-publishes or re-matches terminal text.
@@ -232,13 +265,15 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
       if (permission && prompt.toolUseId && (!permission.amended || permission.kind === 'plan')) {
         const nativeCommand = prompt.toolName === 'Bash' ? readObject(prompt.toolInput)?.command : undefined;
         const command = typeof nativeCommand === 'string' && nativeCommand.trim() ? nativeCommand.trim() : null;
-        return { ...prompt, kind: 'native', dialogId: 'tool_permission', owner: null,
+        const dialog: ClaudeUnifiedVisibleNativeToolDialog = { ...prompt, kind: 'native', dialogId: 'tool_permission', owner: null,
           questions: [], questionId: 'claudeNativePermission', requestReason: 'claude_native_permission',
           header: prompt.toolName,
           question: command ? command + '\n\n' + (permission.explanation ?? permission.context) : permission.context,
           permissionPresentation: permission,
           options: permission.options.map((option, index) => ({ choice: `option_${index + 1}`,
             label: option.label, description: '', answer: { kind: 'selection', targetLabel: option.label } })) };
+        const nativeChoices = buildNativeTerminalPermissionChoices(dialog, prompt.occurrenceId);
+        return nativeChoices ? { ...dialog, nativeChoices } : createClaudeUnifiedUnrecognizedDialogNotice();
       }
       if (screen.nativeQuestionPresentation || screen.permissionPromptVisible || screen.unrecognizedConfirmationDialogVisible) {
         return createClaudeUnifiedUnrecognizedDialogNotice();
@@ -446,15 +481,17 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
   const startAsk = (dialog: ClaudeUnifiedVisibleDialog): void => {
     if (pendingRequest) return;
     const identity = getClaudeUnifiedDialogIdentity(dialog);
-    const abort = new AbortController();
-    pendingAbort = abort;
-    pendingIdentity = identity;
     const digest = createHash('sha256')
       .update(`${runtimeInstanceId}\0${identity}`, 'utf8')
       .digest('hex')
       .slice(0, 24);
     const requestId = dialog.kind === 'native' && dialog.dialogId === 'ask_user_question'
       ? dialog.occurrenceId : `${params.sessionId}:claude-dialog:${digest}`;
+    const nativePermission = dialog.kind === 'native' && dialog.dialogId === 'tool_permission' ? dialog : null;
+    const nativeChoices = nativePermission?.nativeChoices;
+    const abort = new AbortController();
+    pendingAbort = abort;
+    pendingIdentity = identity;
     pendingRequestId = requestId;
     pendingNativePrompt = dialog.kind === 'native' ? nativePrompt : null;
     const requestedNativePrompt = pendingNativePrompt;
@@ -479,10 +516,10 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
           }
           return applied.status === 'answered';
         }
-        const value = result.answers?.[dialog.questionId]?.[0];
-        const dialogOption = resolveClaudeUnifiedDialogSelectedOption(readDecisionAnswers(result), dialog.options);
-        const feedback = !dialogOption && typeof value === 'string' && dialog.permissionPresentation?.feedback ? value : undefined;
-        const option = dialogOption ?? (feedback ? dialog.options[dialog.permissionPresentation!.feedback!.optionIndex] : null);
+        const answer = result.nativeChoice;
+        const option = answer && answer.requirementId === nativeChoices?.requirementId
+          ? dialog.options.find(option => option.choice === answer.choiceId) : null;
+        const feedback = answer?.feedback;
         if (!option) return false;
         const applied = await answerClaudeUnifiedRegisteredDialog({ port: params.port, dialogId: dialog.dialogId,
           expectedIdentity: identity, option, resolveDialog, isCurrent: () => isCurrent(dialog), feedback,
@@ -510,14 +547,18 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
       source: CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
       requestId,
       toolCallId: requestId,
-      toolName: 'AskUserQuestion',
-      input: buildClaudeUnifiedDialogQuestionInput(dialog),
+      toolName: nativePermission ? nativePermission.toolName : 'AskUserQuestion',
+      input: nativePermission ? { ...readObject(nativePermission.toolInput), description: nativePermission.question }
+        : buildClaudeUnifiedDialogQuestionInput(dialog),
+      ...(nativeChoices ? { nativeChoices } : {}),
       traceSummary: buildClaudeUnifiedDialogTraceSummary(dialog),
       reason: dialog.requestReason,
     }, {
       signal: abort.signal,
       acknowledgeDecisionApplication: async (result) => {
-        if (result.decision === 'denied' || result.decision === 'abort') return;
+        if (!nativePermission && (result.decision === 'denied' || result.decision === 'abort')) return;
+        // Cancellation without a selected native option must not write terminal bytes.
+        if (nativePermission && !result.nativeChoice) return;
         if (dialog.kind === 'unrecognized' && dialog.mode === 'notice') return;
         if (disposed || abort.signal.aborted || pendingAbort !== abort || pendingIdentity !== identity) {
           throw new Error('claude_unified_dialog_request_retired');
@@ -538,7 +579,8 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
       },
     }).then((result) => {
       if (pendingRequest !== task || pendingIdentity !== identity || abort.signal.aborted) return;
-      if (dialog.kind === 'native' && result.decision !== 'denied' && result.decision !== 'abort'
+      if (dialog.kind === 'native' && (nativePermission ? Boolean(result.nativeChoice)
+        : result.decision !== 'denied' && result.decision !== 'abort')
         && nativePrompt === requestedNativePrompt) nativePrompt = null;
       // An incomplete/ambiguous prompt is navigation-only. A returned UI value can never become
       // terminal input; the exact episode remains closed until the visible identity changes.

@@ -12,6 +12,8 @@ import { createPluginSessionHandleCapabilitiesFactory } from '@/session/services
 import { applyPermissionModeIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { createPluginInteractionsService } from '@/plugins/runtime/invocation/services/interactions';
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { McpToolPolicyContext } from '@/mcp/runtime/resolveMcpToolIdentity';
+import { NativePermissionChoicesV1Schema } from '@happier-dev/protocol/sessions/permissions/nativeChoicesV1';
 import type {
     HostSessionApprovalRequest,
     HostSessionConfirmationRequest,
@@ -31,7 +33,7 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({ callSessionRpc }));
 
 function createFixture(
     overrides: Partial<Omit<NativeAgentSessionInteractionParams, 'permissionHandler' | 'sessionId'>> = {},
-    options: Readonly<{ mode?: 'default' | 'yolo'; presentationAvailable?: boolean }> = {},
+    options: Readonly<{ mode?: 'default' | 'yolo'; presentationAvailable?: boolean; mcpToolContext?: McpToolPolicyContext }> = {},
 ) {
     // Only Session state and the authenticated server RPC transport are replaced.
     // The existing transport testkit stamps the account actor required by permission replies.
@@ -45,6 +47,7 @@ function createFixture(
     });
     const handler = new ProviderEnforcedPermissionHandler(session, {
         logPrefix: '[Native interaction test]', getWorkspaceWrites: () => 'allow',
+        getMcpToolContext: () => options.mcpToolContext ?? null,
     });
     handler.setPermissionMode(options.mode ?? 'default');
     const lifetime = new AbortController();
@@ -81,10 +84,13 @@ function createFixture(
             const [id, request] = Object.entries(session.__getAgentState().requests ?? {})[0]!;
             return { id, request };
         },
-        async respond(input: unknown, kind: 'user_action' | 'permission' = 'user_action') {
+        async respond(input: unknown, kind: 'user_action' | 'permission' = 'user_action', relationship?: 'sharedApprover') {
             const respond = rpc.handlers.get(kind === 'user_action' ? 'session.user_action.answer' : 'session.permission.respond');
             if (!respond) throw new Error('Expected registered Session response RPC');
-            return await respond(input);
+            return await respond(input, relationship ? { signal: new AbortController().signal, authorization: {
+                kind: 'session.permission.respond', sessionId: session.sessionId,
+                actor: { kind: 'accountUser', accountId: 'shared-account', relationship },
+            } } : undefined);
         },
     });
 }
@@ -116,6 +122,118 @@ const questionsRequest: HostSessionQuestionsRequest = {
 };
 
 describe('native Agent current-session interactions', () => {
+    it.each([
+        ['option_1', 'approved', false, undefined, 'tool'],
+        ['option_4', 'denied', false, undefined, 'tool'],
+        ['option_4', 'denied', true, undefined, 'tool'],
+        ['option_1', 'approved', false, 'sharedApprover', 'tool'],
+        ['option_3', 'approved', false, 'sharedApprover', 'tool'],
+        ['option_3', 'approved', false, undefined, 'tool'],
+        ['option_3', 'denied', false, undefined, 'plan'],
+    ] as const)('applies the exact Claude terminal native selection %s (%s, failure=%s, actor=%s, %s) before settlement', async (choiceId, decision, failSend, relationship, kind) => {
+        const { readFileSync } = await import('node:fs');
+        const { createClaudeNativeAgentSdkContext } = await import('../../../../../../../packages/plugins/claude/src/agent/runtime/nativeServices');
+        const { createClaudeUnifiedResumeChoiceStartupHandler } = await import('../../../../../../../packages/plugins/claude/src/agent/runtime/terminal/unified/resumeChoice/startup');
+        const { createFakeControlPort } = await import('../../../../../../../packages/plugins/claude/src/agent/runtime/terminal/unified/tuiControls/fakeControlPort');
+        const { parseClaudeScreenState } = await import('../../../../../../../packages/plugins/claude/src/agent/runtime/terminal/unified/screenState');
+        const fixture = createFixture({ interactionDeadlineMs: undefined,
+            credentials: { token: 'fixture-account-token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+        });
+        const nativeScreen = readFileSync(new URL('../../../../../../../packages/plugins/claude/src/agent/runtime/terminal/unified/tuiControls/__fixtures__/claude-2.1.309-permission-no-focused.txt', import.meta.url), 'utf8');
+        const planScreen = kind === 'plan' ? readFileSync(new URL('../../../../../../../packages/plugins/claude/src/agent/runtime/terminal/unified/tuiControls/__fixtures__/claude-2.1.304-plan-exit.txt', import.meta.url), 'utf8') : '';
+        const screen = kind === 'plan' ? planScreen.replace('   ❯ 1.', '     1.').replace('     3.', '   ❯ 3.')
+            : choiceId === 'option_1' ? nativeScreen.replace('   1. Yes', ' ❯ 1. Yes').replace(' ❯ 4. No', '   4. No')
+            : choiceId === 'option_3' ? nativeScreen.replace('   3. Yes', ' ❯ 3. Yes').replace(' ❯ 4. No', '   4. No') : nativeScreen;
+        const feedback = 'Keep this harmless probe; do not execute the plan.';
+        const port = createFakeControlPort({ captures: [screen,
+            ...(kind === 'plan' ? [screen.replace('Tell Claude what to change', feedback)] : []),
+            '──────────────────\n❯ \n──────────────────'],
+            ...(failSend ? { failSendKeys: ['Enter'] } : {}) });
+        const context = {
+            services: { logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }, exec: {},
+                sessions: fixture.sessions, interactions: fixture.public },
+            session: { services: {} },
+        } as unknown as AgentSessionRuntimeContext;
+        const handler = createClaudeUnifiedResumeChoiceStartupHandler({ ctx: createClaudeNativeAgentSdkContext(context),
+            sessionId: 'session-1', port, settleMs: 0, wait: async () => {} });
+        onTestFinished(() => handler.dispose());
+        await handler.observeSessionHook({ hook_event_name: 'ClaudeNativePrompt', session_id: 'native',
+            tool_use_id: 'terminal-permission', tool_name: kind === 'plan' ? 'ExitPlanMode' : 'Bash',
+            tool_input: kind === 'plan' ? { plan: 'Review the change' } : { command: 'ruby -e "puts 1"' },
+            happierResponseLocation: 'app_and_terminal' });
+        await handler.handle(parseClaudeScreenState(screen));
+        const { id, request } = await fixture.publishedRequest();
+        expect(request).toMatchObject({ kind: 'permission', tool: kind === 'plan' ? 'ExitPlanMode' : 'Bash', nativeChoices: {
+            choices: kind === 'plan' ? [
+                { id: 'option_1', label: 'Yes, and use auto mode', scope: 'session',
+                    response: { updatedPermissions: [{ type: 'setMode', mode: 'auto', destination: 'session' }] } },
+                { id: 'option_2', label: 'Yes, manually approve edits', scope: 'session' },
+                { id: 'option_3', label: 'Tell Claude what to change', decision: 'denied', allowsFeedback: true },
+            ] : [
+                { id: 'option_1', label: 'Yes', decision: 'approved', scope: 'once' },
+                { id: 'option_2', label: 'Yes, and don’t ask again for: ruby *', scope: 'localPersistent' },
+                { id: 'option_3', label: 'Yes, and switch to auto mode · auto mode handles these prompts for you', scope: 'session' },
+                { id: 'option_4', label: 'No', decision: 'denied', scope: 'once' },
+            ],
+        } });
+        const reply = fixture.respond({ id, nativeChoice: { requirementId: request.nativeChoices!.requirementId, choiceId,
+            ...(kind === 'plan' ? { feedback } : {}),
+        } }, 'permission', relationship);
+        if (relationship && choiceId === 'option_3') {
+            await expect(reply).resolves.toMatchObject({ ok: false, errorCode: 'permission_response_invalid' });
+            expect(port.sentKeys).toEqual([]);
+            expect(fixture.session.__getAgentState().requests?.[id]).toBeDefined();
+            expect(fixture.session.__getAgentState().completedRequests?.[id]).toBeUndefined();
+            return;
+        }
+        if (failSend) {
+            await expect(reply).rejects.toThrow();
+            expect(fixture.session.__getAgentState().requests?.[id]).toBeDefined();
+            expect(fixture.session.__getAgentState().completedRequests?.[id]).toBeUndefined();
+        } else {
+            await expect(reply).resolves.toBeUndefined();
+            expect(fixture.session.__getAgentState().completedRequests?.[id]).toMatchObject({ decision, nativeChoice: { choiceId } });
+        }
+        expect(port.sentKeys).toEqual(['Enter']);
+        if (kind === 'plan') {
+            expect(port.sentRaw).toHaveLength(1);
+            expect(port.sentRaw[0]).toContain(feedback);
+            expect(fixture.session.__getAgentState().completedRequests?.[id]).toMatchObject({ nativeChoice: { feedback } });
+        }
+    });
+
+    it('authors Claude catalog consent from the admitted MCP identity and applies the selected native payload', async () => {
+        const { createClaudeNativePermissionEngine } = await import('../../../../../../../packages/plugins/claude/src/agent/permissions/nativePermissionEngine');
+        const fixture = createFixture({ interactionDeadlineMs: undefined }, { mode: 'yolo', mcpToolContext: {
+            mcpServerIdentities: { 'docs.team': { serverId: 'catalog-docs', serverTitle: 'Docs' } },
+            catalog: { status: 'ready', authority: 'active', revision: 1, diagnostics: [], catalog: { v: 1, bindings: [], servers: [{
+                id: 'catalog-docs', name: 'docs', transport: 'stdio', stdio: { command: 'docs-mcp', args: [] },
+                env: {}, createdAt: 1, updatedAt: 1, tools: { default: 'ask', overrides: {} },
+            }] } },
+        } });
+        let builderCalls = 0;
+        const engine = createClaudeNativePermissionEngine({ services: { interactions: {
+            ...fixture.public,
+            requestApproval: (request: Parameters<typeof fixture.public.requestApproval>[0], options?: Parameters<typeof fixture.public.requestApproval>[1]) => fixture.public.requestApproval(request, { ...options,
+                buildNativeChoices: facts => {
+                    builderCalls += 1;
+                    expect(facts.mcpTool).toMatchObject({ server: 'docs.team', tool: 'mutate', item: { serverId: 'catalog-docs' } });
+                    if (!options?.buildNativeChoices) throw new Error('Claude did not author the admission factory');
+                    return NativePermissionChoicesV1Schema.parse(JSON.parse(JSON.stringify(options.buildNativeChoices(facts))));
+                },
+            }),
+        } } } as unknown as AgentSessionRuntimeContext);
+        const pending = engine.canCallTool('mcp__docs.team__mutate', { page: 'draft' }, { requestId: 'catalog-occurrence' });
+        const { id, request } = await fixture.publishedRequest();
+        expect(builderCalls).toBe(1);
+        const consent = request.nativeChoices?.choices.find(choice => choice.id === 'mcp_always_allow');
+        expect(consent).toMatchObject({ scope: 'localPersistent', response: { approved: true, allowedTools: ['mcp__docs.team__mutate'] },
+            followUp: { actionId: 'mcp.servers.tools.set', input: { serverId: 'catalog-docs', tools: { mutate: 'allow' } } } });
+        await fixture.respond({ id, nativeChoice: { requirementId: 'catalog-occurrence', choiceId: 'mcp_always_allow' } }, 'permission');
+        await expect(pending).resolves.toMatchObject({ behavior: 'allow', updatedPermissions: [{
+            type: 'addRules', rules: [{ toolName: 'mcp__docs.team__mutate' }], behavior: 'allow', destination: 'session',
+        }] });
+    });
     it('applies only the durable ExitPlan mode offered through the real Claude producer and permission ingress', async () => {
         // Test-only composition of the real plugin producer with its host; no new runtime dependency.
         const { createClaudeNativeAgentSdkContext } = await import('../../../../../../../packages/plugins/claude/src/agent/runtime/nativeServices');
@@ -129,7 +247,7 @@ describe('native Agent current-session interactions', () => {
         fixture.session.__setMetadata(createTestMetadata({ permissionMode: 'plan' }));
         const context = {
             services: { logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }, exec: {},
-                interactions: fixture.public },
+                sessions: fixture.sessions, interactions: fixture.public },
             session: { services: { toolExecution: {
                 before: async (request: { input: Record<string, unknown> }) => ({ status: 'continue' as const, input: request.input }),
             } } },

@@ -1,4 +1,5 @@
 import type { ClaudeNativePermissionPresentation } from './nativePermissionScreen.js';
+import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import type { ClaudeScreenState } from '../screenState.js';
 
 /**
@@ -148,6 +149,7 @@ export type ClaudeUnifiedVisibleNativeToolDialog = Readonly<{
   question: string;
   options: readonly ClaudeUnifiedDialogOption[];
   permissionPresentation?: ClaudeNativePermissionPresentation;
+  nativeChoices?: NativePermissionChoicesV1;
 }>;
 
 function option(

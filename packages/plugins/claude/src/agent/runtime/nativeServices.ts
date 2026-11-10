@@ -138,7 +138,7 @@ function createNativePermissionDecisionAdapter(context: AgentSessionRuntimeConte
     ): Promise<ClaudePermissionDecision> {
       const toolName = typeof request.toolName === 'string' ? request.toolName.trim() : '';
       if (!toolName) return { decision: 'denied', rationale: 'Claude supplied an invalid tool request.' };
-      if (isAskUserQuestionToolName(toolName)) {
+      if (isAskUserQuestionToolName(toolName) || request.nativeChoices && options?.acknowledgeDecisionApplication) {
         const permissions = context.services.sessions.current?.permissions;
         if (!permissions) return unavailable('native dialog permission scope');
         // Runtime-authored terminal dialogs retain their source, presentation,
