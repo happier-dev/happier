@@ -440,7 +440,9 @@ export type SessionMetadataRecipientProjectionV1 = z.infer<
 >;
 
 const recipientProjectionWithAdmittedOwner = lazyZodSchema(() => z.union([
-  z.safeExtend(SessionMetadataOwnerRecipientProjectionV1Schema, {
+  // This leaf has already passed ingress admission; its custom parser accepts
+  // unknown input while preserving the envelope output and strict outer shape.
+  z.extend(SessionMetadataOwnerRecipientProjectionV1Schema, {
     ownerMetadata: z.custom<SessionOwnerMetadataEnvelopeV1>(envelope => envelope !== null && envelope !== undefined),
   }),
   SessionMetadataSharedRecipientProjectionV1Schema,
