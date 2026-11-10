@@ -1087,13 +1087,16 @@ const singleLineRowContentStyle: HappierPortableStyle = { paddingTop: 0, padding
 /**
  * The resting list (a phone, a narrow page) sits on the page's own edges (DESIGN.md: title, sections and sheets
  * share one edge): the Collection stands on the sheet edge, and its group heading, row marks and trailing facts
- * stand on the page text edge just inside it (`headingOpticalInsetPx`; lab phone-system flat rows: 18, title 50).
+ * stand on the page text edge just inside it (`headingOpticalInsetPx`; flat rows: mark on 18, title 54).
  * The row's 1 pt focus-ring band is part of that inset. A row with an accessory cell after it keeps that cell's.
- * The mark takes the page row's leading column, so a flat list's titles share a sheet row's mark-to-title step.
+ * The mark takes the page row's leading column and gap, so a flat list's titles share a sheet row's mark-to-title step.
  */
-const restingListContentStyle: HappierPortableStyle = { paddingLeft: HAPPIER_PAGE_METRICS.headingOpticalInsetPx - 1 };
-const restingListTrailingStyle: HappierPortableStyle = {
+const restingListContentStyle: HappierPortableStyle = {
   paddingLeft: HAPPIER_PAGE_METRICS.headingOpticalInsetPx - 1,
+  gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx,
+};
+const restingListTrailingStyle: HappierPortableStyle = {
+  ...restingListContentStyle,
   paddingRight: HAPPIER_PAGE_METRICS.headingOpticalInsetPx - 1,
 };
 /**
@@ -1304,6 +1307,7 @@ const sharedLineFactsStyle: HappierPortableStyle = { flexGrow: 1, flexShrink: 1,
 // The reason chip keeps its words whole; the facts beside it truncate first. A long sentence is held to most of the line.
 const sharedLineEndStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', flexShrink: 0, flexBasis: 'auto', minWidth: 0, maxWidth: '70%' };
 const whereWithControlsStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flexShrink: 1 };
+const factsNodeFrameStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
 
 /**
  * A row with `titleControls`, a `leadingControl` or a `control` field lies over its press target (`contentBesidePressable`): its content lets presses
@@ -1422,7 +1426,13 @@ function ListCells<Item>(props: Readonly<{
   const layer = props.beneath === null ? rowLayerPointerEvents(anatomy) : ROW_LAYER_POINTER_EVENTS;
   const controls = anatomy.titleControls?.(item) ?? null;
   // A row's controls end its byline, beside the row's press target (see `titleControls`).
-  const facts = (value: ReactNode) => layer === null ? <SlotContent value={value} textStyle={secondLine} /> : (
+  // An anatomy's own node (a Machine's state line) gets the line's shrinkable frame, so its text truncates on a narrow
+  // row instead of running past the row's edge (a React Native View does not shrink by default).
+  const facts = (value: ReactNode) => layer === null ? (
+    value === null || value === undefined || value === false || typeof value === 'string' || typeof value === 'number'
+      ? <SlotContent value={value} textStyle={secondLine} />
+      : <View style={factsNodeFrameStyle}><SlotContent value={value} textStyle={secondLine} /></View>
+  ) : (
     <>
       <View pointerEvents={layer.leaf} style={whereWithControlsStyle}><SlotContent value={value} textStyle={secondLine} /></View>
       {controls === null || controls === false || (described && status !== null) ? null : (
@@ -1486,7 +1496,9 @@ function ListCells<Item>(props: Readonly<{
             {anatomy.title(item)}
             {kindWord}
           </HappierText>
-          {metaPlacement === 'inline' && metaCell !== null && !metaOnRow ? <View style={catalogMetaInlineStyle}>{metaCell}</View> : null}
+          {/* A catalog name keeps its natural width, so its meta grows to stand at the line's end; any other title fills
+              the line and the meta keeps its own width (a growing meta took half of a phone row's title line). */}
+          {metaPlacement === 'inline' && metaCell !== null && !metaOnRow ? (catalog ? <View style={catalogMetaInlineStyle}>{metaCell}</View> : metaCell) : null}
           {age === null ? null : (
             <HappierText variant="meta" tone="muted" numberOfLines={1} tabularNumbers>{age}</HappierText>
           )}

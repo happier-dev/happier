@@ -15,6 +15,7 @@ import { ThisComputerServersMenuSection } from '@/components/settings/machines/l
 import { useServerAuthStatusByServerId } from '@/components/settings/server/hooks/useServerAuthStatusByServerId';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { Avatar } from '@/components/ui/avatar/Avatar';
+import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -308,7 +309,7 @@ function IdentitySection(props: Readonly<{
         icon: (
             <Avatar
                 id={profile.id}
-                size={32}
+                size={MENU_ROW_METRICS.identityMarkPx}
                 imageUrl={getAvatarUrl(profile)}
                 thumbhash={profile.avatar?.thumbhash}
             />

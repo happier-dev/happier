@@ -167,18 +167,11 @@ describe('SessionListVirtualizedContent load stability', () => {
     await screen.unmount();
   });
 
-  it('spaces the first group below a leading reminder from the first frame, without waiting for its layout', async () => {
+  it('keeps the first group under the header when the recovery-key reminder leads it (owner 2026-11-10: equal space above and below)', async () => {
+    // The reminder is a block of the list header, spaced by the header's rhythm: the group after it still opens
+    // the column, so the space under the reminder matches the space above it.
     const screen = await renderScreen(
-      build({ showReminders: true, reminderLeads: true }),
-    );
-    expect(probe.firstGroupAtFirstCommit.get(ATTENTION_HEADER.id)).toBe(false);
-    expect(probe.firstGroupAtFirstCommit.get(PROJECT_HEADER.id)).toBe(false);
-    await screen.unmount();
-  });
-
-  it('opens the column with the first group when nothing leads it', async () => {
-    const screen = await renderScreen(
-      build({ showReminders: true, reminderLeads: false }),
+      build({ showReminders: true }),
     );
     expect(probe.firstGroupAtFirstCommit.get(ATTENTION_HEADER.id)).toBe(true);
     expect(probe.firstGroupAtFirstCommit.get(PROJECT_HEADER.id)).toBe(true);

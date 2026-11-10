@@ -150,6 +150,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         // Optical, not geometric — see ICON_LABEL_OPTICAL_NUDGE_STYLE.
         ...ICON_LABEL_OPTICAL_NUDGE_STYLE,
     },
+    // A menu row's leading column is one width, so every title of a menu starts on one edge: a glyph sits centred
+    // in it and an identity mark (`MENU_ROW_METRICS.identityMarkPx`) overhangs it evenly instead of widening it.
+    leftMenu: {
+        width: MENU_ROW_METRICS.iconBoxSizePx,
+        marginRight: MENU_ROW_METRICS.iconMarginRightPx,
+    },
     content: {
         flex: 1,
         minWidth: 0,
@@ -355,6 +361,7 @@ export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>
         splitPressOpacity={motionTokens.press.opacity}
         styles={{
             ...styles,
+            left: isMenu ? [styles.left, styles.leftMenu] as HappierStyleProp : styles.left,
             // The native adapter retains its exact style binding (including registered RN styles).
             title: [styles.title, titleVariantStyle, titleColorStyle, props.titleStyle] as HappierStyleProp,
             titleWithAccessories: [styles.title, styles.titleText, titleVariantStyle, titleColorStyle, props.titleStyle] as HappierStyleProp,

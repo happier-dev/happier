@@ -155,4 +155,15 @@ describe('settings catalog rail shape', () => {
             '/settings/voice/history',
         ]);
     });
+
+    it('gives every Settings overview row a subtitle, so one row pitch holds down each sheet (owner 2026-11-10)', () => {
+        // Overview rows are the routed pages directly under a section (settings → section → page).
+        // Machines is the one row whose subtitle is live presence, supplied by its section.
+        const LIVE_SUBTITLE_PAGE_IDS = new Set(['machines']);
+        const overview = catalog.find((node) => node.id === 'settings');
+        const rows = (overview?.children ?? []).flatMap((section) => (section.children ?? []) as ReadonlyArray<CatalogNode & { searchOnly?: boolean }>)
+            .filter((page) => page.route && !page.searchOnly && !LIVE_SUBTITLE_PAGE_IDS.has(page.id));
+        expect(rows.length).toBeGreaterThan(20);
+        expect(rows.filter((page) => !page.subtitleKey).map((page) => page.id)).toEqual([]);
+    });
 });

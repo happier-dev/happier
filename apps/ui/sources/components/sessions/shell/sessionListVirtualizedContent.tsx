@@ -184,8 +184,6 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
     scheduledSection?: React.ReactNode;
     /** The read that draws `scheduledSection`: whether it leads the groups, and the list presents once it first settles. */
     scheduledRead?: ScheduledWorkflowRowsRead;
-    /** Whether the list header draws the recovery-key reminder (`useSessionsListReminderLeads`). */
-    reminderLeads?: boolean;
     /** The layout these nodes draw; a Projects ↔ Recent choice glides once it commits (web). */
     layout?: SessionListLayoutChoice;
 }>) {
@@ -219,14 +217,14 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
             <SessionListFilteredNoResultsMessage message={props.filteredNoResultsMessage} />
         ) : null
     ), [props.filteredNoResultsMessage, props.queryPresentationState]);
-    // Reminders precede every group; Scheduled/Drafts precede only ordinary groups. The reminder and
-    // Scheduled come from their owners, so the first frame already spaces the groups; Drafts stay measured.
-    const remindersLead = props.showReminders !== false && props.reminderLeads === true;
+    // Scheduled/Drafts precede only ordinary groups; Scheduled comes from its owner, so the first frame already
+    // spaces the groups, and Drafts stay measured. The recovery-key reminder is a block of the list header, spaced by
+    // the header's own rhythm: the group after it still opens the column (owner 2026-11-10: equal space above and below).
     const scheduledRead = props.scheduledRead;
     // A section handed without its read (a fixed element) is drawn as given.
     const scheduledShown = scheduledRead ? isScheduledWorkflowGroupShown(scheduledRead) : props.scheduledSection != null;
     const [draftsShown, setDraftsShown] = React.useState(false);
-    const leadingShown = { reminders: remindersLead, sections: scheduledShown || draftsShown };
+    const leadingSectionsShown = scheduledShown || draftsShown;
     const headerComponent = React.useMemo(() => (
         props.showReminders !== false ? <SessionsListHeader /> : null
     ), [props.showReminders]);
@@ -255,7 +253,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
             ? <View {...{ dataSet: { sessionListFlight: params.item.id } }}>{rendered}</View>
             : rendered;
         return params.item.kind === 'header' && params.item.headerKind !== 'attention' && params.item.headerKind !== 'working'
-            ? <SessionListFirstGroupContext.Provider value={!leadingShown.reminders && !leadingShown.sections}>
+            ? <SessionListFirstGroupContext.Provider value={!leadingSectionsShown}>
                 {row}
             </SessionListFirstGroupContext.Provider>
             : row;
@@ -277,7 +275,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
         (node: SessionListVirtualizedNode) => estimateSessionListNodeSize(node, rowHeight),
         [rowHeight],
     );
-    const firstSupportingGroup = props.nodes[0]?.kind === 'supporting_sections' && !leadingShown.reminders;
+    const firstSupportingGroup = props.nodes[0]?.kind === 'supporting_sections';
     const supportingSectionsValue = React.useMemo<SessionListSupportingSectionsProps>(() => ({
         rowDensity, showDrafts: props.showDrafts, scheduledSection: props.scheduledSection, scheduledShown,
         viewContext: props.viewContext, first: firstSupportingGroup,
@@ -298,7 +296,7 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
     if (awaitingFirstComposition) return <SessionListSkeletonRows />;
     return (
         <SessionListSupportingSectionsContext.Provider value={supportingSectionsValue}>
-        <SessionListFirstGroupContext.Provider value={!leadingShown.reminders}>
+        <SessionListFirstGroupContext.Provider value={true}>
         <VirtualizedList
             ref={props.listRef as React.Ref<VirtualizedListRef>}
             data={props.nodes as any}

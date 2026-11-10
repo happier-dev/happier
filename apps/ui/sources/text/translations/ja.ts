@@ -4319,6 +4319,8 @@ localTailscale: {
     exchangingTokens: "トークンを交換中...",
     usage: "使用状況",
     usageSubtitle: 'セッション、エージェント、モデルごとのトークンとコストです。',
+    deploymentsSubtitle: '新しいプロジェクト環境の既定値です。',
+    reportIssueSubtitle: '問題の内容をお知らせください。',
     profiles: "起動プロファイル",
     profilesSubtitle: "セッション用の環境変数プロファイルを管理",
     secrets: "シークレット",

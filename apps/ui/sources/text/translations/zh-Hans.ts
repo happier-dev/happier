@@ -3752,6 +3752,8 @@ export const zhHans: TranslationStructure = {
     exchangingTokens: "正在交换令牌...",
     usage: "使用情况",
     usageSubtitle: '你的会话、智能体和模型的令牌用量与费用。',
+    deploymentsSubtitle: '新项目环境的默认设置。',
+    reportIssueSubtitle: '告诉我们出了什么问题。',
     profiles: "启动配置",
     profilesSubtitle: "管理环境配置文件和变量",
     secrets: "机密",

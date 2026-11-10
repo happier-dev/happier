@@ -216,14 +216,14 @@ export const HAPPIER_COLLECTION_LIST_METRICS = Object.freeze({
   catalogRow: Object.freeze({
     minHeight: 60,
     /**
-     * The mark's column. On the phone it is the page row's (20 + 12), so a catalog record's title starts on
-     * the same edge as every other row of a sheet (64) instead of 76–80 (PHONE-GEOMETRY-1110).
+     * The mark's column. On the phone it is the page row's (22 + 14), so a catalog record's title starts on
+     * the same edge as every other row of a sheet (68) instead of 76–80 (PHONE-GEOMETRY-1110).
      */
     markBox: PHONE_COLUMN ? HAPPIER_PAGE_METRICS.rowLeadingColumnPx : 32,
     markGap: PHONE_COLUMN ? HAPPIER_PAGE_METRICS.rowLeadingGapPx : 12,
     /**
      * An identity mark drawn in that column (a Team's logo, a person's avatar, a Store item): inside the box
-     * on a pointer platform, and overhanging the phone's 20 column evenly, on the glyph axis.
+     * on a pointer platform, and overhanging the phone's 22 column evenly, on the glyph axis.
      */
     identityMarkPx: PHONE_COLUMN ? HAPPIER_PAGE_METRICS.rowIdentityMarkPx : 28,
     rowGap: 2,
@@ -236,7 +236,7 @@ export const HAPPIER_COLLECTION_LIST_METRICS = Object.freeze({
     /** Air between a page directory's two columns. */
     directoryColumnGap: 40,
   }),
-  /** The glyph column; on the phone it is the page row's (20 + 12), so a list glyph and a sheet glyph match. */
+  /** The glyph column; on the phone it is the page row's (22 + 14), so a list glyph and a sheet glyph match. */
   rowGlyphBox: PHONE_COLUMN ? HAPPIER_PAGE_METRICS.rowLeadingColumnPx : 20,
   rowGlyphGap: PHONE_COLUMN ? HAPPIER_PAGE_METRICS.rowLeadingGapPx : 10,
   /** The header's title row (title, count, the header action's 30px icon buttons). */

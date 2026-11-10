@@ -248,7 +248,7 @@ export type HappierCollectionRowMainProps = Readonly<{
   identity?: ReactNode;
   /**
    * `page`: a row on a page sheet (the Inbox's Work rows) takes the page row's leading column and gap, so its
-   * title shares the sheet's one edge (phone 64) with every `Item` row; the mark sits centred on the glyph axis.
+   * title shares the sheet's one edge (phone 68) with every `Item` row; the mark sits centred on the glyph axis.
    */
   identityColumn?: 'density' | 'page';
   /** The title line: the title, then its quiet context and qualifiers. */

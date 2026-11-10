@@ -3718,6 +3718,8 @@ export const ru: TranslationStructure = {
     exchangingTokens: "Обмен токенов...",
     usage: "Использование",
     usageSubtitle: 'Токены и расходы по вашим сессиям, агентам и моделям.',
+    deploymentsSubtitle: 'Настройки новых окружений проектов.',
+    reportIssueSubtitle: 'Расскажите, что пошло не так.',
     profiles: "Профили запуска",
     profilesSubtitle: "Управление профилями переменных окружения для сессий",
     secrets: "Секреты",

@@ -119,7 +119,7 @@ const PAGE_ROW_PADDING_PX = HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx - HAPPIE
  * so it reads as part of the row rather than as a block inside the sheet (lab `phone-P4`).
  */
 export const HAPPIER_WORK_PAGE_ROW_METRICS = Object.freeze({
-  // The page row's own column (20 + 12), so an Inbox title lands on the sheet's one edge (phone 64, not 74).
+  // The page row's own column (22 + 14), so an Inbox title lands on the sheet's one edge (phone 68, not 74).
   textInsetPx: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx + HAPPIER_PAGE_METRICS.rowLeadingColumnPx + HAPPIER_PAGE_METRICS.rowLeadingGapPx,
   /** The row's trailing inset, matching its leading padding. */
   trailingInsetPx: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx,

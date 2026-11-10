@@ -191,8 +191,9 @@ describe('DropdownMenu page field', () => {
         const pane = await renderField({ selectedId: 'round-robin' });
         expect(await layoutRow(pane.screen, 481)).not.toBe('column');
         expect(fieldBox(pane.screen).width).toBeUndefined();
+        const { HAPPIER_PAGE_METRICS } = await import('@happier-dev/plugin-ui/presentation');
         // No wider than what the label's column leaves (row insets, gap, label column).
-        expect(pane.screen.findAllByType('View' as never).some((node) => flattenTestStyle(node.props.style).maxWidth === 481 - 2 * 16 - 12 - 200)).toBe(true);
+        expect(pane.screen.findAllByType('View' as never).some((node) => flattenTestStyle(node.props.style).maxWidth === 481 - 2 * 16 - HAPPIER_PAGE_METRICS.rowLeadingGapPx - 200)).toBe(true);
         // Below the label's column plus the narrowest trigger it moves beneath.
         expect(await layoutRow(pane.screen, 370)).toBe('column');
         standardCleanup();

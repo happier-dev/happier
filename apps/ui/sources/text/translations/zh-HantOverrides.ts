@@ -3867,6 +3867,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         exchangingTokens: '正在交換權杖...',
         usage: '使用情況',
         usageSubtitle: '你的工作階段、代理與模型的權杖用量與費用。',
+        deploymentsSubtitle: '新專案環境的預設設定。',
+        reportIssueSubtitle: '告訴我們出了什麼問題。',
         profiles: "啟動設定檔",
         profilesSubtitle: '管理工作階段的環境變數設定檔',
         actionsSubtitle: '選擇每個操作在 app、語音與整合中的顯示位置。',

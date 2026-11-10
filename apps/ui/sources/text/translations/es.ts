@@ -3983,6 +3983,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     exchangingTokens: "Intercambiando tokens...",
     usage: "Uso",
     usageSubtitle: 'Tokens y costes de tus sesiones, agentes y modelos.',
+    deploymentsSubtitle: 'Valores para entornos nuevos de proyecto.',
+    reportIssueSubtitle: 'Cuéntanos qué ha fallado.',
     profiles: "Perfiles de inicio",
     profilesSubtitle:
       "Gestionar perfiles de variables de entorno para sesiones",

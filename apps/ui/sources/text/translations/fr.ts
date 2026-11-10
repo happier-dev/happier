@@ -3818,6 +3818,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     exchangingTokens: "Échange des tokens…",
     usage: "Utilisation",
     usageSubtitle: 'Jetons et coûts de tes sessions, agents et modèles.',
+    deploymentsSubtitle: 'Valeurs par défaut des nouveaux environnements de projet.',
+    reportIssueSubtitle: 'Dis-nous ce qui n’a pas marché.',
     profiles: "Profils de lancement",
     profilesSubtitle:
       "Gère les profils de variables d’environnement pour les sessions",

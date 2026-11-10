@@ -4415,6 +4415,8 @@ const enSettings = {
   exchangingTokens: 'Exchanging tokens...',
   usage: 'Usage',
   usageSubtitle: 'Tokens and costs across your sessions, agents and models.',
+  deploymentsSubtitle: 'Defaults for new project environments.',
+  reportIssueSubtitle: 'Tell us what went wrong.',
   profiles: "Launch profiles",
   profilesSubtitle: 'Manage environment variable profiles for sessions',
   secrets: 'Secrets',

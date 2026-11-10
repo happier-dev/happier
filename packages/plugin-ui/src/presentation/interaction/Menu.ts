@@ -11,6 +11,12 @@ export const HAPPIER_MENU_ROW_METRICS = {
   iconGlyphSizePx: 16,
   iconBoxSizePx: 16,
   iconMarginRightPx: 12,
+  /**
+   * An identity mark in a menu row's leading column (an avatar, a Home's mark): centred on the glyph axis and
+   * overhanging the 16 column by 4 on each side, so a menu's titles share one edge whether a row leads with a
+   * glyph or a mark (PHONE-GEOMETRY-1110: the Home menu's identity row stood 16 right of its glyph rows).
+   */
+  identityMarkPx: 24,
   minHeightPx: 36,
   paddingVerticalPx: 8,
   paddingHorizontalPx: 12,

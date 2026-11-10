@@ -10,7 +10,6 @@ import { sessionListStyles } from './sessionListStyles';
 import { SessionListDropOverlay } from './drag/SessionListDropOverlay';
 import { SessionListVirtualizedContent } from './sessionListVirtualizedContent';
 import { ScheduledWorkflowGroup, useScheduledWorkflowRows } from '@/components/workflows/triggers/ScheduledWorkflowSection';
-import { useSessionsListReminderLeads } from './sessionListChrome';
 import { SessionListSearchChrome } from './search/SessionListSearchChrome';
 import { buildSessionListActiveFilterChips, isSessionListWorkFilterDefault, readSessionListWorkFilterSummary } from './search/SessionListFilterControl';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -375,7 +374,6 @@ function VisibleSessionsListViewContent(
     const scheduledSection = React.useMemo(() => scheduledApplies
         ? <ScheduledWorkflowGroup read={scheduledRead} density={viewState.rowDensity} /> : undefined,
     [scheduledApplies, scheduledRead, viewState.rowDensity]);
-    const reminderLeads = useSessionsListReminderLeads();
     const {
         measureNodeViewportOffset,
         nodeIds,
@@ -613,7 +611,6 @@ function VisibleSessionsListViewContent(
                         showReminders={props.filterController.displayFilters.show !== 'runs'}
                         scheduledSection={scheduledSection}
                         scheduledRead={scheduledApplies ? scheduledRead : undefined}
-                        reminderLeads={reminderLeads}
                         layout={layout}
                     />
                 </SyncPerformanceReactProfiler>

@@ -72,6 +72,7 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                     {
                         id: 'homeAdministration',
                         titleKey: 'homeGovernance.title',
+                        subtitleKey: 'homeGovernance.pages.homes',
                         route: homeAdministrationSettingsEntryHref(),
                         keywordsKey: 'settingsSearchKeywords.homeAdministration',
                         icon: ({ theme }) => <Icon name="house" size={16} color={theme.colors.text.secondary} />,
@@ -88,6 +89,7 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                     {
                         id: 'deployments',
                         titleKey: 'projects.deployments.title',
+                        subtitleKey: 'settings.deploymentsSubtitle',
                         route: SETTINGS_ROUTES.deployments,
                         icon: ({ theme }) => <Icon name="hard-drives" size={16} color={theme.colors.text.secondary} />,
                     },
@@ -131,6 +133,7 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                     {
                         id: 'remoteHosts',
                         titleKey: 'settings.remoteHostsTitle',
+                        subtitleKey: 'settingsRemoteHostsPage.pageDescription',
                         route: SETTINGS_ROUTES.remoteHosts,
                         keywordsKey: 'settingsSearchKeywords.remoteHosts',
                         gate: { featureId: 'remoteHosts.management', requiresTauriDesktop: true },
@@ -172,6 +175,7 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                     {
                         id: 'language',
                         titleKey: 'settingsLanguage.title',
+                        subtitleKey: 'settingsLanguage.pageDescription',
                         route: SETTINGS_ROUTES.language,
                         keywordsKey: 'settingsSearchKeywords.language',
                         icon: ({ theme }) => <Icon name="translate" size={16} color={theme.colors.text.secondary} />,
@@ -352,6 +356,7 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                     {
                         id: 'session',
                         titleKey: 'settings.sessions',
+                        subtitleKey: 'settingsSessionPages.runtime.pageDescription',
                         route: SETTINGS_ROUTES.session,
                         keywordsKey: 'settingsSearchKeywords.session',
                         icon: ({ theme }) => <Icon name="terminal" size={16} color={theme.colors.text.secondary} />,
@@ -359,6 +364,7 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                     {
                         id: 'coordination',
                         titleKey: 'settingsCoordination.title',
+                        subtitleKey: 'settingsCoordination.pageDescription',
                         route: SETTINGS_ROUTES.coordination,
                         keywordsKey: 'settingsCoordination.keywords',
                         icon: ({ theme }) => <Icon name="tree-structure" size={16} color={theme.colors.text.secondary} />,
@@ -407,6 +413,7 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                     {
                         id: 'toolRendering',
                         titleKey: 'settingsSession.toolRendering.title',
+                        subtitleKey: 'settingsSessionPages.toolRendering.pageDescription',
                         route: SETTINGS_ROUTES.toolRendering,
                         keywordsKey: 'settingsSearchKeywords.toolRendering',
                         icon: ({ theme }) => <Icon name="wrench" size={16} color={theme.colors.text.secondary} />,
@@ -414,6 +421,7 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                     {
                         id: 'handoff',
                         titleKey: 'settingsSession.handoff.title',
+                        subtitleKey: 'settingsSessionPages.handoff.pageDescription',
                         route: SETTINGS_ROUTES.handoff,
                         keywordsKey: 'settingsSearchKeywords.handoff',
                         icon: ({ theme }) => <Icon name="arrows-left-right" size={16} color={theme.colors.text.secondary} />,
@@ -523,6 +531,7 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                     {
                         id: 'diagnosis',
                         titleKey: 'diagnosis.title',
+                        subtitleKey: 'diagnosis.pageDescription',
                         route: SETTINGS_ROUTES.diagnosis,
                         keywordsKey: 'settingsSearchKeywords.diagnosis',
                         icon: ({ theme }) => <Icon name="first-aid-kit" size={16} color={theme.colors.text.secondary} />,
@@ -530,6 +539,7 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                     {
                         id: 'reportIssue',
                         titleKey: 'settings.reportIssue',
+                        subtitleKey: 'settings.reportIssueSubtitle',
                         route: SETTINGS_ROUTES.reportIssue,
                         keywordsKey: 'settingsSearchKeywords.reportIssue',
                         icon: ({ theme }) => <Icon name="bug" size={16} color={theme.colors.text.secondary} />,

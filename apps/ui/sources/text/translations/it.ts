@@ -4172,6 +4172,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     exchangingTokens: "Scambio dei token...",
     usage: "Utilizzo",
     usageSubtitle: 'Token e costi di sessioni, agenti e modelli.',
+    deploymentsSubtitle: 'Valori per i nuovi ambienti di progetto.',
+    reportIssueSubtitle: 'Dicci cosa non ha funzionato.',
     profiles: "Profili di avvio",
     profilesSubtitle:
       "Gestisci i profili delle variabili ambiente per le sessioni",

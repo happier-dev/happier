@@ -27,11 +27,6 @@ export const SettingsSessionsBehaviorSection = React.memo(function SettingsSessi
             groupId="groupSessionsBehavior"
             onNavigate={onNavigate}
             router={router}
-            resolveSubtitle={(page, defaultSubtitle) => (
-                page.id === 'session'
-                    ? t('settingsSessionPages.runtime.pageDescription')
-                    : defaultSubtitle
-            )}
             append={showAutomations ? (
                 <Item
                     testID="settings-workflow-run-settings"
