@@ -135,7 +135,11 @@ export function readStarterCreateOutcome(
       phase: text(value.phase),
       code,
       repositoryCreated: text(value.repositoryUrl) !== null,
-      remediation: text(value.remediation),
+      // The SCM owner's remediation carries its own label (Choose another name, Connect GitHub…).
+      remediation:
+        value.remediation && typeof value.remediation === 'object'
+          ? text((value.remediation as Record<string, unknown>).label)
+          : null,
     };
   }
   return {
@@ -144,5 +148,18 @@ export function readStarterCreateOutcome(
     code: 'invalid_result',
     repositoryCreated: false,
     remediation: null,
+  };
+}
+
+/**
+ * One create intent per reviewed draft: the same review retried reuses its key (the Action's owners
+ * then never create twice); any reviewed operand that changes is a new intent with a new key.
+ */
+export function createStarterIntentKeys(mint: () => string) {
+  let current: Readonly<{ signature: string; key: string }> | null = null;
+  return (reviewed: Readonly<Record<string, unknown>>): string => {
+    const signature = JSON.stringify(Object.keys(reviewed).sort().map((name) => [name, reviewed[name]]));
+    if (current?.signature !== signature) current = { signature, key: mint() };
+    return current.key;
   };
 }

@@ -37,6 +37,8 @@ type Copy = Readonly<{
   creatingTitle: (p: Name) => string;
   creatingDescription: string;
   failedTitle: string;
+  failedKept: string;
+  failedNothing: string;
   retry: string;
   keepsGoing: string;
   stepRepository: string;
@@ -113,6 +115,8 @@ export const newAppTranslations: Readonly<
     creatingDescription:
       'This takes under a minute. Then your agent starts building and the project opens.',
     failedTitle: 'One step needs another go',
+    failedKept: 'The repository is created. Try again to finish; nothing is created twice.',
+    failedNothing: 'Nothing was created. Change what you need, then try again.',
     retry: 'Try again',
     keepsGoing: 'You can close this; it keeps going',
     stepRepository: 'Create the repository',
@@ -172,6 +176,8 @@ export const newAppTranslations: Readonly<
     creatingDescription:
       'Triga menys d’un minut. Després l’agent comença a construir i s’obre el projecte.',
     failedTitle: 'Un pas s’ha de tornar a provar',
+    failedKept: 'El repositori ja està creat. Torna-ho a provar per acabar; res no es crea dues vegades.',
+    failedNothing: 'No s’ha creat res. Canvia el que calgui i torna-ho a provar.',
     retry: 'Torna-ho a provar',
     keepsGoing: 'Pots tancar-ho; continua igualment',
     stepRepository: 'Crea el repositori',
@@ -231,6 +237,8 @@ export const newAppTranslations: Readonly<
     creatingDescription:
       'Das dauert unter einer Minute. Dann beginnt dein Agent zu bauen und das Projekt öffnet sich.',
     failedTitle: 'Ein Schritt braucht einen neuen Versuch',
+    failedKept: 'Das Repository ist erstellt. Versuche es erneut, um abzuschließen; nichts wird doppelt erstellt.',
+    failedNothing: 'Es wurde nichts erstellt. Ändere, was nötig ist, und versuche es erneut.',
     retry: 'Erneut versuchen',
     keepsGoing: 'Du kannst das schließen; es läuft weiter',
     stepRepository: 'Repository erstellen',
@@ -290,6 +298,8 @@ export const newAppTranslations: Readonly<
     creatingDescription:
       'Tarda menos de un minuto. Después tu agente empieza a construir y se abre el proyecto.',
     failedTitle: 'Un paso necesita otro intento',
+    failedKept: 'El repositorio ya está creado. Reintenta para terminar; nada se crea dos veces.',
+    failedNothing: 'No se creó nada. Cambia lo que necesites y vuelve a intentarlo.',
     retry: 'Reintentar',
     keepsGoing: 'Puedes cerrar esto; sigue en marcha',
     stepRepository: 'Crear el repositorio',
@@ -349,6 +359,8 @@ export const newAppTranslations: Readonly<
     creatingDescription:
       'Cela prend moins d’une minute. Ensuite votre agent commence à construire et le projet s’ouvre.',
     failedTitle: 'Une étape doit être relancée',
+    failedKept: 'Le dépôt est créé. Réessayez pour terminer ; rien n’est créé deux fois.',
+    failedNothing: 'Rien n’a été créé. Modifiez ce qu’il faut, puis réessayez.',
     retry: 'Réessayer',
     keepsGoing: 'Vous pouvez fermer ; cela continue',
     stepRepository: 'Créer le dépôt',
@@ -408,6 +420,8 @@ export const newAppTranslations: Readonly<
     creatingDescription:
       'Ci vuole meno di un minuto. Poi il tuo agente inizia a costruire e il progetto si apre.',
     failedTitle: 'Un passaggio va ritentato',
+    failedKept: 'Il repository è stato creato. Riprova per finire; nulla viene creato due volte.',
+    failedNothing: 'Non è stato creato nulla. Modifica ciò che serve e riprova.',
     retry: 'Riprova',
     keepsGoing: 'Puoi chiudere; continua comunque',
     stepRepository: 'Crea il repository',
@@ -467,6 +481,8 @@ export const newAppTranslations: Readonly<
     creatingDescription:
       '1分もかかりません。その後エージェントが作り始め、プロジェクトが開きます。',
     failedTitle: 'もう一度試す必要がある手順があります',
+    failedKept: 'リポジトリは作成済みです。もう一度試すと完了します。二重に作成されることはありません。',
+    failedNothing: '何も作成されていません。必要な点を変更してから、もう一度試してください。',
     retry: 'もう一度試す',
     keepsGoing: '閉じても続行されます',
     stepRepository: 'リポジトリを作成',
@@ -526,6 +542,8 @@ export const newAppTranslations: Readonly<
     creatingDescription:
       'To trwa krócej niż minutę. Potem agent zaczyna budować i otwiera się projekt.',
     failedTitle: 'Jeden krok trzeba powtórzyć',
+    failedKept: 'Repozytorium jest utworzone. Spróbuj ponownie, aby dokończyć; nic nie powstanie dwa razy.',
+    failedNothing: 'Nic nie zostało utworzone. Zmień, co trzeba, i spróbuj ponownie.',
     retry: 'Spróbuj ponownie',
     keepsGoing: 'Możesz to zamknąć; działa dalej',
     stepRepository: 'Utwórz repozytorium',
@@ -585,6 +603,8 @@ export const newAppTranslations: Readonly<
     creatingDescription:
       'Leva menos de um minuto. Depois seu agente começa a construir e o projeto abre.',
     failedTitle: 'Uma etapa precisa de nova tentativa',
+    failedKept: 'O repositório já foi criado. Tente de novo para terminar; nada é criado duas vezes.',
+    failedNothing: 'Nada foi criado. Altere o que precisar e tente de novo.',
     retry: 'Tentar de novo',
     keepsGoing: 'Você pode fechar; continua rodando',
     stepRepository: 'Criar o repositório',
@@ -644,6 +664,8 @@ export const newAppTranslations: Readonly<
     creatingDescription:
       'Это займёт меньше минуты. Затем агент начнёт работу и откроется проект.',
     failedTitle: 'Один шаг нужно повторить',
+    failedKept: 'Репозиторий создан. Повторите, чтобы завершить, — дважды ничего не создаётся.',
+    failedNothing: 'Ничего не создано. Измените нужное и повторите.',
     retry: 'Повторить',
     keepsGoing: 'Можно закрыть — работа продолжится',
     stepRepository: 'Создать репозиторий',
@@ -701,6 +723,8 @@ export const newAppTranslations: Readonly<
     creatingTitle: ({ name }) => `正在创建 ${name}`,
     creatingDescription: '不到一分钟。之后智能体开始构建，项目随即打开。',
     failedTitle: '有一步需要重试',
+    failedKept: '仓库已创建。重试即可完成，不会重复创建。',
+    failedNothing: '未创建任何内容。修改需要的地方后再试一次。',
     retry: '重试',
     keepsGoing: '可以关闭，它会继续进行',
     stepRepository: '创建仓库',
@@ -756,6 +780,8 @@ export const newAppTranslations: Readonly<
     creatingTitle: ({ name }) => `正在建立 ${name}`,
     creatingDescription: '不到一分鐘。之後代理程式開始建構，專案隨即開啟。',
     failedTitle: '有一步需要重試',
+    failedKept: '儲存庫已建立。重試即可完成，不會重複建立。',
+    failedNothing: '未建立任何內容。修改需要的地方後再試一次。',
     retry: '重試',
     keepsGoing: '可以關閉，它會繼續進行',
     stepRepository: '建立儲存庫',

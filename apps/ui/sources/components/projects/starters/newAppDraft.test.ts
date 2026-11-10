@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildStarterCreateInput,
+  createStarterIntentKeys,
   deriveRepositoryName,
   readStarterCreateOutcome,
 } from './newAppDraft';
@@ -102,5 +103,20 @@ describe('New app draft (projects.starters.create operands)', () => {
       kind: 'failed',
       code: 'invalid_result',
     });
+  });
+
+  it('keeps one create intent per reviewed draft: a retry reuses it, a changed name mints a new one', () => {
+    let n = 0;
+    const keyFor = createStarterIntentKeys(() => `k${++n}`);
+    const reviewed = { starterId: 's', description: 'd', name: 'rye-orders', machineId: 'm1', owner: 'alice' };
+    expect(keyFor(reviewed)).toBe('k1');
+    expect(keyFor({ ...reviewed })).toBe('k1');
+    expect(keyFor({ ...reviewed, name: 'rye-orders-2' })).toBe('k2');
+  });
+
+  it('reads the owner\'s remediation label as the next step', () => {
+    expect(readStarterCreateOutcome({ kind: 'failed', phase: 'publish', code: 'remote_conflict',
+      remediation: { kind: 'retry', label: 'Choose another name' } }))
+      .toMatchObject({ kind: 'failed', remediation: 'Choose another name' });
   });
 });

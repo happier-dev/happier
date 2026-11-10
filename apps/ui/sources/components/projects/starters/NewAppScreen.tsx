@@ -2,10 +2,8 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { Image } from 'expo-image';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import {
-  getBundledProjectStartersV1,
-  type ProjectStarterV1,
-} from '@happier-dev/protocol';
+import { getBundledProjectStartersV1 } from '@happier-dev/protocol/projects/starters/bundledProjectStartersV1';
+import type { ProjectStarterV1 } from '@happier-dev/protocol/projects/starters/projectStarterV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -35,6 +33,9 @@ import type { CustomModalInjectedProps } from '@/modal/types';
 import { randomUUID } from '@/platform/randomUUID';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useActiveMachineFacts } from '@/sync/store/hooks';
+import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
+import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
+import { resolveMachineActionCandidates } from '@/utils/sessions/resolveMachineActionCandidates';
 import { machineScmHostingRepositoryDescribePublishTargets } from '@/sync/ops/scm/machineScm';
 import type { ScmHostingRepositoryDescribePublishTargetsResponse } from '@happier-dev/protocol/scm';
 import { resolveSourceControlPublishRepositoryRemediation } from '@/components/workspaces/scm/update/resolveSourceControlPublishRepositoryRemediation';
@@ -51,6 +52,7 @@ import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames
 
 import {
   buildStarterCreateInput,
+  createStarterIntentKeys,
   deriveRepositoryName,
   readStarterCreateOutcome,
   type StarterCreateOutcome,
@@ -115,7 +117,14 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const phone = useDeviceType() === 'phone';
   const dialog = props.setChrome !== undefined;
   const scope = useActiveServerAccountScope();
-  const machines = useActiveMachineFacts();
+  const knownMachines = useActiveMachineFacts();
+  const presenceNowMs = useMachinePresenceNowMs(knownMachines);
+  const reachabilityRevision = useMachineReachabilityRevision();
+  // Only a Machine that is online now can build the app (a Home can hold hundreds of offline ones).
+  const machines = React.useMemo(
+    () => resolveMachineActionCandidates(scope, knownMachines, { nowMs: presenceNowMs }),
+    [knownMachines, presenceNowMs, reachabilityRevision, scope],
+  );
   const thisComputerMachineId = useThisComputerMachineId();
   const starters = getBundledProjectStartersV1();
 
@@ -127,10 +136,11 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const [name, setName] = React.useState('');
   const [machineId, setMachineId] = React.useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = React.useState(false);
+  const [machineMenuOpen, setMachineMenuOpen] = React.useState(false);
   const [owner, setOwner] = React.useState<OwnerFact>({ kind: 'loading' });
   const [create, setCreate] = React.useState<CreateState | null>(null);
   // One create intent per reviewed draft: a retry of the same review reuses it, so nothing is created twice.
-  const requestKey = React.useRef(randomUUID());
+  const [intentKeyFor] = React.useState(() => createStarterIntentKeys(randomUUID));
 
   const starter =
     starters.find((candidate) => candidate.id === starterId) ?? null;
@@ -193,7 +203,13 @@ export const NewAppScreen = React.memo(function NewAppScreen(
           serverId: scope.serverId,
           homeDir,
           owner: owner.kind === 'ready' ? owner.owner : null,
-          requestKey: requestKey.current,
+          requestKey: intentKeyFor({
+            starterId,
+            description,
+            name,
+            machineId: effectiveMachineId,
+            owner: owner.kind === 'ready' ? owner.owner : null,
+          }),
         },
       )
     : null;
@@ -566,8 +582,11 @@ export const NewAppScreen = React.memo(function NewAppScreen(
           ) : (
             <DropdownMenu
               testID="newApp.machineMenu"
+              open={machineMenuOpen}
+              onOpenChange={setMachineMenuOpen}
               items={machineItems}
               onSelect={(id) => {
+                setMachineMenuOpen(false);
                 setMachineId(id);
               }}
               placement="bottom"
@@ -648,16 +667,19 @@ export const NewAppScreen = React.memo(function NewAppScreen(
           ? header(t('newApp.readyTitle'), t('newApp.readyDescription'))
           : header(
               t('newApp.creatingTitle', { name: appName }),
-              t('newApp.creatingDescription'),
+              // After a stop, the purpose line says what is already done; the card says what stopped.
+              create?.kind === 'failed'
+                ? t(create.repositoryCreated ? 'newApp.failedKept' : 'newApp.failedNothing')
+                : t('newApp.creatingDescription'),
             )}
         {create?.kind === 'projectReady' ? null : create?.kind === 'failed' ? (
-          <AttentionBanner
+          <SurfaceStateCard
             testID="newApp.failed"
-            tone="danger"
-            placement="page-section"
+            kind="error"
+            layout="inline"
             title={t('newApp.failedTitle')}
-            description={create.remediation ?? undefined}
-            details={[create.code]}
+            reason={create.remediation ?? undefined}
+            diagnosticCode={create.code}
           />
         ) : create?.kind === 'outcomeUnknown' ? (
           <AttentionBanner
