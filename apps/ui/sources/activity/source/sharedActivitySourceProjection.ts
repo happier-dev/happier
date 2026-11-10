@@ -76,6 +76,9 @@ function createSharedProjection<T extends Projected>(inputs: Inputs, createProje
     return {
         consumers: 0,
         select(state) {
+            const nowMs = Date.now();
+            // A store arrival may get a turn before an already-due boundary timer.
+            if (published?.nextAttentionBoundaryMs != null && published.nextAttentionBoundaryMs <= nowMs) expired = true;
             if (published && !expired && previousState === state) return published;
             previousState = state;
             const selected = selectSource(state);
@@ -88,7 +91,7 @@ function createSharedProjection<T extends Projected>(inputs: Inputs, createProje
             }
             if (!source || previousSelected !== selected) source = { ...selected, audienceScopes: inputs.audienceScopes };
             previousSelected = selected;
-            published = retain(published, projector.project({ source, nowMs: Date.now(), state }));
+            published = retain(published, projector.project({ source, nowMs, state }));
             return published;
         },
         expire(boundaryMs) {

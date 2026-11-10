@@ -81,10 +81,11 @@ export function createActivitySourceSessionAddressProjection(source: ActivityAtt
     return {
         all: () => [...addressesInOrder.values()],
         /** Delta metadata is produced by the membership writer, never inferred from a cached row. */
-        update(next: ActivityAttentionSource, delta: SessionListRenderableDelta) {
-            const ids = new Set([...delta.changedSessionIds, ...delta.removedSessionIds]);
+        update(next: ActivityAttentionSource, delta: SessionListRenderableDelta | undefined, changedMessageIds: readonly string[] = []) {
+            const ids = new Set([...(delta?.changedSessionIds ?? []), ...(delta?.removedSessionIds ?? []),
+                ...(delta?.hydratedSessionIds ?? []), ...changedMessageIds]);
             const affectedHomes = new Map<string, Set<string>>();
-            for (const change of delta.ordinaryMembershipChanges ?? []) {
+            for (const change of delta?.ordinaryMembershipChanges ?? []) {
                 const membership = ordinary.get(change.serverId) ?? new Set<string>();
                 ordinary.set(change.serverId, membership);
                 for (const id of change.removedSessionIds) membership.delete(id);
@@ -126,8 +127,8 @@ export function collectActivitySourceSessionAddresses(source: ActivityAttentionS
     return collectAddresses(source, includeWarmSourceWhenNotReady, createAddressAdmission(source));
 }
 
-/** Row collections the store's changed-id publication describes; every other source fact is policy. */
-const ACTIVITY_SOURCE_ROW_FIELDS: ReadonlySet<string> = new Set<keyof ActivityAttentionSource>([
+/** Row collections the store's changed-id publication describes. */
+const ACTIVITY_SOURCE_ROW_FIELDS: ReadonlySet<keyof ActivityAttentionSource> = new Set<keyof ActivityAttentionSource>([
     'sessionsById', 'sessionListRowsByServerId', 'ordinarySessionListMembershipByServerId', 'sessionListIndexByServerId',
     // Rebuilt from the concurrent cache and query states, which are compared as policy.
     'sessionListHomeObservationByServerId',
@@ -136,7 +137,7 @@ const ACTIVITY_SOURCE_ROW_FIELDS: ReadonlySet<string> = new Set<keyof ActivityAt
 function isSameActivitySourcePolicy(previous: ActivityAttentionSource, next: ActivityAttentionSource): boolean {
     const keys = new Set([...Object.keys(previous), ...Object.keys(next)]) as Set<keyof ActivityAttentionSource>;
     for (const key of keys) {
-        if (!ACTIVITY_SOURCE_ROW_FIELDS.has(key) && !Object.is(previous[key], next[key])) return false;
+        if (!ACTIVITY_SOURCE_ROW_FIELDS.has(key) && key !== 'sessionMessagesById' && !Object.is(previous[key], next[key])) return false;
     }
     return true;
 }
@@ -146,7 +147,8 @@ type ActivitySourceAddressDeltaState = Readonly<{ sessionListRenderableDelta?: S
 /**
  * One Activity projection kept per Session address. A store publication whose policy is unchanged and
  * whose changed-id revision is the next one re-classifies only the changed addresses through the same
- * address owner; anything else (a policy change, a revision gap, a row change without a revision step)
+ * address owner. Transcripts are immutable per-Session snapshots and use that same address index.
+ * Anything else (a policy change, a revision gap, a row change without a revision step)
  * rebuilds from complete discovery. `classify` decides an exact address subset and returns an entry
  * for every admitted address; an address it leaves out is no longer a candidate.
  */
@@ -186,18 +188,29 @@ export function createActivitySourceAddressTable<T>(params: Readonly<{
                 previousRevision = revision;
                 return false;
             }
-            const incremental = previousSource !== null && projection !== null && delta !== undefined
-                && previousRevision !== null && revision === previousRevision + 1
+            const previous = previousSource;
+            const rowsUnchanged = previous !== null && [...ACTIVITY_SOURCE_ROW_FIELDS]
+                .every(key => Object.is(previous[key], source[key]));
+            const rowRevisionAdvanced = delta !== undefined && previousRevision !== null && revision === previousRevision + 1;
+            const incremental = previousSource !== null && projection !== null
                 && isSameActivitySourcePolicy(previousSource, source)
-                && (delta.ordinaryMembershipChanges !== undefined
-                    || previousSource.ordinarySessionListMembershipByServerId === source.ordinarySessionListMembershipByServerId);
+                && (rowRevisionAdvanced && (delta.ordinaryMembershipChanges !== undefined
+                    || previousSource.ordinarySessionListMembershipByServerId === source.ordinarySessionListMembershipByServerId)
+                    || rowsUnchanged && revision === previousRevision);
+            const changedMessageIds: string[] = [];
+            if (incremental && previousSource?.sessionMessagesById !== source.sessionMessagesById) {
+                // A pointer scan is linear in loaded transcripts; only changed entries are classified.
+                const before = previousSource?.sessionMessagesById;
+                const after = source.sessionMessagesById;
+                for (const id of new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})])) {
+                    if (before?.[id] !== after?.[id]) changedMessageIds.push(id);
+                }
+            }
             previousSource = source;
             previousRevision = revision;
             moved = false;
-            if (incremental && projection && delta) {
-                // A hydrated Session can change what its address resolves to without a row change.
-                const changed = projection.update(source, delta.hydratedSessionIds?.length
-                    ? { ...delta, changedSessionIds: [...delta.changedSessionIds, ...delta.hydratedSessionIds] } : delta);
+            if (incremental && projection) {
+                const changed = projection.update(source, rowRevisionAdvanced ? delta : undefined, changedMessageIds);
                 const classified = params.classify(source, changed.addresses);
                 for (const address of [...changed.addresses, ...changed.removed]) {
                     const key = sessionAddressKey(address);

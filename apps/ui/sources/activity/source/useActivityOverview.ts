@@ -29,6 +29,7 @@ import {
     type ActivitySourceProjectorFactory,
 } from './sharedActivitySourceProjection';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { storage } from '@/sync/domains/state/storageStore';
 
 export type MountedActivityOverview = Readonly<{
     source: ActivityAttentionSource;
@@ -78,23 +79,38 @@ function readNextAttentionBoundaryMs(
  * opinion about what attention means, only about when to look again.
  */
 export function useActivityOverview(): MountedActivityOverview {
-    const source = useActivityAttentionSource();
+    // This reader follows the changed-address publication itself. Signing every
+    // Session first would repeat a full-corpus read before the exact projection.
+    const source = useActivityAttentionSource({ changeDetection: 'identity' });
     const [boundaryVersion, advanceBoundary] = React.useReducer((value: number) => value + 1, 0);
-    // Both inputs matter: the store moved, or a freshness budget elapsed.
-    const nowMs = React.useMemo(() => Date.now(), [boundaryVersion, source]);
-    const overview = React.useMemo(
-        () => buildActivityOverviewFromSource({
-            source,
-            nowMs,
-            includeWarmSourceWhenNotReady: true,
-        }),
-        [nowMs, source],
-    );
-
-    const nextBoundaryMs = readNextAttentionBoundaryMs(source, overview.candidates, nowMs);
-    useActivityBoundaryRefresh(nextBoundaryMs, advanceBoundary);
+    // A freshness boundary invalidates all time-sensitive facts, as before.
+    const project = React.useMemo(() => createMountedActivityOverviewProjector(), [boundaryVersion]);
+    const { overview, nextAttentionBoundaryMs } = React.useMemo(() => project({ source,
+        state: storage.getState(), nowMs: Date.now() }), [project, source]);
+    useActivityBoundaryRefresh(nextAttentionBoundaryMs, advanceBoundary);
 
     return React.useMemo(() => ({ source, overview }), [overview, source]);
+}
+
+function createMountedActivityOverviewProjector() {
+    let nowMs = Date.now();
+    const createTable = () => createActivitySourceAddressTable<ActivityOverviewSnapshot['candidates'][number]>({
+        includeWarmSourceWhenNotReady: true,
+        classify: (source, addresses) => new Map(buildActivityOverviewFromSource({
+            source, nowMs, includeWarmSourceWhenNotReady: true, addresses,
+        }).candidates.map(candidate => [sessionAddressKey(candidate.address!), candidate])),
+    });
+    let table = createTable();
+    let nextAttentionBoundaryMs: number | null = null;
+    return (input: ActivitySourceProjectionInput) => {
+        nowMs = input.nowMs;
+        // An arrival can run after the deadline while its timer is still queued.
+        if (nextAttentionBoundaryMs !== null && nextAttentionBoundaryMs <= nowMs) table = createTable();
+        table.update(input.source, input.state);
+        const overview = buildActivityOverviewFromCandidates([...table.entries().values()]);
+        nextAttentionBoundaryMs = readNextAttentionBoundaryMs(input.source, overview.candidates, nowMs);
+        return { overview, nextAttentionBoundaryMs };
+    };
 }
 
 export type { ActivitySourceProjectionInput } from './sharedActivitySourceProjection';

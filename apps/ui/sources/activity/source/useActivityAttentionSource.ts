@@ -101,12 +101,13 @@ export function useActivityActiveServer(): ActiveServerSnapshot {
 export function useActivityAttentionStoreSelector(
     includeSessionMessages: boolean,
     detailAddresses?: readonly SessionAddress[],
+    changeDetection?: Parameters<typeof createActivityAttentionSourceSelector>[0]['changeDetection'],
 ): (state: StorageState) => ActivityAttentionSource {
     const personalMembership = useActivityPersonalSessionMembership();
     const activeServer = useActivityActiveServer();
     return React.useMemo(
-        () => createActivityAttentionSourceSelector({ personalMembership, activeServer, includeSessionMessages, detailAddresses }),
-        [activeServer, detailAddresses, includeSessionMessages, personalMembership],
+        () => createActivityAttentionSourceSelector({ personalMembership, activeServer, includeSessionMessages, detailAddresses, changeDetection }),
+        [activeServer, changeDetection, detailAddresses, includeSessionMessages, personalMembership],
     );
 }
 
@@ -131,12 +132,14 @@ export function useActivityAttentionSummarySource(): ActivityAttentionSource {
 export function useActivityAttentionSource(options?: Readonly<{
     includeSessionMessages?: boolean;
     detailAddresses?: readonly SessionAddress[];
+    changeDetection?: Parameters<typeof createActivityAttentionSourceSelector>[0]['changeDetection'];
 }>): ActivityAttentionSource {
-    return useActivityAttentionSourceContext(options?.includeSessionMessages !== false, options?.detailAddresses);
+    return useActivityAttentionSourceContext(options?.includeSessionMessages !== false, options?.detailAddresses, options?.changeDetection);
 }
 
-function useActivityAttentionSourceContext(includeSessionMessages: boolean, detailAddresses?: readonly SessionAddress[]): ActivityAttentionSource {
-    const summarySource = storage(useActivityAttentionStoreSelector(includeSessionMessages, detailAddresses));
+function useActivityAttentionSourceContext(includeSessionMessages: boolean, detailAddresses?: readonly SessionAddress[],
+    changeDetection?: Parameters<typeof createActivityAttentionSourceSelector>[0]['changeDetection']): ActivityAttentionSource {
+    const summarySource = storage(useActivityAttentionStoreSelector(includeSessionMessages, detailAddresses, changeDetection));
     const serverProfilesGeneration = React.useSyncExternalStore(
         subscribeServerProfiles,
         getServerProfilesGeneration,

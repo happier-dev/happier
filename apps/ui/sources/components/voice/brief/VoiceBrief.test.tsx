@@ -507,14 +507,15 @@ describe('mounted Voice Brief request', () => {
         const previousStackLimit = Error.stackTraceLimit;
         Error.stackTraceLimit = 80;
         const overviewReads = new Set<string>();
+        let overviewMetadataPathReads = 0;
         let metadataPathReads = 0;
         // Observe reads of real input records; Activity, storage, Inbox and Brief remain real.
         const observeMetadata = (id: string, metadata: NonNullable<ReturnType<typeof readSessionOwnerMetadataView>>) => new Proxy(metadata, {
             get(target, key, receiver) {
                 if (key === 'path') metadataPathReads += 1;
-                if (key === 'path' && !overviewReads.has(id)
-                    && /buildActivityOverviewFromSource\.tsx?:/.test(new Error().stack ?? '')) {
+                if (key === 'path' && /buildActivityOverviewFromSource\.tsx?:/.test(new Error().stack ?? '')) {
                     overviewReads.add(id);
+                    overviewMetadataPathReads += 1;
                 }
                 return Reflect.get(target, key, receiver);
             },
@@ -575,6 +576,7 @@ describe('mounted Voice Brief request', () => {
         const matrix: Record<string, unknown>[] = [];
         const capture = async (phase: string, update: () => void | Promise<unknown>) => {
             overviewReads.clear();
+            overviewMetadataPathReads = 0;
             metadataPathReads = 0;
             commits.reset();
             sessionPublications = 0;
@@ -598,7 +600,9 @@ describe('mounted Voice Brief request', () => {
                 changedSourceFields: (Object.keys(latestInbox!.source) as Array<keyof typeof beforeSource>)
                     .filter(key => beforeSource[key] !== latestInbox!.source[key]),
                 rowRevisionAdvanced: storage.getState().sessionListRenderableDelta?.revision !== beforeRevision,
-                overviewRowsRead: overviewReads.size, briefValueRetained: latestBrief === before,
+                targetSessionSeq: afterSession.seq,
+                targetCandidateSeq: latestInbox!.sessionCandidates.find(candidate => candidate.sessionId === beforeSession.id)?.session.seq,
+                overviewRowsRead: overviewReads.size, overviewMetadataPathReads, briefValueRetained: latestBrief === before,
                 replacedCandidates: latestInbox!.sessionCandidates.filter(candidate => candidate.sessionId.startsWith('brief-scale-')
                     && previousCandidates.get(candidate.sessionId) !== candidate).length,
                 metadataPathReads,
@@ -609,6 +613,7 @@ describe('mounted Voice Brief request', () => {
                 targetAttentionReasons: storage.getState().sessions[beforeSession.id]?.viewer?.attention.reasons,
                 needsYou: latestBrief!.items.filter(item => item.category === 'needs_you').length };
             matrix.push(result);
+            console.info('Brief projection cost phase', JSON.stringify(result));
             return result;
         };
         try {
@@ -630,7 +635,7 @@ describe('mounted Voice Brief request', () => {
             expect(latestInbox!.sessionCandidates.filter(candidate => candidate.sessionId.startsWith('brief-scale-'))).toHaveLength(sessionCount);
             console.info('Brief scale settled census', JSON.stringify({
                 source: Object.keys(latestInbox!.source.sessionsById).filter(id => id.startsWith('brief-scale-')).length,
-                candidates: sessionCount, overviewRowsRead: overviewReads.size,
+                candidates: sessionCount, overviewRowsRead: overviewReads.size, overviewMetadataPathReads,
                 personalMembership: latestMembership?.membershipByServerId[serverId]?.length ?? 0,
             }));
             expect(overviewReads.size).toBe(sessionCount);
@@ -646,12 +651,15 @@ describe('mounted Voice Brief request', () => {
                 const target = storage.getState().sessions[targetId]!;
                 storage.getState().applySessions([{ ...target, seq: target.seq + 1 }]);
             });
-            const message = await capture('message-only progress (fallback census)', () => {
-                storage.getState().applyMessages(targetId, [{ id: 'brief-scale-message', localId: null,
+            const message = await capture('message-only progress', () => {
+                const applied = storage.getState().applyMessages(targetId, [{ id: 'brief-scale-message', localId: null,
                     seq: storage.getState().sessions[targetId]!.seq + 1, createdAt: Date.now(),
                     isSidechain: false, role: 'user', content: { type: 'text', text: 'Fixture follow-up' } }]);
+                expect(applied.changed.length).toBeGreaterThan(0);
             });
-            expect(storage.getState().sessionMessages[targetId]?.messageIdsOldestFirst).toContain('brief-scale-message');
+            expect(storage.getState().sessionMessages[targetId]?.messageIdsOldestFirst).toHaveLength(1);
+            expect(latestInbox!.source.sessionMessagesById?.[targetId]).toBe(storage.getState().sessionMessages[targetId]);
+            expect(message.messagePublications).toBeGreaterThan(0);
             const attention = await capture('new permission request', async () => {
                 const target = storage.getState().sessions[targetId]!;
                 const changed = { ...target, viewer: undefined, agentStateVersion: target.agentStateVersion + 1,
@@ -674,10 +682,58 @@ describe('mounted Voice Brief request', () => {
             expect(progress).toMatchObject({ sourceCensus: sessionCount, candidates: sessionCount, needsYou: 0 });
             expect(progress.overviewRowsRead).toBeLessThanOrEqual(1);
             expect(progress.replacedCandidates).toBeLessThanOrEqual(1);
+            expect(progress.targetCandidateSeq).toBe(progress.targetSessionSeq);
             expect(message).toMatchObject({ sourceCensus: sessionCount, candidates: sessionCount, needsYou: 0 });
+            expect(message.overviewRowsRead).toBeLessThanOrEqual(1);
+            expect(message.replacedCandidates).toBeLessThanOrEqual(1);
+            expect(message.targetCandidateSeq).toBe(message.targetSessionSeq);
             expect(attention).toMatchObject({ sourceCensus: sessionCount, candidates: sessionCount, needsYou: 1 });
             expect(attention.overviewRowsRead).toBeLessThanOrEqual(1);
             expect(attention.replacedCandidates).toBeLessThanOrEqual(1);
+
+            // A separate measurement: one public Home press through real admission,
+            // Runtime startup and Brief delivery, at the same admitted census.
+            await screen.unmount();
+            screen = null;
+            const speech = await installTransport();
+            await selectService();
+            const homeCounter = createRenderCommitCounter();
+            let briefSubtreeCommits = 0;
+            function MeasuredHome() {
+                useRenderCommitCounter(homeCounter);
+                const [open, setOpen] = React.useState(false);
+                useVoiceBriefHomeRequest({ available: true, onOpen: () => setOpen(true) });
+                return <><VoiceBriefButton open={open} />{open ? <React.Profiler id="scale-public-Brief"
+                    onRender={() => { briefSubtreeCommits += 1; }}>
+                    <InboxModelBoundary><InboxObserver /><VoiceBriefBlock onClose={() => setOpen(false)} /></InboxModelBoundary>
+                </React.Profiler> : null}</>;
+            }
+            screen = await renderScreen(<AuthProvider initialCredentials={account!.credentials}>
+                <ActivityPersonalSessionMembershipProvider enabled><InboxSummaryProvider>
+                    <MeasuredHome />
+                </InboxSummaryProvider></ActivityPersonalSessionMembershipProvider>
+            </AuthProvider>);
+            homeCounter.reset();
+            sessionPublications = rowPublications = messagePublications = storeNotifications = inboxPublications = 0;
+            overviewReads.clear();
+            overviewMetadataPathReads = 0;
+            await pressBriefControl('home-brief-me');
+            await speech.waitForStarts(1);
+            await act(async () => speech.connect());
+            await speech.waitForSpoken();
+            console.info('Brief public operation cost', JSON.stringify({
+                phase: 'Home press through delivered Brief', sourceCensus: Object.keys(latestInbox!.source.sessionsById)
+                    .filter(id => id.startsWith('brief-scale-')).length,
+                candidates: latestInbox!.sessionCandidates.filter(candidate => candidate.sessionId.startsWith('brief-scale-')).length,
+                storeNotifications, sessionPublications, rowPublications, messagePublications, inboxPublications,
+                homeHost: homeCounter.read(), briefSubtreeCommits,
+                overviewRowsRead: overviewReads.size, overviewMetadataPathReads,
+                providerStarts: speech.starts.length, deliveredBriefs: speech.spoken.length,
+            }));
+            expect(latestInbox!.sessionCandidates.filter(candidate => candidate.sessionId.startsWith('brief-scale-'))).toHaveLength(sessionCount);
+            expect(briefSubtreeCommits).toBeGreaterThan(0);
+            expect(screen.findByTestId('voice-brief')).toBeTruthy();
+            expect(speech.spoken).toEqual([t('voiceMoments.briefMe')]);
         } finally {
             stop();
             Error.stackTraceLimit = previousStackLimit;

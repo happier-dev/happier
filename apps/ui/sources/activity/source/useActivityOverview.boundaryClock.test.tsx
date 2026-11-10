@@ -250,4 +250,29 @@ describe('mounted Activity overview boundary clock', () => {
         await crossTheFreshnessBoundary();
         expect(completed).toBe(1);
     });
+
+    it.each(['full overview', 'summary', 'completed Bots'] as const)(
+        'expires unchanged %s facts on an arrival before a delayed boundary timer runs', async reader => {
+        const base = storage.getState().sessions['legacy-session']!;
+        const expiring = { ...base, thinking: true, thinkingAt: NOW_MS - 1_000,
+            seq: 4, latestReadyEventSeq: 4,
+            metadata: { ...base.metadata!, bot: { kind: 'bot' as const } },
+            agentState: { requests: {}, completedRequests: {} } };
+        const unrelated = createSessionFixture({ id: 'unrelated', serverId: 'server-a',
+            viewer: undefined, active: false, lastViewedSessionSeq: 100 });
+        storage.getState().applySessions([expiring, unrelated]);
+        let value = 0;
+        function FullProbe() { value = useActivityOverview().overview.counts.thinking; return null; }
+        function SummaryProbe() { value = useActivityOverviewSummary().workingCount; return null; }
+        function BotsProbe() { value = 1 - useHomeCompletedBots().readySessions.length; return null; }
+        await renderScreen(reader === 'full overview' ? <FullProbe /> : reader === 'summary' ? <SummaryProbe /> : <BotsProbe />);
+        expect(value).toBe(1);
+        // A long task can cross the deadline before the scheduled callback gets a turn.
+        vi.setSystemTime(NOW_MS + STALE_SIGNAL_MS + 1_000);
+        await act(async () => {
+            const session = storage.getState().sessions[unrelated.id]!;
+            storage.getState().applySessions([{ ...session, seq: session.seq + 1 }]);
+        });
+        expect(value).toBe(0);
+    });
 });
