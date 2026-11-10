@@ -4,23 +4,26 @@ import {
     useInvestigationAgentActions,
     type BoundHealthNoticeInvestigation,
 } from '@/components/inbox/detail/healthNoticeInvestigation';
-import { failureInvestigationSubjectKey, type FailureInvestigationSubject } from './accountNoticeInvestigation';
+import { failureInvestigationSubjectKey, type FailureInvestigationSubject,
+    type FailureInvestigationExecutionOptions } from './accountNoticeInvestigation';
 import { useAccountNoticeInvestigation } from './AccountNoticeInvestigationProvider';
 
 export type InvestigateFailureOptions = Readonly<{
     /** Read the page's records for its agent-action buttons: the task default and this subject's own, or only its own. */
     agentActions?: 'withDefault' | 'subjectOnly';
+    externalActionTarget?: FailureInvestigationExecutionOptions['externalActionTarget'];
 }>;
 
 /** Every app-shell failure surface borrows the same Account owner without mounting Inbox. */
 export function useInvestigateFailure(subject: FailureInvestigationSubject | null, options?: InvestigateFailureOptions) {
     const owner = useAccountNoticeInvestigation();
     const key = subject ? failureInvestigationSubjectKey(subject) : null;
+    const externalActionTarget = options?.externalActionTarget;
     const investigation = React.useMemo((): BoundHealthNoticeInvestigation | null => !subject ? null : ({
-        readChoices: options => owner.readChoices(subject, options),
-        resume: options => owner.resume(subject, options),
-        run: (selection, options) => owner.run(subject, selection, options),
-    }), [owner, key]);
+        readChoices: options => owner.readChoices(subject, { ...options, externalActionTarget }),
+        resume: options => owner.resume(subject, { ...options, externalActionTarget }),
+        run: (selection, options) => owner.run(subject, selection, { ...options, externalActionTarget }),
+    }), [owner, key, externalActionTarget]);
     return useBoundFailureInvestigation(investigation, options);
 }
 
