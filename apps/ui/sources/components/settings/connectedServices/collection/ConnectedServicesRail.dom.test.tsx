@@ -19,7 +19,7 @@ const rowSelector = '[data-testid^="connected-services-rail:account:"]';
 // Physical browser geometry from the collection owner; no product row cap.
 const dom = createWebListDomHarness({ rowSelector, rowHeight: HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight, width: 360, height: 400 });
 
-it.fails('muse.experience.pc12 mounts a viewport subset of 300 accounts and reaches the last account', async () => {
+it('muse.experience.pc12 mounts a viewport subset of 300 accounts and reaches the last account', async () => {
     const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
     const accounts = Array.from({ length: 300 }, (_, index) => QualifiedConnectedAccountProfileV4Schema.parse({
         ref: { service, accountId: `account-${String(index).padStart(3, '0')}` }, status: 'connected',

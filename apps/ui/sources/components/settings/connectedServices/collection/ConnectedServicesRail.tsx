@@ -11,6 +11,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { VirtualizedList } from '@/components/ui/lists/virtualized';
 import {
     CollectionDraftRow,
     CollectionList,
@@ -78,6 +79,13 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 const SEARCH_THRESHOLD = 6;
 /** The add's 16 px glyph reaches the height of its 32 px row, and no further: the first row is directly beneath. */
 const GROUP_ADD_VERTICAL_REACH = { top: 8, bottom: 8 } as const;
+
+/** One mounted line of the rail; only the recycler's window renders its element (300 accounts mount a viewport). */
+type RailRow = Readonly<{ key: string; render: () => React.ReactElement }>;
+const railRowKey = (row: RailRow) => row.key;
+const renderRailRow = ({ item }: Readonly<{ item: RailRow }>) => item.render();
+const RAIL_LIST_STYLE = { flex: 1, minHeight: 0 } as const;
+const RAIL_LIST_CONTENT_STYLE = { paddingBottom: 16 } as const;
 
 /** What an account row shows at its end: the tightest limit, a stale clock, or that it needs you. */
 export type ConnectedServicesRailAccountMeta =
@@ -197,8 +205,12 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
         : null;
     // Same grouping as the sheets: only a service known to be an agent's sits under Agent sign-in.
     const draftOnlySection = draftOnlyService ? (draftOnlyService.section === 'agents' ? 'agents' : 'tools') : null;
-    const renderDraftOnlyService = (section: 'agents' | 'tools') => draftOnlyService && draftOnlySection === section ? (
-        <React.Fragment key={draftOnlyService.serviceKey}>
+    // Every line of the rail is one recycled row, so a long account list mounts only what the column shows.
+    const rows: RailRow[] = [];
+    const add = (key: string, render: () => React.ReactElement) => rows.push({ key, render });
+    const addDraftOnlyService = (section: 'agents' | 'tools') => {
+        if (!draftOnlyService || draftOnlySection !== section) return;
+        add(`service:${draftOnlyService.serviceKey}`, () => (
             <CollectionNavigationRow
                 rowRole="item"
                 testID={`connected-services-rail:service:${draftOnlyService.serviceKey}`}
@@ -210,6 +222,8 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
                 selected={false}
                 onPress={() => toggle(draftOnlyService.serviceKey)}
             />
+        ));
+        add(`account-draft:${draftOnlyService.serviceKey}`, () => (
             <CollectionDraftRow
                 rowRole="item"
                 testID={`connected-services-rail:account-draft:${draftOnlyService.serviceKey}`}
@@ -217,8 +231,8 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
                 placeholder={presentNewConnectedAccountDraftTitle(draftOnlyService)}
                 child
             />
-        </React.Fragment>
-    ) : null;
+        ));
+    };
 
     // Every "+" (a group's, a service row's) draws just its glyph, so all of them end on the rows' one trailing
     // edge with the percentages, key marks and counts beneath (owner 10-31); the hit area still reaches the target.
@@ -253,7 +267,7 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
     const visibleAgentServices = visibleServices.filter(({ sheet }) => sheet.section === 'agents');
     const visibleToolServices = visibleServices.filter(({ sheet }) => sheet.section !== 'agents');
 
-    const renderService = ({ sheet, rows }: typeof visibleServices[number], expandable: boolean, withContext: boolean) => {
+    const addService = ({ sheet, rows: accountRows }: typeof visibleServices[number], expandable: boolean, withContext: boolean) => {
         const drafting = sheet.serviceKey === draftServiceKey && selection.kind === 'accountDraft';
         const open = (expandable || drafting) && isExpanded(sheet);
         // A folded service speaks for its accounts once: the strongest state they hold (P8 rollup).
@@ -268,64 +282,66 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
             />
         ) : null;
         const serviceSelected = selection.kind === 'service' && selection.serviceKey === sheet.serviceKey;
-        return (
-            <React.Fragment key={sheet.serviceKey}>
-                <CollectionNavigationRow
+        add(`service:${sheet.serviceKey}`, () => (
+            <CollectionNavigationRow
+                rowRole="item"
+                testID={`connected-services-rail:service:${sheet.serviceKey}`}
+                surface="page"
+                title={sheet.label}
+                icon={<ConnectedServiceMark legacyServiceId={sheet.legacyServiceId} pluginId={sheet.service.pluginId} size="column" />}
+                disclosure={expandable || drafting ? { expanded: open } : null}
+                status={rollup}
+                count={sheet.accounts.length > 0 ? sheet.accounts.length : null}
+                selected={serviceSelected}
+                // Another account of this service, from where its accounts are listed (owner 10-30: always shown;
+                // its draft says what it needs when no machine can run the sign-in yet).
+                rightElement={props.onAddAccount ? groupAdd(
+                    `connected-services-rail:service:${sheet.serviceKey}:add`,
+                    t('connectedServicesCollection.addServiceAccount', { service: sheet.label }),
+                    (event) => props.onAddAccount?.(sheet, resolvePressTriggerAnchor(event)),
+                ) : undefined}
+                onPress={() => (expandable || drafting ? toggle(sheet.serviceKey) : props.onOpenService(sheet))}
+            />
+        ));
+        if (open && drafting) {
+            add(`account-draft:${sheet.serviceKey}`, () => (
+                <CollectionDraftRow
                     rowRole="item"
-                    testID={`connected-services-rail:service:${sheet.serviceKey}`}
-                    surface="page"
-                    title={sheet.label}
-                    icon={<ConnectedServiceMark legacyServiceId={sheet.legacyServiceId} pluginId={sheet.service.pluginId} size="column" />}
-                    disclosure={expandable || drafting ? { expanded: open } : null}
-                    status={rollup}
-                    count={sheet.accounts.length > 0 ? sheet.accounts.length : null}
-                    selected={serviceSelected}
-                    // Another account of this service, from where its accounts are listed (owner 10-30: always shown;
-                    // its draft says what it needs when no machine can run the sign-in yet).
-                    rightElement={props.onAddAccount ? groupAdd(
-                        `connected-services-rail:service:${sheet.serviceKey}:add`,
-                        t('connectedServicesCollection.addServiceAccount', { service: sheet.label }),
-                        (event) => props.onAddAccount?.(sheet, resolvePressTriggerAnchor(event)),
-                    ) : undefined}
-                    onPress={() => (expandable || drafting ? toggle(sheet.serviceKey) : props.onOpenService(sheet))}
+                    testID={`connected-services-rail:account-draft:${sheet.serviceKey}`}
+                    titles={draftTitles}
+                    placeholder={presentNewConnectedAccountDraftTitle(sheet)}
+                    child
                 />
-                {open && drafting ? (
-                    <CollectionDraftRow
-                        rowRole="item"
-                        testID={`connected-services-rail:account-draft:${sheet.serviceKey}`}
-                        titles={draftTitles}
-                        placeholder={presentNewConnectedAccountDraftTitle(sheet)}
-                        child
+            ));
+        }
+        if (open) {
+            for (const { account, presentation } of accountRows) {
+                const selected = selection.kind === 'account'
+                    && selection.serviceKey === sheet.serviceKey
+                    && selection.accountId === account.accountId;
+                // Every account reads the same way (owner 10-31): its email, then its name and plan. A tool
+                // with no email keeps its own identity beside its name.
+                const context = presentation.listName
+                    ?? (withContext && presentation.identityLabel && presentation.identityLabel !== presentation.title
+                        ? presentation.identityLabel
+                        : null);
+                add(`account:${sheet.serviceKey}:${account.accountId}`, () => (
+                    <RailAccountRow
+                        testID={`connected-services-rail:account:${sheet.serviceKey}:${account.accountId}`}
+                        sheet={sheet}
+                        account={account}
+                        title={presentation.listTitle}
+                        context={context}
+                        accessibilityLabel={t('connectedServicesCollection.railAccountLabel', { service: sheet.label, account: presentation.listTitle })}
+                        meta={props.renderAccountMeta ? props.renderAccountMeta(sheet, account) : undefined}
+                        selected={selected}
+                        onPress={() => props.onOpenAccount(sheet, account.accountId)}
                     />
-                ) : null}
-                {open ? rows.map(({ account, presentation }) => {
-                    const selected = selection.kind === 'account'
-                        && selection.serviceKey === sheet.serviceKey
-                        && selection.accountId === account.accountId;
-                    // Every account reads the same way (owner 10-31): its email, then its name and plan. A tool
-                    // with no email keeps its own identity beside its name.
-                    const context = presentation.listName
-                        ?? (withContext && presentation.identityLabel && presentation.identityLabel !== presentation.title
-                            ? presentation.identityLabel
-                            : null);
-                    return (
-                        <RailAccountRow
-                            key={account.accountId}
-                            testID={`connected-services-rail:account:${sheet.serviceKey}:${account.accountId}`}
-                            sheet={sheet}
-                            account={account}
-                            title={presentation.listTitle}
-                            context={context}
-                            accessibilityLabel={t('connectedServicesCollection.railAccountLabel', { service: sheet.label, account: presentation.listTitle })}
-                            meta={props.renderAccountMeta ? props.renderAccountMeta(sheet, account) : undefined}
-                            selected={selected}
-                            onPress={() => props.onOpenAccount(sheet, account.accountId)}
-                        />
-                    );
-                }) : null}
-                {props.settled?.serviceKey === sheet.serviceKey ? props.settled.content : null}
-            </React.Fragment>
-        );
+                ));
+            }
+        }
+        const settled = props.settled?.serviceKey === sheet.serviceKey ? props.settled.content : null;
+        if (settled) add(`settled:${sheet.serviceKey}`, () => <>{settled}</>);
     };
 
     // "+" opens the add menu (or connects a service when no menu is supplied).
@@ -383,6 +399,179 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
         </>
     );
 
+    // Beside a detail, the way back to the overview leads the column (lab `cr` aRail), as on Providers.
+    add('overview', () => (
+        <CollectionIndexRow
+            testID="connected-services-rail:overview-row"
+            selected={selection.kind === 'index'}
+            onPress={props.onOpenIndex}
+        />
+    ));
+    if (visibleAgentServices.length > 0 || draftOnlySection === 'agents') {
+        // Open lists show their rows, so the label adds no count (owner 11-01); it is the first group under the
+        // header block (the index row closes that block), so it takes the first group's air.
+        add('group:agents', () => <CollectionListGroupLabel title={t('connectedServicesCollection.agentSignInGroup')} first />);
+        for (const service of visibleAgentServices) addService(service, service.sheet.accounts.length > 0, false);
+        addDraftOnlyService('agents');
+    } else if (!narrowed) {
+        add('empty', () => <Text style={styles.quiet}>{t('connectedServicesCollection.railEmpty')}</Text>);
+    }
+    if (visiblePooled.length > 0 || poolDraftSheet || (!narrowed && props.renderNewPool)) {
+        add('group:pools', () => (
+            <CollectionListGroupLabel
+                title={t('connectedServicesCollection.poolsGroup')}
+                trailing={props.renderNewPool ? props.renderNewPool((onPress) => (
+                    groupAdd('connected-services-rail:new-pool', t('connectedServicesCollection.newPool'), onPress)
+                )) : undefined}
+            />
+        ));
+        if (poolDraftSheet) {
+            add(`pool-draft:${poolDraftSheet.serviceKey}`, () => (
+                <CollectionDraftRow
+                    rowRole="item"
+                    testID={`connected-services-rail:pool-draft:${poolDraftSheet.serviceKey}`}
+                    titles={draftTitles}
+                    placeholder={t('connectedServicesCollection.newPoolDraft', { service: poolDraftSheet.label })}
+                    mark={<Icon name="stack" size={16} color={theme.colors.text.secondary} />}
+                />
+            ));
+        }
+        for (const { sheet, pool } of visiblePooled) {
+            const active = pool.activeConnectedAccountId
+                ? sheet.accounts.find((account) => account.accountId === pool.activeConnectedAccountId) ?? null
+                : null;
+            const activeTitle = active ? presentConnectedServicesIndexAccount(sheet, active, labelsByKey, present).title : null;
+            add(`pool:${sheet.serviceKey}:${pool.ref.groupId}`, () => (
+                <CollectionNavigationRow
+                    testID={`connected-services-rail:pool:${sheet.serviceKey}:${pool.ref.groupId}`}
+                    surface="page"
+                    title={presentConnectedServicesIndexPool(sheet, pool, labelsByKey)}
+                    subtitle={activeTitle
+                        ? t('connectedServicesCollection.railPoolUsing', { service: sheet.label, account: activeTitle })
+                        : sheet.label}
+                    icon={<Icon name="stack" size={16} color={theme.colors.text.secondary} />}
+                    count={pool.members.length > 0 ? pool.members.length : null}
+                    selected={selection.kind === 'pool' && selection.serviceKey === sheet.serviceKey && selection.groupId === pool.ref.groupId}
+                    onPress={() => props.onOpenPool(sheet, pool.ref.groupId)}
+                />
+            ));
+        }
+    }
+    if (!columnFilter.active && (visibleGateways.length > 0 || selection.kind === 'gatewayDraft'
+        || (!needle && (props.onAddGateway || props.renderAddGateway || props.gatewaysLoading || props.gatewaysUnavailable)))) {
+        add('group:gateways', () => (
+            <CollectionListGroupLabel
+                title={t('settingsProvidersCollection.gateway.railGroup')}
+                trailing={props.renderAddGateway
+                    ? props.renderAddGateway((onPress) => groupAdd('connected-services-rail:add-gateway', t('settingsProvidersCollection.gateway.addGateway'), onPress))
+                    : props.onAddGateway
+                        ? groupAdd('connected-services-rail:add-gateway', t('settingsProvidersCollection.gateway.addGateway'), props.onAddGateway)
+                        : undefined}
+            />
+        ));
+        if (selection.kind === 'gatewayDraft') {
+            add('gateway-draft', () => (
+                <CollectionDraftRow
+                    rowRole="item"
+                    testID="connected-services-rail:gateway-draft"
+                    titles={draftTitles}
+                    placeholder={t('connectedServicesCollection.newGatewayDraft')}
+                    mark={<Icon name="path" size={16} color={theme.colors.text.secondary} />}
+                />
+            ));
+        }
+        if (props.gatewaysLoading && !props.gateways?.length) {
+            add('gateways-loading', () => <View testID="connected-services-rail:gateways-loading"><CollectionSkeletonRows count={1} /></View>);
+        }
+        const gatewaysUnavailable = props.gatewaysUnavailable;
+        if (gatewaysUnavailable && !props.gateways?.length) {
+            add('gateways-unavailable', () => (
+                <ConnectedServicesGatewaysUnavailableLine testID="connected-services-rail:gateways-unavailable"
+                    unavailable={gatewaysUnavailable} />
+            ));
+        }
+        for (const gateway of visibleGateways) {
+            add(`gateway:${gateway.connectionId}`, () => (
+                <CollectionNavigationRow
+                    testID={`connected-services-rail:gateway:${gateway.connectionId}`}
+                    surface="page"
+                    title={gateway.title}
+                    subtitle={gateway.summary}
+                    icon={<Icon name="path" size={16} color={theme.colors.text.secondary} />}
+                    selected={selection.kind === 'gateway' && selection.connectionId === gateway.connectionId}
+                    onPress={() => props.onOpenGateway?.(gateway)}
+                />
+            ));
+        }
+    }
+    if (visibleToolServices.length > 0 || draftOnlySection === 'tools' || npmProfilesVisible) {
+        add('group:tools', () => <CollectionListGroupLabel title={t('connectedServicesSettings.codeAndToolsTitle')} />);
+        for (const service of visibleToolServices) addService(service, service.sheet.accounts.length > 0, true);
+        addDraftOnlyService('tools');
+        if (npmProfilesVisible) {
+            add('npm-registry-profiles', () => (
+                <CollectionNavigationRow
+                    rowRole="item"
+                    testID="connected-services-rail:npm-registry-profiles"
+                    surface="page"
+                    title={t('settingsPlugins.registriesTitle')}
+                    icon={<Icon name="package" size={16} color={theme.colors.text.secondary} />}
+                    selected={false}
+                    onPress={() => props.onOpenNpmProfiles?.()}
+                />
+            ));
+        }
+    }
+    const secrets = props.secrets;
+    if (secrets && !columnFilter.active && (!needle || visibleSecrets.length > 0 || selection.kind === 'secretDraft')) {
+        add('group:secrets', () => (
+            <CollectionListGroupLabel
+                title={t('connectedServicesCollection.secretsGroup')}
+                trailing={props.renderNewSecret ? props.renderNewSecret((onPress) => groupAdd('connected-services-rail:new-secret', t('connectedServicesCollection.newSecret'), onPress)) : undefined}
+            />
+        ));
+        if (selection.kind === 'secretDraft') {
+            add('secret-draft', () => (
+                <CollectionDraftRow
+                    rowRole="item"
+                    testID="connected-services-rail:secret-draft"
+                    titles={draftTitles}
+                    placeholder={t('connectedServicesCollection.newSecret')}
+                    mark={<Icon name="key" size={16} color={theme.colors.text.secondary} />}
+                />
+            ));
+        }
+        if (secrets.state === 'loading') {
+            add('secrets-loading', () => <View testID="connected-services-rail:secrets-loading"><CollectionSkeletonRows count={2} /></View>);
+        } else if (secrets.state === 'failed') {
+            add('secrets-failed', () => (
+                <View style={collectionListStyles.stateLine}>
+                    <SurfaceStateCard
+                        testID="connected-services-rail:secrets-failed"
+                        kind="warning"
+                        size="line"
+                        title={t('secretsSettings.staleTitle')}
+                        action={{ label: t('common.retry'), onPress: secrets.onRetry }}
+                    />
+                </View>
+            ));
+        }
+        for (const entry of visibleSecrets) {
+            add(`secret:${entry.ref}`, () => (
+                <CollectionNavigationRow
+                    testID={`connected-services-rail:secret:${entry.ref}`}
+                    surface="page"
+                    title={entry.name ?? t('secrets.catalog.unavailableName')}
+                    subtitle={entry.relationship === 'recipient' ? sharedSecretProvenanceSegments(entry).join(' · ') : savedSecretOwnedRowSummary(entry)}
+                    status={secretRowStatus(entry)}
+                    icon={<Icon name="key" size={16} color={theme.colors.text.secondary} />}
+                    selected={selection.kind === 'secret' && selection.ref === entry.ref}
+                    onPress={() => props.onOpenSecret?.(entry.ref)}
+                />
+            ));
+        }
+    }
+
     return (
         <>
         <CollectionList
@@ -399,168 +588,21 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
                 anchorRef: columnFilter.searchAnchorRef,
             } : null}
             footer={wayOut}
-        >
-            {/* Beside a detail, the way back to the overview leads the column (lab `cr` aRail), as on Providers. */}
-            <CollectionIndexRow
-                testID="connected-services-rail:overview-row"
-                selected={selection.kind === 'index'}
-                onPress={props.onOpenIndex}
-            />
-            {visibleAgentServices.length > 0 || draftOnlySection === 'agents' ? (
+            scrollContent={(
                 <>
-                    {/* Open lists show their rows, so the label adds no count (owner 11-01); it is the first group under the
-                        header block (the index row closes that block), so it takes the first group's air. */}
-                    <CollectionListGroupLabel title={t('connectedServicesCollection.agentSignInGroup')} first />
-                    {visibleAgentServices.map((service) => renderService(service, service.sheet.accounts.length > 0, false))}
-                    {renderDraftOnlyService('agents')}
+                    <VirtualizedList
+                        testID="connected-services-rail:list"
+                        data={rows}
+                        keyExtractor={railRowKey}
+                        renderItem={renderRailRow}
+                        extraData={selection}
+                        style={RAIL_LIST_STYLE}
+                        contentContainerStyle={RAIL_LIST_CONTENT_STYLE}
+                    />
+                    {columnFilter.editorOverlay}
                 </>
-            ) : (
-                !narrowed ? <Text style={styles.quiet}>{t('connectedServicesCollection.railEmpty')}</Text> : null
             )}
-            {(visiblePooled.length > 0 || poolDraftSheet || (!narrowed && props.renderNewPool)) ? (
-                <>
-                    <CollectionListGroupLabel
-                        title={t('connectedServicesCollection.poolsGroup')}
-                        trailing={props.renderNewPool ? props.renderNewPool((onPress) => (
-                            groupAdd('connected-services-rail:new-pool', t('connectedServicesCollection.newPool'), onPress)
-                        )) : undefined}
-                    />
-                    {poolDraftSheet ? (
-                        <CollectionDraftRow
-                            rowRole="item"
-                            testID={`connected-services-rail:pool-draft:${poolDraftSheet.serviceKey}`}
-                            titles={draftTitles}
-                            placeholder={t('connectedServicesCollection.newPoolDraft', { service: poolDraftSheet.label })}
-                            mark={<Icon name="stack" size={16} color={theme.colors.text.secondary} />}
-                        />
-                    ) : null}
-                    {visiblePooled.map(({ sheet, pool }) => {
-                        const active = pool.activeConnectedAccountId
-                            ? sheet.accounts.find((account) => account.accountId === pool.activeConnectedAccountId) ?? null
-                            : null;
-                        const activeTitle = active ? presentConnectedServicesIndexAccount(sheet, active, labelsByKey, present).title : null;
-                        return (
-                            <CollectionNavigationRow
-                                key={`${sheet.serviceKey}:${pool.ref.groupId}`}
-                                testID={`connected-services-rail:pool:${sheet.serviceKey}:${pool.ref.groupId}`}
-                                surface="page"
-                                title={presentConnectedServicesIndexPool(sheet, pool, labelsByKey)}
-                                subtitle={activeTitle
-                                    ? t('connectedServicesCollection.railPoolUsing', { service: sheet.label, account: activeTitle })
-                                    : sheet.label}
-                                icon={<Icon name="stack" size={16} color={theme.colors.text.secondary} />}
-                                count={pool.members.length > 0 ? pool.members.length : null}
-                                selected={selection.kind === 'pool' && selection.serviceKey === sheet.serviceKey && selection.groupId === pool.ref.groupId}
-                                onPress={() => props.onOpenPool(sheet, pool.ref.groupId)}
-                            />
-                        );
-                    })}
-                </>
-            ) : null}
-            {!columnFilter.active && (visibleGateways.length > 0 || selection.kind === 'gatewayDraft'
-                || (!needle && (props.onAddGateway || props.renderAddGateway || props.gatewaysLoading || props.gatewaysUnavailable))) ? (
-                <>
-                    <CollectionListGroupLabel
-                        title={t('settingsProvidersCollection.gateway.railGroup')}
-                        trailing={props.renderAddGateway
-                            ? props.renderAddGateway((onPress) => groupAdd('connected-services-rail:add-gateway', t('settingsProvidersCollection.gateway.addGateway'), onPress))
-                            : props.onAddGateway
-                                ? groupAdd('connected-services-rail:add-gateway', t('settingsProvidersCollection.gateway.addGateway'), props.onAddGateway)
-                                : undefined}
-                    />
-                    {selection.kind === 'gatewayDraft' ? (
-                        <CollectionDraftRow
-                            rowRole="item"
-                            testID="connected-services-rail:gateway-draft"
-                            titles={draftTitles}
-                            placeholder={t('connectedServicesCollection.newGatewayDraft')}
-                            mark={<Icon name="path" size={16} color={theme.colors.text.secondary} />}
-                        />
-                    ) : null}
-                    {props.gatewaysLoading && !props.gateways?.length ? (
-                        <View testID="connected-services-rail:gateways-loading"><CollectionSkeletonRows count={1} /></View>
-                    ) : null}
-                    {props.gatewaysUnavailable && !props.gateways?.length ? (
-                        <ConnectedServicesGatewaysUnavailableLine testID="connected-services-rail:gateways-unavailable"
-                            unavailable={props.gatewaysUnavailable} />
-                    ) : null}
-                    {visibleGateways.map((gateway) => (
-                        <CollectionNavigationRow
-                            key={gateway.connectionId}
-                            testID={`connected-services-rail:gateway:${gateway.connectionId}`}
-                            surface="page"
-                            title={gateway.title}
-                            subtitle={gateway.summary}
-                            icon={<Icon name="path" size={16} color={theme.colors.text.secondary} />}
-                            selected={selection.kind === 'gateway' && selection.connectionId === gateway.connectionId}
-                            onPress={() => props.onOpenGateway?.(gateway)}
-                        />
-                    ))}
-                </>
-            ) : null}
-            {visibleToolServices.length > 0 || draftOnlySection === 'tools' || npmProfilesVisible ? (
-                <>
-                    <CollectionListGroupLabel title={t('connectedServicesSettings.codeAndToolsTitle')} />
-                    {visibleToolServices.map((service) => renderService(service, service.sheet.accounts.length > 0, true))}
-                    {renderDraftOnlyService('tools')}
-                    {npmProfilesVisible ? (
-                        <CollectionNavigationRow
-                            rowRole="item"
-                            testID="connected-services-rail:npm-registry-profiles"
-                            surface="page"
-                            title={t('settingsPlugins.registriesTitle')}
-                            icon={<Icon name="package" size={16} color={theme.colors.text.secondary} />}
-                            selected={false}
-                            onPress={() => props.onOpenNpmProfiles?.()}
-                        />
-                    ) : null}
-                </>
-            ) : null}
-            {props.secrets && !columnFilter.active && (!needle || visibleSecrets.length > 0 || selection.kind === 'secretDraft') ? (
-                <>
-                    <CollectionListGroupLabel
-                        title={t('connectedServicesCollection.secretsGroup')}
-                        trailing={props.renderNewSecret ? props.renderNewSecret((onPress) => groupAdd('connected-services-rail:new-secret', t('connectedServicesCollection.newSecret'), onPress)) : undefined}
-                    />
-                    {selection.kind === 'secretDraft' ? (
-                        <CollectionDraftRow
-                            rowRole="item"
-                            testID="connected-services-rail:secret-draft"
-                            titles={draftTitles}
-                            placeholder={t('connectedServicesCollection.newSecret')}
-                            mark={<Icon name="key" size={16} color={theme.colors.text.secondary} />}
-                        />
-                    ) : null}
-                    {props.secrets.state === 'loading' ? (
-                        <View testID="connected-services-rail:secrets-loading"><CollectionSkeletonRows count={2} /></View>
-                    ) : props.secrets.state === 'failed' ? (
-                        <View style={collectionListStyles.stateLine}>
-                            <SurfaceStateCard
-                                testID="connected-services-rail:secrets-failed"
-                                kind="warning"
-                                size="line"
-                                title={t('secretsSettings.staleTitle')}
-                                action={{ label: t('common.retry'), onPress: props.secrets.onRetry }}
-                            />
-                        </View>
-                    ) : null}
-                    {visibleSecrets.map((entry) => (
-                        <CollectionNavigationRow
-                            key={entry.ref}
-                            testID={`connected-services-rail:secret:${entry.ref}`}
-                            surface="page"
-                            title={entry.name ?? t('secrets.catalog.unavailableName')}
-                            subtitle={entry.relationship === 'recipient' ? sharedSecretProvenanceSegments(entry).join(' · ') : savedSecretOwnedRowSummary(entry)}
-                            status={secretRowStatus(entry)}
-                            icon={<Icon name="key" size={16} color={theme.colors.text.secondary} />}
-                            selected={selection.kind === 'secret' && selection.ref === entry.ref}
-                            onPress={() => props.onOpenSecret?.(entry.ref)}
-                        />
-                    ))}
-                </>
-            ) : null}
-            {columnFilter.editorOverlay}
-        </CollectionList>
+        />
         </>
     );
 });

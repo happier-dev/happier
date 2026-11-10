@@ -13,6 +13,12 @@ import type { ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServ
 import { buildConnectedServicesIndexModel } from '../model/buildConnectedServicesIndexModel';
 import { ConnectedServicesRailView, RailAccountMeta, type ConnectedServicesRailViewProps } from './ConnectedServicesRail';
 
+// The third-party recycler is the viewport boundary; the rail's rows, groups and selection stay real.
+vi.mock('@legendapp/list/react-native', async (importOriginal) => {
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    return createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>() }).module;
+});
+
 const CLAUDE = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
 const KEYS = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
 const GITHUB = { pluginId: 'happier.scm.forge.github', localId: 'github-account' };
