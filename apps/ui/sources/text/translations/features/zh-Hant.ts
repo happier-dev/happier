@@ -13427,6 +13427,8 @@ const traditionalChinese: TeamsTranslationRoot = {
                 readOnlyTeam: ({ team }: { team: string }) => `只有管理 ${team} 設定的人可以變更。`,
                 readOnlyGroup: "只有管理此群組的人可以變更。",
                 machine: "機器",
+                teamDefault: "團隊預設",
+                groupDefault: "群組預設",
                 none: "無",
                 preset: "機器預設",
                 unavailableMachine: "你看不到的機器",

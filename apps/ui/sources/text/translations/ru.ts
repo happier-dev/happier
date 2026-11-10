@@ -7421,6 +7421,7 @@ export const ru: TranslationStructure = {
     startingSession: "Запуск сессии...",
     startNewSessionInFolder: "Новая сессия здесь",
     noMachineSelected: "Пожалуйста, выберите машину для запуска сессии",
+    reviewPresetToStart: ({ name }: { name: string }) => `Проверьте ${name}, чтобы начать сессию`,
     noPathSelected: "Пожалуйста, выберите директорию для запуска сессии",
     managedMachine: {
       title: 'Новая машина',

@@ -7513,6 +7513,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     startingSession: "Rozpoczynanie sesji...",
     startNewSessionInFolder: "Nowa sesja tutaj",
     noMachineSelected: "Proszę wybrać maszynę do rozpoczęcia sesji",
+    reviewPresetToStart: ({ name }: { name: string }) => `Sprawdź ${name}, aby rozpocząć sesję`,
     noPathSelected: "Proszę wybrać katalog do rozpoczęcia sesji",
     managedMachine: {
       title: 'Nowa maszyna',

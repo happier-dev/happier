@@ -7094,6 +7094,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         startingSession: 'Iniciant la sessió...',
         startNewSessionInFolder: 'Nova sessió aquí',
         noMachineSelected: 'Si us plau, selecciona una màquina per iniciar la sessió',
+        reviewPresetToStart: ({ name }: { name: string }) => `Revisa ${name} per iniciar la sessió`,
         noPathSelected: 'Si us plau, selecciona un directori per iniciar la sessió',
         managedMachine: {
           title: 'Màquina nova',

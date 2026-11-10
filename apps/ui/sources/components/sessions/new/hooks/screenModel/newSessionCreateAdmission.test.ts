@@ -61,6 +61,12 @@ describe('resolveNewSessionTargetRequirement', () => {
         }
     });
 
+    it('names the review step when a managed default placed a preset that is not reviewed yet', () => {
+        expect(resolveNewSessionTargetRequirement({ ready: false, hasTarget: false, hasMachine: true, needsFolder: true,
+            placedPresetReason: 'Review Node 22 container to start the session', translate }))
+            .toEqual({ ready: false, reason: 'Review Node 22 container to start the session' });
+    });
+
     it('lets the folder chip speak for a missing folder, since it is still resolving, then reports the machine as unavailable', () => {
         expect(resolveNewSessionTargetRequirement({ ready: false, hasTarget: true, hasMachine: true, needsFolder: true, translate }))
             .toEqual({ ready: false, reason: null });

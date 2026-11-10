@@ -7899,6 +7899,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
       startFreshAction: "Ricomincia da capo con il nuovo account",
     },
     noMachineSelected: "Seleziona una macchina per avviare la sessione",
+    reviewPresetToStart: ({ name }: { name: string }) => `Controlla ${name} per avviare la sessione`,
     noPathSelected: "Seleziona una directory in cui avviare la sessione",
     managedMachine: {
       title: 'Nuova macchina',

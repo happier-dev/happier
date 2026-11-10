@@ -7615,6 +7615,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             startFreshAction: 'Unter dem neuen Konto neu starten',
         },
         noMachineSelected: 'Wähl einen Rechner, um die Session zu starten',
+        reviewPresetToStart: ({ name }: { name: string }) => `Prüf ${name}, um die Session zu starten`,
         noPathSelected: 'Wähl ein Verzeichnis, in dem die Session starten soll',
         managedMachine: {
           title: 'Neue Rechner',

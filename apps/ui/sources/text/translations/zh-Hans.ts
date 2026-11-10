@@ -7372,6 +7372,7 @@ export const zhHans: TranslationStructure = {
       startFreshAction: "在新账户下重新开始",
     },
     noMachineSelected: "请选择一台机器以启动会话",
+    reviewPresetToStart: ({ name }: { name: string }) => `查看 ${name} 以开始会话`,
     noPathSelected: "请选择一个目录以启动会话",
     managedMachine: {
       title: '新机器',

@@ -44,10 +44,12 @@ export function resolveNewSessionTargetRequirement(input: Readonly<{
     /** The getting-started owner's "this Home has a machine" fact; `null` while unknown. */
     hasMachine: boolean | null;
     needsFolder: boolean;
+    /** A managed default placed a preset that still needs its review; the line names that step instead. */
+    placedPresetReason?: string | null;
     translate: (key: NewSessionTargetReasonKey) => string;
 }>): NewSessionCreateRequirement {
     const reason = !input.hasTarget
-        ? input.hasMachine === false ? null : input.translate('newSession.noMachineSelected')
+        ? input.placedPresetReason ?? (input.hasMachine === false ? null : input.translate('newSession.noMachineSelected'))
         : input.needsFolder ? null : input.translate('newSession.machineUnavailableStatus');
     return { ready: input.ready, reason };
 }

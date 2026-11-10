@@ -13479,6 +13479,8 @@ const russian: TeamsTranslationRoot = {
                 readOnlyTeam: ({ team }: { team: string }) => `Изменить их могут только те, кто управляет настройками ${team}.`,
                 readOnlyGroup: "Изменить их могут только те, кто управляет этой группой.",
                 machine: "Машина",
+                teamDefault: "По умолчанию для команды",
+                groupDefault: "По умолчанию для группы",
                 none: "Нет",
                 preset: "Шаблон машины",
                 unavailableMachine: "Машина, которую вы не видите",

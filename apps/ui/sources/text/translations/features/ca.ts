@@ -13469,6 +13469,8 @@ const catalan: TeamsTranslationRoot = {
                 readOnlyTeam: ({ team }: { team: string }) => `Només qui gestiona la configuració de ${team} pot canviar-los.`,
                 readOnlyGroup: "Només qui gestiona aquest grup pot canviar-los.",
                 machine: "Màquina",
+                teamDefault: "Predeterminat de l’equip",
+                groupDefault: "Predeterminat del grup",
                 none: "Cap",
                 preset: "Una configuració predefinida de màquina",
                 unavailableMachine: "Una màquina que no pots veure",

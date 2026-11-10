@@ -7781,6 +7781,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     startingSession: "Iniciando sessão...",
     startNewSessionInFolder: "Nova sessão aqui",
     noMachineSelected: "Por favor, selecione uma máquina para iniciar a sessão",
+    reviewPresetToStart: ({ name }: { name: string }) => `Revise ${name} para iniciar a sessão`,
     noPathSelected: "Por favor, selecione um diretório para iniciar a sessão",
     managedMachine: {
       title: 'Nova máquina',

@@ -8907,6 +8907,7 @@ const enNewSession = {
     startFreshAction: 'Start fresh under the new account',
   },
   noMachineSelected: 'Please select a machine to start the session',
+  reviewPresetToStart: ({ name }: { name: string }) => `Review ${name} to start the session`,
   noPathSelected: 'Please select a directory to start the session in',
   managedMachine: {
     title: 'New machine',

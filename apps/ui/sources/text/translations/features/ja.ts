@@ -13432,6 +13432,8 @@ const japanese: TeamsTranslationRoot = {
                 readOnlyTeam: ({ team }: { team: string }) => `${team} の設定を管理する人だけが変更できます。`,
                 readOnlyGroup: "このグループを管理する人だけが変更できます。",
                 machine: "マシン",
+                teamDefault: "チームの既定",
+                groupDefault: "グループの既定",
                 none: "なし",
                 preset: "マシンのプリセット",
                 unavailableMachine: "表示できないマシン",

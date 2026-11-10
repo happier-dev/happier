@@ -7,6 +7,7 @@ import { createPreflightComposerSuggestionCatalogSource, type ComposerSuggestion
 import type { AutocompleteSuggestionUpdate } from '@/components/autocomplete/autocompleteTypes';
 import { buildSpawnEnvironmentVariablesFromUiState, buildSpawnSessionExtrasFromUiState } from '@/agents/catalog/catalog';
 import { resolveNewSessionBehaviorAgentId } from '@/components/sessions/new/modules/newSessionBehaviorAgent';
+import { useMachinePreset } from '@/components/settings/machines/managed/useMachinePresets';
 import { resolveStrictV2ProfileSecretReadiness } from '@/components/sessions/new/modules/resolveStrictV2ProfileSecretReadiness';
 import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
@@ -1192,6 +1193,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         executionTarget,
         managedMachineSelection,
         managedPlacementPreset,
+        managedPlacementSource,
         placementForPersistence,
         managedMachineArchiveChoiceAvailability,
         setManagedMachineTarget,
@@ -1241,6 +1243,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         fixedDirectoryIntent: input?.fixedDirectoryIntent,
         cacheScopeKey: capabilityServerId,
     });
+    // A managed default names its preset in the composer: one record read, only while a default places one.
+    const managedPlacementPresetRecord = useMachinePreset(targetServerId ?? '', managedPlacementPreset?.presetId ?? '');
     const machines = useEnhancedSessionWizard ? readPlacementMachines() : EMPTY_PLACEMENT_MACHINES;
     const [managedMachineAcquisition, setManagedMachineAcquisition] = React.useState<ManagedMachineAcquisitionDraft | null>(
         () => !tempSessionData?.managedMachineSelection && persistedTargetMatches ? persistedDraft?.managedMachineAcquisition ?? null : null,
@@ -4077,6 +4081,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
             hasTarget: Boolean(selectedMachineId || managedMachineSelection),
             hasMachine,
             needsFolder: directoryKind !== 'managed' && !selectedPath.trim(),
+            placedPresetReason: managedPlacementPreset && !managedMachineSelection
+                ? t('newSession.reviewPresetToStart', { name: managedPlacementPresetRecord.state.value?.name ?? t('managedMachines.picker.newMachine') })
+                : null,
             translate: t,
         }),
         { ready: directoryPreflight.ready,
@@ -4571,6 +4578,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
             selectedMachine: selectedMachineDisplay ?? selectedMachine,
             managedMachineSelection,
             managedPlacementPreset,
+            managedPlacementSource,
+            managedPlacementPresetName: managedPlacementPresetRecord.state.value?.name ?? null,
             hasMachine,
             executionTarget,
             destination: {

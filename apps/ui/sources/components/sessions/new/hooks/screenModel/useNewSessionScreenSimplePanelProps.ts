@@ -129,6 +129,10 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         executionTarget?: SessionAuthoringExecutionTargetV2 | null;
         managedMachineSelection?: ManagedMachineSelectionDraft | null;
         managedPlacementPreset?: Extract<ManagedSessionPlacementV1, { kind: 'preset' }> | null;
+        /** The managed layer that placed the preset; a Team or Group default says so in the chip. */
+        managedPlacementSource?: 'policy' | 'explicit' | 'group' | 'team' | 'home' | 'none' | null;
+        /** The placed preset's name once its record is read; the chip says "New machine" until then. */
+        managedPlacementPresetName?: string | null;
         destination?: Readonly<{
             selectionOrigin?: MachinePoolSelectionOriginV1;
             machineGroups: readonly Readonly<{ serverId: string; serverName: string }>[];
@@ -151,6 +155,8 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         executionTarget,
         managedMachineSelection,
         managedPlacementPreset,
+        managedPlacementSource,
+        managedPlacementPresetName,
         hasMachine,
         pathPopover,
         ...machineAndResumeProps
@@ -159,8 +165,13 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
     const noMachineYet = hasMachine === false && !executionTarget && !selectedMachine && !managedMachineSelection && !managedPlacementPreset;
     const temporaryComputerName = describeExecutionTargetDestination(executionTarget);
     const machineName = temporaryComputerName ?? getMachineDisplayName(selectedMachine) ?? managedMachineSelection?.receipt.launch.name
-        ?? (managedPlacementPreset ? t('managedMachines.picker.newMachine') : undefined);
+        ?? (managedPlacementPreset ? managedPlacementPresetName || t('managedMachines.picker.newMachine') : undefined);
     const destinationParts = machineName ? [machineName] : [];
+    // A preset the member did not pick says which default placed it; picking anything else replaces both parts.
+    if (managedPlacementPreset && (managedPlacementSource === 'team' || managedPlacementSource === 'group')) {
+        destinationParts.unshift(t(managedPlacementSource === 'team'
+            ? 'teams.settings.memberDefaults.teamDefault' : 'teams.settings.memberDefaults.groupDefault'));
+    }
     const serverId = params.targetServerId;
     // Pool provenance and the Home prefix describe an exact Machine choice; a
     // Temporary computer has neither, so it keeps its own single-part label.

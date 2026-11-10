@@ -7982,6 +7982,7 @@ localTailscale: {
       startFreshAction: "新しいアカウントで最初から始める",
     },
     noMachineSelected: "セッションを開始するマシンを選択してください",
+    reviewPresetToStart: ({ name }: { name: string }) => `セッションを開始するには ${name} を確認してください`,
     noPathSelected: "セッションを開始するディレクトリを選択してください",
     managedMachine: {
       title: '新しいマシン',

@@ -7,7 +7,7 @@ import type {
 import type {
     SessionDirectoryIntentV1,
 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
-import { resolveManagedSessionDefaults, type ManagedSessionDefaultsContext, type ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/managedDefaults';
+import { resolveManagedSessionDefaults, type ManagedSessionDefaultsContext, type ManagedSessionPlacementV1, type ResolvedManagedSessionDefaults } from '@happier-dev/protocol/teams/managedDefaults';
 
 import { resolvePreferredLaunchMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
 import { resolveMachineDestinationPurposeEligibility } from '@/components/sessions/new/components/machineSelection/buildMachineDestinationModel';
@@ -169,6 +169,8 @@ export function useNewSessionMachinePathState(params: Readonly<{
     placementForPersistence: NewSessionPlacementForPersistence;
     /** A preset must pass through the existing configurator before it has a reviewed creation receipt. */
     managedPlacementPreset: Extract<ManagedSessionPlacementV1, { kind: 'preset' }> | null;
+    /** Which managed layer placed that preset, so the composer can say where the choice came from. */
+    managedPlacementSource: ResolvedManagedSessionDefaults['placement']['source'] | null;
     managedMachineSelection: ManagedMachineSelectionDraft | null;
     managedMachineArchiveChoiceAvailability: ManagedMachineArchiveChoiceAvailability | null;
     setManagedMachineTarget: (draft: ManagedMachineSelectionDraft, serverId?: string) => void;
@@ -945,6 +947,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
         executionTarget,
         placementForPersistence,
         managedPlacementPreset,
+        managedPlacementSource: managedPlacementPreset ? placementDecision.source : null,
         managedMachineSelection,
         managedMachineArchiveChoiceAvailability,
         setManagedMachineTarget,

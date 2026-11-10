@@ -13494,6 +13494,8 @@ const french: TeamsTranslationRoot = {
                 readOnlyTeam: ({ team }: { team: string }) => `Seules les personnes qui gèrent les réglages de ${team} peuvent les changer.`,
                 readOnlyGroup: "Seules les personnes qui gèrent ce groupe peuvent les changer.",
                 machine: "Machine",
+                teamDefault: "Par défaut de l’équipe",
+                groupDefault: "Par défaut du groupe",
                 none: "Aucun",
                 preset: "Un modèle de machine",
                 unavailableMachine: "Une machine que tu ne vois pas",
