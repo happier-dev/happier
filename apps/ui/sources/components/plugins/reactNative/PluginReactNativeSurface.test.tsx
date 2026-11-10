@@ -78,6 +78,41 @@ afterAll(() => {
 });
 
 describe('PluginReactNativeSurface', () => {
+    it('keeps hidden content reveal motion stopped without retiring the renderer', async () => {
+        const animated = await import('react-native-reanimated');
+        const timing = vi.spyOn(animated, 'withTiming');
+        const cancel = vi.spyOn(animated, 'cancelAnimation');
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+        let mounts = 0;
+        let unmounts = 0;
+        function Content() {
+            React.useEffect(() => { mounts++; return () => { unmounts++; }; }, []);
+            return React.createElement('NativeContent');
+        }
+        const module = { renderSurface: () => <Content /> };
+        const element = (presented: boolean) => <PluginReactNativeSurface surfaceId="surface_1"
+            decision={{ state: 'load', reason: 'compatible', diagnostics: [] }} module={module}
+            renderContext={defaultRenderContext} privateHostBindings={{ presentationActive: presented }} />;
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        try {
+            screen = await renderScreen(element(false));
+            expect(mounts).toBe(1);
+            expect(timing).not.toHaveBeenCalled();
+            await screen.update(element(true));
+            expect(timing).toHaveBeenCalled();
+            const started = timing.mock.calls.length;
+            cancel.mockClear();
+            await screen.update(element(false));
+            expect(cancel).toHaveBeenCalled();
+            expect(timing).toHaveBeenCalledTimes(started);
+            expect(mounts).toBe(1);
+            expect(unmounts).toBe(0);
+        } finally {
+            await screen?.unmount();
+            timing.mockRestore();
+            cancel.mockRestore();
+        }
+    });
 
     it('renders host surface facts without re-admission while checking current host versions', async () => {
         const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');

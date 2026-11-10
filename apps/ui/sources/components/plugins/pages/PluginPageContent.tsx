@@ -39,6 +39,7 @@ import {
 import { createPluginPageLocationOwner, type PluginPageLocationOwner } from '@/components/plugins/pages/pluginPageLocation';
 import { pluginPageTargetKey } from './pluginPageRoute';
 import { FloatingChromeClearedFrame } from '@/components/ui/layout/FloatingChromeClearedFrame';
+import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import {
     PluginPageHeaderActions,
     resolvePluginPageHeaderActions,
@@ -436,12 +437,13 @@ export function PluginPageContent(props: Readonly<{
         );
     }
 
-    // Visibility pauses the plugin renderer, not the page's physical pane owner. Opening an
-    // approval retains this destination; unmounting renderContent would cancel its pending command.
-    const pageContent = isVisible ? (
-                // The page body clears the shell's floating bottom chrome (a phone's tab bar, a docked New Session over
-                // it): the plugin owns its scrolling, so its host keeps what that chrome covers within reach.
-                // A pinned footer inside it (a pushed detail's actions) then clears that chrome once, not again (D17).
+    // Hidden live pages keep their physical host and pending command subscriber connected.
+    // The retained surface withdraws presentation so Resources and motion stop while hidden.
+    const pageContent = (
+        // The page body clears the shell's floating bottom chrome (a phone's tab bar, a docked New Session over
+        // it): the plugin owns its scrolling, so its host keeps what that chrome covers within reach.
+        // A pinned footer inside it (a pushed detail's actions) then clears that chrome once, not again (D17).
+        <RetainedPanelSurface isActive={isVisible}>
                 <FloatingChromeClearedFrame testID="plugin-app-page-host" style={pageContentFrameStyle}>
                     <HappierColumnEdgeContext.Provider value={PLUGIN_PAGE_COLUMN_EDGE_PX}>
                     <PluginPageBackStepProvider owner={locationOwner}>
@@ -476,7 +478,8 @@ export function PluginPageContent(props: Readonly<{
                     </PluginPageBackStepProvider>
                     </HappierColumnEdgeContext.Provider>
                 </FloatingChromeClearedFrame>
-    ) : <React.Fragment />;
+        </RetainedPanelSurface>
+    );
 
     return renderPage(
         <>

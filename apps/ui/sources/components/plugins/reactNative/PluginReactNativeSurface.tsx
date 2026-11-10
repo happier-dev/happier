@@ -705,7 +705,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
     const contentReveal = useSharedValue(animationEnabled ? 0 : 1);
     React.useEffect(() => {
         if (!hasRenderableModule) return;
-        if (!animationEnabled) {
+        if (!animationEnabled || presentationActive === false) {
             cancelAnimation(contentReveal);
             contentReveal.value = 1;
             return;
@@ -714,7 +714,8 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
             duration: reanimatedMotionTokens.durationMs.base,
             easing: reanimatedMotionTokens.easing.standard,
         });
-    }, [animationEnabled, contentReveal, hasRenderableModule]);
+        return () => cancelAnimation(contentReveal);
+    }, [animationEnabled, contentReveal, hasRenderableModule, presentationActive]);
     const contentRevealStyle = useAnimatedStyle(() => ({ opacity: contentReveal.value }));
     const hasCurrentTargetedFallback = props.targetedFallback !== undefined
         && targetedFallbackMountAttemptId === mountAttemptId;
