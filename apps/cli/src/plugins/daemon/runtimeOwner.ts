@@ -836,6 +836,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       await stateStore.initialize();
       params.signal?.throwIfAborted();
       const initialLease = await params.reloadController.acquireRuntimeRegistry({
+        refreshAccountCensus: pluginIds => stateStore.refreshRuntime(pluginIds),
         resolveRuntimeRegistry: async () => {
           const registry = await resolveExecutablePluginRuntimeRegistry({
             ...(params.signal ? { signal: params.signal } : {}),

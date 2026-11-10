@@ -240,6 +240,20 @@ describe('daemon release-less declaration publication', () => {
             await refreshStore.refreshRuntime([manifest.id]);
             expect(await readCensusDiagnostic()).toMatchObject({ failureCause: { errorCode: 'ECONNREFUSED' } });
             accountReadable = true;
+            // An ordinary retained-catalog read is sufficient recovery. No
+            // availability push or registry mutation primes this admission.
+            const readsBeforeRecovery = accountReadStates.length;
+            expect((await owner.readCatalog()).find(row => row.pluginId === target.identity.pluginId))
+                .toMatchObject({ enabled: true });
+            expect(accountReadStates.length - readsBeforeRecovery).toBe(1);
+            expect(resolveSessionCreationAgentTarget(target, controller.getState().activeRegistry!.contributes))
+                .toMatchObject({ agentId: 'codex' });
+            const readsBeforeHealthyRead = accountReadStates.length;
+            await owner.readCatalog();
+            expect(accountReadStates.length).toBe(readsBeforeHealthyRead);
+            accountReadable = false;
+            await refreshStore.refreshRuntime([manifest.id]);
+            accountReadable = true;
             // A single-plugin live signal must also recover the other bundled
             // rows withdrawn by the failed whole-Account census.
             publishPluginAccountAvailabilityChanges(resolveAccountSettingsScopeKey(credentials), [change]);

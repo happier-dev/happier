@@ -93,7 +93,11 @@ export async function readCurrentDaemonPluginCatalogSnapshot(params: Readonly<{
   happyHomeDir?: string;
   selection?: DaemonPluginCatalogReadRequest['selection'];
 }>): Promise<CurrentDaemonPluginCatalogSnapshot> {
-  const lease = params.reloadController.tryAcquireRuntimeRegistry();
+  // An existing failed admission recovers through the same lease owner used
+  // by Session creation. An administrative read never starts a cold runtime.
+  const lease = params.reloadController.getState().activeRegistry
+    ? await params.reloadController.acquireRuntimeRegistry()
+    : null;
   try {
     if (params.selection === 'tools') {
       // The controller observes durable adoption before serving publication,
