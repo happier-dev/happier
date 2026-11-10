@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { findRunningExpoStateInRoot, looksLikeExpoMetro } from '../expo/expo.mjs';
+import { findRunningExpoStateInRoot, observeExpoMetro } from '../expo/expo.mjs';
 import { isTcpPortListening } from '../net/ports.mjs';
 import { resolveLocalhostHost } from '../paths/localhost_host.mjs';
 
@@ -43,19 +43,21 @@ export async function resolveVerifiedStackUiEndpoint({
   requireWeb = true,
   runtimeBackedStart = false,
   requireExpoOwnership = true,
-} = {}, { looksLikeExpoMetroImpl = looksLikeExpoMetro } = {}) {
+} = {}) {
   const host = resolveLocalhostHost({ stackMode: true, stackName });
   const runtimeExpoWebPort =
     runtimeState?.expo && typeof runtimeState.expo === 'object'
       ? toPort(runtimeState.expo.webPort ?? runtimeState.expo.port)
       : null;
 
-  // Runtime metadata selects the endpoint; HTTP observes whether it serves.
+  // Runtime metadata selects the endpoint; HTTP distinguishes ready, busy and stale.
   // A stale wrapper PID (or remote lifecycle record) cannot veto live Metro.
   if (!requireExpoOwnership && acceptExpoState && !runtimeBackedStart && runtimeExpoWebPort && (!requireWeb || runtimeState.expo.webEnabled !== false)) {
-    const running = await looksLikeExpoMetroImpl({ port: runtimeExpoWebPort, statusOnly: true }).catch(() => false);
+    const observation = await observeExpoMetro({ port: runtimeExpoWebPort, statusOnly: true });
+    const running = observation.status === 'ready' || observation.status === 'busy';
     return {
       expected: Boolean(serveUiWanted),
+      metroStatus: observation.status,
       running,
       port: running ? runtimeExpoWebPort : null,
       url: running && serveUiWanted ? `http://${host}:${runtimeExpoWebPort}` : null,

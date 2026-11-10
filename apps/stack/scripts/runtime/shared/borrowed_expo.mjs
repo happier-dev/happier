@@ -5,7 +5,6 @@ import { readTextOrEmpty } from '../../utils/fs/ops.mjs';
 import { getComponentDir, resolveStackEnvPath } from '../../utils/paths/paths.mjs';
 import { readStackRuntimeStateFile } from '../../utils/stack/runtime_state.mjs';
 import { resolveVerifiedStackUiEndpoint } from '../../utils/stack/verified_endpoints.mjs';
-import { looksLikeExpoMetro } from '../../utils/expo/expo.mjs';
 import { resolveRuntimeRemoteServiceObservation } from '../../utils/tui/runtime_placement_summary.mjs';
 import { resolveProcessTeeLogPath } from '../../utils/proc/proc.mjs';
 import { assertCanonicalManagedStackName } from '../../utils/stack/names.mjs';
@@ -62,7 +61,7 @@ export function projectBorrowedExpoRuntime({
     producerStackName: String(producerStackName ?? '').trim(),
     ownership: 'borrowed',
     running,
-    status: running ? 'running' : 'degraded',
+    status: running ? (localEndpoint?.metroStatus === 'busy' ? 'busy' : 'running') : 'degraded',
     port,
     mobilePort,
     devClientEnabled: expo.devClientEnabled === true,
@@ -74,7 +73,6 @@ export function projectBorrowedExpoRuntime({
 
 export async function resolveBorrowedExpoRuntime(
   { rootDir, producerStackName, env = process.env },
-  { looksLikeExpoMetroImpl = looksLikeExpoMetro } = {},
 ) {
   const normalizedProducer = String(producerStackName ?? '').trim();
   if (!normalizedProducer) return null;
@@ -104,7 +102,7 @@ export async function resolveBorrowedExpoRuntime(
     requireWeb: true,
     runtimeBackedStart: false,
     requireExpoOwnership: false,
-  }, { looksLikeExpoMetroImpl });
+  });
 
   return projectBorrowedExpoRuntime({
     producerStackName: normalizedProducer,
@@ -119,7 +117,7 @@ export async function projectBorrowedExpoWebappEnv({
   consumerStackName,
   producerStackName,
   env = process.env,
-}, boundary = {}) {
+}) {
   if (String(env.HAPPIER_WEBAPP_URL ?? '').trim()) return env;
   if (!isBorrowedExpoConsumer({ consumerStackName, producerStackName })) return env;
 
@@ -127,7 +125,7 @@ export async function projectBorrowedExpoWebappEnv({
     rootDir,
     producerStackName,
     env,
-  }, boundary);
+  });
   // The producer's recorded port is the selected runtime fact. Endpoint
   // liveness remains diagnostic and recoverable; one busy Metro probe must not
   // erase the consumer origin for the lifetime of this Stack controller.

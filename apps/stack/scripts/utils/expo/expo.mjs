@@ -1,3 +1,4 @@
+import { readMetroHttp } from './metro_http.mjs';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
@@ -18,42 +19,21 @@ function resolveMetroStatusTimeoutMsFromEnv(env = process.env) {
   return STACK_LISTENER_OBSERVATION_TIMEOUT_MS;
 }
 
-export async function looksLikeExpoMetro({ port, timeoutMs = null, statusOnly = false, signal = null } = {}) {
+/** @returns {Promise<{status: 'ready' | 'busy' | 'unavailable' | 'aborted'}>} */
+export async function observeExpoMetro({ port, timeoutMs = null, statusOnly = false, signal = null } = {}) {
   const p = Number(port);
-  if (!Number.isFinite(p) || p <= 0) return false;
+  if (!Number.isFinite(p) || p <= 0) return { status: 'unavailable' };
   const ms = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0 ? Number(timeoutMs) : resolveMetroStatusTimeoutMsFromEnv();
   const deadline = Date.now() + ms;
   const probeHosts = ['127.0.0.1', 'localhost', '[::1]'];
-  async function fetchText(url) {
-    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) throw new Error('Metro observation deadline expired');
-    const timeout = setTimeout(() => controller?.abort(), remainingMs);
-    const cancel = () => controller?.abort(signal.reason);
-    try {
-      signal?.addEventListener('abort', cancel, { once: true });
-      if (signal?.aborted) cancel();
-      const res = await fetch(url, { signal: controller?.signal });
-      const txt = await res.text().catch(error => {
-        if (signal?.aborted) throw error;
-        return '';
-      });
-      return {
-        ok: res.ok,
-        contentType: String(res.headers?.get?.('content-type') ?? '').toLowerCase(),
-        projectRoot: String(res.headers?.get?.('x-react-native-project-root') ?? '').trim(),
-        text: String(txt),
-      };
-    } finally {
-      clearTimeout(timeout);
-      signal?.removeEventListener('abort', cancel);
-    }
-  }
+  const fetchText = url => readMetroHttp(url, { deadline, signal });
 
   for (const host of probeHosts) {
-    if (signal?.aborted) return false;
+    if (signal?.aborted) return { status: 'aborted' };
     try {
       const statusResponse = await fetchText(`http://${host}:${p}/status`);
+      if (signal?.aborted) return { status: 'aborted' };
+      if (statusResponse.busy) return { status: 'busy' };
       if (
         statusResponse.ok
         && (
@@ -61,30 +41,38 @@ export async function looksLikeExpoMetro({ port, timeoutMs = null, statusOnly = 
           || statusResponse.projectRoot
         )
       ) {
-        return true;
+        return { status: 'ready' };
       }
     } catch {
       // Try the next loopback host within the same observation deadline.
     }
   }
 
-  if (statusOnly) return false;
+  if (statusOnly) return { status: signal?.aborted ? 'aborted' : 'unavailable' };
 
   for (const host of probeHosts) {
-    if (signal?.aborted) return false;
+    if (signal?.aborted) return { status: 'aborted' };
     try {
       const rootResponse = await fetchText(`http://${host}:${p}/`);
+      if (signal?.aborted) return { status: 'aborted' };
+      if (rootResponse.busy) return { status: 'busy' };
       if (!rootResponse.ok) {
         continue;
       }
-      return rootResponse.contentType.includes('text/html')
+      const ready = rootResponse.contentType.includes('text/html')
         || /<!doctype html|<html|<div id="root"/i.test(rootResponse.text);
+      return { status: ready ? 'ready' : 'unavailable' };
     } catch {
       // Keep probing alternate loopback hosts before giving up.
     }
   }
 
-  return false;
+  return { status: signal?.aborted ? 'aborted' : 'unavailable' };
+}
+
+// Readiness callers share the observation, but a busy endpoint is not ready yet.
+export async function looksLikeExpoMetro(options = {}) {
+  return (await observeExpoMetro(options)).status === 'ready';
 }
 
 function resolveMetroWaitTimeoutMsFromEnv(env = process.env) {

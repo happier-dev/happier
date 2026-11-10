@@ -44,6 +44,7 @@ test('waitForExpoMetroRunning returns a non-ok result when the timeout elapses',
     port: 8081,
     timeoutMs: 25,
     intervalMs: 10,
+    continueOnTimeout: false,
   }, {
     looksLikeExpoMetroImpl: async () => false,
     delayImpl: async () => {},
@@ -131,130 +132,45 @@ test('waitForExpoMetroRunning stops before probing when its caller cancels readi
   assert.equal(probes, 0);
 });
 
-test('Metro readiness cancellation wins while an otherwise healthy response body is pending', { timeout: 10_000 }, async t => {
-  const server = createServer((_request, response) => {
+async function serve(t, handler, host = '127.0.0.1') {
+  const server = createServer(handler);
+  await new Promise(resolve => server.listen(0, host, resolve));
+  t.after(() => {
+    server.closeAllConnections();
+    return new Promise(resolve => server.close(resolve));
+  });
+  return server.address().port;
+}
+
+test('Metro readiness cancellation wins while an otherwise healthy response body is pending', async t => {
+  const controller = new AbortController();
+  const port = await serve(t, (_request, response) => {
+    response.writeHead(200, { 'x-react-native-project-root': '/fixture/project' });
+    response.write('packager-status:');
+    controller.abort(new Error('target closed'));
+  });
+  assert.deepEqual(await waitForExpoMetroRunning({ port, signal: controller.signal }),
+    { ok: false, reason: 'aborted', probes: 1 });
+});
+
+test('looksLikeExpoMetro falls back to the root document when /status is unavailable', async t => {
+  const port = await serve(t, (request, response) => {
+    if (request.url === '/status') { response.writeHead(404); response.end(); return; }
+    response.writeHead(200, { 'content-type': 'text/html' });
+    response.end('<!doctype html><html><div id="root"></div></html>');
+  });
+  assert.equal(await looksLikeExpoMetro({ port, timeoutMs: 1000 }), true);
+});
+
+test('looksLikeExpoMetro falls back to IPv6 localhost', async t => {
+  const port = await serve(t, (_request, response) => response.end('packager-status:running'), '::1');
+  assert.equal(await looksLikeExpoMetro({ port, timeoutMs: 1000 }), true);
+});
+
+test('looksLikeExpoMetro accepts the Expo project-root header even if the body stalls', async t => {
+  const port = await serve(t, (_request, response) => {
     response.writeHead(200, { 'x-react-native-project-root': '/fixture/project' });
     response.write('packager-status:');
   });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(async () => {
-    server.closeAllConnections();
-    await new Promise(resolve => server.close(resolve));
-  });
-  const controller = new AbortController();
-  let received;
-  const headers = new Promise(resolve => { received = resolve; });
-  const fetchResponse = globalThis.fetch;
-  t.mock.method(globalThis, 'fetch', async (...args) => {
-    const response = await fetchResponse(...args);
-    received();
-    return response;
-  });
-  const pending = waitForExpoMetroRunning({ port: server.address().port, signal: controller.signal });
-  await headers;
-  controller.abort(new Error('target closed'));
-  assert.deepEqual(await pending, { ok: false, reason: 'aborted', probes: 1 });
-});
-
-test('looksLikeExpoMetro falls back to the root document when /status is unavailable', async () => {
-  const originalFetch = globalThis.fetch;
-  const urls = [];
-
-  globalThis.fetch = async (url) => {
-    urls.push(String(url));
-    if (String(url).endsWith('/status')) {
-      throw new Error('status unavailable');
-    }
-
-    return new Response('<!doctype html><html><body><div id="root"></div></body></html>', {
-      status: 200,
-      headers: {
-        'content-type': 'text/html; charset=utf-8',
-      },
-    });
-  };
-
-  try {
-    const ok = await looksLikeExpoMetro({ port: 8081, timeoutMs: 25 });
-    assert.equal(ok, true);
-    assert.deepEqual(urls, [
-      'http://127.0.0.1:8081/status',
-      'http://localhost:8081/status',
-      'http://[::1]:8081/status',
-      'http://127.0.0.1:8081/',
-    ]);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test('looksLikeExpoMetro falls back to localhost when the Expo web runtime is only reachable on IPv6 localhost', async () => {
-  const originalFetch = globalThis.fetch;
-  const urls = [];
-
-  globalThis.fetch = async (url) => {
-    urls.push(String(url));
-    if (String(url).startsWith('http://127.0.0.1:8081/')) {
-      throw new Error('connect ECONNREFUSED 127.0.0.1');
-    }
-
-    if (String(url) === 'http://localhost:8081/status') {
-      return new Response('packager-status:running', {
-        status: 200,
-        headers: {
-          'content-type': 'text/plain; charset=utf-8',
-        },
-      });
-    }
-
-    throw new Error(`unexpected url: ${String(url)}`);
-  };
-
-  try {
-    const ok = await looksLikeExpoMetro({ port: 8081, timeoutMs: 25 });
-    assert.equal(ok, true);
-    assert.deepEqual(urls, [
-      'http://127.0.0.1:8081/status',
-      'http://localhost:8081/status',
-    ]);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test('looksLikeExpoMetro treats a 200 /status response with the Expo project-root header as healthy even if the body stalls', async () => {
-  const originalFetch = globalThis.fetch;
-  const urls = [];
-
-  globalThis.fetch = async (url) => {
-    urls.push(String(url));
-    if (String(url) !== 'http://127.0.0.1:8081/status') {
-      throw new Error(`unexpected url: ${String(url)}`);
-    }
-
-    return {
-      ok: true,
-      headers: {
-        get(name) {
-          if (String(name).toLowerCase() === 'x-react-native-project-root') {
-            return '/tmp/happier/apps/ui';
-          }
-          return null;
-        },
-      },
-      text: async () => {
-        const error = new Error('This operation was aborted');
-        error.name = 'AbortError';
-        throw error;
-      },
-    };
-  };
-
-  try {
-    const ok = await looksLikeExpoMetro({ port: 8081, timeoutMs: 25 });
-    assert.equal(ok, true);
-    assert.deepEqual(urls, ['http://127.0.0.1:8081/status']);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+  assert.equal(await looksLikeExpoMetro({ port, timeoutMs: 50 }), true);
 });

@@ -25,6 +25,16 @@ import {
 
 async function resolveRemoteBorrowedExpoForTest(t, { metroRunning }) {
   const storageDir = await mkdirTempStackStorage(t);
+  let reachable = metroRunning;
+  const probedPorts = [];
+  const metro = createServer((_request, response) => {
+    probedPorts.push(port);
+    response.writeHead(reachable ? 200 : 503).end(reachable ? 'packager-status:running' : 'unavailable');
+  });
+  metro.listen(0, '127.0.0.1');
+  await once(metro, 'listening');
+  const port = metro.address().port;
+  t.after(() => { metro.closeAllConnections(); return new Promise(resolve => metro.close(resolve)); });
   const producerStackName = 'repo-happier-producer';
   const producerStackDir = join(storageDir, producerStackName);
   await mkdir(producerStackDir, { recursive: true });
@@ -32,7 +42,7 @@ async function resolveRemoteBorrowedExpoForTest(t, { metroRunning }) {
     join(producerStackDir, 'stack.runtime.json'),
     JSON.stringify({
       startedAt: '2026-09-20T08:00:00.000Z',
-      expo: { webPort: 19364, mobilePort: 19364, devClientEnabled: true },
+      expo: { webPort: port, mobilePort: port, devClientEnabled: true },
       placement: { expo: 'mac' },
       remoteTargets: { mac: { status: 'running', services: { expo: true } } },
       processes: { expoPid: null },
@@ -40,8 +50,6 @@ async function resolveRemoteBorrowedExpoForTest(t, { metroRunning }) {
     'utf8',
   );
 
-  const probedPorts = [];
-  let reachable = metroRunning;
   const query = {
     rootDir: process.cwd(),
     producerStackName,
@@ -50,16 +58,9 @@ async function resolveRemoteBorrowedExpoForTest(t, { metroRunning }) {
       HAPPIER_STACK_REPO_DIR: process.cwd(),
     },
   };
-  const boundary = {
-    looksLikeExpoMetroImpl: async ({ port }) => {
-      probedPorts.push(port);
-      return reachable;
-    },
-  };
-  const projected = await resolveBorrowedExpoRuntime(query, boundary);
-
-  return { projected, probedPorts, query, boundary, setReachable(value) { reachable = value; },
-    refresh: () => resolveBorrowedExpoRuntime(query, boundary) };
+  const projected = await resolveBorrowedExpoRuntime(query);
+  return { projected, probedPorts, query, port, setReachable(value) { reachable = value; },
+    refresh: () => resolveBorrowedExpoRuntime(query) };
 }
 
 async function mkdirTempStackStorage(t) {
@@ -85,13 +86,13 @@ test('source restart admits runtime work while borrowed Expo is unavailable', as
 });
 
 test('borrowed Expo projects the consumer UI origin without replacing an explicit webapp URL', async t => {
-  const { query, boundary, setReachable } = await resolveRemoteBorrowedExpoForTest(t, { metroRunning: true });
+  const { query, port, setReachable } = await resolveRemoteBorrowedExpoForTest(t, { metroRunning: true });
   const projected = await projectBorrowedExpoWebappEnv({
     ...query,
     consumerStackName: 'agent-qa-embed',
-  }, boundary);
+  });
 
-  assert.equal(projected.HAPPIER_WEBAPP_URL, 'http://happier-agent-qa-embed.localhost:19364');
+  assert.equal(projected.HAPPIER_WEBAPP_URL, `http://happier-agent-qa-embed.localhost:${port}`);
   const serverEnv = buildServerRuntimeEnv({
     baseEnv: projected,
     serverPort: 43005,
@@ -112,15 +113,15 @@ test('borrowed Expo projects the consumer UI origin without replacing an explici
     ...query,
     consumerStackName: 'agent-qa-embed',
     env: { ...query.env, HAPPIER_WEBAPP_URL: 'https://explicit.example.test' },
-  }, boundary);
+  });
   assert.equal(explicit.HAPPIER_WEBAPP_URL, 'https://explicit.example.test');
 
   setReachable(false);
   const degraded = await projectBorrowedExpoWebappEnv({
     ...query,
     consumerStackName: 'agent-qa-embed',
-  }, boundary);
-  assert.equal(degraded.HAPPIER_WEBAPP_URL, 'http://happier-agent-qa-embed.localhost:19364');
+  });
+  assert.equal(degraded.HAPPIER_WEBAPP_URL, `http://happier-agent-qa-embed.localhost:${port}`);
 });
 
 test('borrowed Expo rejects non-canonical producer names before resolving managed paths', async () => {
@@ -239,7 +240,7 @@ test('borrowers with distinct runtime server and Account URLs receive the same E
 });
 
 test('borrowed Expo projects a verified running remote tunnel as a borrowed consumer endpoint', async (t) => {
-  const { projected, probedPorts } = await resolveRemoteBorrowedExpoForTest(t, {
+  const { projected, probedPorts, port } = await resolveRemoteBorrowedExpoForTest(t, {
     metroRunning: true,
   });
 
@@ -248,18 +249,18 @@ test('borrowed Expo projects a verified running remote tunnel as a borrowed cons
     ownership: 'borrowed',
     running: true,
     status: 'running',
-    port: 19364,
-    mobilePort: 19364,
+    port,
+    mobilePort: port,
     devClientEnabled: true,
     source: 'remote_target',
     remoteTarget: 'mac',
     runtimeStartedAt: '2026-09-20T08:00:00.000Z',
   });
-  assert.deepEqual(probedPorts, [19364]);
+  assert.deepEqual(probedPorts, [port]);
 });
 
 test('borrowed Expo discovers endpoint recovery without restarting its producer or consumer', async (t) => {
-  const { projected, probedPorts, setReachable, refresh } = await resolveRemoteBorrowedExpoForTest(t, {
+  const { projected, probedPorts, port, setReachable, refresh } = await resolveRemoteBorrowedExpoForTest(t, {
     metroRunning: false,
   });
 
@@ -268,18 +269,18 @@ test('borrowed Expo discovers endpoint recovery without restarting its producer 
     ownership: 'borrowed',
     running: false,
     status: 'degraded',
-    port: 19364,
-    mobilePort: 19364,
+    port,
+    mobilePort: port,
     devClientEnabled: true,
     source: 'remote_target',
     remoteTarget: 'mac',
     runtimeStartedAt: '2026-09-20T08:00:00.000Z',
   });
-  assert.deepEqual(probedPorts, [19364]);
+  assert.ok(probedPorts.length > 0 && probedPorts.every(value => value === port));
   setReachable(true);
   const recovered = await refresh();
   assert.equal(recovered.running, true);
-  assert.equal(recovered.port, 19364);
+  assert.equal(recovered.port, port);
   assert.equal(recovered.runtimeStartedAt, projected.runtimeStartedAt);
 });
 
