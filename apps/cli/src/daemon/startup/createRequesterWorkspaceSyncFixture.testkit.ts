@@ -197,7 +197,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   const targetRows = createProjectAccountRowsHttpBoundary(targetAccountRows);
   const requesterRoots = new Map<string, NonNullable<RpcHandlerContext['callerInputAuthorization']>>();
   const approvalArtifacts = new Map<string, Readonly<{ id: string }> & Record<string, unknown>>();
-  const secret = tweetnacl.randomBytes(32);
+  const secret = installedOwnerE2ee ? targetSecret : tweetnacl.randomBytes(32);
   const credentials: StoredCredentials = options.requesterCredentials ?? { token: `e30.${Buffer.from(JSON.stringify({ sub: 'member-a',
     ...(options.originalActionHomeHttp ? { tokenEpoch: 0, provenance: { v: 1, kind: 'account', authority: 'present_user' } } : {}) })).toString('base64url')}.signature`,
     encryption: accountMode === 'e2ee' ? { type: 'legacy', secret } : null };
@@ -625,7 +625,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   }).workspaceRef : fixture.targetRef;
   rows.push(createRequesterRefRow(fixture.sourceRef), createRequesterRefRow(targetRef));
   const custodianRef = { ...fixture.sourceRef, id: 'custodian-private-ref', rootPath: join(installed.directory, 'custodian-private') };
-  custodianRows.push(createPlainProjectAccountRefRow(custodianRef));
+  custodianRows.push(installedOwnerE2ee ? createRequesterRefRow(custodianRef) : createPlainProjectAccountRefRow(custodianRef));
   const custodianBefore = [...custodianRows];
   if (sourceCustodianAccountId === 'member-a') {
     await runWithServerHttpBaseUrl(installed.serverHttpBaseUrl, () => readProjectAccountRows({

@@ -473,10 +473,15 @@ it.skipIf(process.platform !== 'linux').each([true, false])(
     else expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
   });
 
-it.skipIf(process.platform !== 'linux').each(['member-a', 'requester'])(
-  'creates a same-Machine distinct-root Sync through its owner Action (custodian=%s)', async sourceCustodianAccountId => {
+it.skipIf(process.platform !== 'linux').each([
+  { sourceCustodianAccountId: 'member-a', accountMode: 'plain' as const },
+  { sourceCustodianAccountId: 'requester', accountMode: 'plain' as const },
+  { sourceCustodianAccountId: 'member-a', accountMode: 'e2ee' as const },
+])(
+  'creates a same-Machine distinct-root Sync through its owner Action ($sourceCustodianAccountId/$accountMode)', async ({ sourceCustodianAccountId, accountMode }) => {
   executionBoundary.member = false;
-  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', sourceCustodianAccountId, socketIo, allowRelationshipAction: true });
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', sourceCustodianAccountId, socketIo,
+    accountMode, targetResourceMode: accountMode, allowRelationshipAction: true });
   const rejectedSelfCalls: string[] = [];
   // Model Home's real exclusion of the originating daemon socket.
   Reflect.set(setup.installed.machine, 'socket', createApiSessionSocketStub({ connected: true,
@@ -492,10 +497,16 @@ it.skipIf(process.platform !== 'linux').each(['member-a', 'requester'])(
       }
       return resolveApiSessionSocketDefaultAck(event, payload);
     } }));
+  await setup.prepareActionIngress();
   const result = await setup.executeRelationshipAction();
   expect(result, JSON.stringify({ result, rejectedSelfCalls })).toMatchObject({ ok: true, result: { created: true } });
   expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
   if (sourceCustodianAccountId !== 'member-a') expect(setup.custodianRows).toEqual(setup.custodianBefore);
+  const secondPath = `${setup.targetPath}-second`;
+  const second = await setup.prepareInvocation({ ...setup.request, operationId: `${setup.request.operationId}-second`,
+    actionInput: { ...setup.request.actionInput, targetPath: secondPath } });
+  expect(await setup.executeRelationshipAction(second)).toMatchObject({ ok: true, result: { created: true } });
+  expect(await readFile(join(secondPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
 });
 
 it.skipIf(process.platform !== 'linux').each([false, true])(
