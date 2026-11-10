@@ -1,5 +1,5 @@
 import { SHIKI_LANGUAGE_INFO } from './generatedShikiGrammarAssets';
-import { bundledShikiLanguageLoaders } from './loadShikiLanguages.web';
+import { bundledShikiLanguageLoaders } from './loadShikiLanguages';
 
 const bundledLanguagesInfo = SHIKI_LANGUAGE_INFO.map(metadata => ({
     ...metadata,

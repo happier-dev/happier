@@ -13,6 +13,39 @@ const require = createRequire(import.meta.url);
 const uiRoot = fileURLToPath(new URL('..', import.meta.url));
 const { resolveShikiGrammarRegistry } = require('./shikiGrammarRegistry.cjs');
 
+test('native tokenization exports every packaged grammar without bundling grammar JavaScript', async () => {
+    const scratch = await mkdtemp(join(tmpdir(), 'happier-shiki-native-metro-'));
+    let server;
+    try {
+        const { assetPaths } = await generateShikiGrammarAssets({ uiPackageDir: uiRoot });
+        const config = require('../metro.config.js');
+        config.maxWorkers = 2;
+        config.cacheStores = [new (require('metro-cache').FileStore)({ root: join(scratch, 'transforms') })];
+        config.fileMapCacheDirectory = join(scratch, 'filemap');
+        await mkdir(config.fileMapCacheDirectory, { recursive: true });
+        config.reporter = { update() {} };
+        const Server = require('metro/private/Server').default;
+        server = new Server(config, { watch: false });
+        const result = await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
+            entryFile: join(uiRoot, 'sources/components/ui/code/highlighting/shiki/shikiTokenize.ts'),
+            platform: 'ios', dev: true, minify: false, lazy: false,
+        });
+        const graph = [...server.getBundler().getDeltaBundler()._deltaCalculators.keys()].at(-1);
+        const paths = [...graph.dependencies.keys()].map(path => path.replaceAll('\\', '/'));
+        const grammarPaths = paths.filter(path => /\/node_modules\/@shikijs\/(?:langs|themes)\//.test(path));
+        console.log(JSON.stringify({ platform: 'ios', modules: paths.length, bytes: Buffer.byteLength(result.code),
+            grammarAssets: paths.filter(path => path.endsWith('.json.bundle')).length,
+            grammarJavascriptModules: grammarPaths.length }));
+        assert.equal(grammarPaths.length, 0, 'native must use the existing packaged grammar owner');
+        assert.equal(paths.filter(path => path.endsWith('.json.bundle')).length, assetPaths.length);
+        assert.ok(paths.some(path => /\/node_modules\/@shikijs\/core\//.test(path)));
+        new Function(result.code);
+    } finally {
+        if (server) await server.end();
+        await rm(scratch, { recursive: true, force: true });
+    }
+});
+
 test('the complete non-lazy web tokenization graph carries packaged grammar references without grammar or theme JavaScript', async () => {
     const scratch = await mkdtemp(join(tmpdir(), 'happier-shiki-metro-'));
     let server;
