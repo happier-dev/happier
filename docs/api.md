@@ -3268,6 +3268,13 @@ falls back to a legacy Session usage report on an unsupported server.
 Numeric accounting remains queryable for E2EE Sessions under
 the approved usage disclosure contract, without exposing transcript content.
 
+Private responses include complete `scopeKeys` for requested Agent, Machine,
+Project and source breakdowns. These identities come from the same admitted
+population as totals and do not obey the charts' ranked `topLimit`. Usage filter
+inputs consume this inventory; the client Project display-key owner folds unnamed
+anchors and absent Project usage into the same “No project name” group as the
+Work ledger. Inventory stays summary-only, without per-event contributions.
+
 The 0.3 development query owner captures `UsageEvent` and retained
 `UsageReport` facts in the canonical read snapshot shared by the direct service,
 v1, v2 and batch routes. Ordinary bounded PostgreSQL queries capture thin pre-end history

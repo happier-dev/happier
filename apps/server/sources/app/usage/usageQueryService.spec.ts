@@ -40,6 +40,38 @@ function row(id: string, total: number, metadata: CapturedRow['metadata'], optio
 }
 
 describe('captured usage query projection', () => {
+    it('delivers complete scope identities independently of ranked topLimit without event detail', async () => {
+        const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 200 },
+            breakdowns: ['project', 'agent', 'machine', 'source'], topLimit: 1, includeSeries: false });
+        const rows = [
+            { ...row('named', 100, null), projectKey: 'named' },
+            { ...row('unnamed-a', 30, null), projectKey: 'unnamed-a' },
+            { ...row('unnamed-b', 20, null), projectKey: 'unnamed-b', agentId: 'claude', machineId: 'other-machine' },
+            { ...row('no-project', 10, null, { source: 'native' }), sessionId: 'other-session' },
+        ];
+        const snapshot: UsageAnalyticsSnapshot = { rows, legacyReports: [],
+            priceCatalog: { fetchEnabled: false, stored: null }, messageCountsBySession: undefined };
+        const input = UsageAnalyticsQueryBatchRequestSchema.parse({ queries: [query], includeContributions: false,
+            contributionQueries: [], sessionQueries: [] });
+        const value = projectUsageAnalytics(snapshot, query);
+        const delivered = collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery({ v: 1,
+            priceCatalog: resolveCapturedUsageModelPriceCatalog(snapshot.priceCatalog), results: [{ query, value }] }, input, false));
+        const result = UsageAnalyticsQueryBatchResponseSchema.parse(delivered).results[0];
+        if (!result || !('value' in result)) throw new Error('Expected compact accounting');
+        const compact = result.value;
+        expect(compact.breakdowns?.project).toHaveLength(1);
+        expect(compact.contributions).toBeUndefined();
+        expect(Object.fromEntries(compact.scopeKeys?.map(({ dimension, keys }) => [dimension, keys.toSorted()]) ?? [])).toEqual({
+            project: ['named', 'unknown', 'unnamed-a', 'unnamed-b'],
+            agent: ['claude', 'codex'], machine: ['machine', 'other-machine'], source: ['native', 'runtime'],
+        });
+        const narrow = UsageAnalyticsQueryRequestSchema.parse({ ...query, breakdowns: ['agent'] });
+        expect(prepareUsageAnalyticsProjection(snapshot, query, resolveCapturedUsageModelPriceCatalog(snapshot.priceCatalog),
+            projectUsageAnalyticsPopulation(snapshot, query)).select(narrow, snapshot).scopeKeys)
+            .toEqual([{ dimension: 'agent', keys: expect.arrayContaining(['claude', 'codex']) }]);
+        const publicQuery = UsageAnalyticsQueryRequestSchema.parse({ ...query, population: 'public_eligible_personal' });
+        expect(projectUsageAnalytics(snapshot, publicQuery).scopeKeys).toBeUndefined();
+    });
     it.each(['auto', 'reported', 'estimated', 'api_equivalent'] as const)(
         'delivers identical compact activity from prepared canonical facts in %s mode', async costMode => {
             const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 200 }, costMode,

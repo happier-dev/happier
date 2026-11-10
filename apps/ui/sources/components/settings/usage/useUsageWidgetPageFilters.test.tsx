@@ -137,7 +137,7 @@ it('D21 names accounting-only Project choices from the opened Project owner and 
     const { createProjectAccountRowCipherV1 } = await import('@happier-dev/protocol/projects/projectAccountRowCipherV1');
     const { createProjectAccountRowsSync } = await import('@/sync/engine/projects/projectAccountRowsSync');
     const { t } = await import('@/text');
-    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null });
+    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: length => new Uint8Array(length) });
     const rows = [...refs.map(ref => {
         const key = { kind: 'workspace-ref' as const, serverId, id: ref.id };
         return { key, revision: 1, content: cipher.seal({ key, value: ref }) };
@@ -239,7 +239,7 @@ it('R140 folds unnamed Project choices like the ledger and selects their origina
         await act(async () => { expect(hook.getCurrent().filter.select(group.id)).toBe(true); });
         expect(hook.getCurrent().page.scope.projects).toEqual([named[0]]);
         await act(async () => { expect(hook.getCurrent().filter.select(group.id)).toBe(true); });
-        expect(hook.getCurrent().page.scope.projects).toEqual([named[0]!, ...unnamed, 'unknown'].sort());
+        expect(hook.getCurrent().page.scope.projects).toEqual([named[0]!, ...unnamed].sort());
         expect(hook.getCurrent().filter.selected).toEqual(expect.arrayContaining([named[0], group.id]));
         expect(fetch, 'Grouping Project names does not demand rich accounting rows').not.toHaveBeenCalled();
     } finally { await hook.unmount(); fetch.mockRestore(); storage.setState(previous, true); }

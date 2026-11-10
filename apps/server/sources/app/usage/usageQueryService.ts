@@ -24,6 +24,9 @@ import { projectUsageAnalyticsPopulation, type UsageAnalyticsPopulation } from '
 import type { UsageQueryTiming } from './query/usageQueryTiming';
 import type { ScopedUsageEvidenceRow } from './query/scopedUsageEventRow';
 import { captureUsageAnalyticsBatchInTx } from './query/readUsageAnalyticsBatch';
+import { selectUsageScopeKeys, usageScopeFilterDimensions } from '@happier-dev/protocol/usage/usageFilterOptions';
+
+const scopeDimensions = new Set<UsageAnalyticsBreakdownDimension>(Object.values(usageScopeFilterDimensions));
 
 function readContributionContext(row: ScopedUsageContribution): UsageObservationContext | undefined {
     if (row.contextUsedTokens == null && row.contextWindowTokens == null) return undefined;
@@ -186,8 +189,14 @@ export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsPr
     if (request.includeModelTimeline) yield;
     const timelineTruncatedFor = (limit: number) => [...timelineCardinalities.values()].some((counts) => counts.models.size > limit || counts.engines.size > limit);
     const dimensionCounts = new Map<UsageAnalyticsBreakdownDimension, number>();
+    const scopeKeys: NonNullable<UsageAnalyticsQueryResponse['scopeKeys']> = [];
     for (const dimension of new Set([...rankedDimensions, ...(request.includeModelTimeline ? ['model' as const] : [])])) {
-        dimensionCounts.set(dimension, new Set(totalContributions.map(row => resolveUsageContributionDimensionKey(row, dimension) ?? 'unknown')).size);
+        const keys = new Set(totalContributions.map(row => resolveUsageContributionDimensionKey(row, dimension) ?? 'unknown'));
+        dimensionCounts.set(dimension, keys.size);
+        // The private filter inventory needs all identities, never a ranked frontier or rich event rows.
+        if (!publicPopulation && request.breakdowns?.includes(dimension) && scopeDimensions.has(dimension)) {
+            scopeKeys.push({ dimension, keys: [...keys] });
+        }
         yield;
     }
     const rankedFor = (selected: UsageAnalyticsQueryRequest) => {
@@ -236,6 +245,7 @@ export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsPr
         totals,
         series,
         breakdowns,
+        scopeKeys: scopeKeys.length ? scopeKeys : undefined,
         insights: request.includeInsights ? insights : undefined,
         activity,
         leaders: undefined,
@@ -271,6 +281,7 @@ export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsPr
             costFacts: value.costFacts?.map(fact => ({ ...fact, complete: fact.kind !== 'unpriced' && complete })),
             series: selected.includeSeries ? value.series : undefined,
             breakdowns: selected.breakdowns?.length ? Object.fromEntries(selected.breakdowns.map(dimension => [dimension, value.breakdowns?.[dimension]?.slice(0, selected.topLimit)])) : undefined,
+            scopeKeys: selectUsageScopeKeys(value.scopeKeys, selected.breakdowns),
             insights: selected.includeInsights && hasMessages ? value.insights : undefined,
             activity: selected.includeActivity && value.activity ? { ...value.activity,
                 calendarDays: selected.activityResolution === 'weekdayHour' ? undefined : value.activity.calendarDays,

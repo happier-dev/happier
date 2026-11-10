@@ -1,7 +1,7 @@
 import { USAGE_ANALYTICS_COST_MODES } from './usageVocabularyV1.js';
-import * as zMini from 'zod/mini';
+import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { NonBlankOpaqueIdentifierSchema } from '../strings/opaqueIdentifier.js';
@@ -537,6 +537,11 @@ export const UsageAnalyticsQueryResponseSchema = lazyZodSchema(() => z.strictObj
   totals: UsageAnalyticsTotalsSchema,
   series: z.optional(z.array(UsageAnalyticsSeriesBucketSchema)),
   breakdowns: z.optional(UsageAnalyticsBreakdownsSchema),
+  /** Complete filter identities from the admitted population, independent of ranked topLimit. */
+  scopeKeys: z.optional(z.array(z.strictObject({
+    dimension: UsageAnalyticsBreakdownDimensionSchema,
+    keys: z.array(z.string().check(z.trim(), z.minLength(1))),
+  }))),
   insights: z.optional(UsageAnalyticsInsightsSchema),
   activity: z.optional(UsageAnalyticsActivitySchema),
   leaders: z.optional(UsageAnalyticsLeadersSchema),

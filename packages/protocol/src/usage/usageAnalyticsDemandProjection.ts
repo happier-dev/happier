@@ -1,5 +1,6 @@
 import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsBreakdownDimension, type UsageAnalyticsCoverage,
     type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
+import { selectUsageScopeKeys } from './usageFilterOptions.js';
 
 /** Price availability does not change the completeness of the acquired money evidence. */
 export function hasCompleteUsageCostEvidence(value: Pick<UsageAnalyticsQueryResponse, 'coverage'>): boolean {
@@ -69,6 +70,7 @@ export function projectUsageAnalyticsResponseDemand(value: UsageAnalyticsQueryRe
     }
     const rankedPricing = value.summary?.rankedPricing;
     return { ...value, coverage,
+        scopeKeys: selectUsageScopeKeys(value.scopeKeys, requested.breakdowns),
         ...(selectActivity ? { activity: value.activity && (requested.activityResolution === 'calendar'
             ? { calendarDays: value.activity.calendarDays } : { weekdayHourBuckets: value.activity.weekdayHourBuckets }) } : {}),
         insights: requested.includeInsights ? value.insights : undefined,

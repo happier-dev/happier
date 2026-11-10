@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
 import { UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { aggregateUsageContributionCosts } from '@happier-dev/protocol/usage/usageAggregation';
+import { projectUsageContributionTotals } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
 import { getStorage } from '@/sync/domains/state/storage';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
@@ -147,13 +149,20 @@ afterEach(async () => {
 });
 
 describe('mounted Usage page scope commands', () => {
-    it.each(['agents', 'named', 'unnamed', 'unnamed-omitted'] as const)('selects Agents and folded Projects after route feedback and updates the Work ledger (%s)', async selection => {
+    it.each(['agents', 'named', 'unnamed', 'unnamed-omitted', 'unnamed-ranked'] as const)('selects Agents and folded Projects after route feedback and updates the Work ledger (%s)', async selection => {
         const fixture = usageQaAccountingFixture();
         const unnamed = ['a'.repeat(64), 'b'.repeat(64)];
-        const projects = ['named-project', ...unnamed, 'other-project', null];
+        // A ranked response is not a name registry: keep its one named anchor visible.
+        const projects = ['named-project', ...unnamed, ...(selection === 'unnamed-ranked' ? [] : ['other-project']), null];
+        const unfilteredProjectCount = selection === 'unnamed-ranked' ? 2 : 3;
         const contributions = projects.map((projectKey, index) => ({ ...fixture.contributions![0]!,
             id: `selection-${index}`, projectKey, agentId: index === 3 ? 'codex' : 'claude',
+            // Keep the named bucket above the truncated chart's token frontier.
+            ...(selection === 'unnamed-ranked' ? { tokens: { input: index === 0 ? 100 : 10,
+                output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: index === 0 ? 100 : 10 },
+                tokenCategories: undefined } : {}),
             observedAtMs: Date.now(), sessionId: null, turnId: null }));
+        const totalsFor = (rows: typeof contributions) => projectUsageContributionTotals(rows, aggregateUsageContributionCosts(rows, 'auto'));
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-route-filter-selection.test', accountId: 'account-a' }],
             route: request => {
                 if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
@@ -163,15 +172,17 @@ describe('mounted Usage page scope commands', () => {
                     // The HTTP contract indexes absent Project keys as "unknown" (usageQueryFilters).
                     const rows = contributions.filter(row => (!query.filters?.projectKeys?.length || query.filters.projectKeys.includes(row.projectKey ?? 'unknown'))
                         && (!query.filters?.agentIds?.length || query.filters.agentIds.includes(row.agentId)));
-                    return Response.json({ v: 1, totals, contributions: rows, breakdowns: {
-                        agent: [...new Set(rows.map(row => row.agentId))].map(key => ({ key, ...totals })),
-                        // A compact inventory may omit a bucket still present in the Work population.
+                    return Response.json({ v: 1, totals: totalsFor(rows), contributions: rows,
+                        scopeKeys: [{ dimension: 'project', keys: [...new Set(rows.map(row => row.projectKey ?? 'unknown'))] }], breakdowns: {
+                        agent: [...new Set(rows.map(row => row.agentId))].map(key => ({ key, ...totalsFor(rows.filter(row => row.agentId === key)) })),
+                        // The ranked chart omits an unnamed key and the absent-Project bucket.
                         project: [...new Set(rows.map(row => row.projectKey))].flatMap(projectKey =>
-                            projectKey === null && selection === 'unnamed-omitted' ? [] : [{ key: projectKey ?? 'unknown', ...totals,
+                            projectKey === null && selection === 'unnamed-omitted'
+                                || selection === 'unnamed-ranked' && (projectKey === unnamed[1] || projectKey === null) ? [] : [{ key: projectKey ?? 'unknown', ...totalsFor(rows.filter(row => row.projectKey === projectKey)),
                                 ...(projectKey === null ? { label: 'Unknown project' } : !unnamed.includes(projectKey)
                                     ? { label: projectKey === 'named-project' ? 'Named project' : 'Other project' } : {}) }]),
                     }, engineTimeline: [{ bucketStartMs: 1000, bucketEndMs: 2000,
-                        leaders: [...new Set(rows.map(row => row.agentId))].map(key => ({ key, ...totals })) }] });
+                        leaders: [...new Set(rows.map(row => row.agentId))].map(key => ({ key, ...totalsFor(rows.filter(row => row.agentId === key)) })) }] });
                 }
                 return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
             } });
@@ -197,7 +208,7 @@ describe('mounted Usage page scope commands', () => {
         await sync.awaitBootstrapForegroundAcquisition();
         const chip = (field: string) => screen.findAllByType(SelectionListFilterChip).find(node => node.props.filter.id === field)!.props.filter;
         const ledger = () => screen.findByType(UsageProjectLedgerWidget).findAllByType(HappierDataRows)[0]!.props.rows;
-        await waitForHomeGovernance(() => expect(ledger()).toHaveLength(3));
+        await waitForHomeGovernance(() => expect(ledger()).toHaveLength(unfilteredProjectCount));
         // A period selection echoes through the real route/state owner before any scope selection.
         await act(async () => { await screen.findByType(UsageFilterBar).props.onPeriodChange('30days'); });
         await flushHookEffects({ cycles: 40 });
@@ -209,7 +220,7 @@ describe('mounted Usage page scope commands', () => {
             ['projects', 'Named project', 1, ['named-project']],
             ['projects', t('usage.board.work.unknownProject'), 1, [...unnamed, 'unknown']],
         ] as const) {
-            if ((field === 'agents' ? 'agents' : label === t('usage.board.work.unknownProject') ? 'unnamed' : 'named') !== selection.replace('-omitted', '')) continue;
+            if ((field === 'agents' ? 'agents' : label === t('usage.board.work.unknownProject') ? 'unnamed' : 'named') !== selection.replace(/-(omitted|ranked)$/, '')) continue;
             const option = chip(field).options.find((row: { id: string; label: string }) => field === 'agents' ? row.id === 'claude' : row.label === label)!;
             expect(option, JSON.stringify(chip(field).options.map(({ id, label }: { id: string; label: string }) => ({ id, label })))).toBeDefined();
             await screen.pressByTestIdAsync(chip(field).testID);
@@ -240,7 +251,7 @@ describe('mounted Usage page scope commands', () => {
             await screen.pressByTestIdAsync(`${chip(field).testID}:${all.id}`);
             await screen.pressByTestIdAsync(chip(field).testID);
             await flushHookEffects({ cycles: 40 });
-            await waitForHomeGovernance(() => expect(ledger()).toHaveLength(3));
+            await waitForHomeGovernance(() => expect(ledger()).toHaveLength(unfilteredProjectCount));
         }
     });
     it.each([{ selection: 'period' }, { selection: 'filter' }] as const)('retains native $selection callers through actual page layout admission', async ({ selection }) => {
