@@ -19,12 +19,6 @@ export const museCliSupport = {
     sourcePreference: 'system-first',
   },
   install: {
-    managed: {
-      kind: 'vendor_recipe',
-      binaryName: 'muse',
-      installDirEnvKey: 'MUSE_INSTALL_DIR',
-      env: { MUSE_NO_MODIFY_PATH: '1' },
-    },
     manual: {
       kind: 'vendor_recipe',
       recipes: {

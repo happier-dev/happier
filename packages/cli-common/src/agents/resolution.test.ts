@@ -527,32 +527,6 @@ describe('resolveAgentCliCommand', () => {
 });
 
 describe('resolveAgentCliCommand managed_only source policy', () => {
-  it.each(['linux', 'darwin', 'win32'] as const)('resolves a vendor-managed launcher on %s without a JavaScript runtime', platform => {
-    const root = mkdtempSync(join(tmpdir(), 'happier-vendor-managed-resolution-'));
-    const runtimeSpec: AgentCliRuntimeDescriptor = {
-      id: 'declared-vendor', title: 'Declared vendor', binaryName: 'fixture',
-      sourcePreferenceDefault: 'system-first', acceptsJavaScriptFileOverride: false,
-      managedInstall: { kind: 'vendor_recipe', binaryName: 'fixture', installDirEnvKey: 'FIXTURE_INSTALL_DIR' },
-      manualInstallKind: 'vendor_recipe', manualInstallRecipes: null,
-    };
-    try {
-      Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: platform });
-      const processEnv = { HAPPIER_HOME_DIR: root, PATH: '', HAPPIER_DECLARED_VENDOR_PATH: join(root, 'person-override') };
-      const command = resolveAgentCliManagedCommandPathForRuntime(runtimeSpec, { processEnv });
-      expect(command).toBe(join(root, 'tools', 'providers', runtimeSpec.id, 'current', 'bin',
-        platform === 'win32' ? 'fixture.cmd' : 'fixture'));
-      expect(resolveAgentCliCommandForRuntime(runtimeSpec, { processEnv, sourcePolicy: 'managed_only' })).toBeNull();
-      mkdirSync(dirname(command), { recursive: true });
-      writeFileSync(command, platform === 'win32' ? '@echo off\r\npowershell.exe -File "%~dp0.vendor-launcher.ps1" %*\r\n' : '#!/bin/sh\nexit 0\n');
-      chmodSync(command, 0o755);
-      expect(resolveAgentCliCommandForRuntime(runtimeSpec, { processEnv, sourcePolicy: 'managed_only' }))
-        .toEqual({ source: 'managed', command });
-    } finally {
-      if (originalPlatformDescriptor) Object.defineProperty(process, 'platform', originalPlatformDescriptor);
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   function createManagedOnlyFixture(): Readonly<{
     root: string;
     happyHomeDir: string;

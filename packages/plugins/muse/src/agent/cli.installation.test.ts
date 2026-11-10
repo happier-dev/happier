@@ -3,10 +3,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+import { projectAgentCliRuntimeSpec } from '@happier-dev/agents/cli/runtime';
+import { planAgentCliInstallForRuntime } from '@happier-dev/cli-common/agents';
 
 import { createAgentInstallJobOwner } from '@/capabilities/installJobs/agentInstallJobOwner';
+import { museCliSupport } from './cli.js';
 
 describe('Muse setup through the shared Machine installer', () => {
+  it('installs Muse through the ordinary vendor recipe on every supported platform', () => {
+    const runtimeSpec = projectAgentCliRuntimeSpec('muse', museCliSupport)!;
+    for (const platform of ['linux', 'darwin', 'win32'] as const) {
+      const result = planAgentCliInstallForRuntime({ runtimeSpec, platform });
+      expect(result).toMatchObject({ ok: true, plan: {
+        installMode: 'vendor_recipe', managedInstall: null,
+      } });
+    }
+  });
   it.each(['linux', 'darwin', 'win32'] as const)(
     'admits the one Muse install identity on %s and requires vendor-recipe consent',
     async platform => {

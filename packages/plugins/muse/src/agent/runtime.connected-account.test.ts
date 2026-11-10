@@ -59,7 +59,13 @@ it('selects the same qualified Muse Account independently for model demand and f
         createAgentInvocationServices: registry.createAgentInvocationServices,
         agentRuntimeCacheKey: registry.readPluginOccurrenceId('happier.agent.muse'),
       }, {});
-      expect(models).toMatchObject({ ok: true });
+      expect(models).toMatchObject({ ok: true, result: {
+        availableModels: expect.arrayContaining([
+          expect.objectContaining({ id: 'meta/muse-wonder-1.0' }),
+          expect.objectContaining({ id: 'meta/muse-spark-1.3' }),
+          expect.objectContaining({ id: 'meta/muse-spark-1.2' }),
+        ]),
+      } });
       const catalog = await readMuseMspProcessAudit(catalogAudit);
       expect(catalog.methods).toEqual(['initialize', 'initialized', 'model/list']);
       expect(catalog).toMatchObject({ initializeCount: 1, initializedCount: 1, commandCount: 0,

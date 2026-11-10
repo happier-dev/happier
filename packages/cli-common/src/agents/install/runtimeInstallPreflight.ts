@@ -68,7 +68,7 @@ export function runRuntimeInstallPreflight(params: Readonly<{
         }
     }
 
-    if (sourcePolicy === 'managed_only' && params.plan.installMode === 'vendor_recipe' && !params.plan.managedInstall) {
+    if (sourcePolicy === 'managed_only' && params.plan.installMode === 'vendor_recipe') {
         return {
             kind: 'return',
             result: {

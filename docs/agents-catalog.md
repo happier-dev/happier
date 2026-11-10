@@ -207,8 +207,8 @@ remain separate contributions. Its demanded native model catalog preserves all
 returned IDs, including contributor variants and their native descriptions.
 An explicit unavailable default returns a typed model-selection failure rather
 than choosing another account or rewriting the model. Install/update uses the
-declared managed vendor recipe, with explicit consent and the canonical managed
-candidate/verification/promotion lifecycle. Ordinary native launches disable
+ordinary vendor recipe, with explicit consent and canonical executable resolution.
+Ordinary native launches disable
 auto-update. On isolated Machines, finite native-history callbacks use the
 existing requester-native-operation owner to select the member identity and
 workspace and retire its operation resources. Independent reads retain that identity's native
@@ -552,6 +552,11 @@ a target from the presentation id. The public Voice Agent setting resolves
 catalog keys through the Protocol target reader before capturing the selection
 tuple. An unresolved presentation target stays unavailable in settings and the
 Session composer; it never becomes a substitute executable Agent.
+
+In 0.3 development, Voice Settings and readiness Actions also consume Start's
+retained sign-in refusal for the same Account, Agent and Machine. They preserve
+the admitted Machine label and exact setup destination without another probe;
+a different selection does not inherit that refusal.
 
 In 0.3 development, the Voice picker and public Settings Actions share bundled
 choices from `listSelectableBundledAgentExecutionTargets`. Saving a bundled
@@ -1163,6 +1168,15 @@ The runner diagnostic, durable Session issue and launch Action retain that reaso
 choose a model through the existing model selector before retrying. Retained
 Sessions can resume their native model, and an explicit choice still uses Pi's model-selection
 path; the provider remains authoritative for whether that account accepts the chosen model.
+
+The additional Pi native account purposes (Kimi Code key, xAI key, Meta Model API
+key, Gemini key/Vertex service account and GitHub Copilot) use the same preparation
+for preflight, Sessions and finite Runs. Fresh launches require an explicit model
+qualified by one of the selected native providers; the same typed refusal covers
+an automatic default or a model from another provider. Vertex selects
+`google-vertex`; Gemini API keys select `google`. Resume reachability and
+next-prompt model changes retain their existing Pi owners. Muse subscription and
+Antigravity native routes remain undeclared pending their separate transport proof.
 
 Older Pi APIs without a completion receipt expose their structured local choices as a static/error
 fallback. That fallback cannot replace a previous successful dynamic observation. Offline, failed,
@@ -2775,6 +2789,25 @@ Prefer:
 - `AgentId === cliSubcommand === detectKey`
 
 If you need variants, use `flavorAliases` (and keep canonical ids stable).
+
+In 0.3 development, `apps/cli/src/agent/catalog/contributionContracts.test.ts`
+checks every registered bundled Agent's authored contribution and activation.
+Declare `connectedAccounts: []` when accounts are unsupported. Each supported
+purpose declares the credential kinds its account producer actually emits;
+an unknown stored kind remains admissible, while a known disallowed kind is
+excluded by the shared matcher. Account-backed Session Agents declare their
+native ACP model source or a preflight model source, and a resume reachability
+hook when they support resume. A hook that
+cannot attest reachability returns its typed unsupported result explicitly.
+The package install spelling must resolve through the shared Agent identity
+owner to the same catalog id.
+
+The family composition tests exercise catalog selection, prepared launch,
+reply and native resume through process/network boundary fixtures. Their model
+path must yield an account-usable native default or `model_selection_required`;
+catalog membership alone does not establish account entitlement. Catalog and
+launch use the same account preparation owner rather than checking unprepared
+credentials in a daemon prerequisite.
 
 ### Step 1 — author the shared Agent definition in its plugin
 

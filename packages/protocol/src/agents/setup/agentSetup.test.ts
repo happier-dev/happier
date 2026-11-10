@@ -27,19 +27,6 @@ const dependency = PluginManagedDependencyContributionV2Schema.parse({
 });
 
 describe('agent setup metadata', () => {
-  it('keeps vendor-managed installs on the recipe consent and declared platform path', () => {
-    const vendorManaged: Pick<PluginAgentCliMetadata, 'install'> = { install: {
-      managed: { kind: 'vendor_recipe', binaryName: 'fixture', installDirEnvKey: 'FIXTURE_INSTALL_DIR' },
-      manual: { kind: 'vendor_recipe', recipes: { linux: [{ cmd: 'sh', args: ['install.sh'] }] } },
-    } };
-    expect(resolveAgentSetupInstall({ cli: vendorManaged, platform: 'linux', arch: 'x64' }))
-      .toEqual({ available: true, mode: 'vendor_recipe', sizeBytes: null, guideUrl: null });
-    expect(resolveAgentSetupPlatform({ cli: vendorManaged, platform: 'win32', arch: 'x64' }))
-      .toEqual({ supported: false, reason: 'os' });
-    expect(resolveAgentSetupInstall({ cli: vendorManaged, platform: 'win32', arch: 'x64' }))
-      .toEqual({ available: false, mode: 'none', sizeBytes: null, guideUrl: null });
-  });
-
   it('requires the runtime dependency target even when the agent has a vendor recipe', () => {
     expect(resolveAgentSetupPlatform({ cli, dependencies: [dependency], platform: 'darwin', arch: 'x64' }))
       .toEqual({ supported: false, reason: 'arch' });

@@ -49,9 +49,8 @@ export type ManagedAgentCliPreparation =
  *
  * `managed_only` is the strict policy used by a composition that may run only
  * the executable it installed and validated into its own `HAPPIER_HOME_DIR`:
- * environment overrides, system/global installs and unmanaged vendor install recipes are
- * ignored, and a retry may reuse a valid current managed install. Vendor-backed managed
- * installs retain the install owner's explicit recipe consent requirement.
+ * environment overrides, system/global installs and vendor install recipes are
+ * ignored, and a retry may reuse a valid current managed install.
  * Cancellation rejects with the supplied signal reason after installer cleanup;
  * an aborted acquisition never returns a prepared resolution. The returned
  * resolution is passed unchanged into the runtime launch, so an override or

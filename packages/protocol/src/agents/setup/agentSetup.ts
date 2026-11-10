@@ -57,8 +57,7 @@ export function resolveAgentSetupPlatform(params: AgentSetupMetadataInput): Agen
     if (install.managed.assetNameByPlatform && !install.managed.assetNameByPlatform[platform]?.[params.arch]) {
       return { supported: false, reason: 'arch' };
     }
-  } else if (install && (!install.managed || install.managed.kind === 'vendor_recipe')
-    && install.manual.kind !== 'none' && install.manual.recipes && !install.manual.recipes[platform]?.length) {
+  } else if (install && !install.managed && install.manual.kind !== 'none' && install.manual.recipes && !install.manual.recipes[platform]?.length) {
     return { supported: false, reason: 'os' };
   }
   for (const dependency of params.dependencies ?? []) {
@@ -88,7 +87,7 @@ export function resolveAgentSetupInstall(params: AgentSetupMetadataInput): Agent
   if (!resolveAgentSetupPlatform(params).supported || !install) {
     return { available: false, mode: 'none', sizeBytes: null, guideUrl };
   }
-  if (install.managed && install.managed.kind !== 'vendor_recipe') return { available: true, mode: 'managed', sizeBytes: null, guideUrl };
+  if (install.managed) return { available: true, mode: 'managed', sizeBytes: null, guideUrl };
   const recipes = install.manual.kind === 'none' ? undefined : install.manual.recipes;
   const recipe = params.platform === 'darwin' ? recipes?.darwin : params.platform === 'linux' ? recipes?.linux : recipes?.win32;
   return recipe?.length
