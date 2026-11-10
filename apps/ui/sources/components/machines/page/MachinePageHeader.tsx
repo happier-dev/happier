@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import { useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
 import { View } from 'react-native';
 import Animated from 'react-native-reanimated';
@@ -282,6 +283,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
         // A leading needs-you action takes the third button's place, so the row keeps its size and the title never wraps.
         const terminal: PageHeaderMenuAction[] = terminalInMenu ? [{ id: 'open-terminal', testID: 'machine-detail-menu-open-terminal',
             title: t('machineDetailPage.openTerminalAction'), onSelect: handleOpenTerminal }] : [];
+        if (!canManageMachine(machine)) return [...terminal, ...share];
         return [...terminal, rename, ...share, ...environmentApply, ...replacement.menuActions];
     }, [terminalInMenu, handleOpenTerminal, language, activeAccountScope, machine, meta, onRename, renaming, replacement.menuActions, router, target.online, target.serverId]);
 

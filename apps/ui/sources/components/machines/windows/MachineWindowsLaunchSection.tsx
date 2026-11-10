@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -70,7 +71,7 @@ export const MachineWindowsLaunchSection = React.memo(function MachineWindowsLau
         await updateMachineWindowsRemoteSessionLaunchMode(effectiveWindowsRemoteSessionLaunchMode ?? windowsRemoteSessionLaunchModeDefault);
     }, [effectiveWindowsRemoteSessionLaunchMode, updateMachineWindowsRemoteSessionLaunchMode, windowsRemoteSessionLaunchModeDefault]);
 
-    if (!isWindowsMachine) return null;
+    if (!isWindowsMachine || !canManageMachine(machine)) return null;
     return (
         <ItemGroup title={t('machine.windows.title')} description={t('machineDetailPage.windowsSectionDescription')}>
             <Item

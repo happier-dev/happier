@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { hasProviderMachineStateV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
@@ -26,6 +27,7 @@ import { ManagedMachineNativeObservation, useManagedEnrolledMachine } from '@/co
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
 const styles = StyleSheet.create((theme) => ({
     identifier: {
@@ -49,7 +51,7 @@ const styles = StyleSheet.create((theme) => ({
 
 function MachineLastSeenItem({ activeAt }: Readonly<{ activeAt: number | null }>) {
     return <Item title={t('machine.lastSeen')}
-        detail={activeAt ? new Date(activeAt).toLocaleString() : t('machine.never')}
+        detail={activeAt ? formatAsOfTime(activeAt) : t('machine.never')}
         mode="info" showChevron={false} />;
 }
 
@@ -180,7 +182,7 @@ export const MachineDetailsSection = React.memo(function MachineDetailsSection(p
                 />
             </ItemGroup>
 
-            <ItemGroup surface="none" accessibilityLabel={t('machine.actions.removeMachine')}>
+            {canManageMachine(machine) ? <ItemGroup surface="none" accessibilityLabel={t('machine.actions.removeMachine')}>
                 <View style={styles.leaveActions}>
                     <RoundButton
                         testID="machine-detail-remove"
@@ -195,7 +197,7 @@ export const MachineDetailsSection = React.memo(function MachineDetailsSection(p
                     />
                 </View>
                 <Text testID="machine-detail-remove-footnote" style={styles.footnote}>{removeMachineFootnote}</Text>
-            </ItemGroup>
+            </ItemGroup> : null}
         </>
     );
 });
