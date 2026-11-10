@@ -30,7 +30,7 @@ import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions
 import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { getLocalServiceLauncherState, publishLocalServiceLauncherSnapshot, resetLocalServiceLauncherStoreForTests } from '@/sync/domains/local/services/launch/sharedStore';
-import { publishLocalServiceInventorySnapshot, resetLocalServiceInventoryStoreForTests } from '@/sync/domains/local/services/inventory/sharedStore';
+import { resetLocalServiceInventoryStoreForTests } from '@/sync/domains/local/services/inventory/sharedStore';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { executeServiceRelocationAction } from './serviceRelocationAction';
@@ -133,7 +133,7 @@ async function setup(options: Readonly<{
   waiveStartApproval?: boolean;
   onStart?: (request: Readonly<{ machineId: string; params: unknown }>) => unknown;
   startResponse?: () => unknown;
-  beforeRender?: (serverId: string) => void;
+  beforeRender?: (serverId: string) => void | Promise<void>;
   artifactBodyReads?: string[];
   onMove?: (input: unknown) => void;
   setupReview?: Readonly<{ reviewedEffect: unknown; reviewedEffectDigest: string }>;
@@ -144,6 +144,8 @@ async function setup(options: Readonly<{
   let running = options.running;
   let rowMachineId = options.initialBindingMachineId ?? 'devbox';
   let actualFails = options.actualFails;
+  const launcherWatchers = new Set<() => void>();
+  const publishNativeChange = () => { for (const receive of [...launcherWatchers]) receive(); };
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
       status,
@@ -308,26 +310,7 @@ async function setup(options: Readonly<{
   } satisfies LocalServiceLaunchTarget;
   const workerStatusMethod = getActionSpec('projects.worker.status').bindings?.rpcMethod;
   if (!workerStatusMethod) throw new Error('missing_worker_status_method');
-  remote.mockImplementation(async ({ machineId, method, payload: params }) => {
-    if (method === getActionSpec('projects.inspect').bindings?.rpcMethod && setupInspection) return setupInspection;
-    if (options.liveFeeds && method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) return new Promise(() => {});
-    if (options.liveFeeds && (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT
-      || method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH)) return {
-      protocolVersion: 1, snapshot: { v: 1, machineId, generatedAt: 1, refreshState: 'idle', entries: [], diagnostics: [] },
-    };
-    if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START) {
-      await options.onStart?.({ machineId, params });
-      if (options.startResponse) return options.startResponse();
-      return { protocolVersion: 1, machineId, targetId: params.targetId, status: 'denied', reasonCode: 'native_boundary_observed',
-        snapshot: { v: 1, machineId, updatedAt: 1, targets: [] } };
-    }
-    if (method === 'actionOperation.cancel.v1') return { kind: 'requested' };
-    if (method === workerStatusMethod) return {
-      eligible: machineId === 'pool-worker',
-      candidate: machineId === 'pool-worker' ? { serverId, machineId } : null,
-      load: { kind: 'unknown' },
-      explanation: machineId === 'pool-worker' ? 'load_unknown' : 'not_accepting',
-    };
+  const readLauncherSnapshot = async (machineId: string, params: Readonly<{ projection?: 'managed_bindings' }>) => {
     await options.beforeBindingRead?.(machineId);
     if (actualFails && (!options.liveFeeds || params?.projection === 'managed_bindings')) throw new Error('owner_unavailable');
     if (options.candidateFails && machineId === worker.machineId) throw new Error('candidate_unavailable');
@@ -348,6 +331,41 @@ async function setup(options: Readonly<{
         }] : [],
     },
   };
+  };
+  remote.mockImplementation(async ({ machineId, method, payload: params, signal }) => {
+    if (method === getActionSpec('projects.inspect').bindings?.rpcMethod && setupInspection) return setupInspection;
+    if (options.liveFeeds && method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
+      if (!params.launcherProjection) return new Promise(() => {});
+      // Native changes settle each requester's projected watch, not the broad
+      // Machine inventory feed. Reuse the snapshot boundary's current facts.
+      const change = createDeferred<void>();
+      const receive = () => change.resolve();
+      launcherWatchers.add(receive);
+      signal?.addEventListener('abort', receive, { once: true });
+      await change.promise;
+      launcherWatchers.delete(receive);
+      signal?.removeEventListener('abort', receive);
+      return signal?.aborted ? { protocolVersion: 1, changed: false }
+        : { ...await readLauncherSnapshot(machineId, params.launcherProjection.request), changed: true };
+    }
+    if (options.liveFeeds && (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT
+      || method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH)) return {
+      protocolVersion: 1, snapshot: { v: 1, machineId, generatedAt: 1, refreshState: 'idle', entries: [], diagnostics: [] },
+    };
+    if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START) {
+      await options.onStart?.({ machineId, params });
+      if (options.startResponse) return options.startResponse();
+      return { protocolVersion: 1, machineId, targetId: params.targetId, status: 'denied', reasonCode: 'native_boundary_observed',
+        snapshot: { v: 1, machineId, updatedAt: 1, targets: [] } };
+    }
+    if (method === 'actionOperation.cancel.v1') return { kind: 'requested' };
+    if (method === workerStatusMethod) return {
+      eligible: machineId === 'pool-worker',
+      candidate: machineId === 'pool-worker' ? { serverId, machineId } : null,
+      load: { kind: 'unknown' },
+      explanation: machineId === 'pool-worker' ? 'load_unknown' : 'not_accepting',
+    };
+    return readLauncherSnapshot(machineId, params);
   });
   let setLifecycle: (key: string) => void = () => {};
   const placementOwner =
@@ -436,7 +454,7 @@ async function setup(options: Readonly<{
         showDivider={options.showDivider}
       />
     );
-    if (!observationOwner) return control;
+    if (!observationOwner) return <><StartProbe />{control}</>;
     const Provider = observationOwner.ProjectServicePlacementObservationProvider;
     const rowRefId = rowMachineId === source.machineId ? source.id : worker.id;
     const rowTarget = { ...target, machineId: rowMachineId,
@@ -453,7 +471,7 @@ async function setup(options: Readonly<{
         source={{ serverId, refId, machineId: source.machineId }} declaration={{ portable: options.portable !== false, currentnessKey: declarationBasis }} lifecycleKey={lifecycleKey} /> : null}
     </Provider>;
   }
-  options.beforeRender?.(serverId);
+  await options.beforeRender?.(serverId);
   const screen = await renderScreen(<React.Profiler id="services" onRender={() => options.onCommit?.()}><Host /></React.Profiler>);
   if (options.modelOnly) await vi.waitFor(() => expect(model?.state.kind).toBe('ready'));
   else if (options.waitEnabled !== false) await vi.waitFor(() =>
@@ -495,8 +513,8 @@ async function setup(options: Readonly<{
     bindingState: async (machineId: string) => getLocalServiceLauncherState({ ...await catalogBinding(), machineId,
       scope: 'workspace', workspaceRoot: machineId === source.machineId ? source.rootPath : worker.rootPath,
       projection: 'managed_bindings' }),
-    setRunning: (value: boolean) => { running = value; refreshRow?.(); },
-    setRowMachine: (machineId: string) => { rowMachineId = machineId; refreshRow?.(); },
+    setRunning: (value: boolean) => { running = value; publishNativeChange(); refreshRow?.(); },
+    setRowMachine: (machineId: string) => { rowMachineId = machineId; publishNativeChange(); refreshRow?.(); },
     setActualFails: (failed: boolean) => { actualFails = failed; },
     start: (choice?: ProjectExecutionChoiceV1) => start!(choice),
     setDeclarationBasis: (basis: string) => setDeclarationBasis!(basis), setControlVisible: (visible: boolean) => setControlVisible!(visible),
@@ -743,8 +761,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
         // without this instance (including a genuine native exit).
         placementRead = createDeferred<void>();
         holdPlacement = true;
-        await act(async () => { h.setRunning(false); publishLocalServiceInventorySnapshot({ ...await h.catalogBinding(), machineId }, {
-          v: 1, machineId, generatedAt: 2, refreshState: 'idle', entries: [], diagnostics: [] }); });
+        await act(async () => { h.setRunning(false); });
         await vi.waitFor(() => expect(h.screen.findByTestId('service-row-start-row')).toBeTruthy());
         expect(h.screen.findByTestId('service-row-status-operation')).toBeNull();
         if (entry === 'app') {
@@ -855,10 +872,9 @@ describe('Service Runs on through the placement and relocation Actions', () => {
       expect(frames.length).toBeGreaterThan(0);
       expect(frames.every(frame => !frame.includes('localServices.rowStatus.loading') && !frame.includes('common.loading'))).toBe(true);
       capture = () => {};
-      await act(async () => { updatedAt = 3; h.setRunning(false); hold = false; bindingRead.resolve();
-        publishLocalServiceInventorySnapshot({ ...await h.catalogBinding(), machineId: 'devbox' }, {
-          v: 1, machineId: 'devbox', generatedAt: 3, refreshState: 'idle', entries: [], diagnostics: [] }); });
-      await vi.waitFor(() => expect(h.screen.findByTestId('service-row-start-row')).toBeTruthy());
+      await act(async () => { updatedAt = 3; h.setRunning(false); hold = false; bindingRead.resolve(); });
+      await vi.waitFor(() => expect(h.screen.findByTestId('service-row-start-row'), h.screen.getTextContent()).toBeTruthy());
+      expect(h.screen.findByTestId('service-row-status-running')).toBeNull();
       expect(h.screen.getTextContent()).not.toContain('common.loading');
     } finally { bindingRead.resolve(); await h.screen.unmount(); }
   });
@@ -1006,8 +1022,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
       expect(h.screen.getTextContent()).not.toContain('common.loading');
       h.setActualFails(false);
       await act(async () => { h.setRowMachine(machineId); h.setRunning(true);
-        publishLocalServiceInventorySnapshot({ ...await h.catalogBinding(), machineId }, {
-          v: 1, machineId, generatedAt: 2, refreshState: 'idle', entries: [], diagnostics: [] }); });
+        publishHomeAccountChange(h.serverId, undefined, { source: 'connected' }); });
       await vi.waitFor(() => expect(h.screen.findByTestId('service-row-status-running'), JSON.stringify({ text: h.screen.getTextContent(),
         calls: remote.mock.calls.slice(-10).map(([call]) => ({ machineId: call.machineId, method: call.method, payload: call.payload })) })).toBeTruthy());
     } finally { await h.screen.unmount(); }
@@ -1049,14 +1064,12 @@ describe('Service Runs on through the placement and relocation Actions', () => {
       expect(h.screen.getTextContent()).not.toContain('common.loading');
       h.setActualFails(false);
       await act(async () => { h.setRowMachine(machineId); h.setRunning(true);
-        publishLocalServiceInventorySnapshot({ ...await h.catalogBinding(), machineId }, {
-          v: 1, machineId, generatedAt: 2, refreshState: 'idle', entries: [], diagnostics: [] }); });
+        publishHomeAccountChange(h.serverId, undefined, { source: 'connected' }); });
       await vi.waitFor(() => expect(h.screen.findByTestId('service-row-status-running'), h.screen.getTextContent()).toBeTruthy());
       // The receipt has handed off. A later failed refresh carries no new native
       // fact: retain the admitted Running binding without reviving receipt Loading.
       h.setActualFails(true);
-      await act(async () => publishLocalServiceInventorySnapshot({ ...await h.catalogBinding(), machineId }, {
-        v: 1, machineId, generatedAt: 3, refreshState: 'idle', entries: [], diagnostics: [] }));
+      await act(async () => publishHomeAccountChange(h.serverId, undefined, { source: 'connected' }));
       await vi.waitFor(async () => expect((await h.bindingState(machineId)).refreshStatus).toBe('error'));
       expect(h.screen.findByTestId('service-row-status-running')).toBeTruthy();
       expect(h.screen.findByTestId('service-row-start-row')).toBeNull();
@@ -1064,7 +1077,46 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     } finally { await h.screen.unmount(); }
   });
 
-  it.each(['worker', 'pool', 'primary', 'override', 'unavailable'] as const)('addresses normal Start from current saved placement (%s)', async destination => {
+  it('addresses an admitted Start while the observation provider credential read is still pending', async () => {
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
+    const execute = createFrontDoorRuntimeActionExecutor(createActionExecutor(createActionExecutorBoundaryFixture({
+      isActionApprovalRequired: () => false,
+      runtimeActionExecute: createDefaultRuntimeActionExecutor(),
+    })));
+    const observationRead = createDeferred<void>();
+    const readStarted = createDeferred<void>();
+    const starts: Readonly<{ machineId: string; params: unknown }>[] = [];
+    const choice = { kind: 'workers', destination: { kind: 'machine', machineId: 'hz-build-1' } } as const;
+    const h = await setup({ running: false, sharedObservation: true, waitEnabled: false,
+      serviceRuntime: execute, saved: { runsOn: choice, unavailable: 'fail' },
+      onStart: request => starts.push(request),
+      beforeRender: async serverId => {
+        const profile = getServerProfileById(serverId)!;
+        const credentials = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId });
+        // Secure storage is the boundary. Only the mounted observation's first
+        // read waits; the admitted Action can acquire its own credentials.
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementationOnce(async () => {
+          readStarted.resolve();
+          await observationRead.promise;
+          return credentials;
+        });
+      },
+    });
+    try {
+      await readStarted.promise;
+      await act(async () => { await h.start(); });
+      expect(starts).toEqual([expect.objectContaining({ machineId: 'hz-build-1', params: expect.objectContaining({ choice }) })]);
+      expect(h.writes).toEqual([]);
+    } finally {
+      await act(async () => { observationRead.resolve(); await flushHookEffects(); });
+      await h.screen.unmount();
+    }
+  });
+
+  it.each((['worker', 'pool', 'primary', 'override', 'unavailable'] as const).flatMap(destination =>
+    [true, false].map(sharedObservation => ({ destination, sharedObservation })),
+  ))('addresses normal Start from current saved placement ($destination, provider=$sharedObservation)', async ({ destination, sharedObservation }) => {
     const starts: Readonly<{ machineId: string; params: unknown }>[] = [];
     const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
     const execute = createFrontDoorRuntimeActionExecutor(createActionExecutor(createActionExecutorBoundaryFixture({
@@ -1076,7 +1128,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
         poolId: '00000000-0000-4000-8000-000000000032', selection: 'automatic' as const } }
       : { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: 'hz-build-1' } };
     const { screen, start, failPlacementReads, writes } = await setup({ running: false,
-      sharedObservation: true, serviceRuntime: execute, saved: { runsOn: choice, unavailable: 'fail' },
+      sharedObservation, serviceRuntime: execute, saved: { runsOn: choice, unavailable: 'fail' },
       onStart: request => starts.push(request) });
     if (destination === 'unavailable') failPlacementReads();
     await act(async () => {
