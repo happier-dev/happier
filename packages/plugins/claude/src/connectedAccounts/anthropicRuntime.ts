@@ -2,6 +2,7 @@ import type {
   ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
   ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { ANTHROPIC_API_KEY_ENV } from './service.js';
 
 type ConnectedAccountCredentialReader =
   Parameters<PluginConnectedAccountRuntime['status']>[0]['credentials'];
@@ -118,7 +119,7 @@ const anthropicConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime 
     if (!token) throw new Error('Anthropic connected-account credentials are unavailable');
     if (request.kind === 'environment') {
       const env: Record<string, string> = {};
-      if (request.keys.includes('ANTHROPIC_API_KEY')) env.ANTHROPIC_API_KEY = token;
+      if (request.keys.includes(ANTHROPIC_API_KEY_ENV)) env[ANTHROPIC_API_KEY_ENV] = token;
       return {
         kind: 'environment',
         env,

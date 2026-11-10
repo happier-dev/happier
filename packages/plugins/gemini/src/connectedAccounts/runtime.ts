@@ -2,6 +2,7 @@ import type {
   ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
   ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { GEMINI_API_KEY_ENV } from './service.js';
 
 const API_KEY_CREDENTIAL_KEY = 'apiKey';
 const SERVICE_ACCOUNT_CREDENTIAL_KEY = 'serviceAccountJson';
@@ -189,7 +190,7 @@ const geminiConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
       }
       if (request.kind === 'environment') {
         const env: Record<string, string> = {};
-        if (request.keys.includes('GEMINI_API_KEY')) env.GEMINI_API_KEY = apiKey;
+        if (request.keys.includes(GEMINI_API_KEY_ENV)) env[GEMINI_API_KEY_ENV] = apiKey;
         if (request.keys.includes('GOOGLE_API_KEY')) env.GOOGLE_API_KEY = apiKey;
         return { kind: 'environment', env };
       }
