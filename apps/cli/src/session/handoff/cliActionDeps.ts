@@ -99,9 +99,10 @@ export function createCliSessionHandoffActionDeps(
       handoffTargetReplacementApprovalReceiptId,
       handoffTargetReplacementApprovalActionInput,
       signal,
-    }) => {
+    }, context) => {
       if (!params.credentials) return notSupported();
-      const transport = await resolveTransportForSession(sessionId, signal);
+      const transport = await resolveTransportForSession(sessionId, signal,
+        context ? { context, actionId: 'session.handoff' } : undefined);
       if (!transport.ok) {
         return { ok: false, errorCode: transport.code, error: transport.code };
       }
@@ -122,6 +123,9 @@ export function createCliSessionHandoffActionDeps(
       return await callMachineAction({
         machineId: sourceMachineId,
         method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3,
+        context,
+        authority: context?.authority,
+        effectActionId: 'session.handoff',
         request: {
           sessionId: transport.sessionId,
           sourceMachineId,

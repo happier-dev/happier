@@ -1840,7 +1840,7 @@ export type ActionExecutorDeps = Readonly<{
     handoffTargetReplacementApprovalReceiptId?: string | null;
     handoffTargetReplacementApprovalActionInput?: unknown;
     signal?: AbortSignal;
-  }>) => Promise<unknown>;
+  }>, context?: ActionExecutorContext) => Promise<unknown>;
   /**
    * Target-daemon inspection before an operation can replace a destination's
    * contents or activate exact mirroring on it. One owner serves both

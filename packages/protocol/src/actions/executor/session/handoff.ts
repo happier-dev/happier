@@ -46,7 +46,7 @@ export async function dispatchSessionHandoff(inv: Pick<CoreInvocation, 'actionId
                 }
               : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
-          });
+          }, ctx);
           return completeSessionHandoffActionResult(res);
         }
 
