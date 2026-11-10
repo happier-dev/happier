@@ -35,6 +35,8 @@ import { packSessionDataKeyBundleV0, readSessionDataKeyBundleV0, serializeSessio
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { createSecondOpinionSourceFixture, discussionSecondOpinionSecurityContracts } from './secondOpinionSecurity.testkit';
+import { writeSessionPublicShare } from '@/app/share/storedContentPublicShare';
+import { createPlainSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol';
 
 const authentication = createPresentUserSessionAccessAuthentication();
 const document = (text: string) => ({ v: 1 as const, parts: [{ t: 'text' as const, text }] });
@@ -253,8 +255,16 @@ describe('Second opinion source admission (SQLite)', () => {
     it('does not promise a repairable source grant when the reviewer has a public audience', async () => {
         const { owner, reader, source, answer } = await fixture();
         // Keep subject eligibility admitted so only the public audience distinguishes this refusal.
-        const reviewer = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
-        await db.publicSessionShare.create({ data: { sessionId: reviewer.id, tokenHash: randomBytes(32), createdByUserId: owner.id } });
+        const reviewer = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{"v":1}',
+            metadataLayoutVersion: 1, ownerMetadata: JSON.stringify(createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, workspace: {} })) } });
+        // Exercise the public-share owner with its supported isolated-origin fixture.
+        const shared = await writeSessionPublicShare({ authentication, userId: owner.id, sessionId: reviewer.id,
+            lookupId: crypto.randomUUID(), keyDerivation: 'fragment_v1', configEnv: {
+                HAPPIER_PUBLIC_SERVER_URL: 'https://home.example.test',
+                HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: 'preview.example.test',
+                HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_RATE_LIMIT_CHECKER: '1',
+            } });
+        expect(shared.type).toBe('ok');
         const preview = await previewDiscussionSecondOpinion({ authentication, actorAccountId: owner.id, request: {
             source: { kind: 'session', message: { kind: 'session', session: { serverId: 'home', sessionId: source.id }, messageId: answer.id } },
             participants: [{ kind: 'account', accountId: reader.id }],
@@ -320,6 +330,46 @@ describe('Second opinion source admission (SQLite)', () => {
                 authoredContent: content, mentionedAccountIds: [], mentionedSessionIds: [reviewer.id] }) }))
             .toMatchObject({ ok: true, value: { message: { authorAccountId: reader.id, seq: 2 } } });
     });
+    it('refuses a second opinion for a canonically granted recipient without encryption material', async () => {
+        // The canonical encryption testkit signs the owner's binding; the plain
+        // recipient has no Account key and is granted access without an envelope
+        // by the normal grant owner. No stored key or credential is removed.
+        const { owner, reader, source, answer } = await encryptedSourceFixture();
+        const nonce = randomBytes(12);
+        const cipher = createCipheriv('aes-256-gcm', randomBytes(32), nonce);
+        const ciphertext = Buffer.concat([cipher.update(serializeSessionDataKeyValue({ text: 'Private encrypted answer' }), 'utf8'), cipher.final()]);
+        await db.sessionMessage.update({ where: { id: answer.id }, data: { content: { t: 'encrypted', c: encodeBase64(
+            new Uint8Array(packSessionDataKeyBundleV0({ nonce, ciphertext, authTag: cipher.getAuthTag() }))) } } });
+        const granted = await inTx(tx => putSessionAccessGrantInTx(tx, {
+            authentication, actorAccountId: owner.id, sessionId: source.id,
+            subject: { kind: 'account', accountId: reader.id },
+            grant: { accessLevel: 'view', canApprovePermissions: false },
+        }));
+        expect(granted.ok).toBe(true);
+        expect(await db.sessionDataKeyEnvelope.count({ where: { sessionId: source.id, recipientAccountId: reader.id } })).toBe(0);
+        const preview = await previewDiscussionSecondOpinion({ authentication, actorAccountId: reader.id, request: {
+            source: { kind: 'session', message: { kind: 'session', session: { serverId: 'home', sessionId: source.id }, messageId: answer.id } },
+            reviewers: [],
+        } });
+        expect(preview).toMatchObject({ ok: true, value: { sourceContentReady: false } });
+        // HTTP boundary only: the composed Action consumes the real preview,
+        // then refuses before it can request source text or outward mutations.
+        const deps: Pick<ActionExecutorDeps, 'discussionAction'> = {
+            discussionAction: async ({ input }) => previewDiscussionSecondOpinion({ authentication,
+                actorAccountId: reader.id,
+                request: projectDiscussionSecondOpinionPreviewInputV1(DiscussionSecondOpinionStartInputV1Schema.parse(input)) }),
+        };
+        const executor = createActionExecutor(deps as ActionExecutorDeps);
+        expect(await executor.execute('discussion.second_opinion.start', {
+            intent: 'preview', title: 'Review', question: 'Review this answer',
+            source: { kind: 'session', message: { kind: 'session', session: { serverId: 'home', sessionId: source.id }, messageId: answer.id } },
+            reviewers: [], retry: { creationLocalId: crypto.randomUUID(), quoteLocalId: crypto.randomUUID(), questionLocalId: crypto.randomUUID() },
+        }, { surface: 'ui', authority: 'present_user', serverId: 'home', actionsSettings: normalizeActionsSettingsV1({ v: 1,
+            approvalWaivedSurfaces: { 'discussion.second_opinion.start': ['ui'] } }) }))
+            .toMatchObject({ ok: false, errorCode: 'encryption_material_unavailable' });
+        expect(await db.discussion.count({ where: { ownerAccountId: reader.id } })).toBe(0);
+    });
+
     it('lets an E2EE owner attempt the historical absent-envelope source read without granting that fallback to recipients', async () => {
         const { owner, reader, source, answer } = await encryptedSourceFixture();
         // Preview inspects only the opaque envelope; the key-holding transcript reader must still open it.
