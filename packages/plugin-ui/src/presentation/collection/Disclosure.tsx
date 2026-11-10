@@ -137,6 +137,10 @@ const headerRowStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center' }
 const reorderHandleStyle: ViewStyle = { justifyContent: 'center' };
 const headerFlexStyle: ViewStyle = { flex: 1, minWidth: 0 };
 const bodyClipStyle: HappierPortableStyle = { overflow: 'hidden' };
+// While the body is pinned to its animated height, its content is laid out out of flow so it keeps its own
+// height: inside a zero-height clip, native Yoga shrinks shrinkable content to nothing and the reveal measured
+// (and opened to) ~0 px (owner 2026-11-10, Workflow settings groups on iOS). Settled, it is in flow again.
+const measureWhilePinnedStyle: ViewStyle = { position: 'absolute', top: 0, left: 0, right: 0 };
 // A faint line rather than a hard rule; the host supplies the colour.
 const separatorStyle: ViewStyle = { height: HAIRLINE, opacity: 0.6, marginLeft: 16 };
 
@@ -300,7 +304,7 @@ function HappierDisclosureImpl<Motion extends HappierDisclosureMotion>(props: Ha
           style={[bodyClipStyle, props.bodyStyle]}
           {...(testID ? { testID: `${testID}:body` } : {})}
         >
-          <View onLayout={handleBodyLayout} style={props.bodyStyle}>
+          <View onLayout={handleBodyLayout} style={[heightPinned ? measureWhilePinnedStyle : null, props.bodyStyle]}>
             {children}
           </View>
         </Body>
