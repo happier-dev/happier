@@ -7,6 +7,13 @@ export const FX_PROVIDER_OWNED_ENV_KEYS = [
   'FX_GATEWAY_BASE_URL', 'FX_E2E_GATEWAY_CHAT_URL', 'FX_E2E_GATEWAY_MODELS_URL', 'FX_E2E_GATEWAY_CREDITS_URL',
 ] as const;
 
+/** Native configured-provider settings shared by Provider and account launch. */
+export function buildFxConfiguredProviderSettings(input: Readonly<{ modelId: string; baseUrl: string; hasCredential: boolean }>) {
+  return { provider: 'happier', models: { happier: input.modelId },
+    providers: { happier: { protocol: 'openai-chat-completions', base_url: input.baseUrl,
+      auth: input.hasCredential ? { type: 'bearer', env: 'HAPPIER_FX_PROVIDER_API_KEY' } : { type: 'none' }, tool_choice_mode: 'omit' } } };
+}
+
 const unsupported = () => new PluginError({ code: 'fx_provider_binding_unsupported',
   message: 'FX supports Chat Completions endpoints with no authentication or a bearer API key. Custom headers and additional credentials are unsupported.' });
 
@@ -34,12 +41,8 @@ export const FX_PROVIDER_BINDING_ADAPTER = Object.freeze({
     const provider = gateway ? 'gateway' : 'happier';
     const settings = gateway ? {
       provider, credential_source: 'ai_gateway_api_key', models: { [provider]: binding.selection.model.id },
-    } : {
-      provider, models: { [provider]: binding.selection.model.id },
-      providers: { [provider]: { protocol: 'openai-chat-completions', base_url: binding.endpoint.normalizedUrl,
-        auth: credential.kind === 'none' ? { type: 'none' } : { type: 'bearer', env: 'HAPPIER_FX_PROVIDER_API_KEY' },
-        tool_choice_mode: 'omit' } },
-    };
+    } : buildFxConfiguredProviderSettings({ modelId: binding.selection.model.id,
+      baseUrl: binding.endpoint.normalizedUrl, hasCredential: credential.kind !== 'none' });
     // Native saved model preferences take precedence over FX_MODEL. Overlay
     // selected settings in the host-owned home while retaining native history.
     const values: Readonly<Record<string, string>> = {

@@ -39,8 +39,8 @@ describe('CodeBuddy selected account default', () => {
     const activation = await createPluginTestkit({ manifest: CODEBUDDY_PLUGIN.manifest, module: CODEBUDDY_PLUGIN });
     const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'selected' };
     const materialize = vi.fn(async () => { throw new Error('Model selection must precede credential acquisition'); });
-    const getBinding = vi.fn<ConnectedAccountsService['getBinding']>(async () => ({ account, service: account.service,
-      purpose: 'openai-codex-model-request', target: { kind: 'account' as const, displayName: 'Selected' } }));
+    const getBinding = vi.fn<ConnectedAccountsService['getBinding']>(async purpose => purpose === 'openai-codex-model-request' ? { account, service: account.service,
+      purpose, target: { kind: 'account' as const, displayName: 'Selected' } } : null);
     try {
       const prepare = activation.registration('agents', 'codebuddy')?.preflightSessionControls?.prepareLaunchEnvironment;
       expect(prepare).toBeTypeOf('function');
@@ -59,13 +59,15 @@ describe('CodeBuddy selected account default', () => {
   it.each([
     { value: null, selectionSource: 'explicit' as const },
     { value: null, selectionSource: 'inherited' as const },
-  ])('requires a concrete account model before native effects ($selectionSource)', async model => {
+    { value: 'default', selectionSource: 'explicit' as const },
+    { value: 'default', selectionSource: 'inherited' as const },
+  ])('requires a concrete account model before native effects ($value/$selectionSource)', async model => {
     const activation = await createPluginTestkit({ manifest: CODEBUDDY_PLUGIN.manifest, module: CODEBUDDY_PLUGIN });
     const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'selected' };
     const materialize = vi.fn(async () => { throw new Error('Model selection must precede credential acquisition'); });
     const open = vi.fn(async () => { throw new Error('Model selection must precede native startup'); });
-    const context = { services: { connectedAccounts: { getBinding: async () => ({ account, service: account.service,
-      purpose: 'openai-codex-model-request', target: { kind: 'account', displayName: 'Selected' } }), materialize } },
+    const context = { services: { connectedAccounts: { getBinding: async (purpose: string) => purpose === 'openai-codex-model-request' ? { account, service: account.service,
+      purpose, target: { kind: 'account', displayName: 'Selected' } } : null, materialize } },
       protocols: { acp: { open } } } as unknown as AgentRuntimeContext;
     try {
       const factory = activation.registration('agents', 'codebuddy')?.factory;
@@ -75,7 +77,8 @@ describe('CodeBuddy selected account default', () => {
       await expect(runtime.sessions!.open({ kind: 'create', sessionId: 'default-model', cwd: '/repo', configuration: {
         mode: { value: null, updatedAtMs: 0 }, model: { ...model, updatedAtMs: 1 },
         permissionIntent: { value: null, updatedAtMs: 0 }, options: {},
-      } }, context)).rejects.toMatchObject({ code: 'agent_startup_model_reconciliation_failed' });
+      } }, context)).rejects.toMatchObject({ code: 'agent_startup_model_reconciliation_failed',
+        details: { failureCause: { failureReason: 'model_selection_required', retryable: false } } });
       expect(materialize).not.toHaveBeenCalled();
       expect(open).not.toHaveBeenCalled();
     } finally { await activation.dispose(); }

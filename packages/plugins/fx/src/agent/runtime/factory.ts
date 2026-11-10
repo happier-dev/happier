@@ -1,5 +1,4 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { AgentAcpRuntimeOptions, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1, AgentRuntimeFactory, AgentSessionOpenRequest, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 
@@ -10,7 +9,7 @@ import { FX_PROMPT_USAGE } from '../acp/usage.js';
 import { FX_AUTH_STATUS_COMMAND, parseFxStatusCommand } from '../auth/status.js';
 import { FX_ACP_COMMAND } from '../preflight.js';
 import { FX_TERMINAL_CONTRIBUTION } from '../terminal/contribution.js';
-import { prepareFxConnectedAccount } from '../auth/connectedAccount.js';
+import { prepareFxConnectedAccount, hasFxConnectedAccount } from '../auth/connectedAccount.js';
 export { fxExternalSessionsContribution } from '../externalSessions/contribution.js';
 
 const options = {
@@ -21,7 +20,7 @@ const options = {
 } satisfies AgentAcpRuntimeOptions;
 
 function createFxAcpOptions(request: Pick<AgentSessionOpenRequest, 'providerBinding' | 'launchEnvironment'>): AgentAcpRuntimeOptions {
-  if (!request.providerBinding && !request.launchEnvironment?.values[CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]) return options;
+  if (!request.providerBinding && !hasFxConnectedAccount(request.launchEnvironment)) return options;
   // Native choices carry no independent observation of membership in the selected source.
   return { ...options, definition: { ...options.definition, models: {
     catalogConfidence: 'account_unverified',
@@ -65,19 +64,19 @@ async function verifyProviderBinding(
 export const createFxAgentRuntime: AgentRuntimeFactory = () => ({ surfaces: { terminal: FX_TERMINAL_CONTRIBUTION }, sessions: {
   async open(request, context) {
     await verifyProviderBinding(request, context);
-    const launchEnvironment = await prepareFxConnectedAccount(request.launchEnvironment, context.signal, request.configuration?.model);
+    const launchEnvironment = await prepareFxConnectedAccount(request.launchEnvironment, context.signal, request.configuration?.model.value);
     return context.protocols.acp.open({ ...request, ...(launchEnvironment ? { launchEnvironment } : {}) }, createFxAcpOptions(request));
   },
   executionRunContextV1: {
     async open(request, context) {
       await verifyProviderBinding(request, context);
-      const launchEnvironment = await prepareFxConnectedAccount(request.launchEnvironment, context.signal, request.configuration?.model);
+      const launchEnvironment = await prepareFxConnectedAccount(request.launchEnvironment, context.signal, request.configuration?.model.value);
       return context.protocols.acp.openExecutionRunV1({ ...request, ...(launchEnvironment ? { launchEnvironment } : {}) }, createFxAcpOptions(request));
     },
     async openConversation(request, context) {
       if (!context.protocols.acp.openExecutionRunConversationV1) throw new PluginError({ code: 'execution_run_protocol_unsupported', message: 'This host does not support retained detached ACP conversations.' });
       await verifyProviderBinding(request, context);
-      const launchEnvironment = await prepareFxConnectedAccount(request.launchEnvironment, context.signal, request.configuration?.model);
+      const launchEnvironment = await prepareFxConnectedAccount(request.launchEnvironment, context.signal, request.configuration?.model.value);
       return context.protocols.acp.openExecutionRunConversationV1({ ...request, ...(launchEnvironment ? { launchEnvironment } : {}) }, createFxAcpOptions(request));
     },
   },

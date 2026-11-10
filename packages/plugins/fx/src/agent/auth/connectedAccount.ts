@@ -1,14 +1,34 @@
-import { chmod, mkdir } from 'node:fs/promises';
+import { chmod, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isRecord, PluginError } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV, type RequestAuthHeadersV1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createConnectedAccountRequestAuthClient } from '@happier-dev/plugin-sdk/connected-accounts/request-auth';
 import { writeAtomicJsonFile } from '@happier-dev/plugin-sdk/fs';
-import type { AgentSessionConfigurationSnapshot, AgentLaunchEnvironment, AgentConnectedAccountNativeAuthCodecV1, AgentConnectedAccountStateSharingDescriptorV1, AgentConnectedAccountResumeReachabilityInputV1, AgentConnectedAccountRuntimeAuthAdapterV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentLaunchEnvironment, AgentConnectedAccountNativeAuthCodecV1, AgentConnectedAccountStateSharingDescriptorV1, AgentConnectedAccountResumeReachabilityInputV1, AgentConnectedAccountRuntimeAuthAdapterV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { isFxSessionId } from '../externalSessions/source.js';
 
+import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_SELECTED_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
+import { GROK_CONNECTED_ACCOUNT_SERVICE, XAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-grok/connected-account-service';
+import { OPENAI_CONNECTED_ACCOUNT_SERVICE, OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
+import { OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-codex/connected-account-service';
+import { buildFxConfiguredProviderSettings, FX_PROVIDER_OWNED_ENV_KEYS } from '../providerBinding/adapter.js';
+
+export const FX_NATIVE_KEY_PURPOSES = [
+  { purpose: 'openai-api-key', service: OPENAI_CONNECTED_ACCOUNT_SERVICE, environmentKey: OPENAI_SELECTED_API_KEY_ENV, baseUrl: 'https://api.openai.com/v1' },
+  { purpose: 'kimi-api-key', service: KIMI_CONNECTED_ACCOUNT_SERVICE, environmentKey: KIMI_SELECTED_CODE_API_KEY_ENV, baseUrlEnvironmentKey: KIMI_CODE_API_BASE_ENV },
+  { purpose: 'xai-api-key', service: GROK_CONNECTED_ACCOUNT_SERVICE, environmentKey: XAI_SELECTED_API_KEY_ENV, baseUrl: 'https://api.x.ai/v1' },
+] as const;
+export const FX_NATIVE_KEY_ENVIRONMENT_USES = FX_NATIVE_KEY_PURPOSES.flatMap(row => [
+  { purpose: row.purpose, environmentKey: row.environmentKey },
+  ...('baseUrlEnvironmentKey' in row ? [{ purpose: row.purpose, environmentKey: row.baseUrlEnvironmentKey }] : []),
+]);
+export function hasFxConnectedAccount(environment?: AgentLaunchEnvironment): boolean {
+  return Boolean(environment?.values[CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV]
+    || FX_NATIVE_KEY_PURPOSES.some(row => Object.hasOwn(environment?.values ?? {}, row.environmentKey)));
+}
+
 export const FX_CODEX_PURPOSE = 'openai-codex';
-export const FX_CODEX_SERVICE = { pluginId: 'happier.agent.codex', localId: 'openai-codex' } as const;
+export const FX_CODEX_SERVICE = OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE;
 export const FX_REQUEST_AUTH_USE = { purpose: FX_CODEX_PURPOSE, materialization: {
   kind: 'httpHeaders', origin: 'https://chatgpt.com', headerNames: ['authorization', 'chatgpt-account-id'],
 } } as const;
@@ -54,7 +74,7 @@ export const FX_NATIVE_AUTH_CODEC = {
 
 export const FX_STATE_SHARING = {
   // Released FX resolves HOME/.fx; FX_HOME is only in unreleased upstream.
-  nativeHome: { environmentKey: 'HOME', defaultRelativePath: '.' },
+  nativeHome: { environmentKey: 'HOME', defaultRelativePath: '.', purposes: [FX_CODEX_PURPOSE, ...FX_NATIVE_KEY_PURPOSES.map(row => row.purpose)] },
   providerSupportStatus: 'supported',
   config: { supported: true, modes: ['copied', 'isolated'], entries: [{ path: '.fx/settings.json', mode: 'copied' }, { path: '.fx/mcp.json', mode: 'copied' }] },
   state: { supported: true, modes: ['isolated', 'shared'], entries: [{ path: '.fx/sessions', mode: 'linked', createIfMissing: 'directory' }, { path: '.fx/session-files', mode: 'linked' }], sharedStatePrivacyRiskAcknowledgementRequired: true, symlinkUnavailableDegradePolicy: 'block_continuity' },
@@ -75,20 +95,48 @@ export const FX_RUNTIME_AUTH_ADAPTER = {
   async refreshActiveProfile() { return { status: 'unsupported', recovery: 'restart_rematerialize' }; },
 } satisfies AgentConnectedAccountRuntimeAuthAdapterV1;
 
-export async function prepareFxConnectedAccount(environment?: AgentLaunchEnvironment, signal?: AbortSignal, model?: AgentSessionConfigurationSnapshot['model']): Promise<AgentLaunchEnvironment | undefined> {
+export async function prepareFxConnectedAccount(environment?: AgentLaunchEnvironment, signal?: AbortSignal, modelId?: string | null): Promise<AgentLaunchEnvironment | undefined> {
   if (!environment) return environment;
   const capabilityFile = environment.values[CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV];
-  if (!capabilityFile) return environment;
+  const selectedKeys = FX_NATIVE_KEY_PURPOSES.filter(row => Object.hasOwn(environment.values, row.environmentKey));
+  if (!capabilityFile && !selectedKeys.length) return environment;
+  if (selectedKeys.length > 1 || (selectedKeys.length && capabilityFile)) throw new PluginError({ code: 'fx_connected_account_service_mismatch', message: 'Choose one Connected Account for FX.' });
   // FX's Codex provider has no compiled default (selectProviderModel). Use the
   // host-resolved model, including finite-run inheritance, rather than ambient FX_MODEL.
-  const selectedModel = model?.value?.trim();
-  if (!selectedModel) throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
-    message: 'Choose a model for the FX ChatGPT Connected Account.',
+  const selectedModel = modelId?.trim();
+  if (!selectedModel || selectedModel === 'default') throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
+    message: 'Choose a model for the FX Connected Account.',
     details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
       phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
   const home = environment.values.HOME;
   if (!home) throw new PluginError({ code: 'fx_connected_account_home_unavailable', message: 'FX requires its host-prepared native home.' });
-  const client = await createConnectedAccountRequestAuthClient({ capabilityFile });
+  const nativeKey = selectedKeys[0];
+  if (nativeKey) {
+    const secret = environment.values[nativeKey.environmentKey];
+    const baseUrl = 'baseUrlEnvironmentKey' in nativeKey ? environment.values[nativeKey.baseUrlEnvironmentKey] : nativeKey.baseUrl;
+    if (!secret?.trim() || !baseUrl) throw new PluginError({ code: 'fx_connected_account_service_mismatch', message: 'The selected FX account did not provide a native key and endpoint.' });
+    const settingsPath = join(home, '.fx/settings.json');
+    let existing: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(await readFile(settingsPath, 'utf8'));
+      if (!isRecord(parsed)) throw new Error('FX settings must contain an object');
+      existing = parsed;
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    }
+    delete existing.credential_source;
+    const settings = buildFxConfiguredProviderSettings({ modelId: selectedModel, baseUrl, hasCredential: true });
+    await mkdir(join(home, '.fx'), { recursive: true, mode: 0o700 });
+    await chmod(join(home, '.fx'), 0o700);
+    await writeAtomicJsonFile({ path: settingsPath, value: { ...existing, ...settings,
+      models: { ...(isRecord(existing.models) ? existing.models : {}), ...settings.models },
+      providers: { ...(isRecord(existing.providers) ? existing.providers : {}), ...settings.providers } }, mode: 0o600 });
+    const remove = new Set<string>([...FX_PROVIDER_OWNED_ENV_KEYS, ...FX_NATIVE_KEY_ENVIRONMENT_USES.map(use => use.environmentKey)]);
+    const values = { ...Object.fromEntries(Object.entries(environment.values).filter(([key]) => !remove.has(key))),
+      HAPPIER_FX_PROVIDER_API_KEY: secret, FX_PROVIDER: 'happier', FX_AUTH_MODE: 'local', FX_MODEL: selectedModel };
+    return { values, unset: [...new Set([...(environment.unset ?? []), ...remove])].filter(key => !Object.hasOwn(values, key)) };
+  }
+  const client = await createConnectedAccountRequestAuthClient({ capabilityFile: capabilityFile! });
   const material = await client.lookupConnectedAccountRequestAuth({ purpose, ...(signal ? { signal } : {}) });
   const auth = fromRequestAuth(material);
   signal?.throwIfAborted();

@@ -13,7 +13,7 @@ describe('FX plugin manifest', () => {
     expect(PLUGIN_MANIFEST.contributes.agents).toEqual([
       expect.objectContaining({
         id: 'fx',
-        runtime: { kind: 'custom' },
+        runtime: expect.objectContaining({ kind: 'custom' }),
         primary: 'sessions',
       }),
     ]);

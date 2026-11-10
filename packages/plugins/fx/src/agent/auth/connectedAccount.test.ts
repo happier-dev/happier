@@ -14,7 +14,7 @@ import { readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session
 import { FX_PLUGIN } from '../../manifest.js';
 import { createFxAgentRuntime } from '../runtime/factory.js';
 import { FX_TERMINAL_CONTRIBUTION } from '../terminal/contribution.js';
-import { FX_NATIVE_AUTH_CODEC } from './connectedAccount.js';
+import { FX_NATIVE_AUTH_CODEC, prepareFxConnectedAccount } from './connectedAccount.js';
 
 const selectedConfiguration: AgentSessionConfigurationSnapshot = {
   model: { value: 'gpt-selected', updatedAtMs: 1, selectionSource: 'explicit' },
@@ -51,6 +51,14 @@ async function fixture(expiresAt: number | null = Date.now() + 3_600_000, author
 }
 
 describe('FX connected-account native launch', () => {
+  it('refuses the unresolved default model before acquiring credentials', async () => {
+    const input = await fixture();
+    await expect(prepareFxConnectedAccount(input.launchEnvironment, undefined, 'default')).rejects.toMatchObject({ code: 'agent_startup_model_reconciliation_failed',
+      details: { failureCause: { failureReason: 'model_selection_required', retryable: false } } });
+    expect(input.requests).toEqual([]);
+    await expect(readFile(join(input.home, '.fx/chatgpt-auth.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it.each(['session', 'run', 'conversation', 'terminal'] as const)('returns typed model-pick guidance before credentials or native effects for a fresh selected-account %s', async lane => {
     const input = await fixture();
     const open = vi.fn(async () => ({} as never));

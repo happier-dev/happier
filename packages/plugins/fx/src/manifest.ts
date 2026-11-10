@@ -8,7 +8,7 @@ import { fxExternalSessionsContribution } from './agent/externalSessions/contrib
 import { FX_CLI_AUTH } from './agent/auth/status.js';
 import { FX_PROVIDER_BINDING_ADAPTER, FX_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding/adapter.js';
 import { createFxAgentRuntime } from './agent/runtime/factory.js';
-import { FX_CODEX_PURPOSE, FX_CODEX_SERVICE, FX_NATIVE_AUTH_CODEC, FX_REQUEST_AUTH_USE, prepareFxConnectedAccount, FX_RUNTIME_AUTH_ADAPTER, FX_STATE_SHARING, verifyFxResumeReachable } from './agent/auth/connectedAccount.js';
+import { FX_CODEX_PURPOSE, FX_CODEX_SERVICE, FX_NATIVE_KEY_PURPOSES, FX_NATIVE_KEY_ENVIRONMENT_USES, FX_NATIVE_AUTH_CODEC, FX_REQUEST_AUTH_USE, prepareFxConnectedAccount, hasFxConnectedAccount, FX_RUNTIME_AUTH_ADAPTER, FX_STATE_SHARING, verifyFxResumeReachable } from './agent/auth/connectedAccount.js';
 
 
 export const FX_PLUGIN = definePlugin({
@@ -16,7 +16,7 @@ export const FX_PLUGIN = definePlugin({
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [{
     id: 'fx-process', capability: 'process', reason: 'Run the declared FX CLI executable.',
-    scope: { executables: [{ kind: 'systemTool', id: FX_ACP_COMMAND.toolId }], envKeys: ['HOME', 'FX_PROVIDER', 'FX_AUTH_MODE', 'FX_HOME', 'FX_MODEL'] },
+    scope: { executables: [{ kind: 'systemTool', id: FX_ACP_COMMAND.toolId }], envKeys: ['HOME', ...FX_PROVIDER_OWNED_ENV_KEYS, ...FX_NATIVE_KEY_ENVIRONMENT_USES.map(use => use.environmentKey)] },
   }], optional: [] },
   agents: { fx: {
     declaration: {
@@ -38,7 +38,8 @@ export const FX_PLUGIN = definePlugin({
       },
       sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
       primary: 'sessions',
-      connectedAccounts: [{ purpose: FX_CODEX_PURPOSE, service: FX_CODEX_SERVICE, required: false, materializationKinds: ['httpHeaders'], credentialKinds: ['oauth'] }],
+      connectedAccounts: [{ purpose: FX_CODEX_PURPOSE, service: FX_CODEX_SERVICE, required: false, materializationKinds: ['httpHeaders'], credentialKinds: ['oauth'] },
+        ...FX_NATIVE_KEY_PURPOSES.map(({ purpose, service }) => ({ purpose, service, credentialKinds: ['token'] as const, materializationKinds: ['environment'] as const }))],
       catalog: { agentCliSystemTool: { toolId: FX_ACP_COMMAND.toolId }, vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume } },
       surfaces: {
         externalSession: {
@@ -69,6 +70,7 @@ export const FX_PLUGIN = definePlugin({
     factory: createFxAgentRuntime,
     connectedAccountLaunch: {
       requestAuthUses: [FX_REQUEST_AUTH_USE],
+      environmentUses: FX_NATIVE_KEY_ENVIRONMENT_USES,
       stateSharingDescriptor: FX_STATE_SHARING,
       switchContinuity: { continuityMode: 'restart_shared_state_required' },
       continuity: { generationApplicationScope: 'per_session_runtime', nativeAuthCodec: FX_NATIVE_AUTH_CODEC, runtimeAuthAdapter: FX_RUNTIME_AUTH_ADAPTER, verifyResumeReachable: verifyFxResumeReachable },
@@ -78,9 +80,11 @@ export const FX_PLUGIN = definePlugin({
     sessionRunnerFactory: { module: './agent/runtime/factory', export: 'createFxAgentRuntime', runtimeApiVersion: 1, externalSessionsExport: 'fxExternalSessionsContribution' },
     preflightSessionControls: {
       catalogs: { kind: 'acp', command: FX_ACP_COMMAND },
-      async prepareLaunchEnvironment({ environment, signal }) {
-        const prepared = await prepareFxConnectedAccount({ values: environment, unset: [] }, signal);
-        return { environment: prepared?.values ?? environment, unset: prepared?.unset, dispose() {} };
+      async prepareLaunchEnvironment({ environment, signal, modelId }) {
+        const launchEnvironment = { values: environment, unset: [] };
+        const prepared = await prepareFxConnectedAccount(launchEnvironment, signal, modelId);
+        return { environment: prepared?.values ?? environment, unset: prepared?.unset,
+          ...(hasFxConnectedAccount(launchEnvironment) ? { catalogConfidence: 'account_unverified' as const } : {}), dispose() {} };
       },
     },
     externalSessions: fxExternalSessionsContribution,

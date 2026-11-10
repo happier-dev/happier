@@ -28,7 +28,7 @@ function withDispose<T extends object>(runtime: T, dispose: unknown): T {
 }
 
 async function prepare(request: Pick<AgentSessionOpenRequest, 'configuration' | 'providerBinding'>, context: AgentRuntimeContext) {
-  const account = await prepareCodeBuddyConnectedAccount(request, context);
+  const account = await prepareCodeBuddyConnectedAccount({ modelId: request.configuration?.model.value, providerBinding: request.providerBinding }, context);
   const { transport, definition } = CODEBUDDY_ACP_RUNTIME_DECLARATION;
   const options: AgentAcpRuntimeOptions = { transport: { ...transport, args: [...transport.args, ...(account?.args ?? [])], ...(account ? { env: account.env } : {}) },
     definition: { ...definition, toolNameResolver: resolveCodeBuddyAcpToolName,

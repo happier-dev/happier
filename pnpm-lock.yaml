@@ -2760,6 +2760,9 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
+      '@happier-dev/plugins-codex':
+        specifier: workspace:*
+        version: link:../codex
       '@happier-dev/plugins-grok':
         specifier: 0.0.0
         version: link:../grok
@@ -3066,6 +3069,9 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
+      '@happier-dev/plugins-codex':
+        specifier: workspace:*
+        version: link:../codex
       '@happier-dev/plugins-grok':
         specifier: workspace:*
         version: link:../grok

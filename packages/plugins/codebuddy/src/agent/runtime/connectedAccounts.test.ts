@@ -38,7 +38,7 @@ describe('CodeBuddy subscription native configuration', () => {
     expect(existsSync(settingsPath)).toBe(false);
   });
 
-  it.each(['', '  '])('refuses an absent explicit model %j', (modelId) => {
+  it.each(['', '  ', 'default', ' default '])('refuses an unresolved explicit model %j', (modelId) => {
     expect(() => buildCodeBuddySubscriptionConfiguration({ modelId, materialized: {
       kind: 'httpHeaders', headers: { authorization: 'Bearer dummy', 'chatgpt-account-id': 'fixture' },
     } })).toThrow(expect.objectContaining({ code: 'agent_startup_model_reconciliation_failed' }));
