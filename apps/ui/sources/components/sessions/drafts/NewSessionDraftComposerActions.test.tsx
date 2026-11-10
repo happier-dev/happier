@@ -74,22 +74,26 @@ describe('NewSessionDraftComposerActions', () => {
         await screen.unmount();
     });
 
-    it('keeps Start another inline and moves Delete into overflow on compact layouts', async () => {
+    it('keeps Start another labelled and Delete a direct icon action, with no overflow, on compact layouts', async () => {
         windowState.width = 390;
+        const onDelete = vi.fn(async () => undefined);
         const screen = await renderScreen(
             <NewSessionDraftComposerActions
-                deleteDisabled
+                deleteDisabled={false}
                 onStartAnother={vi.fn()}
-                onDelete={vi.fn(async () => undefined)}
+                onDelete={onDelete}
             />,
         );
 
         expect(screen.findByTestId('new-session-draft-start-another')).toBeTruthy();
-        const menu = screen.findByType('DropdownMenu' as React.ElementType);
-        expect(screen.findByTestId('new-session-draft-actions-menu')).toBeTruthy();
-        expect(menu.props.items).toEqual(expect.arrayContaining([
-            expect.objectContaining({ id: 'delete', testID: 'new-session-draft-delete', disabled: true }),
-        ]));
+        expect(screen.findAllByType('DropdownMenu' as React.ElementType)).toHaveLength(0);
+        expect(screen.findByTestId('new-session-draft-actions-menu')).toBeFalsy();
+        const deleteAction = screen.findByTestId('new-session-draft-delete');
+        if (!deleteAction) throw new Error('Expected the compact Delete draft action');
+        expect(deleteAction.props.accessibilityLabel).toBe('sessionDrafts.delete.action');
+        expect(screen.findAll((node) => node.type === 'Text' && node.props.children === 'sessionDrafts.delete.action')).toHaveLength(0);
+        await pressTestInstanceAsync(deleteAction);
+        expect(onDelete).toHaveBeenCalledOnce();
         await screen.unmount();
     });
 });

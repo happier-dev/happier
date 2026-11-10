@@ -16,6 +16,12 @@ export function resolveAgentInputHostPanelMaxHeight(params: {
     platform: string;
     maxPanelHeight?: number | null;
     mode?: AgentInputPanelMaxHeightMode;
+    /**
+     * The composer's measured height outside its card (status row, container padding). The host's room holds the
+     * whole composer, so the card gets what that leaves: a card capped at the whole room grew past it, over the
+     * page above (an expanded Session composer under the page tabs, 2026-11-10).
+     */
+    outsidePanelHeight?: number | null;
 }): number | undefined {
     if (typeof params.maxPanelHeight !== 'number' || !Number.isFinite(params.maxPanelHeight)) {
         return undefined;
@@ -23,7 +29,10 @@ export function resolveAgentInputHostPanelMaxHeight(params: {
     if (params.platform === 'web' && params.mode !== 'host-constrained') {
         return undefined;
     }
-    return Math.max(0, params.maxPanelHeight);
+    const outside = typeof params.outsidePanelHeight === 'number' && Number.isFinite(params.outsidePanelHeight)
+        ? Math.max(0, params.outsidePanelHeight)
+        : 0;
+    return Math.max(0, params.maxPanelHeight - outside);
 }
 
 export function computeMeasuredPanelInputMaxHeight(params: {

@@ -4,7 +4,6 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { useNewSessionEmbeddedHost } from '@/components/sessions/new/navigation/newSessionHost';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -38,15 +37,6 @@ export const NewSessionDraftComposerActions = React.memo(function NewSessionDraf
     // Docked on a desktop, the card is narrow and its status row carries the machine line too: the
     // actions are quiet icons there (owner 2026-11-01), named by their tooltip and accessible name.
     const icons = useNewSessionEmbeddedHost()?.kind === 'docked' && !isMobileLayoutWidth(width);
-    const [menuOpen, setMenuOpen] = React.useState(false);
-    const deleteItems = React.useMemo<ReadonlyArray<DropdownMenuItem>>(() => [{
-        id: 'delete',
-        testID: 'new-session-draft-delete',
-        title: t('sessionDrafts.delete.action'),
-        disabled: props.deleteDisabled,
-        icon: <Icon name="trash" size={ACTION_GLYPH_SIZE} color={theme.colors.state.danger.foreground} />,
-    }], [props.deleteDisabled, theme.colors.state.danger.foreground]);
-
     const runDelete = React.useCallback(() => {
         fireAndForget(props.onDelete(), { tag: 'NewSessionDraftComposerActions.delete' });
     }, [props.onDelete]);
@@ -80,24 +70,12 @@ export const NewSessionDraftComposerActions = React.memo(function NewSessionDraf
                     {t('sessionDrafts.startAnother')}
                 </Text>
             </HappierPressable>
+            {/* Narrow, Delete keeps its place as the quiet trash icon (named by its accessible name), never an
+                overflow menu holding one item (owner 2026-11-10). */}
             {compact ? (
-                <DropdownMenu
-                    open={menuOpen}
-                    onOpenChange={setMenuOpen}
-                    items={deleteItems}
-                    onSelect={(itemId) => {
-                        if (itemId === 'delete') runDelete();
-                    }}
-                    placement="left"
-                    variant="slim"
-                    matchTriggerWidth={false}
-                    maxWidthCap={220}
-                    popoverPortalWebTarget="body"
-                    trigger={({ toggle }) => (
-                        <IconButton testID="new-session-draft-actions-menu" variant="plain" iconName="dots-three" size={AGENT_INPUT_QUIET_ICON_SIZE_PX}
-                            accessibilityLabel={t('common.moreActions')} onPress={toggle} />
-                    )}
-                />
+                <IconButton testID="new-session-draft-delete" variant="plain" iconName="trash" size={AGENT_INPUT_QUIET_ICON_SIZE_PX}
+                    accessibilityLabel={t('sessionDrafts.delete.action')} tooltip={t('sessionDrafts.delete.action')} tooltipPlacement="top"
+                    disabled={props.deleteDisabled} onPress={runDelete} />
             ) : (
                 <HappierPressable
                 hitReach={ACTION_HIT_REACH}

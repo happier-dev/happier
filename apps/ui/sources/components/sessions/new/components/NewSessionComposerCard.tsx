@@ -203,6 +203,7 @@ export function NewSessionComposerCard(input: Readonly<{
                         composerFileScope={props.composerFileScope}
                         onComposerInputFlushRequestChange={props.composerDocument?.onComposerInputFlushRequestChange}
                         onComposerActionBarLayoutChange={props.composerDocument?.onComposerActionBarLayoutChange}
+                        panelHostRef={embeddedHost?.composerPanelRef}
                         inputPersistence={props.composerDocument?.inputPersistence}
                         composerDecorations={props.composerDocument?.composerDecorations ?? []}
                         composerInputLock={props.composerDocument?.composerInputLock ?? null}

@@ -41,9 +41,10 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         borderRadius: CAPSULE_RADIUS,
     },
+    // The glyph centres in the glass's content box, inside its rim: a box the capsule's outer size overflowed
+    // that rim to the right and below, carrying the glyph off-centre (owner 19:16 item 18).
     visual: {
-        width: OVERLAY_CAPSULE_BUTTON_SIZE,
-        height: OVERLAY_CAPSULE_BUTTON_SIZE,
+        flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
     },

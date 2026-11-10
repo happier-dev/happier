@@ -223,6 +223,7 @@ import {
     AGENT_INPUT_ACTION_CHIP_PRESSED_STYLE,
     AGENT_INPUT_ACTION_CHIP_STYLE,
     AGENT_INPUT_FIELD_PADDING_Y,
+    AGENT_INPUT_FIELD_TO_CHIP_RAIL_GAP_PX,
     AGENT_INPUT_PANEL_PADDING_BOTTOM,
     AGENT_INPUT_ACTION_CHIP_GAP_X,
     AGENT_INPUT_CARD_CONTENT_LEADING_INSET,
@@ -350,10 +351,12 @@ const LazyResetStartPicker = retryableLazy(() => import('./components/AgentInput
 
 /**
  * The action bar's row rhythm on native, where wrapped rows state it as a
- * margin rather than a `gap`. Exported so the trailing cluster's own rhythm can
- * be checked against the column's without re-declaring the number.
+ * margin rather than a `gap`: the same one pixel as the web rails (0 in 0.2), the gap the
+ * chips' hit areas split between them, so the setup rail and the machine · folder rail read
+ * as one block. Exported so the trailing cluster's own rhythm can be checked against the
+ * column's without re-declaring the number.
  */
-export const NATIVE_ACTION_BAR_SECTION_GAP_Y = 6;
+export const NATIVE_ACTION_BAR_SECTION_GAP_Y = NATIVE_ACTION_CHIP_GAP_Y;
 /**
  * The rails sit as close as 0.2's (0 there): one pixel, the gap the chips' hit areas split between them
  * (`resolveAgentInputChipRailHitReach`), so the two rails read as one block under the prompt.
@@ -367,7 +370,7 @@ const AGENT_INPUT_CONTAINER_VERTICAL_PADDING = AGENT_INPUT_FIELD_CONTAINER_PADDI
 const AGENT_INPUT_CONTAINER_VERTICAL_CHROME_HEIGHT = AGENT_INPUT_CONTAINER_VERTICAL_PADDING * 2;
 // Panel padding and corner radius come from the composer chrome owner; the radius is shared by the
 // panel surface, its cast-shadow wrapper and the auxiliary banners stacked above the panel.
-const AGENT_INPUT_VARIABLE_SECTION_CONTENT_PADDING_BOTTOM = 4;
+const AGENT_INPUT_VARIABLE_SECTION_CONTENT_PADDING_BOTTOM = AGENT_INPUT_FIELD_TO_CHIP_RAIL_GAP_PX;
 const AGENT_INPUT_COMMAND_MENU_TEST_ID = 'agent-input-command-menu';
 const AGENT_INPUT_COMBOBOX_EXPANDED_STATE = { expanded: true } as const;
 const AGENT_INPUT_COMBOBOX_COLLAPSED_STATE = { expanded: false } as const;
@@ -451,6 +454,8 @@ interface AgentInputProps {
     onComposerInputFlushRequestChange?: (request: (() => void) | null) => void;
     /** Scope-local observer for this mounted input's resolved action-bar layout. */
     onComposerActionBarLayoutChange?: (layout: AgentInputActionBarLayout) => void;
+    /** The card's own host view, for a host that seats something against the card itself (Docked's band). */
+    panelHostRef?: React.RefObject<View | null>;
     /** The host's request when the setting is auto (a narrow card asks for wrap); an explicit setting wins. */
     hostActionBarLayout?: AgentInputActionBarLayout;
     sessionId?: string;
@@ -1151,7 +1156,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         minWidth: 0,
         maxWidth: '85%',
         alignItems: 'center',
-        gap: theme.space.s8,
+        // No gap of its own: Send's leading margin is the one gap before it (`AGENT_INPUT_SEND_LEADING_GAP_PX`).
     },
     /**
      * Phone, with an armed switch: the send cluster is the only occupant of its own row, under the
@@ -1179,7 +1184,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     trailingClusterOnRail: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: theme.space.s8,
+        // Send's leading margin is the pair's one gap (`AGENT_INPUT_SEND_LEADING_GAP_PX`).
         marginLeft: 'auto',
         // An armed switch names its destination in words; it takes the line and ellipsizes, never wider than the card.
         flexShrink: 1,
@@ -1366,12 +1371,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // Existing-session web/Tauri composers are flex-bounded, so their late measured
     // maxPanelHeight must not re-constrain the panel during session switches. Hosts that
     // own an explicit composer budget (for example /new modals) opt into applying it on web.
+    const [panelHeightPx, setPanelHeightPx] = React.useState<number | null>(null);
+    // The whole composer block (status row, padding and card): what it holds besides the card shares the host's room.
+    const [composerBlockHeightPx, setComposerBlockHeightPx] = React.useState<number | null>(null);
     const hostPanelMaxHeight = resolveAgentInputHostPanelMaxHeight({
         platform: Platform.OS,
         maxPanelHeight: props.maxPanelHeight,
         mode: props.panelMaxHeightMode,
+        outsidePanelHeight: composerBlockHeightPx !== null && panelHeightPx !== null ? composerBlockHeightPx - panelHeightPx : null,
     });
-    const [panelHeightPx, setPanelHeightPx] = React.useState<number | null>(null);
     const [inputContainerHeightPx, setInputContainerHeightPx] = React.useState<number | null>(null);
     const [inputContentHeightPx, setInputContentHeightPx] = React.useState<number | null>(null);
     const [inputExpansionToggleVisible, setInputExpansionToggleVisible] = React.useState(false);
@@ -1985,10 +1993,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         const element = node as unknown as { getBoundingClientRect?: () => DOMRect };
         return element.getBoundingClientRect ? { getBoundingClientRectFn: () => element.getBoundingClientRect!() } : node;
     }, []);
+    const panelHostRef = props.panelHostRef;
     const composerEntityDropRef = React.useCallback((node: View | null) => {
         composerDropHost.current = node;
+        if (panelHostRef) panelHostRef.current = node;
         entityDropDomRef(node);
-    }, [entityDropDomRef]);
+    }, [entityDropDomRef, panelHostRef]);
     const composerDropBounds = React.useCallback(() => readWindowBounds(composerDropMeasurable()) ?? composerDropNativeBounds.current, [composerDropMeasurable]);
     // The composer's whole block (status row, attachments and panel): a carried card keeps clear of it.
     const composerBlockBounds = React.useCallback((): WindowBounds | null => {
@@ -2555,6 +2565,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         stageSpotlightRef,
         props.sessionId ? STAGE_SPOTLIGHT_TARGET_IDS.composerQueue : null,
     );
+    const stageSpotlightLayout = stageSpotlightProps.onLayout;
+    const handleComposerBlockLayout = React.useCallback((event: LayoutChangeEvent) => {
+        stageSpotlightLayout?.(event);
+        updateNullableLayoutHeight(setComposerBlockHeightPx, event.nativeEvent.layout.height);
+    }, [stageSpotlightLayout]);
 
     const {
         commandMenuOpen,
@@ -4268,7 +4283,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 ref={stageSpotlightRef}
                 // Measured by the composer's pickers (their clearance) and by the stage spotlight.
                 collapsable={false}
-                onLayout={stageSpotlightProps.onLayout}
+                onLayout={handleComposerBlockLayout}
                 pointerEvents={Platform.OS === 'web' ? 'auto' : undefined}
                 style={[
                     styles.container,

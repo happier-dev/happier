@@ -151,11 +151,10 @@ export function createScrimBandWebLayers(params: Readonly<{
             ...createBackdropWebStyle({ backgroundColor: 'transparent', blurPx: blurPx * scale }),
             ...scrimBandMask(params.rampPx, params.axes, band, sidePx),
         })) : [],
-        // One band recipe on every width and tier (OverlayScrim's): the page colour, held under the status line
-        // and header so nothing behind them reads through, then dissolving, with the frost and picture showing
-        // only in the dissolve. A phone band holds over the rows seated on it; a centred desktop band seats its
-        // header inside the surface, so it holds exactly from the surface's top edge down (the ramp's underlap)
-        // and dissolves over the rest of the ramp above it, and sideways.
+        // One band recipe on every width and tier (OverlayScrim's): the page colour, then dissolving, with the
+        // frost and picture showing in the dissolve. A phone band is seated on the card and eases out from its
+        // edge (0.2's recipe); a centred desktop band seats its header inside the surface, so it holds exactly
+        // from the surface's top edge down (the ramp's underlap) and dissolves over the rest above it, and sideways.
         veil: {
             ...fill,
             ...scrimBandMask(params.rampPx, params.axes, params.axes === 'centre'

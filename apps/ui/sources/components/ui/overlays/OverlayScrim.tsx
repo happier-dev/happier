@@ -95,6 +95,12 @@ export type OverlayScrimProps = Readonly<{
      * this and no other value moves.
      */
     rampHeight?: number;
+    /**
+     * Where the seated surface starts inside the parent, below any row that stands on the band (Docked's
+     * status line, Search's capsules). The band rises from the surface itself, as 0.2's did: seated on such a
+     * row it started that row's height too high. Default 0, the parent's top edge.
+     */
+    seatTop?: number | undefined;
     testID?: string;
     strength?: FloatingBackdropStrength;
     picture?: FloatingBackdropPicture | null;
@@ -102,9 +108,9 @@ export type OverlayScrimProps = Readonly<{
 }>;
 
 /**
- * The ground under the band, one recipe in every tier: the page colour, opaque under the card and the
- * rows seated on the band (blur alone leaves dense list text readable behind a status line), then
- * dissolving with the shared falloff. Where the device frosts, the frost shows through that dissolve.
+ * The ground under the band, one recipe in every tier: the page colour, opaque behind the card, then
+ * dissolving with the shared falloff from the card's edge up. Where the device frosts, the frost shows
+ * through that dissolve.
  *
  * `surface.base`, not `background.canvas`: canvas is the colour BETWEEN the list's rows, and the
  * rows themselves sit on `surface.base`. Against a stack of rows a flat canvas strip reads as a
@@ -204,7 +210,7 @@ export const OverlayScrim = React.memo(function OverlayScrim(props: OverlayScrim
                     position: 'absolute',
                     left: -(props.reach?.right ?? 0),
                     right: -(props.reach?.right ?? 0),
-                    top: -(rampHeight - SCRIM_RAMP_UNDERLAP),
+                    top: (props.seatTop ?? 0) - (rampHeight - SCRIM_RAMP_UNDERLAP),
                     bottom: -(props.reach?.bottom ?? OVERLAY_SCRIM_BOTTOM_EXTENSION),
                 },
                 animatedStyle,

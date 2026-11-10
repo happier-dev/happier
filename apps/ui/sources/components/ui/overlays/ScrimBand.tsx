@@ -29,6 +29,8 @@ export const ScrimBand = React.memo(function ScrimBand(props: Readonly<{
     /** False while the surface is leaving. */
     shown: boolean;
     rampHeight: number;
+    /** Where the seated surface starts below the rows standing on the band (`OverlayScrim`'s `seatTop`). */
+    seatTop?: number;
     progress: SharedValue<number>;
     axes: ScrimBandAxes;
     strength: FloatingBackdropStrength;
@@ -49,7 +51,7 @@ function NativeScrimBand(props: React.ComponentProps<typeof ScrimBand>) {
     const progress = useDerivedValue(() => shown ? entranceProgress.value : withTiming(0, {
         duration: reducedMotion ? 0 : motionTokens.overlay.popover.exitMs,
     }));
-    return <OverlayScrim progress={progress} rampHeight={props.rampHeight}
+    return <OverlayScrim progress={progress} rampHeight={props.rampHeight} seatTop={props.seatTop}
         strength={props.strength} picture={props.picture} reach={props.reach} testID={props.testID} />;
 }
 
@@ -89,7 +91,7 @@ function WebScrimBand(props: React.ComponentProps<typeof ScrimBand>) {
             pointerEvents="none"
             style={{
                 position: 'absolute',
-                top: rise,
+                top: (props.seatTop ?? 0) + rise,
                 left: sidePx === undefined ? -props.reach.right : -sidePx,
                 right: sidePx === undefined ? -props.reach.right : -sidePx,
                 bottom: -props.reach.bottom,

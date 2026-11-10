@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { ChromeGlyph } from '@/components/ui/icons/chromeGlyphInk';
 import { t } from '@/text';
 import { AGENT_INPUT_FIELD_ACCESSORY_EDGES_PX, AGENT_INPUT_QUIET_ICON_SIZE_PX } from './agentInputChromeStyles';
 
@@ -47,13 +48,13 @@ export function AgentInputFieldAccessories(props: Readonly<{
         <View key="promptLibrary" style={[styles.target, { width: geometry.targetSize, height: geometry.targetSize }]}>
             <IconButton
                 testID="agent-input-prompt-library"
-                iconName="book-open"
+                // The composer's quiet tools rest in the shell's chrome ink (owner 11-10), coming up while engaged.
+                icon={<ChromeGlyph name="book-open" size={16} />}
                 accessibilityLabel={t('agentInput.promptPicker.open')}
                 tooltip={t('agentInput.promptPicker.open')}
                 tooltipHidden={props.libraryOpen === true}
                 variant="plain"
                 size={VISUAL_SIZE}
-                iconSize={16}
                 interactiveTargetEdgesPx={AGENT_INPUT_FIELD_ACCESSORY_EDGES_PX}
                 onPress={props.onOpenLibrary}
             />

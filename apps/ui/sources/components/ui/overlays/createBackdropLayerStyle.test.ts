@@ -116,17 +116,19 @@ describe('band behind a seated header (phone and centred desktop)', () => {
         expect(sideways).toContain('rgba(0,0,0,1.000) calc(100% - 100.0px)');
     });
 
-    it.each([true, false])('hides the page behind the status line and header in every tier (blur %s)', (enableBlur) => {
+    it.each([true, false])('seats a phone band on the card and eases it out above, with no held slab (blur %s)', (enableBlur) => {
         const rampPx = 128;
         const layers = createScrimBandWebLayers({
             ground: 'rgb(24, 20, 20)', enableBlur, strength: 'soft', rampPx, axes: 'top',
         });
-        // The ground is the page colour, opaque: blur alone leaves dense list text readable.
         expect(layers.veil.backgroundColor).toBe('rgb(24, 20, 20)');
         const mask = String(layers.veil.maskImage);
-        // From the card up past the status line (~60px above the card, the ramp's top 100px above it).
-        for (const aboveCard of [0, 30, 62]) expect(maskAlphaAt(mask, rampPx - 28 - aboveCard)).toBeGreaterThanOrEqual(0.9);
-        // Still a band: the top of the ramp is clear.
+        // Full strength behind the card (the ramp's underlap), then a soft ease-out from the card's edge.
+        expect(maskAlphaAt(mask, rampPx)).toBe(1);
+        const aboveCard = [0, 30, 62].map((px) => maskAlphaAt(mask, rampPx - 28 - px));
+        expect(aboveCard[0]!).toBeLessThan(0.9);
+        expect(aboveCard[1]!).toBeLessThan(aboveCard[0]!);
+        expect(aboveCard[2]!).toBeLessThan(0.15);
         expect(maskAlphaAt(mask, 0)).toBe(0);
     });
 });

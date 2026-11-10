@@ -56,7 +56,7 @@ afterEach(() => {
 });
 
 describe('native floating composer band', () => {
-    it.each(['android', 'ios-blur-off', 'ios-blur'] as const)('hides the page behind the header rows in every tier (%s)', async (tier) => {
+    it.each(['android', 'ios-blur-off', 'ios-blur'] as const)('seats the band on the card and eases it out in every tier (%s)', async (tier) => {
         const previousOS = Platform.OS;
         Object.defineProperty(Platform, 'OS', { configurable: true, value: tier === 'android' ? 'android' : 'ios' });
         try {
@@ -68,8 +68,7 @@ describe('native floating composer band', () => {
                 reach={{ right: 0, bottom: 48 }} picture={null} />);
             // Frost dissolves the band's top on iOS; it never replaces the ground under the seated rows.
             expect(screen.findAllByType('BlurView')).toHaveLength(tier === 'ios-blur' ? 3 : 0);
-            // Blur or not, the band has to hide the text behind the card and the rows seated above it
-            // (the status line and the header sit in the lower part of the ramp), not tint it.
+            // Blur or not: opaque behind the card, then easing out from its edge (0.2's recipe), never a held slab.
             const dim = screen.findAllByType('LinearGradient').find(node => node.props.dither)!;
             const colors = dim.props.colors as string[];
             const locations = dim.props.locations as number[];
@@ -80,7 +79,9 @@ describe('native floating composer band', () => {
                 const mix = span > 0 ? (t - locations[a]!) / span : 0;
                 return Color(colors[a]!).alpha() * (1 - mix) + Color(colors[b]!).alpha() * mix;
             };
-            for (const t of [0, 0.35, 0.7]) expect(alphaAt(t)).toBeGreaterThanOrEqual(0.9);
+            expect(alphaAt(0)).toBe(1);
+            expect(alphaAt(0.35)).toBeLessThan(0.9);
+            expect(alphaAt(0.7)).toBeLessThan(alphaAt(0.35));
             // Still a band, not a sheet: it clears at the far end.
             expect(Color(colors.at(-1)!).alpha()).toBe(0);
             const underlay = screen.findAll(node => typeof node.type === 'string'

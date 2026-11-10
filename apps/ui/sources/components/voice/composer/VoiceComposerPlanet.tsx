@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { AGENT_INPUT_SEND_LEADING_GAP_PX } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
 import { VoiceMarkArt, type VoiceMarkEvent, type VoiceMarkPose } from '@/components/voice/presence/VoiceMark';
 import type { VoiceHeldInput } from '@/voice/runtime/controller/VoiceConversationController';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -14,7 +15,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 export const VOICE_COMPOSER_PLANET_SLOT = 32;
 const VOICE_COMPOSER_MARK_SIZE = 26;
 /** The trailing row's gap to Send; the press frame grows into half of it on each side. */
-const VOICE_COMPOSER_ROW_GAP = 8;
+const VOICE_COMPOSER_ROW_GAP = AGENT_INPUT_SEND_LEADING_GAP_PX;
 
 /**
  * Voice, in the composer's trailing action slot — immediately before Send (VE-02).

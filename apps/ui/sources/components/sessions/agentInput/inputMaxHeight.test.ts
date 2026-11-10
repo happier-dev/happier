@@ -8,7 +8,18 @@ import {
     computeAgentInputKeyboardOpenVariableSectionMaxHeight,
     computeNewSessionComposerPanelMaxHeight,
     computeNewSessionInputMaxHeight,
+    resolveAgentInputHostPanelMaxHeight,
 } from './inputMaxHeight';
+
+describe('resolveAgentInputHostPanelMaxHeight', () => {
+    it('keeps the whole composer, status row included, inside the host room on native', () => {
+        // The host's room is for the composer block; the card shares it with the status row and padding.
+        expect(resolveAgentInputHostPanelMaxHeight({ platform: 'ios', maxPanelHeight: 400, outsidePanelHeight: 52 })).toBe(348);
+        expect(resolveAgentInputHostPanelMaxHeight({ platform: 'ios', maxPanelHeight: 40, outsidePanelHeight: 52 })).toBe(0);
+        // Before the block is measured the card keeps the host's room.
+        expect(resolveAgentInputHostPanelMaxHeight({ platform: 'ios', maxPanelHeight: 400, outsidePanelHeight: null })).toBe(400);
+    });
+});
 
 describe('inputMaxHeight', () => {
     it('reduces default max height when keyboard is open (native)', () => {

@@ -132,7 +132,7 @@ describe('VoiceComposerPlanet', () => {
         return hosts[0]!;
     }
 
-    it('draws at its slot and reaches the finger target by hit area, stopping at its 8 px gap to Send', async () => {
+    it('draws at its slot and reaches the finger target by hit area, stopping at half its gap to Send', async () => {
         const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
         render(<HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>{scene()}</HappierUiPlatformProvider>);
 
@@ -140,12 +140,13 @@ describe('VoiceComposerPlanet', () => {
         const area = readHitArea(control());
         expect(area.drawn.width).toBeLessThan(targetSize);
         expect(area.drawn.height).toBeLessThan(targetSize);
-        // Stacked above Send 2 px apart it reaches 1 px of that gap; sideways only half the row's 8 px gap,
-        // so it never overlaps Send's own hit area.
+        // Stacked above Send 2 px apart it reaches 1 px of that gap; sideways only half the row's gap to Send
+        // (the composer's one Send gap, owner 11-10), so it never overlaps Send's own hit area.
+        const { AGENT_INPUT_SEND_LEADING_GAP_PX } = await import('@/components/sessions/agentInput/components/agentInputChromeStyles');
         expect(area.insets.top).toBe(1);
         expect(area.insets.bottom).toBe(1);
-        expect(area.insets.left).toBe(4);
-        expect(area.insets.right).toBe(4);
+        expect(area.insets.left).toBe(AGENT_INPUT_SEND_LEADING_GAP_PX / 2);
+        expect(area.insets.right).toBe(AGENT_INPUT_SEND_LEADING_GAP_PX / 2);
     });
 
     it('asks the shared energy clock to run only while the planet is live', () => {

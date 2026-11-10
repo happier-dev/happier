@@ -110,3 +110,19 @@ describe('LiquidFill activation', () => {
         expect(record.setActiveCalls).toEqual([false]);
     });
 });
+
+/**
+ * Skia blends a runtime shader's output as premultiplied colour. The dark theme's track is a faint white
+ * (`rgba(255,255,255,0.06)`); handed over straight, it painted as an opaque white disc (owner 11-10, phone composer).
+ */
+describe('LiquidFill colour uniforms', () => {
+    it('hands the shader premultiplied colours', async () => {
+        const { liquidFillColorUniform } = await import('./LiquidFill');
+        const [r, g, b, a] = liquidFillColorUniform('rgba(255,255,255,0.06)');
+        expect(a).toBeCloseTo(0.06);
+        expect([r, g, b].every((channel) => channel <= a + 1e-6)).toBe(true);
+        const fill = liquidFillColorUniform('#9EB9FF', 0.85);
+        expect(fill[3]).toBeCloseTo(0.85);
+        expect(fill[2]).toBeCloseTo(0.85);
+    });
+});

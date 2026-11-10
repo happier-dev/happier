@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { AGENT_INPUT_ACTION_CHIP_GAP_X, NATIVE_ACTION_CHIP_GAP_Y } from './agentInputChromeStyles';
+import { AGENT_INPUT_ACTION_CHIP_GAP_X, AGENT_INPUT_FIELD_TO_CHIP_RAIL_GAP_PX, NATIVE_ACTION_CHIP_GAP_Y } from './agentInputChromeStyles';
 
 /**
  * A reading card's resolved control line. The primary and secondary groups receive already ordered
@@ -33,7 +33,9 @@ const styles = StyleSheet.create(() => ({
         alignItems: 'center',
         justifyContent: 'space-between',
         flexWrap: 'wrap',
-        rowGap: 4,
+        // The live composer's rhythm: the field-to-rail step above, rails one block below it.
+        marginTop: AGENT_INPUT_FIELD_TO_CHIP_RAIL_GAP_PX,
+        rowGap: NATIVE_ACTION_CHIP_GAP_Y,
         // With no + before it, the first chip's glyph starts on the text's edge (chip inset 10, text inset 8).
         marginLeft: -2,
     },

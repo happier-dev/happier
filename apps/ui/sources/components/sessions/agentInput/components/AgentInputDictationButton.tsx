@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { ChromeGlyph } from '@/components/ui/icons/chromeGlyphInk';
 import { t } from '@/text';
 import { AGENT_INPUT_FIELD_ACCESSORY_EDGES_PX, AGENT_INPUT_QUIET_ICON_SIZE_PX } from './agentInputChromeStyles';
 import type { VoiceDictationSnapshot } from '@/voice/dictation/VoiceDictationController';
@@ -40,7 +41,8 @@ export function AgentInputDictationButton(props: Readonly<{
         <View style={styles.target}>
             <IconButton
                 testID={props.testID ?? 'agent-input-dictation'}
-                iconName={listening ? 'microphone-slash' : 'microphone'}
+                // Chrome ink at rest (owner 11-10); full ink while listening, as the selected control.
+                icon={<ChromeGlyph name={listening ? 'microphone-slash' : 'microphone'} size={16} active={listening} />}
                 accessibilityLabel={label}
                 tooltip={listening ? label : t('voicePresence.dictate')}
                 tooltipPlacement="bottom"
@@ -48,7 +50,6 @@ export function AgentInputDictationButton(props: Readonly<{
                 tone={listening ? 'primary' : 'default'}
                 selected={listening}
                 size={DICTATION_VISUAL_SIZE}
-                iconSize={16}
                 interactiveTargetEdgesPx={AGENT_INPUT_FIELD_ACCESSORY_EDGES_PX}
                 disabled={props.disabled === true || transcribing}
                 onPress={props.onPress}

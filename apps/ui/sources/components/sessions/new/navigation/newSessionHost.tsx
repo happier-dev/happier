@@ -4,6 +4,7 @@ import { useLocalSearchParams, useNavigation, useRouter, type HrefObject } from 
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { isNewSessionPickerSubflowPath, pickNewSessionRouteParams, type NewSessionRouteParams } from './setNewSessionPickerReturnParams';
 
+import type { View } from 'react-native';
 import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
 import type { DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc';
 import type { ModelOption } from '@/sync/domains/models/modelOptions';
@@ -63,6 +64,8 @@ export type NewSessionEmbeddedHost = Readonly<{
     statusTrailingActions?: React.ReactNode;
     /** Replaces the empty composer's line; `null` hides it while empty and not creating. */
     emptyComposerStatus?: SessionInstrumentStripConnectionStatus | null;
+    /** Receives the composer card's host view, so Docked seats its band on the card rather than its header. */
+    composerPanelRef?: React.RefObject<View | null>;
     /** Opens a Session named by the composer's started line (Docked also folds its card as it goes). */
     onOpenStartedSession?: (href: string) => void;
     /**

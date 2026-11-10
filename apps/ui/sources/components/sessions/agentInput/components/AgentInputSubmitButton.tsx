@@ -21,6 +21,7 @@ import type { AgentInputSendIntentOptions, AgentInputSendMenuItem } from '../age
 import type { Theme } from '@/theme';
 
 import { readArmedRouteContinuationLabel, resolveArmedSubmitPresentation, type ArmedRouteContinuation } from './agentContinuationSubmitPresentation';
+import { AGENT_INPUT_SEND_LEADING_GAP_PX } from './agentInputChromeStyles';
 
 /** The composer's Stop control, shared with the rail chip (`createAbortActionButton`). */
 const STOP_TEST_ID = 'agent-input-abort';
@@ -47,7 +48,7 @@ const stylesheet = StyleSheet.create(() => ({
         // onto the chip rail; the circular send is fixed-width and never shrinks.
         flexShrink: 1,
         minWidth: 0,
-        marginLeft: 8,
+        marginLeft: AGENT_INPUT_SEND_LEADING_GAP_PX,
         marginRight: 8,
         paddingTop: SUBMIT_HIT_REACH.top,
         paddingBottom: SUBMIT_HIT_REACH.bottom,

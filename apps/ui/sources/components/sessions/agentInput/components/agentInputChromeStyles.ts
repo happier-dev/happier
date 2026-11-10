@@ -19,6 +19,11 @@ type Theme = UnistylesThemes[keyof UnistylesThemes];
  * state it as `columnGap`; native chips state it as their own trailing margin.
  */
 export const AGENT_INPUT_ACTION_CHIP_GAP_X = 4;
+/**
+ * The one gap before Send: Send's own leading margin, so the Voice glyph beside it is drawn this far from the
+ * circle plus its slot's slack (owner 11-10: the pair read as apart). Voice's press frame grows into half of it.
+ */
+export const AGENT_INPUT_SEND_LEADING_GAP_PX = 4;
 /** The gap between wrapped chip lines: native rows state it as margins, web rows as `rowGap`; the rails' hit areas split this one value. */
 export const NATIVE_ACTION_CHIP_GAP_Y = 1;
 
@@ -45,6 +50,12 @@ export const AGENT_INPUT_PANEL_PADDING_BOTTOM = 8;
  * line sits as far down as it sits in: 12 on a phone (lab D13's content inset), 18 on wider layouts.
  */
 export const AGENT_INPUT_FIELD_PADDING_Y = 5;
+/**
+ * The step from the field's row to the first chip rail, past the field's own padding: live, document and reading
+ * cards alike. The typed text breathes above the controls while the rails themselves stay one block (owner
+ * 2026-11-10: text-to-chips up, rail-to-rail down).
+ */
+export const AGENT_INPUT_FIELD_TO_CHIP_RAIL_GAP_PX = 8;
 
 /**
  * The composer's one edge (calm-shell C1), the same for live, read-only, document and preview composers and

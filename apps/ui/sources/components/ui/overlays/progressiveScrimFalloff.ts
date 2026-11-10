@@ -77,16 +77,8 @@ export function scrimRamp(stopCount: number = DEFAULT_STOP_COUNT): ScrimRamp {
 }
 
 /**
- * How much of a phone band's ramp is held at full strength: up to where the rows seated on the band end
- * (the Docked status line and header, Search's capsules). Blur alone leaves dense list text readable
- * behind those rows, so the page colour hides it there in every tier; frost shows only in the dissolve.
- */
-export const SCRIM_SOLID_HOLD = 0.72;
-
-/**
- * A ramp held at full strength over its first `hold`, then the same falloff over the rest: the band
- * hides what is behind the rows seated on it, and the short dissolve above them keeps it a band
- * rather than a sheet.
+ * A ramp held at full strength over its first `hold`, then the same falloff over the rest: a centred
+ * desktop band holds from its surface's top edge down and dissolves only above it.
  */
 export function scrimHeldRamp(hold: number, stopCount: number = DEFAULT_STOP_COUNT): ScrimRamp {
     const held = Math.min(1, Math.max(0, hold));
@@ -136,7 +128,11 @@ export function scrimBlurLayers(): ReadonlyArray<Readonly<{ scale: number; band:
     }));
 }
 
-/** The phone band's ramp, on native and web alike: held under the seated rows, then dissolving. */
+/**
+ * The phone band's ramp, on native and web alike (0.2's recipe): the one falloff over the whole ramp,
+ * seated on the card itself. It is full strength only behind the card; above it, it eases out from the
+ * card's edge, so no hard top edge shows over the page (a held ramp read as a sharp slab, owner 2026-11-10).
+ */
 export function scrimBandRamp(stopCount: number = DEFAULT_STOP_COUNT): ScrimRamp {
-    return scrimHeldRamp(SCRIM_SOLID_HOLD, stopCount);
+    return scrimRamp(stopCount);
 }

@@ -52,14 +52,15 @@ half4 main(float2 pos) {
     // Slow shimmer band while streaming.
     float bandX = u_center.x + u_radius * sin(u_time * 0.9);
     float band = u_streaming * 0.08 * exp(-pow((pos.x - bandX) / (u_radius * 0.5), 2.0));
-    color.rgb += half3(band) * half(pos.y > surfaceY ? 1.0 : 0.0);
+    color.rgb += half3(band) * color.a * half(pos.y > surfaceY ? 1.0 : 0.0);
 
     // Specular highlight, top-left.
     float2 hl = pos - (u_center + float2(-u_radius * 0.40, -u_radius * 0.45));
     float glow = max(0.0, 1.0 - length(hl) / (u_radius * 0.9));
-    color.rgb += half3(glow * glow * 0.16);
+    color.rgb += half3(glow * glow * 0.16) * color.a;
 
-    // Soft edge.
+    // Soft edge. Colours are premultiplied throughout (Skia blends a shader's output as premultiplied), so the
+    // light added above scales with the colour's own alpha and a faint track stays faint.
     float edge = smoothstep(u_radius, u_radius - 1.0, dist);
     return color * half(edge);
 }
@@ -99,6 +100,16 @@ function colorToFloat4(color: string): [number, number, number, number] {
     return [0.5, 0.5, 0.5, 1];
 }
 
+/**
+ * A theme colour as the shader's premultiplied float4. Skia blends a runtime shader's output as premultiplied
+ * colour, so a faint white track handed over straight (`rgba(255,255,255,0.06)`) painted as an opaque white disc.
+ */
+export function liquidFillColorUniform(color: string, alpha?: number): [number, number, number, number] {
+    const [r, g, b, a] = colorToFloat4(color);
+    const resolvedAlpha = alpha ?? a;
+    return [r * resolvedAlpha, g * resolvedAlpha, b * resolvedAlpha, resolvedAlpha];
+}
+
 export type LiquidFillProps = Readonly<{
     /** Animated fill percentage 0–100 (already spring-smoothed by the owner). */
     fillPct: SharedValue<number>;
@@ -134,10 +145,10 @@ export const LiquidFill = React.memo(function LiquidFill(props: LiquidFillProps)
 
     // 85% fill opacity over the track; amplitude ≤ 8% of radius (5% base, ×1.5 streaming).
     const toneFloat4 = React.useMemo(() => ({
-        ok: colorToFloat4(props.okColor).map((v, i) => (i === 3 ? 0.85 : v)) as [number, number, number, number],
-        warn: colorToFloat4(props.warnColor).map((v, i) => (i === 3 ? 0.85 : v)) as [number, number, number, number],
-        danger: colorToFloat4(props.dangerColor).map((v, i) => (i === 3 ? 0.85 : v)) as [number, number, number, number],
-        track: colorToFloat4(props.trackColor),
+        ok: liquidFillColorUniform(props.okColor, 0.85),
+        warn: liquidFillColorUniform(props.warnColor, 0.85),
+        danger: liquidFillColorUniform(props.dangerColor, 0.85),
+        track: liquidFillColorUniform(props.trackColor),
     }), [props.dangerColor, props.okColor, props.trackColor, props.warnColor]);
 
     const fillPct = props.fillPct;

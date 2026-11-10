@@ -141,21 +141,24 @@ function DockedPill() {
     </View>;
 }
 
-/** The frost around the dock, carrying the picture of whatever the page shows. */
-function DockedBackdrop(props: Readonly<{ shown: boolean; progress: SharedValue<number>; phone: boolean; reach: Readonly<{ left?: number; right: number; bottom: number }> }>) {
+/**
+ * The frost around the dock, carrying the picture of whatever the page shows. On a phone it is seated on the
+ * card itself, not on the status row above it (`cardTop`, the card's offset in the dock), so it eases out from
+ * the card's edge as 0.2's did; seated on the header it started a header-plus-gap too high. A desktop band
+ * seats the whole dock: its header stands inside the band's held tier.
+ */
+function DockedBackdrop(props: Readonly<{ shown: boolean; progress: SharedValue<number>; phone: boolean; cardTop: number; reach: Readonly<{ left?: number; right: number; bottom: number }> }>) {
     const stage = useAtmosphereStageSnapshot().stage;
     const picture = useFloatingBackdropPicture(stage?.backdrop ?? null);
     const strength = useSetting('newSessionBackdropStrengthV1');
     return <ScrimBand testID="new-session-docked-band" shown={props.shown} progress={props.progress} picture={picture} strength={strength} reach={props.reach}
+        seatTop={props.phone ? props.cardTop : 0}
         axes={props.phone ? 'top' : 'centre'} rampHeight={props.phone ? SIMPLE_NEW_SESSION_SCRIM_RAMP_HEIGHT : DESKTOP_DOCK_RAMP_HEIGHT} />;
 }
 
 /** The root keeps the card above the navigator and consumes only the first outside keyboard-dismissal tap. */
 export function NewSessionDockedHost(props: React.PropsWithChildren) {
     const shell = useNewSessionShellHost();
-    const draftId = shell?.visible && typeof shell.host.params.draftId === 'string' ? shell.host.params.draftId : null;
-    const [nativeFocused, setNativeFocused] = React.useState(false);
-    React.useEffect(() => { setNativeFocused(false); }, [draftId]);
     const pointer = resolveOverlayPointerEvents('box-none');
     return <View style={{ flex: 1 }}>
         {props.children}
@@ -166,29 +169,26 @@ export function NewSessionDockedHost(props: React.PropsWithChildren) {
             aria-hidden={shell.visible ? undefined : true}
             importantForAccessibility={shell.visible ? 'auto' : 'no-hide-descendants'}
             style={[StyleSheet.absoluteFillObject, styles.layer, pointer.webStyle, shell.visible ? null : styles.hidden]}>
-            {Platform.OS !== 'web' && nativeFocused ? <Pressable
-                testID="new-session-docked-dismiss-keyboard" style={StyleSheet.absoluteFillObject}
-                accessibilityRole="button" accessibilityLabel={t('common.dismissKeyboard')}
-                onPress={() => {
-                    if (draftId) requestRegisteredComposerBlur({ kind: 'newSession', instanceId: draftId });
-                }} /> : null}
-            {shell.collapsed ? <DockedPill /> : <PopoverScope><DockedComposer nativeFocused={nativeFocused} onNativeFocusChange={setNativeFocused} /></PopoverScope>}
+            {shell.collapsed ? <DockedPill /> : <PopoverScope><DockedComposer /></PopoverScope>}
         </View>
         </PluginSurfaceFocusEligibilityProvider> : null}
     </View>;
 }
 
-function DockedComposer(props: Readonly<{ nativeFocused: boolean; onNativeFocusChange: (focused: boolean) => void }>) {
+function DockedComposer() {
     const shell = useNewSessionShellHost()!;
     const router = useRouter();
     const { phone, pane, reach, clearedChrome, dockGap, composerWidth, columnWidth, windowWidth: width } = useDockSeat();
     const portalTarget = useModalPortalTarget();
     const composerRef = React.useRef<View | null>(null);
     const [webFocused, setFocused] = React.useState(false);
-    const focused = Platform.OS === 'web' ? webFocused : props.nativeFocused;
+    // Whether the field holds the keyboard lives and dies with this composer: a native field that unmounts while
+    // focused (the card folding to its pill) sends no blur, so a copy kept above it left the catcher below standing.
+    const [nativeFocused, setNativeFocused] = React.useState(false);
+    const focused = Platform.OS === 'web' ? webFocused : nativeFocused;
     const bandBoundary = React.useMemo(() => ({ ref: undefined, onLayout: () => {},
-        onFocusChange: (next: boolean) => { if (Platform.OS !== 'web') props.onNativeFocusChange(next); },
-    }), [props.onNativeFocusChange]);
+        onFocusChange: (next: boolean) => { if (Platform.OS !== 'web') setNativeFocused(next); },
+    }), []);
     const [leaving, setLeaving] = React.useState(false);
     const entrance = useFloatingComposerEntrance(true);
     // The page under the dock clears it like the shell's other floating band, so nothing it covers is out of reach.
@@ -196,9 +196,16 @@ function DockedComposer(props: Readonly<{ nativeFocused: boolean; onNativeFocusC
     // What the page under the card must clear past its own bottom edge: on a phone the gap above the bar; on a
     // desktop the card sits in the page's pane, so only its gap above that pane's bottom.
     const coveredGap = phone ? reach.bottom - clearedChrome : dockGap;
+    // The card's offset under the dock's status row, where a phone band is seated. Any change above the card
+    // (the status line appearing or wrapping) also resizes the dock, so its layout is when to re-read it.
+    const panelRef = React.useRef<View | null>(null);
+    const [cardTop, setCardTop] = React.useState(0);
     const onDockLayout = React.useCallback((event: LayoutChangeEvent) => {
         reportCoveredBottom(event.nativeEvent.layout.height + coveredGap);
-    }, [coveredGap, reportCoveredBottom]);
+        const dockNode = composerRef.current;
+        if (!phone || !panelRef.current || !dockNode) return;
+        panelRef.current.measureLayout(dockNode, (_x, y) => setCardTop((previous) => Math.abs(previous - y) < 0.5 ? previous : y), () => {});
+    }, [coveredGap, phone, reportCoveredBottom]);
     const { close, collapse } = shell;
     const dismiss = React.useCallback(() => {
         setLeaving(true);
@@ -218,6 +225,7 @@ function DockedComposer(props: Readonly<{ nativeFocused: boolean; onNativeFocusC
     const host = React.useMemo<NewSessionEmbeddedHost>(() => ({
         ...shell.host,
         onOpenStartedSession: openCreated,
+        composerPanelRef: panelRef,
         // The status row is the card's header, seated on the dock's frost: quiet icons, as on every width.
         // A phone keeps its labelled draft actions and has no fold (portrait Docked is never collapsed).
         // Unwrapped, so each icon is the row's own item and takes the row's one gap, like the draft actions.
@@ -229,6 +237,8 @@ function DockedComposer(props: Readonly<{ nativeFocused: boolean; onNativeFocusC
         </>,
     }), [dismiss, fold, openCreated, phone, shell.host]);
     const draftId = typeof shell.host.params.draftId === 'string' ? shell.host.params.draftId : null;
+    const shownDraftId = shell.visible ? draftId : null;
+    React.useEffect(() => { setNativeFocused(false); }, [shownDraftId]);
     const layer = useEscapeLayer({
         priority: ESCAPE_LAYER_PRIORITIES.overlay,
         enabled: focused,
@@ -310,7 +320,7 @@ function DockedComposer(props: Readonly<{ nativeFocused: boolean; onNativeFocusC
         style={phone ? [styles.phone, { marginBottom: reach.bottom }] : resizable ? null : { width: dockWidth }}
     >
         {/* The card clears the bar; its paint reaches only through the gap above that bar. */}
-        <DockedBackdrop shown={!leaving} progress={entrance.enterProgress} phone={phone}
+        <DockedBackdrop shown={!leaving} progress={entrance.enterProgress} phone={phone} cardTop={cardTop}
             reach={phone ? { right: reach.right, bottom: reach.bottom - clearedChrome } : { left: sideRoom, right: sideRoom, bottom: reach.bottom }} />
         {resizable ? (
             <ResizableDockedPane testID="new-session-docked-resize" resizeEdge="both"
@@ -328,6 +338,13 @@ function DockedComposer(props: Readonly<{ nativeFocused: boolean; onNativeFocusC
     return <EscapeLayerProvider layer={layer}>
         <NativeBackLayerBoundary active={focused} onRequestClose={dismiss} forwardInputBack>
         <View pointerEvents={pointer.nativePointerEvents} style={[{ flex: 1 }, pointer.webStyle]}>
+            {/* With the keyboard up, the first tap outside the card only puts it away. */}
+            {Platform.OS !== 'web' && nativeFocused ? <Pressable
+                testID="new-session-docked-dismiss-keyboard" style={StyleSheet.absoluteFillObject}
+                accessibilityRole="button" accessibilityLabel={t('common.dismissKeyboard')}
+                onPress={() => {
+                    if (draftId) requestRegisteredComposerBlur({ kind: 'newSession', instanceId: draftId });
+                }} /> : null}
             <ComposerKeyboardScaffold mode="newSession" surface="transparent" layoutBottomInset={clearedChrome} composer={composer} composerPointerEvents="box-none" pointerEvents="box-none"
                 contentProps={{ pointerEvents: 'box-none' }}
                 style={pointer.webStyle} contentStyle={pointer.webStyle}>

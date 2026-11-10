@@ -186,10 +186,13 @@ export function UniversalSearchNativeHost(props: UniversalSearchNativeHostProps)
                         },
                     ]}
                 >
+                    {/* Seated on the results and field, under the plane's top gap and the capsule row that
+                        stand on the band: seated on the plane's top it started that much too high. */}
                     <OverlayScrim
                         testID={`${testID}:scrim`}
                         progress={scrimProgress}
                         rampHeight={UNIVERSAL_SEARCH_SCRIM_RAMP_HEIGHT}
+                        seatTop={UNIVERSAL_SEARCH_PLANE_TOP_GAP_PX + OVERLAY_CAPSULE_ROW_HEIGHT}
                     />
                     <View style={styles.capsuleRow}>
                         {keyboardHeight > 0 ? (
