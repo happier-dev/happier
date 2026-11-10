@@ -12,7 +12,7 @@ import type {
   DeploymentReadDemandV1,
 } from '@happier-dev/deployments';
 import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol/v1';
-import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 import {
   DropdownMenu,
@@ -162,12 +162,6 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             onOpenReview={editing.review.open}
             copy="setting"
           />
-        ) : null}
-        {change.followup ? (
-          <SurfaceStateCard testID="project-deployments.environment.settings.preview-enrollment" kind="warning"
-            title={t('projects.deployments.settingsSections.previewsEnrollmentUnavailable')}
-            reason={readDeploymentFailureRecoveryV1(change.followup.errorCode).remedy}
-            diagnosticCode={change.followup.errorCode} />
         ) : null}
         <ItemGroup
           testID={section('servers-build')}
@@ -439,6 +433,13 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             title={t('projects.deployments.sectionPreviews')}
             description={t('projects.deployments.sectionPreviewsDescription')}
           >
+            {/* The save landed; only new pull requests are affected, so the warning sits with the previews it concerns. */}
+            {change.followup ? (
+              <SurfaceStateCard testID="project-deployments.environment.settings.preview-enrollment" kind="warning" size="line"
+                title={t('projects.deployments.settingsSections.previewsEnrollmentUnavailable')}
+                reason={readDeploymentRefusalRecoveryV1(change.followup.errorCode)?.remedy}
+                diagnosticCode={change.followup.errorCode} />
+            ) : null}
             {detail.environment.purpose !== 'preview' ? (
               <PreviewTemplateRows
                 detail={detail}
@@ -739,14 +740,21 @@ function PreviewTemplateRows(props: Readonly<{
   const sharesProduction = template.runtimeTargetLinkId === (props.detail.environment.runtimeTargetLinkId ?? props.detail.runtimeTargetLink?.id);
   const dataKind = previewDataKind(template);
   const save = (patch: Partial<PreviewTemplate>) => onSave?.({ ...template, ...patch });
-  const unavailable = t('projects.deployments.settingsSections.previewsDataUnavailable');
   const canChooseBranch = !!props.lifetime && !!props.inspect
     && props.detail.targetLinks.some(row => row.targetLink.role === 'data' && row.targetLink.source.kind === 'plugin');
+  // A reason marks its segment unavailable (the shared segmented row rule), so only an option that cannot be chosen carries
+  // one. Under the row the reason stands alone, so a single unavailable option names itself.
+  const ownUnavailable = !seenData.own && dataKind !== 'own';
+  const branchUnavailable = !seenData.branch && dataKind !== 'branch' && !canChooseBranch;
+  const bothUnavailable = ownUnavailable && branchUnavailable;
+  const unavailable = (own: boolean) => bothUnavailable ? t('projects.deployments.settingsSections.previewsDataUnavailable')
+    : own ? t('projects.deployments.settingsSections.previewsDataOwnUnavailable')
+      : t('projects.deployments.settingsSections.previewsDataBranchUnavailable');
   const dataOptions: ReadonlyArray<SegmentedChoiceOption<PreviewData>> = [
     { id: 'own', label: t('projects.deployments.settingsSections.previewsDataOwn'),
-      disabled: !seenData.own && dataKind !== 'own', unavailableReason: unavailable },
+      ...(ownUnavailable ? { disabled: true, unavailableReason: unavailable(true) } : {}) },
     { id: 'branch', label: t('projects.deployments.settingsSections.previewsDataBranch'),
-      disabled: !seenData.branch && dataKind !== 'branch' && !canChooseBranch, unavailableReason: unavailable },
+      ...(branchUnavailable ? { disabled: true, unavailableReason: unavailable(false) } : {}) },
     { id: 'none', label: t('projects.deployments.settingsSections.previewsDataNone') },
   ];
   const runsOnSubtitle = sharesProduction ? t('projects.deployments.settingsSections.previewsProductionMachine') : undefined;

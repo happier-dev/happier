@@ -80,7 +80,8 @@ it('reads a parent only on selection, settles a provider refusal, retries explic
     expect(reads).toBe(0);
     await act(async () => picker().props.onSelect(link.id));
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(reads).toBe(1); });
-    expect(screen.findByTestId('preview.branch.loading')).not.toBeNull();
+    // The picker holds while the parent is read, in place.
+    expect(picker().props.itemTrigger.itemProps.disabled).toBe(true);
     expect(saved).toEqual([]);
     await act(async () => refuse());
     const failure = () => screen.root.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'preview.branch.failed');

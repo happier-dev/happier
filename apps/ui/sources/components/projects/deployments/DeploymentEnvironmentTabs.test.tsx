@@ -1195,10 +1195,10 @@ describe('Environment → Settings: checks, backups, previews', () => {
     const id = 'project-deployments.environment.settings.previews.template';
     try {
       expect(await settle(`${id}.data`)).not.toBeNull();
-      const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
-      const data = screen.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === `${id}.data`)!;
-      expect(data.props.options.find((option: { id: string }) => option.id === 'branch').disabled).toBe(false);
       expect(screen.findByTestId(`${id}.branch.parent`)).toBeNull();
+      // The rendered segment is pressable: choosing it opens the parent picker.
+      await screen.pressByTestIdAsync(`${id}.data:branch`);
+      expect(await settle(`${id}.branch.parent`)).not.toBeNull();
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 

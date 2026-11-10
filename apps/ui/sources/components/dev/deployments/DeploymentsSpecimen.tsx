@@ -7,6 +7,7 @@ import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployment
 import {
   createDeploymentEnvironmentDetailV1,
   createDeploymentEnvironmentHeaderV1,
+  createDeploymentTargetLinkHeaderV1,
   createDeploymentReceiptDetailV1,
   createDeploymentReceiptHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
@@ -15,6 +16,8 @@ import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/sett
 import { ProjectDeploymentsView } from '@/components/projects/deployments/ProjectDeploymentsBody';
 import { HappyError } from '@/utils/errors/errors';
 import { useAllMachines } from '@/sync/store/hooks';
+import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 /**
  * Dev-only specimen of Project → Deployments (lab d1/d3) drawn through the real page over a fixture network
@@ -345,6 +348,54 @@ function tabFixtures(tabs: string, environmentId: string) {
   return { listDomains, observeEnvironmentHealth, backup, owner: tabs === 'team' ? { kind: 'team' as const, teamId: 'team-acme' } : null };
 }
 
+/**
+ * `?preview=` makes Staging a preview template whose data can be a branch of its linked Neon database (lab
+ * `previewdb/branch`): `unset` (Neon linked, no parent chosen yet), `linked` (previews branch from `main`) and
+ * `enrollment` (the save lands but new pull requests are not picked up yet). Saves update this fixture in place; the
+ * branch list answers as the Neon plugin's `branches-list-read` does.
+ */
+type SpecimenPreview = { kind: 'unset' | 'linked' | 'enrollment'; template: NonNullable<ReturnType<typeof createDeploymentEnvironmentDetailV1>['content']['previewTemplate']>; revision: number };
+const NEON_LINK = 'target-neon';
+const NEON_PARENT = { providerProjectId: 'polished-sun-41255823', branchId: 'br-main-a1b2c3d4' };
+function createSpecimenPreview(kind: string | undefined): SpecimenPreview | null {
+  if (kind !== 'unset' && kind !== 'linked' && kind !== 'enrollment') return null;
+  return { kind, revision: 1, template: { v: 1, enabled: true, forkPreviews: 'off',
+    repository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/shop' },
+    runtimeTargetLinkId: 'target-link', domain: { domainId: 'wildcard', templateSlug: 'shop', hostnamePattern: 'pr-{number}.preview.shop.dev' },
+    bindingBlueprints: [], data: kind === 'unset' ? [] : [{ kind: 'managed', dataTargetLinkId: NEON_LINK, ownership: 'providerNative',
+      parentBranchRef: NEON_PARENT }] } as SpecimenPreview['template'] };
+}
+function withSpecimenPreview<T extends ReturnType<typeof createDeploymentEnvironmentDetailV1>>(detail: T, preview: SpecimenPreview): T {
+  const pluginId = 'happier.deploy.neon';
+  const neon = createDeploymentTargetLinkHeaderV1({ id: NEON_LINK, environmentId: detail.environment.id, role: 'data', targetKind: 'neon',
+    machines: [], members: [], source: { kind: 'plugin', contribution: { pluginId, localId: 'database' } } });
+  return { ...detail, environment: { ...detail.environment, revision: preview.revision },
+    content: { ...detail.content, previewTemplate: preview.template },
+    targetLinks: [...detail.targetLinks, { targetLink: neon, content: {
+      providerIdentity: { providerAccountId: 'org-acme', providerResourceId: NEON_PARENT.providerProjectId, providerEnvironment: NEON_PARENT.branchId },
+      providerEnvironment: { kind: 'custom', id: NEON_PARENT.branchId }, credentialPrincipal: { kind: 'account', accountId: ACCOUNT,
+        purpose: { consumer: { pluginId, localId: 'link' }, purpose: 'database.manage' },
+        target: { kind: 'account', account: { service: { pluginId, localId: 'database' }, accountId: 'token' } } } } }] } as T;
+}
+function specimenPreviewActions(preview: SpecimenPreview) {
+  return {
+    updateEnvironment: async (environment: Readonly<{ id: string }>, patch: Readonly<{ previewTemplate?: SpecimenPreview['template'] | null }>) => {
+      await pause();
+      if (patch.previewTemplate) preview.template = patch.previewTemplate;
+      preview.revision += 1;
+      return { ok: true as const, environmentId: environment.id, revision: preview.revision,
+        ...(preview.kind === 'enrollment' ? { previewEnrollment: { status: 'unavailable' as const, errorCode: 'source_unavailable' } } : {}) } as never;
+    },
+    inspectPlatformTarget: async () => {
+      await pause();
+      return { ok: true as const, value: { branches: [
+        { providerProjectId: NEON_PARENT.providerProjectId, branchId: NEON_PARENT.branchId, name: 'main' },
+        { providerProjectId: NEON_PARENT.providerProjectId, branchId: 'br-preview-pr-142', name: 'preview/pr-142' },
+      ], nextCursor: null } };
+    },
+  };
+}
+
 function transportFor(
   state: string,
   receiptState: ReceiptState,
@@ -352,6 +403,7 @@ function transportFor(
   cancellable: boolean | undefined,
   tabs: string,
   restore: string | undefined,
+  preview: SpecimenPreview | null,
 ): DeploymentReadTransportV1 {
   const base = createDeploymentEnvironmentDetailV1();
   const baseHeader = createDeploymentEnvironmentHeaderV1({
@@ -439,7 +491,8 @@ function transportFor(
             },
     readEnvironment: async (_scope, environmentId) => ({
       ok: true,
-      value: onMachine(environmentId === production.environment.id ? production : staging, machineId),
+      value: onMachine(environmentId === production.environment.id ? production
+        : preview ? withSpecimenPreview(staging, preview) : staging, machineId),
     }),
     listHistory: async () => ({
       ok: true,
@@ -575,7 +628,7 @@ const SPECIMEN_LIFETIME = {
 
 export function DeploymentsSpecimen(
   props: Readonly<{ state: string; receipt: string; deploy?: string; machine?: string; cancellable?: string; tabs?: string;
-    restore?: string }>,
+    restore?: string; preview?: string }>,
 ) {
   // A real Machine of the signed-in Account: `?machine=` names one, else the longest name (the hardest wrap).
   const wanted = props.machine?.toLowerCase() ?? null;
@@ -584,7 +637,11 @@ export function DeploymentsSpecimen(
     const match = wanted ? named.find((machine) => machine.name.toLowerCase().includes(wanted)) : null;
     return (match ?? [...named].sort((a, b) => b.name.length - a.name.length)[0])?.id ?? null;
   });
-  const actions = React.useMemo(() => specimenActions(props.deploy ?? 'unsupported', props.restore), [props.deploy, props.restore]);
+  const preview = React.useMemo(() => createSpecimenPreview(props.preview), [props.preview]);
+  const actions = React.useMemo(() => ({ ...specimenActions(props.deploy ?? 'unsupported', props.restore),
+    ...(preview ? specimenPreviewActions(preview) : {}) }), [props.deploy, props.restore, preview]);
+  // `?preview=` needs the signed-in Account's real deployment-target declarations (the Neon plugin's branch reader).
+  const { binding } = useServerCredentialAccountScopeBinding(preview ? getActiveServerId() : null);
   const cancellable = props.cancellable === 'true' ? true : props.cancellable === 'false' ? false : undefined;
   const receiptState = (
     [
@@ -607,9 +664,9 @@ export function DeploymentsSpecimen(
           accountId: ACCOUNT,
           projectSourceId: 'source-app',
         },
-        transport: transportFor(props.state, receiptState, machineId, cancellable, props.tabs ?? 'populated', props.restore),
+        transport: transportFor(props.state, receiptState, machineId, cancellable, props.tabs ?? 'populated', props.restore, preview),
       }),
-    [props.state, receiptState, machineId, cancellable, props.tabs, props.restore],
+    [props.state, receiptState, machineId, cancellable, props.tabs, props.restore, preview],
   );
   React.useEffect(() => () => controller.retire(), [controller]);
   return (
@@ -619,7 +676,7 @@ export function DeploymentsSpecimen(
       demand={SHOWN}
       accountId={ACCOUNT}
       serverId="home"
-      lifetime={props.state === 'reader' ? null : SPECIMEN_LIFETIME as never}
+      lifetime={props.state === 'reader' ? null : preview ? binding : SPECIMEN_LIFETIME as never}
       sourceId="source-app"
     />
   );

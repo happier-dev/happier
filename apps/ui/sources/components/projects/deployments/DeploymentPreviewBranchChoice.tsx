@@ -69,6 +69,7 @@ export function DeploymentPreviewBranchChoice(props: Readonly<{
   };
   const target = targets.find(entry => entry.targetLink.id === selectedId);
   const failureCode = state.status === 'failed' ? state.code : read?.kind === 'failed' ? read.code : null;
+  const loading = state.status === 'loading' || read?.kind === 'loading';
   return <>
     <DropdownMenu testID={`${props.testID}.parent`} open={open} onOpenChange={setOpen}
       items={targets.map(entry => ({ id: entry.targetLink.id,
@@ -76,12 +77,13 @@ export function DeploymentPreviewBranchChoice(props: Readonly<{
           ? `${entry.content.providerIdentity.providerResourceId} · ${entry.content.providerIdentity.providerEnvironment}` : undefined }))}
       selectedId={selectedId} onSelect={(id) => { setOpen(false); const entry = targets.find(value => value.targetLink.id === id);
         if (entry) void readBranches(entry); }}
-      itemTrigger={{ title: t('projects.deployments.settingsSections.previewsDataBranch'),
-        itemProps: { accessoryLayout: 'adaptive', disabled: props.saving || state.status !== 'ready' || read?.kind === 'loading',
-          detail: read?.kind === 'ready' ? `${target?.title ?? ''} · ${read.parent.title}` : target?.title } }} />
-    {state.status === 'loading' || read?.kind === 'loading' ? (
-      <SurfaceStateCard testID={`${props.testID}.loading`} size="line" kind="loading" title={t('common.loading')} />
-    ) : failureCode ? (
+      // The row says what the choice does; the field holds the parent, and reads in place so nothing moves while it loads.
+      itemTrigger={{ title: t('projects.deployments.settingsSections.previewsDataParent'),
+        subtitle: t('projects.deployments.settingsSections.previewsDataParentBody'), showSelectedSubtitle: false,
+        detailFormatter: () => loading ? t('common.loading')
+          : read?.kind === 'ready' ? `${target?.title ?? ''} · ${read.parent.title}` : target?.title ?? null,
+        itemProps: { accessoryLayout: 'adaptive', disabled: props.saving || state.status !== 'ready' || loading } }} />
+    {failureCode ? (
       <SurfaceStateCard testID={`${props.testID}.failed`} size="line" kind="error"
         title={t('projects.deployments.platformLink.refused')}
         reason={readDeploymentFailureRecoveryV1(failureCode).remedy}
