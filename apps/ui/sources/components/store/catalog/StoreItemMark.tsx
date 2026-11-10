@@ -5,7 +5,7 @@ import type { MarketplaceCatalogReferenceV1 } from '@happier-dev/protocol/market
 
 import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
-import type { AgentId } from '@/agents/catalog/catalog';
+import { hasAgentIconMark, type AgentId } from '@/agents/catalog/catalog';
 import {
   readBundledPluginBrandPresentation,
   useBundledPluginBrandPresentation,
@@ -134,7 +134,8 @@ export function StoreItemMark(
       />
     );
   }
-  if (facts.agentId)
+  // An Agent without a packaged mark of its own (Muse) shows its plugin's brand, else the kind glyph, never a blank.
+  if (facts.agentId && hasAgentIconMark(facts.agentId, theme))
     return (
       <AgentIcon
         agentId={facts.agentId}

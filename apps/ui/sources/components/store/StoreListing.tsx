@@ -44,12 +44,17 @@ import {
 import { StoreSoftwareRouteListing } from './StoreSoftwarePage';
 import { StoreKindSurface } from './StoreKindSurface';
 import { releaseMcpAddDraftContinuation } from '@/components/settings/mcpServers/add/mcpAddDraftState';
-import { useStoreRegistryIdentity } from './catalog/StoreRegistryIdentity';
 
 type Presentation = 'pane' | 'page';
 
 const referenceKey = (reference: StoreListingReference) =>
   JSON.stringify(reference);
+
+/** What a listing is (App, MCP server…): the bar or pane header above it says this, while the listing names the item. */
+function storeListingKindWord(reference: StoreListingReference | null): string {
+  const kind = reference?.type === 'software' ? 'software' : reference?.type === 'registryItem' ? reference.kind : null;
+  return kind === null ? t('capabilities.store.listingLabel') : t(`capabilities.store.kindWord.${kind}`);
+}
 
 /**
  * Opens one item's listing from a Store directory (S40 §4.2): beside the page in the details pane where one fits,
@@ -92,7 +97,7 @@ export function useStoreListingSelection(): StoreListingReference | null {
  */
 export function StoreListingPaneHost(
   props: Readonly<{
-    /** The directory's identity; the selected pane uses its own item identity. */
+    /** The directory's identity; the selected pane is headed by what the item is, since its hero names it. */
     title: string;
     testID: string;
     children: React.ReactNode;
@@ -106,9 +111,8 @@ export function StoreListingPaneHost(
     openStoreAsPage,
   } = usePluginsOpenItem(continuationId);
   const key = storeOpenItem ? referenceKey(storeOpenItem) : null;
-  const identity = useStoreRegistryIdentity(storeOpenItem?.type === 'storeKind' ? null : storeOpenItem);
   const paneTitle = useStoreListingPaneTitleOverride(key);
-  const listingTitle = paneTitle.title ?? identity?.title ?? (storeOpenItem?.type === 'registryItem' ? storeOpenItem.itemId : props.title);
+  const listingTitle = paneTitle.title ?? (storeOpenItem ? storeListingKindWord(storeOpenItem) : props.title);
   const besidePage = useDetailsPaneAvailable();
   const paneSelectionKey = React.useRef<string | null>(null);
   const keepInPane = besidePage || (key !== null && key === paneSelectionKey.current);
@@ -210,12 +214,7 @@ export function StoreListingPage(
     if (result !== true)
       fireAndForget(result, { tag: 'StoreListingPage.close' });
   }, [params.continuation, router]);
-  const kind =
-    props.reference.type === 'software' ? 'software' : props.reference.type === 'registryItem' ? props.reference.kind : null;
-  const kindWord =
-    kind === null || kind === 'app'
-      ? t('capabilities.store.listingLabel')
-      : t(`capabilities.store.kindWord.${kind}`);
+  const kindWord = storeListingKindWord(props.reference);
   const pageTitle = useStoreListingPaneTitleOverride(referenceKey(props.reference));
   return (
     <StoreListingPageFrame>

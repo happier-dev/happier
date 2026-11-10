@@ -248,7 +248,7 @@ const en: StoreTranslation = {
   },
   updates: {
     title: 'Updates',
-    purpose: 'Newer versions from where your browser extensions, MCP servers, skills and agents came from. Nothing changes until you choose.',
+    purpose: 'Newer versions from where your browser extensions, MCP servers, skills, agents and plugins came from. Nothing changes until you choose.',
     checkNow: 'Check now',
     checking: 'Checking…',
     checkedAt: ({ time }) => `Checked ${time}.`,
@@ -385,7 +385,7 @@ const ca: StoreTranslation = {
   },
   updates: {
     title: 'Actualitzacions',
-    purpose: 'Versions més noves d’on provenen les teves extensions del navegador, servidors MCP, habilitats i agents. Res no canvia fins que triïs.',
+    purpose: 'Versions més noves d’on provenen les teves extensions del navegador, servidors MCP, habilitats, agents i plugins. Res no canvia fins que triïs.',
     checkNow: 'Comprova ara',
     checking: 'Comprovant…',
     checkedAt: ({ time }) => `Comprovat a les ${time}.`,
@@ -521,7 +521,7 @@ const de: StoreTranslation = {
   },
   updates: {
     title: 'Updates',
-    purpose: 'Neuere Versionen von dort, woher deine Browser-Erweiterungen, MCP-Server, Skills und Agents stammen. Nichts ändert sich, bis du wählst.',
+    purpose: 'Neuere Versionen von dort, woher deine Browser-Erweiterungen, MCP-Server, Skills, Agents und Plugins stammen. Nichts ändert sich, bis du wählst.',
     checkNow: 'Jetzt prüfen',
     checking: 'Wird geprüft…',
     checkedAt: ({ time }) => `Geprüft um ${time}.`,
@@ -657,7 +657,7 @@ const es: StoreTranslation = {
   },
   updates: {
     title: 'Actualizaciones',
-    purpose: 'Versiones más nuevas de donde vienen tus extensiones del navegador, servidores MCP, habilidades y agentes. Nada cambia hasta que elijas.',
+    purpose: 'Versiones más nuevas de donde vienen tus extensiones del navegador, servidores MCP, habilidades, agentes y plugins. Nada cambia hasta que elijas.',
     checkNow: 'Comprobar ahora',
     checking: 'Comprobando…',
     checkedAt: ({ time }) => `Comprobado a las ${time}.`,
@@ -794,7 +794,7 @@ const fr: StoreTranslation = {
   },
   updates: {
     title: 'Mises à jour',
-    purpose: 'Les nouvelles versions venant de l’origine de vos extensions du navigateur, serveurs MCP, compétences et agents. Rien ne change tant que vous ne choisissez pas.',
+    purpose: 'Les nouvelles versions venant de l’origine de vos extensions du navigateur, serveurs MCP, compétences, agents et plugins. Rien ne change tant que vous ne choisissez pas.',
     checkNow: 'Vérifier maintenant',
     checking: 'Vérification…',
     checkedAt: ({ time }) => `Vérifié à ${time}.`,
@@ -930,7 +930,7 @@ const it: StoreTranslation = {
   },
   updates: {
     title: 'Aggiornamenti',
-    purpose: 'Versioni più recenti da dove provengono le tue estensioni del browser, i server MCP, le skill e gli agenti. Nulla cambia finché non scegli.',
+    purpose: 'Versioni più recenti da dove provengono le tue estensioni del browser, i server MCP, le skill, gli agenti e i plugin. Nulla cambia finché non scegli.',
     checkNow: 'Controlla ora',
     checking: 'Controllo…',
     checkedAt: ({ time }) => `Controllato alle ${time}.`,
@@ -1065,7 +1065,7 @@ const ja: StoreTranslation = {
   },
   updates: {
     title: 'アップデート',
-    purpose: 'ブラウザー拡張機能、MCP サーバー、スキル、エージェントの取得元にある新しいバージョンです。選ぶまで何も変わりません。',
+    purpose: 'ブラウザー拡張機能、MCP サーバー、スキル、エージェント、プラグインの取得元にある新しいバージョンです。選ぶまで何も変わりません。',
     checkNow: '今すぐ確認',
     checking: '確認中…',
     checkedAt: ({ time }) => `${time} に確認。`,
@@ -1201,7 +1201,7 @@ const pl: StoreTranslation = {
   },
   updates: {
     title: 'Aktualizacje',
-    purpose: 'Nowsze wersje ze źródeł Twoich rozszerzeń przeglądarki, serwerów MCP, umiejętności i agentów. Nic się nie zmieni, dopóki nie wybierzesz.',
+    purpose: 'Nowsze wersje ze źródeł Twoich rozszerzeń przeglądarki, serwerów MCP, umiejętności, agentów i wtyczek. Nic się nie zmieni, dopóki nie wybierzesz.',
     checkNow: 'Sprawdź teraz',
     checking: 'Sprawdzanie…',
     checkedAt: ({ time }) => `Sprawdzono o ${time}.`,
@@ -1338,7 +1338,7 @@ const pt: StoreTranslation = {
   },
   updates: {
     title: 'Atualizações',
-    purpose: 'Versões mais novas de onde vieram suas extensões do navegador, servidores MCP, skills e agentes. Nada muda até você escolher.',
+    purpose: 'Versões mais novas de onde vieram suas extensões do navegador, servidores MCP, skills, agentes e plugins. Nada muda até você escolher.',
     checkNow: 'Verificar agora',
     checking: 'Verificando…',
     checkedAt: ({ time }) => `Verificado às ${time}.`,
@@ -1474,7 +1474,7 @@ const ru: StoreTranslation = {
   },
   updates: {
     title: 'Обновления',
-    purpose: 'Новые версии из источников ваших расширений браузера, MCP-серверов, навыков и агентов. Ничего не изменится, пока вы не выберете.',
+    purpose: 'Новые версии из источников ваших расширений браузера, MCP-серверов, навыков, агентов и плагинов. Ничего не изменится, пока вы не выберете.',
     checkNow: 'Проверить сейчас',
     checking: 'Проверка…',
     checkedAt: ({ time }) => `Проверено в ${time}.`,
@@ -1608,7 +1608,7 @@ const zhHans: StoreTranslation = {
   },
   updates: {
     title: '更新',
-    purpose: '来自你的浏览器扩展、MCP 服务器、技能和代理来源的新版本。在你选择之前不会有任何变化。',
+    purpose: '来自你的浏览器扩展、MCP 服务器、技能、代理和插件来源的新版本。在你选择之前不会有任何变化。',
     checkNow: '立即检查',
     checking: '正在检查…',
     checkedAt: ({ time }) => `检查于 ${time}。`,
@@ -1742,7 +1742,7 @@ const zhHant: StoreTranslation = {
   },
   updates: {
     title: '更新',
-    purpose: '來自你的瀏覽器擴充功能、MCP 伺服器、技能和代理來源的新版本。在你選擇之前不會有任何變化。',
+    purpose: '來自你的瀏覽器擴充功能、MCP 伺服器、技能、代理和外掛來源的新版本。在你選擇之前不會有任何變化。',
     checkNow: '立即檢查',
     checking: '正在檢查…',
     checkedAt: ({ time }) => `檢查於 ${time}。`,

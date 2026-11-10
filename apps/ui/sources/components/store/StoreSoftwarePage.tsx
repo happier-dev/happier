@@ -405,7 +405,7 @@ function SoftwareListingBody(
     }),
     renderDetail: () => (
       <View>
-        <ItemGroup surface="none">
+        <ItemGroup surface="none" header="none">
           <BareSectionContent>
             <View style={styles.head}>
               <View style={styles.title}>

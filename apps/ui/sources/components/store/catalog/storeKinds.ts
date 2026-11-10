@@ -8,6 +8,9 @@ import { useRegistryItems } from '@/registries/useRegistryItems';
 import { usePluginCatalog, type PluginCatalogState } from '@/components/settings/plugins/model/usePluginCatalog';
 import type { PluginMarketplaceCatalogEntry } from '@/components/settings/plugins/readPluginMarketplaceCatalog';
 import { getResolvedAgentCatalogEntries, type ResolvedAgentCatalogEntry } from '@/agents/backendCatalog/agentCatalogProjection';
+import { resolveBuiltInAgentForRegistryId } from '@/agents/registry/resolveBuiltInAgentForRegistryId';
+import { BUNDLED_FIRST_PARTY_PLUGIN_PRESENTATION } from '@/agents/registry/generatedBundledPluginEntries';
+import { resolvePluginLocalizedText } from '@/sync/domains/plugins/ui/i18n';
 import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 import type { AccountProviderDeclarationV1 } from '@happier-dev/protocol/providers/catalog/accountModelProjectionV1';
 import { useInstalledMcpServers, useInstalledSkills, useInstalledAgents, useInstalledProviders, useInstalledPlugins } from './storeInstalled';
@@ -61,14 +64,44 @@ function useMcpList(input: StoreListInput, demand: StoreDemand): RegistryList {
 function useSkillList(input: StoreListInput, demand: StoreDemand): RegistryList {
     return useRegistryItems({ kind: 'skill', query: input.query, sourceIds: input.sourceIds }, demand.presented);
 }
-export type StoreAgentItem = RegistryCatalogItemSummary | ResolvedAgentCatalogEntry;
+/** A built-in Agent, carrying the outcome line of the registry row that names it (folded into it, never listed twice). */
+export type StoreBuiltInAgentItem = ResolvedAgentCatalogEntry & Readonly<{ registryDescription?: string }>;
+export type StoreAgentItem = RegistryCatalogItemSummary | StoreBuiltInAgentItem;
+
+/**
+ * A registry row whose id a built-in Agent declares (`resolveBuiltInAgentForRegistryId`, the one identity owner) is
+ * that built-in: the row folds into it and lends its description; every other row stays as it is.
+ */
+export function linkBuiltInAgentRegistryRows(
+    builtIns: readonly ResolvedAgentCatalogEntry[],
+    registry: readonly RegistryCatalogItemSummary[],
+): readonly StoreAgentItem[] {
+    const lent = new Map<string, string>();
+    const rest = registry.filter(item => {
+        const entry = resolveBuiltInAgentForRegistryId(builtIns, item.itemId);
+        if (!entry || !builtIns.includes(entry)) return true;
+        const description = item.description?.trim();
+        if (description && !lent.has(entry.qualifiedId)) lent.set(entry.qualifiedId, description);
+        return false;
+    });
+    return [...builtIns.map(entry => {
+        const registryDescription = lent.get(entry.qualifiedId);
+        return registryDescription ? { ...entry, registryDescription } : entry;
+    }), ...rest];
+}
+
+/** What the Agent does, in its plugin's own words, else its registry row's; its subtitle only restates its name. */
+function builtInAgentDescription(item: StoreBuiltInAgentItem): string | null {
+    const pluginId = item.identity?.pluginId;
+    const own = pluginId ? resolvePluginLocalizedText({ projection: null, pluginId,
+        value: BUNDLED_FIRST_PARTY_PLUGIN_PRESENTATION[pluginId]?.description }).trim() : '';
+    return own || item.registryDescription || null;
+}
+
 function agentSummary(item: StoreAgentItem): StoreItemSummary<StoreAgentItem> {
     if ('itemId' in item) return registrySummary(item);
-    const subtitle = item.subtitle?.trim() || null;
-    const name = item.title.trim().toLocaleLowerCase();
-    const repeated = subtitle?.toLocaleLowerCase() === name || subtitle?.toLocaleLowerCase() === `${name} cli`;
     return { key: item.backendTargetKey ?? item.qualifiedId, ref: item, title: item.title,
-        description: repeated ? null : subtitle };
+        description: builtInAgentDescription(item) };
 }
 type AgentList = Omit<RegistryList, 'items'> & Readonly<{ items: readonly StoreAgentItem[] }>;
 function useAgentList(input: StoreListInput, demand: StoreDemand): AgentList {
@@ -78,7 +111,7 @@ function useAgentList(input: StoreListInput, demand: StoreDemand): AgentList {
         ? getResolvedAgentCatalogEntries({ enabledAgentIds: [] }).filter(item =>
             `${item.title} ${item.subtitle ?? ''}`.toLocaleLowerCase().includes(input.query.trim().toLocaleLowerCase()))
         : [], [demand.presented, input.query, input.sourceIds]);
-    const items = React.useMemo<readonly StoreAgentItem[]>(() => [...bundled, ...registry.items], [bundled, registry.items]);
+    const items = React.useMemo(() => linkBuiltInAgentRegistryRows(bundled, registry.items), [bundled, registry.items]);
     return { ...registry, items };
 }
 type ProviderList = Readonly<{ items: readonly AccountProviderDeclarationV1[]; loading: false; stale: false; hasNextPage: false }>;

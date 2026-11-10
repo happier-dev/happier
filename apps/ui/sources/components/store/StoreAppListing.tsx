@@ -249,7 +249,7 @@ export function StoreAppListing(
     }),
     renderDetail: () => (
       <View>
-        <ItemGroup surface="none">
+        <ItemGroup surface="none" header="none">
           <BareSectionContent>
             <View style={styles.head}>
               <CapabilityDetailHeader

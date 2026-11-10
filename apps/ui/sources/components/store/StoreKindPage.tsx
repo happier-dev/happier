@@ -4,7 +4,9 @@ import * as React from 'react';
 import { StoreProjectScopeChip } from './StoreProjectScopeChip';
 import { StoreAppDefinitionEntries } from './StoreAppDefinitionEntries';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Icon } from '@/components/ui/icons/Icon';
+import { ITEM_CHEVRON_SIZE } from '@/components/ui/lists/itemDensityMetrics';
 import {
   Collection,
   type CollectionAnatomy,
@@ -655,7 +657,8 @@ export function useBuiltInAgentRows(items: StoreKindList<'agent'>['items']): rea
           open: () => openReference({ type: 'agentContribution', targetKey: entry.backendTargetKey! }),
           mark: (
             <StoreItemMark
-              facts={{ kind: 'agent', title: entry.title, agentId: entry.iconAgentId ?? entry.catalogAgentId }}
+              facts={{ kind: 'agent', title: entry.title, agentId: entry.iconAgentId ?? entry.catalogAgentId,
+                bundledPluginId: entry.identity?.pluginId ?? null }}
               size={ROW_MARK_PX}
             />
           ),
@@ -844,6 +847,7 @@ export function Directory(
     onOpenChange,
   });
   const addLabel = props.addLabel ?? t('capabilities.store.add');
+  const onwardColor = useUnistyles().theme.colors.text.secondary;
   const anatomy = React.useMemo(
     (): CollectionAnatomy<DirectoryRow> =>
       buildCapabilityCollectionAnatomy<DirectoryRow>({
@@ -852,7 +856,10 @@ export function Directory(
         mark: (row) => row.mark,
         facts: (row) => row.facts ?? {},
         // The + is its own target: it opens the same Add owner the row does, never a second Add.
-        action: (row) => row.addable === false ? null : (
+        // A row with nothing to add opens its own page: it points onward, as a navigation row does.
+        action: (row) => row.addable === false ? (
+          <Icon name="caret-right" size={ITEM_CHEVRON_SIZE.comfortable} color={onwardColor} />
+        ) : (
           <RegistryShelfAddControl
             testID={`store.kind.${props.kind}.row.${row.key}`}
             state={row.added ? 'added' : 'available'}
@@ -866,7 +873,7 @@ export function Directory(
         accessibilityLabel: (row) => row.title,
         testID: (row) => `store.kind.${props.kind}.row.${row.key}`,
       }),
-    [addLabel, props.kind],
+    [addLabel, onwardColor, props.kind],
   );
   const [loadingMore, setLoadingMore] = React.useState(false);
   const loadMore = props.list.nextPage;
@@ -892,7 +899,9 @@ export function Directory(
   const pageFailure = !props.list.loading && rows.length === 0 && failures.length > 0 && props.showEmptyState !== false && !section;
   return (
     <View style={styles.body}>
-      {/* Said once above the results (lab h:unreachable, as Discover does), so rows arriving later only ever land under it. */}
+      {/* Said once above the results (lab h:unreachable, as Discover does), so rows arriving later only ever land under it.
+          On its page it stands a step clear of the search, as page status rather than the field's caption. */}
+      {failures.length === 0 ? null : <View style={!section && !pageFailure ? styles.pageStatus : null}>
       <RegistrySourcesUnavailable
         testID={`store.kind.${props.kind}.failure`}
         size={pageFailure ? 'page' : 'line'}
@@ -905,6 +914,7 @@ export function Directory(
           onRetry: failure.onRetry,
         }))}
       />
+      </View>}
       {empty && props.showEmptyState === false ? null : empty && props.query ? (
         // The same inline no-match state Installed uses: what found nothing, and the way to clear it.
         <EmptyState
@@ -968,6 +978,7 @@ export function Directory(
 
 const styles = StyleSheet.create((theme) => ({
   body: { gap: theme.space.s16 },
+  pageStatus: { paddingTop: theme.space.s12 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   phoneScope: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8, alignItems: 'center', paddingHorizontal: resolveItemGroupContentHorizontalInsetPx(), marginBottom: theme.space.s8 },
   // On the page text edge with the section titles above it.

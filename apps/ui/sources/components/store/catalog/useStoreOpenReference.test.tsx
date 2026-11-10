@@ -132,3 +132,33 @@ it('presents a selection that arrives on a phone as the pushed listing page, and
         expect(screen.findAllByTestId('t.detailPane.openAsPage')).toHaveLength(0);
     } finally { device.type = 'tablet'; standardCleanup(); }
 });
+
+it('folds a registry row that names a built-in Agent into that built-in, keeping its outcome line', async () => {
+    const { linkBuiltInAgentRegistryRows } = await import('./storeKinds');
+    const entries = getResolvedAgentCatalogEntries({ enabledAgentIds: [] });
+    const linked = entries.find(entry => (entry.acpRegistryIds?.length ?? 0) > 0)!;
+    const duplicate = { sourceId: 'acp', kind: 'agent', itemId: linked.acpRegistryIds![0]!, title: `${linked.title} CLI`,
+        description: 'Writes and reviews code in your terminal.' } as const;
+    const other = { sourceId: 'acp', kind: 'agent', itemId: 'not-built-in', title: 'Amp', description: 'A coding agent.' } as const;
+    const items = linkBuiltInAgentRegistryRows(entries, [duplicate, other]);
+    expect(items.filter(item => 'itemId' in item)).toEqual([other]);
+    const hook = await renderHook(() => useBuiltInAgentRows(items));
+    try {
+        const row = hook.getCurrent().find(candidate => candidate.key === `agent|${linked.qualifiedId}`)!;
+        expect(row.description).toBe('Writes and reviews code in your terminal.');
+    } finally { await hook.unmount(); standardCleanup(); }
+});
+
+it('never restates a built-in Agent name or channel as its description', async () => {
+    const entries = getResolvedAgentCatalogEntries({ enabledAgentIds: [] });
+    const hook = await renderHook(() => useBuiltInAgentRows(entries));
+    try {
+        for (const entry of entries) {
+            const row = hook.getCurrent().find(candidate => candidate.key === `agent|${entry.qualifiedId}`)!;
+            if (entry.subtitle) expect(row.description).not.toBe(entry.subtitle);
+        }
+        const codex = entries.find(entry => entry.identity?.pluginId === 'happier.agent.codex');
+        if (codex) expect(hook.getCurrent().find(row => row.key === `agent|${codex.qualifiedId}`)!.description)
+            .toBe('OpenAI Codex coding agent.');
+    } finally { await hook.unmount(); standardCleanup(); }
+});

@@ -1120,6 +1120,7 @@ function AddDetail<Item>(
   }>,
 ): React.ReactElement {
   const { edge, space, host, labels } = useShared();
+  const narrow = useAddBodyNarrow();
   const scrollRef = React.useRef<ScrollView>(null);
   const { detailScrollOffset } = props;
   const restoreScroll = React.useCallback(() => {
@@ -1208,7 +1209,8 @@ function AddDetail<Item>(
         {error}
       </host.ErrorText>
     );
-  // Under the identity: the primary, then what it does beside it; a phone page gives each its own full-width line.
+  // Under the identity: the primary, then what it does beside it while the row holds the note on its own measure; a
+  // note that would squeeze wraps beneath the actions, and on a phone it always does. A phone page stacks everything.
   const headAction =
     footer === undefined ? null : (
       <View
@@ -1216,7 +1218,7 @@ function AddDetail<Item>(
         style={
           props.pushed
             ? [styles.stacked, { gap: space.s12, marginTop: space.s8 }]
-            : [styles.row, { gap: space.s16, marginTop: space.s8 }]
+            : [styles.row, styles.wrap, { columnGap: space.s16, rowGap: space.s8, marginTop: space.s8 }]
         }
         testID={`${props.testID}:detail-action`}
       >
@@ -1225,7 +1227,7 @@ function AddDetail<Item>(
           <View style={props.pushed ? styles.stretch : null}>{footer.secondary}</View>
         )}
         {note === null ? null : (
-          <View style={props.pushed ? null : styles.slot}>{note}</View>
+          <View style={props.pushed ? null : narrow ? styles.noteBeneath : styles.noteBeside}>{note}</View>
         )}
       </View>
     );
@@ -1275,6 +1277,10 @@ const styles = StyleSheet.create({
   stacked: { flexDirection: 'column', alignItems: 'stretch' },
   stretch: { alignSelf: 'stretch' },
   slot: { flex: 1, minWidth: 0 },
+  wrap: { flexWrap: 'wrap' },
+  // Its own text width as the basis: beside the actions when that fits, otherwise the wrap puts it on the next line.
+  noteBeside: { flexGrow: 1, flexShrink: 1, flexBasis: 'auto' },
+  noteBeneath: { flexBasis: '100%' },
   footerRule: { borderTopWidth: StyleSheet.hairlineWidth },
   listFooter: { borderTopWidth: StyleSheet.hairlineWidth },
 });
