@@ -124,6 +124,9 @@ describe('SurfaceFreshnessLine inline one line', () => {
         const text = screen.findByTestId('line-text')!;
         // One text run, clamped to a line: a reason that grows or shrinks while reads land never re-flows the header.
         expect(text.props.numberOfLines).toBe(1);
+        // Its glyph, words and recovery share that one row: nothing wraps beneath (native measured the sentence at its
+        // full width and stacked glyph / words / Retry on three lines).
+        expect(flattenStyle(screen.findByTestId('line')!.props.style).flexWrap ?? 'nowrap').toBe('nowrap');
         const spoken = screen.root.findAll(node => typeof node.props?.accessibilityLabel === 'string'
             && node.props.accessibilityLabel.includes(reason));
         expect(spoken.length).toBeGreaterThan(0);

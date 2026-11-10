@@ -238,15 +238,16 @@ export function HappierFreshnessLine(props: Readonly<{
       borderBottomWidth: plain ? 0 : StyleSheet.hairlineWidth,
       borderColor: props.colors.border,
       // A line whose recoveries no longer fit beside its words moves them beneath (time over reason over
-      // actions), never squeezing the sentence to an ellipsis.
-      flexWrap: chip ? undefined : 'wrap',
+      // actions), never squeezing the sentence to an ellipsis. A page header's facts line (`inline`) is one row:
+      // its words shrink to one line and its recovery stays beside them, so the header never grows (R139).
+      flexWrap: chip || inline ? undefined : 'wrap',
     }}>
       {chip ? props.lead ?? null : null}
       {inline ? (
         <>
           {props.icon}
           <View style={{ flexShrink: 1, minWidth: 0 }}>{props.children}</View>
-          {props.action ?? null}
+          {props.action ? <View style={{ flexShrink: 0 }}>{props.action}</View> : null}
         </>
       ) : chip ? (
         <>

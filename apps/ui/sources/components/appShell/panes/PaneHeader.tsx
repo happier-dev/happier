@@ -55,6 +55,8 @@ function readSpokenLine(segments: readonly PaneHeaderLineSegment[]): string {
 }
 
 const PENDING_FACT_STYLE = { opacity: 0 } as const;
+/** The pending fact's box, separator included, is out of the accessibility tree (native reads each text node). */
+const PENDING_FACT_HIDDEN = { accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' } as const;
 
 /** A phone's large header gives its facts up to two lines; the band keeps one. */
 const LARGE_FACTS_LINES = 2;
@@ -207,7 +209,7 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
                 >
                     <View style={styles.largeFlow}>
                         {items.map((nodes, index) => (
-                            <View key={index} style={[styles.largeItem, pendingItems.has(index) ? PENDING_FACT_STYLE : null]}>
+                            <View key={index} style={[styles.largeItem, pendingItems.has(index) ? PENDING_FACT_STYLE : null]} {...(pendingItems.has(index) ? PENDING_FACT_HIDDEN : {})}>
                                 <View style={styles.largeSeparator}>{index === 0 ? null : <Text style={subtitleStyle}>·</Text>}</View>
                                 {nodes}
                             </View>

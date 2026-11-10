@@ -55,7 +55,23 @@ describe('PaneHeaderLineView pending fact', () => {
       // The words hold the line's room (wrapping as the real fact will) without being seen.
       expect(drawnOpacity(screen, '0 changed')).toBe(0);
       expect(drawnOpacity(screen, 'repo on Mac')).toBe(1);
-      const subtitle = screen.findByTestId('header.subtitle');
+      // Nothing of the pending fact is reachable by VoiceOver, its separator included (native reads each text node).
+    const pendingText = screen.root.findAll((candidate) => typeof candidate.type === 'string'
+      && (candidate.children ?? []).some((child) => typeof child === 'string' && child.includes('0 changed')))[0]!;
+    let hidden = false;
+    let joinsSeparator = !large;
+    for (let current: typeof pendingText | null = pendingText; current; current = current.parent) {
+      if (current.props?.accessibilityElementsHidden === true) {
+        hidden = true;
+        // In the wrapping layout the separator box is a sibling of the words: the hidden node must hold both.
+        if (large) joinsSeparator = current.findAll((node) => typeof node.type === 'string'
+          && (node.children ?? []).some((child) => child === '·')).length > 0;
+        if (joinsSeparator) break;
+      }
+    }
+    expect(hidden).toBe(true);
+    expect(joinsSeparator).toBe(true);
+    const subtitle = screen.findByTestId('header.subtitle');
       expect(String(subtitle?.props.accessibilityLabel ?? '')).not.toContain(
         '0 changed',
       );
