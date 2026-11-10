@@ -1023,7 +1023,7 @@ const artifactsBrowserTranslations = { es: {
         loadFailedBody: 'Vuelve a intentarlo en un momento. No se perdió nada.',
         retainedBody: "No se pudo actualizar. Se muestran los últimos artefactos cargados.",
         loadingBody: "Aún se carga el resto.",
-        countSoFar: ({ count }) => `${count} cargados hasta ahora`,
+        countSoFar: ({ count }) => `${count} ${count === 1 ? 'artefacto cargado' : 'artefactos cargados'} hasta ahora`,
         noMatchSoFar: ({ query }) => `Todavía no hay nada que coincida con «${query}»`,
         quota: {
             accountTitle: 'El almacenamiento de artefactos está lleno',
@@ -6274,6 +6274,10 @@ const es: MachineAgentsTranslation = {
     phoneLead: ({ agent, machine }) => `${agent} te pide iniciar sesión. Abre la página aquí, termina y ${machine} lo recogerá.`,
     panelSignedInAs: ({ account }) => `Sesión iniciada como ${account}.`,
     panelChecked: 'Happier lo comprobó hace un momento.',
+    signInUnavailable: "No se pudo comprobar el inicio de sesión. Vuelve a conectar esta máquina y compruébalo de nuevo.",
+    signInChanged: "Este terminal cambió. Ciérralo y vuelve a abrir el inicio de sesión.",
+    signInCancelled: "Se canceló el inicio de sesión. Puedes volver a abrirlo cuando quieras.",
+    signInServiceUnsupported: "Este servicio no puede iniciar sesión en este agente. Elige otro método.",
     sectionTitle: 'Agentes',
     sectionDescription: 'Los agentes de programación de esta máquina y cómo inicia sesión cada uno.',
     addTitle: 'Añadir un agente',
@@ -6843,9 +6847,9 @@ const machineDetailPageTranslations = { es: translated({
             monitoring: {
                 title: "Supervisión",
                 modes: { off: "Desactivada", whileViewing: "Al consultarla", always: "Siempre" },
-                descriptions: { off: "No lee nada. Lo leído antes se conserva, con su hora.", whileViewing: "Lee solo mientras alguien la tiene abierta.", always: "Conserva su historial. Lee una vez por minuto, más a menudo mientras alguien la mira en directo." },
+                descriptions: { off: "No lee nada. Lo leído antes se conserva, con su hora.", whileViewing: "Lee solo mientras alguien la tiene abierta.", always: "Conserva su historial. Lee una vez por minuto, más a menudo mientras alguien la mira." },
                 interval: "Leer cada",
-                intervalDescription: "Con qué frecuencia lee CPU, memoria, disco y red mientras alguien la mira en directo. Si no, una vez por minuto.",
+                intervalDescription: "Con qué frecuencia lee CPU, memoria, disco y red mientras alguien la mira en directo. Si no, cada 15 s mientras se ve un resumen, y una vez por minuto cuando no se ve nada.",
                 seconds: ({ count }: { count: number }) => `${count} s`,
                 offTitle: ({ machine }: { machine: string }) => `La supervisión está desactivada en ${machine}`,
                 offReason: "Happier no está leyendo su CPU, memoria, disco ni red.",
@@ -11767,6 +11771,10 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { es: translated({
+    queryHomesNotSelectedDescription: "Añade los Homes que faltan a esta vista.",
+    transcriptSearchHomeIndexing: "Este Home está indexando las transcripciones. Vuelve a intentarlo cuando termine.",
+    transcriptSearchHomeUnavailable: "La búsqueda de transcripciones no está disponible en este Home. Pide a su administrador que revise la búsqueda.",
+    transcriptSearchHomeUnknown: "Este Home no ha confirmado que la búsqueda de transcripciones esté disponible. Pide a su administrador que revise la búsqueda.",
     runsQuery: {
         loading: "Cargando ejecuciones…",
         updating: "Actualizando ejecuciones…",
@@ -11866,6 +11874,8 @@ const sessionListFilterTranslations = { es: translated({
         filtersProjectNot: ({ names }: { names: string }) => `El proyecto no es ${names}`,
         filtersResultCount: ({ count }: { count: number }) => count === 1 ? `1 elemento` : `${count} elementos`,
         queryInitialLoadingTitle: 'Cargando sesiones…', queryUpdatingTitle: 'Actualizando sesiones…',
+        queryIncompleteTitle: "Esta vista está incompleta",
+        queryHomesNeedUpdateDescription: "Algunas Homes aún no pueden mostrar esta vista. Actualiza o reconfigura esas Homes y vuelve a intentarlo.",
         querySomeHomesUnavailableTitle: 'Algunos Homes no están disponibles', querySomeHomesUnavailableDescription: 'Happier muestra lo que puede alcanzar. Inténtalo de nuevo cuando esos Homes vuelvan a estar en línea.',
         queryRefreshFailedTitle: 'No se pudo actualizar', queryRefreshFailedRetainedDescription: 'Tus sesiones cargadas siguen aquí. Vuelve a intentarlo para buscar actualizaciones.', queryRefreshFailedEmptyDescription: 'Happier no pudo cargar sesiones de los Homes seleccionados. Inténtalo cuando estén disponibles.',
         queryNoMatchesLoadedTitle: 'No hay coincidencias en las sesiones cargadas', queryNoMatchesLoadedDescription: 'Puede haber más sesiones coincidentes en una página anterior.', querySearchOlder: 'Buscar en sesiones anteriores',
@@ -16073,7 +16083,9 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         runJobOnSchedule: { title: "Ejecutar una tarea programada", description: "Elige un servicio, edita el comando en el borrador y activa su horario. No interviene ningún agente." },
         backupVerify: { title: "Verificar una copia de seguridad", description: "Comprueba una instantánea de copia de seguridad al nivel que elijas. No se restaura ni se cambia nada." },
         nightlyBackups: { title: "Copias de seguridad nocturnas", description: "Haz una copia de tus datos, verifica cada instantánea nueva y conserva solo lo que permita tu retención. Activa su horario para ejecutarlo cada noche." },
+        restoreDrill: { title: "Simulacro de restauración", description: "Verifica una instantánea, restáurala en un entorno separado ya guardado, comprueba sus datos y detén sus servicios. Conserva el entorno y sus permisos para el próximo simulacro." },
         dailyHealthDigest: { title: "Resumen diario de salud", description: "Resume cómo les fue a tus entornos y servicios y te lo envía. Añade un disparador para recibirlo cada día." },
+        restartWhenNeeded: { title: "Reiniciar cuando sea necesario", description: "Comprueba las actualizaciones de Configuración según un horario y reinicia solo cuando sea necesario. Se respetan las ventanas de mantenimiento y las aprobaciones habituales." },
         noSessions: "Inicia una sesión de trabajo para usar esta plantilla.",
         nodes: { ask: 'Preguntar', 'review-correctness': 'Revisar la corrección', 'review-tests': 'Revisar pruebas', summarize: 'Resumir hallazgos', analyze: 'Analizar', review: 'Revisar', fix: 'Corregir', check: 'Comprobar', classify: 'Clasificar', reply: 'Redactar una respuesta', digest: 'Resumir cambios', deploy: 'Desplegar el commit exacto' },
         title: 'Empezar con un ejemplo', fromExample: 'Desde un ejemplo', description: 'Cada uno se abre como borrador. Nada se ejecuta hasta que elijas Ejecutar ahora.', sessionDescription: 'Cada uno se abre como borrador en esta sesión. Nada se ejecuta hasta que lo actives.', use: 'Usar este', chooseSession: 'Elegir una sesión…', builtInDescription: 'Parte de Happier. Duplica uno para cambiarlo.', stepCount: ({ count }) => `${count} ${count === 1 ? 'paso' : 'pasos'}`,
@@ -16256,6 +16268,16 @@ type WorkflowTriggersCopy = Shared_workflowTriggersTranslations.WorkflowTriggers
 const en = Shared_workflowTriggersTranslations.en;
 
 const es: WorkflowTriggersCopy = {
+    once: {
+        label: "Una vez",
+        relative: "O después de",
+        relativeHint: "Por ejemplo: in 20 min, 2 h o 1 d. Se calcula al confirmar el disparador.",
+        relativeInvalid: "Introduce un plazo positivo, como in 20 min.",
+        at: ({ time }: { time: string }) => `Una vez el ${time}`,
+        missed: "Se perdió esta ejecución programada. Reprográmala o elige Ejecutar ahora.",
+        missedOffline: "Se perdió esta ejecución porque su máquina estaba desconectada a la hora programada. Reprográmala o elige Ejecutar ahora.",
+        missedUnavailable: "Se perdió esta ejecución porque no se pudo confirmar la disponibilidad de la máquina a la hora programada. Reprográmala o elige Ejecutar ahora.",
+    },
     activity: {
         create: "Crear un activador a partir de este evento",
         test: "Probar este activador",

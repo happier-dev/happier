@@ -1023,7 +1023,7 @@ const artifactsBrowserTranslations = { ja: {
         loadFailedBody: '少し待ってからもう一度お試しください。何も失われていません。',
         retainedBody: "更新できませんでした。最後に読み込んだアーティファクトを表示しています。",
         loadingBody: "残りを読み込み中です。",
-        countSoFar: ({ count }) => `${count} 件を読み込み済み`,
+        countSoFar: ({ count }) => `これまでに ${count} 件のアーティファクトを読み込み済み`,
         noMatchSoFar: ({ query }) => `「${query}」に一致するものはまだありません`,
         quota: {
             accountTitle: 'アーティファクトの保存容量がいっぱいです',
@@ -6269,6 +6269,10 @@ const ja: MachineAgentsTranslation = {
     phoneLead: ({ agent, machine }) => `${agent} がサインインを求めています。ここでページを開いて完了すると、${machine} が反映します。`,
     panelSignedInAs: ({ account }) => `${account} としてサインインしました。`,
     panelChecked: 'Happier がたった今確認しました。',
+    signInUnavailable: "サインインを確認できませんでした。このマシンに再接続して、もう一度確認してください。",
+    signInChanged: "サインイン端末が変更されました。閉じてからサインインを開き直してください。",
+    signInCancelled: "サインインはキャンセルされました。準備ができたら開き直せます。",
+    signInServiceUnsupported: "このサービスではこのエージェントにサインインできません。別の方法を選んでください。",
     sectionTitle: 'エージェント',
     sectionDescription: 'このマシンのコーディングエージェントと、それぞれのサインイン方法。',
     addTitle: 'エージェントを追加',
@@ -6838,9 +6842,9 @@ const machineDetailPageTranslations = { ja: translated({
             monitoring: {
                 title: "モニタリング",
                 modes: { off: "オフ", whileViewing: "表示中のみ", always: "常に" },
-                descriptions: { off: "何も読み取りません。以前の値は読み取った時刻とともに残ります。", whileViewing: "誰かが開いている間だけ読み取ります。", always: "履歴を保持します。1 分に 1 回読み取り、ライブで見ている間はより頻繁に読み取ります。" },
+                descriptions: { off: "何も読み取りません。以前の値は読み取った時刻とともに残ります。", whileViewing: "誰かが開いている間だけ読み取ります。", always: "履歴を保持します。1 分に 1 回読み取り、誰かが見ている間はより頻繁に読み取ります。" },
                 interval: "読み取り間隔",
-                intervalDescription: "誰かがライブで見ている間に CPU、メモリ、ディスク、ネットワークを読み取る頻度。それ以外は 1 分に 1 回です。",
+                intervalDescription: "誰かがライブで見ている間に CPU、メモリ、ディスク、ネットワークを読み取る頻度。それ以外は、概要が表示されている間は 15 秒ごと、何も表示されていないときは 1 分に 1 回です。",
                 seconds: ({ count }: { count: number }) => `${count} 秒`,
                 offTitle: ({ machine }: { machine: string }) => `${machine} のモニタリングはオフです`,
                 offReason: "Happier は CPU、メモリ、ディスク、ネットワークを読み取っていません。",
@@ -11752,6 +11756,10 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { ja: translated({
+    queryHomesNotSelectedDescription: "不足しているHomeをこのビューに追加してください。",
+    transcriptSearchHomeIndexing: "このHomeは会話記録のインデックスを作成中です。完了してからもう一度お試しください。",
+    transcriptSearchHomeUnavailable: "このHomeでは会話記録を検索できません。管理者に検索の確認を依頼してください。",
+    transcriptSearchHomeUnknown: "このHomeでは会話記録を検索できるか確認できていません。管理者に検索の確認を依頼してください。",
     runsQuery: {
         loading: "実行を読み込み中…",
         updating: "実行を更新中…",
@@ -11848,6 +11856,8 @@ const sessionListFilterTranslations = { ja: translated({
         filtersProjectNot: ({ names }: { names: string }) => `除外するプロジェクト:${names}`,
         filtersResultCount: ({ count }: { count: number }) => `${count} 件`,
         queryInitialLoadingTitle: 'セッションを読み込み中…', queryUpdatingTitle: 'セッションを更新中…',
+        queryIncompleteTitle: "このビューは不完全です",
+        queryHomesNeedUpdateDescription: "一部のHomeでは、このビューをまだ表示できません。Homeを更新または再設定してから、もう一度お試しください。",
         querySomeHomesUnavailableTitle: '一部の Home を利用できません', querySomeHomesUnavailableDescription: 'Happier は到達できる範囲を表示しています。Home がオンラインに戻ったら再試行してください。',
         queryRefreshFailedTitle: '更新できませんでした', queryRefreshFailedRetainedDescription: '読み込み済みのセッションはそのまま表示されています。更新を確認するには再試行してください。', queryRefreshFailedEmptyDescription: '選択した Home からセッションを読み込めませんでした。到達可能になったら再試行してください。',
         queryNoMatchesLoadedTitle: '読み込み済みのセッションに一致なし', queryNoMatchesLoadedDescription: '古いページに一致するセッションがある可能性があります。', querySearchOlder: '古いセッションを検索',
@@ -11913,7 +11923,7 @@ const sessionPageTranslations = { ja: translated({
                 addTag: "タグ",
                 pinned: "ピン留め",
                 follow: "フォロー",
-                keepInNeedsYou: "「対応が必要」に残す",
+                keepInNeedsYou: "「対応待ち」に残す",
                 keepInNeedsYouSubtitle: "解除するまでそこに残ります。",
                 fork: "分岐…",
                 forkDetail: "ネイティブ、リプレイ、または設定",
@@ -16008,7 +16018,9 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         runJobOnSchedule: { title: "スケジュールでジョブを実行", description: "サービスを選び、下書きでコマンドを編集してスケジュールをオンにします。エージェントは使用しません。" },
         backupVerify: { title: "バックアップを検証", description: "選んだレベルでバックアップのスナップショットを1つ確認します。復元や変更は行いません。" },
         nightlyBackups: { title: "毎晩のバックアップ", description: "データをバックアップし、新しいスナップショットをすべて検証してから、保持ポリシーで許される分だけ残します。毎晩実行するにはスケジュールをオンにします。" },
+        restoreDrill: { title: "復元訓練", description: "スナップショットを検証し、保存済みの別環境に復元してデータを確認し、サービスを停止します。次回の訓練にも同じ環境と権限を使います。" },
         dailyHealthDigest: { title: "毎日のヘルスダイジェスト", description: "環境とサービスの状態をまとめて送ります。毎日受け取るにはトリガーを追加します。" },
+        restartWhenNeeded: { title: "必要な場合に再起動", description: "スケジュールに従ってセットアップの更新情報を確認し、必要な場合のみ再起動します。メンテナンス時間帯と通常の承認が適用されます。" },
         noSessions: "このテンプレートを使うには作業セッションを開始してください。",
         nodes: { ask: '質問', 'review-correctness': '正確性をレビュー', 'review-tests': 'テストをレビュー', summarize: '指摘をまとめる', analyze: '分析', review: 'レビュー', fix: '修正', check: '確認', classify: '分類', reply: '返信を作成', digest: '変更をまとめる', deploy: '正確なコミットをデプロイ' },
         title: '例から始める', fromExample: '例から', description: 'どれも下書きとして開きます。「今すぐ実行」を選ぶまで実行されません。', sessionDescription: 'どれもこのセッションの下書きとして開きます。オンにするまで実行されません。', use: 'これを使う', chooseSession: 'セッションを選択…', builtInDescription: 'Happierに組み込まれています。変更するには複製してください。', stepCount: ({ count }) => `${count} ステップ`,
@@ -16191,6 +16203,16 @@ type WorkflowTriggersCopy = Shared_workflowTriggersTranslations.WorkflowTriggers
 const en = Shared_workflowTriggersTranslations.en;
 
 const ja: WorkflowTriggersCopy = {
+    once: {
+        label: "1回",
+        relative: "または待機時間",
+        relativeHint: "例: in 20 min、2 h、1 d。トリガーの確定時に日時へ変換されます。",
+        relativeInvalid: "in 20 min など、正の待機時間を入力してください。",
+        at: ({ time }: { time: string }) => `1回実行 ${time}`,
+        missed: "予定された実行が見送られました。再設定するか、今すぐ実行を選んでください。",
+        missedOffline: "予定時刻にマシンがオフラインだったため、実行が見送られました。再設定するか、今すぐ実行を選んでください。",
+        missedUnavailable: "予定時刻のマシンの稼働状況を確認できなかったため、実行が見送られました。再設定するか、今すぐ実行を選んでください。",
+    },
     activity: {
         create: "このイベントからトリガーを作成",
         test: "このトリガーをテスト",

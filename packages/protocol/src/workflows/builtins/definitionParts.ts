@@ -6,7 +6,8 @@ import type { WorkflowStep } from '../workflowV1.js';
 import { PluginJsonSchemaV2Schema } from '../../plugins/contributions/jsonSchema.js';
 
 export const literal = (value: JsonValue): WorkflowValueReference => ({ kind: 'literal', value });
-export const input = (name: string): WorkflowValueReference => ({ kind: 'input', name });
+export const input = (name: string, path?: (string | number)[]): WorkflowValueReference => ({ kind: 'input', name,
+  ...(path === undefined ? {} : { path }) });
 export const result = (blockId: string, path: (string | number)[] = [],
   scope: WorkflowReferenceScope = { kind: 'current' }): WorkflowAuthoredResultReference => ({
   kind: 'result', producer: { blockId, scope }, path,

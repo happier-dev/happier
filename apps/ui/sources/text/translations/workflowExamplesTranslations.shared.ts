@@ -15,7 +15,7 @@ export type Copy = Readonly<{
     notifyWhenAgentWaits: ExampleCopy; dailySummaryInSession: ExampleCopy; memoryUpkeepInSession: ExampleCopy;
     installDepsInWorktree: ExampleCopy; testAfterEveryTurn: ExampleCopy; noSessions: string;
     checkForDrift: ExampleCopy; runJobOnSchedule: ExampleCopy;
-    backupVerify: ExampleCopy; nightlyBackups: ExampleCopy; dailyHealthDigest: ExampleCopy;
+    backupVerify: ExampleCopy; nightlyBackups: ExampleCopy; restoreDrill: ExampleCopy; dailyHealthDigest: ExampleCopy; restartWhenNeeded: ExampleCopy;
     /** What a session-bound example does when it is offered inside that Session (no session to choose). */
     sessionNotifyDescription: string; sessionDailySummaryDescription: string; sessionTestDescription: string;
     /** The quiet mark beside an example the catalog added recently (lab `b-habit T`, Memory upkeep). */
@@ -37,7 +37,9 @@ export const workflowExamplesTranslationsEnglish: Pick<Record<'en'|'de'|'es'|'fr
         runJobOnSchedule: { title: "Run a job on a schedule", description: "Choose a service and edit the command in the draft, then turn on its schedule. No agent is involved." },
         backupVerify: { title: "Verify a backup", description: "Check one backup snapshot at the level you choose. Nothing is restored or changed." },
         nightlyBackups: { title: "Nightly backups", description: "Back up your data, verify every new snapshot, then keep only what your retention allows. Turn on its schedule to run it each night." },
+        restoreDrill: { title: 'Restore drill', description: 'Verify a snapshot, restore it into a separate saved environment, check its data, then stop its services. Keep that environment and its grants for the next drill.' },
         dailyHealthDigest: { title: "Daily health digest", description: "Sum up how your environments and services did and send it to you. Add a trigger to get it every day." },
+        restartWhenNeeded: { title: 'Restart when needed', description: 'Check Setup’s update facts on a schedule and restart only when needed. Maintenance windows and normal reboot approvals still apply.' },
         noSessions: 'Start a working session to use this template.',
         nodes: { ask: 'Ask', 'review-correctness': 'Review correctness', 'review-tests': 'Review tests', summarize: 'Summarize findings', analyze: 'Analyze', review: 'Review', fix: 'Fix', check: 'Check', classify: 'Classify', reply: 'Draft a reply', digest: 'Summarize changes', deploy: 'Deploy the exact commit' },
         title: 'Start from an example', fromExample: 'From an example', description: 'Each one opens as a draft. Nothing runs until you choose Run now.', sessionDescription: 'Each one opens as a draft in this session. Nothing runs until you turn it on.', use: 'Use this', chooseSession: 'Choose a session…', builtInDescription: 'Part of Happier. Duplicate one to change it.', stepCount: ({ count }) => `${count} ${count === 1 ? 'step' : 'steps'}`,

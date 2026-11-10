@@ -1023,7 +1023,7 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
         loadFailedBody: '请稍后重试。没有任何内容丢失。',
         retainedBody: "无法刷新。正在显示上次加载的工件。",
         loadingBody: "仍在加载其余内容。",
-        countSoFar: ({ count }) => `已加载 ${count} 个`,
+        countSoFar: ({ count }) => `目前已加载 ${count} 个工件`,
         noMatchSoFar: ({ query }) => `暂时没有与“${query}”匹配的内容`,
         quota: {
             accountTitle: '工件存储已满',
@@ -6264,6 +6264,10 @@ const zhHans: MachineAgentsTranslation = {
     phoneLead: ({ agent, machine }) => `${agent} 需要你登录。在这里打开页面并完成，${machine} 会自动获取。`,
     panelSignedInAs: ({ account }) => `已登录为 ${account}。`,
     panelChecked: 'Happier 刚刚检查过。',
+    signInUnavailable: "无法检查登录状态。请重新连接此机器，然后再次检查。",
+    signInChanged: "登录终端已更改。请关闭它并重新打开登录。",
+    signInCancelled: "登录已取消。准备好后可以重新打开。",
+    signInServiceUnsupported: "此服务无法为此代理登录。请选择其他登录方式。",
     sectionTitle: '智能体',
     sectionDescription: '此机器上的编程智能体，以及各自的登录方式。',
     addTitle: '添加智能体',
@@ -6833,9 +6837,9 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
             monitoring: {
                 title: "监控",
                 modes: { off: "关闭", whileViewing: "查看时", always: "始终" },
-                descriptions: { off: "不读取任何数据。之前的读数会保留，并标明时间。", whileViewing: "仅在有人打开时读取。", always: "保留历史记录。每分钟读取一次，有人实时查看时更频繁。" },
+                descriptions: { off: "不读取任何数据。之前的读数会保留，并标明时间。", whileViewing: "仅在有人打开时读取。", always: "保留历史记录。每分钟读取一次，有人查看时更频繁。" },
                 interval: "读取间隔",
-                intervalDescription: "有人实时查看时读取 CPU、内存、磁盘和网络的频率。否则每分钟读取一次。",
+                intervalDescription: "有人实时查看时读取 CPU、内存、磁盘和网络的频率。否则在显示摘要时每 15 秒读取一次，没有任何显示时每分钟读取一次。",
                 seconds: ({ count }: { count: number }) => `${count} 秒`,
                 offTitle: ({ machine }: { machine: string }) => `${machine} 的监控已关闭`,
                 offReason: "Happier 未读取它的 CPU、内存、磁盘或网络。",
@@ -11747,6 +11751,10 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { zhHans: translated({
+    queryHomesNotSelectedDescription: "将缺少的 Home 添加到此视图。",
+    transcriptSearchHomeIndexing: "此 Home 正在为会话记录建立索引。请在完成后重试。",
+    transcriptSearchHomeUnavailable: "此 Home 的会话记录搜索不可用。请联系其管理员检查搜索功能。",
+    transcriptSearchHomeUnknown: "此 Home 尚未确认会话记录搜索是否可用。请联系其管理员检查搜索功能。",
     runsQuery: {
         loading: "正在加载运行…",
         updating: "正在更新运行…",
@@ -11842,6 +11850,8 @@ const sessionListFilterTranslations = { zhHans: translated({
         filtersProjectNot: ({ names }: { names: string }) => `项目不是 ${names}`,
         filtersResultCount: ({ count }: { count: number }) => `${count} 项`,
         queryInitialLoadingTitle: '正在加载会话…', queryUpdatingTitle: '正在更新会话…',
+        queryIncompleteTitle: "此视图不完整",
+        queryHomesNeedUpdateDescription: "部分 Home 暂时无法显示此视图。请更新或重新配置这些 Home 后重试。",
         querySomeHomesUnavailableTitle: '部分 Home 不可用', querySomeHomesUnavailableDescription: 'Happier 正在显示可访问的内容。请在这些 Home 恢复在线后重试。',
         queryRefreshFailedTitle: '无法刷新', queryRefreshFailedRetainedDescription: '已加载的会话仍会保留。请重试以检查更新。', queryRefreshFailedEmptyDescription: 'Happier 无法从所选 Home 加载会话。请在它们恢复可访问后重试。',
         queryNoMatchesLoadedTitle: '已加载的会话中没有匹配项', queryNoMatchesLoadedDescription: '较早的页面中可能还有匹配的会话。', querySearchOlder: '搜索更早的会话',
@@ -11907,7 +11917,7 @@ const sessionPageTranslations = { 'zh-Hans': translated({
                 addTag: "标签",
                 pinned: "已置顶",
                 follow: "关注",
-                keepInNeedsYou: "保留在“需要你”中",
+                keepInNeedsYou: "保留在需要你",
                 keepInNeedsYouSubtitle: "在你清除前一直保留。",
                 fork: "分叉…",
                 forkDetail: "原生、重放或配置",
@@ -16003,7 +16013,9 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         runJobOnSchedule: { title: "定时运行任务", description: "选择服务，在草稿中编辑命令，然后开启计划。无需代理参与。" },
         backupVerify: { title: "验证备份", description: "按你选择的级别检查一个备份快照。不会恢复或更改任何内容。" },
         nightlyBackups: { title: "每晚备份", description: "备份你的数据，验证每个新快照，然后只保留保留策略允许的部分。开启计划即可每晚运行。" },
+        restoreDrill: { title: "恢复演练", description: "验证快照，将其恢复到单独保存的环境中，检查数据后停止服务。保留该环境和授权，供下次演练使用。" },
         dailyHealthDigest: { title: "每日健康摘要", description: "汇总你的环境和服务的运行情况并发送给你。添加触发器即可每天收到。" },
+        restartWhenNeeded: { title: "按需重启", description: "按计划检查设置的更新信息，仅在需要时重启。仍遵循维护时段和常规重启审批。" },
         noSessions: "启动一个工作会话以使用此模板。",
         nodes: { ask: '提问', 'review-correctness': '审查正确性', 'review-tests': '审查测试', summarize: '汇总发现', analyze: '分析', review: '审查', fix: '修复', check: '检查', classify: '分类', reply: '起草回复', digest: '汇总变更', deploy: '部署事件的确切提交' },
         title: '从示例开始', fromExample: '使用示例', description: '每个示例都以草稿打开。选择“立即运行”之前不会运行。', sessionDescription: '每个都会在此会话中以草稿打开。打开之前不会运行。', use: '使用此示例', chooseSession: '选择会话…', builtInDescription: 'Happier 内置。复制后即可修改。', stepCount: ({ count }) => `${count} 个步骤`,
@@ -16186,6 +16198,16 @@ type WorkflowTriggersCopy = Shared_workflowTriggersTranslations.WorkflowTriggers
 const en = Shared_workflowTriggersTranslations.en;
 
 const zhHans: WorkflowTriggersCopy = {
+    once: {
+        label: "一次",
+        relative: "或延迟",
+        relativeHint: "例如：in 20 min、2 h 或 1 d。确认触发器时计算具体时间。",
+        relativeInvalid: "请输入正的延迟时间，例如 in 20 min。",
+        at: ({ time }: { time: string }) => `执行一次： ${time}`,
+        missed: "此计划运行已错过。请重新安排或选择立即运行。",
+        missedOffline: "由于计算机在计划时间离线，此次运行已错过。请重新安排或选择立即运行。",
+        missedUnavailable: "由于无法确认计算机在计划时间是否可用，此次运行已错过。请重新安排或选择立即运行。",
+    },
     activity: {
         create: "根据此事件创建触发器",
         test: "测试此触发器",

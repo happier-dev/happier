@@ -1023,7 +1023,7 @@ const artifactsBrowserTranslations = { ca: {
         loadFailedBody: 'Torna-ho a provar d’aquí a un moment. No s’ha perdut res.',
         retainedBody: "No s’ha pogut actualitzar. Es mostren els darrers artefactes carregats.",
         loadingBody: "Encara es carrega la resta.",
-        countSoFar: ({ count }) => `${count} carregats fins ara`,
+        countSoFar: ({ count }) => `${count} ${count === 1 ? 'artefacte carregat' : 'artefactes carregats'} fins ara`,
         noMatchSoFar: ({ query }) => `Encara no hi ha res que coincideixi amb «${query}»`,
         quota: {
             accountTitle: 'L’emmagatzematge d’artefactes és ple',
@@ -6274,6 +6274,10 @@ const ca: MachineAgentsTranslation = {
     phoneLead: ({ agent, machine }) => `${agent} et demana que iniciïs sessió. Obre la pàgina aquí, acaba i ${machine} ho detectarà.`,
     panelSignedInAs: ({ account }) => `Sessió iniciada com a ${account}.`,
     panelChecked: 'Happier ho ha comprovat fa un moment.',
+    signInUnavailable: "No s’ha pogut comprovar l’inici de sessió. Torna a connectar aquesta màquina i comprova-ho de nou.",
+    signInChanged: "Aquest terminal ha canviat. Tanca’l i torna a obrir l’inici de sessió.",
+    signInCancelled: "S’ha cancel·lat l’inici de sessió. Pots tornar-lo a obrir quan vulguis.",
+    signInServiceUnsupported: "Aquest servei no pot iniciar sessió en aquest agent. Tria un altre mètode.",
     sectionTitle: 'Agents',
     sectionDescription: 'Els agents de programació d’aquesta màquina i com inicia sessió cadascun.',
     addTitle: 'Afegeix un agent',
@@ -6843,9 +6847,9 @@ const machineDetailPageTranslations = { ca: translated({
             monitoring: {
                 title: "Supervisió",
                 modes: { off: "Desactivada", whileViewing: "En consultar-la", always: "Sempre" },
-                descriptions: { off: "No llegeix res. El que va llegir abans es manté, amb la seva hora.", whileViewing: "Llegeix només mentre algú la té oberta.", always: "Conserva l’historial. Llegeix un cop per minut, més sovint mentre algú ho mira en directe." },
+                descriptions: { off: "No llegeix res. El que va llegir abans es manté, amb la seva hora.", whileViewing: "Llegeix només mentre algú la té oberta.", always: "Conserva l’historial. Llegeix un cop per minut, més sovint mentre algú ho mira." },
                 interval: "Llegeix cada",
-                intervalDescription: "Cada quant llegeix CPU, memòria, disc i xarxa mentre algú ho mira en directe. Si no, un cop per minut.",
+                intervalDescription: "Cada quant llegeix CPU, memòria, disc i xarxa mentre algú ho mira en directe. Si no, cada 15 s mentre es veu un resum, i un cop per minut quan no es veu res.",
                 seconds: ({ count }: { count: number }) => `${count} s`,
                 offTitle: ({ machine }: { machine: string }) => `La supervisió està desactivada a ${machine}`,
                 offReason: "Happier no està llegint la CPU, la memòria, el disc ni la xarxa.",
@@ -11763,6 +11767,10 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { ca: translated({
+    queryHomesNotSelectedDescription: "Afegeix els Homes que falten a aquesta vista.",
+    transcriptSearchHomeIndexing: "Aquest Home està indexant les transcripcions. Torna-ho a provar quan acabi.",
+    transcriptSearchHomeUnavailable: "La cerca de transcripcions no està disponible en aquest Home. Demana al seu administrador que revisi la cerca.",
+    transcriptSearchHomeUnknown: "Aquest Home no ha confirmat que la cerca de transcripcions estigui disponible. Demana al seu administrador que revisi la cerca.",
     runsQuery: {
         loading: "Carregant execucions…",
         updating: "Actualitzant execucions…",
@@ -11862,6 +11870,8 @@ const sessionListFilterTranslations = { ca: translated({
         filtersProjectNot: ({ names }: { names: string }) => `El projecte no és ${names}`,
         filtersResultCount: ({ count }: { count: number }) => count === 1 ? `1 element` : `${count} elements`,
         queryInitialLoadingTitle: 'S’estan carregant les sessions…', queryUpdatingTitle: 'S’estan actualitzant les sessions…',
+        queryIncompleteTitle: "Aquesta vista és incompleta",
+        queryHomesNeedUpdateDescription: "Algunes Homes encara no poden mostrar aquesta vista. Actualitza-les o reconfigura-les i torna-ho a provar.",
         querySomeHomesUnavailableTitle: 'Alguns Homes no estan disponibles', querySomeHomesUnavailableDescription: 'Happier mostra allò que pot trobar. Torna-ho a provar quan aquests Homes estiguin en línia.',
         queryRefreshFailedTitle: 'No s’ha pogut actualitzar', queryRefreshFailedRetainedDescription: 'Les sessions carregades continuen aquí. Torna-ho a provar per comprovar si hi ha actualitzacions.', queryRefreshFailedEmptyDescription: 'Happier no ha pogut carregar sessions dels Homes seleccionats. Torna-ho a provar quan siguin accessibles.',
         queryNoMatchesLoadedTitle: 'Cap coincidència a les sessions carregades', queryNoMatchesLoadedDescription: 'Pot haver-hi més sessions coincidents en una pàgina anterior.', querySearchOlder: 'Cerca en sessions anteriors',
@@ -11927,7 +11937,7 @@ const sessionPageTranslations = { ca: translated({
                 addTag: "Etiqueta",
                 pinned: "Fixada",
                 follow: "Seguir",
-                keepInNeedsYou: "Mantenir a Et necessita",
+                keepInNeedsYou: "Mantén a Et necessita",
                 keepInNeedsYouSubtitle: "S'hi queda fins que la treguis.",
                 fork: "Bifurcar…",
                 forkDetail: "Nativa, reproducció o configurar",
@@ -16046,7 +16056,9 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         runJobOnSchedule: { title: "Executar una tasca programada", description: "Tria un servei, edita l’ordre a l’esborrany i activa’n l’horari. No hi intervé cap agent." },
         backupVerify: { title: "Verifica una còpia de seguretat", description: "Comprova una instantània de còpia de seguretat al nivell que triïs. No es restaura ni es canvia res." },
         nightlyBackups: { title: "Còpies de seguretat nocturnes", description: "Fa una còpia de les teves dades, verifica cada instantània nova i conserva només el que permet la retenció. Activa’n l’horari per executar-ho cada nit." },
+        restoreDrill: { title: "Simulacre de restauració", description: "Verifica una instantània, restaura-la en un entorn separat ja desat, comprova les dades i atura els serveis. Conserva l’entorn i els permisos per al proper simulacre." },
         dailyHealthDigest: { title: "Resum diari de salut", description: "Resumeix com han anat els teus entorns i serveis i te l’envia. Afegeix un activador per rebre’l cada dia." },
+        restartWhenNeeded: { title: "Reinicia quan calgui", description: "Comprova les actualitzacions de Configuració segons un horari i reinicia només quan calgui. Es respecten les finestres de manteniment i les aprovacions habituals." },
         noSessions: "Inicia una sessió de treball per utilitzar aquesta plantilla.",
         nodes: { ask: 'Preguntar', 'review-correctness': 'Revisar la correcció', 'review-tests': 'Revisar proves', summarize: 'Resumir troballes', analyze: 'Analitzar', review: 'Revisar', fix: 'Corregir', check: 'Comprovar', classify: 'Classificar', reply: 'Redactar una resposta', digest: 'Resumir canvis', deploy: 'Desplegar el commit exacte' },
         title: 'Comença amb un exemple', fromExample: 'D’un exemple', description: 'Cadascun s’obre com a esborrany. Res no s’executa fins que triïs Executa ara.', sessionDescription: 'Cadascun s’obre com a esborrany en aquesta sessió. Res no s’executa fins que l’activis.', use: 'Fes servir aquest', chooseSession: 'Tria una sessió…', builtInDescription: 'Part de Happier. Duplica’l per canviar-lo.', stepCount: ({ count }) => `${count} ${count === 1 ? 'pas' : 'passos'}`,
@@ -16229,6 +16241,16 @@ type WorkflowTriggersCopy = Shared_workflowTriggersTranslations.WorkflowTriggers
 const en = Shared_workflowTriggersTranslations.en;
 
 const ca: WorkflowTriggersCopy = {
+    once: {
+        label: "Una vegada",
+        relative: "O després de",
+        relativeHint: "Per exemple: in 20 min, 2 h o 1 d. Es calcula quan confirmes el disparador.",
+        relativeInvalid: "Introdueix un retard positiu, com ara in 20 min.",
+        at: ({ time }: { time: string }) => `Una vegada a ${time}`,
+        missed: "S’ha perdut aquesta execució programada. Torna-la a programar o tria Executa ara.",
+        missedOffline: "S’ha perdut aquesta execució perquè la màquina estava desconnectada a l’hora programada. Torna-la a programar o tria Executa ara.",
+        missedUnavailable: "S’ha perdut aquesta execució perquè no s’ha pogut confirmar la disponibilitat de la màquina a l’hora programada. Torna-la a programar o tria Executa ara.",
+    },
     activity: {
         create: "Crea un activador a partir d’aquest esdeveniment",
         test: "Prova aquest activador",

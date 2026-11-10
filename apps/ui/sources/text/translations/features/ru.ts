@@ -1023,7 +1023,7 @@ const artifactsBrowserTranslations = { ru: {
         loadFailedBody: 'Повторите попытку через мгновение. Ничего не потеряно.',
         retainedBody: "Не удалось обновить. Показаны последние загруженные артефакты.",
         loadingBody: "Остальное ещё загружается.",
-        countSoFar: ({ count }) => `Загружено пока: ${count}`,
+        countSoFar: ({ count }) => `Артефактов загружено пока: ${count}`,
         noMatchSoFar: ({ query }) => `Пока ничего не найдено по запросу «${query}»`,
         quota: {
             accountTitle: 'Хранилище артефактов заполнено',
@@ -6301,6 +6301,10 @@ const ru: MachineAgentsTranslation = {
     phoneLead: ({ agent, machine }) => `${agent} просит вас войти. Откройте страницу здесь, завершите вход — и ${machine} его подхватит.`,
     panelSignedInAs: ({ account }) => `Вход выполнен: ${account}.`,
     panelChecked: 'Happier только что это проверил.',
+    signInUnavailable: "Не удалось проверить вход. Подключитесь к этой машине заново и повторите проверку.",
+    signInChanged: "Этот терминал входа изменился. Закройте его и откройте вход заново.",
+    signInCancelled: "Вход отменён. Его можно открыть снова, когда будете готовы.",
+    signInServiceUnsupported: "Эта служба не может выполнить вход для этого агента. Выберите другой способ.",
     sectionTitle: 'Агенты',
     sectionDescription: 'Агенты для программирования на этой машине и как каждый из них выполняет вход.',
     addTitle: 'Добавить агента',
@@ -6870,9 +6874,9 @@ const machineDetailPageTranslations = { ru: translated({
             monitoring: {
                 title: "Мониторинг",
                 modes: { off: "Выключен", whileViewing: "При просмотре", always: "Всегда" },
-                descriptions: { off: "Ничего не считывает. Прежние показания остаются, со временем.", whileViewing: "Считывает, только пока кто-то его открыл.", always: "Хранит историю. Считывает раз в минуту, чаще — пока кто-то смотрит в реальном времени." },
+                descriptions: { off: "Ничего не считывает. Прежние показания остаются, со временем.", whileViewing: "Считывает, только пока кто-то его открыл.", always: "Хранит историю. Считывает раз в минуту, чаще — пока кто-то смотрит." },
                 interval: "Считывать каждые",
-                intervalDescription: "Как часто считывать ЦП, память, диск и сеть, пока кто-то смотрит в реальном времени. В остальное время — раз в минуту.",
+                intervalDescription: "Как часто считывать ЦП, память, диск и сеть, пока кто-то смотрит в реальном времени. Иначе — каждые 15 с, пока видна сводка, и раз в минуту, когда ничего не показано.",
                 seconds: ({ count }: { count: number }) => `${count} с`,
                 offTitle: ({ machine }: { machine: string }) => `Мониторинг на ${machine} выключен`,
                 offReason: "Happier не считывает процессор, память, диск и сеть.",
@@ -11788,6 +11792,10 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { ru: translated({
+    queryHomesNotSelectedDescription: "Добавьте недостающие Homes в это представление.",
+    transcriptSearchHomeIndexing: "Этот Home индексирует записи разговоров. Повторите попытку после завершения индексации.",
+    transcriptSearchHomeUnavailable: "Поиск по записям разговоров недоступен в этом Home. Попросите администратора проверить поиск.",
+    transcriptSearchHomeUnknown: "Этот Home не подтвердил доступность поиска по записям разговоров. Попросите администратора проверить поиск.",
     runsQuery: {
         loading: "Загрузка запусков…",
         updating: "Обновление запусков…",
@@ -11888,6 +11896,8 @@ const sessionListFilterTranslations = { ru: translated({
         filtersProjectNot: ({ names }: { names: string }) => `Проект не ${names}`,
         filtersResultCount: ({ count }: { count: number }) => (count % 10 === 1 && count % 100 !== 11) ? `${count} элемент` : (count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14)) ? `${count} элемента` : `${count} элементов`,
         queryInitialLoadingTitle: 'Загрузка сессий…', queryUpdatingTitle: 'Обновление сессий…',
+        queryIncompleteTitle: "Это представление неполное",
+        queryHomesNeedUpdateDescription: "Некоторые Homes пока не могут показать это представление. Обновите или перенастройте их и попробуйте снова.",
         querySomeHomesUnavailableTitle: 'Некоторые Home недоступны', querySomeHomesUnavailableDescription: 'Happier показывает доступные данные. Повторите попытку, когда эти Home снова будут в сети.',
         queryRefreshFailedTitle: 'Не удалось обновить', queryRefreshFailedRetainedDescription: 'Загруженные сессии остались на месте. Повторите попытку, чтобы проверить обновления.', queryRefreshFailedEmptyDescription: 'Happier не удалось загрузить сессии из выбранных Home. Повторите попытку, когда они станут доступны.',
         queryNoMatchesLoadedTitle: 'Нет совпадений в загруженных сессиях', queryNoMatchesLoadedDescription: 'Другие подходящие сессии могут находиться на более старой странице.', querySearchOlder: 'Искать в старых сессиях',
@@ -11953,7 +11963,7 @@ const sessionPageTranslations = { ru: translated({
                 addTag: "Метка",
                 pinned: "Закреплена",
                 follow: "Следить",
-                keepInNeedsYou: "Оставить в «Нужно ваше участие»",
+                keepInNeedsYou: "Оставить в «Ждут вас»",
                 keepInNeedsYouSubtitle: "Остаётся там, пока вы её не уберёте.",
                 fork: "Ответвить…",
                 forkDetail: "Нативно, повтор или настройка",
@@ -16056,7 +16066,9 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         runJobOnSchedule: { title: "Запускать задачу по расписанию", description: "Выберите сервис, измените команду в черновике и включите расписание. Без участия агента." },
         backupVerify: { title: "Проверить резервную копию", description: "Проверяет один снимок резервной копии на выбранном уровне. Ничего не восстанавливается и не меняется." },
         nightlyBackups: { title: "Ночные резервные копии", description: "Создаёт резервную копию данных, проверяет каждый новый снимок и оставляет только то, что разрешает политика хранения. Включите расписание, чтобы запускать это каждую ночь." },
+        restoreDrill: { title: "Проверка восстановления", description: "Проверьте снимок, восстановите его в отдельном сохранённом окружении, проверьте данные и остановите службы. Сохраните окружение и разрешения для следующей проверки." },
         dailyHealthDigest: { title: "Ежедневная сводка состояния", description: "Подводит итог работы ваших окружений и сервисов и отправляет вам. Добавьте триггер, чтобы получать её каждый день." },
+        restartWhenNeeded: { title: "Перезапуск при необходимости", description: "Проверяет данные обновлений Настройки по расписанию и перезапускает только при необходимости. Окна обслуживания и обычные подтверждения перезапуска сохраняются." },
         noSessions: "Начните рабочую сессию, чтобы использовать этот шаблон.",
         nodes: { ask: 'Спросить', 'review-correctness': 'Проверить корректность', 'review-tests': 'Проверить тесты', summarize: 'Подвести итоги', analyze: 'Проанализировать', review: 'Проверить', fix: 'Исправить', check: 'Проверить результат', classify: 'Классифицировать', reply: 'Подготовить ответ', digest: 'Собрать изменения', deploy: 'Развернуть точный коммит' },
         title: 'Начать с примера', fromExample: 'Из примера', description: 'Каждый открывается как черновик. Ничего не запускается до выбора «Запустить сейчас».', sessionDescription: 'Каждый открывается как черновик в этой сессии. Ничего не запустится, пока вы его не включите.', use: 'Использовать', chooseSession: 'Выбрать сессию…', builtInDescription: 'Часть Happier. Создайте копию для изменений.', stepCount: ({ count }) => `Шагов: ${count}`,
@@ -16239,6 +16251,16 @@ type WorkflowTriggersCopy = Shared_workflowTriggersTranslations.WorkflowTriggers
 const en = Shared_workflowTriggersTranslations.en;
 
 const ru: WorkflowTriggersCopy = {
+    once: {
+        label: "Один раз",
+        relative: "Или через",
+        relativeHint: "Например: in 20 min, 2 h или 1 d. Время вычисляется при подтверждении триггера.",
+        relativeInvalid: "Введите положительный интервал, например in 20 min.",
+        at: ({ time }: { time: string }) => `Один раз в ${time}`,
+        missed: "Запланированный запуск пропущен. Перенесите его или выберите «Запустить сейчас».",
+        missedOffline: "Запуск пропущен, потому что машина была не в сети в назначенное время. Перенесите его или выберите «Запустить сейчас».",
+        missedUnavailable: "Запуск пропущен, потому что доступность машины в назначенное время не удалось подтвердить. Перенесите его или выберите «Запустить сейчас».",
+    },
     activity: {
         create: "Создать триггер из этого события",
         test: "Проверить этот триггер",

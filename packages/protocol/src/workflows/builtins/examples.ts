@@ -3,14 +3,14 @@ import type { AutomationScheduleTriggerInput, AutomationSessionLifecycleTriggerI
 import { agent, input, literal, result } from './definitionParts.js';
 import { setWorkflowDefaultField, setWorkflowStepExecutionField, walkWorkflowBlocks } from '../workflowDefinitionEditV1.js';
 import type { AutomationTriggerDefinitionInput } from '../../automations/automationTriggerDefinition.js';
-import { createBackupVerifyWorkflowV1, createDailyHealthDigestWorkflowV1, createNightlyBackupsWorkflowV1 } from './backupExamples.js';
+import { createBackupVerifyWorkflowV1, createDailyHealthDigestWorkflowV1, createNightlyBackupsWorkflowV1, createRestoreDrillWorkflowV1 } from './backupExamples.js';
 
 export const WORKFLOW_STARTER_EXAMPLE_KEYS_V1 = [
   'ask-once', 'review-pull-request', 'work-through-each-file', 'repair-until-it-passes',
   'triage-an-issue', 'morning-digest', 'deploy-on-push',
   'notify-when-agent-waits', 'daily-summary-in-session', 'memory-upkeep-in-session', 'install-deps-in-worktree', 'test-after-every-turn',
   'check-for-drift', 'run-a-job-on-a-schedule',
-  'backup-verify', 'nightly-backups', 'daily-health-digest',
+  'backup-verify', 'nightly-backups', 'restore-drill', 'daily-health-digest', 'restart-when-needed',
 ] as const;
 export type WorkflowStarterExampleKeyV1 = (typeof WORKFLOW_STARTER_EXAMPLE_KEYS_V1)[number];
 export type WorkflowStarterExampleV1 = Readonly<{
@@ -189,6 +189,20 @@ const runJobOnSchedule: WorkflowDefinitionV1 = {
   finalOutput: result('job'),
 };
 
+const restartWhenNeeded: WorkflowDefinitionV1 = {
+  version: 1, defaults: {},
+  inputs: ['serverId', 'machineId', 'expectedInstallationId']
+    .map(name => ({ name, valueType: 'string' as const, required: true })),
+  blocks: [
+    { kind: 'action', id: 'check', name: 'Check whether updates require a restart', actionId: 'machines.setup.plan',
+      input: { homeId: input('serverId'), machineId: input('machineId'), mode: literal('check'), updates: literal({ scope: 'all' }) } },
+    { kind: 'action', id: 'restart', name: 'Restart when needed', actionId: 'machines.reboot',
+      onlyWhen: { kind: 'compare', operator: 'eq', left: result('check', ['updates', 'observation', 'rebootNeeded']), right: literal(true) },
+      input: { serverId: input('serverId'), machineId: input('machineId'), expectedInstallationId: input('expectedInstallationId') } },
+  ],
+  finalOutput: result('check'),
+};
+
 function example(key: WorkflowStarterExampleKeyV1, copyKey: string, definition: WorkflowDefinitionV1 | (() => WorkflowDefinitionV1),
   triggerSeed?: WorkflowStarterExampleV1['triggerSeed']): WorkflowStarterExampleV1 {
   return { key, titleKey: `workflows.examples.${copyKey}.title`, descriptionKey: `workflows.examples.${copyKey}.description`,
@@ -223,7 +237,9 @@ export const WORKFLOW_STARTER_EXAMPLES_V1: readonly WorkflowStarterExampleV1[] =
   example('run-a-job-on-a-schedule', 'runJobOnSchedule', runJobOnSchedule, offUntilInputsAreSet('0 3 * * *')),
   example('backup-verify', 'backupVerify', createBackupVerifyWorkflowV1),
   example('nightly-backups', 'nightlyBackups', createNightlyBackupsWorkflowV1, offUntilInputsAreSet('0 2 * * *')),
+  example('restore-drill', 'restoreDrill', createRestoreDrillWorkflowV1, offUntilInputsAreSet('0 3 * * 0')),
   example('daily-health-digest', 'dailyHealthDigest', createDailyHealthDigestWorkflowV1),
+  example('restart-when-needed', 'restartWhenNeeded', restartWhenNeeded, offUntilInputsAreSet('0 3 * * *')),
 ]);
 
 export function getWorkflowStarterExamplesV1(): readonly WorkflowStarterExampleV1[] {

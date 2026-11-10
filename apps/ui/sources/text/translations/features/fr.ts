@@ -1023,7 +1023,7 @@ const artifactsBrowserTranslations = { fr: {
         loadFailedBody: 'Réessaie dans un instant. Rien n’a été perdu.',
         retainedBody: "Actualisation impossible. Les derniers artefacts chargés restent affichés.",
         loadingBody: "Chargement du reste en cours.",
-        countSoFar: ({ count }) => `${count} chargés pour l’instant`,
+        countSoFar: ({ count }) => `${count} ${count > 1 ? 'artefacts chargés' : 'artefact chargé'} pour l’instant`,
         noMatchSoFar: ({ query }) => `Aucun résultat pour « ${query} » pour l’instant`,
         quota: {
             accountTitle: 'Le stockage des artefacts est plein',
@@ -6272,6 +6272,10 @@ const fr: MachineAgentsTranslation = {
     phoneLead: ({ agent, machine }) => `${agent} te demande de te connecter. Ouvre la page ici, termine, et ${machine} le prendra en compte.`,
     panelSignedInAs: ({ account }) => `Connecté en tant que ${account}.`,
     panelChecked: 'Happier vient de le vérifier.',
+    signInUnavailable: "La connexion n’a pas pu être vérifiée. Reconnectez cette machine, puis vérifiez à nouveau.",
+    signInChanged: "Ce terminal a changé. Fermez-le et rouvrez la connexion.",
+    signInCancelled: "La connexion a été annulée. Vous pouvez la rouvrir quand vous voulez.",
+    signInServiceUnsupported: "Ce service ne permet pas de connecter cet agent. Choisissez une autre méthode.",
     sectionTitle: 'Agents',
     sectionDescription: 'Les agents de code de cette machine et la façon dont chacun se connecte.',
     addTitle: 'Ajouter un agent',
@@ -6841,9 +6845,9 @@ const machineDetailPageTranslations = { fr: translated({
             monitoring: {
                 title: "Surveillance",
                 modes: { off: "Désactivée", whileViewing: "Pendant la consultation", always: "Toujours" },
-                descriptions: { off: "Ne lit rien. Les relevés précédents restent, datés.", whileViewing: "Lit seulement quand quelqu’un l’a ouverte.", always: "Conserve son historique. Lit une fois par minute, plus souvent quand quelqu’un regarde en direct." },
+                descriptions: { off: "Ne lit rien. Les relevés précédents restent, datés.", whileViewing: "Lit seulement quand quelqu’un l’a ouverte.", always: "Conserve son historique. Lit une fois par minute, plus souvent quand quelqu’un regarde." },
                 interval: "Lire toutes les",
-                intervalDescription: "Fréquence de lecture du CPU, de la mémoire, du disque et du réseau quand quelqu’un regarde en direct. Sinon, une fois par minute.",
+                intervalDescription: "Fréquence de lecture du CPU, de la mémoire, du disque et du réseau quand quelqu’un regarde en direct. Sinon, toutes les 15 s quand un résumé est affiché, et une fois par minute quand rien ne l’est.",
                 seconds: ({ count }: { count: number }) => `${count} s`,
                 offTitle: ({ machine }: { machine: string }) => `La surveillance est désactivée sur ${machine}`,
                 offReason: "Happier ne lit ni son CPU, ni sa mémoire, ni son disque, ni son réseau.",
@@ -11764,6 +11768,10 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { fr: translated({
+    queryHomesNotSelectedDescription: "Ajoute les Homes manquants à cette vue.",
+    transcriptSearchHomeIndexing: "Ce Home indexe les transcriptions. Réessaie une fois l’indexation terminée.",
+    transcriptSearchHomeUnavailable: "La recherche dans les transcriptions est indisponible sur ce Home. Demande à son administrateur de vérifier la recherche.",
+    transcriptSearchHomeUnknown: "Ce Home n’a pas confirmé la disponibilité de la recherche dans les transcriptions. Demande à son administrateur de vérifier la recherche.",
     runsQuery: {
         loading: "Chargement des exécutions…",
         updating: "Mise à jour des exécutions…",
@@ -11864,6 +11872,8 @@ const sessionListFilterTranslations = { fr: translated({
         filtersProjectNot: ({ names }: { names: string }) => `Le projet n’est pas ${names}`,
         filtersResultCount: ({ count }: { count: number }) => count === 1 ? `1 élément` : `${count} éléments`,
         queryInitialLoadingTitle: 'Chargement des sessions…', queryUpdatingTitle: 'Mise à jour des sessions…',
+        queryIncompleteTitle: "Cette vue est incomplète",
+        queryHomesNeedUpdateDescription: "Certaines Homes ne peuvent pas encore afficher cette vue. Mets-les à jour ou reconfigure-les, puis réessaie.",
         querySomeHomesUnavailableTitle: 'Certains Homes sont indisponibles', querySomeHomesUnavailableDescription: 'Happier affiche ce qui est accessible. Réessaie lorsque ces Homes seront de nouveau en ligne.',
         queryRefreshFailedTitle: 'Actualisation impossible', queryRefreshFailedRetainedDescription: 'Tes sessions chargées restent affichées. Réessaie pour vérifier les mises à jour.', queryRefreshFailedEmptyDescription: 'Happier n’a pas pu charger les sessions des Homes sélectionnés. Réessaie lorsqu’ils seront accessibles.',
         queryNoMatchesLoadedTitle: 'Aucun résultat dans les sessions chargées', queryNoMatchesLoadedDescription: 'D’autres sessions correspondantes peuvent se trouver sur une page plus ancienne.', querySearchOlder: 'Rechercher dans les anciennes sessions',
@@ -11929,7 +11939,7 @@ const sessionPageTranslations = { fr: translated({
                 addTag: "Étiquette",
                 pinned: "Épinglée",
                 follow: "Suivre",
-                keepInNeedsYou: "Garder dans À traiter",
+                keepInNeedsYou: "Garder dans A besoin de toi",
                 keepInNeedsYouSubtitle: "Y reste jusqu'à ce que vous l'en retiriez.",
                 fork: "Dériver…",
                 forkDetail: "Native, relecture ou configurer",
@@ -16071,7 +16081,9 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         runJobOnSchedule: { title: "Exécuter une tâche planifiée", description: "Choisis un service, modifie la commande dans le brouillon puis active son horaire. Aucun agent n’intervient." },
         backupVerify: { title: "Vérifier une sauvegarde", description: "Vérifie un instantané de sauvegarde au niveau choisi. Rien n’est restauré ni modifié." },
         nightlyBackups: { title: "Sauvegardes nocturnes", description: "Sauvegarde tes données, vérifie chaque nouvel instantané, puis ne garde que ce que ta rétention autorise. Active son horaire pour l’exécuter chaque nuit." },
+        restoreDrill: { title: "Exercice de restauration", description: "Vérifiez un instantané, restaurez-le dans un environnement distinct déjà enregistré, contrôlez ses données, puis arrêtez ses services. Conservez cet environnement et ses autorisations pour le prochain exercice." },
         dailyHealthDigest: { title: "Bilan de santé quotidien", description: "Résume l’état de tes environnements et services et te l’envoie. Ajoute un déclencheur pour le recevoir chaque jour." },
+        restartWhenNeeded: { title: "Redémarrer si nécessaire", description: "Vérifie les mises à jour de Configuration selon un calendrier et redémarre seulement si nécessaire. Les plages de maintenance et les approbations habituelles restent applicables." },
         noSessions: "Démarre une session de travail pour utiliser ce modèle.",
         nodes: { ask: 'Demander', 'review-correctness': 'Vérifier la justesse', 'review-tests': 'Examiner les tests', summarize: 'Résumer les constats', analyze: 'Analyser', review: 'Examiner', fix: 'Corriger', check: 'Vérifier', classify: 'Classer', reply: 'Rédiger une réponse', digest: 'Résumer les changements', deploy: 'Déployer le commit exact' },
         title: 'Partir d’un exemple', fromExample: 'À partir d’un exemple', description: 'Chaque exemple s’ouvre comme brouillon. Rien ne démarre avant ton choix Exécuter maintenant.', sessionDescription: 'Chacun s’ouvre comme brouillon dans cette session. Rien ne s’exécute avant que tu l’actives.', use: 'Utiliser celui-ci', chooseSession: 'Choisir une session…', builtInDescription: 'Inclus dans Happier. Duplique-le pour le modifier.', stepCount: ({ count }) => `${count} ${count === 1 ? 'étape' : 'étapes'}`,
@@ -16254,6 +16266,16 @@ type WorkflowTriggersCopy = Shared_workflowTriggersTranslations.WorkflowTriggers
 const en = Shared_workflowTriggersTranslations.en;
 
 const fr: WorkflowTriggersCopy = {
+    once: {
+        label: "Une fois",
+        relative: "Ou dans",
+        relativeHint: "Par exemple : in 20 min, 2 h ou 1 d. Calculé quand tu confirmes le déclencheur.",
+        relativeInvalid: "Saisissez un délai positif, par exemple in 20 min.",
+        at: ({ time }: { time: string }) => `Une fois le ${time}`,
+        missed: "Cette exécution programmée a été manquée. Reprogramme-la ou choisis Exécuter maintenant.",
+        missedOffline: "Cette exécution a été manquée car sa machine était hors ligne à l’heure prévue. Reprogramme-la ou choisis Exécuter maintenant.",
+        missedUnavailable: "Cette exécution a été manquée car la disponibilité de la machine à l’heure prévue n’a pas pu être confirmée. Reprogramme-la ou choisis Exécuter maintenant.",
+    },
     activity: {
         create: "Créer un déclencheur à partir de cet événement",
         test: "Tester ce déclencheur",

@@ -17,7 +17,44 @@ const listActionId = 'workflow.starters.list';
 const resolveActionId = 'workflow.starters.resolve';
 
 describe('workflow authoring starters through Actions', () => {
-  it.each(['backup-verify', 'nightly-backups', 'daily-health-digest'])('resolves %s without a Session through the public starter Actions', async (key) => {
+  it('offers a Session-free restore drill that retains its chosen Environment and cleans up on failure', async () => {
+    const executor = createActionExecutor({});
+    const resolved = await executor.execute(resolveActionId, { key: 'restore-drill' }, { surface: 'cli' });
+    expect(resolved).toMatchObject({ ok: true, result: { status: 'ready', example: { key: 'restore-drill' } } });
+    if (!resolved.ok) throw new Error('The persistent drill must be discoverable');
+    const example = readyExample(resolved.result);
+    expect(example).not.toHaveProperty('sessionTarget');
+    expect(example.definition.blocks.at(-1)).toMatchObject({ kind: 'loop', runWhen: 'always',
+      body: [{ kind: 'action', actionId: 'machines.services.control', input: { operation: { kind: 'literal', value: 'stop' } } }] });
+    expect(example.definition.inputs.map(field => field.name)).toEqual(expect.arrayContaining([
+      'backupTarget', 'restoreSource', 'drillTarget', 'restoreDestination', 'verificationLevel', 'dataCheck',
+    ]));
+  });
+  it('opens Restart when needed as an unsaved schedule using Setup facts and the ordinary reboot Action', async () => {
+    const executor = createActionExecutor({});
+    const listed = await executor.execute(listActionId, {}, { surface: 'agent' });
+    expect(listed).toMatchObject({ ok: true, result: { examples: expect.arrayContaining([
+      expect.objectContaining({ key: 'restart-when-needed' }),
+    ]) } });
+    const resolved = await executor.execute(resolveActionId, { key: 'restart-when-needed' }, { surface: 'ui' });
+    expect(resolved).toMatchObject({ ok: true, result: { status: 'ready' } });
+    if (!resolved.ok) throw new Error('Restart starter must resolve');
+    const example = readyExample(resolved.result);
+    expect(example.trigger).toMatchObject({ kind: 'schedule', enabled: false });
+    expect(example.definition.blocks).toMatchObject([
+      { kind: 'action', id: 'check', actionId: 'machines.setup.plan', input: {
+        homeId: { kind: 'input', name: 'serverId' }, machineId: { kind: 'input', name: 'machineId' },
+        mode: { kind: 'literal', value: 'check' }, updates: { kind: 'literal', value: { scope: 'all' } },
+      } },
+      { kind: 'action', actionId: 'machines.reboot', onlyWhen: {
+        kind: 'compare', operator: 'eq', left: { kind: 'result', producer: { blockId: 'check', scope: { kind: 'current' } },
+          path: ['updates', 'observation', 'rebootNeeded'] }, right: { kind: 'literal', value: true },
+      }, input: { expectedInstallationId: { kind: 'input', name: 'expectedInstallationId' } } },
+    ]);
+    expect(example).not.toHaveProperty('sessionTarget');
+  });
+
+  it.each(['backup-verify', 'nightly-backups', 'restore-drill', 'daily-health-digest'])('resolves %s without a Session through the public starter Actions', async (key) => {
     let stored: Awaited<ReturnType<WorkflowDefinitionArtifactOperations['read']>> = null;
     const unused = (): never => { throw new Error('authoring_starts_no_run_or_trigger'); };
     // Artifact persistence is the system boundary; catalog resolution, semantic
@@ -55,7 +92,9 @@ describe('workflow authoring starters through Actions', () => {
         } }] },
       ] });
       expect(example.definition.inputs.map(input => input.name)).toEqual(['readinessScope', 'backupAutomationIds']);
-    } else expect(example.definition.blocks[0]).toMatchObject({ kind: 'action',
+    } else if (key === 'restore-drill') expect(example.definition.blocks[0]).toMatchObject({ kind: 'parallel',
+      failurePolicy: 'collect_outcomes' });
+    else expect(example.definition.blocks[0]).toMatchObject({ kind: 'action',
       actionId: key === 'backup-verify' ? 'deployments.backups.verify' : 'deployments.backups.run' });
     if (key === 'nightly-backups') {
       expect(example.definition.blocks).toMatchObject([

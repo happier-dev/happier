@@ -1023,7 +1023,7 @@ const artifactsBrowserTranslations = { pl: {
         loadFailedBody: 'Spróbuj ponownie za chwilę. Nic nie zostało utracone.',
         retainedBody: "Nie udało się odświeżyć. Wyświetlane są ostatnio wczytane artefakty.",
         loadingBody: "Reszta wciąż się wczytuje.",
-        countSoFar: ({ count }) => `Wczytano dotąd: ${count}`,
+        countSoFar: ({ count }) => `Wczytane dotąd artefakty: ${count}`,
         noMatchSoFar: ({ query }) => `Na razie nic nie pasuje do „${query}”`,
         quota: {
             accountTitle: 'Miejsce na artefakty jest pełne',
@@ -6292,6 +6292,10 @@ const pl: MachineAgentsTranslation = {
     phoneLead: ({ agent, machine }) => `${agent} prosi o zalogowanie. Otwórz stronę tutaj, dokończ, a ${machine} to przejmie.`,
     panelSignedInAs: ({ account }) => `Zalogowano jako ${account}.`,
     panelChecked: 'Happier właśnie to sprawdził.',
+    signInUnavailable: "Nie udało się sprawdzić logowania. Połącz ponownie tę maszynę i sprawdź jeszcze raz.",
+    signInChanged: "Ten terminal logowania się zmienił. Zamknij go i otwórz logowanie ponownie.",
+    signInCancelled: "Logowanie anulowano. Możesz je otworzyć ponownie, gdy zechcesz.",
+    signInServiceUnsupported: "Ta usługa nie może zalogować tego agenta. Wybierz inną metodę logowania.",
     sectionTitle: 'Agenci',
     sectionDescription: 'Agenci programistyczni na tej maszynie i sposób logowania każdego z nich.',
     addTitle: 'Dodaj agenta',
@@ -6861,9 +6865,9 @@ const machineDetailPageTranslations = { pl: translated({
             monitoring: {
                 title: "Monitorowanie",
                 modes: { off: "Wyłączone", whileViewing: "Podczas przeglądania", always: "Zawsze" },
-                descriptions: { off: "Niczego nie odczytuje. Wcześniejsze odczyty zostają, z godziną.", whileViewing: "Odczytuje tylko, gdy ktoś ma go otwartego.", always: "Zachowuje historię. Odczytuje raz na minutę, częściej, gdy ktoś ogląda na żywo." },
+                descriptions: { off: "Niczego nie odczytuje. Wcześniejsze odczyty zostają, z godziną.", whileViewing: "Odczytuje tylko, gdy ktoś ma go otwartego.", always: "Zachowuje historię. Odczytuje raz na minutę, częściej, gdy ktoś patrzy." },
                 interval: "Odczytuj co",
-                intervalDescription: "Jak często odczytuje procesor, pamięć, dysk i sieć, gdy ktoś ogląda na żywo. W przeciwnym razie raz na minutę.",
+                intervalDescription: "Jak często odczytuje procesor, pamięć, dysk i sieć, gdy ktoś ogląda na żywo. W przeciwnym razie co 15 s, gdy widać podsumowanie, i raz na minutę, gdy nic nie jest widoczne.",
                 seconds: ({ count }: { count: number }) => `${count} s`,
                 offTitle: ({ machine }: { machine: string }) => `Monitorowanie jest wyłączone na ${machine}`,
                 offReason: "Happier nie odczytuje procesora, pamięci, dysku ani sieci.",
@@ -11777,6 +11781,10 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { pl: translated({
+    queryHomesNotSelectedDescription: "Dodaj brakujące Homes do tego widoku.",
+    transcriptSearchHomeIndexing: "Ten Home indeksuje transkrypcje. Spróbuj ponownie po zakończeniu indeksowania.",
+    transcriptSearchHomeUnavailable: "Wyszukiwanie transkrypcji jest niedostępne w tym Home. Poproś administratora o sprawdzenie wyszukiwania.",
+    transcriptSearchHomeUnknown: "Ten Home nie potwierdził dostępności wyszukiwania transkrypcji. Poproś administratora o sprawdzenie wyszukiwania.",
     runsQuery: {
         loading: "Ładowanie uruchomień…",
         updating: "Aktualizowanie uruchomień…",
@@ -11877,6 +11885,8 @@ const sessionListFilterTranslations = { pl: translated({
         filtersProjectNot: ({ names }: { names: string }) => `Projekt nie jest ${names}`,
         filtersResultCount: ({ count }: { count: number }) => count === 1 ? '1 element' : (count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14)) ? `${count} elementy` : `${count} elementów`,
         queryInitialLoadingTitle: 'Ładowanie sesji…', queryUpdatingTitle: 'Aktualizowanie sesji…',
+        queryIncompleteTitle: "Ten widok jest niepełny",
+        queryHomesNeedUpdateDescription: "Niektóre Homes nie mogą jeszcze wyświetlić tego widoku. Zaktualizuj je lub skonfiguruj ponownie, a potem spróbuj jeszcze raz.",
         querySomeHomesUnavailableTitle: 'Niektóre Home są niedostępne', querySomeHomesUnavailableDescription: 'Happier pokazuje dostępne dane. Spróbuj ponownie, gdy te Home wrócą online.',
         queryRefreshFailedTitle: 'Nie udało się odświeżyć', queryRefreshFailedRetainedDescription: 'Załadowane sesje nadal są widoczne. Spróbuj ponownie, aby sprawdzić aktualizacje.', queryRefreshFailedEmptyDescription: 'Happier nie mógł załadować sesji z wybranych Home. Spróbuj ponownie, gdy będą dostępne.',
         queryNoMatchesLoadedTitle: 'Brak wyników w załadowanych sesjach', queryNoMatchesLoadedDescription: 'Więcej pasujących sesji może znajdować się na starszej stronie.', querySearchOlder: 'Przeszukaj starsze sesje',
@@ -11942,7 +11952,7 @@ const sessionPageTranslations = { pl: translated({
                 addTag: "Tag",
                 pinned: "Przypięta",
                 follow: "Obserwuj",
-                keepInNeedsYou: "Zostaw w Potrzebuje cię",
+                keepInNeedsYou: "Zostaw w sekcji Czeka na Ciebie",
                 keepInNeedsYouSubtitle: "Zostaje tam, dopóki jej nie usuniesz.",
                 fork: "Rozgałęź…",
                 forkDetail: "Natywnie, odtworzenie lub konfiguracja",
@@ -16044,7 +16054,9 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         runJobOnSchedule: { title: "Uruchamiaj zadanie według harmonogramu", description: "Wybierz usługę, edytuj polecenie w szkicu i włącz harmonogram. Bez udziału agenta." },
         backupVerify: { title: "Zweryfikuj kopię zapasową", description: "Sprawdza jedną migawkę kopii zapasowej na wybranym poziomie. Nic nie jest przywracane ani zmieniane." },
         nightlyBackups: { title: "Nocne kopie zapasowe", description: "Tworzy kopię danych, weryfikuje każdą nową migawkę i zachowuje tylko to, na co pozwala retencja. Włącz harmonogram, aby uruchamiać to co noc." },
+        restoreDrill: { title: "Próba przywracania", description: "Sprawdź migawkę, przywróć ją do osobnego zapisanego środowiska, sprawdź dane i zatrzymaj usługi. Zachowaj środowisko i jego uprawnienia do następnej próby." },
         dailyHealthDigest: { title: "Codzienny raport kondycji", description: "Podsumowuje, jak działały Twoje środowiska i usługi, i wysyła to do Ciebie. Dodaj wyzwalacz, aby dostawać go codziennie." },
+        restartWhenNeeded: { title: "Uruchom ponownie w razie potrzeby", description: "Sprawdzaj aktualizacje Konfiguracji według harmonogramu i uruchamiaj ponownie tylko w razie potrzeby. Nadal obowiązują okna konserwacji i zwykłe zatwierdzenia." },
         noSessions: "Rozpocznij sesję roboczą, aby użyć tego szablonu.",
         nodes: { ask: 'Zapytaj', 'review-correctness': 'Sprawdź poprawność', 'review-tests': 'Sprawdź testy', summarize: 'Podsumuj ustalenia', analyze: 'Analizuj', review: 'Przejrzyj', fix: 'Napraw', check: 'Sprawdź', classify: 'Klasyfikuj', reply: 'Przygotuj odpowiedź', digest: 'Podsumuj zmiany', deploy: 'Wdróż dokładny commit' },
         title: 'Zacznij od przykładu', fromExample: 'Z przykładu', description: 'Każdy otwiera się jako szkic. Nic nie ruszy, dopóki nie wybierzesz Uruchom teraz.', sessionDescription: 'Każdy otwiera się jako szkic w tej sesji. Nic nie ruszy, dopóki go nie włączysz.', use: 'Użyj tego', chooseSession: 'Wybierz sesję…', builtInDescription: 'Część Happier. Powiel, aby zmienić.', stepCount: ({ count }) => `Kroki: ${count}`,
@@ -16227,6 +16239,16 @@ type WorkflowTriggersCopy = Shared_workflowTriggersTranslations.WorkflowTriggers
 const en = Shared_workflowTriggersTranslations.en;
 
 const pl: WorkflowTriggersCopy = {
+    once: {
+        label: "Raz",
+        relative: "Lub za",
+        relativeHint: "Na przykład: in 20 min, 2 h lub 1 d. Obliczane po potwierdzeniu wyzwalacza.",
+        relativeInvalid: "Wpisz dodatni czas oczekiwania, np. in 20 min.",
+        at: ({ time }: { time: string }) => `Jednorazowo ${time}`,
+        missed: "Pominięto zaplanowane uruchomienie. Zaplanuj je ponownie lub wybierz Uruchom teraz.",
+        missedOffline: "Pominięto uruchomienie, ponieważ komputer był offline w zaplanowanym czasie. Zaplanuj je ponownie lub wybierz Uruchom teraz.",
+        missedUnavailable: "Pominięto uruchomienie, ponieważ nie udało się potwierdzić dostępności komputera w zaplanowanym czasie. Zaplanuj je ponownie lub wybierz Uruchom teraz.",
+    },
     activity: {
         create: "Utwórz wyzwalacz z tego zdarzenia",
         test: "Przetestuj ten wyzwalacz",

@@ -1023,7 +1023,7 @@ const artifactsBrowserTranslations = { pt: {
         loadFailedBody: 'Tente novamente em instantes. Nada foi perdido.',
         retainedBody: "Não foi possível atualizar. Mostrando os últimos artefatos carregados.",
         loadingBody: "Ainda carregando o restante.",
-        countSoFar: ({ count }) => `${count} carregados até agora`,
+        countSoFar: ({ count }) => `${count} ${count === 1 ? 'artefato carregado' : 'artefatos carregados'} até agora`,
         noMatchSoFar: ({ query }) => `Ainda nada corresponde a “${query}”`,
         quota: {
             accountTitle: 'O armazenamento de artefatos está cheio',
@@ -6274,6 +6274,10 @@ const pt: MachineAgentsTranslation = {
     phoneLead: ({ agent, machine }) => `${agent} está pedindo para você entrar. Abra a página aqui, conclua e ${machine} vai detectar.`,
     panelSignedInAs: ({ account }) => `Conectado como ${account}.`,
     panelChecked: 'O Happier verificou agora há pouco.',
+    signInUnavailable: "Não foi possível verificar o login. Reconecte esta máquina e verifique novamente.",
+    signInChanged: "Este terminal mudou. Feche-o e abra o login novamente.",
+    signInCancelled: "O login foi cancelado. Você pode abri-lo novamente quando quiser.",
+    signInServiceUnsupported: "Este serviço não pode autenticar este agente. Escolha outro método de login.",
     sectionTitle: 'Agentes',
     sectionDescription: 'Os agentes de programação desta máquina e como cada um entra.',
     addTitle: 'Adicionar um agente',
@@ -6843,9 +6847,9 @@ const machineDetailPageTranslations = { pt: translated({
             monitoring: {
                 title: "Monitorização",
                 modes: { off: "Desligada", whileViewing: "Ao visualizar", always: "Sempre" },
-                descriptions: { off: "Não lê nada. O que leu antes fica, com a hora da leitura.", whileViewing: "Lê apenas enquanto alguém a tem aberta.", always: "Mantém o histórico. Lê uma vez por minuto, com mais frequência enquanto alguém acompanha ao vivo." },
+                descriptions: { off: "Não lê nada. O que leu antes fica, com a hora da leitura.", whileViewing: "Lê apenas enquanto alguém a tem aberta.", always: "Mantém o histórico. Lê uma vez por minuto, com mais frequência enquanto alguém está a ver." },
                 interval: "Ler a cada",
-                intervalDescription: "Com que frequência lê CPU, memória, disco e rede enquanto alguém acompanha ao vivo. Caso contrário, uma vez por minuto.",
+                intervalDescription: "Com que frequência lê CPU, memória, disco e rede enquanto alguém acompanha ao vivo. Caso contrário, a cada 15 s enquanto um resumo está visível, e uma vez por minuto quando nada está.",
                 seconds: ({ count }: { count: number }) => `${count} s`,
                 offTitle: ({ machine }: { machine: string }) => `A monitorização está desligada em ${machine}`,
                 offReason: "O Happier não está a ler CPU, memória, disco nem rede.",
@@ -11763,6 +11767,10 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { pt: translated({
+    queryHomesNotSelectedDescription: "Adicione os Homes em falta a esta vista.",
+    transcriptSearchHomeIndexing: "Este Home está a indexar as transcrições. Tente novamente quando terminar.",
+    transcriptSearchHomeUnavailable: "A pesquisa de transcrições não está disponível neste Home. Peça ao administrador para verificar a pesquisa.",
+    transcriptSearchHomeUnknown: "Este Home não confirmou que a pesquisa de transcrições está disponível. Peça ao administrador para verificar a pesquisa.",
     runsQuery: {
         loading: "A carregar execuções…",
         updating: "A atualizar execuções…",
@@ -11862,6 +11870,8 @@ const sessionListFilterTranslations = { pt: translated({
         filtersProjectNot: ({ names }: { names: string }) => `O projeto não é ${names}`,
         filtersResultCount: ({ count }: { count: number }) => count === 1 ? `1 item` : `${count} itens`,
         queryInitialLoadingTitle: 'Carregando sessões…', queryUpdatingTitle: 'Atualizando sessões…',
+        queryIncompleteTitle: "Esta vista está incompleta",
+        queryHomesNeedUpdateDescription: "Algumas Homes ainda não podem mostrar esta vista. Atualiza ou reconfigura essas Homes e tenta novamente.",
         querySomeHomesUnavailableTitle: 'Alguns Homes estão indisponíveis', querySomeHomesUnavailableDescription: 'O Happier mostra o que consegue acessar. Tente novamente quando esses Homes voltarem a ficar online.',
         queryRefreshFailedTitle: 'Não foi possível atualizar', queryRefreshFailedRetainedDescription: 'Suas sessões carregadas continuam aqui. Tente novamente para verificar atualizações.', queryRefreshFailedEmptyDescription: 'O Happier não conseguiu carregar sessões dos Homes selecionados. Tente novamente quando estiverem acessíveis.',
         queryNoMatchesLoadedTitle: 'Nenhuma correspondência nas sessões carregadas', queryNoMatchesLoadedDescription: 'Mais sessões correspondentes podem estar disponíveis em uma página anterior.', querySearchOlder: 'Pesquisar sessões anteriores',
@@ -16024,7 +16034,9 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         runJobOnSchedule: { title: "Executar uma tarefa agendada", description: "Escolhe um serviço, edita o comando no rascunho e ativa o horário. Nenhum agente participa." },
         backupVerify: { title: "Verificar uma cópia de segurança", description: "Verifica um instantâneo de cópia de segurança ao nível que escolher. Nada é restaurado nem alterado." },
         nightlyBackups: { title: "Cópias de segurança noturnas", description: "Faz cópia dos seus dados, verifica cada novo instantâneo e mantém só o que a retenção permite. Ative o horário para correr todas as noites." },
+        restoreDrill: { title: "Simulação de restauração", description: "Verifique um snapshot, restaure-o em um ambiente separado já salvo, confira os dados e pare os serviços. Mantenha o ambiente e suas permissões para a próxima simulação." },
         dailyHealthDigest: { title: "Resumo diário de saúde", description: "Resume como correram os seus ambientes e serviços e envia-lhe. Adicione um acionador para o receber todos os dias." },
+        restartWhenNeeded: { title: "Reiniciar quando necessário", description: "Verifica as atualizações da Configuração num horário definido e reinicia apenas quando necessário. As janelas de manutenção e as aprovações habituais continuam a aplicar-se." },
         noSessions: "Inicie uma sessão de trabalho para usar este modelo.",
         nodes: { ask: 'Perguntar', 'review-correctness': 'Revisar a correção', 'review-tests': 'Revisar testes', summarize: 'Resumir achados', analyze: 'Analisar', review: 'Revisar', fix: 'Corrigir', check: 'Verificar', classify: 'Classificar', reply: 'Redigir uma resposta', digest: 'Resumir mudanças', deploy: 'Implantar o commit exato' },
         title: 'Começar com um exemplo', fromExample: 'De um exemplo', description: 'Cada um abre como rascunho. Nada executa até você escolher Executar agora.', sessionDescription: 'Cada um abre como rascunho nesta sessão. Nada é executado até você ativá-lo.', use: 'Usar este', chooseSession: 'Escolher uma sessão…', builtInDescription: 'Parte do Happier. Duplique para alterar.', stepCount: ({ count }) => `${count} ${count === 1 ? 'etapa' : 'etapas'}`,
@@ -16207,6 +16219,16 @@ type WorkflowTriggersCopy = Shared_workflowTriggersTranslations.WorkflowTriggers
 const en = Shared_workflowTriggersTranslations.en;
 
 const pt: WorkflowTriggersCopy = {
+    once: {
+        label: "Uma vez",
+        relative: "Ou após",
+        relativeHint: "Por exemplo: in 20 min, 2 h ou 1 d. Calculado ao confirmar o gatilho.",
+        relativeInvalid: "Insira um intervalo positivo, como in 20 min.",
+        at: ({ time }: { time: string }) => `Uma vez em ${time}`,
+        missed: "Esta execução agendada foi perdida. Reagende-a ou escolha Executar agora.",
+        missedOffline: "Esta execução foi perdida porque a máquina estava offline no horário agendado. Reagende-a ou escolha Executar agora.",
+        missedUnavailable: "Esta execução foi perdida porque não foi possível confirmar a disponibilidade da máquina no horário agendado. Reagende-a ou escolha Executar agora.",
+    },
     activity: {
         create: "Criar um gatilho a partir deste evento",
         test: "Testar este gatilho",

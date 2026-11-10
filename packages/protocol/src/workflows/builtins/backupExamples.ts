@@ -1,4 +1,6 @@
 import { DeploymentBackupRunInputV1Schema } from '../../deployments/deploymentBackupActionsV1.js';
+import { DeploymentBackupRestorePrepareInputV1Schema } from '../../deployments/deploymentBackupRestoreV1.js';
+import { DeploymentDataQueryInputV1Schema } from '../../deployments/deploymentReadsV1.js';
 import { ProjectReadinessReadInputV1Schema } from '../../projects/readinessV1.js';
 import type { WorkflowDefinitionV1 } from '../workflowV1.js';
 import { input, literal, result } from './definitionParts.js';
@@ -8,6 +10,60 @@ import { input, literal, result } from './definitionParts.js';
 const backupTargetReferences = () => Object.fromEntries(Object.keys(DeploymentBackupRunInputV1Schema.shape)
   .map(name => [name, { kind: 'input' as const, name: 'backupTarget', path: [name] }]));
 const targetInput = { name: 'backupTarget', valueType: 'json' as const, required: true };
+
+/** Reuses a person-selected isolated Environment; its retained grants never become Workflow inputs. */
+export function createRestoreDrillWorkflowV1(): WorkflowDefinitionV1 {
+  const services = { serverId: input('drillTarget', ['serverId']), machineId: input('drillTarget', ['machineId']),
+    environmentId: input('drillTarget', ['environmentId']) };
+  const control = (operation: 'start' | 'stop') => ({ serverId: services.serverId, machineId: services.machineId,
+    serviceId: { kind: 'item' as const, field: 'value' as const, path: ['serviceId'] },
+    expectedGeneration: { kind: 'item' as const, field: 'value' as const, path: ['generation'] }, operation: literal(operation) });
+  const restore = Object.fromEntries(Object.keys(DeploymentBackupRestorePrepareInputV1Schema.shape)
+    .filter(name => name !== 'mode').map(name => [name,
+      name === 'source' ? input('restoreSource') : name === 'destination' ? input('restoreDestination')
+        : input(name === 'deploymentId' ? 'backupTarget' : 'drillTarget', [name])]));
+  const query = Object.fromEntries(Object.keys(DeploymentDataQueryInputV1Schema.shape).map(name => [name,
+    name in DeploymentBackupRestorePrepareInputV1Schema.shape ? input('drillTarget', [name]) : input('dataCheck', [name])]));
+  return {
+    version: 1, defaults: {}, inputs: [targetInput,
+      { name: 'restoreSource', valueType: 'json', required: true,
+        description: 'The selected repository snapshot, backup operation and original source Environment.' },
+      { name: 'drillTarget', valueType: 'json', required: true,
+        description: 'The existing isolated destination and its current serving deployment. Keep this Environment and its sealed grants between runs.' },
+      { name: 'restoreDestination', valueType: 'json', required: true,
+        description: 'The database or volume inside the isolated drill Environment.' },
+      { name: 'verificationLevel', valueType: 'string', required: true },
+      { name: 'dataCheck', valueType: 'json', required: true,
+        description: 'A service, read-only SQL statement and named parameters that prove the restored data is usable.' },
+    ],
+    blocks: [
+      { kind: 'parallel', id: 'drill', name: 'Restore and check the retained drill Environment', failurePolicy: 'collect_outcomes', branches: [
+        { id: 'restoreAndCheck', name: 'Check this recovery point', blocks: [
+          { kind: 'action', id: 'drillServices', name: 'Read the isolated Environment services', actionId: 'machines.services.list', input: services },
+          { kind: 'loop', id: 'startDrill', name: 'Start the retained drill services', repetition: {
+            kind: 'items', items: result('drillServices', ['services']), execution: 'sequential', failurePolicy: 'fail_stop',
+          }, body: [{ kind: 'action', id: 'startService', name: 'Start this drill service', actionId: 'machines.services.control', input: control('start') }] },
+          { kind: 'action', id: 'verify', name: 'Verify the exact source snapshot', actionId: 'deployments.backups.verify', input: {
+            ...backupTargetReferences(), backupOperationId: input('restoreSource', ['backupOperationId']),
+            snapshotId: input('restoreSource', ['snapshotId']), level: input('verificationLevel'),
+          } },
+          { kind: 'action', id: 'prepareRestore', name: 'Prepare restore into the isolated Environment', actionId: 'deployments.backups.restore',
+            input: { ...restore, mode: literal('prepare') } },
+          { kind: 'action', id: 'confirmRestore', name: 'Restore this recovery point', actionId: 'deployments.backups.restore',
+            input: { ...restore, mode: literal('confirm'), prepareOperationId: result('prepareRestore', ['operationId']) } },
+          { kind: 'action', id: 'checkData', name: 'Check restored data with the read-only database role', actionId: 'deployments.data.query', input: query },
+        ] },
+      ] },
+      // Resolve current service generations after restore. A volume activation may
+      // replace them; cleanup must consume the same inventory owner as Start.
+      { kind: 'action', id: 'cleanupServices', name: 'Read the retained drill services after the check', runWhen: 'always',
+        actionId: 'machines.services.list', input: services },
+      { kind: 'loop', id: 'stopDrill', name: 'Stop the isolated Environment and retain its data', runWhen: 'always', repetition: {
+        kind: 'items', items: result('cleanupServices', ['services']), execution: 'sequential', failurePolicy: 'collect_outcomes',
+      }, body: [{ kind: 'action', id: 'stopService', name: 'Stop this drill service', actionId: 'machines.services.control', input: control('stop') }] },
+    ], finalOutput: result('drill'),
+  };
+}
 
 export function createDailyHealthDigestWorkflowV1(): WorkflowDefinitionV1 {
   return {

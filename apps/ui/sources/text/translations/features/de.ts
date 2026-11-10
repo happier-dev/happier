@@ -1017,7 +1017,7 @@ const artifactsBrowserTranslations = { de: {
         loadFailedBody: 'Versuche es gleich noch einmal. Nichts ist verloren.',
         retainedBody: "Aktualisierung fehlgeschlagen. Die zuletzt geladenen Artefakte werden angezeigt.",
         loadingBody: "Der Rest wird noch geladen.",
-        countSoFar: ({ count }) => `${count} bisher geladen`,
+        countSoFar: ({ count }) => `${count} ${count === 1 ? 'Artefakt' : 'Artefakte'} bisher geladen`,
         noMatchSoFar: ({ query }) => `Bisher passt nichts zu „${query}“`,
         quota: {
             accountTitle: 'Der Artefaktspeicher ist voll',
@@ -6266,6 +6266,10 @@ const de: MachineAgentsTranslation = {
     phoneLead: ({ agent, machine }) => `${agent} bittet dich, dich anzumelden. Öffne die Seite hier, schließe ab, und ${machine} übernimmt es.`,
     panelSignedInAs: ({ account }) => `Angemeldet als ${account}.`,
     panelChecked: 'Happier hat es gerade geprüft.',
+    signInUnavailable: "Die Anmeldung konnte nicht geprüft werden. Verbinde diesen Rechner erneut und prüfe noch einmal.",
+    signInChanged: "Dieses Anmeldeterminal hat sich geändert. Schließe es und öffne die Anmeldung erneut.",
+    signInCancelled: "Die Anmeldung wurde abgebrochen. Du kannst sie jederzeit erneut öffnen.",
+    signInServiceUnsupported: "Dieser Dienst kann diesen Agenten nicht anmelden. Wähle eine andere Anmeldemethode.",
     sectionTitle: 'Agenten',
     sectionDescription: 'Die Coding-Agenten auf diesem Gerät und wie sich jeder anmeldet.',
     addTitle: 'Agenten hinzufügen',
@@ -6835,9 +6839,9 @@ const machineDetailPageTranslations = { de: translated({
             monitoring: {
                 title: "Überwachung",
                 modes: { off: "Aus", whileViewing: "Beim Ansehen", always: "Immer" },
-                descriptions: { off: "Liest nichts. Frühere Werte bleiben, mit ihrem Zeitpunkt.", whileViewing: "Liest nur, solange jemand den Rechner geöffnet hat.", always: "Bewahrt den Verlauf. Liest einmal pro Minute, öfter, solange jemand live zusieht." },
+                descriptions: { off: "Liest nichts. Frühere Werte bleiben, mit ihrem Zeitpunkt.", whileViewing: "Liest nur, solange jemand den Rechner geöffnet hat.", always: "Bewahrt den Verlauf. Liest einmal pro Minute, öfter, solange jemand hinsieht." },
                 interval: "Lesen alle",
-                intervalDescription: "Wie oft CPU, Arbeitsspeicher, Speicher und Netzwerk gelesen werden, solange jemand live zusieht. Sonst einmal pro Minute.",
+                intervalDescription: "Wie oft CPU, Arbeitsspeicher, Speicher und Netzwerk gelesen werden, solange jemand live zusieht. Sonst alle 15 s, solange eine Übersicht sichtbar ist, und einmal pro Minute, wenn nichts angezeigt wird.",
                 seconds: ({ count }: { count: number }) => `${count} s`,
                 offTitle: ({ machine }: { machine: string }) => `Überwachung ist auf ${machine} aus`,
                 offReason: "Happier liest weder CPU, Arbeitsspeicher, Speicher noch Netzwerk.",
@@ -11748,6 +11752,10 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { de: translated({
+    queryHomesNotSelectedDescription: "Füge die fehlenden Homes zu dieser Ansicht hinzu.",
+    transcriptSearchHomeIndexing: "Dieses Home indexiert Transkripte. Versuche es nach Abschluss erneut.",
+    transcriptSearchHomeUnavailable: "Die Transkriptsuche ist auf diesem Home nicht verfügbar. Bitte die Administration, die Suche zu prüfen.",
+    transcriptSearchHomeUnknown: "Dieses Home hat die Verfügbarkeit der Transkriptsuche nicht bestätigt. Bitte die Administration, die Suche zu prüfen.",
     runsQuery: {
         loading: "Läufe werden geladen…",
         updating: "Läufe werden aktualisiert…",
@@ -11849,6 +11857,8 @@ const sessionListFilterTranslations = { de: translated({
         filtersProjectNot: ({ names }: { names: string }) => `Projekt ist nicht ${names}`,
         filtersResultCount: ({ count }: { count: number }) => count === 1 ? `1 Element` : `${count} Elemente`,
         queryInitialLoadingTitle: 'Sessions werden geladen…', queryUpdatingTitle: 'Sessions werden aktualisiert…',
+        queryIncompleteTitle: "Diese Ansicht ist unvollständig",
+        queryHomesNeedUpdateDescription: "Einige Homes können diese Ansicht noch nicht anzeigen. Aktualisiere oder konfiguriere diese Homes neu und versuche es erneut.",
         querySomeHomesUnavailableTitle: 'Einige Homes sind nicht verfügbar', querySomeHomesUnavailableDescription: 'Happier zeigt erreichbare Sessions. Versuche es erneut, sobald die Homes wieder online sind.',
         queryRefreshFailedTitle: 'Aktualisierung fehlgeschlagen', queryRefreshFailedRetainedDescription: 'Deine geladenen Sessions bleiben sichtbar. Versuche erneut, nach Aktualisierungen zu suchen.', queryRefreshFailedEmptyDescription: 'Happier konnte keine Sessions von den ausgewählten Homes laden. Versuche es erneut, wenn sie erreichbar sind.',
         queryNoMatchesLoadedTitle: 'Keine Treffer in geladenen Sessions', queryNoMatchesLoadedDescription: 'Auf einer älteren Seite können weitere passende Sessions verfügbar sein.', querySearchOlder: 'Ältere Sessions durchsuchen',
@@ -15512,7 +15522,9 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         runJobOnSchedule: { title: "Aufgabe nach Zeitplan ausführen", description: "Wähle einen Dienst, bearbeite den Befehl im Entwurf und schalte den Zeitplan ein. Ohne Agent." },
         backupVerify: { title: "Backup prüfen", description: "Prüft einen Backup-Snapshot in der gewählten Tiefe. Nichts wird wiederhergestellt oder geändert." },
         nightlyBackups: { title: "Nächtliche Backups", description: "Sichert deine Daten, prüft jeden neuen Snapshot und behält nur, was deine Aufbewahrung erlaubt. Schalte den Zeitplan ein, um es jede Nacht auszuführen." },
+        restoreDrill: { title: "Wiederherstellung testen", description: "Prüfe einen Snapshot, stelle ihn in einer separaten gespeicherten Umgebung wieder her, prüfe die Daten und stoppe ihre Dienste. Umgebung und Freigaben bleiben für den nächsten Test erhalten." },
         dailyHealthDigest: { title: "Täglicher Gesundheitsbericht", description: "Fasst zusammen, wie es deinen Umgebungen und Diensten ging, und schickt es dir. Füge einen Auslöser hinzu, um ihn täglich zu erhalten." },
+        restartWhenNeeded: { title: "Bei Bedarf neu starten", description: "Prüfe die Update-Fakten von Setup nach Zeitplan und starte nur bei Bedarf neu. Wartungsfenster und die üblichen Neustart-Freigaben gelten weiterhin." },
         noSessions: "Starte eine Arbeitssitzung, um diese Vorlage zu verwenden.",
         nodes: { ask: 'Fragen', 'review-correctness': 'Korrektheit prüfen', 'review-tests': 'Tests prüfen', summarize: 'Befunde zusammenfassen', analyze: 'Analysieren', review: 'Prüfen', fix: 'Beheben', check: 'Überprüfen', classify: 'Einordnen', reply: 'Antwort entwerfen', digest: 'Änderungen zusammenfassen', deploy: 'Den genauen Commit deployen' },
         title: 'Mit einem Beispiel beginnen', fromExample: 'Aus einem Beispiel', description: 'Jedes öffnet sich als Entwurf. Erst mit „Jetzt ausführen“ startet etwas.', sessionDescription: 'Jedes öffnet sich als Entwurf in dieser Sitzung. Nichts läuft, bis du es einschaltest.', use: 'Dieses verwenden', chooseSession: 'Sitzung auswählen…', builtInDescription: 'Teil von Happier. Zum Ändern duplizieren.', stepCount: ({ count }) => `${count} ${count === 1 ? 'Schritt' : 'Schritte'}`,
@@ -15695,6 +15707,16 @@ type WorkflowTriggersCopy = Shared_workflowTriggersTranslations.WorkflowTriggers
 const en = Shared_workflowTriggersTranslations.en;
 
 const de: WorkflowTriggersCopy = {
+    once: {
+        label: "Einmal",
+        relative: "Oder nach",
+        relativeHint: "Zum Beispiel: in 20 min, 2 h oder 1 d. Wird beim Bestätigen des Auslösers berechnet.",
+        relativeInvalid: "Gib eine positive Wartezeit ein, etwa in 20 min.",
+        at: ({ time }: { time: string }) => `Einmal am ${time}`,
+        missed: "Dieser geplante Lauf wurde verpasst. Plane ihn neu oder wähle Jetzt ausführen.",
+        missedOffline: "Dieser Lauf wurde verpasst, weil sein Computer zur geplanten Zeit offline war. Plane ihn neu oder wähle Jetzt ausführen.",
+        missedUnavailable: "Dieser Lauf wurde verpasst, weil die Verfügbarkeit des Computers zur geplanten Zeit nicht bestätigt werden konnte. Plane ihn neu oder wähle Jetzt ausführen.",
+    },
     activity: {
         create: "Aus diesem Ereignis einen Auslöser erstellen",
         test: "Diesen Auslöser testen",

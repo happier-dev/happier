@@ -1023,7 +1023,7 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
         loadFailedBody: '請稍後重試。沒有任何內容遺失。',
         retainedBody: "無法重新整理。正在顯示上次載入的成品。",
         loadingBody: "仍在載入其餘內容。",
-        countSoFar: ({ count }) => `已載入 ${count} 個`,
+        countSoFar: ({ count }) => `目前已載入 ${count} 個成品`,
         noMatchSoFar: ({ query }) => `目前沒有符合「${query}」的項目`,
         quota: {
             accountTitle: '成品儲存空間已滿',
@@ -6264,6 +6264,10 @@ const zhHant: MachineAgentsTranslation = {
     phoneLead: ({ agent, machine }) => `${agent} 需要你登入。在這裡開啟頁面並完成，${machine} 會自動取得。`,
     panelSignedInAs: ({ account }) => `已登入為 ${account}。`,
     panelChecked: 'Happier 剛剛檢查過。',
+    signInUnavailable: "無法檢查登入狀態。請重新連接此機器，然後再次檢查。",
+    signInChanged: "登入終端已變更。請關閉它並重新開啟登入。",
+    signInCancelled: "登入已取消。準備好後可以重新開啟。",
+    signInServiceUnsupported: "此服務無法為此代理登入。請選擇其他登入方式。",
     sectionTitle: '代理',
     sectionDescription: '此機器上的程式設計代理，以及各自的登入方式。',
     addTitle: '新增代理',
@@ -6833,9 +6837,9 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
             monitoring: {
                 title: "監控",
                 modes: { off: "關閉", whileViewing: "檢視時", always: "始終" },
-                descriptions: { off: "不讀取任何資料。先前的讀數會保留，並標明時間。", whileViewing: "僅在有人開啟時讀取。", always: "保留歷史記錄。每分鐘讀取一次，有人即時檢視時更頻繁。" },
+                descriptions: { off: "不讀取任何資料。先前的讀數會保留，並標明時間。", whileViewing: "僅在有人開啟時讀取。", always: "保留歷史記錄。每分鐘讀取一次，有人檢視時更頻繁。" },
                 interval: "讀取間隔",
-                intervalDescription: "有人即時檢視時讀取 CPU、記憶體、磁碟和網路的頻率。否則每分鐘讀取一次。",
+                intervalDescription: "有人即時檢視時讀取 CPU、記憶體、磁碟和網路的頻率。否則在顯示摘要時每 15 秒讀取一次，沒有任何顯示時每分鐘讀取一次。",
                 seconds: ({ count }: { count: number }) => `${count} 秒`,
                 offTitle: ({ machine }: { machine: string }) => `${machine} 的監控已關閉`,
                 offReason: "Happier 未讀取它的 CPU、記憶體、磁碟或網路。",
@@ -11747,6 +11751,10 @@ const en = Shared_sessionListFilterTranslations.en;
 const translated = Shared_sessionListFilterTranslations.translated;
 
 const sessionListFilterTranslations = { zhHant: translated({
+    queryHomesNotSelectedDescription: "將缺少的 Home 加入此檢視。",
+    transcriptSearchHomeIndexing: "此 Home 正在為對話記錄建立索引。請在完成後重試。",
+    transcriptSearchHomeUnavailable: "此 Home 的對話記錄搜尋無法使用。請聯絡其管理員檢查搜尋功能。",
+    transcriptSearchHomeUnknown: "此 Home 尚未確認對話記錄搜尋是否可用。請聯絡其管理員檢查搜尋功能。",
     runsQuery: {
         loading: "正在載入執行…",
         updating: "正在更新執行…",
@@ -11842,6 +11850,8 @@ const sessionListFilterTranslations = { zhHant: translated({
         filtersProjectNot: ({ names }: { names: string }) => `專案不是 ${names}`,
         filtersResultCount: ({ count }: { count: number }) => `${count} 個項目`,
         queryInitialLoadingTitle: '正在載入工作階段…', queryUpdatingTitle: '正在更新工作階段…',
+        queryIncompleteTitle: "此檢視不完整",
+        queryHomesNeedUpdateDescription: "部分 Home 暫時無法顯示此檢視。請更新或重新設定這些 Home 後重試。",
         querySomeHomesUnavailableTitle: '部分 Home 無法使用', querySomeHomesUnavailableDescription: 'Happier 正在顯示可存取的內容。請在這些 Home 恢復連線後再試一次。',
         queryRefreshFailedTitle: '無法重新整理', queryRefreshFailedRetainedDescription: '已載入的工作階段仍會保留。請重試以檢查更新。', queryRefreshFailedEmptyDescription: 'Happier 無法從所選 Home 載入工作階段。請在它們恢復可存取後再試一次。',
         queryNoMatchesLoadedTitle: '已載入的工作階段中沒有相符項目', queryNoMatchesLoadedDescription: '較早的頁面中可能還有相符的工作階段。', querySearchOlder: '搜尋較早的工作階段',
@@ -11907,7 +11917,7 @@ const sessionPageTranslations = { 'zh-Hant': translated({
                 addTag: "標籤",
                 pinned: "已釘選",
                 follow: "追蹤",
-                keepInNeedsYou: "保留在「需要你」中",
+                keepInNeedsYou: "保留在需要你",
                 keepInNeedsYouSubtitle: "在你清除前會一直保留。",
                 fork: "分叉…",
                 forkDetail: "原生、重播或設定",
@@ -16003,7 +16013,9 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         runJobOnSchedule: { title: "定時執行工作", description: "選擇服務，在草稿中編輯指令，再開啟排程。無需代理參與。" },
         backupVerify: { title: "驗證備份", description: "依你選擇的層級檢查一個備份快照。不會還原或變更任何內容。" },
         nightlyBackups: { title: "每晚備份", description: "備份你的資料，驗證每個新快照，然後只保留保留政策允許的部分。開啟排程即可每晚執行。" },
+        restoreDrill: { title: "復原演練", description: "驗證快照，將其復原至另外儲存的環境，檢查資料後停止服務。保留該環境與授權，供下次演練使用。" },
         dailyHealthDigest: { title: "每日健康摘要", description: "彙整你的環境與服務的運作情況並傳送給你。新增觸發器即可每天收到。" },
+        restartWhenNeeded: { title: "按需重新啟動", description: "依排程檢查設定的更新資訊，僅在需要時重新啟動。仍遵循維護時段和一般重新啟動核准。" },
         noSessions: "啟動一個工作階段以使用此範本。",
         nodes: { ask: '提問', 'review-correctness': '審查正確性', 'review-tests': '審查測試', summarize: '彙總發現', analyze: '分析', review: '審查', fix: '修復', check: '檢查', classify: '分類', reply: '起草回覆', digest: '彙總變更', deploy: '部署事件的確切提交' },
         title: '從範例開始', fromExample: '使用範例', description: '每個範例都以草稿開啟。選擇「立即執行」之前不會執行。', sessionDescription: '每個都會在此工作階段以草稿開啟。開啟之前不會執行。', use: '使用此範例', chooseSession: '選擇工作階段…', builtInDescription: 'Happier 內建。複製後即可修改。', stepCount: ({ count }) => `${count} 個步驟`,
@@ -16186,6 +16198,16 @@ type WorkflowTriggersCopy = Shared_workflowTriggersTranslations.WorkflowTriggers
 const en = Shared_workflowTriggersTranslations.en;
 
 const zhHant: WorkflowTriggersCopy = {
+    once: {
+        label: "一次",
+        relative: "或延遲",
+        relativeHint: "例如：in 20 min、2 h 或 1 d。確認觸發器時計算具體時間。",
+        relativeInvalid: "請輸入正的延遲時間，例如 in 20 min。",
+        at: ({ time }: { time: string }) => `執行一次： ${time}`,
+        missed: "此排程執行已錯過。請重新排程或選擇立即執行。",
+        missedOffline: "由於電腦在排程時間離線，此次執行已錯過。請重新排程或選擇立即執行。",
+        missedUnavailable: "由於無法確認電腦在排程時間是否可用，此次執行已錯過。請重新排程或選擇立即執行。",
+    },
     activity: {
         create: "根據此事件建立觸發條件",
         test: "測試此觸發條件",
