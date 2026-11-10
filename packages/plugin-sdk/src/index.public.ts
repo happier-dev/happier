@@ -17,16 +17,29 @@ export type {
     DeploymentTargetPromoteInputV1, DeploymentTargetTeardownInputV1,
     DeploymentTargetRuntimeRoleV1, DeploymentTargetRoleInputV1,
     DeploymentTargetRoleResultV1, DeploymentTargetRoleFailureV1,
+    DeploymentTargetDomainInputV1, DeploymentTargetDomainResultV1,
+    DeploymentTargetVariablesReadInputV1, DeploymentTargetVariablesSyncInputV1,
+    DeploymentTargetVariablesReadResultV1, DeploymentTargetVariablesSyncResultV1,
+    DeploymentTargetOwnedVariableV1, DeploymentTargetVariableMetadataV1,
 } from './deploymentTargets.js';
-export { DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetLogsResultV1ProtocolSchema,
+export { DeploymentTargetDomainResultV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetLogsResultV1ProtocolSchema,
+    DeploymentTargetVariablesReadResultV1ProtocolSchema, DeploymentTargetVariablesSyncResultV1ProtocolSchema,
     DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetPreparationBaseV1ProtocolSchema,
     hasDeploymentTargetPreparationCoordinatesV1 } from './deploymentTargets.js';
 export type { HealthChecksService, HealthCheckKindContributionV1, HealthCheckKindV1, HealthCheckStatusV1, HealthCheckSubjectV1, HealthCheckResultV1, HealthCheckSourceConfigV1, SavedHealthCheckSelectorV1 } from './healthCheckKinds.js';
-export { HEALTH_CHECK_KINDS_V1, HealthCheckSubjectV1ProtocolSchema, HealthCheckResultV1ProtocolSchema, HealthCheckSourceConfigV1ProtocolSchema, HealthCheckTransitionV1ProtocolSchema, SavedHealthCheckSelectorV1ProtocolSchema } from './healthCheckKinds.js';
+export type { HealthCheckKindCatalogV1 } from './healthCheckKinds.js';
+export { HealthCheckKindCatalogV1ProtocolSchema } from './healthCheckKinds.js';
+export type { HealthCheckSourceSelectorV1 } from './healthCheckKinds.js';
+export { HealthCheckSourceSelectorV1ProtocolSchema } from './healthCheckKinds.js';
+export type { HealthCheckDomainSetupIntentV1 } from './healthCheckKinds.js';
+export { HealthCheckDomainSetupIntentV1ProtocolSchema } from './healthCheckKinds.js';
+export { createHealthCheckSourceInstanceIdV1, HEALTH_CHECK_KINDS_V1, HealthCheckSubjectV1ProtocolSchema, HealthCheckResultV1ProtocolSchema, HealthCheckSourceConfigV1ProtocolSchema, HealthCheckTransitionV1ProtocolSchema, SavedHealthCheckSelectorV1ProtocolSchema } from './healthCheckKinds.js';
 export { HealthCheckTcpConfigV1ProtocolSchema, HealthCheckDnsConfigV1ProtocolSchema, HealthCheckHeartbeatConfigV1ProtocolSchema } from './healthCheckKinds.js';
-export { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_EVENT_REFS_V1, HealthCheckSetupInputV1ProtocolSchema, HealthCheckSetupDraftV1ProtocolSchema,
+export { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_EVENT_REFS_V1, HEALTH_CHECK_SETUP_OPEN_ACTION_REF_V1, HealthCheckSetupInputV1ProtocolSchema, HealthCheckSetupDraftV1ProtocolSchema,
     HealthCheckHttpConfigV1ProtocolSchema, isHealthCheckLoopbackRefusedV1 } from './healthCheckKinds.js';
 export type { HealthCheckSetupInputV1, HealthCheckSetupDraftV1 } from './healthCheckKinds.js';
+export type { PluginWebhookHeartbeatManageInputV1, PluginWebhookHeartbeatManageResultV1 } from './healthCheckKinds.js';
+export { PluginWebhookHeartbeatManageInputV1ProtocolSchema, PluginWebhookHeartbeatManageResultV1ProtocolSchema } from './healthCheckKinds.js';
 export type { MachineRecipeV1, MachineRecipeStepV1, MachineRecipeSelectionV1, MachineSetupV1, MachineSetupScriptV1, MachinePresetItemV1, MachineSetupPresetContributionV1, StoredAppPresetInputV1 } from './machineSetup.js';
 export { createDockerMembershipStep } from './machineSetup.js';
 export { DOCKER_ENGINE_RECIPE_REF_V1 } from './machineSetup.js';
@@ -198,6 +211,7 @@ export type { PluginInvocationContributionIdentity } from './identity.js';
 export type { PluginInvocationOriginSurface } from './invocation.js';
 export type { PluginJsonValueV2 } from './identity.js';
 export { computeCanonicalDomainSeparatedDigest } from './identity.js';
+export { buildQualifiedPluginContributionKey } from './identity.js';
 export { computeSha256HexDigest } from './identity.js';
 export { createCanonicalJsonSigningInput } from './identity.js';
 export type { PluginMachineMaterializationRefV1 } from './invocation.js';

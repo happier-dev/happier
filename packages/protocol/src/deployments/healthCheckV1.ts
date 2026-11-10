@@ -6,6 +6,10 @@ import { DeploymentTimestampV1Schema } from './deploymentIdentifiersV1.js';
 
 /** Finite built-ins; installed qualified kinds use the contribution catalog. */
 export const HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 = 'happier.machine.services';
+/** Public client Action: opens the saved-check editor without executing setup. */
+export const HEALTH_CHECK_SETUP_OPEN_ACTION_REF_V1 = {
+  pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'health/open-setup',
+} as const;
 export const HEALTH_CHECK_EVENT_REFS_V1 = {
   status: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'health-status' },
   failed: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'health-check-failed' },

@@ -59,6 +59,7 @@ import {
 import { createMcpSignInConnectedAccountRegistration } from '@/mcp/oauth/mcpSignInRuntime';
 import { assembleAutomationRuntime } from './composition/automationAssembly';
 import { createSavedHealthChecksHost } from '@/deployments/healthChecks/savedHealthChecks';
+import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 import { publishSavedServiceHealthResult } from '@/deployments/healthChecks/publishServiceHealth';
 import { createPluginWebhookHeartbeatClient } from './webhooks/heartbeatClient';
 import { createCurrentDomainEdgeObservation } from '@/deployments/healthChecks/currentDomainEdgeObservation';
@@ -3232,6 +3233,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     actionCaller: request.initiatingActionCaller,
                     ...(request.sessionId ? { defaultSessionId: request.sessionId } : {}), signal: request.signal },
                 inheritedInvocation: {
+                    ...(request.requestId === undefined ? {} : { operationRequestId: request.requestId }),
                     ...(request.requiredDangerLevel ? { requiredDangerLevel: request.requiredDangerLevel } : {}),
                     ...(request.requiredReadOnly ? { requiredReadOnly: request.requiredReadOnly } : {}),
                     ...(request.resourceSessionId ? { resourceSessionId: request.resourceSessionId } : {}),
@@ -3283,6 +3285,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 }),
             context: {
                 surface: request.surface,
+                ...(request.requestId === undefined ? {} : { operationRequestId: request.requestId }),
                 ...(request.originSurface ? { originSurface: request.originSurface } : {}),
                 caller: request.caller,
                 ...(request.initiatingActionCaller ? { initiatingActionCaller: request.initiatingActionCaller } : {}),
@@ -3493,14 +3496,24 @@ export async function resolveExecutablePluginRuntimeRegistry(
         readCredentials: readHealthCheckCredentials,
         serverHttpBaseUrl: notificationServerHttpBaseUrl,
     });
+    const resolveHealthCheckSourceOwner = () => {
+        const caller = resolveCurrentPluginMaterializationRef(HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1);
+        const occurrenceId = readCurrentPluginOccurrenceId(HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1);
+        return caller && occurrenceId ? { caller, occurrenceId } : null;
+    };
     invocationServiceOwners = createProductionPluginInvocationServiceOwners({
         readSecretSources: () => resolvedRuntimeRegistryOwner?.secretSources,
         resolveRetirementSignal: pluginId => resolveRuntimeConsumerLifecycle(pluginId).retirementSignal,
         ...(!params?.accountExecution ? { healthChecks: createSavedHealthChecksHost({
             serverId: sessionCredentialsServerId,
             resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet,
+            readKinds: () => (resolvedRuntimeRegistryOwner?.healthCheckKinds ?? []).map(entry => ({
+                pluginId: entry.pluginId, ...entry.definition,
+            })),
+            resolveSourceOwner: resolveHealthCheckSourceOwner,
             enrollHeartbeat: heartbeatClient.enroll,
             readHeartbeatReceipt: heartbeatClient.read,
+            manageHeartbeat: heartbeatClient.manage,
             onDomainResult: value => currentDomainEdgeObservation.publish(value),
             onServiceResult: value => publishSavedServiceHealthResult(projectManagedServicesOwner, value),
             openDomainArtifact: async (artifactId, signal) => {
@@ -6424,6 +6437,12 @@ export async function resolveExecutablePluginRuntimeRegistry(
             return projectManagedServicesOwner;
         },
         currentDomainEdgeObservation,
+        readHealthCheckSource(sourceInstanceId, signal) {
+            const owner = params?.accountExecution ? null : resolveHealthCheckSourceOwner();
+            return owner ? readAdoptedHealthCheckBatch({ ...owner, sourceInstanceId, signal,
+                resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet })
+                : { kind: 'unavailable' as const, reason: 'source_unavailable' as const };
+        },
         readSharedProviderGatewayRuntime(input) {
             return projectManagedServicesOwner.readSharedProviderGatewayRuntime(input);
         },

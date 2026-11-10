@@ -93,6 +93,13 @@ observer and every destination before I/O; ordinary plugin network disclosure
 does not provide that saved-check admission. See the maintained public-authoring
 example's `readEndpointMetadata` helper.
 
+The development daemon's `healthChecks.listKinds({ signal })` exposes the admitted
+finite-kind catalog. `healthChecks.readSource({ sourceInstanceId }, { signal })`
+returns the current saved source for the observer, including the exact check ids
+and configuration. A contributed finite producer resolves its selector from that
+source. Both reads retain ordinary invocation cancellation; an unavailable source
+is a typed refusal rather than permission to use caller-supplied configuration.
+
 ## Accepted machine starts in development
 
 In unreleased 0.3 source, only a provisioner whose native start returns before

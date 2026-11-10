@@ -7,6 +7,11 @@ import {
 import {
   PLUGIN_WEBHOOK_HEARTBEAT_ENSURE_PATH_V1,
   PLUGIN_WEBHOOK_HEARTBEAT_READ_PATH_V1,
+  PLUGIN_WEBHOOK_HEARTBEAT_MANAGE_PATH_V1,
+  PluginWebhookHeartbeatManageInputV1Schema,
+  PluginWebhookHeartbeatManageResultV1Schema,
+  type PluginWebhookHeartbeatManageInputV1,
+  type PluginWebhookHeartbeatManageResultV1,
   PluginWebhookEndpointEnsureInputV1Schema,
   PluginWebhookEndpointEnsureResultV1Schema,
   PluginWebhookHeartbeatReadInputV1Schema,
@@ -33,6 +38,7 @@ export type PluginWebhookHeartbeatReadRequest = Readonly<{
   webhookEndpointId: string;
 }>;
 export type PluginWebhookHeartbeatClient = Readonly<{
+  manage(request: Readonly<{ caller: PluginMachineMaterializationRefV1; input: PluginWebhookHeartbeatManageInputV1 }>, signal?: AbortSignal): Promise<PluginWebhookHeartbeatManageResultV1>;
   enroll(request: PluginWebhookHeartbeatEnrollRequest, signal?: AbortSignal): Promise<Readonly<{ webhookEndpointId: string }>>;
   read(request: PluginWebhookHeartbeatReadRequest, signal?: AbortSignal): Promise<PluginWebhookHeartbeatReadResultV1>;
 }>;
@@ -72,6 +78,17 @@ export function createPluginWebhookHeartbeatClient(params: Readonly<{
     return response.data;
   };
   return Object.freeze<PluginWebhookHeartbeatClient>({
+    async manage(request, signal) {
+      signal?.throwIfAborted();
+      try {
+        const input = PluginWebhookHeartbeatManageInputV1Schema.parse(request.input);
+        return PluginWebhookHeartbeatManageResultV1Schema.parse(await post(
+          PLUGIN_WEBHOOK_HEARTBEAT_MANAGE_PATH_V1, { caller: request.caller, input }, signal));
+      } catch {
+        signal?.throwIfAborted();
+        return { kind: 'unavailable', code: 'endpoint_unavailable' };
+      }
+    },
     async enroll(request, signal) {
       signal?.throwIfAborted();
       try {
@@ -81,6 +98,7 @@ export function createPluginWebhookHeartbeatClient(params: Readonly<{
           .update('happier.pluginWebhookHeartbeat.enroll.v1\u0000')
           .update(stringifyPluginInstallationManifestCanonicalJsonV1({
             caller: request.caller, sourceInstanceId: request.sourceInstanceId, checkId: request.checkId,
+            heartbeatContributionId: request.heartbeatContributionId,
           }))
           .digest('hex');
         const input = PluginWebhookEndpointEnsureInputV1Schema.parse({

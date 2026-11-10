@@ -1,8 +1,9 @@
 import { z } from 'zod/mini';
-import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { lazyZodSchema, lazyDefinition } from '../../lazyZodSchema.js';
 import { HealthCheckResultV1ProtocolSchema } from '../../deployments/healthCheckV1.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
-import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
+import { asProtocolZod, projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
+import { PluginIdSchema } from '../pluginId.js';
 import { normalizePluginJsonSchema, pluginJsonValuesEqual } from '../actions/protocolComposableSchema.js';
 import type { PluginActionContributionV2 } from '../actions/v2.js';
 import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
@@ -26,6 +27,13 @@ export const HealthCheckKindContributionV1Schema = lazyZodSchema(() => z.strictO
     action: asProtocolZod(PluginContributionLocalIdSchema),
 }));
 export type HealthCheckKindContributionV1 = z.infer<typeof HealthCheckKindContributionV1Schema>;
+
+/** Current declarations projected by the existing runtime contribution catalog. */
+export const HealthCheckKindCatalogV1Schema = lazyZodSchema(() => z.array(z.strictObject({
+    pluginId: asProtocolZod(PluginIdSchema), ...HealthCheckKindContributionV1Schema.shape,
+})));
+export type HealthCheckKindCatalogV1 = z.infer<typeof HealthCheckKindCatalogV1Schema>;
+export const HealthCheckKindCatalogV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckKindCatalogV1Schema));
 
 /** Catalog ingestion withdraws only the failed declaration and retains healthy siblings. */
 export function validateHealthCheckKindContributionsV1(

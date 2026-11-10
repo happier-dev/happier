@@ -531,10 +531,20 @@ const result = results.find(value => value.checkId === selector.checkId)?.result
 ```
 
 This finite service accepts saved selectors, not replacement URLs or observer
-identities. The current first-party binding supports watched Machine-service
-HTTP and certificate checks in source; bundled activation remains incomplete.
-Environment/Domain integration is not established by that binding. Background
-sources use the shared checkpointed Event runner;
+identities. In development source, generic Environment and Machine-service checks
+share the built-in HTTP, certificate, TCP, DNS and heartbeat producers. Domain
+bindings retain their native Domain admission. Qualified contributed kinds use
+their declared finite Action through ordinary Action policy.
+
+`context.services.healthChecks.listKinds({ signal })` reads the admitted catalog.
+Its entries include `pluginId`, local `id`, `title`, closed `configSchema` and
+finite `action`. A contributed producer reads its saved configuration with
+`context.services.healthChecks.readSource({ sourceInstanceId }, { signal })` and
+selects its exact `checkId` from the returned source. The host reads the current
+adopted observer source; a missing or retired source is unavailable. Do not call
+`read` recursively for your own contributed kind.
+
+Background sources use the shared checkpointed Event runner;
 they do not add a second timer or write a Workflow run for every observation.
 
 ## Related

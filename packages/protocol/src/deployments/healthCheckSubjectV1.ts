@@ -2,6 +2,8 @@ import { z } from 'zod/mini';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { DeploymentIdentifierV1Schema as id } from './deploymentIdentifiersV1.js';
+import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
+import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 
 /** The observation subject is independent of the Machine running its checks. */
 export const MachineServiceHealthCheckSubjectV1Schema = lazyZodSchema(() => z.strictObject({
@@ -12,4 +14,9 @@ export const HealthCheckSubjectV1Schema = lazyZodSchema(() => z.discriminatedUni
   MachineServiceHealthCheckSubjectV1Schema,
 ]));
 export type HealthCheckSubjectV1 = z.infer<typeof HealthCheckSubjectV1Schema>;
+/** One stable saved source per exact watched subject, shared by setup and finite reads. */
+export function createHealthCheckSourceInstanceIdV1(subject: HealthCheckSubjectV1): string {
+  return `health:${computeCanonicalDomainSeparatedDigest('happier.health.subject.v1',
+    [createCanonicalJsonSigningInput(subject)])}`;
+}
 export const HealthCheckSubjectV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSubjectV1Schema));
