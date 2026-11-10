@@ -1867,8 +1867,8 @@ runner comes from `hints.summarizerRunner` through the background task runner
 owner (below): Auto or the person's explicit runner. Nothing ready throws
 `LlmTaskRunnerUnavailableError` before any Run starts, and the hint pass backs off
 as for any failed Run. The indexer reads the Session's own Agent from the same
-Session fetch that opens its transcript and passes it with the hint, so Auto keeps
-the text on that Agent (the default Agent when metadata names none). The Resume owner
+Session fetch that opens its transcript and passes it with the hint; that Agent
+wins Auto's cost ties. The Resume owner
 treats a request that names no authority as automatic, so only a named person's
 Resume, or a new send, crosses a hold. Stop keeps the opposite default on purpose:
 a Stop with no authority still records the hold.
@@ -3000,6 +3000,15 @@ accepted turn; a lost response after dispatch remains outcome-unknown. The
 failure owner logs one redacted cause record for each settlement or refused
 preparation. These facts describe 0.3 development source; they do not establish
 the cause of a historical failure whose underlying evidence was not recorded.
+Live ACP configuration refusals retain their request diagnostic at the native
+adapter. The model transition coordinator uses the primary Session issue
+projector to carry its closed `failureCause`, with `turn_start` as the fallback
+phase, through failed or reconciliation-required results. Prompt errors,
+metadata overrides, and public Action failure details preserve this same cause;
+they do not infer HTTP errors from ordinary assistant text or introduce retry
+decisions. A native JSON-RPC integer request code stays a `providerErrorCode`.
+An unavailable model-transition RPC owner retains the known `turn_start` phase
+with an unknown cause; absence of an owner does not establish a native refusal.
 Shared Codex control obtains its per-Session socket directory from the host
 Exec owner using the held native launch identity. Cross-UID Linux placement
 reuses the Session MCP directory/verified exact-UID ACL owner under `/tmp`;
@@ -3915,6 +3924,10 @@ cannot bypass the list. Its own WebSearch stays disabled unless listed.
 Unsupported native surfaces refuse a confined launch rather than silently
 ignoring policy. These are source contracts, not a claim that an already-running
 daemon has loaded them; native runtime/model support must be verified at launch.
+For a nonempty exclusive recipe, the shared host reads MCP tool catalogs before
+calling the Agent's native open. A failed probe refuses startup with
+`mcp_tool_catalog_unavailable` through the runner attestation and `session.spawn_new`
+launch error; it does not establish that the Agent runtime lacks confinement support.
 The current Codex MCP proof covers native app-server 0.162.1 and a model whose
 actual native catalog declares `code_mode_only`. The native catalog probe uses
 the Session's launch environment, configuration overrides and `CODEX_HOME`,
@@ -4427,19 +4440,22 @@ Session text, and the cost tiers Auto may use.
   signed in or connected through a service, with their offered models. Task
   runs and the pickers' "Auto — currently" read use the same reader
   ([`llmTaskRunner.ts`](../apps/cli/src/agent/executionRuns/tasks/llmTaskRunner.ts)).
-- Every one of these tasks sends Session or repository text to a model, so Auto
-  stays on one Agent: the Session's own Agent, or the default Agent
-  (`DEFAULT_AGENT_ID`) when there is no Session or its Agent is unknown. It never
-  moves the text to another provider. Within that Agent it skips models the task
-  can't use and takes the lowest tagged cost tier, catalog order on ties. An
-  untagged model is never assumed cheap: with no tagged model Auto uses the
-  Agent's catalog `default`, else its first model. Memory hints read the
-  Session's Agent from the same Session fetch that opens its transcript.
+- Auto takes the cheapest model among every enabled Agent that is ready: the
+  lowest tagged cost tier across all candidates (the diff summary needs `low`),
+  skipping models the task can't use. The Session's own Agent wins a tie, then
+  catalog order; there is no provider list. An untagged model is never assumed
+  cheap: only when no candidate is tagged does Auto take one Agent (the
+  Session's, else the first in catalog order) and its catalog `default`, else its
+  first model. Auto asks for the picked model's lowest declared effort (the first
+  value of its own `reasoning_effort` select) unless the person set an effort for
+  that task. Memory hints read the Session's Agent from the same Session fetch
+  that opens its transcript. All candidates are the person's own enabled
+  accounts.
 - Cost tiers are provider facts on the model descriptor (`costTier`). A
   provider's low tier is its cheap, fast tier. Codex tags its live model list by
   model family in its own plugin.
-- Nothing fits: a typed `LLM_TASK_RUNNER_UNAVAILABLE` failure naming the one
-  Agent Auto could use, with `no_ready_agent` or `no_matching_model`. It goes to
+- Nothing fits: a typed `LLM_TASK_RUNNER_UNAVAILABLE` failure with
+  `no_ready_agent` or `no_matching_model` and the unavailable Agents. It goes to
   the task's existing failure path; nothing else is tried.
 
 Pickers show what Auto would pick through `agents.models.list` with purpose

@@ -28,8 +28,16 @@ import { createExternalContributionFixtures, createLease, createNativeAgentRunti
 import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 
 describe('Session startup operation custody', () => {
-  it.each(['agent_session_error', 'agent_startup_failed', 'mcp_tool_catalog_unavailable'] as const)(
-    'settles rejected construction while the input receiver remains alive (%s)', async code => {
+  it.each([
+    { code: 'agent_session_error', message: 'PRIVATE_CONSTRUCTION_BODY', expectedCode: 'agent_session_error', reason: 'unclassified_provider_error' },
+    { code: 'agent_startup_failed', message: 'PRIVATE_CONSTRUCTION_BODY', expectedCode: 'agent_startup_failed', reason: 'unclassified_provider_error' },
+    { code: 'mcp_tool_catalog_unavailable', message: '', expectedCode: 'mcp_tool_catalog_unavailable', reason: 'unclassified_provider_error' },
+    { code: 'agent_session_error', message: 'Authentication required PRIVATE_DEVICE_CODE', expectedCode: 'provider_endpoint_auth_required', reason: 'authentication_required' },
+    { code: 'agent_session_error', message: 'FX requires an access token with a known, current expiry. Refresh the Connected Account and retry. PRIVATE_TOKEN', expectedCode: 'provider_endpoint_auth_required', reason: 'auth_expired' },
+    { code: 'model_selection_required', message: 'The selected Muse model is unavailable in the native catalog. PRIVATE_MODEL', expectedCode: 'agent_startup_model_reconciliation_failed', reason: 'model_selection_required' },
+    { code: 'agent_session_error', message: 'OpenCode model "PRIVATE_MODEL" is not selectable', expectedCode: 'agent_startup_model_reconciliation_failed', reason: 'model_selection_required' },
+  ] as const)(
+    'settles and retires rejected construction ($expectedCode/$reason)', async ({ code, message, expectedCode, reason }) => {
     const sessionId = 'construction-failed-child';
     // Only process liveness and marker persistence are substituted boundaries.
     // The recorder, observer, spawn handler and durable settlement remain real.
@@ -49,9 +57,9 @@ describe('Session startup operation custody', () => {
       lease: { ...createLease('acme-agent'), sourceCustody: binding.sourceCustody },
       createSessionHostServiceOwners,
       runtime: { sessions: { open: async () => {
-        if (code === 'agent_session_error') throw new Error('PRIVATE_CONSTRUCTION_BODY');
+        if (code === 'agent_session_error') throw new Error(message);
         if (code === 'mcp_tool_catalog_unavailable') throw new Error('MCP catalog must refuse before native open');
-        throw new PluginError({ code, message: 'PRIVATE_CONSTRUCTION_BODY', details: { failureCause } });
+        throw new PluginError({ code, message, ...(code === 'model_selection_required' ? {} : { details: { failureCause } }) });
       } } },
       sessionCapabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
       sessionInput: buildPluginSessionBindingInput({ credentials: { token: 'token', encryption: null }, directory: '/project',
@@ -83,7 +91,9 @@ describe('Session startup operation custody', () => {
         } as never)).rejects.toBeDefined();
         return { type: 'success', sessionId };
       },
-      stopSession: async () => { throw new Error('A failed construction receiver retains input custody'); },
+      stopSession: createStopSession({ pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+        areTrackedRunnersExited: async () => true, waitForTrackedRunnersExit: async () => true,
+        readHostAttachmentState: async () => ({ status: 'absent' }), readTerminalAttachmentInfo: async () => null }),
     }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input,
       getTrackedSessions: () => [tracked], timeoutMs: 0 }) });
     const operations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
@@ -97,12 +107,12 @@ describe('Session startup operation custody', () => {
         return { ok: true, result: projectSessionSpawnFailure(result) };
       } });
     expect(response).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed',
-      launchError: { code, ...(failureCause ? { failureCause } : {}) } } });
+      launchError: { code: expectedCode, failureCause: { phase: 'client_start', failureReason: reason } } } });
     expect(await operations.handlers.getV2({ operationId: 'construction-failed', waitForTerminal: true }))
       .toMatchObject({ kind: 'found', operation: { state: 'failed', result: { type: 'error', code: 'spawn_failed',
-        launchError: { code, ...(failureCause ? { failureCause } : {}) } } } });
+        launchError: { code: expectedCode, failureCause: { phase: 'client_start', failureReason: reason } } } } });
     expect(child.exitCode).toBeNull();
-    expect(tracked.stopRequestedAtMs).toBeUndefined();
+    expect(tracked.stopRequestedAtMs).toBeTypeOf('number');
     expect(JSON.stringify(response)).not.toContain('PRIVATE_');
   });
 

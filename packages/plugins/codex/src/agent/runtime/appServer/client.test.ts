@@ -27,6 +27,8 @@ import { createJsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/prot
 import { createCodexAppServerTurnFailure, readCodexAppServerFailureCause } from './turns/failure';
 import { createStableRunnerPluginExecService, issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
 import { withCodexNativeStartupLock } from './nativeStartupLock';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { sanitizeNativeAgentSessionBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 
 type AgentNativeLaunchQualifier = NonNullable<NonNullable<Parameters<ExecService['spawn']>[1]>['nativeLaunch']>;
 
@@ -250,18 +252,24 @@ describe('createCodexAppServerClient', () => {
         const context = { signal: new AbortController().signal, services: { exec: capture.exec,
             logger: { debug() {}, warn() {} }, sessions: { current: null } },
             session: { id: 'restricted-startup', services: {} } } as unknown as AgentSessionRuntimeContext;
-        await expect(openCodexNativeAppServerSession({
+        const failure: unknown = await openCodexNativeAppServerSession({
             ...(kind === 'create' ? { kind: 'create' as const } : { kind: 'fork' as const,
                 source: { sessionId: 'source-session', providerSessionId: '11111111-1111-4111-8111-111111111111' } }),
             sessionId: 'restricted-startup', cwd: osBoundary.home,
             launchEnvironment: { values: { CODEX_HOME: osBoundary.home, CODEX_SQLITE_HOME: osBoundary.home }, unset: [] },
             configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
-                permissionIntent: { value: 'default', updatedAtMs: 0 }, options: {}, allowedTools: [], unlistedTools: 'deny' },
-        }, context)).rejects.toMatchObject({ code: 'codex_tool_restriction_unsupported_runtime',
+                permissionIntent: { value: 'default', updatedAtMs: 0 }, options: {},
+                allowedTools: ['mcp__context7__resolve-library-id'], unlistedTools: 'deny' },
+            mcpServers: { context7: { command: '/fixture/context7', enabledTools: ['resolve-library-id'] } },
+        }, context).then(async runtime => { await runtime.dispose(); return null; }, error => error);
+        expect(failure).toMatchObject({ code: 'codex_tool_restriction_unsupported_runtime',
             message: expect.stringContaining('machines.agents.install'), diagnostic: {
                 code: 'codex_tool_restriction_unsupported_runtime', severity: 'error',
                 message: expect.stringContaining('machines.agents.install'),
             } });
+        expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error',
+            error: sanitizeNativeAgentSessionBoundaryError(failure, true) }).code)
+            .toBe('codex_tool_restriction_unsupported_runtime');
         expect(capture.specs).toEqual([]);
         expect(capture.connections).toEqual([]);
     });

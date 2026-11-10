@@ -19,6 +19,7 @@ export type McpServerProbeResult = Readonly<{
 }>;
 
 export class McpServerProbeError extends Error {
+  readonly code = 'mcp_tool_catalog_unavailable';
   readonly phase: 'connect' | 'list_tools';
   readonly stderrTail: string | undefined;
   readonly spawnFailure: StdioMcpServerStartupFailure | undefined;

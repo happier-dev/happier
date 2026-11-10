@@ -63,6 +63,25 @@ export function readAgentStartupFailureCode(value: unknown): AgentStartupFailure
     : null;
 }
 
+/**
+ * Why a Machine refused to run a requester's Session (a Session started for another Account on a shared
+ * Machine): the daemon's lifecycle handler emits these as launch-error codes and clients present them.
+ */
+export const REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS = {
+  requester_session_runtime_owner_unavailable: 'The requester Session runtime owner is unavailable.',
+  requester_machine_admission_unavailable: 'The requester Machine admission is unavailable.',
+  requester_session_custody_unavailable: 'The requester Session credential custody is unavailable.',
+  requester_session_bootstrap_mismatch: 'The recovered requester Session binding does not match this request.',
+  requester_session_bootstrap_not_current: 'The recovered requester Session authority is no longer current.',
+} as const;
+export type RequesterSessionRuntimeRefusalCode = keyof typeof REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS;
+
+export function readRequesterSessionRuntimeRefusalCode(value: unknown): RequesterSessionRuntimeRefusalCode | null {
+  return typeof value === 'string' && Object.hasOwn(REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS, value)
+    ? value as RequesterSessionRuntimeRefusalCode
+    : null;
+}
+
 const CODEX_REFRESH_FREE_AUTH_FAILURE_REASONS = [
   'refresh_bridge_unavailable', 'provider_account_identity_unavailable',
   'experimental_api_unavailable', 'workspace_incompatible',
@@ -100,6 +119,7 @@ export const SESSION_PREPARATION_FAILURE_PREVIEWS = {
   filesystem_identity_custody_unavailable: 'Agent isolation is unavailable. Ask the machine owner to review its setup, then retry the session.',
   plugin_disabled: 'This Agent plugin is disabled. Re-enable it in Plugins to resume this Session.',
   plugin_mcp_preparation_unavailable: 'Plugin MCP preparation is unavailable. Check the target machine, then retry the session.',
+  mcp_tool_catalog_unavailable: 'An MCP tool catalog could not be read before Agent startup. Check the selected MCP servers, then retry the session.',
   project_environment_binding_unavailable: 'Required Project environment bindings are unavailable. Review the Project variables and selected profile, then retry the session.',
   agent_runtime_daemon_service_generation_not_current: 'The runner agent generation is no longer current. Retry the session on the target machine.',
   native_agent_privileged_effect_authority_unavailable: 'Runner daemon authority is unavailable. Check the target machine, then retry the session.',
