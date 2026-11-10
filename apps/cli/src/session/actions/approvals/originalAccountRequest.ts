@@ -56,10 +56,7 @@ export async function executeOriginalAccountCliApprovalRequest(options: Readonly
       })().catch(error => { lifetime.abort(error); }).finally(() => { reading = undefined; });
     };
     const observation = observeAccountChanges({ token: options.token, serverUrl: options.serverHttpBaseUrl, entityId: artifactId }, {
-      onChange: change => {
-        if (change?.t === 'account-change' && change.entityIds && !change.entityIds.includes(artifactId)) return;
-        invalidate();
-      },
+      onChange: invalidate,
       onError: error => { lifetime.abort(error); },
     });
     try {

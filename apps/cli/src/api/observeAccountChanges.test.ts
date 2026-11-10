@@ -30,6 +30,68 @@ vi.mock('axios', async importOriginal => {
 });
 
 import { createWorkflowRunStorageClient, type WorkflowRunStorageOperation } from '@/daemon/workflows/workflowRunStorageClient';
+import { observeAccountChanges } from './observeAccountChanges';
+
+describe('Entity-scoped Account observation cost', () => {
+  it('wakes only addressed readers and preserves coarse and reconnect recovery', async () => {
+    vi.useFakeTimers();
+    const scopes = Array.from({ length: 64 }, (_, index) => index < 32 ? `approval-${index}` : `workflow-run:${index}`);
+    const reads = scopes.map(() => vi.fn());
+    const coarseRead = vi.fn();
+    const onError = vi.fn();
+    const observers = scopes.map((entityId, index) => observeAccountChanges({
+      token: 'account-token', serverUrl: 'https://exact-home.test', entityId,
+    }, { onChange: reads[index]!, onError }));
+    observers.push(observeAccountChanges({ token: 'account-token', serverUrl: 'https://exact-home.test' },
+      { onChange: coarseRead, onError }));
+    const emitChange = (body: unknown) => wire.emit('update', { id: 'wake', seq: 1, createdAt: 1, body });
+    const readCount = () => reads.reduce((sum, read) => sum + read.mock.calls.length, 0);
+    const clearReads = () => { for (const read of reads) read.mockClear(); coarseRead.mockClear(); };
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      clearReads();
+      for (let index = 0; index < 100; index++) {
+        emitChange({ t: 'account-change', changeKinds: ['machine'], entityIds: [`machine-${index}`] });
+      }
+      expect(readCount()).toBe(0);
+      expect(coarseRead).toHaveBeenCalledTimes(100);
+      for (const index of [0, 32]) {
+        emitChange({ t: 'account-change', changeKinds: [index === 0 ? 'artifact' : 'account'], entityIds: [scopes[index]] });
+      }
+      expect(readCount()).toBe(2);
+      expect(reads[0]).toHaveBeenCalledTimes(1);
+      expect(reads[32]).toHaveBeenCalledTimes(1);
+      clearReads();
+      emitChange({ t: 'update-artifact', artifactId: 'other' });
+      emitChange({ t: 'delete-artifact', artifactId: 'other' });
+      expect(readCount()).toBe(0);
+      emitChange({ t: 'update-artifact', artifactId: scopes[0] });
+      emitChange({ t: 'delete-artifact', artifactId: scopes[1] });
+      expect(readCount()).toBe(2);
+      expect(reads[0]).toHaveBeenCalledTimes(1);
+      expect(reads[1]).toHaveBeenCalledTimes(1);
+      for (const body of [
+        { t: 'account-change' },
+        { t: 'account-change', entityIds: ['other'] },
+        { t: 'account-change', changeKinds: ['artifact'] },
+        { t: 'account-change', changeKinds: ['future-kind'], entityIds: ['other'] },
+      ]) {
+        clearReads();
+        emitChange(body);
+        expect(readCount()).toBe(scopes.length);
+        expect(coarseRead).toHaveBeenCalledTimes(1);
+      }
+      clearReads();
+      wire.emit('connect');
+      expect(readCount()).toBe(scopes.length);
+      expect(coarseRead).toHaveBeenCalledTimes(1);
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      await Promise.all(observers.map(observer => observer.dispose()));
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe('Account-fed Workflow wait through the existing CLI transport', () => {
   afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });

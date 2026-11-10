@@ -1,4 +1,5 @@
 import { UpdateContainerSchema, type UpdateContainer } from '@happier-dev/protocol/updates';
+import { ChangeKindSchema } from '@happier-dev/protocol/changes';
 import { observeSessionSocketEvents } from '@/session/transport/socket/sessionSocketAgentState';
 import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 
@@ -22,7 +23,14 @@ export function observeAccountChanges(
       const parsed = UpdateContainerSchema.safeParse(value);
       if (!parsed.success) return;
       const body = parsed.data.body;
-      if (body.t === 'account-change') handlers.onChange(body);
+      if (body.t === 'account-change') {
+        // Known commit hints select the reader's entity; absent or future hints
+        // remain coarse so older/newer servers and reconnects still catch up.
+        if (opts.entityId !== undefined && body.entityIds && body.changeKinds
+          && body.changeKinds.every(kind => ChangeKindSchema.safeParse(kind).success)
+          && !body.entityIds.includes(opts.entityId)) return;
+        handlers.onChange(body);
+      }
       else if ((body.t === 'new-artifact' || body.t === 'update-artifact' || body.t === 'delete-artifact')
         && (opts.entityId === undefined || body.artifactId === opts.entityId)) handlers.onChange(body);
     },
