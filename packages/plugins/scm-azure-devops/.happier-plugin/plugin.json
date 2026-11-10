@@ -446,6 +446,12 @@
                             "type": "string",
                             "x-happier-max-utf8-bytes": 7181
                           },
+                          "requestId": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 128
+                          },
                           "requiredPermissions": {
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -755,6 +761,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -953,6 +965,12 @@
                             "type": "string",
                             "x-happier-max-utf8-bytes": 7181
                           },
+                          "requestId": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 128
+                          },
                           "requiredPermissions": {
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -1036,6 +1054,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -1685,6 +1709,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -3181,6 +3211,12 @@
                                 "type": "string",
                                 "x-happier-max-utf8-bytes": 7181
                               },
+                              "requestId": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
+                              },
                               "requiredPermissions": {
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -3308,6 +3344,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -4804,6 +4846,12 @@
                                 "type": "string",
                                 "x-happier-max-utf8-bytes": 7181
                               },
+                              "requestId": {
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "type": "string",
+                                "x-happier-max-utf8-bytes": 128
+                              },
                               "requiredPermissions": {
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -4913,6 +4961,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -7470,6 +7524,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -7913,6 +7973,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -8333,6 +8399,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -9103,6 +9175,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -9594,6 +9672,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -10054,6 +10138,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -11867,6 +11957,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -13416,6 +13512,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -14961,6 +15063,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -16530,6 +16638,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -16654,6 +16768,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -16721,6 +16841,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -18215,6 +18341,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -20049,6 +20181,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -21598,6 +21736,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -23143,6 +23287,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -24712,6 +24862,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -24836,6 +24992,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -24903,6 +25065,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -26397,6 +26565,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -28231,6 +28405,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -29780,6 +29960,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -31325,6 +31511,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -32894,6 +33086,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -33018,6 +33216,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -33085,6 +33289,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -34579,6 +34789,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -36430,6 +36646,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -37979,6 +38201,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -39524,6 +39752,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -41093,6 +41327,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -41217,6 +41457,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -41284,6 +41530,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -42779,6 +43031,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -43336,6 +43594,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -43403,6 +43667,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -45621,6 +45891,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -47115,6 +47391,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -47427,6 +47709,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -48921,6 +49209,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -50237,6 +50531,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -51731,6 +52031,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -52043,6 +52349,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -53537,6 +53849,12 @@
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
+                            },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
                             },
                             "requiredPermissions": {
                               "minLength": 1,
@@ -54861,6 +55179,12 @@
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
                     },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
                     "requiredPermissions": {
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -56355,6 +56679,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -56667,6 +56997,12 @@
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 7181
+                    },
+                    "requestId": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
                     },
                     "requiredPermissions": {
                       "minLength": 1,
@@ -58162,6 +58498,12 @@
                               "type": "string",
                               "x-happier-max-utf8-bytes": 7181
                             },
+                            "requestId": {
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string",
+                              "x-happier-max-utf8-bytes": 128
+                            },
                             "requiredPermissions": {
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
@@ -58654,6 +58996,14 @@
             "observed"
           ],
           "type": "object"
+        },
+        "operation": {
+          "presentation": {
+            "onStart": "current"
+          },
+          "progress": "reported",
+          "version": 1,
+          "visibility": "activity"
         },
         "placementBindings": [
           "commandPalette"
@@ -59294,6 +59644,14 @@
             "prepared"
           ],
           "type": "object"
+        },
+        "operation": {
+          "presentation": {
+            "onStart": "current"
+          },
+          "progress": "reported",
+          "version": 1,
+          "visibility": "activity"
         },
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",

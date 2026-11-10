@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { createPluginActionPresentUserGate } from '@happier-dev/protocol';
+import { checkTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
 import { PLUGIN_MANIFEST as GITHUB_MANIFEST, GITHUB_TRIAGE_ACTION_IDS_V1 } from '../../scm-github/src/manifest.js';
 import { GITHUB_FILE_VIEWED_ACTION_IDS_V1 } from '../../scm-github/src/triage/fileViewedContracts.js';
 import { PLUGIN_MANIFEST as CHANNELS_MANIFEST } from '../../channels/src/manifest.js';
@@ -37,10 +38,15 @@ import { TRIAGE_ENTRIES_CONTROL_LOCAL_ID_V1 } from './composer/attachmentValue.j
 import { createTestkitCorpusCollections } from './corpus/testkit/corpusCollections.test-support.js';
 import { testkitEntryRef } from './corpus/testkit/observations.test-support.js';
 import { createTriageSetEntryPinnedActionHandler, listTriagePinnedEntries } from './actions/userMarks.js';
+import { INTERNAL_TASK_SOURCE_RECORD_V1 } from './internalTasks/configuration.js';
 
 const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../', import.meta.url));
 
 describe('Triage plugin manifest', () => {
+  it('conforms to the public source contract for its built-in task source', () => {
+    const result = checkTriageSourceContributionV1(PLUGIN_MANIFEST);
+    expect(result.ok, result.ok ? undefined : result.errors.join('\n')).toBe(true);
+  });
   it('runs reversible present-user edits directly while preserving explicit Ask and automated defaults', async () => {
     // SIMPLIFY-CHALLENGE-1106 #5/M1 changes the default, never a person's Ask preference.
     for (const id of [TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1, TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1,
@@ -109,16 +115,20 @@ describe('Triage plugin manifest', () => {
     for (const id of ['tasks/create-v1', 'tasks/edit-v1', 'tasks/transition-v1',
       'internal/tasks/create-v1', 'internal/tasks/edit-v1', 'internal/tasks/transition-v1', 'internal/tasks/link-session-v1']) {
       const action = PLUGIN_MANIFEST.contributes.actions.find(entry => entry.id === id)!;
-      const gate = createPluginActionPresentUserGate({ resolve: () => ({ status: 'resolved', action,
+      const gate = (ask = false) => createPluginActionPresentUserGate({ resolve: () => ({ status: 'resolved', action,
         policy: { qualifiedId: `${PLUGIN_MANIFEST.id}/${id}`, occurrenceId: 'triage-occurrence',
           dangerLevel: action.dangerLevel, confirmation: action.confirmation, confirmationWhen: action.confirmationWhen,
           scopes: action.scopes, surfaces: action.surfaces,
+          ...(ask ? { approvalRequiredByActionSettings: true } : {}),
           authorization: { generation: { targetGeneration: '1', desiredGeneration: '1', appliedGeneration: '1' },
             resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] } },
       }) });
+      const input = { v: 1, instance: INTERNAL_TASK_SOURCE_RECORD_V1.value.configured };
       for (const surface of ['ui', 'agent', 'mcp', 'cli']) {
-        expect(await gate.admit({ surface, invocationSurface: surface, input: {} }), id)
+        expect(await gate().admit({ surface, invocationSurface: surface, input }), id)
           .toMatchObject({ status: 'admitted' });
+        expect(await gate(true).admit({ surface, invocationSurface: surface, input }), `${id} explicit Ask`)
+          .toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
       }
     }
   });
@@ -370,8 +380,10 @@ describe('Triage plugin manifest', () => {
       }],
     };
 
-    expect(PLUGIN_MANIFEST.contributes?.pluginContributionPoints).toHaveLength(1);
-    expect(PLUGIN_MANIFEST.contributes?.pluginContributionPoints?.[0]).toMatchObject(expectedPoint);
+    const sourcePoints = PLUGIN_MANIFEST.contributes.pluginContributionPoints
+      .filter(point => point.id === TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1);
+    expect(sourcePoints).toHaveLength(1);
+    expect(sourcePoints[0]).toMatchObject(expectedPoint);
     // The public target reference may also carry the Protocol-owned semantic
     // decoder. This assertion owns only the stable routing identity.
     expect(TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1).toMatchObject({

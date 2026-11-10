@@ -122,6 +122,7 @@ export function compactActionSchemas(manifest: PluginManifestJson): PluginManife
   // These declared roles require exact schema documents at manifest admission.
   // Consume their canonical role inventories rather than duplicating contracts.
   const inlineActions = new Set([
+    ...(manifest.contributes.targetedPluginContributions ?? []).flatMap(contribution => Object.values(contribution.operations)),
     ...(manifest.contributes.machineProvisioners ?? []).flatMap(readMachineProvisionerActionRolesV1).map(binding => binding.action),
     ...(manifest.contributes.accessProviders ?? []).flatMap(readAccessProviderActionRolesV1).map(binding => binding.action),
     ...(manifest.contributes.deploymentTargets ?? []).flatMap(readDeploymentTargetActionRolesV1).map(binding => binding.action),

@@ -12076,7 +12076,20 @@
         "title": "Read a Happier task"
       },
       {
-        "dangerLevel": "safe",
+        "confirmation": {
+          "body": "This adds a task to this Happier Account.",
+          "confirmLabel": "Create task",
+          "title": "Create this task?"
+        },
+        "confirmationWhen": {
+          "op": "not",
+          "predicate": {
+            "op": "eq",
+            "path": "instance.binding.source",
+            "value": "accountData"
+          }
+        },
+        "dangerLevel": "writesRemote",
         "description": "Create a task in the built-in Happier source with its supported task fields and optional initial status.",
         "execution": {
           "account": {
@@ -15398,7 +15411,20 @@
         "title": "Create a Happier task"
       },
       {
-        "dangerLevel": "safe",
+        "confirmation": {
+          "body": "This updates the task in this Happier Account.",
+          "confirmLabel": "Save changes",
+          "title": "Save these task changes?"
+        },
+        "confirmationWhen": {
+          "op": "not",
+          "predicate": {
+            "op": "eq",
+            "path": "instance.binding.source",
+            "value": "accountData"
+          }
+        },
+        "dangerLevel": "writesRemote",
         "description": "Apply the supplied supported fields to an exact Happier task; omitted fields remain unchanged.",
         "execution": {
           "account": {
@@ -18764,7 +18790,20 @@
         "title": "Edit a Happier task"
       },
       {
-        "dangerLevel": "safe",
+        "confirmation": {
+          "body": "This updates the task status in this Happier Account.",
+          "confirmLabel": "Change status",
+          "title": "Change this task’s status?"
+        },
+        "confirmationWhen": {
+          "op": "not",
+          "predicate": {
+            "op": "eq",
+            "path": "instance.binding.source",
+            "value": "accountData"
+          }
+        },
+        "dangerLevel": "writesRemote",
         "description": "Apply a declared status transition to an exact Happier task through its existing task Action.",
         "execution": {
           "account": {

@@ -8,6 +8,7 @@ import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contribut
 import { createActionInputForm } from '../../../../ui/sources/components/plugins/actions/actionInputForm';
 import { compilePluginJsonSchema as compileSdkPluginJsonSchema } from '@happier-dev/plugin-sdk/manifest';
 import { compactActionSchemas } from './actionSchemas.ts';
+import { checkTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
 import { renderCliBundledPluginManifestAssets } from './registry.ts';
 import { serializeCanonicalPluginManifest } from '../../../src/plugins/manifest/serialize';
 import type { PluginManifestJson } from './projectionFacts.ts';
@@ -44,6 +45,22 @@ function fixture(): PluginManifestJson {
 }
 
 describe('published Action schema compaction', () => {
+  it.each([
+    { name: 'GitHub', load: () => import('../../../../../packages/plugins/scm-github/src/manifest.ts') },
+    { name: 'Sentry', load: () => import('../../../../../packages/plugins/sentry/src/manifest.ts') },
+    { name: 'Linear', load: () => import('../../../../../packages/plugins/linear/src/manifest.ts') },
+  ])('preserves the public source ABI through $name manifest publication', async ({ load }) => {
+    const source = await load();
+    const before = checkTriageSourceContributionV1(source.PLUGIN_MANIFEST);
+    expect(before.ok, before.ok ? undefined : before.errors.join('\n')).toBe(true);
+    const assets = renderCliBundledPluginManifestAssets({ pluginPackages: [{
+      pluginId: source.PLUGIN_MANIFEST.id, pluginPackageId: 'source-fixture',
+      packageName: '@happier-dev/plugins-source-fixture', packageVersion: '0.0.0',
+      manifest: source.PLUGIN_MANIFEST,
+    }] });
+    const after = checkTriageSourceContributionV1(JSON.parse(assets[0]!.out));
+    expect(after.ok, after.ok ? undefined : after.errors.join('\n')).toBe(true);
+  });
   it('compacts and admits the final asset while preserving authored runtime agreement facts', () => {
     const manifest = fixture();
     const original = JSON.stringify(manifest);

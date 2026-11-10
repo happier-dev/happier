@@ -25,6 +25,10 @@ const surfaces = ['plugin', 'ui', 'agent', 'mcp', 'cli'] as const;
 const write = { surfaces, placementBindings: [], execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
   dangerLevel: 'safe' } as const;
 const read = { surfaces, placementBindings: [], execution: TRIAGE_DATA_ACTION_EXECUTION_V1, dangerLevel: 'safe' } as const;
+// Account-data edits retain their direct default; explicit Ask still wins at the approval owner.
+const taskWrite = { ...write, confirmationWhen: {
+  op: 'not', predicate: { op: 'eq', path: 'instance.binding.source', value: 'accountData' },
+} } as const;
 
 /** The built-in Account-data source is always available; old setup requests reuse it. */
 export const INTERNAL_TASK_ACTIONS_V1 = {
@@ -47,13 +51,16 @@ export const INTERNAL_TASK_ACTIONS_V1 = {
   'internal/tasks/get-v1': { ...read, title: 'Read a Happier task', inputSchema: protocol.operations.get.declaration.input.schema,
     description: 'Read one exact Happier task, including editable fields and task relationships, using its source-local reference.',
     resultSchema: protocol.operations.get.declaration.resultSchema, run: getInternalTask },
-  'internal/tasks/create-v1': { ...write, title: 'Create a Happier task',
+  'internal/tasks/create-v1': { ...taskWrite, dangerLevel: protocol.operations.create.declaration.dangerLevel, title: 'Create a Happier task',
+    confirmation: { title: 'Create this task?', body: 'This adds a task to this Happier Account.', confirmLabel: 'Create task' },
     description: 'Create a task in the built-in Happier source with its supported task fields and optional initial status.',
     inputSchema: protocol.operations.create.declaration.input.schema, resultSchema: protocol.operations.create.declaration.resultSchema, run: createInternalTask },
-  'internal/tasks/edit-v1': { ...write, title: 'Edit a Happier task',
+  'internal/tasks/edit-v1': { ...taskWrite, dangerLevel: protocol.operations.edit.declaration.dangerLevel, title: 'Edit a Happier task',
+    confirmation: { title: 'Save these task changes?', body: 'This updates the task in this Happier Account.', confirmLabel: 'Save changes' },
     description: 'Apply the supplied supported fields to an exact Happier task; omitted fields remain unchanged.',
     inputSchema: protocol.operations.edit.declaration.input.schema, resultSchema: protocol.operations.edit.declaration.resultSchema, run: editInternalTask },
-  'internal/tasks/transition-v1': { ...write, title: 'Change a Happier task’s status',
+  'internal/tasks/transition-v1': { ...taskWrite, dangerLevel: protocol.operations.transition.declaration.dangerLevel, title: 'Change a Happier task’s status',
+    confirmation: { title: 'Change this task’s status?', body: 'This updates the task status in this Happier Account.', confirmLabel: 'Change status' },
     description: 'Apply a declared status transition to an exact Happier task through its existing task Action.',
     inputSchema: protocol.operations.transition.declaration.input.schema, resultSchema: protocol.operations.transition.declaration.resultSchema, run: transitionInternalTask },
   'internal/tasks/link-session-v1': { ...write, title: 'Link or unlink a Happier task',

@@ -193,7 +193,7 @@ async function install({ accountListingStatus, shipped = manifest } = {}) {
     });
 
     const conformance = checkTriageSourceContributionV1(shipped);
-    assert.equal(conformance.ok, true);
+    assert.equal(conformance.ok, true, JSON.stringify(conformance));
     const [contribution] = conformance.manifest.contributes.targetedPluginContributions.filter(
         (candidate) => candidate.target.pluginId === TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1
             && candidate.target.pointId === TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
