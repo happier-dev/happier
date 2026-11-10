@@ -411,7 +411,6 @@ export function useMachineAgentsByMachine<T>(
     // Only this Home and Account's observations can change what these Machines' inventories show.
     const reachabilityRevision = useMachineReachabilityRevision(machineIds.length > 0, lifetime?.scope);
     const machineFacts = useInventoryMachineFacts(target.serverId, machineIds, lifetime);
-    const onlineFactsKey = JSON.stringify(machineFacts.map(fact => fact.online));
     const alwaysOnlineMachineId = target.alwaysOnlineMachineId?.trim() || null;
     const projectionReaders = useInventoryProjectionReaders(target.serverId, machineIds);
     const projectionRevisions = useInventoryProjectionRevisions(projectionReaders);
@@ -421,52 +420,127 @@ export function useMachineAgentsByMachine<T>(
             return (cached?.kind === 'ready' || cached?.kind === 'error')
                 && Object.values(cached.inputs?.pluginProjectionV2?.agentsById ?? {}).some(agent => agent.connectedAccounts?.length);
         }) });
-    const cacheRef = React.useRef<ReadonlyMap<string, T | MachineAgentsSnapshot>>(new Map());
-    const read = React.useCallback(() => {
-        const previous = cacheRef.current;
-        const currentLifetime = lifetime?.isCurrent() ? lifetime : null;
-        let onlineFacts: readonly boolean[] = [];
-        if (select && currentLifetime) {
-            const resolveScopeId = captureServerProfileScopeResolver();
-            const activeServerId = getActiveServerSnapshot().serverId;
-            const nowMs = Date.now();
-            // Inventory can publish during commit before React installs a new
-            // callback. Read actual scoped presence, never captured render facts.
-            onlineFacts = readInventoryMachines(target.serverId, activeServerId, machineIds, resolveScopeId).map(machine =>
-                Boolean(machine && isMachineSelectableForFleet(currentLifetime.scope, machine, nowMs, resolveScopeId)));
-        }
-        const next = new Map<string, T | MachineAgentsSnapshot>(machineIds.map((id, index) => {
-            const snapshot = currentLifetime ? readMachineAgentsForScope(currentLifetime, id) : EMPTY_MACHINE_AGENTS;
-            // A stable selector's previous map contains only that selector's values.
-            return [id, select ? select(snapshot, previous.get(id) as T | undefined,
-                id === alwaysOnlineMachineId || onlineFacts[index] === true) : snapshot];
+    type SummaryInput = Readonly<{ snapshot: MachineAgentsSnapshot; online: boolean }>;
+    const published = React.useRef<Readonly<{
+        lifetime: typeof lifetime; select: typeof select; alwaysOnlineMachineId: typeof alwaysOnlineMachineId;
+        inputs: ReadonlyMap<string, SummaryInput>; value(): ReadonlyMap<string, T | MachineAgentsSnapshot>;
+    }> | null>(null);
+    const summary = React.useMemo(() => {
+        const previous = published.current;
+        const retained = previous && previous.lifetime === lifetime && previous.select === select
+            && previous.alwaysOnlineMachineId === alwaysOnlineMachineId ? previous : null;
+        const previousValue = retained?.value();
+        // Membership changes retain the incumbent selector's surviving rows.
+        // A different selector or Account never receives another one's T values.
+        let value: ReadonlyMap<string, T | MachineAgentsSnapshot> = new Map(machineIds.flatMap(id =>
+            previousValue?.has(id) ? [[id, previousValue.get(id)!] as const] : []));
+        const inputs = new Map(machineIds.flatMap(id => {
+            const input = retained?.inputs.get(id);
+            return input ? [[id, input] as const] : [];
         }));
-        if (previous.size === next.size && [...next].every(([id, row]) => previous.has(id) && previous.get(id) === row)) return previous;
-        cacheRef.current = next;
-        return next;
-    }, [alwaysOnlineMachineId, lifetime, machineIds, select, target.serverId]);
-    const subscribe = React.useCallback((listener: () => void) => {
-        const disposers = lifetime ? machineIds.map((id) => machineAgentInventoryStore.subscribe(scopeKey(lifetime, id), listener)) : [];
-        return () => { for (const dispose of disposers) dispose(); };
-    }, [lifetime, machineIds]);
+        let observed = 0;
+        let current = lifetime?.isCurrent() === true;
+        let facts: typeof machineFacts | undefined;
+        const update = (ids: readonly string[]) => {
+            let next: Map<string, T | MachineAgentsSnapshot> | undefined;
+            for (const id of ids) {
+                const snapshot = lifetime?.isCurrent() ? readMachineAgentsForScope(lifetime, id) : EMPTY_MACHINE_AGENTS;
+                let online = id === alwaysOnlineMachineId;
+                if (select && !online) {
+                    // A keyed inventory publication can precede React's presence
+                    // render. Resolve only its Machine through the existing owner.
+                    const machine = lifetime?.isCurrent()
+                        ? resolveServerScopedMachine(getStorage().getState(), lifetime.scope.serverId, id) : null;
+                    online = Boolean(machine && lifetime && isMachineSelectableForFleet(lifetime.scope, machine));
+                }
+                const previous = inputs.get(id);
+                if (previous?.snapshot === snapshot && previous.online === online) continue;
+                inputs.set(id, { snapshot, online });
+                const selected = select ? select(snapshot, value.get(id) as T | undefined, online) : snapshot;
+                if (value.has(id) && value.get(id) === selected) continue;
+                next ??= new Map(value);
+                next.set(id, selected);
+            }
+            if (next) value = next;
+            return next !== undefined;
+        };
+        const read = (nextFacts: typeof machineFacts) => {
+            const nextCurrent = lifetime?.isCurrent() === true;
+            if (observed === 0 || current !== nextCurrent) update(machineIds);
+            else if (select && facts !== nextFacts) {
+                const changed = machineIds.filter((id, index) =>
+                    inputs.get(id)?.online !== (id === alwaysOnlineMachineId || nextFacts[index]?.online === true));
+                update(changed);
+            }
+            current = nextCurrent;
+            facts = nextFacts;
+            return value;
+        };
+        const subscribe = (listener: () => void) => {
+            const disposers = lifetime ? machineIds.map(id => machineAgentInventoryStore.subscribe(scopeKey(lifetime, id), () => {
+                if (update([id])) listener();
+            })) : [];
+            observed += 1;
+            // Catch publications between render and subscription, including a
+            // newly selected membership/selector or Account lifetime.
+            if (update(machineIds)) listener();
+            return () => { observed -= 1; for (const dispose of disposers) dispose(); };
+        };
+        published.current = { lifetime, select, alwaysOnlineMachineId, inputs, value: () => value };
+        return { read, subscribe };
+    }, [alwaysOnlineMachineId, lifetime, machineIds, select]);
+    const readSummary = React.useCallback(() => summary.read(machineFacts), [machineFacts, summary]);
+    const readAcp = React.useCallback(() => lifetime ? getAcpCatalogSnapshot(lifetime.scope) : null, [lifetime]);
+    const acpCatalog = React.useSyncExternalStore(subscribeAcpCatalogSnapshots, readAcp, readAcp);
+    // These are the mounted observation's inputs, not a second inventory. Global
+    // Account/auth/catalog changes renew all entries; keyed facts renew one.
+    const observations = React.useMemo(() => new Map<string, Readonly<{
+        fact: typeof machineFacts[number]; reader: typeof projectionReaders[number];
+        revision: number; projection: ReturnType<typeof projectionReaders[number]['readCached']>;
+    }>>(), [acpCatalog, authentication, lifetime]);
+    const acquisitions = React.useMemo(() => new Map<string, Readonly<{
+        online: boolean; revision: number; abort: AbortController;
+    }>>(), [lifetime, presented, target.load, target.serverId]);
+    React.useEffect(() => () => {
+        for (const acquisition of acquisitions.values()) acquisition.abort.abort();
+        acquisitions.clear();
+    }, [acquisitions]);
     React.useEffect(() => {
         if (!presented || !lifetime || target.load !== true) return;
-        const abort = new AbortController();
-        for (const machineId of machineIds) {
+        for (const [index, machineId] of machineIds.entries()) {
+            const online = machineFacts[index]?.online === true;
+            const revision = projectionReaders[index]!.readRevision();
+            const previous = acquisitions.get(machineId);
+            if (previous?.online === online && previous.revision === revision) continue;
+            previous?.abort.abort();
+            const abort = new AbortController();
+            acquisitions.set(machineId, { online, revision, abort });
             void refreshMachineAgents({ serverId: lifetime.scope.serverId, machineId, accountLifetime: lifetime, signal: abort.signal });
         }
-        return () => abort.abort();
-    }, [lifetime, onlineFactsKey, machineIds, presented, projectionRevisions, target.load, target.serverId]);
+        const currentIds = new Set(machineIds);
+        for (const [id, acquisition] of acquisitions) if (!currentIds.has(id)) {
+            acquisition.abort.abort();
+            acquisitions.delete(id);
+        }
+    }, [acquisitions, lifetime, machineFacts, machineIds, presented, projectionReaders, projectionRevisions, target.load]);
     React.useEffect(() => {
         if (!lifetime) return;
         for (const [index, machineId] of machineIds.entries()) {
-            const inputs = projectionReaders[index]!.readCached();
+            const reader = projectionReaders[index]!;
+            const inputs = reader.readCached();
+            const revision = reader.readRevision();
+            const previous = observations.get(machineId);
+            const fact = machineFacts[index]!;
+            if (previous?.fact === fact && previous.reader === reader && previous.revision === revision && previous.projection === inputs) continue;
+            observations.set(machineId, { fact, reader, revision, projection: inputs });
             if (machineFacts[index]?.online !== true || inputs?.kind === 'ready' || inputs?.kind === 'error') {
-                observe({ lifetime, machineId, authentication, revision: projectionReaders[index]!.readRevision(),
+                observe({ lifetime, machineId, authentication, revision,
                     projection: { phase: inputs?.kind === 'ready' || inputs?.kind === 'error' ? inputs.kind : 'idle',
                         inputs: inputs?.kind === 'ready' || inputs?.kind === 'error' ? inputs.inputs ?? null : null } });
             }
         }
-    }, [authentication, lifetime, machineFacts, machineIds, projectionReaders, projectionRevisions, reachabilityRevision, target.load, target.serverId]);
-    return React.useSyncExternalStore(subscribe, read, read);
+        const currentIds = new Set(machineIds);
+        for (const id of observations.keys()) if (!currentIds.has(id)) observations.delete(id);
+    }, [authentication, lifetime, machineFacts, machineIds, observations, projectionReaders, projectionRevisions, reachabilityRevision, target.load, target.serverId]);
+    return React.useSyncExternalStore(summary.subscribe, readSummary, readSummary);
 }

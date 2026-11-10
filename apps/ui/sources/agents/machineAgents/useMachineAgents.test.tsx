@@ -1,9 +1,11 @@
 import { act } from 'react-test-renderer';
-import { createElement, Profiler, type ProfilerOnRenderCallback, type PropsWithChildren } from 'react';
+import { createElement, Profiler, useLayoutEffect, type ProfilerOnRenderCallback, type PropsWithChildren } from 'react';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import type { MachineAgentInventoryItem} from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { buildConfiguredAcpAgentSelectionV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
@@ -29,7 +31,7 @@ const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await
 const { installConnectedAccountDescriptorProjection, retireConnectedAccountDescriptorProjection } = await import('@/sync/domains/connectedServices/connectedServiceRegistry');
 const { loadDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
-const { refreshMachineAgents, useMachineAgents, useMachineAgent, useMachineAgentsByMachine, useRefreshMachineAgents } = await import('./useMachineAgents');
+const { refreshMachineAgents, useMachineAgents, useMachineAgent, useMachineAgentsByMachine, useRefreshMachineAgents, selectMachineAgentUpdateFacts } = await import('./useMachineAgents');
 const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
 const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
 const { clearMachineRequestReachabilityForTest, recordMachineRequestFailed } = await import('@/sync/domains/machines/reachability/machineReachability');
@@ -525,6 +527,118 @@ describe('machine inventory lifecycle boundary', () => {
             expect(rpc.mock.calls.filter(([request]) => request.method === 'capabilities.detect')).toHaveLength(0);
         } finally { resolve.mockRestore(); active.mockRestore(); capture.mockRestore(); await hook.unmount(); }
     });
+    it('projects only the changed Machine for a mounted fleet summary during installation arrivals', async () => {
+        const server = await network.addHome('https://fleet-arrival-cost.test', 'fleet-arrival-account');
+        const scope = { serverId: server.id, accountId: 'fleet-arrival-account' };
+        const accountLifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        // Reuse the incumbent 100-Machine owner stress shape above, not a product limit.
+        const machines = Array.from({ length: 100 }, (_, index) => {
+            const machine = createMachineFixture({ id: `fleet-arrival-${index}`, active: true, activeAt: Date.now() });
+            return { ...machine, metadata: { ...machine.metadata!, agentInventory: { checkedAt: 10, installedAgentIds: [] as string[] } } };
+        });
+        storage.setState({ profileScope: scope });
+        const apply = (rows: typeof machines) => storage.getState().applyMachines(rows, false,
+            { sourceServerId: server.id, sourceAccountId: scope.accountId });
+        apply(machines);
+        applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 1, record: { v: 1, definitions: [] } }, true);
+        // Real daemon ACKs populate the existing projection cache; the passive summary never probes.
+        rpc.mockImplementation(async ({ method }: { method: string }) => method.includes('contributionRegistryProjection.describe')
+            ? { protocolVersion: 1, projection: emptyProjection } : { jobs: [] });
+        await Promise.all(machines.map(machine => loadDaemonMergedProjectionInputs({ serverId: server.id,
+            machineId: machine.id, accountLifetime, sections: ['agentsById', 'familiesById.connectedAccounts'] })));
+        const select = vi.fn(selectMachineAgentUpdateFacts);
+        const hook = await renderHook(() => useMachineAgentsByMachine({ serverId: server.id,
+            machineIds: machines.map(machine => machine.id), load: false }, select));
+        const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+        // Call through the genuine device-storage boundary, including unchanged hint writes.
+        const writes = vi.spyOn(getPersistenceStorage(), 'set');
+        // Instrument logical reads without replacing the canonical inventory owner.
+        const reads = vi.spyOn(machineAgentInventoryStore, 'read');
+        const changedMachineIds: string[] = [];
+        const stops = machines.map(machine => machineAgentInventoryStore.subscribe(
+            serverAccountScopedResourceKey(scope, 'machine-agents', machine.id), () => changedMachineIds.push(machine.id)));
+        const inventoryWrites = () => writes.mock.calls.filter(([key]) => key.includes('machine-agents:v1:'));
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().size).toBe(machines.length));
+            expect(machines.every(machine => machineAgentInventoryStore.read(
+                serverAccountScopedResourceKey(scope, 'machine-agents', machine.id)).status === 'ready')).toBe(true);
+            select.mockClear(); writes.mockClear(); reads.mockClear(); changedMachineIds.length = 0;
+            const held = hook.getCurrent();
+            const unrelated = createMachineFixture({ id: 'fleet-unobserved', active: true, activeAt: Date.now() });
+            await act(async () => storage.getState().applyMachines([unrelated], false,
+                { sourceServerId: server.id, sourceAccountId: scope.accountId }));
+            await act(async () => apply(machines));
+            expect(select).not.toHaveBeenCalled();
+            expect(reads).not.toHaveBeenCalled();
+            expect(inventoryWrites()).toHaveLength(0);
+            expect(changedMachineIds).toEqual([]);
+            expect(hook.getCurrent()).toBe(held);
+
+            for (const index of [0, machines.length - 1]) {
+                select.mockClear(); writes.mockClear(); reads.mockClear(); changedMachineIds.length = 0;
+                const before = hook.getCurrent();
+                const previous = machines[index]!;
+                const machine = { ...previous, seq: previous.seq + 1, metadataVersion: previous.metadataVersion + 1,
+                    metadata: { ...previous.metadata, agentInventory: { checkedAt: 20, installedAgentIds: ['codex'] } } };
+                machines[index] = machine;
+                await act(async () => apply([machine]));
+                expect(hook.getCurrent().get(machine.id)).toMatchObject([{ agentId: 'codex', installed: true, state: 'unknown' }]);
+                expect(changedMachineIds).toEqual([machine.id]);
+                expect.soft(select.mock.calls).toHaveLength(1);
+                expect.soft([...new Set(reads.mock.calls.map(([key]) => key))]).toEqual([
+                    serverAccountScopedResourceKey(scope, 'machine-agents', machine.id),
+                ]);
+                expect.soft(inventoryWrites()).toHaveLength(1);
+                expect.soft(inventoryWrites().every(([key]) => key.includes(JSON.stringify(machine.id)))).toBe(true);
+                expect([...hook.getCurrent()].filter(([id]) => id !== machine.id).every(([id, rows]) => rows === before.get(id))).toBe(true);
+                await act(async () => apply([machine]));
+                expect.soft(select.mock.calls).toHaveLength(1);
+                expect.soft(inventoryWrites()).toHaveLength(1);
+            }
+            expect(rpc.mock.calls.some(([request]) => request.method === 'capabilities.detect')).toBe(false);
+        } finally { stops.forEach(stop => stop()); reads.mockRestore(); writes.mockRestore(); await hook.unmount(); }
+    });
+
+    it('renews fleet membership and selectors while catching an inventory arrival before subscription', async () => {
+        const server = await network.addHome('https://fleet-membership.test', 'fleet-membership-account');
+        const scope = { serverId: server.id, accountId: 'fleet-membership-account' };
+        const machines = ['fleet-member-a', 'fleet-member-b', 'fleet-member-c'].map(id => createMachineFixture({ id, active: false, activeAt: 0 }));
+        storage.setState({ profileScope: scope });
+        storage.getState().applyMachines(machines, true, { sourceServerId: server.id, sourceAccountId: scope.accountId });
+        const key = (id: string) => serverAccountScopedResourceKey(scope, 'machine-agents', id);
+        const publish = (id: string, version: number) => machineAgentInventoryStore.publish(key(id), {
+            status: 'offline', items: [{ ...item, version: String(version) }], lastCheckedAt: version,
+        });
+        const first = vi.fn((snapshot: typeof EMPTY_MACHINE_AGENTS, previous: Readonly<{ label: string }> | undefined) => {
+            const label = `first:${snapshot.agents[0]?.version}`;
+            return previous?.label === label ? previous : { label };
+        });
+        const second = vi.fn((snapshot: typeof EMPTY_MACHINE_AGENTS, previous: Readonly<{ label: string }> | undefined) => {
+            const label = `second:${snapshot.agents[0]?.version}`;
+            return previous?.label === label ? previous : { label };
+        });
+        const hook = await renderHook(({ ids, select, arrival }: { ids: string[]; select: typeof first; arrival: number }) => {
+            const summary = useMachineAgentsByMachine({ serverId: server.id, machineIds: ids, load: false }, select);
+            // The new membership renders before its passive subscription attaches.
+            useLayoutEffect(() => { publish(ids[ids.length - 1]!, arrival); }, [arrival, ids]);
+            return summary;
+        }, { initialProps: { ids: [machines[0]!.id, machines[1]!.id], select: first, arrival: 1 } });
+        try {
+            expect(hook.getCurrent().get(machines[1]!.id)).toEqual({ label: 'first:1' });
+            const retained = hook.getCurrent().get(machines[1]!.id);
+            const ids = [machines[1]!.id, machines[2]!.id];
+            await hook.rerender({ ids, select: first, arrival: 2 });
+            expect([...hook.getCurrent()]).toEqual([[machines[1]!.id, { label: 'first:1' }], [machines[2]!.id, { label: 'first:2' }]]);
+            expect(hook.getCurrent().get(machines[1]!.id)).toBe(retained);
+            first.mockClear();
+            await act(async () => publish(machines[0]!.id, 3));
+            expect(first).not.toHaveBeenCalled();
+            await hook.rerender({ ids, select: second, arrival: 2 });
+            expect([...hook.getCurrent()]).toEqual([[machines[1]!.id, { label: 'second:1' }], [machines[2]!.id, { label: 'second:2' }]]);
+            expect(second.mock.calls[0]?.[1]).toBeUndefined();
+        } finally { await hook.unmount(); }
+    });
+
     it('uses acquired Connected Account descriptors without reparsing the raw machine family', async () => {
         const { publishDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters');
         const { useMachineAgentAuthentication } = await import('./useMachineAgentAuthentication');
@@ -794,25 +908,67 @@ describe('machine inventory lifecycle boundary', () => {
         expect(selectable()).toBe(true);
     });
 
-    it('releases a demanded inventory refresh on unmount and admits the next refresh of the same machine', async () => {
-        const server = await network.addHome('https://cancel-inventory.example.test', 'inventory-account');
+    it.each(['manual', 'fleet'] as const)('releases a demanded inventory refresh on unmount and admits the next refresh of the same machine (%s)', async mode => {
+        const server = await network.addHome(`https://cancel-inventory-${mode}.example.test`, 'inventory-account');
         const scope = { serverId: server.id, accountId: 'inventory-account' };
-        const machine = createMachineFixture({ id: 'cancel-inventory-machine', active: true, activeAt: Date.now() });
+        const machine = createMachineFixture({ id: `cancel-inventory-${mode}-machine`, active: true, activeAt: Date.now() });
         storage.setState({ machineListByServerId: { [server.id]: [machine] }, profileScope: scope });
         rpc.mockImplementationOnce(() => new Promise(() => {}));
-        const hook = await renderHook(() => useRefreshMachineAgents(server.id));
-        const pending = hook.getCurrent()(machine.id);
+        const render = () => renderHook(() => {
+            if (mode === 'manual') return { refresh: useRefreshMachineAgents(server.id), status: undefined };
+            const fleet = useMachineAgentsByMachine({ serverId: server.id, machineIds: [machine.id], load: true });
+            return { refresh: undefined, status: fleet.get(machine.id)?.status };
+        });
+        const hook = await render();
+        const pending = hook.getCurrent().refresh?.(machine.id);
         let settled = false;
-        void pending.then(() => { settled = true; });
+        void pending?.then(() => { settled = true; });
         await vi.waitFor(() => expect(rpc).toHaveBeenCalledTimes(1));
         await hook.unmount();
-        await vi.waitFor(() => expect(settled).toBe(true));
+        if (mode === 'manual') await vi.waitFor(() => expect(settled).toBe(true));
         rpc.mockResolvedValueOnce({ protocolVersion: 1, projection: emptyProjection });
-        const reopened = await renderHook(() => useRefreshMachineAgents(server.id));
+        const reopened = await render();
         try {
-            await reopened.getCurrent()(machine.id);
+            if (mode === 'manual') await reopened.getCurrent().refresh?.(machine.id);
+            else await vi.waitFor(() => expect(reopened.getCurrent().status).toBe('ready'));
             expect(rpc).toHaveBeenCalledTimes(2);
         } finally { await reopened.unmount(); }
+    });
+
+    it('keeps another fleet Machine acquisition admitted when one Machine registry changes', async () => {
+        const server = await network.addHome('https://fleet-independent-acquisition.test', 'fleet-acquisition-account');
+        const scope = { serverId: server.id, accountId: 'fleet-acquisition-account' };
+        let changed = createMachineFixture({ id: 'fleet-restarted-machine', active: true, activeAt: Date.now(),
+            daemonStateVersion: 1, daemonState: { status: 'running', contributionRegistryProjectionRevision: 0 } });
+        const other = createMachineFixture({ id: 'fleet-pending-machine', active: true, activeAt: Date.now() });
+        storage.setState({ profileScope: scope });
+        storage.getState().applyMachines([changed, other], true, { sourceServerId: server.id, sourceAccountId: scope.accountId });
+        const pending = createDeferred<void>();
+        let otherDescriptions = 0;
+        network.setRpcAckResponder(async request => {
+            if (request.method.includes('contributionRegistryProjection.describe')) {
+                if (request.targetId === other.id && ++otherDescriptions === 1) await pending.promise;
+                return { ok: true, result: { protocolVersion: 1, projection: emptyProjection } };
+            }
+            return { ok: true, result: { ok: true, jobs: [] } };
+        });
+        const hook = await renderHook(() => useMachineAgentsByMachine({ serverId: server.id,
+            machineIds: [changed.id, other.id], load: true }));
+        const changedDescriptions = () => network.requests.filter(request => request.targetId === changed.id
+            && request.method.includes('contributionRegistryProjection.describe')).length;
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().get(changed.id)?.status).toBe('ready'));
+            expect(otherDescriptions).toBe(1);
+            const before = changedDescriptions();
+            changed = { ...changed, daemonStateVersion: 2,
+                daemonState: { ...changed.daemonState!, contributionRegistryProjectionRevision: 1 } };
+            await act(async () => storage.getState().applyMachines([changed], false,
+                { sourceServerId: server.id, sourceAccountId: scope.accountId }));
+            await vi.waitFor(() => expect(changedDescriptions()).toBeGreaterThan(before));
+            expect(otherDescriptions).toBe(1);
+            await act(async () => pending.resolve());
+            await vi.waitFor(() => expect(hook.getCurrent().get(other.id)?.status).toBe('ready'));
+        } finally { pending.resolve(); await hook.unmount(); }
     });
 
     it('hydrates the selected Codex pool credential beside a successful signed-out native probe', async () => {
@@ -1289,8 +1445,10 @@ describe('machine inventory lifecycle boundary', () => {
         vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
         vi.setSystemTime(10_000);
         const clock = vi.spyOn(Date, 'now').mockReturnValue(10_000);
-        const machine = createMachineFixture({ id: `presence-boundary-${mode}-machine`, active: true, activeAt: 10_000 });
-        storage.setState({ machineListByServerId: { [server.id]: [machine] }, profileScope: scope });
+        const machine = createMachineFixture({ id: `presence-boundary-${mode}-machine`, active: true, activeAt: 10_000,
+            presenceProtocolVersion: 1 });
+        storage.setState({ profileScope: scope });
+        storage.getState().applyMachines([machine], true, { sourceServerId: server.id, sourceAccountId: scope.accountId });
         machineAgentInventoryStore.publish(serverAccountScopedResourceKey(scope, 'machine-agents', machine.id),
             { status: 'ready', items: [item], lastCheckedAt: 12 });
         const errors = vi.spyOn(console, 'error');
@@ -1348,7 +1506,7 @@ describe('machine inventory lifecycle boundary', () => {
             if (method.includes('contributionRegistryProjection.describe')) return { protocolVersion: 1, projection };
             if (method === 'capabilities.detect') return { protocolVersion: 1, results: Object.fromEntries((payload?.requests ?? []).map(request =>
                 [request.id, { ok: true, checkedAt: 12, data: request.id === 'tool.acpAgentInventory'
-                    ? { items: [{ ...item, agentId: 'custom-acp', definitionId: 'configured', title: 'Configured Agent',
+                    ? { items: [{ ...item, agentId: buildConfiguredAcpAgentSelectionV1('configured').agentId, definitionId: 'configured', title: 'Configured Agent',
                         managed: true, fit: { kind: 'can_run', via: 'npm' } }] }
                     : { ...item, authStatus: { state: 'logged_in', checkedAt: 12 } } }])) };
             return { jobs: [] };
@@ -1392,7 +1550,7 @@ describe('machine inventory lifecycle boundary', () => {
             if (method.includes('contributionRegistryProjection.describe')) return { protocolVersion: 1, projection };
             if (method === 'capabilities.detect') return { protocolVersion: 1, results: Object.fromEntries((payload?.requests ?? []).map(request =>
                 [request.id, { ok: true, checkedAt: 12, data: request.id === 'tool.acpAgentInventory'
-                    ? { items: (request.params?.definitions ?? []).map(definition => ({ ...item, agentId: 'custom-acp',
+                    ? { items: (request.params?.definitions ?? []).map(definition => ({ ...item, agentId: buildConfiguredAcpAgentSelectionV1(definition.definitionId).agentId,
                         definitionId: definition.definitionId, title: definition.title, managed: true, fit: { kind: 'can_run', via: 'npm' } })) }
                     : { ...item, authStatus: { state: 'logged_in', checkedAt: 12 } } }])) };
             return { jobs: [] };
@@ -1415,7 +1573,10 @@ describe('machine inventory lifecycle boundary', () => {
                 return;
             }
             if (surface === 'inventory') await vi.waitFor(() =>
-                expect(isMachineAgentReady(hook.getCurrent().agents.find(agent => agent.definitionId === 'configured'))).toBe(true));
+                expect(isMachineAgentReady(hook.getCurrent().agents.find(agent => agent.definitionId === 'configured')),
+                    JSON.stringify({ inventory: hook.getCurrent(), requests: network.requests.filter(request => request.method === 'capabilities.detect')
+                        .map(request => ({ targetId: request.targetId, payload: request.payload })) }))
+                    .toBe(true));
             await vi.waitFor(() => expect(hook.getCurrent().status).toBe('ready'));
             expect(isMachineAgentReady(hook.getCurrent().agents.find(agent => agent.agentId === 'review'))).toBe(true);
         } finally {
@@ -1564,14 +1725,14 @@ describe('machine inventory lifecycle boundary', () => {
         await hook.unmount();
     });
 
-    it('applies install, uninstall and daemon restart pushes only to the changed Machine inventory', async () => {
+    it.each(['detail', 'fleet'] as const)('applies install, uninstall and daemon restart pushes only to the changed Machine inventory (%s)', async mode => {
         const { getMachineContributionRegistryProjectionRevision } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
-        const server = await network.addHome('https://inventory-install-push.test', 'inventory-account');
+        const server = await network.addHome(`https://inventory-install-push-${mode}.test`, 'inventory-account');
         const scope = { serverId: server.id, accountId: 'inventory-account' };
         const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
-        let changed = createMachineFixture({ id: 'installed-machine', active: true, activeAt: Date.now(), daemonStateVersion: 1,
+        let changed = createMachineFixture({ id: `${mode}-installed-machine`, active: true, activeAt: Date.now(), daemonStateVersion: 1,
             daemonState: { status: 'running', runtimeId: 'before-restart', contributionRegistryProjectionRevision: 0 } });
-        const other = createMachineFixture({ id: 'unchanged-machine', active: true, activeAt: Date.now(), daemonStateVersion: 1,
+        const other = createMachineFixture({ id: `${mode}-unchanged-machine`, active: true, activeAt: Date.now(), daemonStateVersion: 1,
             daemonState: { status: 'running', runtimeId: 'other-runtime', contributionRegistryProjectionRevision: 0 } });
         storage.setState({ profileScope: scope });
         storage.getState().applyMachines([changed, other], true, { sourceServerId: server.id, sourceAccountId: scope.accountId });
@@ -1584,46 +1745,74 @@ describe('machine inventory lifecycle boundary', () => {
             if (method === 'capabilities.detect') return { protocolVersion: 1, results: {
                 'cli.review': { ok: true, checkedAt: Date.now(), data: { ...item, installed } },
             } };
-            return { jobs: [] };
+            return { ok: true, jobs: [] };
         });
         for (const machine of [changed, other]) await refreshMachineAgents({ serverId: server.id, machineId: machine.id, accountLifetime: lifetime });
-        const selected = await renderHook(() => useMachineAgents({ serverId: server.id, machineId: changed.id, agentId: 'review' }));
+        // The transport fixture's missing catalog route leaves a stale Account
+        // read. Hold that separate authority constant while measuring Machine pushes.
+        expect(getAcpCatalogSnapshot(scope)).toMatchObject({ stale: true, catalog: { status: 'unavailable' } });
+        applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 1, record: { v: 1, definitions: [] } }, true);
+        const mountRequestsBefore = network.requests.length;
+        const selected = await renderHook(() => mode === 'detail'
+            ? useMachineAgents({ serverId: server.id, machineId: changed.id, agentId: 'review' })
+            : useMachineAgentsByMachine({ serverId: server.id, machineIds: [changed.id, other.id], load: true }).get(changed.id) ?? EMPTY_MACHINE_AGENTS);
         let otherRenders = 0;
+        let otherCommits = 0;
+        const wrapper = ({ children }: PropsWithChildren) => createElement(Profiler,
+            { id: 'unrelated-inventory', onRender: () => { otherCommits++; } }, children);
         const unrelated = await renderHook(() => {
             otherRenders++;
             return useMachineAgents({ serverId: server.id, machineId: other.id, agentId: 'review' });
-        });
+        }, { wrapper });
         await vi.waitFor(() => expect(selected.getCurrent().status).toBe('ready'));
         await vi.waitFor(() => expect(unrelated.getCurrent().status).toBe('ready'));
+        await vi.waitFor(() => expect(new Set(network.requests.slice(mountRequestsBefore)
+            .filter(request => request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST).map(request => request.targetId)))
+            .toEqual(new Set([changed.id, other.id])));
+        // Commit the mounted demands' warm-cache answers before measuring a new arrival.
+        await act(async () => {});
         const otherAgent = unrelated.getCurrent().agents[0];
         const otherSnapshot = unrelated.getCurrent();
         const rendersBefore = otherRenders;
+        const commitsBefore = otherCommits;
+        const otherPublications: string[] = [];
+        const otherKey = serverAccountScopedResourceKey(scope, 'machine-agents', other.id);
+        const stopOtherPublications = machineAgentInventoryStore.subscribe(otherKey, () => {
+            otherPublications.push(machineAgentInventoryStore.read(otherKey).status);
+        });
+        const inventoryReads = vi.spyOn(machineAgentInventoryStore, 'read');
         rpc.mockClear();
         const requestsBefore = network.requests.length;
-        for (const transition of ['install', 'uninstall', 'restart'] as const) {
-            installed = transition !== 'uninstall';
-            changed = { ...changed, daemonStateVersion: changed.daemonStateVersion + 1,
-                daemonState: { ...changed.daemonState!, runtimeId: transition === 'restart' ? 'after-restart' : 'before-restart',
-                    contributionRegistryProjectionRevision: transition === 'install' ? 1 : transition === 'uninstall' ? 2 : 0 } };
-            await act(async () => storage.getState().applyMachines([changed], false,
-                { sourceServerId: server.id, sourceAccountId: scope.accountId }));
-            expect(getMachineContributionRegistryProjectionRevision({ serverId: server.id, machineId: changed.id })).toBe(
-                transition === 'install' ? 1 : transition === 'uninstall' ? 2 : 3);
-            await vi.waitFor(() => {
-                expect(selected.getCurrent()).toMatchObject({ status: 'ready', agents: [{ installed, stale: false }] });
-                expect(isAgentSelectableForNewSession({ agentId: 'review', machineAgentsById: {
-                    review: selected.getCurrent().agents[0],
-                } })).toBe(installed);
-                expect(resolveMachineAgentPickerPlacement(selected.getCurrent().agents[0] ?? null).group).toBe(installed ? 'onMachine' : 'notOnMachine');
-            });
-            expect(unrelated.getCurrent()).toBe(otherSnapshot);
-            expect(unrelated.getCurrent().agents[0]).toBe(otherAgent);
-            expect(otherRenders).toBe(rendersBefore);
-            expect(network.requests.slice(requestsBefore).filter(request => request.targetId === other.id)).toHaveLength(0);
-            expect(storage.getState().machineListByServerId[server.id]?.find(machine => machine.id === other.id)).toBe(other);
+        try {
+            for (const transition of ['install', 'uninstall', 'restart'] as const) {
+                installed = transition !== 'uninstall';
+                changed = { ...changed, daemonStateVersion: changed.daemonStateVersion + 1,
+                    daemonState: { ...changed.daemonState!, runtimeId: transition === 'restart' ? 'after-restart' : 'before-restart',
+                        contributionRegistryProjectionRevision: transition === 'install' ? 1 : transition === 'uninstall' ? 2 : 0 } };
+                await act(async () => storage.getState().applyMachines([changed], false,
+                    { sourceServerId: server.id, sourceAccountId: scope.accountId }));
+                expect(getMachineContributionRegistryProjectionRevision({ serverId: server.id, machineId: changed.id })).toBe(
+                    transition === 'install' ? 1 : transition === 'uninstall' ? 2 : 3);
+                await vi.waitFor(() => {
+                    expect(selected.getCurrent()).toMatchObject({ status: 'ready', agents: [{ installed, stale: false }] });
+                    expect(isAgentSelectableForNewSession({ agentId: 'review', machineAgentsById: {
+                        review: selected.getCurrent().agents[0],
+                    } })).toBe(installed);
+                    expect(resolveMachineAgentPickerPlacement(selected.getCurrent().agents[0] ?? null).group).toBe(installed ? 'onMachine' : 'notOnMachine');
+                });
+                expect(unrelated.getCurrent()).toBe(otherSnapshot);
+                expect(unrelated.getCurrent().agents[0]).toBe(otherAgent);
+                expect.soft(network.requests.slice(requestsBefore).filter(request => request.targetId === other.id)).toHaveLength(0);
+                expect(otherRenders, JSON.stringify({ otherCommits, commitsBefore, transition, otherPublications,
+                    otherReads: inventoryReads.mock.calls.filter(([key]) => key === otherKey).length })).toBe(rendersBefore);
+                expect(storage.getState().machineListByServerId[server.id]?.find(machine => machine.id === other.id)).toBe(other);
+            }
+        } finally {
+            inventoryReads.mockRestore();
+            stopOtherPublications();
+            await selected.unmount();
+            await unrelated.unmount();
         }
-        await selected.unmount();
-        await unrelated.unmount();
     });
 
     it('retains descriptors and last-good facts but denies readiness when a projection refresh fails', async () => {
