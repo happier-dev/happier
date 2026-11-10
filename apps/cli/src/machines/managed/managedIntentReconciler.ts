@@ -261,6 +261,8 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
         client.assertConnection(machine);
         options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: machine.id,
             controller: machine.controller, ...(machine.resource ? { resource: machine.resource } : {}) } });
+        if (params.action === 'machines.managed.delete' && machine.desired === 'delete'
+            && machine.allocation === 'confirmed-absent') return machine;
         let effectContext = options.context;
         // Acquisition recovery and Remove use one native correlation reader.
         let nativeOwner: ReturnType<typeof createManagedNativeInvocation> | undefined;
@@ -394,7 +396,7 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                 } });
                 bridge ??= createManagedGuestActivityTransport(params.input, options, machine);
                 await waitForIdle({ machine, bridge, duration: idleDuration, signal: options.signal,
-                    isCurrent: () => client.isCurrent(machine),
+                    isCurrent: async () => await client.readCurrent(machine) !== null,
                     onActivity: kind => publishActivity(options, machine, kind) });
             }
             let waitingForGuestWork = false;
@@ -437,7 +439,7 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                                 && machine.homeId === admittedMachine.homeId && machine.intentRevision === admittedMachine.intentRevision
                                 && isDeepStrictEqual(machine.controller, admittedMachine.controller)
                                 && isDeepStrictEqual(machine.resource, admittedMachine.resource)) return machine;
-                            if (!await client.isCurrent(admittedMachine)) throw new ManagedMachineControllerError('intent_changed');
+                            if (!await client.readCurrent(admittedMachine)) throw new ManagedMachineControllerError('intent_changed');
                             // Only the still-live new intent re-enters normal fresh
                             // admission. The old native effect is never resubmitted.
                             const retried = await reconcileManagedIntent({ ...params, machine });

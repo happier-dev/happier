@@ -39,6 +39,7 @@ import {
     readManagedJsonEqualityOperand,
     inManagedMachinePublicationTx,
     readManagedController, resolveManagedMachineRoleInTx,
+    hasPossibleManagedNativeResource,
 } from "./managedRows";
 
 /** Declared reconciliation can recover partial cleanup; native submission still requires its concrete target. */
@@ -213,6 +214,16 @@ export async function admitManagedControl(params: Readonly<{
         if (request.action === "machines.managed.retire") {
             data.archivedAt = new Date();
             data.cleanup = { disposition: "unavailable", reason: "manual_responsibility" };
+        } else if (request.action === 'machines.managed.delete'
+            && !hasPossibleManagedNativeResource(row)) {
+            // Admission owns allocation: unsubmitted and confirmed-absent
+            // allocations need neither a provisioner nor a cleanup operation.
+            data.allocation = 'confirmed-absent';
+            if (!row.enrolledMachineId) data.creationState = 'canceled';
+            data.desired = 'delete';
+            data.desiredWhen = 'now';
+            data.desiredAfterMs = null;
+            data.cleanup = getActivePrismaRuntime().DbNull;
         } else {
             const pendingCleanup = request.action === 'machines.managed.delete' && request.input.when === 'now'
                 && await hasPendingManagedCleanupTargetInTx(tx, row, true);

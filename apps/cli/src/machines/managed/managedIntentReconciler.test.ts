@@ -217,6 +217,21 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
 }
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
+describe('Delete with no native resource', () => {
+    it('settles the Home-confirmed absence without native effects or guest activity', async () => {
+        const test = setup();
+        test.setMachine({ allocation: 'confirmed-absent', creationState: 'canceled',
+            resource: undefined, enrolledMachineId: undefined });
+        await expect(test.run()).resolves.toMatchObject({ kind: 'accepted', managedId: 'managed' });
+        expect(test.effects).toEqual([]);
+        expect(test.readActivity).not.toHaveBeenCalled();
+        expect(test.confirmIdle).not.toHaveBeenCalled();
+        expect(test.post.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+            '/v1/machines/managed/controller/admit-control',
+        ]);
+    });
+});
+
 describe('unused Stop through guest drain and controller operation custody', () => {
     it.each(['idle-lapse', 'delayed-native-lapse', 'work-during-native-lapse', 'work-resumes', 'activity-unavailable', 'until-delete', 'cancel', 'renewal-failure'] as const)(
         'owns Boat mandatory TTL through the real policy lifecycle (%s)', async ending => {
@@ -1718,6 +1733,24 @@ describe('unused Stop through guest drain and controller operation custody', () 
         expect(refused.effects).toEqual([role]);
     });
     it.each([
+        { observedAt: 5, availability: 'absent' as const },
+        { observedAt: 5, availability: 'present' as const, power: 'stopped' as const, storage: 'lost' as const },
+        { observedAt: 5, availability: 'unavailable' as const, reason: 'transport' },
+    ])('settles a refused wake with its native observation ($availability)', async observation => {
+        const test = setup(undefined, undefined, 'start', observation);
+        const machine = test.readMachine();
+        await expect(test.driver.execute('machines.managed.power.set', {
+            homeId: machine.homeId, managedId: machine.id, intent: 'start', when: 'now', expectedRevision: machine.intentRevision,
+        }, test.options)).rejects.toMatchObject({ code: 'provider_unavailable' });
+        expect(test.reports).toEqual([expect.objectContaining({
+            result: { kind: 'refused', code: 'provider_unavailable' }, observation,
+        })]);
+        expect(test.readMachine()).toMatchObject({ observation,
+            allocation: observation.availability === 'absent' ? 'confirmed-absent' : 'bound' });
+        expect(test.readMachine().submittedNativeEffect).toBeUndefined();
+        expect(test.effects).not.toContain('power');
+    });
+    it.each([
         { boundary: 'admit-control', intent: 'start', action: 'machines.managed.power.set', code: 'database_connection_unavailable' },
         { boundary: 'admit-control', intent: 'start', action: 'machines.managed.power.set', code: 'database_transaction_conflict_exhausted' },
         { boundary: 'admit-control', intent: 'delete', action: 'machines.managed.delete', code: 'database_transaction_conflict_exhausted' },
@@ -2656,6 +2689,46 @@ describe('managed native intent through the accepted Action', () => {
         expect(test.effects).toEqual(['rebuild']);
     });
 
+    it.each(['refused', 'changed'] as const)('preserves bound rebuild identity when pre-bootstrap currentness is %s', async response => {
+        const replacement = { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {},
+            devcontainerObservation: { nativeResourceId: 'replacement', user: 'coder', workspaceFolder: '/work',
+                storage: { kind: 'child' as const, childPath: '/work' } } };
+        const test = setup(undefined, undefined, 'rebuild', undefined, undefined, { kind: 'bound', resource: replacement });
+        const machine = test.readMachine();
+        const home = test.post.getMockImplementation()!;
+        test.post.mockImplementation(async (url, body, config) => {
+            if (String(url).endsWith('/report-intent')) {
+                const report = ManagedControllerIntentReportV1Schema.parse(body);
+                if (report.result.kind === 'bound') {
+                    test.reports.push(report);
+                    test.setMachine({ resource: report.result.resource, enrolledMachineId: undefined,
+                        submittedNativeEffect: undefined, recovery: undefined, observation: undefined });
+                    return { status: 200, data: { machine: test.readMachine() } };
+                }
+            }
+            if (String(url).endsWith('/current')) {
+                if (response === 'refused') return { status: 403, data: { code: 'permission_denied' } };
+                test.setMachine({ intentRevision: 2 });
+                return { status: 200, data: { machine: test.readMachine() } };
+            }
+            return await home(url, body, config);
+        });
+        const execution = test.driver.execute('machines.managed.rebuild', { homeId: machine.homeId,
+            managedMachineId: machine.id, kind: 'rebuild', expectedRevision: machine.intentRevision,
+            reviewedEffectDigest: 'reviewed-effects' }, test.options);
+        if (response === 'refused') {
+            await expect(execution).resolves.toMatchObject({ ok: false, errorCode: 'action_outcome_unknown',
+                details: { kind: 'managedControllerRequest', category: 'status', status: 403, code: 'permission_denied' } });
+        } else {
+            await expect(execution).rejects.toMatchObject({ code: 'intent_changed' });
+        }
+        expect(test.reports).toEqual([expect.objectContaining({ result: { kind: 'bound', resource: replacement } })]);
+        expect(test.readMachine()).toMatchObject({ id: machine.id, homeId: machine.homeId, allocation: 'bound', resource: replacement });
+        expect(test.readMachine().enrolledMachineId).toBeUndefined();
+        expect(test.readMachine().submittedNativeEffect).toBeUndefined();
+        expect(test.effects).toEqual(['rebuild']);
+    });
+
     it('routes reviewed rebuild through the same private intent custody and retains uncertain replacement without replay', async () => {
         const test = setup(undefined, undefined, 'rebuild');
         const request = { homeId: test.readMachine().homeId, managedMachineId: 'managed', kind: 'rebuild', expectedRevision: 1, reviewedEffectDigest: 'reviewed-effects' };
@@ -3191,6 +3264,43 @@ describe('managed native intent through the accepted Action', () => {
         expect(test.reports[1]).toMatchObject({ result: { kind: 'unknown' }, requestId: 'control',
             observation: { observedAt: 0, availability: 'present' } });
         expect(test.post.mock.calls.some(([url]) => String(url).endsWith('/controller/report'))).toBe(false);
+    });
+    it.each([
+        { phase: 'idle', response: 'refused' },
+        { phase: 'idle', response: 'changed' },
+        { phase: 'previous-effect', response: 'refused' },
+        { phase: 'previous-effect', response: 'changed' },
+    ] as const)('distinguishes Home refusal from changed intent during $phase ($response)', async ({ phase, response }) => {
+        const test = setup(undefined, undefined, 'delete', { observedAt: 1, availability: 'present', power: 'stopped' });
+        const machine = test.readMachine();
+        test.setMachine(phase === 'idle' ? { desiredWhen: 'after-idle' } : {
+            intentRevision: 2,
+            submittedNativeEffect: { intentRevision: 1, requestId: 'previous-control', intent: 'stop', controller: machine.controller },
+        });
+        const home = test.post.getMockImplementation()!;
+        test.post.mockImplementation(async (url, body, config) => {
+            if (String(url).endsWith('/current')) return response === 'refused'
+                ? { status: 403, data: { code: 'permission_denied' } }
+                : { status: 200, data: { machine: { ...test.readMachine(), intentRevision: 3 } } };
+            const result = await home(url, body, config);
+            if (phase === 'previous-effect' && String(url).endsWith('/report-intent')) {
+                test.setMachine({ submittedNativeEffect: undefined });
+                return { status: 200, data: { machine: test.readMachine() } };
+            }
+            return result;
+        });
+        if (response === 'refused') {
+            await expect(test.run()).resolves.toMatchObject({ ok: false, errorCode: 'action_outcome_unknown',
+                details: { kind: 'managedControllerRequest', category: 'status', status: 403, code: 'permission_denied' } });
+        } else {
+            await expect(test.run()).rejects.toMatchObject({ code: 'intent_changed' });
+        }
+        expect(test.effects).toEqual([]);
+        expect(test.readMachine().submittedNativeEffect).toBeUndefined();
+        if (phase === 'previous-effect') expect(test.reports).toContainEqual(expect.objectContaining({
+            requestId: 'previous-control', result: { kind: 'unknown' },
+            observation: { observedAt: 1, availability: 'present', power: 'stopped' },
+        }));
     });
     it('keeps guest admission drained after an unknown native effect may still stop the same resource', async () => {
         const test = setup({ kind: 'idle', since: 0 }, { kind: 'unknown' });
