@@ -33,7 +33,7 @@ export async function prepareLocaleAssets({ uiPackageDir,
             stdin: { contents: `import { ${host} } from './translations/${language}';\nimport { BUNDLED_PLUGIN_TRANSLATIONS } from './bundledPluginTranslations/${language}.generated';\nexport const bundle = { host: ${host}, plugins: BUNDLED_PLUGIN_TRANSLATIONS };`,
                 loader: 'ts', resolveDir: resolve(uiPackageDir, 'sources/text') },
             absWorkingDir: uiPackageDir, bundle: true, platform: 'browser', format: 'cjs',
-            target: ['es2020'], minify: true, write: false, metafile: true,
+            target: ['es2020'], minify: true, charset: 'utf8', write: false, metafile: true,
             plugins: [{ name: 'authored-workspace-source', setup(builder) {
                 builder.onResolve({ filter: /^@happier-dev\// }, args => {
                     const path = sourceOptions.resolveSourceImport(args.path);

@@ -1,4 +1,4 @@
-import { PUBLIC_USAGE_PLANET_COPY_EN } from '@happier-dev/protocol/account/publicProfilePublication';
+import { PUBLIC_USAGE_PLANET_COPY_EN } from '@happier-dev/protocol/account/publicProfilePresentationCopy';
 
 // Copy for the calendar and planet-family Usage chart bodies (Ninety planets, Streak thread, Weeks, Days on the
 // surface, Ringed by streaks, Around the period, Moons, Machines, Projects, Atmosphere).

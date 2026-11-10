@@ -1,4 +1,4 @@
-import { PUBLIC_PROFILE_PAGE_COPY_EN, PUBLIC_PROFILE_FIELD_COPY_EN } from '@happier-dev/protocol/account/publicProfilePublication';
+import { PUBLIC_PROFILE_PAGE_COPY_EN, PUBLIC_PROFILE_FIELD_COPY_EN } from '@happier-dev/protocol/account/publicProfilePresentationCopy';
 
 /**
  * Copy for the Account handle (one username shared with Friends and the public page) and the
