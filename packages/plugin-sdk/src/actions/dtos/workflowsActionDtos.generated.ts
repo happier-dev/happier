@@ -58,6 +58,9 @@ export type WorkflowsActionInputById = {
                 };
             };
         } | {
+            kind: 'repo_file';
+            path: string;
+        } | {
             kind: 'saved';
             definitionId: string;
             revision: {
@@ -97,7 +100,7 @@ export type WorkflowsActionInputById = {
                 workflow?: undefined | {
                     runId: string;
                     source: {
-                        kind: 'automation' | 'catalog' | 'inline' | 'saved';
+                        kind: 'automation' | 'catalog' | 'inline' | 'repo_file' | 'saved';
                         definitionId?: string | undefined;
                         ref?: string | undefined;
                         revision?: undefined | {
@@ -106,6 +109,8 @@ export type WorkflowsActionInputById = {
                         };
                         version?: number | string | undefined;
                         automationId?: string | undefined;
+                        path?: string | undefined;
+                        commit?: string | undefined;
                     };
                 };
             };
@@ -497,7 +502,7 @@ export type WorkflowsActionInputById = {
                 workflow?: undefined | {
                     runId: string;
                     source: {
-                        kind: 'automation' | 'catalog' | 'inline' | 'saved';
+                        kind: 'automation' | 'catalog' | 'inline' | 'repo_file' | 'saved';
                         definitionId?: string | undefined;
                         ref?: string | undefined;
                         revision?: undefined | {
@@ -506,6 +511,8 @@ export type WorkflowsActionInputById = {
                         };
                         version?: number | string | undefined;
                         automationId?: string | undefined;
+                        path?: string | undefined;
+                        commit?: string | undefined;
                     };
                 };
             };
@@ -541,7 +548,7 @@ export type WorkflowsActionInputById = {
                 workflow?: undefined | {
                     runId: string;
                     source: {
-                        kind: 'automation' | 'catalog' | 'inline' | 'saved';
+                        kind: 'automation' | 'catalog' | 'inline' | 'repo_file' | 'saved';
                         definitionId?: string | undefined;
                         ref?: string | undefined;
                         revision?: undefined | {
@@ -550,6 +557,8 @@ export type WorkflowsActionInputById = {
                         };
                         version?: number | string | undefined;
                         automationId?: string | undefined;
+                        path?: string | undefined;
+                        commit?: string | undefined;
                     };
                 };
             };
@@ -1575,6 +1584,9 @@ export type WorkflowsActionInputById = {
                 scheduleExpr: null;
                 everyMs: number;
                 timezone: null | string;
+            } | {
+                kind: 'once';
+                scheduledAt: number;
             };
             enabled: boolean;
         } | {
@@ -1758,6 +1770,9 @@ export type WorkflowsActionInputById = {
                 scheduleExpr: null;
                 everyMs: number;
                 timezone: null | string;
+            } | {
+                kind: 'once';
+                scheduledAt: number;
             };
             enabled: boolean;
         } | {
@@ -1817,8 +1832,8 @@ export type WorkflowsActionInputById = {
         } | {
             kind: 'session';
         };
-        approvalProfileId?: null | string | undefined;
         inputs?: Record<string, unknown> | undefined;
+        approvalProfileId?: null | string | undefined;
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
             roleId: string;
@@ -1989,6 +2004,9 @@ export type WorkflowsActionInputById = {
                     scheduleExpr: null;
                     everyMs: number;
                     timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
             } | {
                 source: {
@@ -2040,8 +2058,8 @@ export type WorkflowsActionInputById = {
             } | {
                 kind: 'session';
             };
-            approvalProfileId?: null | string | undefined;
             inputs?: Record<string, unknown> | undefined;
+            approvalProfileId?: null | string | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
                 roleId: string;
@@ -2222,6 +2240,9 @@ export type WorkflowsActionInputById = {
                 scheduleExpr: null;
                 everyMs: number;
                 timezone: null | string;
+            } | {
+                kind: 'once';
+                scheduledAt: number;
             };
             enabled: boolean;
         } | {
@@ -2279,8 +2300,8 @@ export type WorkflowsActionInputById = {
         } | {
             kind: 'session';
         };
-        approvalProfileId?: null | string | undefined;
         inputs?: Record<string, unknown> | undefined;
+        approvalProfileId?: null | string | undefined;
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
             roleId: string;
@@ -2462,6 +2483,9 @@ export type WorkflowsActionInputById = {
                     scheduleExpr: null;
                     everyMs: number;
                     timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
             } | {
                 source: {
@@ -2508,8 +2532,8 @@ export type WorkflowsActionInputById = {
             } | {
                 kind: 'session';
             };
-            approvalProfileId?: null | string | undefined;
             inputs?: Record<string, unknown> | undefined;
+            approvalProfileId?: null | string | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
                 roleId: string;
@@ -3692,7 +3716,7 @@ export type WorkflowsActionResultById = {
                     workflow?: undefined | {
                         runId: string;
                         source: {
-                            kind: 'automation' | 'catalog' | 'inline' | 'saved';
+                            kind: 'automation' | 'catalog' | 'inline' | 'repo_file' | 'saved';
                             definitionId?: string | undefined;
                             ref?: string | undefined;
                             revision?: undefined | {
@@ -3701,6 +3725,8 @@ export type WorkflowsActionResultById = {
                             };
                             version?: number | string | undefined;
                             automationId?: string | undefined;
+                            path?: string | undefined;
+                            commit?: string | undefined;
                         };
                     };
                 };
@@ -4031,6 +4057,10 @@ export type WorkflowsActionResultById = {
             } | {
                 kind: 'inline';
                 sourceArtifactId?: string | undefined;
+            } | {
+                kind: 'repo_file';
+                path: string;
+                commit: string;
             } | {
                 kind: 'saved';
                 definitionId: string;
@@ -5330,7 +5360,7 @@ export type WorkflowsActionResultById = {
                     workflow?: undefined | {
                         runId: string;
                         source: {
-                            kind: 'automation' | 'catalog' | 'inline' | 'saved';
+                            kind: 'automation' | 'catalog' | 'inline' | 'repo_file' | 'saved';
                             definitionId?: string | undefined;
                             ref?: string | undefined;
                             revision?: undefined | {
@@ -5339,6 +5369,8 @@ export type WorkflowsActionResultById = {
                             };
                             version?: number | string | undefined;
                             automationId?: string | undefined;
+                            path?: string | undefined;
+                            commit?: string | undefined;
                         };
                     };
                 };
@@ -6651,7 +6683,7 @@ export type WorkflowsActionResultById = {
                     workflow?: undefined | {
                         runId: string;
                         source: {
-                            kind: 'automation' | 'catalog' | 'inline' | 'saved';
+                            kind: 'automation' | 'catalog' | 'inline' | 'repo_file' | 'saved';
                             definitionId?: string | undefined;
                             ref?: string | undefined;
                             revision?: undefined | {
@@ -6660,6 +6692,8 @@ export type WorkflowsActionResultById = {
                             };
                             version?: number | string | undefined;
                             automationId?: string | undefined;
+                            path?: string | undefined;
+                            commit?: string | undefined;
                         };
                     };
                 };
@@ -11376,7 +11410,7 @@ export type WorkflowsActionResultById = {
                     workflow?: undefined | {
                         runId: string;
                         source: {
-                            kind: 'automation' | 'catalog' | 'inline' | 'saved';
+                            kind: 'automation' | 'catalog' | 'inline' | 'repo_file' | 'saved';
                             definitionId?: string | undefined;
                             ref?: string | undefined;
                             revision?: undefined | {
@@ -11385,6 +11419,8 @@ export type WorkflowsActionResultById = {
                             };
                             version?: number | string | undefined;
                             automationId?: string | undefined;
+                            path?: string | undefined;
+                            commit?: string | undefined;
                         };
                     };
                 };
@@ -11422,8 +11458,12 @@ export type WorkflowsActionResultById = {
                     scheduleExpr: null;
                     everyMs: number;
                     timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
                 nextRunAt?: null | number | undefined;
+                remainingOccurrences?: null | number | undefined;
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
             } | {
@@ -11498,8 +11538,12 @@ export type WorkflowsActionResultById = {
                     scheduleExpr: null;
                     everyMs: number;
                     timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
                 nextRunAt?: null | number | undefined;
+                remainingOccurrences?: null | number | undefined;
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
             } | {
@@ -11538,7 +11582,7 @@ export type WorkflowsActionResultById = {
                     workflow?: undefined | {
                         runId: string;
                         source: {
-                            kind: 'automation' | 'catalog' | 'inline' | 'saved';
+                            kind: 'automation' | 'catalog' | 'inline' | 'repo_file' | 'saved';
                             definitionId?: string | undefined;
                             ref?: string | undefined;
                             revision?: undefined | {
@@ -11547,6 +11591,8 @@ export type WorkflowsActionResultById = {
                             };
                             version?: number | string | undefined;
                             automationId?: string | undefined;
+                            path?: string | undefined;
+                            commit?: string | undefined;
                         };
                     };
                 };
@@ -11608,7 +11654,7 @@ export type WorkflowsActionResultById = {
                 workflow?: undefined | {
                     runId: string;
                     source: {
-                        kind: 'automation' | 'catalog' | 'inline' | 'saved';
+                        kind: 'automation' | 'catalog' | 'inline' | 'repo_file' | 'saved';
                         definitionId?: string | undefined;
                         ref?: string | undefined;
                         revision?: undefined | {
@@ -11617,6 +11663,8 @@ export type WorkflowsActionResultById = {
                         };
                         version?: number | string | undefined;
                         automationId?: string | undefined;
+                        path?: string | undefined;
+                        commit?: string | undefined;
                     };
                 };
             };
@@ -11674,7 +11722,7 @@ export type WorkflowsActionResultById = {
                 workflow?: undefined | {
                     runId: string;
                     source: {
-                        kind: 'automation' | 'catalog' | 'inline' | 'saved';
+                        kind: 'automation' | 'catalog' | 'inline' | 'repo_file' | 'saved';
                         definitionId?: string | undefined;
                         ref?: string | undefined;
                         revision?: undefined | {
@@ -11683,6 +11731,8 @@ export type WorkflowsActionResultById = {
                         };
                         version?: number | string | undefined;
                         automationId?: string | undefined;
+                        path?: string | undefined;
+                        commit?: string | undefined;
                     };
                 };
             };
@@ -11740,7 +11790,7 @@ export type WorkflowsActionResultById = {
                 workflow?: undefined | {
                     runId: string;
                     source: {
-                        kind: 'automation' | 'catalog' | 'inline' | 'saved';
+                        kind: 'automation' | 'catalog' | 'inline' | 'repo_file' | 'saved';
                         definitionId?: string | undefined;
                         ref?: string | undefined;
                         revision?: undefined | {
@@ -11749,6 +11799,8 @@ export type WorkflowsActionResultById = {
                         };
                         version?: number | string | undefined;
                         automationId?: string | undefined;
+                        path?: string | undefined;
+                        commit?: string | undefined;
                     };
                 };
             };
@@ -11805,7 +11857,7 @@ export type WorkflowsActionResultById = {
                 workflow?: undefined | {
                     runId: string;
                     source: {
-                        kind: 'automation' | 'catalog' | 'inline' | 'saved';
+                        kind: 'automation' | 'catalog' | 'inline' | 'repo_file' | 'saved';
                         definitionId?: string | undefined;
                         ref?: string | undefined;
                         revision?: undefined | {
@@ -11814,6 +11866,8 @@ export type WorkflowsActionResultById = {
                         };
                         version?: number | string | undefined;
                         automationId?: string | undefined;
+                        path?: string | undefined;
+                        commit?: string | undefined;
                     };
                 };
             };
@@ -12198,7 +12252,7 @@ export type WorkflowsActionResultById = {
                 workflow?: undefined | {
                     runId: string;
                     source: {
-                        kind: 'automation' | 'catalog' | 'inline' | 'saved';
+                        kind: 'automation' | 'catalog' | 'inline' | 'repo_file' | 'saved';
                         definitionId?: string | undefined;
                         ref?: string | undefined;
                         revision?: undefined | {
@@ -12207,6 +12261,8 @@ export type WorkflowsActionResultById = {
                         };
                         version?: number | string | undefined;
                         automationId?: string | undefined;
+                        path?: string | undefined;
+                        commit?: string | undefined;
                     };
                 };
             };
@@ -12819,7 +12875,7 @@ export type WorkflowsActionResultById = {
             workflow?: undefined | {
                 runId: string;
                 source: {
-                    kind: 'automation' | 'catalog' | 'inline' | 'saved';
+                    kind: 'automation' | 'catalog' | 'inline' | 'repo_file' | 'saved';
                     definitionId?: string | undefined;
                     ref?: string | undefined;
                     revision?: undefined | {
@@ -12828,6 +12884,8 @@ export type WorkflowsActionResultById = {
                     };
                     version?: number | string | undefined;
                     automationId?: string | undefined;
+                    path?: string | undefined;
+                    commit?: string | undefined;
                 };
             };
         };
@@ -12856,8 +12914,12 @@ export type WorkflowsActionResultById = {
                     scheduleExpr: null;
                     everyMs: number;
                     timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
                 triggerDefinitionEnvelope: null;
+                remainingOccurrences?: null | number | undefined;
             } | {
                 id: string;
                 revision: number;
@@ -13552,8 +13614,12 @@ export type WorkflowsActionResultById = {
                     scheduleExpr: null;
                     everyMs: number;
                     timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
                 triggerDefinitionEnvelope: null;
+                remainingOccurrences?: null | number | undefined;
             } | {
                 id: string;
                 revision: number;
@@ -14250,8 +14316,12 @@ export type WorkflowsActionResultById = {
                     scheduleExpr: null;
                     everyMs: number;
                     timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
                 triggerDefinitionEnvelope: null;
+                remainingOccurrences?: null | number | undefined;
             } | {
                 id: string;
                 revision: number;
@@ -14952,8 +15022,12 @@ export type WorkflowsActionResultById = {
                     scheduleExpr: null;
                     everyMs: number;
                     timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
                 triggerDefinitionEnvelope: null;
+                remainingOccurrences?: null | number | undefined;
             } | {
                 id: string;
                 revision: number;
@@ -15812,8 +15886,12 @@ export type WorkflowsActionResultById = {
                     scheduleExpr: null;
                     everyMs: number;
                     timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
                 triggerDefinitionEnvelope: null;
+                remainingOccurrences?: null | number | undefined;
             } | {
                 id: string;
                 revision: number;
@@ -16520,8 +16598,12 @@ export type WorkflowsActionResultById = {
                     scheduleExpr: null;
                     everyMs: number;
                     timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
                 triggerDefinitionEnvelope: null;
+                remainingOccurrences?: null | number | undefined;
             } | {
                 id: string;
                 revision: number;
@@ -17218,8 +17300,12 @@ export type WorkflowsActionResultById = {
                     scheduleExpr: null;
                     everyMs: number;
                     timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
                 triggerDefinitionEnvelope: null;
+                remainingOccurrences?: null | number | undefined;
             } | {
                 id: string;
                 revision: number;
@@ -17916,8 +18002,12 @@ export type WorkflowsActionResultById = {
                     scheduleExpr: null;
                     everyMs: number;
                     timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
                 triggerDefinitionEnvelope: null;
+                remainingOccurrences?: null | number | undefined;
             } | {
                 id: string;
                 revision: number;

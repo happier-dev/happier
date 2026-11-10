@@ -39,6 +39,10 @@ import { ActionsSettingsV1Schema } from '../actionSettings.js';
 import { createProjectAccountRowCipherV1 } from '../../projects/projectAccountRowCipherV1.js';
 import type { ExternalActionExecutionAuthorizationV1 } from '../externalActionApi.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
+import { readWorkflowRunDisplayMetadataV1, readWorkflowRunSourceSavedByV1 } from '../../workflows/workflowRunDisplayMetadataV1.js';
+import { captureWorkflowDefinitionV1 } from './workflowDefinitionCapture.js';
+import { WorkflowDefinitionCaptureResultV1Schema } from '../../workflows/workflowDiscussionCaptureV1.js';
+import { DiscussionOpenedMessageV1Schema } from '../../discussions/actions.js';
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const definition = validateWorkflowDefinition({
@@ -121,6 +125,97 @@ function storedRootInvocation(snapshot: ReturnType<typeof runSnapshot>) {
 }
 
 describe('shared Account workflow run owner', () => {
+  it.each([false, true])('starts a repository workflow document and rejoins its frozen source without rereading the file (Discussion=%s)', async fromDiscussion => {
+    const stored = new Map<string, ReturnType<typeof runSnapshot>>();
+    let fileReads = 0;
+    let fileAvailable = true;
+    const commit = 'a'.repeat(40);
+    const discussion = { serverId: 'home', discussionId: 'discussion' };
+    const owner = createWorkflowAccountRunActionOwner({
+      ...ownerDeps({ execute: async operation => {
+        if (operation.operation === 'get') {
+          const snapshot = stored.get(String(operation.runId));
+          if (!snapshot) throw Object.assign(new Error('missing'), { code: 'run_not_found' });
+          return snapshot;
+        }
+        if (operation.operation === 'invocations.list') return { invocations: [] };
+        if (operation.operation !== 'admit') throw new Error('unexpected_storage_operation');
+        const base = runSnapshot();
+        const snapshot = { ...base, run: { ...base.run, id: String(operation.runId) },
+          keyCensus: { ...base.keyCensus, runId: String(operation.runId) }, acceptedEnvelope: String(operation.acceptedEnvelope) };
+        stored.set(snapshot.run.id, snapshot);
+        return { run: snapshot.run, kind: 'created' };
+      } }),
+      // Repository bytes and Run storage are external host/persistence boundaries.
+      readRepositoryWorkflow: async ({ projectTarget, signal }) => {
+        fileReads += 1;
+        if (!fileAvailable) throw Object.assign(new Error('file_deleted'), { code: 'source_unavailable' });
+        expect(projectTarget).toEqual({ machineId: 'machine-a', directory: '/repo' });
+        expect(signal).toBe(controller.signal);
+        return { json: JSON.stringify({ kind: 'happier.workflow', version: 1,
+          definition: { version: 1, defaults: definition.defaults, blocks: ['from repository'] } }), commit };
+      },
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+      prepareWorkspace: async () => ({ ok: true, workspaceTarget: {
+        project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } }),
+      resolveDiscussionOrigin: async () => ({ discussion, messageId: 'question', throughSeq: 1 }),
+    });
+    const controller = new AbortController();
+    const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', callerPermissionMode: 'default', signal: controller.signal, serverId: 'home',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } };
+    const input = WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'repo_file', path: './.happier/workflows/check.json' },
+      ...(fromDiscussion ? { origin: { kind: 'discussion', discussion, addressingMessageId: 'question' } } : {}) });
+    await expect(owner.execute({ actionId: 'workflow.run.start', input, context })).resolves.toMatchObject({ admission: 'created' });
+    const detail = WorkflowRunGetResultV1Schema.parse(await owner.execute({ actionId: 'workflow.run.get', input: { runId }, context }));
+    expect(detail.acceptedContext.source).toEqual({ kind: 'repo_file', path: './.happier/workflows/check.json', commit });
+    expect(detail.definition.blocks[0]).toMatchObject({ document: { text: 'from repository' } });
+    expect(readWorkflowRunDisplayMetadataV1(detail.acceptedContext, () => detail.definition)?.title).toBe('from repository');
+    expect(readWorkflowRunSourceSavedByV1(detail.acceptedContext)).toBeNull();
+    fileAvailable = false;
+    await expect(owner.execute({ actionId: 'workflow.run.start', input, context })).resolves.toMatchObject({ admission: 'existing' });
+    const replayId = '22222222-2222-4222-8222-222222222222';
+    await expect(owner.execute({ actionId: 'workflow.run.start', input: WorkflowRunStartRequestV1Schema.parse({
+      runId: replayId, source: { kind: 'inline', definition: detail.authoredDefinition, replay: { runId } },
+    }), context })).resolves.toMatchObject({ admission: 'created', run: { id: replayId } });
+    const replay = WorkflowRunGetResultV1Schema.parse(await owner.execute({ actionId: 'workflow.run.get', input: { runId: replayId }, context }));
+    expect(replay.acceptedContext.source).toEqual(detail.acceptedContext.source);
+    expect(fileReads).toBe(1);
+    if (fromDiscussion) {
+      const message = DiscussionOpenedMessageV1Schema.parse({ id: 'answer', seq: 2, discussionId: discussion.discussionId,
+        localId: null, authorAccountId: null, accountActor: null, producerV1: { v: 1, kind: 'workflow', runId,
+          invocationRecordId: 'invocation', invocationAttempt: '0', execution: { kind: 'action', actionId: 'plugin:external/check' }, outcome: 'answer' },
+        content: { v: 1, parts: [{ t: 'text', text: 'Result from the repository workflow' }] }, mentionedAccountIds: [], createdAt: 2,
+        messageRef: { kind: 'discussion', discussion, messageId: 'answer' } });
+      const captured = WorkflowDefinitionCaptureResultV1Schema.parse(await captureWorkflowDefinitionV1({ discussion, messageIds: ['answer'] }, context, {
+        discussionAction: async () => ({ v: 1, serverId: 'home', discussionId: discussion.discussionId,
+          messages: [message], hasMoreOlder: false, messageSeq: 2, incomplete: false }),
+        workflowAction: async () => await owner.execute({ actionId: 'workflow.run.get', input: { runId }, context }),
+      }));
+      expect(captured.status).toBe('ready');
+      expect(captured.provenance.workflow?.source).toEqual(detail.acceptedContext.source);
+    }
+  });
+
+  it.each([
+    ['{', 'workflow_document_invalid_json'],
+    [JSON.stringify({ kind: 'happier.workflow', version: 1, definition: { blocks: [] } }), 'workflow_document_invalid_definition'],
+  ])('refuses an invalid repository workflow document with its parser cause (%s)', async (json, code) => {
+    const owner = createWorkflowAccountRunActionOwner({
+      ...ownerDeps({ execute: async operation => {
+        if (operation.operation === 'get') throw Object.assign(new Error('missing'), { code: 'run_not_found' });
+        throw new Error('invalid_document_must_not_admit');
+      } }),
+      readRepositoryWorkflow: async () => ({ json, commit: 'a'.repeat(40) }),
+    });
+    const result = owner.execute({ actionId: 'workflow.run.start', input: WorkflowRunStartRequestV1Schema.parse({
+      runId, source: { kind: 'repo_file', path: 'workflow.json' },
+    }), context: { surface: 'cli', authority: 'present_user', externalActionTarget: { kind: 'machine', machineId: 'machine-a',
+      project: { machineId: 'machine-a', directory: '/repo' } } } });
+    await expect(result.catch(error => normalizeWorkflowActionThrownError(error))).resolves.toMatchObject({
+      errorCode: 'invalid_input', details: { code },
+    });
+  });
+
   it.each([false, true])('defers existing Run recipient-key writes until admitted continuation (cancel=%s)', async cancel => {
     const snapshot = runSnapshot();
     const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',

@@ -89,10 +89,11 @@ HAPPIER_TOKEN='hap_v1_…' hdev list
 The flag takes precedence over `HAPPIER_TOKEN`. Neither form saves the token in
 your CLI profile; use your normal secret-management mechanism to provide it.
 
-The normal CLI can use an ordinary `hap_v1` token across its one-shot tmux
-continuation. It refuses a compound `hapc_v1` credential before starting a child
-process, so the local wrapping secret is never copied into a child environment.
-Use `hapc_v1` with the in-process Happier SDK instead.
+CLI Action commands can use a compound `hapc_v1` credential through their
+in-process SDK transport. An ordinary `hap_v1` token can also cross the CLI's
+one-shot tmux continuation. A compound credential is refused before a
+child-session continuation, so its local wrapping secret is never copied into
+that child environment.
 
 ## Choose what automation and plugins may do
 

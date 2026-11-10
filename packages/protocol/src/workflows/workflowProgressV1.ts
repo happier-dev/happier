@@ -1,6 +1,7 @@
 import * as zMini from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { WorkflowTargetUnavailableReasonV1Schema } from './workflowTargetUnavailableReasonV1.js';
+import { WorkflowDocumentParseFailureV1Schema } from './workflowDocumentSchemasV1.js';
 export { WorkflowTargetUnavailableReasonV1Schema, type WorkflowTargetUnavailableReasonV1 } from './workflowTargetUnavailableReasonV1.js';
 import { WorkflowDiscussionOriginV1Schema } from './workflowDestinationsV1.js';
 import { SessionMessageReplyOutcomeV1Schema } from '../sessions/messages/sessionMessageReplyV1.js';
@@ -929,10 +930,10 @@ export const WorkflowActionFailureV1Schema = lazyZodSchema(() => {
   z.extend(envelope, {
     errorCode: z.literal('invalid_input'),
     details: z.optional(z.strictObject({
-      code: z.optional(z.enum(['invalid_input', 'invalid_trigger_target',
+      code: z.optional(z.union([WorkflowDocumentParseFailureV1Schema.shape.code, z.enum(['invalid_input', 'invalid_trigger_target',
         'session_trigger_scope_required', 'session_trigger_kind_unsupported', 'session_trigger_source_mismatch', 'session_trigger_project_mismatch',
         'trigger_definition_envelope_not_allowed', 'legacy_conversion_review_invalid',
-        'workflow_trigger_target_mismatch', 'inline_trigger_team_not_allowed'])), blockId: zMini.optional(WorkflowBlockIdSchema),
+        'workflow_trigger_target_mismatch', 'inline_trigger_team_not_allowed'])])), blockId: zMini.optional(WorkflowBlockIdSchema),
       issues: z.optional(z.array(z.union([WorkflowValidationIssueV1Schema, z.strictObject({
         code: z.enum(['unknown_block_id', 'invalid_target']), path: z.tuple([z.literal('ops'), z.number().check(z.int(), z.nonnegative())]),
       })]))),

@@ -5570,6 +5570,16 @@ health to claim that a backup, Machine setup or certificate recovered.
 
 ## Workflow inputs and complete review reads (0.3 development source)
 
+`workflow.run.start` also accepts `source: { kind: 'repo_file', path }` against
+its ordinary Project target. The target host reads the working-tree file using
+the existing `happier.workflow` version 1 import/export document format. The
+start owner validates the document and freezes its definition, requested path
+and observed repository HEAD commit in the accepted Run. Local file edits are
+included; the recorded commit does not claim the file bytes were committed.
+Repeating the same Run id rejoins the accepted snapshot without rereading the
+file. Starting a new Run id reads the file again. No watcher or saved-definition
+synchronization is involved.
+
 In unreleased 0.3 development, `workflow.run.start` and scheduled occurrences
 accept a shared Machine with a current `use` grant through the canonical Machine
 admission owner. Revocation refuses the next Run; admitted Runs finish. Review

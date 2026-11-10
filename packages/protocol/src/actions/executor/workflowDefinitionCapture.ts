@@ -68,6 +68,7 @@ export async function captureWorkflowDefinitionV1(input: unknown, context: Actio
       ...('revision' in source && source.revision ? { revision: source.revision } : {}),
       ...('ref' in source ? { ref: source.ref, version: source.version } : {}),
       ...('automationId' in source ? { automationId: source.automationId } : {}),
+      ...(source.kind === 'repo_file' ? { path: source.path, commit: source.commit } : {}),
     };
     draft = { status: 'ready' as const, name: request.name ?? run.data.acceptedContext.metadata?.title ?? 'Untitled pattern',
       definition: run.data.authoredDefinition, steps: captured.steps,

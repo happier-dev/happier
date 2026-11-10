@@ -37,6 +37,7 @@ import {
   WorkflowRunStartedByV1Schema,
   WorkflowReplayAgentOverrideV1Schema,
   WorkflowAcceptedInlineSourceV1Schema,
+  WorkflowAcceptedDirectSourceV1Schema,
 } from './workflowDefinitionV1.js';
 import { WorkflowAcceptedWorkspaceTargetV1Schema } from './workflowWorkspaceV1.js';
 import {
@@ -159,6 +160,7 @@ export const WorkflowRunSourceV1Schema = lazyZodSchema(() => z.discriminatedUnio
   z.strictObject({ kind: z.literal('saved'), definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema,
     visibleTeamId: zMini.optional(preservedBoundedNfcString(191, 'Team ids')) }),
   z.strictObject({ kind: z.literal('catalog'), workflow: WorkflowDefinitionRefV1StringSchema.check(zMini.refine((ref) => parseWorkflowDefinitionRefV1(ref)?.kind !== 'artifact', 'Catalog sources must name a built-in or plugin workflow')), pluginVersion: z.optional(z.string().check(z.minLength(1))) }),
+  z.strictObject({ kind: z.literal('repo_file'), path: z.string().check(z.minLength(1)) }),
 ]));
 export const WorkflowRunStartRequestV1Schema = lazyZodSchema(() => z.strictObject({
   runId: WorkflowDirectRunAdmissionIdV1Schema,
@@ -382,13 +384,9 @@ export const WorkflowRunAcceptedContextV1Schema = lazyZodSchema(() => z.union([
   }),
   z.strictObject({
     startedBy: WorkflowRunStartedByV1Schema,
-    source: z.discriminatedUnion('kind', [
+    source: z.union([
       WorkflowRunAcceptedAutomationSourceV1Schema,
-      WorkflowAcceptedInlineSourceV1Schema,
-      z.strictObject({ kind: z.literal('saved'), definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema,
-        savedBy: zMini.nullable(WorkflowDefinitionSavedByV1Schema) }),
-      z.strictObject({ kind: z.literal('catalog'), ref: WorkflowDefinitionRefV1StringSchema,
-        version: z.union([z.number().check(z.int(), z.nonnegative(), z.int()), z.string().check(z.minLength(1))]) }),
+      WorkflowAcceptedDirectSourceV1Schema,
     ]),
     metadata: zMini.optional(WorkflowDefinitionMetadataV1Schema),
     inputs: WorkflowInputsV1Schema,

@@ -1,0 +1,117 @@
+---
+title: Start a Workflow from CI
+description: Start a repository-defined Workflow through the authenticated Action API and read its result.
+---
+
+Have CI start a Workflow on a Happier Machine, wait for its outcome, and read the
+result using the same Actions as an explicit Run.
+
+<Callout>
+  These commands describe unreleased 0.3 development source. Use matching
+  development CLI, Home, and daemon builds, with the Home's `workflows` feature
+  enabled. The examples use `hdev`.
+</Callout>
+
+## What you need first
+
+- An installed development CLI on the CI runner and `jq` for the shell example.
+- An online Happier Machine with the repository checked out at the Project
+  directory you will target. Its Agent and model credentials must be ready.
+- An [API Token](/security/api-tokens) allowed to start and read Workflow Runs on
+  that Machine. For an E2EE Account, create it with **Encryption access** and
+  keep the complete `hapc_v1` credential. Workflow Action commands use the
+  in-process SDK transport; they do not start an interactive CLI session.
+- The Home URL, Machine ID, absolute Project directory, and a fresh UUID for
+  each intentional Run. Retain that UUID with the CI job so a retry can reuse it.
+
+Choose the token's grant and the Actions' **External API & SDK** settings before
+running CI. An **Ask first** setting needs a person to approve; a token does not
+bypass it. See [API Tokens](/security/api-tokens#choose-what-automation-and-plugins-may-do)
+for access and approval controls.
+
+## Save the Workflow in the repository
+
+Export an existing saved definition to a file, then commit it with your project:
+
+```bash
+mkdir -p workflows
+hdev workflow definition export <definition-id> workflows/ci.json
+```
+
+The file is the ordinary JSON import/export document:
+`{ "kind": "happier.workflow", "version": 1, "definition": … }`.
+Keep that wrapper; a bare definition or YAML is not the document format.
+
+Before starting, check out the intended commit on the target Machine at the
+target Project directory. `repo_file` reads that Machine's working-tree file;
+the CI runner's checkout is not uploaded. The Run freezes the accepted definition
+and records the requested path and checkout commit. Uncommitted file edits are
+included, so the recorded commit alone does not identify those edited bytes.
+
+## Start and observe the Run
+
+Configure CI's secret store to inject the credential as `HAPPIER_TOKEN`. Set the
+non-secret `HAPPIER_SERVER_URL`, `HAPPIER_MACHINE_ID`, `HAPPIER_PROJECT_DIRECTORY`,
+and `HAPPIER_RUN_ID` variables for this job. Do not echo the token, put it in a
+URL, or enable shell tracing. Keep result files private too: they can contain
+project content.
+
+```bash
+set +x
+set -eu
+umask 077
+
+hdev workflow run start \
+  --run-id "$HAPPIER_RUN_ID" \
+  --source-json '{"kind":"repo_file","path":"workflows/ci.json"}' \
+  --machine-id "$HAPPIER_MACHINE_ID" \
+  --project-directory "$HAPPIER_PROJECT_DIRECTORY" \
+  --json > workflow-start.json
+jq -e '.ok == true' workflow-start.json > /dev/null
+
+hdev workflow run wait \
+  --run-id "$HAPPIER_RUN_ID" \
+  --conditions-json '["terminal","attention","paused"]' \
+  --machine-id "$HAPPIER_MACHINE_ID" \
+  --json > workflow-wait.json
+jq -e '.ok == true and .data.observation == "terminal" and .data.run.state == "succeeded"' \
+  workflow-wait.json > /dev/null
+
+hdev workflow run get \
+  --run-id "$HAPPIER_RUN_ID" \
+  --machine-id "$HAPPIER_MACHINE_ID" \
+  --json > workflow-result.json
+jq -e '.ok == true' workflow-result.json > /dev/null
+```
+
+The Project directory selects the execution workspace; `source.path` is relative
+to it. Add `--inputs-json` with values keyed by the Workflow's declared input
+names when inputs are required. The CLI calls `workflow.run.start` with that
+source and a Machine target containing the Project. CI can invoke the same Action through the
+[SDK or Action API](/extending/sdk); no CI event contribution is required.
+
+In the CLI JSON envelope, the Run is under `.data.run` and its selected final
+value, when the Workflow produces one, is under `.data.result`. SDK Action
+results expose `run` and `result` directly. A successful start confirms admission,
+not completion. The example explicitly checks for a successful terminal Run;
+attention, pause, failure, or an observation timeout must not mark CI successful.
+Waiting observes the existing Run and does not cancel it when CI stops waiting.
+
+## Retry or investigate
+
+If the start response is lost, repeat the same request with the same
+Run UUID. Happier rejoins the admitted Run without rereading its file, even if
+that file has changed or disappeared. A different request with that UUID
+conflicts; use a new UUID only when you intend to start another Run.
+
+For a failed or attention-needed Run, open it in **Workflows**, or inspect its
+invocations with `hdev workflow run invocations list --run-id <uuid> --json`.
+Correct unavailable authentication, approvals, Machine connectivity, or the
+Workflow's requested inputs before deliberately starting another Run. A
+missing or invalid file fails before a new Run is admitted.
+
+## Related
+
+- [Workflows](/extras/automations)
+- [API Tokens](/security/api-tokens)
+- [SDK and Action API](/extending/sdk)

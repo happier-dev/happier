@@ -2170,6 +2170,17 @@ adapter or reverse-development-binary promise is added.
 
 ## Shared Workflow projections (0.3 development)
 
+Workflow start adds the closed source arm `{ kind: 'repo_file', path }`;
+accepted snapshots and Run detail retain `{ kind: 'repo_file', path, commit }`,
+and Discussion capture preserves that provenance. It uses the existing
+`happier.workflow` version 1 document codec. The commit is the repository HEAD
+observed while reading working-tree content, rather than an assertion that the
+file matches that commit. Existing source arms remain readable. Matching
+Protocol, host and generated SDK readers update together under the unpublished
+0.3 direct cut; there is no migration, new wire epoch or reverse-development
+reader adapter. The scoped clean predecessor at
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no Workflow start/source contract.
+
 The closed Workflow failure vocabulary retains the trigger owner's existing
 `present_user_required` refusal when an agent requests private legacy-conversion
 review. This read is refused before storage access; it no longer appears as
@@ -6116,8 +6127,23 @@ Session-scoped schedules use the same latest-pending coalescer as other scoped
 automatic firings: the active Run stays intact, and a newer firing replaces the
 older queued occurrence. Their cadence cursor advances at admission through the
 existing exact trigger-revision/cursor CAS. An older terminal Run cannot move a
-newer cursor. Unscoped schedules retain one-open-Run suppression and advance
-their cursor at terminal settlement.
+newer cursor. Unscoped recurring schedules retain one-open-Run suppression and
+advance their cursor at terminal settlement.
+
+In unreleased 0.3 source, the schedule union also accepts
+`{ kind: 'once', scheduledAt: <epoch milliseconds> }`. The existing schedule
+worker admits its occurrence through the same Run owner. Admission consumes
+its `remainingOccurrences` from 1 to 0 and clears `nextRunAt`; cursor recovery
+does not rearm it. The trigger remains readable with its history. A target
+offline at the due instant produces a terminal `missed` occurrence with
+`machine_offline`, rather than queued work that fires on reconnect. If later
+presence transitions have erased evidence for the due instant, admission also
+records `missed`, with `machine_presence_at_due_unavailable`; it never guesses
+that the Machine was online. The UI
+resolves a relative delay when confirming the trigger and then retains only
+the absolute instant. Cron and interval shapes remain unchanged; this new
+kind requires matching development components and the additive schedule
+migration.
 
 The development schedule and reply-handoff workers retain their existing
 10-second fallback scans. Process-local schedule wake hints cannot reach a
@@ -7676,10 +7702,14 @@ Unreleased 0.3 runtime usage observations share the closed payload schema in
 envelopes. A witnessed `accounting.nativeSessionId` permits an observation with
 no measurements. Absent tokens, cost and counter semantics stay absent; this
 does not authorize deriving counted totals or attributing child spend to a parent.
-Existing measured observations retain their strict shapes. Matching development
-readers consume the leaf together, without a legacy adapter or new wire epoch.
-This runtime admission does not establish ingest support: the current numeric
-Usage ledger still requires a separate owner-approved unknown-measurement change.
+Within a supplied token or cost object, unavailable numeric measurements are
+`null`; an observed zero remains `0`. The SDK derives its usage arm from the
+same leaf. Matching development readers consume this contract together, without
+a legacy adapter or new wire epoch. The UsageEvent ledger stores the six token
+and three numeric cost columns as nullable measurements. Aggregation skips null
+operands, retains null when nothing was measured, and exposes incomplete facts
+through the existing accounting coverage projection. New migrations preserve
+existing measured values; they do not reinterpret historical zeros as unknown.
 
 Unreleased 0.3 native Agent model snapshots and ACP model controls add optional
 `catalogConfidence`, using the existing Provider catalog confidence vocabulary.

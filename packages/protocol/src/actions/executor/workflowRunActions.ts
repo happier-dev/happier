@@ -26,6 +26,7 @@ import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLe
 import type { WorkflowAuthoredResultReference } from '../../workflows/workflowReferenceV1.js';
 import { openWorkflowAcceptedSnapshotListingStoredEnvelopeV1, openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { validateWorkflowDefinition, matchesWorkflowAcceptedDefinitionV1 } from '../../workflows/workflowValidationV1.js';
+import { parseWorkflowDocumentJsonIngressV1 } from '../../workflows/workflowDocumentV1.js';
 import { ActionIdSchema, type ActionId, type WorkflowActionIdV1 } from '../actionIds.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
@@ -526,6 +527,9 @@ export type WorkflowAccountRunActionDeps = Readonly<{
   storage: Storage;
   definitions: DefinitionReader;
   readPluginWorkflows?: WorkflowPluginSourceReaderV1;
+  /** The target host reads the existing import/export document and its observed repository HEAD. */
+  readRepositoryWorkflow?: (input: Readonly<{ path: string; projectTarget: WorkflowProjectTargetV1; signal?: AbortSignal }>) => Promise<
+    Readonly<{ json: string; commit: string }>>;
   resolveEncryption: (signal?: AbortSignal) => Promise<AvailableAutomationAccountEncryptionV1>;
   /** Server-admitted list sidecars need caller key material, never an exact Account cursor. */
   resolveReadEncryption?: (signal?: AbortSignal) => Promise<WorkflowRunReadEncryptionV1>;
@@ -1048,10 +1052,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           && matchesWorkflowAcceptedDefinitionV1(existing.accepted.authoredDefinition, normalizedInline)
         : inputSource.kind === 'catalog'
           ? existing.accepted.source.kind === 'catalog' && existing.accepted.source.ref === inputSource.workflow
+          : inputSource.kind === 'repo_file'
+            ? existing.accepted.source.kind === 'repo_file' && existing.accepted.source.path === inputSource.path
           : existing.accepted.source.kind === 'saved'
           && existing.accepted.source.definitionId === inputSource.definitionId
           && sameStrictJsonValue(existing.accepted.source.revision, inputSource.revision);
-      const expectedMetadata = input.source.kind === 'inline' ? input.metadata : undefined;
+      const expectedMetadata = input.source.kind === 'inline' || input.source.kind === 'repo_file' ? input.metadata : undefined;
       const expectedTarget = admittedTarget;
       const normalizedExpectedTarget = expectedTarget
         ? normalizeProjectTargetForComparison(expectedTarget, deps.normalizeAbsolutePath)
@@ -1198,6 +1204,17 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       metadata = saved.metadata;
       source = { kind: 'saved', definitionId: inputSource.definitionId, revision: inputSource.revision,
         savedBy: saved.savedBy ?? null };
+    } else if (inputSource.kind === 'repo_file') {
+      if (!deps.readRepositoryWorkflow) throw workflowError('source_unavailable');
+      const file = await deps.readRepositoryWorkflow({ path: inputSource.path, projectTarget,
+        ...(args.context.signal ? { signal: args.context.signal } : {}) });
+      args.context.signal?.throwIfAborted();
+      const parsed = parseWorkflowDocumentJsonIngressV1(file.json, ingressContext);
+      if (!parsed.ok) throw workflowError('invalid_input', { code: parsed.code, issues: parsed.issues });
+      definition = parsed.document.definition;
+      definitionValidation = { valid: true, normalizedDefinition: definition, issues: [], targetValidation: 'not_requested' };
+      // Preserve the submitted spelling so an admitted Run can rejoin without another filesystem read.
+      source = { kind: 'repo_file', path: inputSource.path, commit: file.commit };
     } else {
       if (!deps.resolveMaterializationContext) throw workflowError('source_unavailable');
       materialization = await measureActionStartPhaseV1(args.context, 'workflow_materialization_context',

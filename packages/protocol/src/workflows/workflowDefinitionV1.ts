@@ -28,7 +28,7 @@ import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js'
 import { AutomationIdV1Schema } from '../automations/automationIdV1.js';
 import { SessionInputSourceAuthorityV1Schema } from '../sessions/messages/sessionInputAdmission.js';
 import { WorkflowBlockIdSchema, WorkflowInputNameSchema } from './workflowReferenceV1.js';
-import { WorkflowAcceptedWorkspaceTargetV1Schema } from './workflowWorkspaceV1.js';
+import { WorkflowAcceptedWorkspaceTargetV1Schema, WorkflowCommittedRevisionV1Schema } from './workflowWorkspaceV1.js';
 import { resolveWorkflowStepSelectionV1 } from './workflowStepSelectionV1.js';
 import { RoleOverrideV1Schema, ResolvedRoleV1Schema } from '../prompts/roles/rolesV1.js';
 import { WorkflowDefinitionRefV1StringSchema } from './workflowDefinitionRefV1.js';
@@ -79,10 +79,12 @@ export const WorkflowDefinitionCaptureProvenanceV1Schema = lazyZodSchema(() => z
   messages: z.array(z.strictObject({ source: DiscussionMessageRefV1Schema, authorAccountId: z.nullable(z.string()),
     participantSessionId: z.optional(z.string()) })),
   workflow: z.optional(z.strictObject({ runId: WorkflowRunIdV1Schema, source: z.strictObject({
-    kind: z.enum(['inline', 'saved', 'catalog', 'automation']),
+    kind: z.union([WorkflowAcceptedAutomationSourceV1Schema.shape.kind,
+      ...WorkflowAcceptedDirectSourceV1Schema._zod.def.options.map(source => source.shape.kind)]),
     definitionId: z.optional(WorkflowDefinitionIdV1Schema),
     ref: z.optional(z.string()), revision: z.optional(WorkflowArtifactRevisionV1Schema),
     version: z.optional(z.union([z.string(), z.number()])), automationId: z.optional(z.string()),
+    path: z.optional(z.string().check(z.minLength(1))), commit: z.optional(WorkflowCommittedRevisionV1Schema),
   }) })),
 }));
 
@@ -406,8 +408,16 @@ export const WorkflowAcceptedInlineSourceV1Schema = lazyZodSchema(() => z.strict
   sourceArtifactId: zMini.optional(WorkflowDefinitionIdV1Schema),
 }));
 
-const WorkflowAcceptedDirectSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+export const WorkflowAcceptedRepositoryFileSourceV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('repo_file'),
+  path: z.string().check(z.minLength(1)),
+  /** HEAD observed when the host read the working-tree document, not a claim that its bytes are committed. */
+  commit: WorkflowCommittedRevisionV1Schema,
+}));
+
+export const WorkflowAcceptedDirectSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   WorkflowAcceptedInlineSourceV1Schema,
+  WorkflowAcceptedRepositoryFileSourceV1Schema,
   z.strictObject({
     kind: z.literal('saved'),
     definitionId: WorkflowDefinitionIdV1Schema,

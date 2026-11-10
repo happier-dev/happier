@@ -289,7 +289,7 @@ A timer is only one of three automatic sources that can start a Workflow.
 
 | Trigger | What starts the run |
 | --- | --- |
-| **Schedule** | A cron expression or an interval. |
+| **Schedule** | A one-time date and time, a cron expression, or an interval. |
 | **Plugin event** | Something a plugin observed — a new issue, a push, a review request. |
 | **Session turn finished** | Completion of the exact active parent turn selected while authoring. |
 
@@ -299,10 +299,23 @@ admit an authorized bound conversation.
 
 ### Schedule
 
-A schedule is either an interval — every *n* minutes — or a cron expression,
-with presets for the common cases (**Every hour**, **Daily midnight**). Cron
+A schedule can run once at a date and time, repeat at an interval — every *n*
+minutes — or use a cron expression, with presets for the common cases
+(**Every hour**, **Daily midnight**). Cron
 schedules run against a timezone you set, so a "daily at midnight" workflow
 means midnight where you are rather than wherever the machine thinks it is.
+
+In unreleased 0.3 development source, a one-time schedule saves one absolute
+instant. Choose a date and time, or enter a relative delay such as **in 20 min**;
+the delay is resolved when you confirm the trigger. Save the Workflow to keep
+the schedule. You can edit or cancel it before it is due.
+After its occurrence, the schedule shows **Done** and stays available with its
+Run history. If its target Machine is offline when it is due, History records
+the occurrence as **Missed** with that reason. Reconnecting the Machine does
+not run that missed occurrence later; schedule another time or use **Run now**.
+If processing was delayed and later reconnects have erased the Machine's
+presence at the scheduled time, the occurrence is also marked **Missed**, with
+a reason explaining that the due-time presence is unavailable.
 
 ### Plugin events
 
@@ -949,6 +962,7 @@ through the normal Run lifecycle.
 
 ## Related
 
+- [Start a Workflow from CI](/extras/workflows-ci) — run a repository definition through authenticated Actions.
 - [Starting a session](/sessions/new-session-shortcuts) — where scheduled sessions are created.
 - [Agent autonomy](/extending/agent-autonomy) — agents creating sessions themselves.
 - [Feature flags](/extras/feature-flags) — the `workflows` gate and its released compatibility alias.

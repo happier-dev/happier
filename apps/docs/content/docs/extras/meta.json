@@ -2,7 +2,9 @@
   "title": "Extras",
   "pages": [
     "index",
+    "deploy-an-app",
     "automations",
+    "workflows-ci",
     "notifications-routing",
     "notifications-setup",
     "embedded-terminal",
