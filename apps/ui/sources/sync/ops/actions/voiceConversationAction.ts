@@ -44,6 +44,7 @@ import { createUiSessionSpawnUserAttemptId } from '@/sync/domains/session/spawn/
 import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
 import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 import { isVoiceConversationCustodySessionMetadata, isVoiceConversationSystemSessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
+import { isVoiceTranscriptHistorySession } from '@/voice/persistence/voiceTranscriptHistorySession';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { sync } from '@/sync/sync';
@@ -204,12 +205,17 @@ export async function executeVoiceConversationAction(
         if (!areServerProfileIdentifiersEquivalent(address.serverId, getActiveServerSnapshot().serverId)) return unavailable('voice_conversation_home_not_mounted');
         await sync.ensureSessionVisibleForMessageRoute(address.sessionId, { serverId: address.serverId, hydrateMessages: false });
         if (deps.isCurrent?.() === false) return unavailable('voice_action_account_changed');
-        const metadata = readVoiceSessionOwnerMetadataFromState(storage.getState(), address);
-        if (!isVoiceConversationCustodySessionMetadata(metadata)) return unavailable('session_unavailable');
+        const state = storage.getState();
+        const metadata = readVoiceSessionOwnerMetadataFromState(state, address);
+        const isConversation = isVoiceConversationCustodySessionMetadata(metadata);
         if (actionId === 'ui.voice_global.conversations.open') {
+            if (!isConversation && !isVoiceTranscriptHistorySession({
+                active: state.sessions[address.sessionId]?.active, metadata,
+            })) return unavailable('session_unavailable');
             await deps.navigate(buildScopedSessionRouteHref({ sessionId: address.sessionId, serverId: address.serverId }));
             return { status: 'completed', voice: current.voice };
         }
+        if (!isConversation) return unavailable('session_unavailable');
         if (!isVoiceConversationSystemSessionMetadata(metadata)) return unavailable('voice_conversation_retired');
         const binding = voiceConversationBindingResolver.resolveByConversationSessionId({ conversationSessionId: address.sessionId });
         continuedTarget = binding?.targetSessionAddress ?? null;

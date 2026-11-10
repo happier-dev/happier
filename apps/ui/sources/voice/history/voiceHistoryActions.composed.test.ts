@@ -13,6 +13,7 @@ import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/se
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { SESSION_LIST_PAGE_DEFAULT_LIMIT } from '@happier-dev/protocol/sessions/listing/query';
 import { encodeBase64 } from '@/encryption/base64';
+import { buildVoiceTranscriptHistorySessionMetadata, isVoiceTranscriptHistorySession } from '@/voice/persistence/voiceTranscriptHistorySession';
 
 vi.mock('socket.io-client', async original =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
@@ -28,6 +29,37 @@ function message(id: string, text: string, createdAt: number): Message {
 }
 
 describe('History through the default Action composition', () => {
+  it('reopens a persisted transcript-history carrier after a cold refresh without a Voice attempt', async () => {
+    const account = await createVoiceSettingsAccountTestHarness(settingsParse({}));
+    onTestFinished(account.dispose);
+    const { storage } = await import('@/sync/domains/state/storage');
+    const serverId = account.scope.serverId;
+    const session = createSessionFixture({ id: 'finished-eleven-history', serverId, active: false,
+      metadata: { ...createSessionFixture().metadata!, ...buildVoiceTranscriptHistorySessionMetadata() } });
+    const request = account.request.getMockImplementation()!;
+    account.request.mockImplementation(createSessionReadBatchFetchBoundary(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path === `/v2/sessions/${session.id}`) return Response.json(createPlainSessionByIdResponseFixture(session));
+      return request(input, init);
+    }));
+    expect(storage.getState().sessions[session.id]).toBeUndefined();
+    const navigations: string[] = [];
+    const executor = createDefaultActionExecutor({ openRoute: async href => { navigations.push(href); } });
+    const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+      serverId, expectedAccountId: account.scope.accountId };
+    const opened = await executor.execute('ui.voice_global.conversations.open', {
+      conversationSessionAddress: { serverId, sessionId: session.id },
+    }, context);
+    expect(isVoiceTranscriptHistorySession(storage.getState().sessions[session.id])).toBe(true);
+    expect(opened, JSON.stringify(opened)).toMatchObject({ ok: true, result: { status: 'completed' } });
+    expect(navigations).toEqual([`/session/${session.id}?serverId=${serverId}`]);
+    // Read-only history admission must not make the shared carrier a resumable call.
+    const { executeVoiceConversationAction } = await import('@/sync/ops/actions/voiceConversationAction');
+    expect(await executeVoiceConversationAction('ui.voice_global.continue_conversation', {
+      conversationSessionAddress: { serverId, sessionId: session.id }, expectedAttempt: null,
+    }, { navigate: async () => undefined })).toMatchObject({ status: 'unavailable', code: 'session_unavailable' });
+    expect(navigations).toHaveLength(1);
+  });
   it('settles the initial search while its owner read is pending and publishes a failed read', async () => {
     const account = await createVoiceSettingsAccountTestHarness(settingsParse({}));
     onTestFinished(account.dispose);
