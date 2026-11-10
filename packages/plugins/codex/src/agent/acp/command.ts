@@ -1,6 +1,7 @@
 import { resolveManagedDependencyCommand } from '@happier-dev/plugin-sdk/managed-services/native';
 import { CODEX_ACP_MANAGED_DEPENDENCY } from '../installables/definition.js';
 import { readCodexMcpServerKeysFromConfigToml } from '../mcp/configServers.js';
+import { codexNativeUpstreamConfigOverrides } from '../providerBinding/runtimeConfig.js';
 
 export type CodexAcpSpawnSpec = { command: string; args: string[] };
 
@@ -24,7 +25,7 @@ function appendConfigOverridesArgs(
     ? readCodexMcpServerKeysFromConfigToml(env).map((key) => `mcp_servers.${key}.enabled=false`)
     : [];
 
-  const args = [...baseOverrides.flatMap((override) => ['-c', override]), ...spec.args];
+  const args = [...[...baseOverrides, ...codexNativeUpstreamConfigOverrides(env)].flatMap((override) => ['-c', override]), ...spec.args];
   return { command: spec.command, args };
 }
 

@@ -1,4 +1,5 @@
 import { PluginError, type JsonValue, type LoggerService } from '@happier-dev/plugin-sdk';
+import { codexNativeUpstreamConfigOverrides } from '../../providerBinding/runtimeConfig.js';
 import type {
     ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import type {
@@ -192,6 +193,7 @@ export function buildCodexAppServerArgs(params: Readonly<{
     ), [
         ...userMcpOverrides,
         ...(params.configOverrides ?? []),
+        ...codexNativeUpstreamConfigOverrides(params.env),
     ]);
 }
 

@@ -167,6 +167,7 @@ import { handleTokenUsageNotification, type CodexTokenUsageRuntimeObservation } 
 import { buildCodexAppServerTokenCountObservationInput } from '../../usage/tokenCountMessage.js';
 import { isCodexRequestUsageIdentityContradicted, resolveCodexRequestUsageAttribution } from './requestUsageAttribution.js';
 import type { CodexProviderBindingEngineConfigV1 } from '../../providerBinding/runtimeConfig.js';
+import { CODEX_NATIVE_UPSTREAM_CONFIG_ENV } from '../../providerBinding/runtimeConfig.js';
 import { createCodexAppServerRealtimeConversation } from './realtime.js';
 import { registerCodexAppServerInteractionHandlers } from './interactions.js';
 
@@ -997,7 +998,8 @@ export function createCodexAppServerRuntime(
     && (mcpServerKeys.size > 0 || Boolean(params.functionTools?.length));
   let currentReasoningEffort: string | null = null;
   let currentServiceTier: string | null = null;
-  let modelsSnapshot: AgentSessionModelsSnapshot = { models: null };
+  let modelsSnapshot: AgentSessionModelsSnapshot = { models: null,
+    ...(readRuntimeProcessEnv()[CODEX_NATIVE_UPSTREAM_CONFIG_ENV] ? { catalogConfidence: 'account_unverified' as const } : {}) };
   const modelListeners = new Set<(snapshot: AgentSessionModelsSnapshot) => void>();
   // Every route reports native model readback. Provider catalog membership
   // stays with its authorized owner; native discovery runs only on native routes.
@@ -2862,7 +2864,7 @@ export function createCodexAppServerRuntime(
         currentModelId: observedModelId, currentModeId: currentCollaborationModeId,
         currentReasoningEffort, currentServiceTier });
       if (!disposed && client === appServerClient && controls.modelsObserved) {
-        modelsSnapshot = { models: controls.availableModels, observedAt: Date.now(), currentModelId: observedModelId ?? controls.currentModelId };
+        modelsSnapshot = { ...modelsSnapshot, models: controls.availableModels, observedAt: Date.now(), currentModelId: observedModelId ?? controls.currentModelId };
         for (const listener of modelListeners) listener(modelsSnapshot);
       }
     }

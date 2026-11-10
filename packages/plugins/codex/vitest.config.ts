@@ -1,15 +1,18 @@
 import { resolve } from 'node:path';
 import { configDefaults, defineConfig } from 'vitest/config';
 import { resolveVitestWorkers } from '../../../scripts/testing/vitestWorkers';
-import { createWorkspaceHostSourceAlias } from '../../../scripts/testing/vitestWorkspacePackageResolution';
-import { workspacePackageOptimizationExcludes, workspacePackageSourcesPlugin } from '../../../apps/cli/scripts/vitestWorkspacePackageResolution';
+import { createWorkspaceHostSourceAlias, createWorkspacePackageSourcesPlugin, readHostWorkspacePackageSpecs } from '../../../scripts/testing/vitestWorkspacePackageResolution';
+
+const workspacePackages = readHostWorkspacePackageSpecs(resolve(__dirname, '../../..'), resolve(__dirname, '../../../apps/cli'), [
+  { packageName: '@happier-dev/plugins-codex', packageSourceRoot: resolve(__dirname, 'src') },
+]);
 
 export default defineConfig({
   resolve: { alias: [createWorkspaceHostSourceAlias(resolve(__dirname, '../../..'), resolve(__dirname, '../../../apps/cli/src'))] },
   server: { fs: { allow: [resolve(__dirname, '../../..')] } },
   // Agent tests compose the real CLI host, including its workspace dependencies.
-  optimizeDeps: { exclude: workspacePackageOptimizationExcludes },
-  plugins: [workspacePackageSourcesPlugin],
+  optimizeDeps: { exclude: workspacePackages.map(spec => spec.packageName) },
+  plugins: [createWorkspacePackageSourcesPlugin(workspacePackages)],
   test: {
     ...resolveVitestWorkers(),
     environment: 'node',

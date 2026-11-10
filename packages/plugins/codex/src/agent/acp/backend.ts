@@ -10,6 +10,7 @@ import { buildCodexExecutionRunBaseEnv } from '../executionRuns/environment.js';
 import { buildCodexAcpEnvOverrides } from './env.js';
 import { resolveCodexAcpSpawnWithOptions } from './command.js';
 import { resolveCodexConnectedServiceRefreshSelectionFromEnv } from '../auth/services/runtime/auth/generationRequest.js';
+import { CODEX_NATIVE_UPSTREAM_CONFIG_ENV } from '../providerBinding/runtimeConfig.js';
 import {
   CODEX_ACP_TOOL_PATTERNS,
   resolveCodexAcpExplicitToolHint,
@@ -64,6 +65,7 @@ export function buildCodexNativeAcpRuntimeOptions(
       timeouts: Object.freeze({ initializeMs: timeouts.initMs }),
     }),
     definition: Object.freeze({
+      ...(env[CODEX_NATIVE_UPSTREAM_CONFIG_ENV] ? { models: { catalogConfidence: 'account_unverified' as const } } : {}),
       ...(authMethodId ? { auth: Object.freeze({ methodId: authMethodId }) } : {}),
       timeouts: Object.freeze(timeouts),
       toolNameInference: Object.freeze({

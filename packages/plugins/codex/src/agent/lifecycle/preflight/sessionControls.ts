@@ -20,6 +20,7 @@ import {
 } from '../../runtime/appServer/state/controls.js';
 import { listCodexAppServerSkills } from '../../runtime/appServer/catalog/index.js';
 import { resolveCodexSessionBackendMode } from '../backendMode.js';
+import { prepareCodexConnectedAccountKeyPreflight } from '../../runtime/connectedAccountKeys.js';
 
 // Codex rust-v0.163.0 / 83086188ae0614bd882818ff1aa23f3194962012:
 // protocol/src/user_input.rs MAX_USER_INPUT_TEXT_CHARS; app-server-protocol
@@ -187,6 +188,7 @@ async function probeCodexPassiveRealtimeSetup(
 }
 
 export const CODEX_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
+  prepareLaunchEnvironment: prepareCodexConnectedAccountKeyPreflight,
   resolveMaxInputUnicodeCharacters: input => usesCodexAppServer(input) ? CODEX_MAX_INPUT_UNICODE_CHARACTERS : null,
   jsonRpcCommands: Object.freeze([
     CODEX_PREFLIGHT_JSON_RPC_COMMAND,

@@ -55,7 +55,7 @@ import {
   isCodexAppServerPreTurnFailure,
   sanitizeCodexAppServerRuntimeAuthClassification,
 } from './turns/failure.js';
-import { parseCodexProviderBindingEngineConfigV1 } from '../../providerBinding/runtimeConfig.js';
+import { CODEX_NATIVE_UPSTREAM_CONFIG_ENV, parseCodexProviderBindingEngineConfigV1, readCodexNativeUpstreamConfig } from '../../providerBinding/runtimeConfig.js';
 import { reconcileCodexResumeRolloutPath } from '../../auth/services/state/sharing/reconcileResumeRolloutPath.js';
 import type { CodexGoalProjection } from './work/goalProjection.js';
 import type { CodexSessionCatalogBinder } from '../controls.js';
@@ -1021,12 +1021,12 @@ export async function openCodexNativeAppServerSession(
   goalProjection?: CodexGoalProjection,
   bindSessionCatalog?: CodexSessionCatalogBinder,
 ): Promise<AgentSessionRuntime> {
+  const processEnv = readLaunchEnvironment(request);
   const initialProviderBinding = parseCodexProviderBindingEngineConfigV1(
     Object.prototype.hasOwnProperty.call(request, 'providerBinding')
       ? (request as unknown as Readonly<Record<string, unknown>>).providerBinding
       : null,
-  );
-  const processEnv = readLaunchEnvironment(request);
+  ) ?? readCodexNativeUpstreamConfig(processEnv);
   const runtimeDescriptor = request.runtimeDescriptorV1
     ? readCanonicalCodexAgentRuntimeDescriptorV1(request.runtimeDescriptorV1)
     : null;
@@ -1036,6 +1036,10 @@ export async function openCodexNativeAppServerSession(
     && runtimeDescriptor.appServerTransport === 'daemonProxy'
     ? 'daemonProxy' as const
     : null;
+  if (appServerTransport === 'daemonProxy' && processEnv[CODEX_NATIVE_UPSTREAM_CONFIG_ENV]) {
+    throw new PluginError({ code: 'agent_startup_transport_failed', retryable: false,
+      message: 'The already-running Codex server cannot apply the selected Connected Account. Open a new Session for this model source.' });
+  }
   if (appServerTransport === 'daemonProxy' && request.configuration?.unlistedTools === 'deny') {
     throw new PluginError({
       code: 'codex_tool_restriction_unsupported_transport',
@@ -1230,12 +1234,12 @@ export async function openCodexNativeAppServerExecutionRunConversation(
   request: AgentExecutionRunOpenRequest,
   context: AgentExecutionRunRuntimeContextV1,
 ): Promise<AgentExecutionRunConversationRuntimeV1> {
+  const processEnv = readLaunchEnvironment(request);
   const initialProviderBinding = parseCodexProviderBindingEngineConfigV1(
     Object.prototype.hasOwnProperty.call(request, 'providerBinding')
       ? (request as unknown as Readonly<Record<string, unknown>>).providerBinding
       : null,
-  );
-  const processEnv = readLaunchEnvironment(request);
+  ) ?? readCodexNativeUpstreamConfig(processEnv);
   let providerSessionId = request.kind === 'resume' ? request.checkpointId : null;
   if (request.kind === 'fork') {
     const sourceProviderSessionId = readExactCodexProviderSessionId(request.checkpointId);
