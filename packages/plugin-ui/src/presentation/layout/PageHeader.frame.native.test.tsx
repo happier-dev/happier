@@ -8,8 +8,9 @@ vi.mock('react-native', () => ({ View: 'View', Text: 'Text', Pressable: 'Pressab
 import { HappierCollectionLayoutContext, type HappierCollectionLayoutState } from '../collection/collectionLayout.js';
 import { HappierPageHeader, type HappierPageHeaderProps, type HappierPageHeaderTextRender } from './PageHeader.js';
 import { HAPPIER_PAGE_METRICS } from './pageMetrics.js';
+import { HappierShellTitleRowContext } from './shellTitleRow.js';
 
-function renderHeader(props: Partial<HappierPageHeaderProps>, layout: HappierCollectionLayoutState | null = null) {
+function renderHeader(props: Partial<HappierPageHeaderProps>, layout: HappierCollectionLayoutState | null = null, shellPane = false) {
   const roles: string[] = [];
   const renderText: HappierPageHeaderTextRender = (input) => {
     if (input.header) roles.push(input.role);
@@ -18,9 +19,11 @@ function renderHeader(props: Partial<HappierPageHeaderProps>, layout: HappierCol
   let renderer!: ReactTestRenderer;
   act(() => {
     renderer = create(
-      <HappierCollectionLayoutContext.Provider value={layout}>
-        <HappierPageHeader testID="header" title="Inbox" renderText={renderText} {...props} />
-      </HappierCollectionLayoutContext.Provider>,
+      <HappierShellTitleRowContext.Provider value={shellPane}>
+        <HappierCollectionLayoutContext.Provider value={layout}>
+          <HappierPageHeader testID="header" title="Inbox" renderText={renderText} {...props} />
+        </HappierCollectionLayoutContext.Provider>
+      </HappierShellTitleRowContext.Provider>,
     );
   });
   const column = renderer.root.findByProps({ testID: 'header' }).findAllByType('View')[1]!;
@@ -57,5 +60,15 @@ describe('the top of the page', () => {
     ['a stacked collection', { mode: 'stacked', detailBeside: false }],
   ])('keeps the page offset with %s', (_name, layout) => {
     expect(renderHeader({}, layout).paddingTop).toBe(page);
+  });
+
+  // The title line holds a control's height (its actions never move it); its centre is the band's centre,
+  // where the rail's first icon and every column title sit.
+  it.each<[string, HappierCollectionLayoutState | null]>([
+    ['alone in the pane', null],
+    ['beside a list', { mode: 'split', detailBeside: true }],
+  ])('puts the title on the shell title row when the page heads a desktop shell pane, %s', (_name, layout) => {
+    const { paddingTop } = renderHeader({}, layout, true);
+    expect(paddingTop + HAPPIER_PAGE_METRICS.controlHeightPx / 2).toBe(HAPPIER_PAGE_METRICS.paneHeaderHeightPx / 2);
   });
 });

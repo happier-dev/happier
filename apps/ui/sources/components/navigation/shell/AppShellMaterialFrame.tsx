@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { APP_SHELL_CONTENT_SHEET_TEST_ID } from './desktopChrome/desktopChromeMetrics';
 import { Platform, View, type ViewStyle } from 'react-native';
+import { HappierShellTitleRowContext } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
 import { AtmosphereLayer } from '@/components/atmosphere/AtmosphereLayer';
@@ -304,7 +305,10 @@ export function AppShellMaterialFrame(props: Readonly<{
                         <AppShellMaterialPlane key="route-content" group="content" color={theme.colors.surface.base} translucentColor={theme.colors.surface.selected} style={[styles.content, styles.contentPlane]}>
                             <AppShellTailContext.Provider value={tail}>
                                 <AppShellContentPaneContext.Provider value={contentPane}>
-                                    <HorizontalSafeAreaProvider value={insetSplit.content}>{props.children}</HorizontalSafeAreaProvider>
+                                    <HorizontalSafeAreaProvider value={insetSplit.content}>
+                                        {/* A page heading this pane puts its title on the shell's one title row. */}
+                                        <HappierShellTitleRowContext.Provider value={props.showChrome}>{props.children}</HappierShellTitleRowContext.Provider>
+                                    </HorizontalSafeAreaProvider>
                                 </AppShellContentPaneContext.Provider>
                             </AppShellTailContext.Provider>
                         </AppShellMaterialPlane>

@@ -1,4 +1,11 @@
+import { HAPPIER_COLLECTION_LIST_METRICS, resolveHappierTitleRowInsetPx } from '@happier-dev/plugin-ui/presentation';
+
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
+
+import {
+    DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX,
+    DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_TARGET_SIZE_PX,
+} from '../desktopChrome/desktopChromeMetrics';
 
 /**
  * Geometry of the app rail (lab `xrail-R1`, measured: rail 56 wide, items 36 centred on x 28).
@@ -25,6 +32,15 @@ export const APP_RAIL_ITEM_EDGES_PX = Object.freeze({
 export const APP_RAIL_AVATAR_SIZE_PX = 28;
 /** The title strip across the window: back, forward, the column toggle, and macOS's traffic lights. */
 export const APP_SHELL_TITLE_STRIP_HEIGHT_PX = 40;
+/** Above the rail's first icon: its slot centres on the shell's one title row, level with every column title. */
+export const APP_RAIL_PADDING_TOP_PX = resolveHappierTitleRowInsetPx(APP_RAIL_ITEM_SLOT_PX);
+/**
+ * Where the title strip's controls (back, forward, the column toggle…) start, from the window's leading edge: the
+ * first glyph stands on the column's text edge below it, so the strip's controls head the column's title, search
+ * field and rows (owner 2026-11-10). Hosts that draw window controls before the logo (macOS) shift the strip.
+ */
+export const APP_SHELL_TITLE_STRIP_CONTROLS_START_PX = APP_RAIL_WIDTH_PX + HAPPIER_COLLECTION_LIST_METRICS.contentInset
+    - (DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_TARGET_SIZE_PX - DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX) / 2;
 
 const GLYPH_RIGHT_PX = APP_RAIL_WIDTH_PX / 2 + APP_RAIL_ICON_GLYPH_SIZE_PX / 2;
 const GLYPH_TOP_PX = APP_RAIL_ITEM_SLOT_PX / 2 - APP_RAIL_ICON_GLYPH_SIZE_PX / 2;

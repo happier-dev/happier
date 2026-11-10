@@ -20,7 +20,7 @@ import {
 import { useDesktopSidebarHistoryNavigationAvailability } from '../desktopChrome/useDesktopSidebarHistoryNavigationAvailability';
 import { useResolvedDesktopWindowControls } from '../desktopChrome/useResolvedDesktopWindowControls';
 import { SidebarCollapseIcon, SidebarExpandIcon } from '../SidebarIcons';
-import { APP_RAIL_WIDTH_PX, APP_SHELL_TITLE_STRIP_HEIGHT_PX } from './appRailMetrics';
+import { APP_RAIL_WIDTH_PX, APP_SHELL_TITLE_STRIP_CONTROLS_START_PX, APP_SHELL_TITLE_STRIP_HEIGHT_PX } from './appRailMetrics';
 import { usePaneArrangement, usePaneArrangementAvailable } from '@/components/appShell/panes/arrangement/usePaneArrangement';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import { AppShellThemeToggle } from './AppShellThemeToggle';
@@ -222,6 +222,9 @@ const PaneArrangementToggle = React.memo(function PaneArrangementToggle(props: R
 /** The gap between the strip's controls: their hit areas split it, so neighbours never overlap. */
 const TITLE_STRIP_CONTROL_GAP_PX = 8;
 
+/** Between the strip's own pieces: the logo's slot, the controls, the workspace tabs and the trailing accessories. */
+const TITLE_STRIP_GAP_PX = 4;
+
 /** The strip's own end inset, after its trailing accessories. */
 const TITLE_STRIP_END_PADDING_PX = 12;
 
@@ -233,7 +236,7 @@ const stylesheet = StyleSheet.create(() => ({
         flexDirection: 'row',
         alignItems: 'center',
         paddingRight: TITLE_STRIP_END_PADDING_PX,
-        gap: 4,
+        gap: TITLE_STRIP_GAP_PX,
     },
     // Centred over the rail, so the logo heads the rail's column of icons.
     logoSlot: {
@@ -241,7 +244,9 @@ const stylesheet = StyleSheet.create(() => ({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    // The first control's glyph stands on the column's text edge below it (the shell grid).
     controls: {
+        marginLeft: APP_SHELL_TITLE_STRIP_CONTROLS_START_PX - APP_RAIL_WIDTH_PX - TITLE_STRIP_GAP_PX,
         flexDirection: 'row',
         alignItems: 'center',
         gap: TITLE_STRIP_CONTROL_GAP_PX,

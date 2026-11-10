@@ -134,7 +134,8 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
     searchChrome: {
         paddingLeft: SESSION_LIST_TEXT_INSET_PX,
         paddingRight: SESSION_LIST_HEADER_PADDING_RIGHT_PX,
-        paddingTop: theme.space.s8,
+        // The title row sits on the shell's one title row, as every column's does.
+        paddingTop: HAPPIER_COLLECTION_LIST_METRICS.headerPaddingTop,
     },
     searchChromeControlsRow: {
         minHeight: SESSION_LIST_COLUMN_METRICS.titleRowHeightPx,

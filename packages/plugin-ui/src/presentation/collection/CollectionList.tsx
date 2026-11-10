@@ -3,6 +3,7 @@ import { Platform, View, type ViewStyle } from 'react-native';
 
 import { useHappierPageSection } from '../layout/PageSection.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
+import { resolveHappierTitleRowInsetPx } from '../layout/shellTitleRow.js';
 import { HAPPIER_MENU_ROW_METRICS } from '../interaction/Menu.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { useHappierPrecisePointer } from '../interaction/precisePointer.js';
@@ -163,6 +164,9 @@ export type HappierCollectionListProps = Readonly<{
  */
 const PHONE_COLUMN = Platform.OS === 'ios';
 
+/** A column header's title row (title, count, the header action's 30px icon buttons). */
+const COLUMN_TITLE_ROW_HEIGHT_PX = 36;
+
 /**
  * Geometry of the list anatomy, at normal text scale: the one rhythm owner for every navigation
  * column (the Sessions, Plugins and Settings columns, a list + detail rail, a plugin's
@@ -236,11 +240,14 @@ export const HAPPIER_COLLECTION_LIST_METRICS = Object.freeze({
   rowGlyphBox: PHONE_COLUMN ? HAPPIER_PAGE_METRICS.rowLeadingColumnPx : 20,
   rowGlyphGap: PHONE_COLUMN ? HAPPIER_PAGE_METRICS.rowLeadingGapPx : 10,
   /** The header's title row (title, count, the header action's 30px icon buttons). */
-  titleRowHeight: 36,
+  titleRowHeight: COLUMN_TITLE_ROW_HEIGHT_PX,
   /** The narrowest a column's title gets before a control beside it yields: "My work" and its chevron. */
   titleFloor: 88,
-  /** From the column's top edge to the title row. */
-  headerPaddingTop: 12,
+  /**
+   * From the column's top edge to the title row: it centres the row on the shell's one title row, level with
+   * the rail's first icon and the page title, so the title's top margin matches its left one (`contentInset`).
+   */
+  headerPaddingTop: resolveHappierTitleRowInsetPx(COLUMN_TITLE_ROW_HEIGHT_PX),
   /** Header → search field, and the field → the first row. */
   headerGap: 4,
   /**

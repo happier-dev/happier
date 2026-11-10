@@ -323,6 +323,11 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
 - **Spacing runs on one rhythm.** Card insets, header heights, row heights and gaps are steps of the
   same grid. Dense desktop rows are compact; a row's hit area is the whole row, and its drawn height follows
   the design, not a touch-target number.
+- **Shell grid.** On the desktop, every column's title (a sidebar, a list column) and the page title sit
+  on one title row: the centre of the pane band, level with the rail's first icon. A column title's
+  top margin equals its left margin. Each column's text edge (title, row glyphs) continues up to
+  the title strip, where the first control's glyph stands on it. Owners: `resolveHappierTitleRowInsetPx`
+  and the rail and strip metrics; no screen adds its own offset (owner, 2026-11-10).
 - Align icons optically, not only mathematically; asymmetric symbols often need correction.
 - Keep icons and labels visually balanced and baseline-aligned.
 - Avoid creating every grouping as a rounded card. Use proximity, whitespace, headings, dividers, background regions, and elevation according to meaning.
@@ -648,8 +653,8 @@ live in the page-presentation owners in code.
   (Home, Inbox, a plugin's top-level collection). An entity page keeps the page title because its mark
   leads. Home's greeting over its planet is Home's own moment, not a page title. A page never chooses;
   `HappierPageHeader` decides from what navigation says. The title sits
-  at one height on every page, with or without header actions. Only a detail actually open beside a
-  list shares that list's top band.
+  at one height on every page, with or without header actions. On the desktop that height is the
+  shell's title row (see "Shell grid"), alone in its pane or beside a list.
 - **A title block is one unit.** Mark, title and purpose read as one block: the mark is drawn large in a slot
   that hugs it, close to the title, and the purpose sits right under the title. A page never sizes its own mark;
   `PageHeaderMarkIcon` draws it (plugins: `PageHeader`'s `leading`).

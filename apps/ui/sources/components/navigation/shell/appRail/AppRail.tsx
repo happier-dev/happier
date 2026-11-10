@@ -39,6 +39,7 @@ import {
     APP_RAIL_ITEM_EDGES_PX,
     APP_RAIL_ITEM_SIZE_PX,
     APP_RAIL_ITEM_SLOT_PX,
+    APP_RAIL_PADDING_TOP_PX,
     APP_RAIL_WIDTH_PX,
 } from './appRailMetrics';
 import { AppRailBadge, AppRailMenuCount, resolveAppRailBadgeTone } from './AppRailBadge';
@@ -145,7 +146,7 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
 
     const [availableHeight, setAvailableHeight] = React.useState<number | null>(null);
     const onRailLayout = React.useCallback((event: LayoutChangeEvent) => {
-        const height = Math.max(0, event.nativeEvent.layout.height - RAIL_PADDING_TOP_PX - RAIL_PADDING_BOTTOM_PX);
+        const height = Math.max(0, event.nativeEvent.layout.height - APP_RAIL_PADDING_TOP_PX - RAIL_PADDING_BOTTOM_PX);
         setAvailableHeight(current => current === height ? current : height);
     }, []);
     const items = React.useMemo(() => buildAppRailPlacementItems(entries, props.updatesVisible === true), [entries, props.updatesVisible]);
@@ -600,7 +601,6 @@ const AppRailUpdates = React.memo(function AppRailUpdates(props: Readonly<{ rend
     );
 });
 
-const RAIL_PADDING_TOP_PX = 4;
 const RAIL_PADDING_BOTTOM_PX = 12;
 const RAIL_SEPARATOR_MARGIN_PX = 8;
 const RAIL_SEPARATOR_SIZE_PX = RAIL_SEPARATOR_MARGIN_PX * 2 + StyleSheet.hairlineWidth;
@@ -612,7 +612,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 0,
         minHeight: 0,
         alignItems: 'center',
-        paddingTop: RAIL_PADDING_TOP_PX,
+        paddingTop: APP_RAIL_PADDING_TOP_PX,
         paddingBottom: RAIL_PADDING_BOTTOM_PX,
         backgroundColor: theme.colors.background.canvas,
     },

@@ -7,6 +7,7 @@ import { HappierMiddleEllipsisText, HappierPageHeaderMetaId, HappierPageHeaderMe
 import { HappierText, useHappierTextPresentation } from '../text/Text.js';
 import { useHappierCollectionDetailWidth, useHappierCollectionLayout } from '../collection/collectionLayout.js';
 import { HAPPIER_PAGE_METRICS, resolveHappierPageBackMeasuringLine, resolveHappierPageBackPlacement } from './pageMetrics.js';
+import { HappierShellTitleRowContext, resolveHappierTitleRowInsetPx } from './shellTitleRow.js';
 import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle, type HappierPageTextRole } from './pageText.js';
 import { useHappierColumnEdgeRemainder } from './columnEdge.js';
 import { HappierPressable } from '../interaction/Pressable.js';
@@ -191,6 +192,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   const renderBack = props.renderBack ?? null;
   const showsBack = showTitle && renderBack !== null;
   const collectionLayout = useHappierCollectionLayout();
+  const onShellTitleRow = useContext(HappierShellTitleRowContext);
   const collectionMode = collectionLayout?.mode ?? null;
   const detailWidthPx = useHappierCollectionDetailWidth();
   // The pane's width decides whether back fits in the gutter left of the
@@ -437,14 +439,16 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
           maxWidth: props.columnMaxWidthPx,
           paddingHorizontal: textInsetPx,
           // When navigation chrome already shows the title, the purpose line takes the title's place
-          // right under that chrome instead of leaving the title's room empty above it. Beside a collection's
-          // list the list's header is that chrome's row: the title row centres on it, so the column title,
-          // the page title and their actions read as one band (owner 2026-10-30; Lane 12 Main approved). A window
-          // wide enough for a split with no detail open has no such band: the page keeps the page's top.
+          // right under that chrome instead of leaving the title's room empty above it. A page heading a desktop
+          // shell pane, or a detail beside a collection's list, puts its title line (a control's height) on the
+          // shell's one title row, level with the rail's first icon and every column title (owner 2026-11-10).
+          // Elsewhere (a phone's body title, a window without the shell) the page keeps the page's top.
           // A large title hangs from the phone bar that left it the name, as close as the purpose line would.
-          paddingTop: showTitle && collectionLayout?.detailBeside !== true && props.largeTitle !== true
-            ? HAPPIER_PAGE_METRICS.pageHeaderPaddingTopPx
-            : HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx,
+          paddingTop: !showTitle || props.largeTitle === true
+            ? HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx
+            : onShellTitleRow || collectionLayout?.detailBeside === true
+              ? resolveHappierTitleRowInsetPx(HAPPIER_PAGE_METRICS.controlHeightPx)
+              : HAPPIER_PAGE_METRICS.pageHeaderPaddingTopPx,
           paddingBottom: HAPPIER_PAGE_METRICS.pageHeaderPaddingBottomPx,
         }}
       >
