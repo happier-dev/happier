@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { DeploymentTemplateDataV1Schema, DeploymentTemplateV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
-import { DeploymentTemplateRefV1Schema, DeploymentDigestV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentTemplateRefV1Schema, DeploymentDigestV1Schema, DeploymentRepositoryDefinitionV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentRevisionV1Schema } from '@happier-dev/protocol/deployments/deploymentIdentifiersV1';
 
@@ -11,9 +11,13 @@ const databaseInventory = z.union([z.array(DeploymentTemplateDataV1Schema), Depl
 /** Private provenance only. Definition owns Compose; bindings own all credential references. */
 export const DeploymentEnvironmentTemplateProvenanceV1Schema = z.strictObject({
     templateRef: DeploymentTemplateRefV1Schema,
-    definition: z.strictObject({ kind: z.literal('stored'), contentRevision: DeploymentRevisionV1Schema, composeDigest: DeploymentDigestV1Schema }),
+    definition: z.union([
+        z.strictObject({ kind: z.literal('stored'), contentRevision: DeploymentRevisionV1Schema, composeDigest: DeploymentDigestV1Schema }),
+        DeploymentRepositoryDefinitionV1Schema,
+    ]),
     services: z.array(z.string().check(z.minLength(1))),
     health: DeploymentTemplateV1Schema.shape.health,
+    volumes: z.optional(DeploymentTemplateV1Schema.shape.volumes),
     data: z.optional(z.pipe(databaseInventory, z.transform((data: z.infer<typeof databaseInventory>) => Array.isArray(data) ? data : [data]))),
     exports: DeploymentTemplateV1Schema.shape.exports,
     loginFields: DeploymentTemplateV1Schema.shape.loginFields,

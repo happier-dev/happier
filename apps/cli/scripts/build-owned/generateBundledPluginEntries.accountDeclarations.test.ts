@@ -47,11 +47,12 @@ describe('bundled Account declaration publication', () => {
     expect(firstPaint).toMatchObject({ hasMachineProvisioners: true });
     expect(firstPaint.presentationManifest.contributes.machineProvisioners).toEqual([]);
   });
-  it('keeps deployment target demand discoverable without putting descriptors into first paint', async () => {
-    const source: unknown = JSON.parse(readFileSync(new URL('../../assets/bundled-plugin-manifests/deploy-vercel.json', import.meta.url), 'utf8'));
+  it.each(['deploy-vercel', 'deploy-cloudflare', 'deployment-neon', 'deployment-supabase'])(
+    'keeps %s deployment target demand discoverable without putting descriptors into first paint', async id => {
+    const source: unknown = JSON.parse(readFileSync(new URL(`../../assets/bundled-plugin-manifests/${id}.json`, import.meta.url), 'utf8'));
     const admitted = ingestPluginManifestV2(source);
     if (!admitted.ok) throw new Error(JSON.stringify(admitted.diagnostics));
-    const full = await projectBundledPluginUiDeclaration({ packageName: '@happier-dev/plugins-deploy-vercel',
+    const full = await projectBundledPluginUiDeclaration({ packageName: `@happier-dev/plugins-${id}`,
       packageVersion: '0.0.0', manifest: admitted.manifest, artifactGraphs: [] });
     const firstPaint = await projectBundledPluginUiFirstPaintDeclaration(full);
     expect(firstPaint).toMatchObject({ hasDeploymentTargets: true });

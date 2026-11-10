@@ -91,6 +91,11 @@ describe('multi-Machine deployment contracts', () => {
         const databases = [template.data, { engine: 'mysql', service: 'mysql', port: 3306 }];
         expect(DeploymentEnvironmentContentV1Schema.parse({ ...environment.content, template: { ...template, data: databases } })
             .template?.data).toEqual(databases);
+        const repositoryDefinition = { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } };
+        expect(DeploymentEnvironmentContentV1Schema.parse({ ...environment.content,
+            template: { ...template, definition: repositoryDefinition } }).template?.definition).toEqual(repositoryDefinition);
+        expect(DeploymentEnvironmentContentV1Schema.safeParse({ ...environment.content,
+            template: { ...template, definition: { ...repositoryDefinition, ref: '' } } }).success).toBe(false);
         for (const invalid of [{ ...template, document: 'second-compose-owner' }, { ...template, password: 'inline-secret' }]) {
             expect(DeploymentEnvironmentContentV1Schema.safeParse({ ...environment.content, template: invalid }).success).toBe(false);
         }

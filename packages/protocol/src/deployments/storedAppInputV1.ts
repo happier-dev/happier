@@ -68,6 +68,9 @@ export const DeploymentTargetManagedRetentionV1Schema = lazyZodSchema(() => z.en
 export const DeploymentComposeSelectorsV1Schema = lazyZodSchema(() => z.strictObject({
     profiles: z.array(DeploymentTextV1Schema), services: z.array(DeploymentTextV1Schema), primaryService: z.optional(DeploymentTextV1Schema),
 }));
+/** An operation restriction, distinct from the complete stored source selectors. */
+export const DeploymentServiceSubsetV1Schema = lazyZodSchema(() => DeploymentComposeSelectorsV1Schema.shape.services.check(
+    z.minLength(1), z.refine(values => new Set(values).size === values.length, { message: 'Select each service once.' })));
 /** Exact public source files travel with the stored Compose source and its digest. */
 export const DeploymentComposePublicFilesV1Schema = lazyZodSchema(() => z.array(z.strictObject({
     path: WorkspaceManifestRelativePathSchema.check(z.refine(value => !/[\\\0:]/u.test(value)
@@ -92,7 +95,13 @@ export const DeploymentStoredDefinitionV1Schema = lazyZodSchema(() => z.strictOb
 }));
 export const DeploymentRepositoryComposeV1Schema = lazyZodSchema(() => z.strictObject({
     path: ScmRepositoryContainedSubdirV1Schema, ...DeploymentComposeSelectorsV1Schema.shape,
+    augmentation: z.optional(z.pick(DeploymentStoredDefinitionV1Schema, { document: true, publicFiles: true })),
 }));
+/** Repository selection and its exact additive Compose source share one persisted owner. */
+export const DeploymentRepositoryDefinitionV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: z.literal('repository'), ref: DeploymentTextV1Schema, compose: z.optional(DeploymentRepositoryComposeV1Schema),
+}));
+export type DeploymentRepositoryDefinitionV1 = z.infer<typeof DeploymentRepositoryDefinitionV1Schema>;
 /** Authored input is normalized once to the existing stored definition before storage. */
 export const DeploymentComposeDefinitionInputV1Schema = lazyZodSchema(() => z.strictObject({
     from: z.literal('compose'), ...z.pick(DeploymentStoredDefinitionV1Schema, { document: true, publicFiles: true }).shape,
@@ -138,6 +147,7 @@ export const DeploymentPendingDeployIntentV1Schema = lazyZodSchema(() => z.stric
     sourceIntent: DeploymentSourceIntentV1Schema, requestKey: id, targetLinkId: id,
     actionOperationId: id, sourceMethod: z.optional(DeploymentSourceMethodV1Schema),
     onFailure: z.optional(DeploymentOnFailureV1Schema),
+    services: z.optional(DeploymentServiceSubsetV1Schema),
     triggerOccurrence: z.optional(DeploymentPendingTriggerOccurrenceV1Schema),
 }));
 export type DeploymentPendingDeployIntentV1 = z.infer<typeof DeploymentPendingDeployIntentV1Schema>;
@@ -210,11 +220,14 @@ export const EnvironmentSecretBindingIdentityV1Schema = lazyZodSchema(() => z.un
 export type EnvironmentSecretBindingIdentityV1 = z.infer<typeof EnvironmentSecretBindingIdentityV1Schema>;
 
 /** One purpose/address definition serves persisted rows and unsettled Action input. */
+function backupDestinationBindingSchema<TSource extends z.core.$ZodType>(source: TSource) {
+    return z.strictObject({ ...backupBindingIdentity.shape, source });
+}
 function environmentSecretBindingSchema<TSource extends z.core.$ZodType>(secretSource: TSource) {
     return z.union([
         z.strictObject({ ...variableIdentity(), source: z.union([secretSource, DeploymentNonSecretVariableBindingSourceV1Schema]) }),
         z.strictObject({ ...registryBindingIdentity.shape, access: z.enum(['pull', 'pushPull']), source: secretSource }),
-        z.strictObject({ ...backupBindingIdentity.shape, source: secretSource }),
+        backupDestinationBindingSchema(secretSource),
         z.strictObject({ ...domainBindingIdentity.shape, source: secretSource }),
         z.strictObject({ ...serviceDataBindingIdentity.shape, source: secretSource }),
         z.strictObject({ ...managedDataBindingIdentity.shape, source: secretSource }),
@@ -223,9 +236,11 @@ function environmentSecretBindingSchema<TSource extends z.core.$ZodType>(secretS
 export const EnvironmentSecretBindingV1Schema = lazyZodSchema(() => environmentSecretBindingSchema(DeploymentSecretBindingSourceV1Schema));
 export type EnvironmentSecretBindingV1 = z.infer<typeof EnvironmentSecretBindingV1Schema>;
 /** A pending choice exists only in Action custody, never in an Environment Artifact. */
-export const EnvironmentSecretBindingInputV1Schema = lazyZodSchema(() => environmentSecretBindingSchema(z.union([
+const secretBindingInputSource = lazyZodSchema(() => z.union([
     DeploymentSecretBindingSourceV1Schema, z.strictObject({ kind: z.literal('secret'), ref: z.literal('person_selects') }),
-])));
+]));
+export const EnvironmentBackupDestinationBindingInputV1Schema = lazyZodSchema(() => backupDestinationBindingSchema(secretBindingInputSource));
+export const EnvironmentSecretBindingInputV1Schema = lazyZodSchema(() => environmentSecretBindingSchema(secretBindingInputSource));
 export type EnvironmentSecretBindingInputV1 = z.infer<typeof EnvironmentSecretBindingInputV1Schema>;
 
 /** Source revisions and registry access replace, rather than create, the same row. */
