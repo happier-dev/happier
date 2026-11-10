@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { Href } from 'expo-router';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Platform } from 'react-native';
@@ -574,14 +575,14 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
 
     const primarySession = useSession(primaryRequestSessionAddress?.sessionId ?? openConversationSessionId ?? snapSessionId ?? '',
         primaryRequestSessionAddress?.serverId ?? openConversationSessionAddress?.serverId ?? recoverySessionServerId);
-    const primaryStatus = useSessionStatus(primarySession, { subscribeToSession: false, workingTextMode: 'static' });
+    const primaryStatus = useSessionStatus(primarySession, { subscribeToSession: false });
     // A native Voice Agent raises approvals on its own conversation Session,
     // independently of the coding target. Both retain ordinary Session custody.
     const conversationRequestAddress = activeOpenConversationTarget?.requestAddress ?? null;
     const otherRequestAddress = areSessionAddressesEqual(primaryRequestSessionAddress, conversationRequestAddress)
         ? null : conversationRequestAddress;
     const conversationSession = useSession(otherRequestAddress?.sessionId ?? '', otherRequestAddress?.serverId);
-    const conversationStatus = useSessionStatus(conversationSession, { subscribeToSession: false, workingTextMode: 'static' });
+    const conversationStatus = useSessionStatus(conversationSession, { subscribeToSession: false });
     const presentConversationRequest = resolveVoiceSessionNeedsYou(conversationStatus)
         && !resolveVoiceSessionNeedsYou(primaryStatus);
     const pendingRequestSessionAddress = presentConversationRequest ? otherRequestAddress : primaryRequestSessionAddress;
@@ -665,7 +666,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     const refusalRecoveryAction = startAdmission.refusal?.recoveryAction;
     const recoverStart = React.useCallback(() => {
         if (!refusalRecoveryAction) return;
-        const target = refusalRecoveryAction === 'open_session' ? '/new'
+        const target: Href | null = refusalRecoveryAction === 'open_session' ? '/new'
             : refusalRecoveryAction === 'open_setup' ? SETTINGS_ROUTES.voice : resolveVoiceSettingsRecoveryTarget(refusalRecoveryAction);
         if (target) navigateWithFocusReturn(() => router.push(target as never));
     }, [navigateWithFocusReturn, refusalRecoveryAction, router]);

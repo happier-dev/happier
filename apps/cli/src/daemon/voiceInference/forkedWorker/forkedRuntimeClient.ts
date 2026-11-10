@@ -13,6 +13,7 @@
  * process (and tests can substitute an in-memory channel — a pure boundary mock).
  */
 
+import type { setTimeout as nodeSetTimeout } from 'node:timers';
 import type { DaemonVoiceInferenceModelRuntimeState } from '@happier-dev/protocol';
 import type { HappierProcessRootSource } from '@/daemon/processes/roots/listHappierProcessRoots';
 
@@ -347,7 +348,7 @@ export function createForkedVoiceInferenceRuntimeClient(
 
     return await new Promise<TResult>((resolve, reject) => {
       let settled = false;
-      let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
+      let deadlineTimer: ReturnType<typeof nodeSetTimeout> | null = null;
 
       const clearDeadline = () => {
         if (deadlineTimer) {
@@ -379,7 +380,7 @@ export function createForkedVoiceInferenceRuntimeClient(
         if (effectiveTimeoutMs <= 0) {
           return;
         }
-        deadlineTimer = setTimeout(onDeadline, effectiveTimeoutMs);
+        deadlineTimer = (setTimeout as typeof nodeSetTimeout)(onDeadline, effectiveTimeoutMs);
         deadlineTimer.unref?.();
       };
 

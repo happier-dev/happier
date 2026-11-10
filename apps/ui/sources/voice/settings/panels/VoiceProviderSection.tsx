@@ -316,6 +316,7 @@ export function useVoiceConversationsReadinessModel(props: {
   visibleRows: VoiceReadinessSelectionRow[];
   selectedServiceBillingRows: VoiceReadinessSelectionRow[];
   selectedProviderReadiness: VoiceRoleReadiness | null;
+  selectedProviderCredentialResolving: boolean;
   isCheckingPassiveSetup: boolean;
   checkProviderReadiness: () => void;
   showCheckedReadiness: boolean;

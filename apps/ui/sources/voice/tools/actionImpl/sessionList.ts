@@ -8,6 +8,7 @@ import { projectSessionSummaryIdentityV1, projectSessionSummaryV1 } from '@happi
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { createSessionProjectKeyResolverV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { readSessionListRenderableOwnerMetadataView } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { admitProjectWorkspaceCensusForSubject } from '@/sync/domains/workspaces/projectWorkspaceCensusAdmission';
 import { readProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projectAccountRows';
@@ -112,7 +113,7 @@ function readRetainedPreview(state: ReturnType<typeof storage.getState>, serverI
 }
 
 function projectMountedSessionSummary(
-  session: Parameters<typeof readSessionListRenderableOwnerMetadataView>[0],
+  session: SessionListRenderableSession,
   serverId: string,
   presence: string | null,
 ) {

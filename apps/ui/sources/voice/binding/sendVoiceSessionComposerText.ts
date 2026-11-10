@@ -15,8 +15,8 @@ import { voiceSessionBindingStore } from './voiceConversationBindingStore';
 import { resolveVoiceSessionComposerRouting } from './voiceSessionComposerRouting';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getVoiceSessionPresentedAttemptId, recordVoiceSessionFirstSuccessInput } from '@/voice/session/voiceSessionStore';
-import { readSafeVoiceRuntimeFailureCode, readSafeVoiceRuntimeFailureFacts } from '@/voice/runtime/voiceRuntimeFailureCode';
-import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readSafeVoiceRuntimeFailureCode, readSafeVoiceRuntimeFailureFacts, type VoiceRuntimeFailureCause } from '@/voice/runtime/voiceRuntimeFailureCode';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { log } from '@/log';
 
 export type VoiceTextTurnPendingPort = Readonly<{
@@ -38,7 +38,7 @@ export type VoiceTextTurnPendingPort = Readonly<{
 }>;
 
 export type DurableVoiceTextTurnResult = Readonly<{
-    failureCause?: ActionFailureCauseV1;
+    failureCause?: VoiceRuntimeFailureCause;
     /** Native/provider turn dispatch, not the persistence outcome of the Pending input. */
     effectAttempted?: boolean;
     cause?: unknown;

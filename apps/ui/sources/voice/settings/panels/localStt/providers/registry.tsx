@@ -27,7 +27,7 @@ export function createLocalSttProviderRegistry(
   const projected = voiceRegistry.list()
     .filter((entry) => entry.source.kind !== 'built_in' && entry.kind === 'voice.speech-engine.v1')
     .map((entry) => createBundledLocalSttProviderSpec(entry))
-    .filter((entry): entry is LocalSttProviderSpec => entry !== null);
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
   const list = Object.freeze([...candidateProviderSpecs, ...projected].filter((spec) => {
     const contribution = voiceRegistry.get(spec.id);
     return contribution?.kind === 'voice.speech-engine.v1'

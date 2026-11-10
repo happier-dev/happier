@@ -24,7 +24,8 @@ export function revealVoiceCompanionSection(): boolean {
 
 // Mounted presentation owners lend their existing controls; no request survives an unmount.
 let glance: ((open: boolean) => void) | null = null;
-let setup: ((open: boolean) => boolean | void) | null = null;
+type SetupControl = (open: boolean) => boolean | void;
+let setup: SetupControl | null = null;
 let position: ((point: Readonly<{ x: number; y: number }>) => boolean) | null = null;
 
 export function registerVoiceGlancePresentation(control: NonNullable<typeof glance>): () => void {
@@ -38,7 +39,7 @@ export function setVoiceGlanceOpen(open: boolean): boolean {
 }
 // Setup unfolded in place over the work (from the composer mark) answers before a host's tile (Home's
 // Get set up, Settings → Voice), which re-registers as its items change; each falls back on unmount.
-let setupInPlace: NonNullable<typeof setup> | null = null;
+let setupInPlace: SetupControl | null = null;
 export function registerVoiceSetupPresentation(
     control: NonNullable<typeof setup>,
     options?: Readonly<{ inPlace?: boolean }>,
