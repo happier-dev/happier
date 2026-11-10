@@ -119,8 +119,10 @@ export function readDeclaredConnectedAccountActionSelection(
   serviceRefs: readonly QualifiedConnectedAccountRef['service'][],
 ): Readonly<{ kind: 'invalid' }> | Readonly<{ kind: 'inherit' }> | Readonly<{ kind: 'native' }>
   | Readonly<{ kind: 'account'; account: QualifiedConnectedAccountRef }> {
-  const rawAccount = readInputPath(value, mapping.path);
-  const hasAccount = rawAccount !== undefined && rawAccount !== null;
+  const accounts = [mapping.path, ...(mapping.alternativePaths ?? [])].map(path => readInputPath(value, path))
+    .filter(account => account !== undefined && account !== null);
+  if (accounts.length > 1) return { kind: 'invalid' };
+  const hasAccount = accounts.length === 1;
   if (mapping.nativeServicePath) {
     const rawNative = readInputPath(value, mapping.nativeServicePath);
     const hasNative = rawNative !== undefined && rawNative !== null;
@@ -130,8 +132,8 @@ export function readDeclaredConnectedAccountActionSelection(
       return native.success && serviceRefs.some(ref => sameService(ref, native.data)) ? { kind: 'native' } : { kind: 'invalid' };
     }
   }
-  if (!hasAccount) return { kind: 'inherit' };
-  const account = QualifiedConnectedAccountRefSchema.safeParse(readInputOptionValue(rawAccount));
+  if (!hasAccount) return { kind: mapping.alternativePaths?.length ? 'invalid' : 'inherit' };
+  const account = QualifiedConnectedAccountRefSchema.safeParse(readInputOptionValue(accounts[0]));
   return account.success ? { kind: 'account', account: account.data } : { kind: 'invalid' };
 }
 

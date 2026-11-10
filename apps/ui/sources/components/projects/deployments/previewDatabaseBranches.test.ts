@@ -39,11 +39,11 @@ it('offers only the parent selected by the linked provider identity, preserving 
   expect(readPreviewBranchParents({ branches: [
     { providerProjectId: 'project', branchId: 'main', name: 'Production' },
     { providerProjectId: 'project', branchId: 'other', name: 'Another branch' },
-  ] }, neonLink.content.providerIdentity)).toEqual([{ title: 'Production', parentBranchRef: { providerProjectId: 'project', branchId: 'main' } }]);
+  ] }, neonLink.content.providerIdentity)).toEqual([{ title: 'Production', parentBranchRef: { providerProjectId: 'project', branchId: 'main', displayName: 'Production' } }]);
   const supabaseLink = linked(supabase.id, 'project', 'selected-ref');
   expect(readPreviewBranchParents({ branches: [
     { parentProjectRef: 'project', projectRef: 'selected-ref', branchId: 'uuid', name: 'Production' },
     { parentProjectRef: 'project', projectRef: 'other-ref', branchId: 'other-uuid', name: 'Other' },
-  ] }, supabaseLink.content.providerIdentity)).toEqual([{ title: 'Production', parentBranchRef: { providerProjectId: 'selected-ref', branchId: 'uuid' } }]);
+  ] }, supabaseLink.content.providerIdentity)).toEqual([{ title: 'Production', parentBranchRef: { providerProjectId: 'selected-ref', branchId: 'uuid', displayName: 'Production' } }]);
   expect(readPreviewBranchParents({ branches: [] }, neonLink.content.providerIdentity)).toEqual([]);
 });

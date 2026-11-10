@@ -274,7 +274,11 @@ reads the current adopted source of the Machine-services observer. Configure use
 that same `health/setup` Action with `mode: 'preview'` before saving. Its readonly
 branch returns a draft with effective P40 Account/Project alert defaults only when
 the alert leaf is absent; explicit empty channels remain Off. It enrolls no
-endpoints, writes no source and sends no notification. An optional `testContext`
+endpoints, writes no source and sends no notification. Its optional
+`destinationSelectionContext` is the existing Machine target of the admitted
+Environment controller or service owner, including first Configure. Destination
+selection waits for this address instead of borrowing the editor's observer.
+An optional `testContext`
 contains only a real saved source revision and its current service owner or
 Environment controller, addressed through the invoking Home profile; changed
 alert choices do not borrow that saved selector. Full Save retains the existing
@@ -2284,6 +2288,19 @@ grants no Action authority; the subsequent Action rechecks its chosen target.
 Account retirement and cancellation close the picker. These are development
 source contracts, pending package and loaded-runtime validation.
 
+The unreleased notification destination selection uses the same finite form
+owner: `selectActionInput({hostAction:{action:'notifications.notify_me',
+projection:'notificationDestination'},channelId?})`. Without `channelId`, the
+form first chooses from the current notification channel options. It then
+opens the Channels-owned input-type picker and returns
+`{kind:'notificationDestination',channel}` or cancellation. The result contains
+saved addressing only; provider operations resolve it through the current
+connection owner. Selection never sends, changes a connection or saves the
+subject. Source setup and Account/Project creation preferences borrow this
+same presenter. The mounted Home and Account lifetime remain bound throughout
+selection; retirement closes the form. Explicit Test remains the separately
+confirmed `notifications.test` Action.
+
 The callback's `options.resources` binds the ordinary Resource service to its
 own plugin, occurrence and exact host context. A composed Resource can read or
 watch another Resource through this owner. `resources.watch(id, invalidate)`
@@ -2775,7 +2792,13 @@ its Node-builtin rejection), the UI's existing client executable module host,
 and the CLI's existing plugin module loader. Hermes compiles the app evaluator's
 `new Function` with one function-scoped binding per `let`/`const`, so the compiler
 lowers block-scoped closures in the emitted artifact: otherwise a loop's closures
-share their last value, including esbuild's namespace getters over host modules. A package exports its portable
+share their last value, including esbuild's namespace getters over host modules.
+The same pass lowers classes: Hermes's dynamic evaluator rejects small class
+bodies and can fail constructing a class in a large artifact with an undefined
+prototype error. Plugin-authored class semantics remain portable through the
+compiler rather than requiring individual plugin rewrites. The compiler also
+lowers async functions to generators: the same dynamic evaluator can turn async
+arrows in a large artifact into undefined callbacks. A package exports its portable
 entry under `./happier-plugin-ui/<artifactId>`; it must not import host internals.
 See the [SDK author reference](../packages/plugin-sdk/README.md#portable-account-actions-03-development)
 and [separately authored fixture](../packages/plugin-sdk/fixtures/account-actions/src/index.ts).
@@ -3910,6 +3933,17 @@ Containers CLI is used for advanced file or inline configuration. Remote Docker
 hosts and contexts are outside this flow. Presets, Team presets, pools and retention
 remain on the existing managed Machine owners.
 
+Devcontainer presets save only the author operands accepted by the options
+Action: image and setup script, runtime, workspace and file or inline build
+configuration. Saving or editing these operands does not require a controller or
+native acquisition. On use, native options compute the effect review and its
+digest once for the selected operands. The receipt builder puts only the digest
+in `reviewedFacts.reviewedEffectDigest`, outside the saved launch choices; the
+ordinary acquisition approval signs those facts with the request. The controller
+passes that admitted digest to native acquire. The provider retains its existing
+effect-time drift check before execution and stores executable facts in the
+retained resource. Resize consumes that resource and size, not a preset launch.
+
 Local acquire/rebuild role inputs can carry the transient `guestHome` fact:
 the selected application origin and controller-resolved IP addresses. The
 controller uses the existing Home carrier policy and OS resolver; these addresses
@@ -3930,10 +3964,12 @@ and rebuild. Existing file launches continue to read the authored file. The same
 options Action fields drive agents and the preset editor, and native effect
 review discloses workspace and additional bind mounts. Existing Machine labels
 and Compose namespaces select a separate primary container per managed Machine.
-This is an unpublished plugin schema extension: reload matching controller
-declarations and clients together; existing file-based presets need no migration.
+This is an unpublished plugin schema change: reload matching Protocol, SDK,
+controller declarations and clients together. Existing retained resources keep
+their executable facts; editing an earlier development preset projects its
+saved values through the current author-input schema before saving.
 
-In 0.3 development source, native options return one optional `base` launch/query projection and independent `dimensions` arrays for size, image, location, network and duration. Each entry declares its executable selector `assignments` as input paths and JSON values, with its localized native facts and prices. Empty arrays mean no control; a missing base means the query is incomplete. Complete launch combinations are not enumerated. The public SDK's machine-provisioner entrypoint exposes `projectMachineProvisionerSelectionV1`, the single Protocol selection owner. It applies the declared paths with the shared input writer, checks compact directed native adjacency constraints, and accepts an executable selection only when every offered dimension is selected and the contributed closed launch schema validates. Native acquire still revalidates current availability. Form-qualified providers can return the reviewed complete launch with singleton dimensions and empty assignments. Devcontainer's effect review remains bound to that exact unchanged base launch. Stored recipe/receipt `choices` continues to hold one executable launch, not an options catalog; no data migration is needed. During the CD31 QA/dev daemon transition, one UI parse-boundary adapter accepts the earlier complete-choice result and retains each exact launch as one selectable row; producers write only the dimension shape. Remove that old reader once every QA/dev daemon runs a bundle with CD31 producers, after the orchestrator confirms reloads. Reader removal is the last migration step; source publication alone does not establish loaded-runtime compatibility.
+In 0.3 development source, native options return one optional `base` launch/query projection and independent `dimensions` arrays for size, image, location, network and duration. Each entry declares its executable selector `assignments` as input paths and JSON values, with its localized native facts and prices. Empty arrays mean no control; a missing base means the query is incomplete. Complete launch combinations are not enumerated. The public SDK's machine-provisioner entrypoint exposes `projectMachineProvisionerSelectionV1`, the single Protocol selection owner. It applies the declared paths with the shared input writer, checks compact directed native adjacency constraints, and accepts an executable selection only when every offered dimension is selected and the contributed closed launch schema validates. Native acquire still revalidates current availability. Form-qualified providers can return the reviewed complete launch with singleton dimensions and empty assignments. Devcontainer's effect review remains bound to the exact unchanged author operands in that base launch; its computed digest travels separately in acquisition review facts. Stored recipe/receipt `choices` holds the launch operands rather than an options catalog or a native review digest. During the CD31 QA/dev daemon transition, one UI parse-boundary adapter accepts the earlier complete-choice result and retains each exact launch as one selectable row; producers write only the dimension shape. Remove that old reader once every QA/dev daemon runs a bundle with CD31 producers, after the orchestrator confirms reloads. Reader removal is the last migration step; source publication alone does not establish loaded-runtime compatibility.
 
 An unavailable options base or selected dimension can carry closed
 `unavailableReason: { code, status, fieldPath? }`: a native reason code, localized

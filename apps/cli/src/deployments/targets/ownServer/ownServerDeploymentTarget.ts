@@ -167,6 +167,9 @@ export type OwnServerDeploymentRuntimeAcquisition = Readonly<{
         /** Source backup credentials retain their original Environment/installation subjects. */
         acquireCopySourceSecrets?(input: Readonly<{ environmentId: string; targetLinkId: string;
             deploymentId: string; actionOperationId: string }>): Promise<import('./ownServerDeploymentHostRuntime').OwnServerSecretLaunchAdmission>;
+        /** Reopen captured nonsecret transport without selecting the current backup configuration. */
+        openBackupDestination?(configuration: import('@happier-dev/deployment-protocol').DeploymentBackupConfigurationV1):
+            ReturnType<typeof import('./backupDestination').openDeploymentBackupDestinationForHost>;
         /** Lazy use of this acquisition's captured destination and P42 bindings. */
         preparePreMigrationBackupOperands?(): Promise<import('./backupDestination').OwnServerPreMigrationBackupOperandsForHost>;
         prepareBackupRepositoryOperands?(): Promise<import('./backupDestination').OwnServerBackupRepositoryOperandsForHost>;

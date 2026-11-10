@@ -3,7 +3,7 @@ import nacl from 'tweetnacl';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
-import { ExternalActionExecutionAuthorizationRequestV1Schema, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, projectDeploymentPreparationAdmissionV1, projectExternalActionDeploymentMetadataEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { configuration } from '@/configuration';
 import { updateSettings, writeDaemonState } from '@/persistence';
@@ -17,8 +17,11 @@ import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-pro
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { DeploymentTemplateInstantiateInputV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+import { DeploymentMoveToRepositoryInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
+import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); withdrawActiveProjectAccountRowsSnapshot(); });
 
 it.each(['account', 'terminal', 'legacy'] as const)('refuses implicit create before approval when the named %s identity has no daemon', async kind => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-create-no-daemon-',
@@ -54,13 +57,21 @@ it.each(['account', 'terminal', 'legacy'] as const)('refuses implicit create bef
 it.each([
     ['deployments.environments.create', 'preview', true], ['deployments.environments.create', 'apply', true],
     ['deployments.environments.create', 'preview', false], ['deployments.environments.create', 'apply', false],
+    ['deployments.environments.create', 'apply', false, 'host', false, true],
     ['deployments.targets.link', 'apply', true],
     ['deployments.templates.instantiate', 'preview', false], ['deployments.templates.instantiate', 'apply', false],
     ['deployments.templates.instantiate', 'preview', true],
     ['deployments.templates.instantiate', 'preview', true, 'plugin'],
     ['deployments.templates.instantiate', 'apply', true, 'plugin'],
+    ['deployments.templates.instantiate', 'preview', false, 'host', true],
+    ['deployments.templates.instantiate', 'preview', true, 'plugin', true],
+    ['deployments.environments.moveToRepository', 'preview', false, 'host', true],
+    ['deployments.environments.moveToRepository', 'preview', true, 'host', true],
+    ['deployments.environments.moveToRepository', 'preview', false, 'host', false],
+    ['deployments.environments.moveToRepository', 'preview', true, 'plugin', true],
+    ['deployments.environments.moveToRepository', 'preview', true, 'plugin', false],
     ['session.spawn_new', 'execute', false], ['session.spawn_new', 'prepare', false],
-] as const)('admits %s (%s, explicit=%s, caller=%s) at Home even on the own local daemon', async (actionId, mode, explicit, caller: 'host' | 'plugin' = 'host') => {
+] as const)('admits %s (%s, explicit=%s, caller=%s, repository=%s, preparedPreview=%s) at Home even on the own local daemon', async (actionId, mode, explicit, caller: 'host' | 'plugin' = 'host', repositoryWorkspace = false, preparedPreview = false) => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-deployment-preview-',
         env: { HAPPIER_SERVER_URL: 'https://home.test', HAPPIER_WEBAPP_URL: 'https://home.test' } }, async () => {
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
@@ -82,9 +93,22 @@ it.each([
             controlToken: 'fixture-control', machineId: machine.id, accountId: 'owner' });
         const setupSpawn = actionId === 'session.spawn_new';
         const template = actionId === 'deployments.templates.instantiate';
+        const move = actionId === 'deployments.environments.moveToRepository';
+        const workspaceMachine = { ...machine, id: 'repository-daemon', installationId: 'repository-installation' };
+        const originMachine = { ...machine, id: 'origin-host', installationId: 'origin-installation' };
+        const selectedMachine = preparedPreview ? originMachine : move || template && repositoryWorkspace ? workspaceMachine : machine;
+        const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/app' };
+        const workspace = { id: 'repository-workspace', serverId: 'srv_home', machineId: workspaceMachine.id,
+            rootPath: '/repository/app', createdAtMs: 1, repositoryIdentity: repository, source: { sourceId: 'source', revision: 1 } };
         const accountSettings = accountSettingsParse(setupSpawn ? { actionsSettingsV1: { v: 1,
             actions: { 'session.spawn_new': { approvalRequiredSurfaces: ['cli'] } } } } : {});
-        const input = setupSpawn ? SessionSpawnNewActionInputV2Schema.parse({
+        const input = move ? DeploymentMoveToRepositoryInputV1Schema.parse({ mode, serverId: 'srv_home', environmentId: 'environment',
+            definition: { contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }, path: 'compose.yaml',
+            workspace: { kind: 'workspace-ref', serverId: workspace.serverId, id: workspace.id },
+            ...(repositoryWorkspace ? { repository,
+                baseCommit: 'a'.repeat(40), baseBranch: 'main' }
+                : { createRepository: { providerKind: 'github', owner: 'owner', repositoryName: 'app', visibility: 'private', remoteName: 'origin' } }),
+        }) : setupSpawn ? SessionSpawnNewActionInputV2Schema.parse({
             executionTarget: { serverId: 'srv_home', machineId: machine.id }, directory: { kind: 'managed' },
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             machineSetupPlanInput: { homeId: 'srv_home', machineId: machine.id,
@@ -97,7 +121,10 @@ it.each([
                 : { kind: 'create', name: 'App', requestKey: 'create-app', protection: 'nonProduction', purpose: 'standard',
                     deployerMode: 'managers', controllerMachineId: machine.id },
             target: { kind: 'new', installationId: 'runtime-installation' }, bindings: [],
-            destination: mode === 'preview' ? { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }
+            destination: repositoryWorkspace ? { kind: 'repositoryPullRequest', repository,
+                workspace: { kind: 'workspace-ref', serverId: workspace.serverId, id: workspace.id }, sourceRevision: 1,
+                baseCommit: 'a'.repeat(40), baseBranch: 'main', branchName: 'template/app', composePath: 'compose.yaml', title: 'Add app' }
+                : mode === 'preview' ? { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }
                 : { kind: 'stored' },
         }) : actionId === 'deployments.targets.link' ? {
             serverId: 'srv_home', environmentId: 'environment', expectedRevision: 1, requestKey: 'link-provider',
@@ -108,6 +135,13 @@ it.each([
                 target: { kind: 'account', account: { service: { pluginId: 'example.deploy', localId: 'service' }, accountId: 'credential' } } },
                 providerIdentity: { providerAccountId: 'native-account', providerResourceId: 'native-resource', providerEnvironment: 'production' },
                 providerEnvironment: { kind: 'production' } },
+        } : preparedPreview ? { serverId: 'srv_home', projectSourceId: 'source', requestKey: 'create-preview',
+            protection: 'nonProduction', purpose: 'preview', deployerMode: 'managers', controllerMachineId: originMachine.id,
+            buildMachineId: originMachine.id, contentArtifactId: 'prepared-preview', contentHeaderVersion: 1, contentBodyVersion: 1,
+            preview: { templateEnvironmentId: 'template', expectedTemplateRevision: 1,
+                runtimeTargetLinkId: 'template-runtime', pullRequestId: '17' },
+            firstTargetLink: { contentArtifactId: 'prepared-runtime', contentHeaderVersion: 1, contentBodyVersion: 1,
+                machines: [{ machineId: originMachine.id, installationId: originMachine.installationId }] },
         } : { mode, serverId: 'srv_home', projectSourceId: 'source', name: 'App', requestKey: 'create-app',
             protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: machine.id,
             definition: { from: 'catalogApp', templateRef: { sourceId: 'apps', itemId: 'app', version: '1',
@@ -122,8 +156,11 @@ it.each([
         // ingress, proof selection, sealed requester custody and parsing stay real.
         const machineReads = vi.spyOn(axios, 'get').mockImplementation(async url => String(url).endsWith('/v1/account/encryption')
             ? { status: 200, data: { mode: 'plain', updatedAt: 1 } }
-            : String(url).endsWith('/v1/machines/controller') ? { status: 200, data: { machine } }
-                : { status: 200, data: [machine] });
+            : String(url).endsWith('/v1/account/encryption/currentness') ? { status: 200, data: { mode: 'plain', version: 1,
+                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } }
+            : String(url).includes('/v1/machines/') ? { status: 200, data: { machine:
+                [machine, workspaceMachine, originMachine].find(row => String(url).endsWith(`/v1/machines/${row.id}`)) } }
+                : { status: 200, data: move || repositoryWorkspace ? [machine, workspaceMachine, originMachine] : [machine] });
         const homeRequests = vi.spyOn(axios, 'request').mockImplementation(async request => {
             if (new URL(request.url!).pathname === managedMachineActionEndpointPathV1('machines.managed.list'))
                 return { status: 200, data: { machines: [] } };
@@ -133,14 +170,20 @@ it.each([
                     controllerMachineId: machine.id }), targetLinks: [] } };
         });
         const requests: string[] = [];
+        const envelopes: unknown[] = [];
+        const boundaryFailures: unknown[] = [];
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            try {
+            if (String(url).includes('/v1/account/project-rows/'))
+                return projectAccountRowsReadHttpResponse([createPlainProjectAccountRefRow(workspace)], String(url), body);
             const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
             requests.push(String(url));
-            expect(request.envelope).toMatchObject({ v: 1, input, target: { kind: 'machine', machineId: machine.id } });
+            envelopes.push(request.envelope);
             if (String(url).endsWith('/execution-authorization')) return { status: 200, data: { v: 1, token: 'home-proof', binding: {
                 accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
-                serverIdentityId: 'srv_home', custodianAccountId: 'owner', machineId: machine.id, installationId: machine.installationId,
+                serverIdentityId: 'srv_home', custodianAccountId: 'owner', machineId: selectedMachine.id, installationId: selectedMachine.installationId,
                 actionId, requestId: request.envelope.requestId, target: request.envelope.target,
+                environmentId: projectExternalActionDeploymentMetadataEnvironmentIdV1(actionId, input),
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
                 ...(actionId === 'deployments.environments.create' || template
                     ? { deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input) } : {}),
@@ -150,6 +193,7 @@ it.each([
             else expect(request.executionAuthorization?.requesterAccountContext).toBeDefined();
             return { status: 200, data: { v: 1, actionId,
                 requestId: request.envelope.requestId, execution: partial ? { ok: true, result: partial } : expected } };
+            } catch (error) { boundaryFailures.push(error); throw error; }
         });
         const app = createDaemonControlApp({ machineId: machine.id, controlToken: 'fixture-control',
             getChildren: () => [], stopSession: async () => ({ status: 'not_found' }),
@@ -168,7 +212,7 @@ it.each([
         try {
             const executor = createCliActionExecutorFromCredentials({ credentials,
                 ...(!setupSpawn ? { externalActionClient: true } : {}),
-                ...(explicit ? { machineId: template ? 'remote-runtime' : machine.id } : {}),
+                ...(explicit ? { machineId: template ? 'remote-runtime' : move ? 'origin-host' : machine.id } : {}),
                 serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
                 actionsSettingsProvider: createActionSettingsProvider({ accountSettings }) });
             const context = { ...(caller === 'plugin' ? { surface: 'plugin' as const,
@@ -178,12 +222,17 @@ it.each([
                 const prepared = await executor.prepare(actionId, input, context);
                 return prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
             })() : await executor.execute(actionId, input, context);
-            if (template) expect(machineReads.mock.calls.map(([url]) => String(url))).toContain('https://home.test/v1/machines/controller');
+            expect(boundaryFailures).toEqual([]);
+            if (template && !repositoryWorkspace) expect(machineReads.mock.calls.map(([url]) => String(url))).toContain('https://home.test/v1/machines/controller');
+            for (const envelope of envelopes) expect(envelope).toMatchObject({ v: 1, input,
+                target: { kind: 'machine', machineId: selectedMachine.id } });
             expect(result).toEqual(expected);
             expect(requests).toEqual([`https://home.test/v1/actions/${actionId}/execution-authorization`,
                 `https://home.test/v1/actions/${actionId}`]);
-            if (setupSpawn || template) expect(localTransport).not.toHaveBeenCalled();
-            if (template) expect(homeRequests.mock.calls.filter(([request]) =>
+            if (setupSpawn || template || move) expect(localTransport).not.toHaveBeenCalled();
+            if (move || template && repositoryWorkspace) expect(homeRequests.mock.calls.filter(([request]) =>
+                request.url?.includes('/v1/deployments/environments/'))).toHaveLength(0);
+            if (template && !repositoryWorkspace) expect(homeRequests.mock.calls.filter(([request]) =>
                 request.url?.includes('/v1/deployments/environments/'))).toHaveLength(mode === 'preview' ? 1 : 0);
         } finally { await app.close(); }
     });

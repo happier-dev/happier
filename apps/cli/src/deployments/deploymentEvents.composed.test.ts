@@ -3,6 +3,7 @@ import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protoco
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
 import { AutomationEventAdmitInputV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
+import { buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { UpdateBodySchema } from '@happier-dev/protocol/updates';
 import { createDeploymentReceiptEventSourceAdapter, deploymentEventActions } from '../../../../packages/plugins/machine-services/src/deploymentEvents';
 import { projectDeploymentReceiptInvalidationsForHost } from './receiptEventInvalidation';
@@ -26,6 +27,9 @@ function fixture(event: string | readonly string[] = 'deployment-failed', pageSi
     const rollback = createDeploymentReceiptHeaderV1({ ...failed, id: 'rollback', operation: 'rollback', state: 'succeeded' });
     const rows = [failed, rollback, { ...failed, id: 'running', state: 'running' as const, settledAtMs: undefined }];
     let safe = true;
+    let domainRevision = 1;
+    let domainCount = 1;
+    let domainsAvailable = true;
     const reads: string[] = [];
     const admissions: ReturnType<typeof AutomationEventAdmitInputV1Schema.parse>[] = [];
     const listeners = new Map<string, Set<(event: { payload: JsonValue }) => void | Promise<void>>>();
@@ -54,7 +58,18 @@ function fixture(event: string | readonly string[] = 'deployment-failed', pageSi
                 failureSummary: deployment.state === 'failed' ? { code: 'build_failed', phase: 'build' } : null }
                 : { ok: false, error: 'deployment_unavailable' };
         }
-        if (id === 'deployments.environments.get') return { ok: true, environment: { id: 'env' } };
+        if (id === 'deployments.domains.list') {
+            if (!domainsAvailable) return { ok: false, error: 'deployment_unavailable' };
+            const offset = input.cursor ? Number(input.cursor) : 0;
+            const domains = Array.from({ length: domainCount }, (_, index) => ({
+                id: `domain-${index}`, environmentId: 'env', revision: domainRevision,
+            }));
+            return { ok: true, domains: domains.slice(offset, offset + 1),
+                nextCursor: offset + 1 < domains.length ? String(offset + 1) : null };
+        }
+        if (id === 'deployments.environments.get') return { ok: true, environment: { id: input.environmentId, revision: 1, projectSourceId: 'source',
+            ...(input.environmentId === 'env' ? { previewTemplateEnvironmentId: 'template' } : {}) } };
+        if (id === 'deployments.environments.list') return { ok: true, items: [{ id: 'env', revision: 1 }], nextCursor: null };
         throw new Error(`Unexpected Action ${id}`);
     });
     // Host Actions and authenticated Event delivery are genuine plugin boundaries.
@@ -69,19 +84,85 @@ function fixture(event: string | readonly string[] = 'deployment-failed', pageSi
         } } } },
     } as unknown as BackgroundServiceContext;
     const adapter = createDeploymentReceiptEventSourceAdapter(context.services.events.host, () => 10);
-    adapter.subscribeWake?.(async () => {});
-    const cycle = (source = adapter) => runCheckpointedPluginEventObserverV1({ context, source, mode: 'once', now: () => 10 });
+    let wakeSubscription = adapter.subscribeWake?.(async () => {});
+    const cycle = async (source = adapter) => {
+        // The real runner owns its subscription during a finite cycle. Keep one
+        // connected host delivery boundary between cycles, without overlapping it.
+        wakeSubscription?.dispose();
+        try { await runCheckpointedPluginEventObserverV1({ context, source, mode: 'once', now: () => 10 }); }
+        finally { wakeSubscription = source.subscribeWake?.(async () => {}); }
+    };
     return { context, adapter, execute, admissions, rows, reads, cycle, safe(value: boolean) { safe = value; },
+        subscriptions(eventId: string) { return listeners.get(eventId)?.size ?? 0; },
         sources(definitions: PluginCheckpointedEventSourceDefinitionV1[]) { currentDefinitions = definitions; },
-        configure(sourceConfig: typeof config) { currentDefinitions = currentDefinitions.map(current => ({ ...current, sourceConfig })); },
+        configure(sourceConfig: typeof config & { previewChildren?: true }) { currentDefinitions = currentDefinitions.map(current => ({ ...current, sourceConfig })); },
         async wake(environmentId = 'env', deploymentId = 'failed') {
             for (const listener of listeners.get('@happier/deployment/receipt-invalidated') ?? []) await listener({ payload: { environmentId, deploymentId } });
+        },
+        domainsAvailable(value: boolean) { domainsAvailable = value; },
+        domains(count: number) { domainCount = count; },
+        async environmentChanged(changed = true) {
+            if (changed) domainRevision += 1;
+            const change = buildDeploymentAccountChangeV1({ environmentId: 'env', projectSourceId: 'source', revision: 1 });
+            for (const listener of listeners.get('@happier/account/entities-invalidated') ?? []) await listener({ payload: { entityIds: [change.entityId] } });
         },
         async reconnect() {
             for (const listener of listeners.get('@happier/automation/event-sources-invalidated') ?? []) await listener({ payload: { reason: 'reconnect', definitionsChanged: false } });
         } };
 }
 describe('deployment receipt Events through canonical admission', () => {
+    it('pushes pending, ready, failure and retained cleanup receipts for one preview template without polling', async () => {
+        const f = fixture('deployment-receipt-changed', 10);
+        f.configure({ ...config, observingSince: 20, environmentId: 'template', previewChildren: true });
+        f.rows.splice(0, f.rows.length, createDeploymentReceiptHeaderV1({ ...f.rows[0], id: 'preview',
+            state: 'running', settledAtMs: undefined }));
+        await f.cycle();
+        expect(f.admissions.at(-1)).toMatchObject({ eventRef: { localId: 'deployment-receipt-changed' },
+            payload: { environmentId: 'env', deploymentId: 'preview', state: 'running' } });
+        for (const [state, operation, revision] of [['succeeded', 'deploy', 2], ['failed', 'deploy', 3], ['succeeded', 'teardown', 4]] as const) {
+            f.rows[0] = createDeploymentReceiptHeaderV1({ ...f.rows[0], state, operation, revision, settledAtMs: revision + 2 });
+            await f.wake('env', 'preview'); await f.cycle();
+            expect(f.admissions.at(-1)).toMatchObject({ payload: { environmentId: 'env', deploymentId: 'preview', state, operation,
+                receiptRevision: revision } });
+        }
+        expect(f.admissions).toHaveLength(4);
+        await f.wake('unrelated', 'preview'); await f.cycle();
+        expect(f.admissions).toHaveLength(4);
+        expect(f.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.observe')).toHaveLength(0);
+        expect(f.execute.mock.calls.find(([id]) => id === 'deployments.environments.list')?.[1]).toMatchObject({
+            previewTemplateEnvironmentId: 'template', projectSourceId: 'source', includeDeleted: true });
+        expect(f.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.list').map(([, input]) => input))
+            .toEqual([{ serverId: 'home', environmentId: 'env', limit: 1 }]);
+    });
+    it('reprojects the current receipt after a later serving Environment change without polling', async () => {
+        const f = fixture('deployment-receipt-changed', 10);
+        f.configure({ ...config, environmentId: 'template', previewChildren: true });
+        f.domains(2);
+        f.rows.splice(0, f.rows.length, createDeploymentReceiptHeaderV1({ ...f.rows[0], id: 'preview', state: 'succeeded' }));
+        expect(f.subscriptions('@happier/account/entities-invalidated')).toBe(0);
+        await f.cycle();
+        expect(f.subscriptions('@happier/account/entities-invalidated')).toBe(1);
+        expect(f.admissions).toHaveLength(1);
+        await f.environmentChanged(); await f.cycle();
+        expect(f.admissions).toHaveLength(2);
+        expect(f.admissions[1]).toMatchObject({ payload: { deploymentId: 'preview', receiptRevision: 1, state: 'succeeded' } });
+        expect(f.admissions[1]!.occurrenceId).not.toBe(f.admissions[0]!.occurrenceId);
+        await f.environmentChanged(false); await f.cycle();
+        expect(f.admissions[2]!.occurrenceId).toBe(f.admissions[1]!.occurrenceId);
+        expect(f.execute.mock.calls.filter(([id]) => id === 'deployments.domains.list')).toHaveLength(6);
+        expect(f.execute.mock.calls.filter(([id]) => id === 'deployments.domains.get')).toHaveLength(0);
+        f.execute.mockClear(); await f.cycle();
+        expect(f.execute.mock.calls.filter(([id]) => id === 'deployments.domains.list' || id === 'deployments.receipts.list')).toHaveLength(0);
+        f.domainsAvailable(false); await f.environmentChanged(); await f.cycle();
+        expect(f.admissions).toHaveLength(3);
+        f.domainsAvailable(true); f.domains(0); await f.environmentChanged(); await f.cycle();
+        expect(f.admissions).toHaveLength(4);
+        expect(f.admissions[3]!.occurrenceId).not.toBe(f.admissions[2]!.occurrenceId);
+        expect(f.admissions[3]!.payload).not.toHaveProperty('targetUrl');
+        expect(f.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.observe')).toHaveLength(0);
+        f.sources([]); await f.cycle();
+        expect(f.subscriptions('@happier/account/entities-invalidated')).toBe(0);
+    });
     it('keeps receipt reads separate across Homes and excludes sources assigned to another observer', async () => {
         const f = fixture('deployment-succeeded', 5);
         f.rows.splice(0, f.rows.length, createDeploymentReceiptHeaderV1({ ...f.rows[0], state: 'succeeded', requestedAtMs: 0, startedAtMs: 0, settledAtMs: 1 }));

@@ -363,7 +363,7 @@ function parseRepositoryEventsContinuity(
   return Object.freeze({ historyGap: parsed.data.historyGap === true });
 }
 
-function parseGithubAutomationRepositoryEventSourceConfig(
+export function parseGithubAutomationRepositoryEventSourceConfig(
   value: unknown,
 ): GithubAutomationRepositoryEventSourceConfigV1 {
   if (!isRecord(value) || value.v !== 1 || (!isGithubConnectedAccountRef(value.credentialRef, GITHUB_PLUGIN_ID)

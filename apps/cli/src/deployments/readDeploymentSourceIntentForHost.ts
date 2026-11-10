@@ -1,6 +1,6 @@
 import { refuseDeploymentAuthorization } from './deploymentAuthorizationFailure';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import { readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { readHostAdmittedReviewedChildV1, readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { DeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -21,11 +21,11 @@ import { isHostRequesterUnrestrictedOwner, type HostRequesterExecutionIdentity }
 export type DeploymentSourceRequesterIdentityResolver = (context: ActionExecutorContext) => Promise<HostRequesterExecutionIdentity>;
 
 type DeploymentSourceRequest = Readonly<{
-    environment: DeploymentEnvironmentDetailV1;
+    environment: Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'>;
     sourceIntent?: DeploymentSourceIntentV1;
     sha?: string;
     context: ActionExecutorContext;
-    actionId?: 'deployments.deploy' | 'deployments.promote' | 'deployments.rollback' | DeploymentBackupActionIdV1;
+    actionId?: 'deployments.deploy' | 'deployments.promote' | 'deployments.rollback' | 'deployments.environments.update' | DeploymentBackupActionIdV1;
     restoration?: boolean;
     /** Native materialization needs a checkout; provider Git integration does not. */
     requireWorkspace?: boolean;
@@ -112,7 +112,8 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
     };
     await readSource();
     const rows = needsWorkspace ? await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => readProjectAccountRowsObservation({
-        ...(authorization ? { authorization, effectActionId: childActionId ?? authorization.binding.actionId } : { credentials: host.credentials }),
+        ...(authorization ? { authorization, effectActionId: readHostAdmittedReviewedChildV1(request.context)?.actionId
+            ?? childActionId ?? authorization.binding.actionId } : { credentials: host.credentials }),
         serverId: host.serverId, signal, assertCurrentAuthority: assertAuthority,
         selection: { kinds: ['workspace-ref'], serverId: host.serverId },
     })) : undefined;

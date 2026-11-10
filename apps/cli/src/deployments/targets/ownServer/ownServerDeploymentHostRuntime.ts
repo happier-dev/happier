@@ -38,7 +38,7 @@ import { createServiceReferenceForwardCustody } from './serviceReferenceForwardC
 import { acquirePrivateServiceContainerBridge } from './privateServiceContainerBridge';
 import type { ServiceExportMachineForward } from '@/daemon/peer/iroh/serviceExportMachineForward';
 import { privateServiceForwardAcquisitionError, projectDeploymentFailure } from '../../deploymentFailure';
-import { prepareOwnServerPreMigrationBackupOperandsForHost, prepareOwnServerBackupRunOperandsForHost, prepareOwnServerBackupRepositoryOperandsForHost } from './backupDestination';
+import { openDeploymentBackupDestinationForHost, prepareOwnServerPreMigrationBackupOperandsForHost, prepareOwnServerBackupRunOperandsForHost, prepareOwnServerBackupRepositoryOperandsForHost } from './backupDestination';
 import { materializeCaddyInitialConfigV1 } from './caddyRouteMaterialization';
 export { openDeploymentBackupDestinationForHost, prepareOwnServerPreMigrationBackupOperandsForHost, prepareOwnServerBackupRunOperandsForHost } from './backupDestination';
 
@@ -307,6 +307,10 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                             targetLinkId: source.targetLinkId, materialization: { kind: 'copySourceRead',
                                 deploymentId: source.deploymentId, actionOperationId: source.actionOperationId },
                             context: request.context, signal });
+                    },
+                    async openBackupDestination(configuration) {
+                        return openDeploymentBackupDestinationForHost({ registry: retainedLease.registry,
+                            configuration, context: request.context, signal });
                     },
                     async prepareBackupRepositoryOperands() {
                         return prepareOwnServerBackupRepositoryOperandsForHost({ registry: retainedLease.registry,

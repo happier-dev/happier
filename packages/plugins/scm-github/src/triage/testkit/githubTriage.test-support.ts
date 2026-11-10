@@ -171,7 +171,7 @@ export function createStubGithubTransport(input: Readonly<{
    * configured Account.
    */
   binding?: Readonly<{ purpose: string; account?: ConnectedAccountRef }> | null;
-  /** Daemon credential boundary; native credentials never enter the listed-account path. */
+  /** Generic custody boundary override; native credentials never enter the listed-account path. */
   nativeMaterialization?: ConnectedAccountMaterialization | (() => never);
   /** Optional host Action boundary used by operations that coordinate through a canonical host owner. */
   executeAction?: (actionId: string, actionInput: unknown) => unknown | Promise<unknown>;
@@ -181,10 +181,19 @@ export function createStubGithubTransport(input: Readonly<{
   const listRequests: Array<Readonly<{ purpose: string; limit?: number }>> = [];
   const bindingReads: string[] = [];
   let materializeCount = 0;
+  const materializeAccount = (request: RecordedMaterialization) => {
+    materializeCount += 1;
+    materializations.push(Object.freeze({ ...request, materialization: Object.freeze({ ...request.materialization }) }));
+    return Object.freeze({ kind: 'httpHeaders' as const,
+      headers: Object.freeze({ Authorization: 'Bearer test-only-placeholder' }) });
+  };
 
   const connectedAccounts = {
-    async materialize(): Promise<ConnectedAccountMaterialization> {
+    async materialize(purpose: string, materialization: Readonly<Record<string, unknown>>,
+      options?: Readonly<{ expectedAccount?: ConnectedAccountRef }>): Promise<ConnectedAccountMaterialization> {
       const materialized = input.nativeMaterialization;
+      if (options?.expectedAccount && materialized === undefined)
+        return materializeAccount({ purpose, materialization, account: options.expectedAccount });
       if (materialized === undefined) {
         throw Object.assign(new Error('Sign in with gh CLI'), { code: 'plugin_connected_account_native_unavailable' });
       }
@@ -220,16 +229,7 @@ export function createStubGithubTransport(input: Readonly<{
       kind: 'httpHeaders';
       headers: Readonly<Record<string, string>>;
     }>> {
-      materializeCount += 1;
-      materializations.push(Object.freeze({
-        purpose: request.purpose,
-        account: request.account,
-        materialization: Object.freeze({ ...request.materialization }),
-      }));
-      return Object.freeze({
-        kind: 'httpHeaders',
-        headers: Object.freeze({ Authorization: 'Bearer test-only-placeholder' }),
-      });
+      return materializeAccount(request);
     },
   };
 

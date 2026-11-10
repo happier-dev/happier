@@ -7,6 +7,7 @@ import {
   type CollectionAnatomy,
 } from '@happier-dev/plugin-ui';
 import type { EnvironmentVariableBindingV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentVariableFactOptionsV1, type DeploymentVariableFactV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import type { DeploymentEnvironmentReadDetailV1, EnvironmentSecretBindingProjectionV1 } from '@happier-dev/deployments';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -38,6 +39,7 @@ import { t } from '@/text';
 
 import {
   readDeploymentActionError,
+  readDeploymentActionResult,
   type DeploymentActionOutcome,
 } from './deploymentActionOutcome';
 import type { DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
@@ -49,6 +51,12 @@ import { SharedSavedSecretValueItem } from '@/components/secrets/SharedSavedSecr
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { DeploymentSecretBindingsNotice } from './DeploymentSecretBindingsNotice';
+import { DeploymentEnvironmentDomainSelect } from './DeploymentEnvironmentDomainSelect';
+import { useDeploymentProviderVariables } from './useDeploymentProviderVariables';
+import type { DeploymentTargetVariableMetadataV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+import type { DeploymentBindingsSetResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+const providerKeyOf = (fact: DeploymentTargetVariableMetadataV1) => fact.key;
+type ProviderSaveResult = NonNullable<Extract<DeploymentBindingsSetResultV1, { ok: true }>['providerVariables']>;
 
 type VariableBinding = EnvironmentVariableBindingV1;
 type Phase = 'build' | 'runtime' | 'both';
@@ -64,7 +72,7 @@ type BindingsDraft = ReturnType<typeof useEnvironmentSecretBindingsDraft>;
 type SavedSecretBindings = ReturnType<typeof useEnvironmentSavedSecretBindings>;
 type SecretSources = EnvironmentSavedSecretBindingResult['sources'];
 type PanelMode = 'table' | 'bulk';
-type Adding = 'plain' | 'secret' | 'saved' | 'reference';
+type Adding = 'plain' | 'secret' | 'saved' | 'reference' | 'fact';
 type SecretSource = Extract<VariableBinding['source'], { kind: 'secret' }>;
 
 const PHASES: readonly Phase[] = ['build', 'runtime', 'both'];
@@ -87,12 +95,14 @@ const noop = () => {};
  * is used and where its value comes from. Rows read metadata only. They come from Plan 42's binding
  * projection (K1) through the page's draft owner. Only the shared Reveal leaf reads a value after confirmation.
  * Identities stay stable across echoes; every change is local
- * until Save, which is one `deployments.bindings.set` write (a "Both" change is the build+runtime pair at once).
+ * until Save through the draft's owning Environment Action (a "Both" change is the build+runtime pair at once).
  */
 export const DeploymentVariablesPanel = React.memo(
   function DeploymentVariablesPanel(
     props: Readonly<{
       draft: BindingsDraft;
+      title?: string;
+      description?: string;
       phone: boolean;
       environmentName: (environmentId: string) => string | null;
       /** The Machine the release starts on, which alone opens the sealed secrets. */
@@ -100,6 +110,9 @@ export const DeploymentVariablesPanel = React.memo(
       review: DeploymentReviewHandle;
       /** The Environment the draft edits: a new secret binds only into this one. */
       environmentId: string;
+      projectSourceId?: string;
+      providerTargetLinkId?: string | null;
+      providerVariablesActive?: boolean;
       /** The Home/Account a new secret is saved under (Settings → Secrets); null while it is not current. */
       scope: AccountSettingsScope | null;
       /** The same Home/Account's lifetime: "Use a saved secret…" picks only while it is current. */
@@ -113,12 +126,19 @@ export const DeploymentVariablesPanel = React.memo(
       onDeploy?: (() => void) | null;
       /** Declared service exports "Point at another service" offers (this Environment's and its Project's). */
       referenceTargets?: readonly VariableReferenceTarget[];
+      domainRead?: Pick<React.ComponentProps<typeof DeploymentEnvironmentDomainSelect>, 'controller' | 'demand'>;
     }>,
   ) {
     const { theme } = useUnistyles();
     const router = useRouter();
     const { draft } = props;
     const editor = draft.editor;
+    const provider = useDeploymentProviderVariables({ lifetime: props.lifetime, active: props.providerVariablesActive, projectSourceId: props.projectSourceId,
+      environmentId: props.environmentId, targetLinkId: props.providerTargetLinkId });
+    const providerByKey = React.useMemo(() => new Map(provider.value?.variables.map(row => [row.key, row]) ?? []), [provider.value]);
+    const [providerSaveState, setProviderSave] = React.useState<Readonly<{ lifetime: typeof props.lifetime; environmentId: string; result: ProviderSaveResult }> | null>(null);
+    const providerSave = providerSaveState?.lifetime === props.lifetime && providerSaveState.environmentId === props.environmentId
+      ? providerSaveState.result : null;
     // A Saved Secret row names its secret from the Account's one catalog (no material is read).
     const catalog = useSavedSecretCatalogEntries({ scope: props.scope });
     const secretName = React.useCallback(
@@ -126,6 +146,13 @@ export const DeploymentVariablesPanel = React.memo(
       [catalog],
     );
     const rows = React.useMemo(() => variableRows(editor.rows), [editor.rows]);
+    const providerOnly = React.useMemo(() => {
+      const authored = new Set(rows.map(row => row.name));
+      return provider.value?.variables.filter(fact => !authored.has(fact.key)) ?? [];
+    }, [provider.value, rows]);
+    const providerOnlyModel = useHappierCollection<DeploymentTargetVariableMetadataV1>({
+      items: providerOnly, keyOf: providerKeyOf, openKey: null, onOpenChange: noop,
+    });
     const rotated = React.useMemo(() => rotatedSecrets(props.secretRevisions ?? null), [props.secretRevisions]);
     // Rows still bound to an older revision than the newest one saved: "Use the new revision" re-binds them here.
     const stale = React.useMemo(() => rows.filter(row => row.binding.source.kind === 'secret'
@@ -139,6 +166,9 @@ export const DeploymentVariablesPanel = React.memo(
     }, [router]);
     const editable = draft.canEdit && !draft.saving;
     const [adding, setAdding] = React.useState<Adding | null>(null);
+    const [fact, setFact] = React.useState<DeploymentVariableFactV1>('primaryUrl');
+    const [factOpen, setFactOpen] = React.useState(false);
+    const [factDomainId, setFactDomainId] = React.useState<string | null>(null);
     // "Use a saved secret…" (lab d2 `pick`): the shared reference-only picker, then a name for it here.
     const [picked, setPicked] = React.useState<SecretSource | null>(null);
     const pickSaved = React.useCallback(async () => {
@@ -233,6 +263,7 @@ export const DeploymentVariablesPanel = React.memo(
         title: (row) => row.name,
         // The list reads one row as the lab's `rowsp`: the name, then where it is used and its value.
         byline: (row: VariableRow) => (
+              <View>
                 <Text
                   variant="meta"
                   numberOfLines={2}
@@ -242,6 +273,10 @@ export const DeploymentVariablesPanel = React.memo(
                   {rowRotation(row, rotated) !== null ? <>{' · '}<RotatedWord
                     testID={`project-deployments.environment.variable.${row.name}.rotated`} /></> : null}
                 </Text>
+                {providerByKey.has(row.name) ? <ProviderVariableStatus fact={providerByKey.get(row.name)!}
+                  choice={draft.providerChoices.get(row.name)} editable={editable}
+                  onChoose={choice => draft.chooseProviderVariable(row.name, choice)} /> : null}
+              </View>
               ),
         action: rowMenu(true),
         fields: [
@@ -262,6 +297,13 @@ export const DeploymentVariablesPanel = React.memo(
                   minWidth: 180,
                   priority: 4,
                 },
+                ...(props.providerTargetLinkId ? [{
+                  key: 'provider', title: t('projects.deployments.providerVariablesColumn'),
+                  render: (row: VariableRow) => providerByKey.has(row.name) ? <ProviderVariableStatus fact={providerByKey.get(row.name)!}
+                    choice={draft.providerChoices.get(row.name)} editable={editable}
+                    onChoose={choice => draft.chooseProviderVariable(row.name, choice)} /> : null,
+                  minWidth: 180, priority: 6, control: true,
+                }] : []),
                 {
                   key: 'menu',
                   title: '',
@@ -279,6 +321,10 @@ export const DeploymentVariablesPanel = React.memo(
       };
     }, [
       editable,
+      providerByKey,
+      draft.providerChoices,
+      draft.chooseProviderVariable,
+      props.providerTargetLinkId,
       props.environmentName,
       secretName,
       remove,
@@ -291,12 +337,26 @@ export const DeploymentVariablesPanel = React.memo(
       theme.colors.text.secondary,
     ]);
 
+    const providerOnlyAnatomy = React.useMemo<CollectionAnatomy<DeploymentTargetVariableMetadataV1>>(() => ({
+      glyph: () => null,
+      loadingGlyph: false,
+      title: fact => fact.key,
+      byline: fact => <ProviderVariableStatus fact={fact} editable={false} onChoose={noop} />,
+      accessibilityLabel: fact => fact.key,
+      columnTitles: anatomy.columnTitles,
+    }), [anatomy.columnTitles]);
+
     const save = async (): Promise<boolean> => {
       setOutcome(null);
+      setProviderSave(null);
       try {
         const result = await draft.save();
+        if (result) {
+          if (result.ok && result.providerVariables) setProviderSave({ lifetime: props.lifetime, environmentId: props.environmentId, result: result.providerVariables });
+          void provider.refresh();
+        }
         if (result && !result.ok) {
-          setOutcome({ kind: 'refused', reason: 'other', code: result.error });
+          setOutcome(readDeploymentActionResult(result));
           return false;
         }
         return true;
@@ -304,6 +364,7 @@ export const DeploymentVariablesPanel = React.memo(
         const next = readDeploymentActionError(error);
         if (next.kind === 'approval') props.review.request(next.artifactId);
         setOutcome(next);
+        if (props.providerTargetLinkId) void provider.refresh();
         return false;
       }
     };
@@ -403,13 +464,13 @@ export const DeploymentVariablesPanel = React.memo(
     return (
       <ItemGroup
         testID="project-deployments.environment.variables"
-        title={t('projects.deployments.variablesTitle')}
+        title={props.title ?? t('projects.deployments.variablesTitle')}
         titleAccessory={
           rows.length > 0 ? (
             <ManagedSectionCount count={rows.length} />
           ) : undefined
         }
-        description={t('projects.deployments.variablesDescription')}
+        description={props.description ?? t('projects.deployments.variablesDescription')}
         action={actions}
         surface="none"
       >
@@ -423,6 +484,23 @@ export const DeploymentVariablesPanel = React.memo(
             onOpenReview={props.review.open}
           />
         ) : null}
+        {props.providerTargetLinkId && provider.loading && !provider.value ? <SurfaceStateCard size="line" kind="loading"
+          testID="project-deployments.environment.variables.provider.loading" title={t('common.loading')} /> : null}
+        {props.providerTargetLinkId && provider.failure ? <SurfaceStateCard size="line" kind="error"
+          testID="project-deployments.environment.variables.provider.unavailable"
+          title={t('projects.deployments.providerVariablesUnavailable')} diagnosticCode={provider.failure}
+          action={{ label: t('common.retry'), onPress: () => { void provider.refresh(); } }} /> : null}
+        {providerSave && providerSave.failures.length > 0 ? <AttentionBanner tone="warning"
+          testID="project-deployments.environment.variables.provider.partial"
+          title={t('projects.deployments.providerVariablesPartial')}
+          details={providerSave.failures.map(failure => `${failure.key}: ${failure.code}`)} /> : null}
+        {providerOnly.length > 0 ? <CoreCollectionScope>
+          <Collection<DeploymentTargetVariableMetadataV1> model={providerOnlyModel} anatomy={providerOnlyAnatomy}
+            testID="project-deployments.environment.variables.provider.unbound"
+            accessibilityLabel={t('projects.deployments.providerVariablesColumn')}
+            presentation="list" detail="none" scroll="page" minListWidth={TABLE_MIN_WIDTH_PX}
+            minDetailWidth={TABLE_MIN_WIDTH_PX} preferredListRatio={1} />
+        </CoreCollectionScope> : null}
         {mode === 'table' && rotated.size > 0 && rows.some(row => rowRotation(row, rotated) !== null) ? (
           <AttentionBanner
             testID="project-deployments.environment.variables.rotated"
@@ -488,10 +566,36 @@ export const DeploymentVariablesPanel = React.memo(
           <AddValueVariable
             taken={rows}
             secret={adding === 'secret'}
+            valueReady={adding !== 'fact' || fact !== 'domainUrl' || factDomainId !== null}
+            valueControl={adding === 'fact' ? <>
+              <DropdownMenu testID="project-deployments.environment.variables.add.fact-choice"
+                open={factOpen} onOpenChange={setFactOpen}
+                items={DeploymentVariableFactOptionsV1.map(value => ({ id: value, title: factTitle(value) }))}
+                selectedId={fact} onSelect={value => {
+                  const selected = DeploymentVariableFactOptionsV1.find(choice => choice === value);
+                  if (selected) setFact(selected);
+                  setFactOpen(false);
+                }} itemTrigger={{ title: t('projects.deployments.settingsSections.previewEditor.addFact'),
+                  detailFormatter: () => factTitle(fact), itemProps: { accessoryLayout: 'adaptive' } }} />
+              {fact === 'domainUrl' ? props.domainRead ? <DeploymentEnvironmentDomainSelect {...props.domainRead}
+                environmentId={props.environmentId} selectedId={factDomainId} onSelect={setFactDomainId}
+                disabled={draft.saving} title={t('projects.deployments.factDomainUrl')}
+                testID="project-deployments.environment.variables.add.fact-domain"
+                stateTestID="project-deployments.environment.variables.add.fact-domain-state" />
+                : <SurfaceStateCard kind="unavailable" size="line" title={t('common.unavailable')} /> : null}
+            </> : undefined}
             bound={adding === 'saved' && picked ? savedName(picked) : null}
             status={saved.status}
             onCancel={() => setAdding(null)}
             onAdd={async (name, value) => {
+              if (adding === 'fact') {
+                if (fact === 'domainUrl' && !factDomainId) return false;
+                const source: Extract<VariableBinding['source'], { kind: 'deploymentFact' }> = fact === 'domainUrl'
+                  ? { kind: 'deploymentFact', fact, domainId: factDomainId! } : { kind: 'deploymentFact', fact };
+                const result = editor.setVariable({ name, phase: 'runtime', source });
+                if (result.ok) setAdding(null);
+                return result.ok;
+              }
               if (adding === 'saved') {
                 const result = picked ? editor.setVariable({ name, phase: 'runtime', source: picked }) : { ok: false };
                 if (result.ok) setAdding(null);
@@ -728,6 +832,8 @@ function AddValueVariable(
     /** A saved secret already picked: only its name here is asked for. */
     bound?: string | null;
     status: SavedSecretBindings['status'];
+    valueControl?: React.ReactNode;
+    valueReady?: boolean;
     onCancel: () => void;
     onAdd: (name: string, value: string) => boolean | Promise<boolean>;
   }>,
@@ -754,7 +860,7 @@ function AddValueVariable(
       onSave={() => {
         void Promise.resolve(props.onAdd(trimmed, value)).then((ok) => setFailed(!ok));
       }}
-      saveDisabled={trimmed.length === 0 || duplicate || busy || (props.secret && !props.bound && value.length === 0)}
+      saveDisabled={trimmed.length === 0 || duplicate || busy || props.valueReady === false || (props.secret && !props.bound && value.length === 0)}
       cancelLabel={t('common.cancel')}
       saveLabel={t('common.add')}
       saveTestID="project-deployments.environment.variables.add.save"
@@ -785,7 +891,7 @@ function AddValueVariable(
             {t('projects.deployments.addSavedBound', { name: props.bound })}
           </Text>
         ) : null}
-        {props.bound ? null : <FieldTextInput
+        {props.bound ? null : props.valueControl ?? <FieldTextInput
           testID="project-deployments.environment.variables.add.value"
           value={value}
           onChangeText={setValue}
@@ -912,6 +1018,13 @@ function AddMenu(
             icon: <Icon name="link" size={16} color={theme.colors.text.secondary} />,
           }]
         : []),
+      {
+        id: 'fact',
+        testID: `${id}.fact`,
+        title: t('projects.deployments.settingsSections.previewEditor.addFact'),
+        subtitle: t('projects.deployments.sourceFactDetail'),
+        icon: <Icon name="code" size={16} color={theme.colors.text.secondary} />,
+      },
       {
         id: 'paste',
         category: 'paste',
@@ -1162,6 +1275,10 @@ function SaveOutcome(
     );
   }
   if (outcome.kind !== 'refused') return null;
+  if (outcome.failure?.effectAttempted) return <AttentionBanner
+    testID="project-deployments.environment.variables.provider.unpersisted" tone="warning"
+    title={t('projects.deployments.providerVariablesUnpersisted')}
+    description={t('projects.deployments.providerVariablesUnpersistedBody')} details={[outcome.code]} />;
   return (
     <AttentionBanner
       testID={`project-deployments.environment.variables.refused.${outcome.reason}`}
@@ -1175,6 +1292,34 @@ function SaveOutcome(
       details={[outcome.code]}
     />
   );
+}
+
+/** Masked provider facts, beside the authored source. The provider owner decides drift and ownership. */
+function ProviderVariableStatus(props: Readonly<{
+  fact: DeploymentTargetVariableMetadataV1; choice?: 'useOurs' | 'keepTheirs'; editable: boolean;
+  onChoose: (choice: 'useOurs' | 'keepTheirs') => void;
+}>) {
+  const { fact } = props;
+  const prefix = `project-deployments.environment.variables.provider.${fact.key}`;
+  const conflict = fact.present && (!fact.owned || fact.drift === 'changed');
+  return <View testID={prefix}>
+    <Text variant="meta">{[
+      fact.present ? t('projects.deployments.providerVariablesPresent') : t('projects.deployments.providerVariablesMissing'),
+      fact.secret ? t('projects.deployments.providerVariablesSecret') : t('projects.deployments.providerVariablesPlain'),
+      fact.owned ? t('projects.deployments.providerVariablesOwned') : t('projects.deployments.providerVariablesExternal'),
+      fact.drift === 'changed' ? t('projects.deployments.providerVariablesChanged')
+        : fact.drift === 'unknown' ? t('projects.deployments.providerVariablesUnknown') : null,
+    ].filter(Boolean).join(' · ')}</Text>
+    {conflict && props.editable ? <>
+      <Text variant="meta">{t('projects.deployments.providerVariablesChoiceBody')}</Text>
+      <SegmentedTabBar<'useOurs' | 'keepTheirs' | ''>
+      accessibilityLabel={fact.key} compact activeTabId={props.choice ?? ''}
+      onSelectTab={choice => { if (choice) props.onChoose(choice); }}
+      tabs={[
+        { id: 'useOurs', label: t('projects.deployments.providerVariablesUseOurs'), testID: `${prefix}.useOurs` },
+        { id: 'keepTheirs', label: t('projects.deployments.providerVariablesKeepTheirs'), testID: `${prefix}.keepTheirs` },
+      ]} /></> : null}
+  </View>;
 }
 
 /** The newest saved revision any runtime member does not run yet, per (name, phase); unknown facts say nothing. */
@@ -1326,18 +1471,22 @@ function sourceTitle(
           t('projects.deployments.sourceAnotherEnvironment'),
       });
     case 'deploymentFact':
-      switch (source.fact) {
-        case 'primaryUrl':
-          return t('projects.deployments.factPrimaryUrl');
-        case 'commitSha':
-          return t('projects.deployments.factCommitSha');
-        case 'deploymentId':
-          return t('projects.deployments.factDeploymentId');
-        case 'environmentName':
-          return t('projects.deployments.factEnvironmentName');
-        case 'domainUrl':
-          return t('projects.deployments.factDomainUrl');
-      }
+      return factTitle(source.fact);
+  }
+}
+
+function factTitle(fact: DeploymentVariableFactV1): string {
+  switch (fact) {
+    case 'primaryUrl':
+      return t('projects.deployments.factPrimaryUrl');
+    case 'commitSha':
+      return t('projects.deployments.factCommitSha');
+    case 'deploymentId':
+      return t('projects.deployments.factDeploymentId');
+    case 'environmentName':
+      return t('projects.deployments.factEnvironmentName');
+    case 'domainUrl':
+      return t('projects.deployments.factDomainUrl');
   }
 }
 

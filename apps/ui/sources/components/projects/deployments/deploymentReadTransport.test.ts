@@ -42,7 +42,11 @@ describe('deployment scoped read transport', () => {
         const targetLink = createDeploymentTargetLinkHeaderV1({ role: 'data', targetKind: 'database', machines: [], members: [],
             source: { kind: 'plugin', contribution: { pluginId: 'com.example.database', localId: 'database' } } });
         const content = { providerIdentity: { providerAccountId: 'team', providerResourceId: 'internal-project-id', providerEnvironment: 'main' },
-            providerEnvironment: { kind: 'custom' as const, id: 'main' } };
+            providerEnvironment: { kind: 'custom' as const, id: 'main' },
+            credentialPrincipal: { kind: 'account' as const, accountId: 'alice',
+                purpose: { consumer: { pluginId: 'com.example.database', localId: 'projects-link' }, purpose: 'database' },
+                target: { kind: 'account' as const, account: { service: { pluginId: 'com.example.database', localId: 'database' },
+                    accountId: 'database-token' } } } };
         try {
             await account.createArtifactDocument({ artifactId: targetLink.contentArtifactId,
                 header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'Customer database' }, body: JSON.stringify(content) });

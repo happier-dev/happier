@@ -66,7 +66,8 @@ it('reads restore workspace rows under the signed public root while reading the 
     if (sourceIntent.kind !== 'repository') throw new Error('Repository fixture required');
     const native = projectDeploymentNativeAdmissionV1('deployments.backups.restore', { serverId: 'home',
         environmentId: environment.environment.id, machineId: 'controller', installationId: 'installation',
-        targetLinkId: 'target', deploymentId: 'capture-receipt', restoreBackupId: 'backup', expectedRevision: 1, mode: 'prepare' });
+        targetLinkId: 'target', deploymentId: 'capture-receipt', source: { kind: 'repository', snapshotId: 'backup' },
+        expectedRevision: 1, mode: 'prepare' });
     const effects: string[] = [];
     // Signing and HTTP are genuine boundaries; retain real Source/Account row admission beneath them.
     const authorization = { ...ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-restore', binding: {

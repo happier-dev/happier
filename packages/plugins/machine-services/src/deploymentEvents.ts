@@ -1,6 +1,8 @@
 import { arePluginMachineMaterializationRefsEqual, computeCanonicalDomainSeparatedDigest, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, deploymentInProgressStates, DeploymentReceiptEventSourceConfigV1ProtocolSchema as configSchema,
+import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1, readDeploymentAccountChangeV1,
+    DeploymentReceiptChangedEventV1ProtocolSchema as changedSchema,
+    deploymentInProgressStates, DeploymentReceiptEventSourceConfigV1ProtocolSchema as configSchema,
     DeploymentReceiptEventSetupV1ProtocolSchema as setupSchema,
     DeploymentFailedEventV1ProtocolSchema as failedSchema, DeploymentRollbackCompletedEventV1ProtocolSchema as rollbackSchema,
     DeploymentReceiptOutcomeEventV1ProtocolSchema as outcomeSchema,
@@ -12,10 +14,13 @@ import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 
 const pluginId = DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.pluginId;
 export const DEPLOYMENT_FAILED_EVENT = DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.localId;
+const changedEvent = DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1.localId;
 export const ROLLBACK_COMPLETED_EVENT = 'rollback-completed';
 type ReceiptRead = Extract<PluginActionResultById['deployments.receipts.get'], { ok: true }>;
 type Receipt = ReceiptRead['deployment'] & Pick<ReceiptRead, 'failureSummary'>;
 const outcomes = {
+    [changedEvent]: { state: null, operation: null, schema: changedSchema, key: 'deploymentReceiptChanged',
+        title: 'Deployment receipt changed', description: 'The current deployment receipt or its serving Domain changed.' },
     [DEPLOYMENT_FAILED_EVENT]: { state: 'failed', operation: null, schema: failedSchema, key: 'deploymentFailed',
         title: 'Deployment failed', description: 'A deployment receipt settled as failed, with its recorded failure phase.' },
     [ROLLBACK_COMPLETED_EVENT]: { state: 'succeeded', operation: 'rollback', schema: rollbackSchema, key: 'rollbackCompleted',
@@ -33,7 +38,7 @@ type EventId = keyof typeof outcomes;
 const isEventId = (id: string): id is EventId => Object.hasOwn(outcomes, id);
 const sourceId = (config: DeploymentReceiptEventSourceConfigV1, event: EventId) =>
     `deployment:${computeCanonicalDomainSeparatedDigest('happier.deployment.event-source.v1', [config.serverId, config.environmentId, event, String(config.observingSince),
-        ...(config.targetLinkId ? [config.targetLinkId] : [])])}`;
+        ...(config.targetLinkId ? [config.targetLinkId] : []), ...(config.previewChildren ? ['previewChildren'] : [])])}`;
 
 const setupAction = (event: EventId) => ({
     title: 'Choose deployment Environment', execution: { target: 'daemon' as const }, scopes: ['global', 'machine'] as const,
@@ -42,6 +47,7 @@ const setupAction = (event: EventId) => ({
     resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, configSchema.jsonSchema),
     async run(input: unknown, context: PluginInvocationContext) {
         const scope = setupSchema.parse(input);
+        if (scope.previewChildren && event !== changedEvent) throw new PluginError({ code: 'deployment_target_unavailable' });
         let credentialPrincipal: DeploymentReceiptEventSourceConfigV1['credentialPrincipal'];
         if (scope.targetLinkId) {
             const read = await context.services.actions.execute('deployments.observation.get', {
@@ -81,7 +87,8 @@ const event = (id: EventId) => {
 };
 export const deploymentEvents = Object.fromEntries((Object.keys(outcomes) as EventId[]).map(id => [id, event(id)]));
 
-type PendingReceipt = { receipt?: Receipt | null };
+type PendingReceipt = { receipt?: Receipt | null; environmentId?: string; latest?: true;
+    templateEnvironmentId?: string | null; domains?: string };
 type State = { config: DeploymentReceiptEventSourceConfigV1; event: EventId; fullRead: boolean;
     pending: Map<string, PendingReceipt>; observing: Set<string>; observations: PluginEventObservationV1[] | null };
 const inProgressStates = new Set(deploymentInProgressStates());
@@ -94,10 +101,32 @@ function pendingEligibility(state: State, time: number): number | null {
 export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServiceContext['services']['events']['host'],
     now: () => number = Date.now): PluginCheckpointedEventSourceAdapterV1<DeploymentReceiptEventSourceConfigV1, State> {
     const states = new Map<string, State>();
+    let accountChanges: { dispose(): void } | undefined;
+    let wakeSources: Parameters<NonNullable<PluginCheckpointedEventSourceAdapterV1<DeploymentReceiptEventSourceConfigV1, State>['subscribeWake']>>[0] | undefined;
+    const updateAccountSubscription = () => {
+        const needed = [...states.values()].some(state => state.event === changedEvent);
+        if (!needed) { accountChanges?.dispose(); accountChanges = undefined; }
+        else if (!accountChanges && wakeSources) accountChanges = host.subscribe({
+            eventId: '@happier/account/entities-invalidated', scope: { kind: 'account' },
+        }, async event => {
+            for (const entityId of event.payload.entityIds) {
+                const change = readDeploymentAccountChangeV1({ kind: 'account', entityId });
+                if (!change || change.deploymentId || change.activityChanged) continue;
+                const entries = new Map<string, PendingReceipt>();
+                for (const [id, state] of states) {
+                    if (state.event !== changedEvent || !state.config.previewChildren && state.config.environmentId !== change.environmentId) continue;
+                    const entry: PendingReceipt = entries.get(state.config.serverId) ?? { environmentId: change.environmentId, latest: true };
+                    entries.set(state.config.serverId, entry);
+                    state.pending.set(`environment:${change.environmentId}`, entry);
+                    await wakeSources?.(id);
+                }
+            }
+        });
+    };
     const decode = (definition: PluginCheckpointedEventSourceDefinitionV1) => {
         if (definition.eventRef.pluginId !== pluginId || definition.sourceContractVersion !== 1 || !isEventId(definition.eventRef.localId)) return null;
         const parsed = configSchema.safeParse(definition.sourceConfig);
-        return parsed.success ? parsed.data : null;
+        return parsed.success && (!parsed.data.previewChildren || definition.eventRef.localId === changedEvent) ? parsed.data : null;
     };
     const adopt = (definition: PluginCheckpointedEventSourceDefinitionV1, source: DeploymentReceiptEventSourceConfigV1) => {
         const event = definition.eventRef.localId as EventId;
@@ -107,6 +136,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
             states.set(definition.sourceInstanceId, state);
         }
         state.config = source;
+        updateAccountSubscription();
         return state;
     };
     return {
@@ -121,21 +151,44 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 const receipts: Receipt[] = [];
                 if (state.fullRead) {
                     const retained: Receipt[] = [];
-                    let cursor: string | undefined;
-                    do {
-                        const page = await context.services.actions.execute('deployments.receipts.list', {
-                            serverId: source.serverId, environmentId: source.environmentId, ...(cursor ? { cursor } : {}),
+                    const environmentIds: string[] = [];
+                    if (source.previewChildren) {
+                        const template = await context.services.actions.execute('deployments.environments.get', {
+                            serverId: source.serverId, environmentId: source.environmentId,
                         }, { signal: context.signal });
-                        if (!('ok' in page) || !page.ok) throw new PluginError({ code: 'ok' in page ? page.error : 'deployment_unavailable', message: 'Deployment receipts are unavailable.' });
-                        retained.push(...page.items); cursor = page.nextCursor ?? undefined;
-                    } while (cursor);
+                        if (!('ok' in template) || !template.ok) throw new PluginError({ code: 'ok' in template ? template.error : 'deployment_unavailable' });
+                        let cursor: string | undefined;
+                        do {
+                            const page = await context.services.actions.execute('deployments.environments.list', {
+                                serverId: source.serverId, projectSourceId: template.environment.projectSourceId,
+                                previewTemplateEnvironmentId: source.environmentId, includeDeleted: true, ...(cursor ? { cursor } : {}),
+                            }, { signal: context.signal });
+                            if (!('ok' in page) || !page.ok) throw new PluginError({ code: 'ok' in page ? page.error : 'deployment_unavailable' });
+                            if (page.coverage === 'partial') throw new PluginError({ code: 'deployment_unavailable' });
+                            environmentIds.push(...page.items.map(item => item.id)); cursor = page.nextCursor ?? undefined;
+                        } while (cursor);
+                    } else environmentIds.push(source.environmentId);
+                    for (const environmentId of environmentIds) {
+                        let cursor: string | undefined;
+                        do {
+                            const page = await context.services.actions.execute('deployments.receipts.list', {
+                                serverId: source.serverId, environmentId, ...(event === changedEvent ? { limit: 1 } : {}),
+                                ...(cursor ? { cursor } : {}),
+                            }, { signal: context.signal });
+                            if (!('ok' in page) || !page.ok) throw new PluginError({ code: 'ok' in page ? page.error : 'deployment_unavailable', message: 'Deployment receipts are unavailable.' });
+                            retained.push(...page.items); cursor = event === changedEvent ? undefined : page.nextCursor ?? undefined;
+                        } while (cursor);
+                    }
                     // The adapter belongs to one authenticated Account. Share the
                     // receipt owner's facts only within the same Home/Environment;
                     // each source keeps its own projection and checkpoint.
-                    const entries = retained.map(receipt => [receipt.id, { receipt }] as const);
+                    const entries = retained.map(receipt => [receipt.id, { receipt, environmentId: receipt.environmentId,
+                        ...(source.previewChildren ? { templateEnvironmentId: source.environmentId } : {}) }] as const);
                     for (const sibling of states.values()) {
                         if (!sibling.fullRead || sibling.config.serverId !== source.serverId
-                            || sibling.config.environmentId !== source.environmentId) continue;
+                            || sibling.config.environmentId !== source.environmentId
+                            || sibling.config.previewChildren !== source.previewChildren
+                            || (sibling.event === changedEvent) !== (event === changedEvent)) continue;
                         for (const [id, entry] of entries) if (!sibling.pending.has(id)) sibling.pending.set(id, entry);
                         sibling.observing.clear();
                         sibling.fullRead = false;
@@ -144,21 +197,53 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 for (const id of state.observing) if (!state.pending.has(id)) state.pending.set(id, {});
                 for (const [id, entry] of state.pending) pending.set(id, entry);
                 for (const id of pending.keys()) state.pending.delete(id);
-                for (const [deploymentId, entry] of pending) {
-                    if (entry.receipt === undefined) {
-                        const read = await context.services.actions.execute('deployments.receipts.get', {
-                            serverId: source.serverId, environmentId: source.environmentId, deploymentId,
+                const domainFacts = new Map<string, string>();
+                for (const [pendingId, entry] of pending) {
+                    const environmentId = entry.environmentId ?? source.environmentId;
+                    if (source.previewChildren && entry.templateEnvironmentId === undefined) {
+                        const child = await context.services.actions.execute('deployments.environments.get', {
+                            serverId: source.serverId, environmentId,
                         }, { signal: context.signal });
+                        if (!('ok' in child) || !child.ok) throw new PluginError({ code: 'ok' in child ? child.error : 'deployment_unavailable' });
+                        entry.templateEnvironmentId = child.environment.previewTemplateEnvironmentId ?? null;
+                    }
+                    if (source.previewChildren && entry.templateEnvironmentId !== source.environmentId) continue;
+                    if (entry.receipt === undefined) {
+                        const read = entry.latest
+                            ? await context.services.actions.execute('deployments.receipts.list', {
+                                serverId: source.serverId, environmentId, limit: 1,
+                            }, { signal: context.signal })
+                            : await context.services.actions.execute('deployments.receipts.get', {
+                                serverId: source.serverId, environmentId, deploymentId: pendingId,
+                            }, { signal: context.signal });
                         if (!('ok' in read) || !read.ok) {
                             if ('ok' in read && !read.ok && read.error === 'deployment_unavailable') {
                                 entry.receipt = null;
                             } else throw new PluginError({ code: 'ok' in read ? read.error : 'deployment_unavailable', message: 'Deployment receipt is unavailable.' });
                         } else {
-                            entry.receipt = { ...read.deployment, failureSummary: read.failureSummary };
+                            entry.receipt = 'items' in read ? read.items[0] ?? null : { ...read.deployment, failureSummary: read.failureSummary };
                         }
                     }
-                    if (entry.receipt === null) state.observing.delete(deploymentId);
-                    else receipts.push(entry.receipt);
+                    if (entry.receipt === null) state.observing.delete(pendingId);
+                    else {
+                        if (event === changedEvent) {
+                            if (entry.domains === undefined) {
+                                const domains: string[] = [];
+                                let cursor: string | undefined;
+                                do {
+                                    const page = await context.services.actions.execute('deployments.domains.list', {
+                                        serverId: source.serverId, environmentId, ...(cursor ? { cursor } : {}),
+                                    }, { signal: context.signal });
+                                    if (!('ok' in page) || !page.ok) throw new PluginError({ code: 'ok' in page ? page.error : 'deployment_unavailable' });
+                                    for (const domain of page.domains) domains.push(domain.id, String(domain.revision));
+                                    cursor = page.nextCursor ?? undefined;
+                                } while (cursor);
+                                entry.domains = computeCanonicalDomainSeparatedDigest('happier.deployment.domain-revisions.v1', domains);
+                            }
+                            domainFacts.set(entry.receipt.id, entry.domains);
+                        }
+                        receipts.push(entry.receipt);
+                    }
                 }
                 // Only the failed source drives finite platform observation. Its
                 // sibling outcome sources consume the receipt owner's invalidation.
@@ -188,17 +273,18 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 const observations: PluginEventObservationV1[] = [];
                 for (const receipt of receipts) {
                     const outcome = outcomes[event];
-                    if (receipt.environmentId !== source.environmentId
+                    if (!source.previewChildren && receipt.environmentId !== source.environmentId
                         || source.targetLinkId && (receipt.targetLinkId !== source.targetLinkId || receipt.operation === 'teardown')
                         || event === DEPLOYMENT_RECEIPT_EVENT_REFS_V1.succeeded.localId && receipt.operation === 'teardown'
-                        || receipt.settledAtMs === undefined || receipt.settledAtMs < source.observingSince
-                        || receipt.state !== outcome.state || outcome.operation !== null && receipt.operation !== outcome.operation) continue;
+                        || event !== changedEvent && (receipt.settledAtMs === undefined || receipt.settledAtMs < source.observingSince
+                            || receipt.state !== outcome.state || outcome.operation !== null && receipt.operation !== outcome.operation)) continue;
+                    const observedAt = receipt.settledAtMs ?? receipt.startedAtMs ?? receipt.requestedAtMs;
                     const identity = { environmentId: receipt.environmentId, deploymentId: receipt.id, targetLinkId: receipt.targetLinkId,
-                        receiptRevision: receipt.revision, observedAt: receipt.settledAtMs };
+                        receiptRevision: receipt.revision, observedAt };
                     let payload;
                     if (event === DEPLOYMENT_FAILED_EVENT) {
                         const result = receipt.failureSummary === undefined ? await context.services.actions.execute('deployments.receipts.get', {
-                            serverId: source.serverId, environmentId: source.environmentId, deploymentId: receipt.id,
+                            serverId: source.serverId, environmentId: receipt.environmentId, deploymentId: receipt.id,
                         }, { signal: context.signal }) : { ok: true as const, failureSummary: receipt.failureSummary };
                         if (!result.ok) throw new PluginError({ code: result.error });
                         if (result.failureSummary === undefined) throw new PluginError({
@@ -210,13 +296,16 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                     observations.push({ eventRef: { pluginId, localId: event }, sourceInstanceId: definition.sourceInstanceId,
                         sourceContractVersion: definition.sourceContractVersion,
                         occurrenceId: computeCanonicalDomainSeparatedDigest('happier.deployment.receipt-event.v1',
-                            [source.serverId, receipt.environmentId, receipt.id, event, String(receipt.settledAtMs)]),
-                        occurredAt: receipt.settledAtMs, observationReceivedAt: now(), observedDelta: 1, payload });
+                            [source.serverId, receipt.environmentId, receipt.id, event, String(observedAt),
+                                ...(event === changedEvent ? [String(receipt.revision), domainFacts.get(receipt.id)!] : [])]),
+                        occurredAt: observedAt, observationReceivedAt: now(), observedDelta: 1, payload });
                 }
                 state.observations = observations;
               } catch (error) {
                 if (fullRead) state.fullRead = true;
-                else for (const id of pending.keys()) if (!state.pending.has(id)) state.pending.set(id, {});
+                else for (const [id, entry] of pending) if (!state.pending.has(id)) state.pending.set(id, {
+                    environmentId: entry.environmentId, latest: entry.latest, templateEnvironmentId: entry.templateEnvironmentId,
+                });
                 throw error;
               }
             }
@@ -240,13 +329,16 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 if (source) { adopt(definition, source); current.add(definition.sourceInstanceId); }
             }
             for (const key of states.keys()) if (!current.has(key)) states.delete(key);
+            updateAccountSubscription();
             return { complete: true };
         },
         subscribeWake(wake) {
+            wakeSources = wake;
+            updateAccountSubscription();
             const receipts = host.subscribe({ eventId: '@happier/deployment/receipt-invalidated', scope: { kind: 'account' } }, async event => {
                 const entries = new Map<string, PendingReceipt>();
-                for (const [id, state] of states) if (state.config.environmentId === event.payload.environmentId) {
-                    const entry = entries.get(state.config.serverId) ?? {};
+                for (const [id, state] of states) if (state.config.environmentId === event.payload.environmentId || state.config.previewChildren) {
+                    const entry = entries.get(state.config.serverId) ?? { environmentId: event.payload.environmentId };
                     entries.set(state.config.serverId, entry);
                     state.pending.set(event.payload.deploymentId, entry); await wake(id);
                 }
@@ -256,7 +348,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 for (const state of states.values()) state.fullRead = true;
                 await wake();
             });
-            return { dispose() { receipts.dispose(); reconnect.dispose(); } };
+            return { dispose() { receipts.dispose(); reconnect.dispose(); accountChanges?.dispose(); accountChanges = undefined; wakeSources = undefined; } };
         },
     };
 }

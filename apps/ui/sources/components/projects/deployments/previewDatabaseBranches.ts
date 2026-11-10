@@ -9,7 +9,7 @@ export type PreviewBranchTarget = LinkedTarget & Readonly<{ actionId: string; ti
 
 /** Linked data targets consume their plugin's branch contribution, without a second provider catalog. */
 export function previewBranchTargets(declarations: readonly Readonly<{ manifest: PluginPortableReleaseManifestV1 }>[],
-  detail: DeploymentEnvironmentReadDetailV1, titles?: ReadonlyMap<string, string>): readonly PreviewBranchTarget[] {
+  detail: DeploymentEnvironmentReadDetailV1): readonly PreviewBranchTarget[] {
   return detail.targetLinks.flatMap((row): PreviewBranchTarget[] => {
     const source = row.targetLink.source;
     if (row.targetLink.role !== 'data' || source.kind !== 'plugin') return [];
@@ -17,7 +17,7 @@ export function previewBranchTargets(declarations: readonly Readonly<{ manifest:
     const target = manifest?.contributes.deploymentTargets?.find(entry => entry.id === source.contribution.localId);
     const branches = target?.role === 'data' ? target.dataV1?.branches : undefined;
     if (!branches?.listAction || !branches.create || !branches.delete) return [];
-    return [{ ...row, title: titles?.get(row.targetLink.id) || (typeof target?.title === 'string' ? target.title : row.targetLink.targetKind),
+    return [{ ...row, title: typeof target?.title === 'string' ? target.title : row.targetLink.targetKind,
       actionId: formatQualifiedPluginActionId({ pluginId: source.contribution.pluginId, localId: branches.listAction }) }];
   });
 }

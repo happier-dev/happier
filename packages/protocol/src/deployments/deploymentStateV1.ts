@@ -8,6 +8,9 @@ export const DeploymentStateV1Schema = lazyZodSchema(() => z.enum([
 ]));
 export type DeploymentStateV1 = z.infer<typeof DeploymentStateV1Schema>;
 
+/** Receipt operation vocabulary also consumed by provider observation inputs. */
+export const DeploymentReceiptOperationV1Schema = lazyZodSchema(() => z.enum(['deploy', 'rollback', 'promote', 'teardown']));
+
 /** Presentation of the executor's observed phase; cancellation itself never restores a workload. */
 export const DeploymentCancellationConsequenceV1Schema = lazyZodSchema(() => z.strictObject({
     kind: z.enum(['service-down-until-rollback', 'may-leave-service-down-until-rollback']),

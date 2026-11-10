@@ -23,9 +23,13 @@ import {
   type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 import { useTriageDetailRequest } from '@happier-dev/triage-sources/ui';
+import { useLivePluginResourceProjection, type PluginUiResourceProjection, type PluginUiResourceProjectionSnapshot } from '@happier-dev/plugin-ui/hostApi';
+import { buildGithubPreviewEnvironmentQueryV1 } from '../triage/previewQuery.js';
+import { parseGithubRoutingToken } from '../triage/locator.js';
 
 import { GITHUB_PLUGIN_ID } from '../observations/githubProviderContracts.js';
-import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../triage/contribution.js';
+import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1, GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } from '../triage/contribution.js';
+import { GithubPullRequestPreviewStatusResultV1Schema } from '../triage/mutations/contracts.js';
 import {
   GithubPreviewResultV1Schema,
   type GithubPreviewResultV1,
@@ -35,6 +39,7 @@ import {
   UNREADABLE_RESULT,
   type ExecuteResult,
 } from './detail/readBoundary.js';
+import { GithubReadFailureDetails } from './detail/readFailure.js';
 
 /**
  * The PR's Preview step (DEPLOY-COMPOSE-1107 P15): what the one `github/pull-request/preview` Action states about
@@ -54,6 +59,10 @@ type PreviewPhase =
 type MarkerState = 'passed' | 'failed' | 'running' | 'open';
 
 const shortSha = (sha: string): string => sha.slice(0, 7);
+
+const previewCollectionProjection: PluginUiResourceProjection<string> = { decode: content => content.digest };
+const selectPreviewCollection = (snapshot: PluginUiResourceProjectionSnapshot<string>) =>
+  snapshot.value ?? (snapshot.error ? 'unavailable' : undefined);
 
 /** A teardown receipt is the preview being removed: its running and failed states read as cleanup. */
 function childPhase(child: PreviewChild): PreviewPhase {
@@ -200,8 +209,8 @@ function failureText(
 }
 
 /**
- * One read of this PR's previews while the Overview is shown, read again when the observed head moves. No timer:
- * a later push arrives as a new observation, and Retry reads again after a failed read.
+ * The existing deployment collection wakes the same canonical PR read when receipts or cleanup change.
+ * Its first snapshot precedes the initial Action, so a change during mounting cannot become a stale baseline.
  */
 function useGithubPullRequestPreview(
   input: TriageDetailSurfaceInputV1,
@@ -227,6 +236,14 @@ function useGithubPullRequestPreview(
     input.observation.snapshot.reviewRevision?.headSha ?? null;
   const { active, activeSignal } = useTabPanelActivity();
   const [attempt, setAttempt] = React.useState(0);
+  const query = React.useMemo(() => {
+    const route = routingToken === null ? null : parseGithubRoutingToken(routingToken);
+    return serverId !== null && route !== null
+      ? buildGithubPreviewEnvironmentQueryV1(serverId, route, localRef.entryId) : null;
+  }, [serverId, routingToken, localRef.entryId]);
+  const observedCollection = useLivePluginResourceProjection({ hostRead: 'deployments.environments.list', input: query ?? { serverId: serverId ?? '' } },
+    previewCollectionProjection, selectPreviewCollection, { enabled: pullRequest && query !== null && active }).value;
+  const collection = query === null ? 'unavailable' : observedCollection;
   const authority = React.useMemo(
     () => ({
       instance,
@@ -235,8 +252,9 @@ function useGithubPullRequestPreview(
       serverId,
       observedHead,
       attempt,
+      collection,
     }),
-    [instance, localRef, routingToken, serverId, observedHead, attempt],
+    [instance, localRef, routingToken, serverId, observedHead, attempt, collection],
   );
   const [settled, setSettled] = React.useState<Readonly<{
     authority: typeof authority;
@@ -247,6 +265,7 @@ function useGithubPullRequestPreview(
   React.useEffect(() => {
     if (
       !readable ||
+      collection === undefined ||
       !active ||
       activeSignal.aborted ||
       settledAuthority === authority
@@ -264,6 +283,8 @@ function useGithubPullRequestPreview(
         execution.status === 'success'
           ? GithubPreviewResultV1Schema.safeParse(execution.result)
           : null;
+      const failure = (value: TriageSourceFailureV1) =>
+        dispatchFailure(execution, 'github-preview-read-failed', value);
       const result: GithubPreviewResultV1 =
         execution.status !== 'success'
           ? {
@@ -271,8 +292,16 @@ function useGithubPullRequestPreview(
               failure: dispatchFailure(execution, 'github-preview-read-failed'),
             }
           : parsed?.success
-            ? parsed.data
-            : { kind: 'unavailable', failure: UNREADABLE_RESULT };
+            ? parsed.data.kind === 'unavailable'
+              ? { ...parsed.data, failure: failure(parsed.data.failure) }
+              : { ...parsed.data, previews: parsed.data.previews.map(child =>
+                  child.kind === 'unavailable'
+                    ? { ...child, failure: failure(child.failure) }
+                    : child.publication?.kind === 'unavailable'
+                      ? { ...child, publication: { ...child.publication,
+                          failure: failure(child.publication.failure) } }
+                      : child) }
+            : { kind: 'unavailable', failure: failure(UNREADABLE_RESULT) };
       setSettled({ authority, result });
     });
     return () => {
@@ -281,6 +310,7 @@ function useGithubPullRequestPreview(
     };
   }, [
     readable,
+    collection,
     active,
     activeSignal,
     authority,
@@ -366,6 +396,7 @@ export function GithubPullRequestPreviewStep({
             />
           }
         />
+        <GithubReadFailureDetails failures={[result.failure]} />
       </Step>
     );
   }
@@ -442,7 +473,9 @@ function SinglePreview({
   const url = readyUrl(child);
   const reason = previewReason(text, child, headSha, closed);
   const next = <PreviewNextStep child={child} closed={closed} open={open} />;
-  if (url === null && reason === null && !hasNextStep(child, closed, open))
+  if (url === null && reason === null && !hasNextStep(child, closed, open)
+    && (child.kind !== 'preview' || child.publication === undefined)
+    && (!child.controller || child.controller.state === 'available'))
     return null;
   return (
     <Stack gap="small">
@@ -455,6 +488,9 @@ function SinglePreview({
         <Text variant="body" tone="secondary" value={reason} />
       )}
       {next}
+      {child.kind === 'unavailable' ? <GithubReadFailureDetails failures={[child.failure]} /> : null}
+      <PreviewController child={child} open={open} />
+      {child.kind === 'preview' && child.publication ? <PreviewPublication key={`${child.deploymentId}:${child.state}`} publication={child.publication} /> : null}
     </Stack>
   );
 }
@@ -472,17 +508,67 @@ function PreviewRow({
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const url = readyUrl(child);
-  if (url !== null && !needsCleanup(child, closed))
-    return <PreviewAddressRow url={url} />;
   const reason = previewReason(text, child, headSha, closed);
   return (
+    <Stack gap="small">
+    {url !== null && !needsCleanup(child, closed) ? <PreviewAddressRow url={url} /> :
     <Item
       title={url ?? previewSentence(text, child)}
       {...(reason === null ? {} : { subtitle: reason })}
       accessoryWraps
       accessory={<PreviewNextStep child={child} closed={closed} open={open} />}
-    />
+    />}
+    {child.kind === 'unavailable' ? <GithubReadFailureDetails failures={[child.failure]} /> : null}
+    {child.kind === 'preview' && child.publication ? <PreviewPublication key={`${child.deploymentId}:${child.state}`} publication={child.publication} /> : null}
+    <PreviewController child={child} open={open} />
+    </Stack>
   );
+}
+
+/** The Environment owner supplies reachability independently of the app's serving receipt. */
+function PreviewController({ child, open }: Readonly<{ child: PreviewChild; open: OpenDeployment | null }>): React.ReactElement | null {
+  const text = usePluginTranslation();
+  if (!child.controller || child.controller.state === 'available') return null;
+  return <Item title={child.controller.state === 'paused'
+    ? text('plugins.github.ui.preview.controllerPaused', 'Controller paused')
+    : text('plugins.github.ui.preview.controllerUnknown', 'Controller availability unknown')}
+    subtitle={text('plugins.github.ui.preview.controllerRecovery', 'Bring the controller online or choose another Machine.')}
+    accessoryWraps accessory={open === null ? undefined : <Button size="small" variant="plain"
+      title={text('plugins.github.ui.preview.chooseController', 'Choose another controller')}
+      onPress={() => open({ environmentId: child.environmentId, tab: 'settings' })} />} />;
+}
+
+/** A failed PR update never changes the receipt's readiness or starts another deploy. */
+function PreviewPublication({ publication }: Readonly<{ publication: NonNullable<PreviewItem['publication']> }>): React.ReactElement {
+  const text = usePluginTranslation();
+  const action = React.useMemo(() => ({ pluginId: GITHUB_PLUGIN_ID,
+    localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus }), []);
+  const { execute } = useExecutePluginAction(action);
+  const [busy, setBusy] = React.useState(false);
+  const [result, setResult] = React.useState<ReturnType<typeof GithubPullRequestPreviewStatusResultV1Schema.parse> | null>(null);
+  const current = publication.kind === 'current' || result?.kind === 'applied';
+  const failure = result?.kind === 'failed' || result?.kind === 'uncertain' ? result.failure
+    : publication.kind === 'unavailable' ? publication.failure : undefined;
+  const retry = async () => {
+    if (publication.kind === 'current' || busy) return;
+    setBusy(true);
+    try {
+      const execution = await execute(publication.input);
+      const parsed = execution.status === 'success' ? GithubPullRequestPreviewStatusResultV1Schema.safeParse(execution.result) : null;
+      setResult(execution.status !== 'success' ? { kind: 'failed', failure: dispatchFailure(execution, 'github-preview-status-failed') }
+        : parsed?.success ? parsed.data : { kind: 'failed', failure: UNREADABLE_RESULT });
+    } finally { setBusy(false); }
+  };
+  return <><Item title={current ? text('plugins.github.ui.preview.prUpdated', 'PR updated')
+    : result?.kind === 'uncertain' ? text('plugins.github.ui.preview.prUpdateUnconfirmed', 'PR update not confirmed')
+    : failure || result?.kind === 'refused' ? text('plugins.github.ui.preview.prUpdateUnavailable', 'PR update unavailable')
+    : text('plugins.github.ui.preview.prUpdatePending', 'PR update pending')}
+    {...(failure ? { subtitle: failureText(text, failure) } : result?.kind === 'refused' ? { subtitle: result.reason } : {})}
+    accessory={current ? undefined : <Button size="small" variant="plain" disabled={busy}
+      title={busy ? text('plugins.github.ui.preview.prUpdating', 'Updating PR…') : text('plugins.github.ui.preview.retryPrUpdate', 'Retry PR update')}
+      onPress={retry} />} />
+    {failure ? <GithubReadFailureDetails failures={[failure]} /> : null}
+  </>;
 }
 
 function hasNextStep(

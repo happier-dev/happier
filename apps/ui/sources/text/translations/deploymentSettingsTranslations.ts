@@ -177,6 +177,7 @@ type DeploymentSettingsTranslations = Readonly<{
   setupLocalGrowth: string;
   setupCapacityKnown: string;
   setupCapacityUnknown: string;
+  setupCapacityAtBackupMachine: string;
   credentialSshPrivateKey: string;
   setupMoreOptions: string;
   setupNoDatabaseTitle: string;
@@ -343,6 +344,7 @@ export const deploymentSettingsTranslations = {
     setupLocalGrowth: "Keep everything never deletes backups automatically. This disk can fill up.",
     setupCapacityKnown: "Free space",
     setupCapacityUnknown: "Free space unavailable",
+    setupCapacityAtBackupMachine: "Review free space on the Machine that owns this backup path.",
     credentialSshPrivateKey: "SSH private key",
     addCheck: 'Add check',
     addCheckUnavailable:
@@ -479,6 +481,7 @@ export const deploymentSettingsTranslations = {
     setupLocalGrowth: "При хранении всех копий они не удаляются автоматически. Диск может заполниться.",
     setupCapacityKnown: "Свободное место",
     setupCapacityUnknown: "Свободное место неизвестно",
+    setupCapacityAtBackupMachine: "Проверьте свободное место на машине, которой принадлежит этот путь резервного копирования.",
     credentialSshPrivateKey: "Закрытый ключ SSH",
     addCheck: 'Добавить проверку',
     addCheckUnavailable:
@@ -614,6 +617,7 @@ export const deploymentSettingsTranslations = {
     setupLocalGrowth: "Zachowaj wszystko nie usuwa kopii automatycznie. Dysk może się zapełnić.",
     setupCapacityKnown: "Wolne miejsce",
     setupCapacityUnknown: "Wolne miejsce niedostępne",
+    setupCapacityAtBackupMachine: "Sprawdź wolne miejsce na maszynie, do której należy ta ścieżka kopii zapasowej.",
     credentialSshPrivateKey: "Klucz prywatny SSH",
     addCheck: 'Dodaj sprawdzenie',
     addCheckUnavailable:
@@ -752,6 +756,7 @@ export const deploymentSettingsTranslations = {
     setupLocalGrowth: "Conservar todo no elimina copias automáticamente. El disco puede llenarse.",
     setupCapacityKnown: "Espacio libre",
     setupCapacityUnknown: "Espacio libre no disponible",
+    setupCapacityAtBackupMachine: "Consulta el espacio libre en la máquina que contiene esta ruta de copias.",
     credentialSshPrivateKey: "Clave privada SSH",
     addCheck: 'Añadir comprobación',
     addCheckUnavailable:
@@ -892,6 +897,7 @@ export const deploymentSettingsTranslations = {
     setupLocalGrowth: "Tout conserver ne supprime jamais les copies automatiquement. Ce disque peut se remplir.",
     setupCapacityKnown: "Espace libre",
     setupCapacityUnknown: "Espace libre indisponible",
+    setupCapacityAtBackupMachine: "Vérifiez l’espace libre sur la machine qui contient ce chemin de sauvegarde.",
     credentialSshPrivateKey: "Clé privée SSH",
     addCheck: 'Ajouter une vérification',
     addCheckUnavailable:
@@ -1031,6 +1037,7 @@ export const deploymentSettingsTranslations = {
     setupLocalGrowth: "Conserva tutto non elimina automaticamente le copie. Il disco può riempirsi.",
     setupCapacityKnown: "Spazio libero",
     setupCapacityUnknown: "Spazio libero non disponibile",
+    setupCapacityAtBackupMachine: "Controlla lo spazio libero sulla macchina che ospita questo percorso di backup.",
     credentialSshPrivateKey: "Chiave privata SSH",
     addCheck: 'Aggiungi controllo',
     addCheckUnavailable:
@@ -1171,6 +1178,7 @@ export const deploymentSettingsTranslations = {
     setupLocalGrowth: "Guardar tudo nunca elimina cópias automaticamente. O disco pode encher.",
     setupCapacityKnown: "Espaço livre",
     setupCapacityUnknown: "Espaço livre indisponível",
+    setupCapacityAtBackupMachine: "Consulte o espaço livre na máquina que contém este caminho de cópias.",
     credentialSshPrivateKey: "Chave privada SSH",
     addCheck: 'Adicionar verificação',
     addCheckUnavailable:
@@ -1310,6 +1318,7 @@ export const deploymentSettingsTranslations = {
     setupLocalGrowth: "Conservar-ho tot no elimina còpies automàticament. El disc es pot omplir.",
     setupCapacityKnown: "Espai lliure",
     setupCapacityUnknown: "Espai lliure no disponible",
+    setupCapacityAtBackupMachine: "Consulta l’espai lliure a la màquina que conté aquest camí de còpies.",
     credentialSshPrivateKey: "Clau privada SSH",
     addCheck: 'Afegeix una comprovació',
     addCheckUnavailable:
@@ -1449,6 +1458,7 @@ export const deploymentSettingsTranslations = {
     setupLocalGrowth: "Alles behalten löscht keine Sicherungen automatisch. Dieser Datenträger kann volllaufen.",
     setupCapacityKnown: "Freier Speicherplatz",
     setupCapacityUnknown: "Freier Speicherplatz nicht verfügbar",
+    setupCapacityAtBackupMachine: "Prüfe den freien Speicherplatz auf der Maschine, auf der dieser Backup-Pfad liegt.",
     credentialSshPrivateKey: "Privater SSH-Schlüssel",
     addCheck: 'Prüfung hinzufügen',
     addCheckUnavailable:
@@ -1582,6 +1592,7 @@ export const deploymentSettingsTranslations = {
     setupLocalGrowth: "保留全部不会自动删除备份。此磁盘可能会被占满。",
     setupCapacityKnown: "可用空间",
     setupCapacityUnknown: "可用空间未知",
+    setupCapacityAtBackupMachine: "请在此备份路径所在的机器上查看剩余空间。",
     credentialSshPrivateKey: "SSH 私钥",
     addCheck: '添加检查',
     addCheckUnavailable: '无法在此设置检查 · 请打开机器的服务页面',
@@ -1714,6 +1725,7 @@ export const deploymentSettingsTranslations = {
     setupLocalGrowth: "保留全部不會自動刪除備份。此磁碟可能會被佔滿。",
     setupCapacityKnown: "可用空間",
     setupCapacityUnknown: "可用空間未知",
+    setupCapacityAtBackupMachine: "請在此備份路徑所在的機器上查看可用空間。",
     credentialSshPrivateKey: "SSH 私密金鑰",
     addCheck: '新增檢查',
     addCheckUnavailable: '無法在此設定檢查 · 請開啟機器的服務頁面',
@@ -1848,6 +1860,7 @@ export const deploymentSettingsTranslations = {
     setupLocalGrowth: "すべて保持ではバックアップは自動削除されません。ディスクがいっぱいになる場合があります。",
     setupCapacityKnown: "空き容量",
     setupCapacityUnknown: "空き容量を取得できません",
+    setupCapacityAtBackupMachine: "このバックアップ先パスを所有するマシンで空き容量を確認してください。",
     credentialSshPrivateKey: "SSH 秘密鍵",
     addCheck: 'チェックを追加',
     addCheckUnavailable:

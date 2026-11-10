@@ -10,6 +10,7 @@ import {
 } from '@/components/settings/secrets/secretSettingsTestHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { setScopedActionApprovalPreference } from '@happier-dev/protocol/actions/actionSettings';
 
 vi.mock('socket.io-client', async (importOriginal) =>
   (
@@ -79,6 +80,30 @@ function editing(
 }
 
 describe('Environment → Permissions: approvals', () => {
+  it.each([
+    { parent: 'required' as const, child: 'waived' as const },
+    { parent: 'waived' as const, child: 'required' as const },
+  ])('shows the canonical stricter preview approval ($parent parent, $child child)', async ({ parent, child }) => {
+    const detail = manager({ id: 'preview-child', purpose: 'preview', previewTemplateEnvironmentId: 'template-parent',
+      previewRepositoryId: 'repository', previewPullRequestId: '42', previewTargetLinkId: 'preview-runtime' });
+    let actionsSettingsV1 = setScopedActionApprovalPreference({ settings: account.persistedSettings.actionsSettingsV1,
+      actionId: 'deployments.deploy', scope: { kind: 'environment', environmentId: 'template-parent' },
+      surface: 'agent', mode: parent });
+    actionsSettingsV1 = setScopedActionApprovalPreference({ settings: actionsSettingsV1,
+      actionId: 'deployments.deploy', scope: { kind: 'environment', environmentId: 'preview-child' },
+      surface: 'agent', mode: child });
+    await account.dispose();
+    account = await createSecretSettingsTestHarness({ settings: settingsParse({ actionsSettingsV1 }) });
+    const screen = await renderScreen(<DeploymentPermissionsPanel detail={detail as never}
+      machineName={() => 'vps-1'} onOpenController={() => {}} editing={editing().value as never} />);
+    try {
+      const deploy = `${prefix}.approvals.deployments.deploy`;
+      expect(screen.findByTestId(`${deploy}:mode:ask_first`)?.props.accessibilityState.checked).toBe(true);
+      expect(screen.findByTestId(`${deploy}:mode:allowed`)?.props.accessibilityState.checked).toBe(false);
+      expect(screen.findByTestId(`${deploy}.loosening`)).toBeNull();
+    } finally { await screen.unmount(); }
+  });
+
   it('writes one Environment-scoped approval from the row, and reads one an agent wrote through the same Action', async () => {
     const detail = manager();
     const screen = await renderScreen(

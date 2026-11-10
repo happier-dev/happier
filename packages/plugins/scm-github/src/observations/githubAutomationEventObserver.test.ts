@@ -676,6 +676,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     let resolved = false;
     let denied = false;
     let targetCurrent = true;
+    let invalidate = () => {};
     const checkpoints = createCheckpointCollection([]);
     const send = vi.fn(async (_request: Parameters<PluginInvocationContext['services']['notifications']['send']>[0]) => ({ deliveries: [], replayed: false }));
     const transport = createStubGithubTransport({
@@ -726,7 +727,11 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     } },
       observerBackgroundContext({ actions, collection: checkpoints.collection,
         http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
-        notifications: { send }, signal: controller.signal }),
+        notifications: { send }, signal: controller.signal,
+        events: { host: { subscribe: (_target: unknown, listener: SourcesInvalidatedListener) => {
+          invalidate = () => listener(sourcesInvalidated());
+          return { dispose() {} };
+        } } } }),
       async input => { expect(validateAttemptInput(input)).toBe(true); });
     const context = { ...background, surface: 'plugin', invokedAtMs: 1, caller: { kind: 'host', domain: 'ingress', originSurface: 'webhook',
       contribution: { id: 'github-events', qualifiedId: `${GITHUB_PLUGIN_ID}/github-events` } } } as PluginInvocationContext;
@@ -745,12 +750,13 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       expect(delivered).toEqual({ kind: 'settled', disposition: 'accepted' });
       expect(send).toHaveBeenCalledTimes(1);
       const rowId = createGithubAutomationEventCheckpointRowId({
-        automationId: source.automationId, sourceSelectorId: source.sourceSelectorId,
+        automationId: source.automationId, sourceSelectorId: source.sourceSelectorId, eventRef: source.eventRef,
       });
       const committedCheckpoint = checkpoints.read(rowId);
       expect(committedCheckpoint).not.toBeNull();
       const providerReads = transport.requests.length;
       const checkpointWrites = checkpoints.put.mock.calls.length;
+      invalidate();
       await deliver('workflow_run', 'in_progress');
       expect(transport.requests).toHaveLength(providerReads);
       expect(send).toHaveBeenCalledTimes(1);
@@ -775,6 +781,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     expect(send).toHaveBeenCalledTimes(2);
     expect(send.mock.calls[1]?.[0]).toMatchObject({ itemId: id, resolved: true });
     enrolled = false;
+    invalidate();
     const reads = transport.requests.length;
     expect(await deliver('workflow_run', 'completed')).toEqual({ kind: 'settled', disposition: 'ignored' });
     expect(transport.requests).toHaveLength(reads);

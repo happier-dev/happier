@@ -85,7 +85,9 @@ it('authors a deployment fact in the shared Variables draft without reading secr
   const { screen, readBindings } = await mount();
   await screen.pressByTestIdAsync('project-deployments.environment.variables.add');
   await vi.waitFor(() => expect(screen.findHostByTestId('project-deployments.environment.variables.add.fact')).not.toBeNull());
-  await screen.pressByTestIdAsync('project-deployments.environment.variables.add.fact');
+  const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+  const menu = screen.findAllByType(DropdownMenu).find(node => node.props.items?.some((item: { id: string }) => item.id === 'fact'))!;
+  await act(async () => menu.props.onSelect('fact'));
   await act(async () => screen.changeTextByTestId('project-deployments.environment.variables.add.name', 'PREVIEW_URL'));
   await screen.pressByTestIdAsync('project-deployments.environment.variables.add.save');
   await measureMountedCollections(screen);

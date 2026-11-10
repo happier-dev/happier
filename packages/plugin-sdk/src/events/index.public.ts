@@ -1,4 +1,6 @@
 export type { EventContribution } from '../events.js';
+export { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1, DeploymentReceiptChangedEventV1ProtocolSchema,
+    readDeploymentAccountChangeV1 } from './deploymentReceipts.js';
 export { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, deploymentInProgressStates } from './deploymentReceipts.js';
 export { DeploymentReceiptOutcomeEventV1ProtocolSchema } from './deploymentReceipts.js';
 export { DeploymentReceiptEventSourceConfigV1ProtocolSchema, DeploymentReceiptEventSetupV1ProtocolSchema, DeploymentFailedEventV1ProtocolSchema,

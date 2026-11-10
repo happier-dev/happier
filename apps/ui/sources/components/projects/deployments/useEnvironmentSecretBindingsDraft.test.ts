@@ -28,6 +28,96 @@ beforeEach(() => { installHomeGovernanceBoundaries(homes); });
 afterEach(async () => { await standardCleanup(); for (const account of accounts.splice(0)) account.dispose(); await homes.reset(); });
 
 describe('Environment Variables consumer draft', () => {
+    it('edits preview blueprints without reading or changing the parent bindings', async () => {
+        const serverId = await homes.addHome({ name: 'Preview variables', serverUrl: 'https://preview-vars.test', accountId: 'owner', currentAccount: true });
+        const lifetime = (await captureAccount(serverId)).accountLifetime;
+        const base = createDeploymentEnvironmentDetailV1();
+        const production = createDeploymentSecretVariableBindingV1({ name: 'PRODUCTION_TOKEN', phase: 'runtime', resourceId: 'prod', resourceRevision: 1 });
+        const blueprint = { purpose: 'variable' as const, name: 'PUBLIC_URL', phase: 'runtime' as const,
+            source: { kind: 'deploymentFact' as const, fact: 'primaryUrl' as const } };
+        const detail = { ...base, content: { ...base.content, bindings: [production], previewTemplate: {
+            v: 1 as const, enabled: true, forkPreviews: 'off' as const,
+            repository: { kind: 'github' as const, deployment: 'https://github.com', repository: 'acme/app' },
+            runtimeTargetLinkId: base.environment.runtimeTargetLinkId!, domain: null, bindingBlueprints: [blueprint], data: [],
+        } } };
+        const hook = await renderHook(() => useEnvironmentSecretBindingsDraft({ environmentId: detail.environment.id,
+            lifetime, snapshot: ready(detail), setBindings: null, bindingTarget: 'previewTemplate' }));
+        expect(hook.getCurrent().editor.rows.map(row => row.binding)).toEqual([blueprint]);
+        await act(async () => { hook.getCurrent().editor.setVariable({ name: 'PREVIEW_MODE', phase: 'runtime', source: { kind: 'value', value: 'true' } }); });
+        expect(hook.getCurrent().dirty).toBe(true);
+        expect(detail.content.bindings).toEqual([production]);
+        await act(async () => hook.getCurrent().cancel());
+        expect(hook.getCurrent().editor.rows.map(row => row.binding)).toEqual([blueprint]);
+    });
+
+    it('edits preview blueprints through the Environment update Action and retains the saved draft until its echo', async () => {
+        const homeId = `srv_${'9'.repeat(32)}`;
+        const serverId = await homes.addHome({ name: 'Preview blueprint save', serverUrl: 'https://preview-blueprint-save.test',
+            serverIdentityId: homeId, accountId: 'account-owner', currentAccount: true });
+        const lifetime = (await captureAccount(serverId)).accountLifetime;
+        const base = createDeploymentEnvironmentDetailV1();
+        const detail = { ...base, environment: { ...base.environment, serverId: homeId }, content: { ...base.content, previewTemplate: {
+            v: 1 as const, enabled: true, forkPreviews: 'off' as const,
+            repository: { kind: 'github' as const, deployment: 'https://github.com', repository: 'acme/app' },
+            runtimeTargetLinkId: base.environment.runtimeTargetLinkId!, domain: null, bindingBlueprints: [], data: [],
+        } } };
+        const blueprint = { purpose: 'variable' as const, name: 'PUBLIC_URL', phase: 'runtime' as const,
+            source: { kind: 'deploymentFact' as const, fact: 'primaryUrl' as const } };
+        const nextBlueprint = { ...blueprint, name: 'COMMIT_SHA', source: { kind: 'deploymentFact' as const, fact: 'commitSha' as const } };
+        let revision = detail.environment.revision;
+        let preparedArtifact = {
+            contentArtifactId: detail.environment.contentArtifactId,
+            contentHeaderVersion: detail.environment.contentHeaderVersion,
+            contentBodyVersion: detail.environment.contentBodyVersion,
+        };
+        homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { select: () => ({ body: {
+            ok: true, environment: { ...detail.environment, revision, ...preparedArtifact }, targetLinks: detail.targetLinks.map(item => item.targetLink),
+        } }) });
+        let boundaryFailure: unknown;
+        const diagnosticHome: Pick<typeof homes, 'answer'> = { answer(id, path, reply) {
+            const select = reply.select;
+            homes.answer(id, path, select ? { ...reply, select: async (body, request) => {
+                try { return await select(body, request); }
+                catch (cause) { boundaryFailure = cause; throw cause; }
+            } } : reply);
+        } };
+        await answerExternalActionAccountForHome(diagnosticHome, serverId, {
+            machineId: 'machine-a', actionId: 'deployments.environments.update', tokenEpoch: 0, execute: operand => {
+                const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(operand);
+                expect(input.expectedRevision).toBe(revision);
+                expect(input).toMatchObject(preparedArtifact);
+                expect(input.patch).toEqual({ previewTemplate: { ...detail.content.previewTemplate,
+                    bindingBlueprints: revision === detail.environment.revision ? [blueprint] : [blueprint, nextBlueprint] } });
+                // A successful private update publishes a new Artifact; its Action result owns that reference.
+                preparedArtifact = { contentArtifactId: `saved-preview-blueprints-${++revision}`,
+                    contentHeaderVersion: 1, contentBodyVersion: 1 };
+                return { ok: true, environmentId: detail.environment.id, revision, preparedArtifact };
+            },
+        });
+        const actions = createDeploymentActions(lifetime, detail.environment.projectSourceId);
+        const hook = await renderHook(() => useEnvironmentSecretBindingsDraft({ environmentId: detail.environment.id,
+            lifetime, snapshot: ready(detail), bindingTarget: 'previewTemplate',
+            setBindings: (patch, operation, base) => actions.setPreviewBindings(base.environment, base.content.previewTemplate!, patch, operation) }));
+        await act(async () => { expect(hook.getCurrent().editor.put(blueprint)).toEqual({ ok: true }); });
+        await act(async () => { expect(await hook.getCurrent().save().catch((cause: unknown) => {
+            if (boundaryFailure) throw boundaryFailure;
+            throw new Error(`Blueprint save failed after ${JSON.stringify(homes.requests.map(({ method, path }) => ({ method, path })))}`, { cause });
+        })).toMatchObject({ ok: true }); });
+        expect(hook.getCurrent().dirty).toBe(false);
+        expect(hook.getCurrent().editor.rows.map(row => row.binding)).toEqual([blueprint]);
+        const count = homes.requests.length;
+        expect(await hook.getCurrent().save()).toBeNull();
+        expect(homes.requests.length).toBe(count);
+        // A second edit before the read echo must retain the first acknowledged blueprint and its revision.
+        await act(async () => { expect(hook.getCurrent().editor.put(nextBlueprint)).toEqual({ ok: true }); });
+        await act(async () => { expect(await hook.getCurrent().save().catch((cause: unknown) => {
+            throw boundaryFailure ?? cause;
+        })).toMatchObject({ ok: true }); });
+        expect(hook.getCurrent().editor.rows.map(row => row.binding)).toEqual([blueprint, nextBlueprint]);
+        expect(homes.requestsFor('/v1/actions/deployments.environments.update')).toHaveLength(2);
+        expect(homes.requestsFor('/v1/actions/deployments.bindings.set')).toHaveLength(0);
+    });
+
     it('projects Team Machine disclosure for a newly selected secret without a value read, write or second approval', async () => {
         const serverId = await homes.addHome({ name: 'Disclosure data', serverUrl: 'https://disclosure.test',
             accountId: 'owner', currentAccount: true });

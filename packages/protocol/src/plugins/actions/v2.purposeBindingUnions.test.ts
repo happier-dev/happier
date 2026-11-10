@@ -87,6 +87,50 @@ function scanAction(inputSchema: PluginJsonSchemaV2) {
 }
 
 describe('Connected Account purpose bindings across union-shaped Action inputs', () => {
+  it('admits one alternative qualified Account path per ordinary source or configured-instance arm', () => {
+    const configured = scanInputSchema(qualifiedAccountRef).anyOf?.[0];
+    if (!configured) throw new Error('expected configured input arm');
+    const source: PluginJsonSchemaV2 = { type: 'object', properties: { sourceConfig: {
+      type: 'object', properties: { credentialRef: qualifiedAccountRef }, required: ['credentialRef'], additionalProperties: false,
+    } }, required: ['sourceConfig'], additionalProperties: false };
+    const native: PluginJsonSchemaV2 = { type: 'object', properties: { instance: {
+      type: 'object', properties: { binding: { type: 'object', properties: { service: qualifiedAccountRef.properties?.service ?? {} },
+        required: ['service'], additionalProperties: false } }, required: ['binding'], additionalProperties: false,
+    } }, required: ['instance'], additionalProperties: false };
+    const action = { ...scanAction({ anyOf: [configured, source, native] }), connectedAccountPurposeBindings: [{
+      path: 'instance.binding.account', alternativePaths: ['sourceConfig.credentialRef'],
+      nativeServicePath: 'instance.binding.service', purpose: 'account-use',
+    }] };
+    expect(PluginActionContributionV2Schema.safeParse(action).success).toBe(true);
+  });
+
+  it.each(['missing', 'multiple', 'malformed'] as const)('rejects an alternative credential arm with %s selection', kind => {
+    const account = kind === 'malformed' ? { type: 'string' as const } : qualifiedAccountRef;
+    const properties = { ...(kind === 'missing' ? {} : { first: account }), ...(kind === 'multiple' ? { second: account } : {}) };
+    const action = { ...scanAction({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false }),
+      connectedAccountPurposeBindings: [{ path: 'first', alternativePaths: ['second'], purpose: 'account-use' }] };
+    expect(PluginActionContributionV2Schema.safeParse(action).success).toBe(false);
+  });
+  it('preserves nested selection correlation and rejects reused or inconsistent alternative credential paths', () => {
+    const arm = (name: string, account: PluginJsonSchemaV2 = qualifiedAccountRef): PluginJsonSchemaV2 => ({
+      type: 'object', properties: { [name]: account }, required: [name], additionalProperties: false,
+    });
+    const action = (second: PluginJsonSchemaV2 = qualifiedAccountRef) => ({
+      ...scanAction({ type: 'object', properties: { binding: { anyOf: [arm('first'), arm('second', second)] } },
+        required: ['binding'], additionalProperties: false }),
+      connectedAccountPurposeBindings: [{ path: 'binding.first', alternativePaths: ['binding.second'], purpose: 'account-use' }],
+    });
+    expect(PluginActionContributionV2Schema.safeParse(action()).success).toBe(true);
+    expect(PluginActionContributionV2Schema.safeParse(action({ ...qualifiedAccountRef, properties: {
+      ...qualifiedAccountRef.properties, accountId: { type: 'string', const: 'one-account' },
+    } })).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({ ...action(), connectedAccountPurposeBindings: [{
+      path: 'binding.first', alternativePaths: ['binding.first', 'binding.second'], purpose: 'account-use',
+    }] }).success).toBe(false);
+    expect(PluginActionContributionV2Schema.safeParse({ ...action(), connectedAccountPurposeBindings: [
+      ...action().connectedAccountPurposeBindings, { path: 'binding.second', purpose: 'another-purpose' },
+    ] }).success).toBe(false);
+  });
   it('rejects a service identity union when any arm is not an exact qualified identity', () => {
     const service = qualifiedAccountRef.properties?.service;
     const canonicalArms = service?.anyOf;

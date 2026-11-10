@@ -62,12 +62,17 @@ export function previewStatusInput() {
 
 /** Network-contract fixtures for the public Home Actions. Internal policy/Artifact parsing remains real in the handler. */
 export function previewStatusTransport(options: Readonly<{
+  tombstoned?: boolean;
+  replacementChild?: boolean;
   headSha?: string; foreignSource?: boolean; foreignReceipt?: boolean; artifactRevision?: number;
   native?: boolean; loseResponse?: boolean; publicationNotObserved?: boolean; deny?: boolean; existing?: boolean;
   deletedChild?: boolean; deletedTemplate?: boolean; retiredLink?: boolean; advanceHeadAfterRead?: boolean; childId?: string;
   receiptState?: 'running' | 'failed' | 'cancelled'; operation?: 'deploy' | 'teardown'; pullRequestState?: 'open';
   domainState?: 'active' | 'failed'; domainHostname?: string; domainPath?: string; supersededReceipt?: boolean; inactiveReceipt?: boolean;
   multiplePreviews?: boolean; unavailableFirstPreview?: boolean; previewQueryError?: 'deployment_access_denied'; previewReadDenied?: boolean;
+  publicationReadDenied?: boolean; publicationReadFailure?: 'transport' | 'malformed';
+  controllerState?: 'available' | 'paused' | 'unknown';
+  noReceipt?: boolean;
 }> = {}) {
   const childId = options.childId ?? 'preview-child';
   const repository = { kind: 'github', deployment: 'https://github.com', repository: REPOSITORY_KEY };
@@ -80,7 +85,7 @@ export function previewStatusTransport(options: Readonly<{
     ...(purpose === 'preview' ? { previewTemplateEnvironmentId: 'preview-template', previewRepositoryId: 'preview-source',
       previewPullRequestId: '1284', previewTargetLinkId: 'template-runtime' } : {}),
     ...reference(id), createdByAccountId: 'preview-owner', createdAtMs: 1, updatedAtMs: 1,
-    ...(purpose === 'preview' ? options.deletedChild ? { deletedAtMs: 2 } : {} : options.deletedTemplate ? { deletedAtMs: 2 } : {}),
+    ...(purpose === 'preview' ? id === childId && (options.deletedChild || options.tombstoned) ? { deletedAtMs: 2 } : {} : options.deletedTemplate ? { deletedAtMs: 2 } : {}),
     capabilities: { role: 'manager', read: true, deploy: true, manage: true, manageBindings: true, manageTargets: true, delete: true } });
   const runtimeLink = (id: string, environmentId: string) => ({ v: 1, id, environmentId, revision: 1, role: 'runtime',
     ...(environmentId === childId && options.operation === 'deploy' && !options.receiptState
@@ -88,7 +93,7 @@ export function previewStatusTransport(options: Readonly<{
     source: options.native ? { kind: 'plugin', contribution: { pluginId: 'native-provider', localId: 'runtime' } }
       : { kind: 'host', id: 'own-server' }, targetKind: 'ownServer', state: 'none', machines: ['preview-machine'],
     members: [{ machineId: 'preview-machine', installationId: 'preview-installation', state: 'active' }],
-    ...(options.retiredLink ? { detachedAtMs: 2 } : {}),
+    ...(options.retiredLink || options.tombstoned && environmentId === childId ? { detachedAtMs: 2 } : {}),
     ...reference(id), createdByAccountId: 'preview-owner', createdAtMs: 1, updatedAtMs: 1 });
   const sourceIntent = { kind: 'repository', projectSourceId: 'preview-source', sourceRevision: 1, sha: OBSERVED_HEAD,
     compose: { path: 'compose.yaml', services: ['app'], profiles: [] }, pullRequestHead: { number: 1284 } };
@@ -109,9 +114,11 @@ export function previewStatusTransport(options: Readonly<{
           || JSON.stringify(request.previewRepository) !== JSON.stringify(repository)) throw new Error('Expected one exact repository/PR query');
         if (options.previewQueryError) return { ok: false, error: options.previewQueryError };
         const secondPage = options.multiplePreviews && request.cursor === 'preview-next-page';
-        return { ok: true, items: [secondPage ? { ...environment('preview-second', 'preview'),
+        return { ok: true, items: options.replacementChild ? [environment(childId, 'preview'), {
+          ...environment('new-preview-child', 'preview'), runtimeTargetLinkId: 'new-preview-runtime',
+        }].filter(item => request.includeDeleted === true || item.deletedAtMs === undefined) : [secondPage ? { ...environment('preview-second', 'preview'),
           previewTemplateEnvironmentId: 'preview-second-template', previewTargetLinkId: 'preview-second-template-runtime',
-          runtimeTargetLinkId: 'preview-second-runtime' } : environment(childId, 'preview')],
+          runtimeTargetLinkId: 'preview-second-runtime' } : environment(childId, 'preview')].filter(item => request.includeDeleted === true || item.deletedAtMs === undefined),
           currentDeployments: [], runtimeTargetLinks: [], nextCursor: options.multiplePreviews && !secondPage ? 'preview-next-page' : null, coverage: 'complete' };
       }
       if (actionId === 'deployments.environments.get') {
@@ -127,6 +134,7 @@ export function previewStatusTransport(options: Readonly<{
         const child = request.environmentId === childId;
         const id = child ? childId : 'preview-template';
         return { ok: true, environment: environment(id, child ? 'preview' : 'standard'),
+          ...(options.controllerState ? { controller: { machineId: 'preview-controller', state: options.controllerState } } : {}),
           targetLinks: [runtimeLink(child ? 'preview-runtime' : 'template-runtime', id)] };
       }
       if (actionId === 'deployments.receipts.get') return { ok: true, deployment: { v: 1, id: 'preview-teardown',
@@ -134,7 +142,7 @@ export function previewStatusTransport(options: Readonly<{
         operation: options.operation ?? 'teardown', state: options.receiptState ?? 'succeeded', requestKey: 'preview-request', requestedByAccountId: 'preview-owner',
         actionOperationId: 'preview-operation', requestedAtMs: 1, startedAtMs: 1, settledAtMs: 1, ...reference('preview-teardown') } };
       if (actionId === 'deployments.receipts.list') return { ok: true,
-        items: [{ v: 1, id: request.environmentId === 'preview-second' ? 'preview-second-deployment' : options.supersededReceipt ? 'newer-deployment' : 'preview-teardown',
+        items: options.noReceipt ? [] : [{ v: 1, id: request.environmentId === 'preview-second' ? 'preview-second-deployment' : options.supersededReceipt ? 'newer-deployment' : 'preview-teardown',
           environmentId: request.environmentId === 'preview-second' ? 'preview-second' : options.foreignReceipt ? 'foreign-child' : childId,
           targetLinkId: request.environmentId === 'preview-second' ? 'preview-second-runtime' : 'preview-runtime', revision: 1,
           operation: options.operation ?? 'teardown', state: options.receiptState ?? 'succeeded', requestKey: 'preview-request',
@@ -186,7 +194,12 @@ export function previewStatusTransport(options: Readonly<{
         const headSha = options.advanceHeadAfterRead && pullRequestReads > 1 ? ADVANCED_HEAD : options.headSha;
         return json(pullRequestBody({ state: options.pullRequestState ?? 'closed', ...(headSha ? { headSha } : {}) }));
       }
-      if (request.method === 'GET' && path === `${REPOSITORY_PATH}/commits/${OBSERVED_HEAD}/statuses`) return json(published === null || options.publicationNotObserved ? [] : [published]);
+      if (request.method === 'GET' && path === `${REPOSITORY_PATH}/commits/${OBSERVED_HEAD}/statuses`) {
+        if (options.publicationReadDenied) return json({ message: 'Resource not accessible by integration' }, 403);
+        if (options.publicationReadFailure === 'transport') throw new Error('Provider unavailable');
+        if (options.publicationReadFailure === 'malformed') return json({ invalid: true });
+        return json(published === null || options.publicationNotObserved ? [] : [published]);
+      }
       if (request.method === 'POST' && path === `${REPOSITORY_PATH}/statuses/${OBSERVED_HEAD}`) {
         if (options.deny) return json({ message: 'Resource not accessible by integration' }, 403);
         published = { id: 91, ...(readRecordedJsonBody(request) as Readonly<Record<string, unknown>>) };

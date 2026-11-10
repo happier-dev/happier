@@ -47,35 +47,51 @@ const FACTS = {
   removed: { state: 'success', description: 'Preview removed' },
 } as const;
 
+function matchesStatus(value: Status | null, input: Publication, context: string): boolean {
+  const fact = FACTS[input.status];
+  return value !== null && value.context.toLowerCase() === context
+    && value.state === fact.state && value.description === fact.description && value.targetUrl === input.targetUrl;
+}
+
+/** Publication is a refreshable provider projection, independent of app readiness. */
+export async function readGithubPullRequestPreviewPublication(input: Publication & Readonly<{
+  localRef: GithubTriageEntryLocalRefV1; route: GithubRepositoryRouteV1; templateTargetLinkId: string;
+}>, dependencies: GithubGetDependenciesV1): Promise<Readonly<{ kind: 'current' }> | Readonly<{ kind: 'unpublished' }>
+  | Readonly<{ kind: 'unavailable'; failure: TriageSourceFailureV1 }>> {
+  const context = previewContext(input.templateEnvironmentId, input.templateTargetLinkId);
+  const read = await readLatestStatus({ ...input, sha: input.expectedHeadSha, context }, dependencies);
+  return read.ok ? { kind: matchesStatus(read.status, input, context) ? 'current' : 'unpublished' }
+    : { kind: 'unavailable', failure: read.failure };
+}
+
 /** The provider's newest-first collection is read only for this exact owned context. */
 async function readLatestStatus(input: Readonly<{
   route: GithubRepositoryRouteV1; localRef: GithubTriageEntryLocalRefV1; sha: string; context: string;
 }>, dependencies: GithubGetDependenciesV1): Promise<StatusRead> {
+  const invalid = (code: string): StatusRead => ({ ok: false, failure: { class: 'unsupportedContract', code,
+    ...(dependencies.client.requestId === undefined ? {} : { requestId: dependencies.client.requestId }) } });
   let next: string | null = `${buildGithubApiUrl(['repos', input.route.owner, input.route.name, 'commits', input.sha, 'statuses'])}?per_page=${GITHUB_MAX_PAGE_SIZE_V1}`;
   while (next !== null) {
     dependencies.signal.throwIfAborted();
     const requestedUrl: string = next;
     let response;
     try { response = await dependencies.client.request({ url: requestedUrl }); }
-    catch (error) { return { ok: false, failure: toTriageFailure(classifyGithubTransportFailure(error)) }; }
+    catch (error) { return { ok: false, failure: toTriageFailure(classifyGithubTransportFailure(error, dependencies.client.requestId)) }; }
     if (!isGithubSuccessStatus(response.status)) return { ok: false,
       failure: toTriageFailure(classifyGithubResponseFailure(response, dependencies.now())) };
     let body: unknown;
     try { body = decodeGithubJsonResponse(response); }
-    catch { return { ok: false, failure: { class: 'unsupportedContract', code: 'github_preview_status_envelope_invalid' } }; }
-    if (!Array.isArray(body)) return { ok: false,
-      failure: { class: 'unsupportedContract', code: 'github_preview_status_envelope_invalid' } };
+    catch { return invalid('github_preview_status_envelope_invalid'); }
+    if (!Array.isArray(body)) return invalid('github_preview_status_envelope_invalid');
     for (const value of body) {
       if (!record(value) || typeof value.context !== 'string' || value.context.toLowerCase() !== input.context) continue;
       const parsed = status(value);
-      return parsed === null ? { ok: false,
-        failure: { class: 'unsupportedContract', code: 'github_preview_status_envelope_invalid' } }
+      return parsed === null ? invalid('github_preview_status_envelope_invalid')
         : { ok: true, status: parsed };
     }
     const page = readValidatedGithubFollowUpPage(response.headers, requestedUrl,
       readGithubRepositoryIdFromCollisionScope(input.localRef.collisionScope));
-    if (page.kind === 'invalid') return { ok: false,
-      failure: { class: 'unsupportedContract', code: 'github_preview_status_link_invalid' } };
+    if (page.kind === 'invalid') return invalid('github_preview_status_link_invalid');
     next = page.kind === 'next' ? page.url : null;
   }
   return { ok: true, status: null };
@@ -98,8 +114,7 @@ export async function publishGithubPullRequestPreviewStatus(input: Publication &
   if (!before.ok) return { kind: 'failed', failure: before.failure };
   dependencies.signal.throwIfAborted();
   const fact = FACTS[input.status];
-  const matches = (value: Status | null) => value !== null && value.context.toLowerCase() === context
-    && value.state === fact.state && value.description === fact.description && value.targetUrl === input.targetUrl;
+  const matches = (value: Status | null) => matchesStatus(value, input, context);
   const applied = (observed: Status): GithubPullRequestPreviewStatusResultV1 => ({ kind: 'applied', publication: {
     serverId: input.serverId, environmentId: input.environmentId, templateEnvironmentId: input.templateEnvironmentId,
     targetLinkId: input.targetLinkId, deploymentId: input.deploymentId, expectedHeadSha: input.expectedHeadSha,
@@ -125,7 +140,7 @@ export async function publishGithubPullRequestPreviewStatus(input: Publication &
         }
         return { kind: 'sent' as const };
       } catch (error) {
-        return { kind: 'sent' as const, failure: toTriageFailure(classifyGithubTransportFailure(error)) };
+        return { kind: 'sent' as const, failure: toTriageFailure(classifyGithubTransportFailure(error, dependencies.client.requestId)) };
       }
     },
     mayHaveChanged: result => result.kind === 'sent',

@@ -4,7 +4,8 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DeploymentEnvironmentDetailV1, EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentArtifactDocumentV1, DeploymentEnvironmentDetailV1, EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
+import { readPreviewDomainForHost } from '../../previewDomainForHost';
 import type { OwnServerDeploymentReceipt } from './ownServerDeploymentTarget';
 import type { ServerProfile } from '@/server/serverProfiles';
 import { EnvironmentVariableBindingV1Schema } from '@happier-dev/deployment-protocol';
@@ -110,6 +111,42 @@ beforeEach(async () => {
 });
 
 describe('own-server installed host acquisition', () => {
+    it('prepares canonical backup sources from a stored definition before any target exists', async () => {
+        const mounted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
+            controller: pluginReloadController, runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
+        const keys = nacl.sign.keyPair();
+        vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
+            installationId: 'installation', createdAt: 1, publicKey: Buffer.from(keys.publicKey).toString('base64url'),
+            privateKey: Buffer.from(keys.secretKey).toString('base64url') });
+        const root = await mkdtemp(join(tmpdir(), 'happier-backup-definition-'));
+        const docker = await createOwnServerDockerBoundary(join(root, 'bin'));
+        vi.stubEnv('PATH', `${join(root, 'bin')}${delimiter}${process.env.PATH ?? ''}`);
+        const document = 'services:\n  web:\n    image: app\n    volumes:\n      - content:/srv/content\n      - content:/srv/mirror:ro\n  reader:\n    image: app\n    volumes:\n      - content:/srv/content:ro\nvolumes:\n  content:\n    name: physical-content\n';
+        const definition = { kind: 'stored' as const, contentRevision: 1, document,
+            composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: [] };
+        const selected: DeploymentEnvironmentDetailV1 = { ...environment, environment: { ...environment.environment,
+            runtimeTargetLinkId: undefined, buildMachineId: undefined }, targetLinks: [],
+            content: { ...environment.content, definition } };
+        const runtime = createOwnServerDeploymentRuntimeForHost({ credentials: { token: 'fixture', encryption: null },
+            serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine',
+            resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
+            async acquirePluginRuntimeRegistryLease() { throw new Error('Definition review must not acquire the runtime registry'); },
+            async readEnvironmentSecretLaunchAdmission() { throw new Error('Definition review must not acquire launch secrets'); } });
+        try {
+            const prepare = Reflect.get(runtime, 'prepareBackupSourceChoices');
+            expect(prepare).toBeTypeOf('function');
+            const choices = await Reflect.apply(prepare, runtime, [{ environment: selected, context: request.context }]);
+            expect(choices).toEqual([
+                { kind: 'volume', sourceId: expect.any(String), service: 'web', volume: 'content', consistency: 'stopDuringCopy' },
+                { kind: 'volume', sourceId: expect.any(String), service: 'reader', volume: 'content', consistency: 'stopDuringCopy' },
+            ]);
+            expect(new Set(choices.map((choice: { sourceId: string }) => choice.sourceId)).size).toBe(2);
+            const calls = await docker.readInvocations();
+            expect(calls.some(call => call.args.includes('config'))).toBe(true);
+            expect(calls.some(call => call.args.some(arg => ['pull', 'build', 'create', 'up', 'start'].includes(arg)))).toBe(false);
+        } finally { try { await rm(root, { recursive: true, force: true }); } finally { await mounted.dispose(); } }
+    });
+
     it('refuses a provider-built repository source before staging native content', async () => {
         const keys = nacl.sign.keyPair();
         vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
@@ -483,7 +520,7 @@ describe('own-server installed host acquisition', () => {
             } finally { await acquired.release(); }
         } finally { try { await mounted.dispose(); } finally { await rm(root, { recursive: true, force: true }); } }
     });
-    it.each(['deployment', 'restoration', 'review', 'copySourceRead'] as const)('materializes exact deployment facts through installation grants for %s without fabricating unavailable values', async kind => {
+    it.each(['deployment', 'restoration', 'review', 'copySourceRead', 'previewDomain'] as const)('materializes exact deployment facts through installation grants for %s without fabricating unavailable values', async kind => {
         const mounted = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [] } });
         const keys = nacl.sign.keyPair();
         vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
@@ -495,6 +532,12 @@ describe('own-server installed host acquisition', () => {
                 source: { kind: 'deploymentFact', fact: 'deploymentId' } },
             { purpose: 'variable', phase: 'build', name: 'DATABASE_ENDPOINT',
                 source: { kind: 'reference', environmentId: 'data', export: 'database', via: 'privateNetwork' } },
+            ...(kind === 'previewDomain' ? [
+                { purpose: 'variable', phase: 'runtime', name: 'DOMAIN_URL',
+                    source: { kind: 'deploymentFact', fact: 'domainUrl', domainId: 'template-domain' } },
+                { purpose: 'variable', phase: 'runtime', name: 'PRIMARY_URL',
+                    source: { kind: 'deploymentFact', fact: 'primaryUrl' } },
+            ] : []),
         ].map(binding => EnvironmentVariableBindingV1Schema.parse(binding));
         const grants = bindings.map(binding => {
             if (binding.source.kind === 'secret') throw new Error('Non-secret fixture required');
@@ -507,6 +550,18 @@ describe('own-server installed host acquisition', () => {
         // exact definitions and phase selection remain the real P42 path.
         const materializations: unknown[] = [];
         const network = vi.spyOn(axios, 'request').mockImplementation(async config => {
+            if (kind === 'previewDomain' && config.url?.endsWith('/environments/template/domains/template-domain')) return {
+                status: 200, data: { ok: true, environmentId: 'template', revision: 1,
+                    domain: { v: 1, id: 'template-domain', environmentId: 'template',
+                    targetLinkId: 'template-runtime', revision: 1, state: 'active', contentArtifactId: 'domain-content',
+                    contentHeaderVersion: 1, contentBodyVersion: 1, createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1 } },
+            };
+            if (kind === 'previewDomain' && config.url?.endsWith('/v1/artifacts/domain-content')) return {
+                status: 200, data: { artifact: { artifactId: 'domain-content', ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+                    header: { kind: 'deployment-domain.v1', title: 'Preview' }, revision: { headerVersion: 1, bodyVersion: 1 },
+                    seq: 1, createdAt: 1, updatedAt: 1,
+                    body: JSON.stringify({ hostname: '*.preview.test', target: { service: 'app', containerPort: 8080, path: '/app' } }) } },
+            };
             if (!config.url?.endsWith('/environment/secret-launch-admission')
                 && !config.url?.endsWith('/source-environment/secret-launch-admission')) throw new Error('Unexpected source or native read');
             materializations.push(config.data.materialization);
@@ -521,7 +576,23 @@ describe('own-server installed host acquisition', () => {
             serverHttpBaseUrl: 'https://home.test', machineId: 'machine',
             async acquirePluginRuntimeRegistryLease() { return mounted.lease; } });
         try {
-            const admittedEnvironment = { ...environment, content: { ...environment.content, definition, bindings } };
+            const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'acme/widgets' };
+            const template: DeploymentEnvironmentDetailV1 = { ...environment,
+                environment: { ...environment.environment, id: 'template', runtimeTargetLinkId: 'template-runtime' },
+                content: { ...environment.content, previewTemplate: { v: 1, enabled: true, forkPreviews: 'off', repository,
+                    runtimeTargetLinkId: 'template-runtime', domain: { domainId: 'template-domain', templateSlug: 'app',
+                        hostnamePattern: 'pr-{number}-{template-slug}' }, bindingBlueprints: [], data: [] } },
+                targetLinks: [{ ...environment.targetLinks[0]!, targetLink: { ...environment.targetLinks[0]!.targetLink,
+                    id: 'template-runtime', environmentId: 'template' } }],
+            };
+            const admittedEnvironment: DeploymentEnvironmentDetailV1 = { ...environment,
+                environment: { ...environment.environment, ...(kind === 'previewDomain' ? { purpose: 'preview' as const,
+                    previewTemplateEnvironmentId: 'template', previewRepositoryId: 'source', previewPullRequestId: '17',
+                    previewTargetLinkId: 'template-runtime' } : {}) },
+                content: { ...environment.content, definition, bindings, ...(kind === 'previewDomain' ? { previewProvenance: {
+                    v: 1 as const, templateEnvironmentId: 'template', runtimeTargetLinkId: 'template-runtime', repository,
+                    headRepository: repository, pullRequestId: '17', pullRequestNumber: 17, author: { id: 'author', login: 'alice' },
+                } } : {}) } };
             const materialization = kind === 'review' ? { kind: 'review' as const, contentArtifactId: 'candidate-artifact' }
                 : kind === 'restoration' ? { kind: 'restoration' as const, deploymentId: 'failed-operation', sourceDeploymentId: 'selected-receipt' }
                     : request.materialization;
@@ -532,6 +603,15 @@ describe('own-server installed host acquisition', () => {
                     actionOperationId: kind === 'restoration' ? 'original-operation' : receipt.deployment.actionOperationId },
                 environment: admittedEnvironment,
                 content: { ...receipt.content, sourceIntent: definition },
+                ...(kind === 'previewDomain' ? { readReferenceEnvironment: async (reference: { environmentId: string }) => {
+                    if (reference.environmentId !== 'template') throw Object.assign(new Error('reference_unavailable'), { code: 'reference_unavailable' });
+                    return template;
+                }, readPreviewDomain: (input: Parameters<typeof readPreviewDomainForHost>[0]) => readPreviewDomainForHost(input, {
+                    readMetadata: async operand => (await axios.request<unknown>({ method: 'GET',
+                        url: `https://home.test/v1/deployments/environments/${operand.environmentId}/domains/${operand.domainId}` })).data,
+                    open: async artifactId => (await axios.request<{ artifact: DeploymentArtifactDocumentV1 }>({ method: 'GET',
+                        url: `https://home.test/v1/artifacts/${artifactId}` })).data.artifact,
+                }) } : {}),
             });
             try {
                 expect(materializations).toEqual([kind === 'review' ? { kind: 'review', contentArtifactId: 'candidate-artifact' }
@@ -555,10 +635,15 @@ describe('own-server installed host acquisition', () => {
                 const material = await prepare('runtime');
                 try {
                     expect(material.env).toEqual({ ENVIRONMENT_NAME: 'Staging', ...(kind === 'review' ? {}
-                        : { DEPLOYMENT_ID: kind === 'restoration' ? 'selected-receipt' : 'deployment' }) });
+                        : { DEPLOYMENT_ID: kind === 'restoration' ? 'selected-receipt' : 'deployment' }),
+                        ...(kind === 'previewDomain' ? { DOMAIN_URL: 'https://pr-17-app.preview.test/app',
+                            PRIMARY_URL: 'https://pr-17-app.preview.test/app' } : {}) });
                     // Acquisition spent the phase admission; its captured facts
                     // do not acquire the same authority again during preparation.
-                    expect(network.mock.calls.length - readsBefore).toBe(0);
+                    expect(network.mock.calls.slice(readsBefore).filter(([config]) => config.url?.endsWith('/secret-launch-admission'))).toHaveLength(0);
+                    expect(network.mock.calls.length - readsBefore).toBe(kind === 'previewDomain' ? 2 : 0);
+                    if (kind === 'previewDomain') await expect(acquired.secrets.resolveNonSecret!({ kind: 'deploymentFact',
+                        fact: 'domainUrl', domainId: 'another-domain' })).rejects.toMatchObject({ code: 'reference_unavailable' });
                 }
                 finally { material.dispose(); }
                 await expect(prepare('build')).rejects.toMatchObject({ code: 'reference_unavailable' });

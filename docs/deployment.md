@@ -2659,6 +2659,8 @@ and Environment facts on demand, without a stored score or background polling.
 The Project home Readiness widget binds the Project itself without a checkout.
 Its explicit Environment picker borrows the Project's existing paged deployment
 collection; selection and Refresh invoke one composite read while presented.
+Read failures retain the Action owner's diagnostic code; explicit Refresh retries
+the finite read without creating a Session.
 The widget selects one Environment. The public Action also accepts a batch of
 Environments belonging to its admitted controller; a mixed-controller batch is
 refused at admission and does not route implicitly to other controllers.
@@ -2878,6 +2880,12 @@ configuration through the same restore/P42 credential owner. The current source
 generation supplies native execution; its current backup configuration does not
 retarget the selected historical snapshot. Run and prune continue to use current
 configuration.
+The retained configuration reopens the installed destination's nonsecret transport
+through its ordinary Open Action. Local bind facts and SFTP host-key custody reach
+P42 without adding fields to stored captures. The recorded repository locator wins
+over Open's computed locator, including older root repositories whose capture has
+a nonempty ownership prefix. Captured credential roles resolve the admitted source
+Environment's current Saved Secret references at the next acquisition boundary.
 
 Development-source stop-copy backups declare their exact admitted native service
 IDs and retained Domain subjects on the existing Action operation before stop.

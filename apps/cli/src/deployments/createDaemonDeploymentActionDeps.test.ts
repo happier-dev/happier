@@ -3406,7 +3406,8 @@ describe('installed deployment storage and target composition', () => {
         expect(writes).toHaveLength(3);
         expect(acquisitions).toBe(0);
     });
-    it.each(['template install', 'template install artifact failure', 'template install native failure', 'template install docker access denied', 'template install preparation failure', 'template install failed receipt', 'template install pending receipt', 'stored preparation cost', 'stored preparation stale held', 'stored preparation failure reason', 'stored preparation missing tool', 'machine Use stored definition', 'machine Use Team receipt history', 'machine Use pending stored definition', 'configured ref', 'stale Team grant', 'approved exact SHA', 'native tool version changes', 'compact exact SHA', 'pending exact SHA', 'retained rollback', 'retained rollback intent', 'retained rollback intent e2ee', 'trigger claim consent', 'missing native builder'] as const)('retains native review from %s without rewriting either Artifact', async selection => {
+    it.each(['template install', 'template install artifact failure', 'template install native failure', 'template install docker access denied', 'template install preparation failure', 'template install failed receipt', 'template install pending receipt', 'stored preparation cost', 'stored preparation stale held', 'stored preparation failure reason', 'stored preparation missing tool', 'machine Use stored definition', 'machine Use Team receipt history', 'machine Use pending stored definition', 'configured ref', 'stale Team grant', 'approved exact SHA', 'native tool version changes', 'compact exact SHA', 'pending exact SHA', 'retained rollback', 'retained rollback intent', 'retained rollback intent e2ee', 'trigger claim consent', 'trigger claim consent merge', 'missing native builder'] as const)('retains native review from %s without rewriting either Artifact', async selection => {
+        const triggerConsentSelection = selection === 'trigger claim consent' || selection === 'trigger claim consent merge';
         const storedPreparation = selection.startsWith('stored preparation');
         const teamReceiptHistory = selection === 'machine Use Team receipt history';
         const mode = selection === 'retained rollback intent e2ee' ? 'e2ee' : 'plain';
@@ -3435,7 +3436,7 @@ describe('installed deployment storage and target composition', () => {
         const startedAt = performance.now();
         const milestones: { phase: string; elapsedMs: number; nativeInvocations?: number }[] = [];
         let nativeSummary: { count: number; lastCommand: readonly string[] } | undefined;
-        if (templateSelection || selection === 'stored preparation cost' || selection === 'pending exact SHA' || selection === 'approved exact SHA' || selection === 'native tool version changes' || selection === 'configured ref' || selection === 'stale Team grant' || selection === 'trigger claim consent') onTestFailed(() => {
+        if (templateSelection || selection === 'stored preparation cost' || selection === 'pending exact SHA' || selection === 'approved exact SHA' || selection === 'native tool version changes' || selection === 'configured ref' || selection === 'stale Team grant' || triggerConsentSelection) onTestFailed(() => {
             // Content-free phase only: native/runtime setup is not behavior RED.
             console.error('native_review_fixture_phase', { selection, phase: pendingPhase,
                 elapsedMs: Math.round(performance.now() - startedAt), milestones,
@@ -3632,7 +3633,7 @@ describe('installed deployment storage and target composition', () => {
             vi.spyOn(axios, 'request').mockImplementation(async request => {
                 try {
                 const path = new URL(request.url!).pathname;
-                if (selection === 'trigger claim consent' && path.endsWith('/deploy') && request.method === 'POST') {
+                if (triggerConsentSelection && path.endsWith('/deploy') && request.method === 'POST') {
                     triggerDeployRequests.push(request.data);
                     // Home returns an idempotently settled receipt for this consent test.
                     return { status: 200, data: DeploymentReceiptResultV1Schema.parse({ ok: true,
@@ -4134,7 +4135,7 @@ describe('installed deployment storage and target composition', () => {
                     'candidate preparation opens one Environment body; Team sharing reads only current owner metadata').toBe(1);
                 posts.mockImplementation(createBeforeEdit);
             }
-            if (selection === 'trigger claim consent') {
+            if (triggerConsentSelection) {
                 pendingPhase = 'trigger-save';
                 const automationId = 'automation-1';
                 const triggerId = 'deployment-trigger';
@@ -4191,7 +4192,8 @@ describe('installed deployment storage and target composition', () => {
                     project: { machineId: 'machine-a', directory: repository }, deployment: {},
                     inputs: { serverId: 'home', environmentId: environment.environment.id, targetLinkId: currentTargetLinkId },
                     trigger: { kind: 'pluginEvent', enabled: true,
-                        eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/repository-pushed-v1' },
+                        eventRef: { pluginId: 'happier.scm.forge.github', localId: selection === 'trigger claim consent merge'
+                            ? 'automation/pull-request-merged-v1' : 'automation/repository-pushed-v1' },
                         sourceInstanceId: 'github:repository:77', sourceContractVersion: 1, sourceConfig: {}, displayLabel: 'Repository',
                         observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
                             machineId: 'machine-a', materializationId: 'github-install', pluginId: 'happier.scm.forge.github' } },
@@ -4232,10 +4234,21 @@ describe('installed deployment storage and target composition', () => {
                 });
                 const pushedSha = git('rev-parse', 'HEAD');
                 expect(pushedSha).not.toBe(receipt.content.sourceIntent.sha);
-                const normalized = normalizeGithubWebhookDelivery({ eventType: 'push', providerDeliveryId: 'delivery-1', receivedAtMs: 1000,
-                    rawBody: new TextEncoder().encode(JSON.stringify({ repository: { id: 77, full_name: 'owner/source' },
-                        ref: 'refs/heads/main', before: receipt.content.sourceIntent.sha, after: pushedSha })) }).automationEvent;
-                if (!normalized) throw new Error('Expected normalized repository push');
+                const normalizeCommit = (sha: string, providerDeliveryId: string) => {
+                    const merged = selection === 'trigger claim consent merge';
+                    const repositoryPayload = { id: 77, full_name: 'owner/source' };
+                    const payload = merged ? { action: 'closed', repository: repositoryPayload, pull_request: {
+                        id: 456, number: 34, merged: true, merged_at: '2026-08-10T12:05:06Z', merge_commit_sha: sha,
+                        user: { id: 99, login: 'octocat', type: 'User' },
+                        head: { sha: 'd'.repeat(40), ref: 'feature', repo: repositoryPayload },
+                        base: { ref: 'main', repo: repositoryPayload },
+                    } } : { repository: repositoryPayload, ref: 'refs/heads/main', before: receipt.content.sourceIntent.sha, after: sha };
+                    const event = normalizeGithubWebhookDelivery({ eventType: merged ? 'pull_request' : 'push', providerDeliveryId,
+                        receivedAtMs: 1000, rawBody: new TextEncoder().encode(JSON.stringify(payload)) }).automationEvent;
+                    if (!event) throw new Error('Expected normalized deployment event');
+                    return event;
+                };
+                const normalized = normalizeCommit(pushedSha, 'delivery-1');
                 const base = { v: 1 as const, kind: 'pluginEvent' as const,
                     eventRef: normalized.eventRef,
                     sourceSelectorId: '00000000-0000-4000-8000-000000000002', occurrenceId: normalized.occurrenceId,
@@ -4431,7 +4444,9 @@ describe('installed deployment storage and target composition', () => {
                 const completedInputs: unknown[] = [];
                 for (const [ordinal, sha] of [receipt.content.sourceIntent.sha, pushedSha].entries()) {
                     const journeyRunId = `00000000-0000-4000-8000-${String(ordinal + 10).padStart(12, '0')}`;
-                    const occurrence = { ...base, occurrenceId: `journey-${ordinal}`, payload: { ...base.payload, after: sha } };
+                    const normalizedJourney = normalizeCommit(sha, `journey-${ordinal}`);
+                    const occurrence = { ...base, occurrenceId: normalizedJourney.occurrenceId,
+                        occurredAt: normalizedJourney.occurredAtMs, payload: normalizedJourney.payload };
                     const journeyEvidence = AutomationRunPluginEventTriggerEvidenceV1Schema.parse({ ...evidence, ...occurrence });
                     const journeyCause = AutomationRunCauseSchema.parse({ ...cause,
                         occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: occurrence }) });

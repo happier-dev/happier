@@ -9,6 +9,8 @@ import { WorkflowTriggerListResultV1Schema } from '@happier-dev/protocol/workflo
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { sameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
+import { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { z } from 'zod/mini';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 
@@ -25,6 +27,12 @@ const unavailable = (errorCode = 'source_unavailable'): DeploymentPreviewEnrollm
 const refused = (result: Extract<ActionExecuteResult, { ok: false }>): DeploymentPreviewEnrollmentV1 => ({
     status: 'unavailable', errorCode: result.errorCode, ...(result.failureCause ? { failureCause: result.failureCause } : {}),
 });
+
+function readReceiptEvent(lease: PluginRuntimeRegistryLease) {
+    return lease.registry.contributes.automationEligibleEvents?.find(item =>
+        item.event.identity.pluginId === DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1.pluginId
+        && item.event.identity.localId === DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1.localId);
+}
 
 /** The existing Account Event owner retains the source; no deployment-local watcher or trigger-id store. */
 export function createPreviewEnrollmentForHost(host: Readonly<{
@@ -59,11 +67,18 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                 { action: 'workflow.trigger.update' as const, role: TRIGGER_ROLE },
             ];
             if (!policy) return { children: [], prepareExecutionContext };
-            const enabledChildren = policy.enabled ? [...children, { action: 'workflow.trigger.add' as const, role: TRIGGER_ROLE }] : children;
+            // Retained lifecycle sources may need the receipt sibling added after
+            // an earlier partial enrollment, including while new previews are disabled.
+            const enabledChildren = [...children, { action: 'workflow.trigger.add' as const, role: TRIGGER_ROLE }];
             try {
-                return await withEvents(policy.repository.kind, async events => ({ children: [
-                    ...events.map(event => ({ action: event.setupAction.identity, role: SETUP_ROLE })), ...enabledChildren,
-                ], prepareExecutionContext })) ?? { children: enabledChildren, prepareExecutionContext };
+                return await withEvents(policy.repository.kind, async (events, lease) => {
+                    const receiptEvent = events.some(event => event.event.automation.source.scmPullRequestLifecycle?.previewStatusActionRef)
+                        ? readReceiptEvent(lease) : undefined;
+                    return { children: [
+                        ...events.map(event => ({ action: event.setupAction.identity, role: SETUP_ROLE })),
+                        ...(receiptEvent ? [{ action: receiptEvent.setupAction.identity, role: SETUP_ROLE }] : []), ...enabledChildren,
+                    ], prepareExecutionContext };
+                }) ?? { children: enabledChildren, prepareExecutionContext };
             } catch { return { children: enabledChildren, prepareExecutionContext }; }
         },
         async completeUpdate(updated: UpdateSuccess, input: UpdateInput, context: ActionExecutorContext): Promise<UpdateSuccess> {
@@ -78,7 +93,8 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                     const invoke = context.hostReviewedChild.invoke;
                     const listed = await invoke({ action: 'workflow.trigger.list', role: TRIGGER_ROLE, input: { scope: 'account_inline' } });
                     if (!listed.ok) return refused(listed);
-                    const sets = WorkflowTriggerListResultV1Schema.parse(listed.result).sets.filter(set =>
+                    const allSets = WorkflowTriggerListResultV1Schema.parse(listed.result).sets;
+                    const sets = allSets.filter(set =>
                         set.context?.deploymentPreview?.serverId === host.serverId
                         && set.context.deploymentPreview.environmentId === input.environmentId);
                     if (!policy.enabled && sets.length === 0) return { status: 'disabled' };
@@ -120,7 +136,62 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                                     },
                                 }] } },
                                 trigger: { ...trigger, enabled: true } }) });
-                        return written.ok ? { status: policy.enabled ? 'enrolled' : 'disabled' } : refused(written);
+                        if (!written.ok) return refused(written);
+                        const statusActionRef = source.scmPullRequestLifecycle?.previewStatusActionRef;
+                        if (statusActionRef) {
+                            const receiptEvent = readReceiptEvent(lease);
+                            if (!receiptEvent) return unavailable();
+                            const receiptSource = receiptEvent.event.automation.source;
+                            if (!receiptSource.supportedObservationTransports.includes('checkpointedPull')) return unavailable();
+                            const receiptWatcher = await (lease.resolveCurrentPluginMaterializationRef
+                                ?? lease.registry.resolveCurrentPluginMaterializationRef)?.(receiptEvent.event.identity.pluginId);
+                            if (!receiptWatcher || receiptWatcher.machineId !== host.machineId) return unavailable('machine_unavailable');
+                            const receiptSetup = await invoke({ action: receiptSource.setupActionRef, role: SETUP_ROLE,
+                                input: { v: 1, serverId: host.serverId, environmentId: input.environmentId, previewChildren: true } });
+                            if (!receiptSetup.ok) return refused(receiptSetup);
+                            const receiptConfigured = PluginEventAutomationSetupResultV1Schema.parse(receiptSetup.result);
+                            if (receiptConfigured.sourceContractVersion !== receiptSource.sourceContractVersion
+                                || !compilePluginJsonSchema(receiptSource.sourceConfigSchema)(receiptConfigured.sourceConfig)) return unavailable();
+                            const statusActionId = formatQualifiedPluginActionId(statusActionRef);
+                            const target = { kind: 'inline' as const, definition: { version: 1, inputs: [
+                                { name: 'payload', valueType: 'json', required: true },
+                            ], defaults: {}, blocks: [{ kind: 'action', id: 'preview-status', actionId: statusActionId, input: {
+                                v: { kind: 'literal', value: 1 },
+                                serverId: { kind: 'literal', value: host.serverId },
+                                templateEnvironmentId: { kind: 'literal', value: input.environmentId },
+                                sourceConfig: { kind: 'literal', value: configured.sourceConfig },
+                                environmentId: { kind: 'input', name: 'payload', path: ['environmentId'] },
+                                deploymentId: { kind: 'input', name: 'payload', path: ['deploymentId'] },
+                            } }] } };
+                            const statusSet = allSets.find(set => set.target?.kind === 'inline'
+                                && set.target.definition.blocks.length === 1
+                                && set.target.definition.blocks.some(block => {
+                                    if (block.kind !== 'action' || block.actionId !== statusActionId) return false;
+                                    const server = block.input.serverId;
+                                    const template = block.input.templateEnvironmentId;
+                                    return server?.kind === 'literal' && server.value === host.serverId
+                                        && template?.kind === 'literal' && template.value === input.environmentId;
+                                }));
+                            const statusTrigger = statusSet?.triggers.find(item => item.kind === 'pluginEvent'
+                                && item.eventRef.pluginId === receiptEvent.event.identity.pluginId
+                                && item.eventRef.localId === receiptEvent.event.identity.localId);
+                            if (statusSet && !statusTrigger) return unavailable();
+                            const receiptTrigger = { kind: 'pluginEvent' as const, eventRef: receiptEvent.event.identity,
+                                sourceInstanceId: receiptConfigured.sourceInstanceId,
+                                sourceContractVersion: receiptConfigured.sourceContractVersion,
+                                sourceConfig: receiptConfigured.sourceConfig, displayLabel: receiptConfigured.displayLabel,
+                                observationTransport: { kind: 'checkpointedPull' as const, watcherMaterializationRef: receiptWatcher },
+                                filter: null, maximumObservationAgeMs: null };
+                            const statusWritten = statusSet && statusTrigger
+                                ? await invoke({ action: 'workflow.trigger.update', role: TRIGGER_ROLE, input: normalizeStrictJsonValue({
+                                    automationId: statusSet.automationId, triggerId: statusTrigger.id, expectedRevision: statusSet.revision,
+                                    patch: { enabled: true, target, trigger: receiptTrigger } }) })
+                                : await invoke({ action: 'workflow.trigger.add', role: TRIGGER_ROLE, input: normalizeStrictJsonValue({
+                                    project: { machineId: host.machineId, directory: '~' }, executionTarget: { kind: 'detached_run' },
+                                    target, trigger: { ...receiptTrigger, enabled: true } }) });
+                            if (!statusWritten.ok) return refused(statusWritten);
+                        }
+                        return { status: policy.enabled ? 'enrolled' : 'disabled' };
                     }) ?? unavailable();
                 })();
                 return { ...updated, previewEnrollment: enrollment };

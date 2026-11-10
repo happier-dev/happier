@@ -354,7 +354,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
     }>, effect: (native: Readonly<{
         native: Parameters<typeof observeOwnServerNativeRestoreDestination>[0];
         createInput: OwnServerNativeRestoreInputFactory;
-        createUploadInput(upload: NonNullable<OwnServerRestoreRequestForHost['upload']>): OwnServerNativeUploadRestoreInput;
+        createUploadInput(upload: NonNullable<OwnServerRestoreRequestForHost['upload']>, destination: Parameters<typeof prepareOwnServerNativeRestore>[1]['destination']): Promise<OwnServerNativeUploadRestoreInput>;
         runtime: OwnServerDeploymentRuntimeAcquisition;
         createBackupInput(operands: Pick<OwnServerNativeRestoreInput, 'execEnv' | 'readAccess'>): Promise<OwnServerNativeRestoreInput>;
     }>) => Promise<T>): Promise<T> {
@@ -403,6 +403,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             bindings: environment.content.bindings, assertCurrent: recovery.assertCurrent } }),
                     onIncumbentServicesChanged: input.onIncumbentServicesChanged };
                 const createInput: OwnServerNativeRestoreInputFactory = async capture => {
+                    if (!recovery.runtime.openBackupDestination) refuse('unsupported_action');
+                    const opened = await recovery.runtime.openBackupDestination!(capture.configuration);
                     const identities = new Set(capture.configuration.credentialBindings.map(environmentSecretBindingIdentityV1));
                     const credentialEnvironment = input.copySource?.environment ?? input.snapshot.environment;
                     if (input.copySource) {
@@ -413,7 +415,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             deploymentId: input.copySource.receipt.deployment.id,
                             actionOperationId: input.copySource.receipt.deployment.actionOperationId });
                     }
-                    const credentials = createDeploymentBackupEnvironmentForHost({ ...capture.repository,
+                    const credentials = createDeploymentBackupEnvironmentForHost({ ...opened, ...capture.repository,
                         signal: context.operation.signal!, isCurrent: () => currentActivation.isCurrent(), preparation: {
                             ...recovery.runtime.secrets, ...(copySecrets ? { grants: copySecrets.grants } : {}),
                             environmentId: credentialEnvironment.environment.id,
@@ -426,7 +428,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                         onStopPending: () => input.onStopPending?.() };
                 };
                 return effect({ native, createInput, runtime: recovery.runtime,
-                    createUploadInput(upload) { return { ...native, upload, operationProgress: input.request.context.operationProgress,
+                    async createUploadInput(upload, destination) { return { ...native, upload,
+                        ...(destination.adapter === 'volume-v1' ? { runtimeImage: await project.prepareResticRuntime({ render, context }) } : {}), operationProgress: input.request.context.operationProgress,
                         onStopPending: () => input.onStopPending?.() }; },
                     async createBackupInput(operands) {
                         return { ...native, ...operands, runtimeImage: await project.prepareResticRuntime({ render, context }),
@@ -572,26 +575,31 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             if (upload) {
                 const selected = input.mode === 'prepare' ? input.destination : retained?.prepared.destination;
                 const target = selected && ('kind' in selected ? selected.kind === 'database'
-                    ? { service: selected.service, database: selected.database, adapter: 'postgres-v1' as const } : undefined
-                    : selected.adapter === 'postgres-v1' ? selected : undefined);
+                    ? { service: selected.service, database: selected.database, adapter: 'postgres-v1' as const }
+                        : { service: selected.service, volume: selected.volume, adapter: 'volume-v1' as const }
+                    : selected);
                 if (!target) refuse('unsupported_action');
-                const destination = await observeOwnServerNativeRestoreDestination(native, { target,
-                    operationId: input.mode === 'prepare' ? operationId : retained!.prepared.operationId,
-                    environmentId: input.environmentId, revision: snapshot.environment.environment.revision });
+                const observation = { operationId: input.mode === 'prepare' ? operationId : retained!.prepared.operationId,
+                    environmentId: input.environmentId, revision: snapshot.environment.environment.revision };
+                const destination = target.adapter === 'volume-v1'
+                    ? await observeOwnServerNativeVolumeRestoreDestination(native, { ...observation, target })
+                    : await observeOwnServerNativeRestoreDestination(native, { ...observation, target });
                 const source = { kind: 'upload' as const, transferId: upload.transferId, sizeBytes: upload.sizeBytes, sha256: upload.sha256 };
                 if (input.mode === 'confirm') {
                     if (!retained || 'configuration' in retained || retained.prepared.source.kind !== 'upload') refuse('stale_input');
-                    return confirmOwnServerNativeRestore(createUploadInput(upload), { prepare: retained.prepared,
+                    return confirmOwnServerNativeRestore(await createUploadInput(upload, destination), { prepare: retained.prepared,
                         source, sourceFormat: retained.prepared.sourceFormat, destination });
                 }
-                const safety = destination.hasMeaningfulData ? await runtime.preparePreMigrationBackupOperands?.() : undefined;
+                const safety = destination.hasMeaningfulData ? destination.adapter === 'volume-v1'
+                    ? await runtime.prepareBackupRunOperands?.() : await runtime.preparePreMigrationBackupOperands?.() : undefined;
                 try {
                     if (destination.hasMeaningfulData && !safety) refuse('backup_required');
-                    if (safety && (safety.destination.service !== destination.service || safety.destination.database !== destination.database
+                    if (safety && destination.adapter === 'postgres-v1' && (!('destination' in safety)
+                        || safety.destination.service !== destination.service || safety.destination.database !== destination.database
                         || safety.destination.environmentId !== destination.environmentId)) refuse('stale_input');
-                    const prepared = await prepareOwnServerNativeRestore(createUploadInput(upload), { operationId, source,
+                    const prepared = await prepareOwnServerNativeRestore(await createUploadInput(upload, destination), { operationId, source,
                         destination, ...(safety ? { safetyBackup: { environmentId: destination.environmentId,
-                            configuration: safety.configuration, data: safety.data } } : {}) }, safety ? await createBackupInput(safety) : undefined);
+                            configuration: safety.configuration, ...('data' in safety ? { data: safety.data } : {}) } } : {}) }, safety ? await createBackupInput(safety) : undefined);
                     if (prepared.source.kind !== 'upload' || prepared.repository) refuse('outcome_unknown');
                     await reviewSnapshot(prepared.destination);
                     return { kind: 'prepared', prepared: { ...prepared, source: prepared.source } };

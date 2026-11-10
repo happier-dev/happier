@@ -44,6 +44,17 @@ import {
   type RuntimeActionIdV1,
 } from './actionIds.js';
 
+it('routes a cold prepared preview Create through its canonical Machine approval owner', () => {
+  const spec = getActionSpec('deployments.environments.create');
+  const input = spec.inputSchema.parse({ serverId: 'home', projectSourceId: 'source', requestKey: 'preview-head-a',
+    protection: 'nonProduction', purpose: 'preview', deployerMode: 'managers', controllerMachineId: 'controller',
+    buildMachineId: 'builder', contentArtifactId: 'exact-head-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+    preview: { templateEnvironmentId: 'template', expectedTemplateRevision: 1, runtimeTargetLinkId: 'template-runtime', pullRequestId: '17' },
+    firstTargetLink: { contentArtifactId: 'runtime-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+      machines: [{ machineId: 'runtime', installationId: 'installation-runtime' }] } });
+  expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('machine');
+});
+
 it.each([
   { actionId: 'machines.list' as const, input: { limit: 201 } },
   { actionId: 'servers.list' as const, input: { limit: 201 } },
@@ -3865,7 +3876,7 @@ describe('Action Spec Registry', () => {
       expect(spec.bindings?.sdkMethod ?? null).toBe(sdkMethod);
       expect(spec.surfaces.rpc).toBe(true);
       expect(spec.surfaces.api).toBe(api);
-      const automated = ['sessions.external.candidates.list', 'sessions.external.candidate.delete', 'sessions.external.link.ensure', 'sessions.external.transcript.page'].includes(id);
+      const automated = ['sessions.external.candidates.list', 'sessions.external.candidate.delete', 'sessions.external.link.ensure', 'sessions.external.transcript.page', 'sessions.external.transcript.readAfter', 'sessions.external.status.get'].includes(id);
       expect(spec.surfaces.mcp).toBe(automated);
       expect(spec.surfaces.agent).toBe(automated);
       expect(spec.surfaces.voice).toBe(false);
@@ -3912,8 +3923,15 @@ describe('Action Spec Registry', () => {
     }
 
     const takeoverStart = getActionSpec('sessions.external.takeover.start');
-    expect(takeoverStart.surfaceBindings?.rpc?.inputSchema).toBe(takeoverStart.inputSchema);
-    expect(takeoverStart.surfaceBindings?.rpc?.outputSchema).toBe(takeoverStart.outputSchema);
+    const intent = { request: { v: 1, idempotencyKey: 'takeover-1', sessionId: 'session-1', plan: 'takeover',
+      targetStorageMode: 'persisted', targetDirectory: '/workspace', targetRuntimeMode: 'terminal' } };
+    const source = { machineId: 'machine-1', remoteSessionId: 'remote-1', linkGeneration: '7',
+      qualifiedIdentity: { v: 1, agent: { pluginId: 'example.agent', localId: 'example' },
+        source: { kind: 'jsonl', contractVersion: 1 } } };
+    expect(takeoverStart.inputSchema.safeParse(intent).success).toBe(true);
+    expect(takeoverStart.inputSchema.safeParse({ request: { ...intent.request, source } }).success).toBe(false);
+    expect(takeoverStart.surfaceBindings?.rpc?.inputSchema.safeParse({ request: { ...intent.request, source } }).success).toBe(true);
+    expect(takeoverStart.outputSchema.safeParse({ ok: true, progress: {} }).success).toBe(false);
     expect(takeoverStart.surfaceBindings?.rpc?.decodeInput).toBeDefined();
     expect(takeoverStart.surfaceBindings?.rpc?.encodeOutput).toBeDefined();
 

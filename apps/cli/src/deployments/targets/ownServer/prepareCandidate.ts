@@ -21,6 +21,7 @@ export async function prepareOwnServerDeploymentCandidate(input: Readonly<{
     stageContent(sourceIntent: DeploymentSourceIntentV1): Promise<string>;
     runtime: OwnServerDeploymentRuntime; context: ActionExecutorContext;
     readReferenceEnvironment?: OwnServerDeploymentTargetHostInput['readEnvironment'];
+    readPreviewDomain?: OwnServerDeploymentTargetHostInput['readPreviewDomain'];
     machineResults?: readonly DeploymentMachineResultV1[];
 }>): Promise<DeploymentOwnServerContentV1> {
     const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
@@ -33,7 +34,8 @@ export async function prepareOwnServerDeploymentCandidate(input: Readonly<{
     if (!input.runtime.acquireCandidate) return refuse('unsupported');
     const runtime = await input.runtime.acquireCandidate({ environmentId: environment.environment.id, targetLinkId: input.targetLinkId,
         ...(input.sourceIntent ? { sourceIntent: input.sourceIntent } : {}), ...(input.sha ? { sha: input.sha } : {}),
-        stageContent: input.stageContent, context: input.context, readReferenceEnvironment: input.readReferenceEnvironment }, environment);
+        stageContent: input.stageContent, context: input.context, readReferenceEnvironment: input.readReferenceEnvironment,
+        readPreviewDomain: input.readPreviewDomain }, environment);
     try {
         const port = createDeploymentSourceMaterializationPort({ admit: async () => ({ ...runtime.source,
             assertCurrent: runtime.assertSourceCurrent }) });

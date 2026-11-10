@@ -19,7 +19,7 @@ import { DeploymentDomainAddAdmissionInputV1Schema, DeploymentEnvironmentCreateI
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1,
-    DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
+    DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1,
     DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1,
     DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1, isDeploymentDomainAddActionIdV1,
     isDeploymentDomainMetadataReadActionIdV1, isDeploymentMembershipActionIdV1,
@@ -749,7 +749,8 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     effectActionId: string,
     proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown; reviewedChild?: ReviewedActionChildHttpProofV1 }>,
     isReadOnlyArtifactPurpose?: (proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>) => boolean,
-    isNativeHttpPurpose?: (proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>) => boolean,
+    isNativeHttpPurpose?: (proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
+        readActionId?: typeof DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1[number] | DeploymentDomainMetadataReadActionIdV1) => boolean,
 ): Promise<DeploymentCreateHttpPurpose | null> {
     const admission = binding.deploymentPreparationAdmission;
     if (!admission || admission.operation !== 'create' || !isDeploymentCreateHttpEffect(binding, effectActionId)) return null;
@@ -801,6 +802,14 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
         return reviewedDeploy ? admit(true) : { rootActionId: 'deployments.environments.create', effectActionId };
     }
     if (deployEffect && !proof.path.startsWith('/v1/artifacts/')) {
+        const read = await readDeploymentPreparationHttpReadPurpose(tx, binding, effectActionId, proof,
+            actionId => isNativeHttpPurpose?.(proof, actionId) === true);
+        if (read) {
+            const selected = read.environmentId !== undefined ? read.environmentId === environmentId
+                : read.deploymentId !== undefined
+                    && await tx.deployment.findFirst({ where: { id: read.deploymentId, environmentId: environmentId! }, select: { id: true } }) !== null;
+            return selected ? reviewedDeploy ? admit(true) : { rootActionId: 'deployments.environments.create', effectActionId } : null;
+        }
         const parsed = DeploymentDeployAdmissionInputV1Schema.safeParse(proof.body);
         if (parsed.success) {
             const { actionOperationId: _operation, ...reviewedInput } = parsed.data;
@@ -896,6 +905,10 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     if (method === 'GET' && proof.body === undefined && (match[2] === undefined || match[2] === 'recipients' || match[2] === 'grants')
         && matches({ id: artifactId })) {
         if (!childEffect && (artifactId === admission.candidate?.contentArtifactId
+            || binding.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
+                && admission.catalogApp === undefined
+                && artifactId === createDeploymentEnvironmentContentArtifactIdV1({ ...binding,
+                    actionId: DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 })
             || admission.preview && await tx.deploymentEnvironment.findFirst({ where: {
                 id: admission.preview.templateEnvironmentId, contentArtifactId: artifactId,
             }, select: { id: true } }))) return admit(true);

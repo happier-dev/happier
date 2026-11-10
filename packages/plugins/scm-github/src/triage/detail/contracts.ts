@@ -9,6 +9,7 @@ import {
   defineProtocolUnion,
   defineProtocolUtf8String,
   ProtocolDeploymentReceiptOperationV1Schema,
+  ProtocolDeploymentControllerAvailabilityV1Schema,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
   MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
@@ -26,7 +27,7 @@ import {
 } from './projection.js';
 import { GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } from '../contribution.js';
 import { GITHUB_CHECKS_STATES_V1, GITHUB_CHECKS_CONDITION_STATES_V1 } from '../types.js';
-import { GITHUB_MERGE_METHODS_V1 } from '../mutations/contracts.js';
+import { GITHUB_MERGE_METHODS_V1, GithubPullRequestPreviewStatusInputV1Schema } from '../mutations/contracts.js';
 import { GITHUB_REVIEW_DECISIONS_V1 } from '../mapping/facts.js';
 import { GITHUB_MAX_DETAIL_PAGE_SIZE_V1 } from './routes.js';
 import {
@@ -167,6 +168,7 @@ export const GithubPreviewResultV1Schema = defineProtocolUnion([
         environmentId: defineProtocolString({ minLength: 1 }),
         deploymentId: defineProtocolString({ minLength: 1 }),
         operation: ProtocolDeploymentReceiptOperationV1Schema,
+        controller: ProtocolDeploymentControllerAvailabilityV1Schema.optional(),
         servingSha: defineProtocolString({ minLength: 1 }),
         state: defineProtocolUnion([
           defineProtocolLiteral('needsApproval'),
@@ -177,9 +179,16 @@ export const GithubPreviewResultV1Schema = defineProtocolUnion([
           defineProtocolLiteral('outdated'),
         ]),
         targetUrl: defineProtocolUnion([defineProtocolString({ minLength: 1 }), defineProtocolLiteral(null)]),
+        publication: defineProtocolUnion([
+          defineProtocolObject({ kind: defineProtocolLiteral('current') }, { policy: 'closed' }),
+          defineProtocolObject({ kind: defineProtocolLiteral('unpublished'), input: GithubPullRequestPreviewStatusInputV1Schema }, { policy: 'closed' }),
+          defineProtocolObject({ kind: defineProtocolLiteral('unavailable'), input: GithubPullRequestPreviewStatusInputV1Schema,
+            failure: TriageSourceFailureV1Schema }, { policy: 'closed' }),
+        ]).optional(),
       }, { policy: 'closed' }),
       defineProtocolObject({ kind: defineProtocolLiteral('unavailable'),
         environmentId: defineProtocolString({ minLength: 1 }), failure: TriageSourceFailureV1Schema,
+        controller: ProtocolDeploymentControllerAvailabilityV1Schema.optional(),
       }, { policy: 'closed' }),
     ])),
   }, { policy: 'closed' }),

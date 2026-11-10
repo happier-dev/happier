@@ -57,7 +57,11 @@ export const PluginEventAutomationDeclarationV1Schema = lazyZodSchema(() => z.st
   source: z.strictObject({
     sourceContractVersion: AutomationEventPositiveSafeIntegerV1Schema,
     /** Neutral lifecycle role consumed by deployment preview enrollment. */
-    scmPullRequestLifecycle: z.optional(z.strictObject({ providerKind: ScmHostingProviderKindSchema })),
+    scmPullRequestLifecycle: z.optional(z.strictObject({
+      providerKind: ScmHostingProviderKindSchema,
+      /** Existing Forge Action used by a sibling receipt-change Workflow. */
+      previewStatusActionRef: zMini.optional(asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema)),
+    })),
     supportedObservationTransports: z.array(AutomationObservationTransportKindV1Schema).check(z.minLength(1), z.superRefine((value, context) => {
         if (new Set(value).size !== value.length) {
           context.addIssue({ code: "custom", message: 'Observation transports must be unique' });

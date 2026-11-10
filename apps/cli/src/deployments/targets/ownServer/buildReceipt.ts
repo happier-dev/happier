@@ -119,7 +119,8 @@ export async function buildOwnServerDeploymentReceipt(host: OwnServerDeploymentT
         if (!isDeepStrictEqual(initial.content.images, initial.basis.images)) refuse('outcome_unknown');
         if (initial.basis.buildServices?.length && initial.content.sourceIntent.kind !== 'repository') refuse('needs_repository');
         const runtime = await host.runtime.acquire({ ...request, executionRole: 'build',
-            materialization: { kind: 'deployment', deploymentId: initial.receipt.deployment.id } }, { ...initial, readReferenceEnvironment: host.readEnvironment });
+            materialization: { kind: 'deployment', deploymentId: initial.receipt.deployment.id } }, { ...initial,
+                readReferenceEnvironment: host.readEnvironment, readPreviewDomain: host.readPreviewDomain });
         let stageOutput: Awaited<ReturnType<typeof openOwnServerDeploymentStageLog>> | undefined;
         try {
             const assertCurrent = async () => {

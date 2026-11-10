@@ -42,6 +42,35 @@ it('binds private preview template content while preserving the reviewed Environ
     patch: { buildMachineId: 'foreign-builder' } })).not.toBe(native.authoredMetadataDigest);
 });
 
+it.each([
+  ['plain', 'runtime'], ['plain', 'builder'], ['e2ee', 'runtime'], ['e2ee', 'builder'],
+] as const)('retains preview placement authorization across its HTTP JSON boundary (%s, %s only)', (mode, placement) => {
+  const actionId = 'deployments.environments.update';
+  const target = { kind: 'machine', machineId: 'controller' } as const;
+  const input = { serverId: 'srv_preview', environmentId: 'environment', expectedRevision: 4,
+    contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1,
+    ...(placement === 'runtime' ? { patch: { previewTemplate: { v: 1, enabled: true, forkPreviews: 'off',
+      repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
+      runtimeTargetLinkId: 'runtime', domain: null, bindingBlueprints: [], data: [] } } }
+      : { patch: { buildMachineId: 'builder' } }) };
+  const envelope = mode === 'plain' ? { v: 1, requestId: 'preview-placement', target, input } as const
+    : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: { serverIdentityId: input.serverId, accountId: 'actor', actionId, requestId: 'preview-placement', target,
+        authentication: { kind: 'account', tokenEpoch: 1 } }, input,
+      material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) }, randomBytes: n => new Uint8Array(n).fill(2) });
+  const native = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'preview-proof', binding: {
+    accountId: 'actor', custodianAccountId: 'actor', authentication: { kind: 'account', tokenEpoch: 1 },
+    serverIdentityId: input.serverId, machineId: target.machineId, installationId: 'installation', actionId,
+    requestId: envelope.requestId, target, accountEncryptionMode: mode, environmentId: input.environmentId,
+    ...(envelope.v === 2 && envelope.machineRuntimeDemand ? { machineRuntimeDemand: envelope.machineRuntimeDemand } : {}),
+    deploymentNativeAdmission: native, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+  } });
+  const received = ExternalActionExecutionAuthorizationV1Schema.parse(JSON.parse(JSON.stringify(authorization)));
+  expect(isExternalActionAuthorizationBoundToEnvelope(received.binding,
+    { actionId, machineId: target.machineId, envelope })).toBe(true);
+});
+
 it.each(['template.instantiate', 'template.updates.apply'] as const)('refuses obsolete requester software carriers while retaining ordinary authorization (%s)', actionId => {
   const authorization = { v: 1, token: 'template-setup-proof', binding: {
     accountId: 'actor', custodianAccountId: 'actor', authentication: { kind: 'account', tokenEpoch: 1 },

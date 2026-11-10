@@ -60,6 +60,20 @@ export function readRequesterAccountActionContext(authorization?: ExternalAction
   return projection?.[requesterActionContext] ?? null;
 }
 
+/** Select private author custody once; a signed requester cannot inherit the daemon Account. */
+export function resolveRequesterSavedSecretActionCustody(input: Readonly<{
+  authorization?: ExternalActionExecutionAuthorizationV1;
+  credentials: StoredCredentials;
+  operationContext?: SavedSecretOperationContextV1;
+}>): Readonly<{ credentials: StoredCredentials; operation: SavedSecretOperationContextV1 | undefined }> {
+  const operation = readRequesterAccountActionContext(input.authorization)?.savedSecretOperationContext
+    ?? (input.authorization ? undefined : input.operationContext);
+  if (input.authorization && !operation) throw Object.assign(new Error('Saved Secret requester custody is unavailable'), {
+    code: 'client_required',
+  });
+  return { credentials: operation?.credentials ?? input.credentials, operation };
+}
+
 /** Keep admitted custody when its owner enriches the same signed root. */
 export function rebindRequesterAccountActionContext(
   authorization: ExternalActionExecutionAuthorizationV1,

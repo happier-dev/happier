@@ -34,7 +34,7 @@ export async function prepareUiDeploymentTargetLink(account: LazyActionAccountCo
         if (existing) return existing;
     }
     const created = await account.createArtifactDocument({
-        header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: '' },
+        header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'title' in input ? input.title ?? '' : '' },
         body: JSON.stringify(provider ?? {}), signal: context.signal,
     });
     await shareDeploymentContentWithOwner(account, created.artifactId, current.environment.owner, context.signal);

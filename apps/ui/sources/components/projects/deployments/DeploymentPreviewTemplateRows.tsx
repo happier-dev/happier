@@ -12,16 +12,20 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { t } from '@/text';
 import type { createDeploymentActions } from './deploymentActions';
 import { DeploymentPreviewBranchChoice } from './DeploymentPreviewBranchChoice';
+import { DeploymentPreviewNativeChoice } from './DeploymentPreviewNativeChoice';
+import { showDeploymentSheet } from './deploymentSheet';
 import { DeploymentPreviewDomainChoice } from './DeploymentPreviewDomainChoice';
 import { sourceWord } from './DeploymentCreationDefaultsRows';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Typography } from '@/constants/Typography';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { DeploymentPreviewTemplateV1Schema, type DeploymentPreviewForkEligibilityV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
 
 /**
  * The preview template this Environment carries (lab `d5d/template`, `previewdb/template`, `previewdb/branch`,
  * `d5d/prodmachine`): whether new pull requests get previews, where they run, their address pattern and their data.
- * Read from the Environment's own content; forks never get previews, which is a fact rather than a choice here.
+ * Read from the Environment's own content; fork opt-in consumes the host's placement admission.
  */
 type PreviewTemplate = NonNullable<DeploymentEnvironmentReadDetailV1['content']['previewTemplate']>;
 type PreviewData = 'own' | 'branch' | 'none';
@@ -41,8 +45,14 @@ type PreviewTemplateRowsProps = Readonly<{
   saving: boolean;
   inspect: ReturnType<typeof createDeploymentActions>['inspectPlatformTarget'] | null;
   prepareDefaults: ReturnType<typeof createDeploymentActions>['prepareConfigurationDefaults'] | null;
+  prepareForkPolicy?: ReturnType<typeof createDeploymentActions>['preparePreviewForkPolicy'] | null;
+  onChooseMachine?: (() => void) | null;
   /** The captured Home/Account the Project repository is read under; absent while it is not current. */
   lifetime: ServerAccountScopeLifetime | null;
+  unresolvedData?: 'own' | 'branch';
+  onDataChoice?: (choice: PreviewData) => void;
+  requireRuntimeChoice?: boolean;
+  onRuntimeChoice?: () => void;
   testID: string;
 }>;
 
@@ -69,13 +79,26 @@ export function PreviewTemplateRows(props: PreviewTemplateRowsProps) {
   };
   const link = runtimeLinks.find((candidate) => candidate.id === template.runtimeTargetLinkId);
   const sharesProduction = template.runtimeTargetLinkId === (props.detail.environment.runtimeTargetLinkId ?? props.detail.runtimeTargetLink?.id);
-  const dataKind = previewDataKind(template);
+  const dataKind = props.unresolvedData ?? previewDataKind(template);
   const save = (patch: Partial<PreviewTemplate>) => onSave?.({ ...template, ...patch });
+  const nativeSelection = template.data.find(selection => selection.kind === 'template');
+  const openNative = () => {
+    const lifetime = props.lifetime;
+    if (!lifetime) return;
+    showDeploymentSheet({ component: DeploymentPreviewNativeChoice,
+      props: { detail: props.detail, lifetime, machineName: props.machineName,
+        initialSelection: nativeSelection, onSelect: selection => save({ data: [selection] }), testID: `${props.testID}.native` },
+      title: t('projects.deployments.settingsSections.previewsDataOwn'), testID: `${props.testID}.native.modal` });
+  };
+  const chooseRuntime = (runtimeTargetLinkId: string) => {
+    props.onRuntimeChoice?.();
+    save({ runtimeTargetLinkId });
+  };
   const canChooseBranch = !!props.lifetime && !!props.inspect
     && props.detail.targetLinks.some(row => row.targetLink.role === 'data' && row.targetLink.source.kind === 'plugin');
   // A reason marks its segment unavailable (the shared segmented row rule), so only an option that cannot be chosen carries
   // one. Under the row the reason stands alone, so a single unavailable option names itself.
-  const ownUnavailable = !seenData.own && dataKind !== 'own';
+  const ownUnavailable = !props.lifetime && !seenData.own && dataKind !== 'own';
   const branchUnavailable = !seenData.branch && dataKind !== 'branch' && !canChooseBranch;
   const bothUnavailable = ownUnavailable && branchUnavailable;
   const unavailable = (own: boolean) => bothUnavailable ? t('projects.deployments.settingsSections.previewsDataUnavailable')
@@ -104,7 +127,7 @@ export function PreviewTemplateRows(props: PreviewTemplateRowsProps) {
             onValueChange={(enabled) => save({ enabled })} />
         ) : undefined}
       />
-      {onSave && runtimeLinks.length > 1 && runtimeLinks.length <= 4 ? (
+      {onSave && runtimeLinks.length > 0 && runtimeLinks.length <= 4 && (runtimeLinks.length > 1 || props.requireRuntimeChoice) ? (
         <SegmentedChoiceItem<string>
           testID={`${props.testID}.runsOn`}
           testIDPrefix={`${props.testID}.runsOn`}
@@ -113,15 +136,15 @@ export function PreviewTemplateRows(props: PreviewTemplateRowsProps) {
           subtitleLeading={runsOnLeading}
           accessoryLayout="adaptive"
           options={runtimeLinks.map((candidate) => ({ id: candidate.id, label: linkName(candidate) }))}
-          value={template.runtimeTargetLinkId}
+          value={props.requireRuntimeChoice ? null : template.runtimeTargetLinkId}
           disabled={props.saving}
-          onChange={(runtimeTargetLinkId) => save({ runtimeTargetLinkId })}
+          onChange={chooseRuntime}
         />
       ) : onSave && runtimeLinks.length > 4 ? (
         <DropdownMenu testID={`${props.testID}.runsOn`} open={runtimeOpen} onOpenChange={setRuntimeOpen}
           items={runtimeLinks.map(candidate => ({ id: candidate.id, title: linkName(candidate) }))}
-          selectedId={template.runtimeTargetLinkId}
-          onSelect={runtimeTargetLinkId => { setRuntimeOpen(false); save({ runtimeTargetLinkId }); }}
+          selectedId={props.requireRuntimeChoice ? null : template.runtimeTargetLinkId}
+          onSelect={runtimeTargetLinkId => { setRuntimeOpen(false); chooseRuntime(runtimeTargetLinkId); }}
           itemTrigger={{ title: t('projects.deployments.settingsSections.previewsRunsOn'), subtitle: runsOnSubtitle,
             detailFormatter: () => linkName(link), itemProps: { accessoryLayout: 'adaptive', disabled: props.saving } }} />
       ) : (
@@ -149,7 +172,9 @@ export function PreviewTemplateRows(props: PreviewTemplateRowsProps) {
           value={choosingBranch ? 'branch' : dataKind}
           disabled={props.saving}
           onChange={(next) => {
+            props.onDataChoice?.(next);
             setChoosingBranch(next === 'branch');
+            if (next === 'own' && !seenData.own && !nativeSelection) { openNative(); return; }
             if (next === dataKind) return;
             const data = next === 'none' ? [] : seenData[next];
             if (data) save({ data });
@@ -163,16 +188,80 @@ export function PreviewTemplateRows(props: PreviewTemplateRowsProps) {
           mode="info"
         />
       )}
+      {onSave && props.lifetime && nativeSelection && dataKind === 'own' ? (
+        <Item testID={`${props.testID}.native.selected`} title={t('projects.deployments.settingsSections.previewEditor.nativeTemplate')}
+          detail={nativeSelection.templateRef.itemId} mode="info" rightElement={
+            <SectionActionButton testID={`${props.testID}.native.configure`} title={t('common.edit')}
+              disabled={props.saving} onPress={openNative} />} />
+      ) : null}
       {onSave && props.lifetime && props.inspect && (choosingBranch || dataKind === 'branch') ? (
         <DeploymentPreviewBranchChoice detail={props.detail} lifetime={props.lifetime} inspect={props.inspect}
           saving={props.saving} onSave={(data) => save({ data })} testID={`${props.testID}.branch`} />
       ) : null}
-      {template.forkPreviews === 'off' ? (
+      {onSave && props.prepareForkPolicy ? (
+        <PreviewForkChoice environment={props.detail.environment} template={template} prepare={props.prepareForkPolicy}
+          runtimeTargetLinkRevision={link?.revision ?? null}
+          saving={props.saving} onSave={next => save({ forkPreviews: next })}
+          onChooseMachine={props.onChooseMachine} testID={`${props.testID}.forkPolicy`} />
+      ) : template.forkPreviews === 'off' ? (
         <Item testID={`${props.testID}.forks`} title={t('projects.deployments.settingsSections.previewsForks')}
           titleStyle={Typography.default('regular')} mode="info" />
       ) : null}
     </>
   );
+}
+
+function PreviewForkChoice(props: Readonly<{
+  environment: DeploymentEnvironmentReadDetailV1['environment'];
+  template: PreviewTemplate;
+  runtimeTargetLinkRevision: number | null;
+  prepare: NonNullable<PreviewTemplateRowsProps['prepareForkPolicy']>;
+  saving: boolean;
+  onSave: (policy: PreviewTemplate['forkPreviews']) => void;
+  onChooseMachine?: (() => void) | null;
+  testID: string;
+}>) {
+  const [eligibility, setEligibility] = React.useState<DeploymentPreviewForkEligibilityV1 | null>(null);
+  const [failed, setFailed] = React.useState(false);
+  const [retry, setRetry] = React.useState(0);
+  const prepare = useEventCallback((signal: AbortSignal) => props.prepare(props.environment,
+    { repository: props.template.repository, runtimeTargetLinkId: props.template.runtimeTargetLinkId }, { signal }));
+  React.useEffect(() => {
+    const controller = new AbortController();
+    setEligibility(null);
+    setFailed(false);
+    void prepare(controller.signal).then(result => {
+      if (!controller.signal.aborted) setEligibility(result);
+    }, () => { if (!controller.signal.aborted) setFailed(true); });
+    return () => controller.abort();
+  }, [props.environment.id, props.environment.buildMachineId, props.environment.protection,
+    props.template.runtimeTargetLinkId, props.runtimeTargetLinkRevision, props.prepare, prepare, retry]);
+  const allowed = eligibility?.kind === 'eligible';
+  const reason = eligibility?.kind === 'ineligible'
+    ? t(eligibility.reason === 'production_workload' ? 'projects.deployments.settingsSections.previewEditor.forksProduction'
+      : 'projects.deployments.settingsSections.previewEditor.forksUnsupported')
+    : eligibility?.kind === 'unavailable' || failed ? t('projects.deployments.settingsSections.previewEditor.forksUnavailable')
+      : !eligibility ? t('projects.deployments.settingsSections.previewEditor.forksLoading') : undefined;
+  const labels: Record<PreviewTemplate['forkPreviews'], string> = {
+    off: t('projects.deployments.settingsSections.previewEditor.forksOff'),
+    approveEachCommit: t('projects.deployments.settingsSections.previewEditor.forksApprove'),
+  };
+  return <>
+    <SegmentedChoiceItem<PreviewTemplate['forkPreviews']> testID={props.testID} testIDPrefix={props.testID}
+      title={t('projects.deployments.settingsSections.previewEditor.forks')}
+      subtitle={t('projects.deployments.settingsSections.previewEditor.forksBody')} accessoryLayout="adaptive"
+      options={Object.values(DeploymentPreviewTemplateV1Schema.shape.forkPreviews._zod.def.entries).map(id => ({ id, label: labels[id],
+        disabled: id === 'approveEachCommit' && !allowed,
+        ...(id === 'approveEachCommit' && !allowed ? { unavailableReason: reason } : {}) }))}
+      value={props.template.forkPreviews} disabled={props.saving}
+      onChange={next => { if (next === 'off' || allowed) props.onSave(next); }} />
+    {failed ? <Item title={t('projects.deployments.settingsSections.previewEditor.forksUnavailable')}
+      rightElement={<SectionActionButton testID={`${props.testID}.retry`} title={t('common.retry')}
+        onPress={() => setRetry(value => value + 1)} />} /> : null}
+    {eligibility && !allowed && props.onChooseMachine ? <Item
+      title={t('projects.deployments.settingsSections.previewEditor.forksChooseMachine')}
+      onPress={props.onChooseMachine} /> : null}
+  </>;
 }
 
 /**
@@ -205,6 +294,8 @@ function PreviewTurnOnRow(props: Readonly<{
   runtimeTargetLinkId: string;
   testID: string;
   prepareDefaults: ReturnType<typeof createDeploymentActions>['prepareConfigurationDefaults'] | null;
+  prepareForkPolicy?: PreviewTemplateRowsProps['prepareForkPolicy'];
+  onChooseMachine?: PreviewTemplateRowsProps['onChooseMachine'];
   controller: DeploymentReadControllerV1;
   demand: DeploymentReadDemandV1;
   machineName: (id: string) => string;
@@ -216,6 +307,8 @@ function PreviewTurnOnRow(props: Readonly<{
   const [defaults, setDefaults] = React.useState<Awaited<ReturnType<NonNullable<typeof props.prepareDefaults>>> | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [failure, setFailure] = React.useState(false);
+  const [unresolvedData, setUnresolvedData] = React.useState<'own' | 'branch' | undefined>();
+  const [requireRuntimeChoice, setRequireRuntimeChoice] = React.useState(false);
   if (!repository) {
     return project.status === 'loading' ? null : (
       <Item testID={`${props.testID}.noRepository`}
@@ -226,12 +319,21 @@ function PreviewTurnOnRow(props: Readonly<{
     {defaults ? <Item title={t('projects.deployments.settingsSections.previewsRunsOn')}
       detail={defaults.values.previewMachineId ? props.machineName(defaults.values.previewMachineId) : undefined}
       subtitle={sourceWord(defaults.sources.previewMachineId)} mode="info" /> : null}
+    {defaults && unresolvedData && draft.data.length === 0 ? <Item testID={`${props.testID}.data.default`}
+      title={t('projects.deployments.settingsSections.previewsData')}
+      detail={t(unresolvedData === 'own' ? 'projects.deployments.settingsSections.previewsDataOwn'
+        : 'projects.deployments.settingsSections.previewsDataBranch')}
+      subtitle={sourceWord(defaults.sources.previewDatabase)} mode="info" /> : null}
     <PreviewTemplateRows {...props} detail={{ ...props.detail, content: { ...props.detail.content, previewTemplate: draft } }}
-      saving={props.saving} onSave={setDraft} />
+      saving={props.saving} onSave={setDraft}
+      unresolvedData={draft.data.length === 0 ? unresolvedData : undefined}
+      onDataChoice={choice => setUnresolvedData(choice === 'none' ? undefined : choice)}
+      requireRuntimeChoice={requireRuntimeChoice} onRuntimeChoice={() => setRequireRuntimeChoice(false)} />
     <Item title={t('projects.deployments.settingsSections.previewEditor.configure')} rightElement={<>
       <SectionActionButton title={t('common.cancel')} onPress={() => { setDraft(null); setDefaults(null); }} />
       <SectionActionButton testID={`${props.testID}.setup.save`} title={t('common.save')}
-        disabled={props.saving} onPress={() => props.onSave(draft)} />
+        disabled={props.saving || requireRuntimeChoice || Boolean(unresolvedData && draft.data.length === 0)}
+        onPress={() => { if (!requireRuntimeChoice && !(unresolvedData && draft.data.length === 0)) props.onSave(draft); }} />
     </>} />
   </>;
   return (
@@ -249,11 +351,11 @@ function PreviewTurnOnRow(props: Readonly<{
             const runtime = resolved.values.previewMachineId ? props.detail.targetLinks.find(row =>
               row.targetLink.role === 'runtime' && row.targetLink.machines?.includes(resolved.values.previewMachineId!))?.targetLink.id
               : props.runtimeTargetLinkId;
-            if (!runtime || resolved.values.previewDatabase && resolved.values.previewDatabase !== 'none') {
-              setFailure(true); return;
-            }
             setDefaults(resolved);
-            setDraft({ v: 1, enabled: true, forkPreviews: 'off', repository, runtimeTargetLinkId: runtime,
+            setRequireRuntimeChoice(!runtime);
+            setUnresolvedData(resolved.values.previewDatabase && resolved.values.previewDatabase !== 'none'
+              ? resolved.values.previewDatabase : undefined);
+            setDraft({ v: 1, enabled: true, forkPreviews: 'off', repository, runtimeTargetLinkId: runtime ?? props.runtimeTargetLinkId,
               domain: null, bindingBlueprints: [], data: [] });
           }).catch(() => setFailure(true)).finally(() => setLoading(false));
         }} />

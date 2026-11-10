@@ -181,6 +181,8 @@ async function renderTab(
   const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
   // Sheets the page opens (Backups setup) render through the canonical modal testkit host.
   const { ModalProvider } = await import('@/modal');
+  const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+  const { AccountNoticeInvestigationBoundary } = await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
   const page = (selectedTab: string) => (
     <ModalProvider>
     <PresentedDetailNavigationProvider>
@@ -224,7 +226,9 @@ async function renderTab(
     });
     return screen.findByTestId(testID);
   };
-  return { screen, controller, settle, updateTab: (next: string) => screen.update(element(next)) };
+  return { screen, controller, settle, updateTab: (next: string) => screen.update(
+    <AppPaneProvider><AccountNoticeInvestigationBoundary>{element(next)}</AccountNoticeInvestigationBoundary></AppPaneProvider>,
+  ) };
 }
 
 describe('Environment → Domains', () => {
@@ -1282,6 +1286,133 @@ describe('Environment → Settings: checks, backups, previews', () => {
     } finally { await screen.unmount(); controller.retire(); }
   });
 
+  it.each([
+    { kind: 'eligible' as const },
+    { kind: 'ineligible' as const, reason: 'production_workload' as const },
+    { kind: 'unavailable' as const, reason: 'inventory_incomplete' as const },
+  ])('prepares fork opt-in through the canonical Action before offering it ($kind)', async forkEligibility => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Fork preview policy', serverUrl: 'https://fork-preview-policy.test',
+      serverIdentityId: `srv_${'7'.repeat(32)}`, accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const base = createDeploymentEnvironmentDetailV1();
+    const template = { v: 1 as const, enabled: true, forkPreviews: 'off' as const,
+      repository: { kind: 'github' as const, deployment: 'https://github.com', repository: 'acme/shop' },
+      runtimeTargetLinkId: base.environment.runtimeTargetLinkId!, domain: null, bindingBlueprints: [], data: [] };
+    const detail = createDeploymentEnvironmentDetailV1({ environment: { ...base.environment, serverId },
+      content: { ...base.content, previewTemplate: template } });
+    const requests: unknown[] = [];
+    const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+    const { DeploymentActionInputSchemasV1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+    homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`,
+      { body: { ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) } });
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
+      actionId: 'deployments.environments.update', tokenEpoch: 0, execute: raw => {
+        const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(raw);
+        requests.push(input);
+        expect(input.patch?.previewTemplate).toEqual({ ...template, forkPreviews: 'approveEachCommit' });
+        return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision,
+          ...(input.mode === 'preview' ? { forkEligibility } : {}) };
+      } });
+    const actions = (await import('./deploymentActions')).createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId);
+    const { screen, controller, settle } = await renderTab('settings', detail, {},
+      { environmentActions: actions, lifetime: account.accountLifetime });
+    const id = 'project-deployments.environment.settings.previews.template.forkPolicy';
+    try {
+      expect(await settle(id)).not.toBeNull();
+      const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+      const picker = () => screen.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === id)!;
+      await vi.waitFor(() => expect(requests).toHaveLength(1));
+      expect(requests[0]).toMatchObject({ mode: 'preview' });
+      expect(template.forkPreviews).toBe('off');
+      await vi.waitFor(() => expect(picker().props.options.find((option: { id: string }) => option.id === 'approveEachCommit')?.disabled)
+        .toBe(forkEligibility.kind !== 'eligible'));
+      if (forkEligibility.kind === 'eligible') {
+        await act(async () => picker().props.onChange('approveEachCommit'));
+        await vi.waitFor(() => expect(requests).toHaveLength(2));
+        expect(requests[1]).not.toHaveProperty('mode');
+      } else expect(requests).toHaveLength(1);
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
+  it('prepares fork placement only when placement facts change, not unrelated template edits', async () => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Fork placement edits', serverUrl: 'https://fork-placement-edits.test',
+      serverIdentityId: `srv_${'6'.repeat(32)}`, accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const base = createDeploymentEnvironmentDetailV1();
+    const alternateRuntimeId = `${base.environment.runtimeTargetLinkId}-alternate`;
+    const initial = createDeploymentEnvironmentDetailV1({ environment: { ...base.environment, serverId },
+      targetLinks: [...base.targetLinks, { ...base.targetLinks[0]!,
+        targetLink: { ...base.targetLinks[0]!.targetLink, id: alternateRuntimeId } }],
+      content: { ...base.content, previewTemplate: { v: 1, enabled: true, forkPreviews: 'off',
+        repository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/shop' },
+        runtimeTargetLinkId: base.environment.runtimeTargetLinkId!, domain: null, bindingBlueprints: [], data: [] } } });
+    const requests: unknown[] = [];
+    let refuseNext = false;
+    homes.answer(serverId, `GET /v1/deployments/environments/${initial.environment.id}`,
+      { body: { ok: true, environment: initial.environment, targetLinks: initial.targetLinks.map(row => row.targetLink) } });
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: initial.environment.controllerMachineId,
+      actionId: 'deployments.environments.update', tokenEpoch: 0, execute: raw => {
+        requests.push(raw);
+        if (refuseNext) { refuseNext = false; return { ok: false, error: 'deployment_unavailable' }; }
+        return { ok: true, environmentId: initial.environment.id, revision: initial.environment.revision,
+          forkEligibility: { kind: 'eligible' } };
+      }, failure: result => result && typeof result === 'object' && 'ok' in result && result.ok === false
+        && 'error' in result && typeof result.error === 'string' ? { errorCode: result.error, error: result.error } : null });
+    const actions = (await import('./deploymentActions')).createDeploymentActions(account.accountLifetime, initial.environment.projectSourceId);
+    const { PreviewTemplateRows } = await import('./DeploymentPreviewTemplateRows');
+    const controller = createDeploymentReadControllerV1({ scope: { ...scope, serverId }, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: initial }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: createDeploymentReceiptDetailV1() }),
+    } });
+    let changeDetail: React.Dispatch<React.SetStateAction<typeof initial>> = () => {};
+    function Harness() {
+      const [detail, setDetail] = React.useState(initial);
+      changeDetail = setDetail;
+      return <PreviewTemplateRows detail={detail} controller={controller} demand={shown} machineName={id => id}
+        onSave={() => {}} saving={false} inspect={null} prepareDefaults={null}
+        prepareForkPolicy={actions.preparePreviewForkPolicy} lifetime={account.accountLifetime} testID="fork-placement" />;
+    }
+    const screen = await renderScreen(<Harness />);
+    try {
+      const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+      const prepared = () => expect(screen.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === 'fork-placement.forkPolicy')
+        ?.props.options.find((option: { id: string }) => option.id === 'approveEachCommit')?.disabled).toBe(false);
+      await vi.waitFor(() => expect(requests).toHaveLength(1));
+      await vi.waitFor(prepared);
+      await act(async () => changeDetail(detail => ({ ...detail, content: { ...detail.content,
+        previewTemplate: { ...detail.content.previewTemplate!, bindingBlueprints: [{ purpose: 'variable', name: 'PUBLIC_URL',
+          phase: 'runtime', source: { kind: 'deploymentFact', fact: 'primaryUrl' } }] } } })));
+      await vi.waitFor(prepared);
+      expect(requests).toHaveLength(1);
+      await act(async () => changeDetail(detail => ({ ...detail, content: { ...detail.content,
+        previewTemplate: { ...detail.content.previewTemplate!, domain: { domainId: 'preview-domain', templateSlug: 'app',
+          hostnamePattern: 'pr-{number}.example.test' }, data: [...detail.content.previewTemplate!.data] } } })));
+      await vi.waitFor(prepared);
+      expect(requests).toHaveLength(1);
+      await act(async () => changeDetail(detail => ({ ...detail, environment: { ...detail.environment, buildMachineId: 'builder-b' } })));
+      await vi.waitFor(() => expect(requests).toHaveLength(2));
+      await act(async () => changeDetail(detail => ({ ...detail, environment: { ...detail.environment, protection: 'production' } })));
+      await vi.waitFor(() => expect(requests).toHaveLength(3));
+      await act(async () => changeDetail(detail => ({ ...detail, content: { ...detail.content,
+        previewTemplate: { ...detail.content.previewTemplate!, runtimeTargetLinkId: alternateRuntimeId } } })));
+      await vi.waitFor(() => expect(requests).toHaveLength(4));
+      await act(async () => changeDetail(detail => ({ ...detail, targetLinks: detail.targetLinks.map(row => ({ ...row,
+        targetLink: { ...row.targetLink, revision: row.targetLink.revision + 1 } })) })));
+      await vi.waitFor(() => expect(requests).toHaveLength(5));
+      refuseNext = true;
+      await act(async () => changeDetail(detail => ({ ...detail, environment: { ...detail.environment, buildMachineId: 'builder-c' } })));
+      await vi.waitFor(() => expect(screen.findByTestId('fork-placement.forkPolicy.retry')).not.toBeNull());
+      expect(requests).toHaveLength(6);
+      await screen.pressByTestIdAsync('fork-placement.forkPolicy.retry');
+      await vi.waitFor(() => expect(requests).toHaveLength(7));
+      await vi.waitFor(prepared);
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
   it('offers a managed branch for an unseeded template with a linked database, without reading provider branches before selection', async () => {
     await homes.reset();
     const serverId = await homes.addHome({ name: 'Preview database', serverUrl: 'https://preview-database.test', accountId: 'account-owner', currentAccount: true });
@@ -1305,6 +1436,207 @@ describe('Environment → Settings: checks, backups, previews', () => {
       // The rendered segment is pressable: choosing it opens the parent picker.
       await screen.pressByTestIdAsync(`${id}.data:branch`);
       expect(await settle(`${id}.branch.parent`)).not.toBeNull();
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
+  it('authors an unseeded native preview from another Project capture through the existing intent writer', async () => {
+    await homes.reset();
+    const serverUrl = 'https://native-preview-intent.test';
+    const serverIdentityId = 'srv_native_intent';
+    const serverId = await homes.addHome({ name: 'Native intent', serverUrl, serverIdentityId,
+      accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const { readFile } = await import('node:fs/promises');
+    const { DeploymentTemplateV1Schema } = await import('@happier-dev/protocol/registries');
+    const { deriveMarketplaceSourceId } = await import('@happier-dev/protocol/marketplace');
+    const { createPromptLibraryCatalogBoundary } = await import('@/dev/testkit/harness/promptLibraryCatalogBoundary');
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { DeploymentActionInputSchemasV1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+    const { DeploymentBackupActionInputSchemasV1 } = await import('@happier-dev/protocol/deployments/deploymentBackupActionsV1');
+    const { DeploymentBackupConfigurationV1Schema, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
+      DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } = await import('@happier-dev/deployment-protocol');
+    const { SavedSecretCatalogEntryV1Schema } = await import('@happier-dev/protocol/account/settings/savedSecretCatalogV1');
+    const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/backup-destinations/src/manifest');
+    const { PluginProjectionV2Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+    const { DaemonContributionRegistryProjectionDescribeResponseSchema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+    const catalogUrl = `${serverUrl}/apps.json`;
+    const sourceId = deriveMarketplaceSourceId(catalogUrl);
+    const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources', value: { v: 2,
+      sources: [{ id: sourceId, title: 'Apps', url: catalogUrl, format: 'happier-catalog', kinds: ['app'], enabled: true, addedAt: 1 }],
+      disabledSourceIds: [] } }] });
+    for (const path of ['/v1/account/entity-rows/prompt-library', '/v1/account/entity-rows/prompt-library/registry-sources']) {
+      homes.answer(serverId, path, { body: await (await catalog.handle(path))!.json() });
+    }
+    const bundled: unknown = JSON.parse(await readFile(new URL('../../../../../../packages/plugins/deployment-templates/resources/registry/apps.json', import.meta.url), 'utf8'));
+    if (!bundled || typeof bundled !== 'object' || !('apps' in bundled) || !Array.isArray(bundled.apps)) throw new Error('Expected bundled catalog');
+    const entry: unknown = bundled.apps.find((row: { itemId: string }) => row.itemId === 'postgresql');
+    if (!entry || typeof entry !== 'object' || !('app' in entry)) throw new Error('Expected canonical PostgreSQL');
+    const app = DeploymentTemplateV1Schema.parse(entry.app);
+    homes.answer(serverId, '/apps.json', { body: { schemaVersion: 1, apps: [{ itemId: 'postgresql', app }] } });
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = createDeploymentEnvironmentDetailV1({ environment: { ...base.environment, serverId: serverIdentityId }, content: { ...base.content,
+      previewTemplate: { v: 1, enabled: true, forkPreviews: 'off', repository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/shop' },
+        runtimeTargetLinkId: base.environment.runtimeTargetLinkId!, domain: null, bindingBlueprints: [], data: [] } } });
+    const destination = PLUGIN_MANIFEST.contributes.backupDestinations!.find(row => row.id === 'local')!;
+    const backup = DeploymentBackupConfigurationV1Schema.parse({ configRevision: 1,
+      destinationRef: { pluginId: PLUGIN_MANIFEST.id, localId: destination.id }, occurrenceId: destination.id,
+      config: { path: '/source-backups' }, sources: [{ kind: 'dump', sourceId: 'source-postgres', service: 'postgres', consistency: 'logical' }],
+      credentialBindings: [{ purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword' }],
+      ownership: { environmentId: 'source-data', prefix: 'source' }, retention: { kind: 'keepEverything' } });
+    const sourceLink = createDeploymentTargetLinkHeaderV1({ id: 'source-runtime', environmentId: 'source-data',
+      contentArtifactId: 'source-runtime-content', activeDeploymentId: 'source-deploy' });
+    const sourceDetail = createDeploymentEnvironmentDetailV1({
+      environment: { ...base.environment, id: 'source-data', serverId: serverIdentityId, projectSourceId: 'another-project',
+        runtimeTargetLinkId: sourceLink.id, contentArtifactId: 'source-data-content' },
+      targetLinks: [{ targetLink: sourceLink, content: base.targetLinks[0]!.content }],
+      content: { ...base.content, name: 'Shared PostgreSQL', backup, template: {
+        templateRef: { sourceId: 'source-catalog', itemId: 'postgres', version: '1', ref: { kind: 'version', version: '1' } },
+        definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }, services: ['postgres'],
+        data: [{ engine: 'postgres', service: 'postgres' }] } },
+    });
+    await account.createArtifactDocument({ artifactId: sourceDetail.environment.contentArtifactId,
+      header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: sourceDetail.content.name }, body: JSON.stringify(sourceDetail.content) });
+    await account.createArtifactDocument({ artifactId: sourceLink.contentArtifactId,
+      header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'Source runtime' }, body: JSON.stringify(base.targetLinks[0]!.content) });
+    homes.answer(serverId, '/v1/deployments/environments', { select: (_body, request) => {
+      expect(new URL(request.url).searchParams.has('projectSourceId')).toBe(false);
+      return { body: { ok: true, items: [sourceDetail.environment], nextCursor: null } };
+    } });
+    for (const row of [detail, sourceDetail]) homes.answer(serverId, `GET /v1/deployments/environments/${row.environment.id}`,
+      { body: { ok: true, environment: row.environment, targetLinks: row.targetLinks.map(link => link.targetLink) } });
+    const ref = formatSharedSavedSecretRefV1('preview-backup-password');
+    const secret = SavedSecretCatalogEntryV1Schema.parse({ ref, source: 'shared_resource', relationship: 'owner',
+      name: 'Preview backup password', kind: 'apiKey', encryptionMode: 'plain', ownerAccountId: 'account-owner', revision: 7,
+      materialStatus: 'ready', audience: { accounts: [], teams: [], groups: [] }, capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } });
+    homes.answer(serverId, '/v1/account/saved-secrets/resources', { body: { resources: [secret] } });
+    const machineId = detail.environment.controllerMachineId;
+    storage.setState({ settingsScope: account.accountLifetime.scope, profileScope: account.accountLifetime.scope });
+    storage.getState().activateProfileScope(account.accountLifetime.scope);
+    await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: machineId, activeAt: Date.now() })]);
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    machineProjectionReplies.set(machineId, DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+      projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1, familiesById: { backupDestinations: {
+        family: 'backupDestinations', entriesById: { [`${PLUGIN_MANIFEST.id}/${destination.id}`]: {
+          id: `${PLUGIN_MANIFEST.id}/${destination.id}`, pluginId: PLUGIN_MANIFEST.id, pluginVersion: PLUGIN_MANIFEST.version, definition: destination } } } } }) }));
+    const snapshotId = 'c'.repeat(64);
+    let inventoryReads = 0;
+    await answerExternalActionAccountForHome(homes, serverId, { machineId, actionId: 'deployments.backups.inventory', tokenEpoch: 0,
+      execute: raw => {
+        const input = DeploymentBackupActionInputSchemasV1['deployments.backups.inventory'].parse(raw);
+        expect(input).toMatchObject({ environmentId: sourceDetail.environment.id, targetLinkId: sourceLink.id, deploymentId: 'source-deploy' });
+        inventoryReads++;
+        return { kind: 'inventory', environmentId: sourceDetail.environment.id, configRevision: 1, repositoryId: 'a'.repeat(64), snapshots: [
+          { source: { sourceId: 'source-postgres', kind: 'dump' }, snapshot: { snapshotId, treeId: 'd'.repeat(64),
+            hostname: 'source', time: '2026-11-09T10:00:00Z', paths: ['dump'], tags: [] },
+            verification: { kind: 'verified', backupOperationId: 'source-capture', configRevision: 1 } } ] };
+      } });
+    const saved: NonNullable<Detail['content']['previewTemplate']>[] = [];
+    await answerExternalActionAccountForHome(homes, serverId, { machineId, actionId: 'deployments.environments.update', tokenEpoch: 0,
+      execute: raw => {
+        const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(raw);
+        if (input.mode !== 'preview' && input.patch?.previewTemplate) saved.push(input.patch.previewTemplate);
+        return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1,
+          ...(input.mode === 'preview' ? { forkEligibility: { kind: 'unavailable', reason: 'placement_unavailable' } } : {}) };
+      } });
+    const actions = (await import('./deploymentActions')).createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId);
+    const { screen, controller, settle } = await renderTab('settings', detail, {}, { serverId, environmentActions: actions, lifetime: account.accountLifetime });
+    const id = 'project-deployments.environment.settings.previews.template';
+    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+    const diagnostics = () => JSON.stringify({
+      rendered: screen.getTextContent().slice(-3500), inventoryReads,
+      paths: homes.requests.map(request => request.path).slice(-12),
+      failures: screen.findAllByType(SurfaceStateCard).map(node => ({ testID: node.props.testID, code: node.props.diagnosticCode })),
+    });
+    try {
+      expect(await settle(`${id}.data`)).not.toBeNull();
+      expect(inventoryReads).toBe(0);
+      await screen.pressByTestIdAsync(`${id}.data:own`);
+      expect(await settle(`${id}.native.picker`)).not.toBeNull();
+      const rowId = `store.kind.app.row.app|${sourceId}|postgresql`;
+      expect(await settle(rowId)).not.toBeNull();
+      await screen.pressByTestIdAsync(rowId);
+      expect(await settle(`${id}.native.source:source-data`), diagnostics()).not.toBeNull();
+      expect(inventoryReads).toBe(0);
+      await screen.pressByTestIdAsync(`${id}.native.source:source-data`);
+      expect(await settle(`${id}.native.capture`), diagnostics()).not.toBeNull();
+      expect(inventoryReads).toBe(1);
+      const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+      const captures = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${id}.native.capture`)!;
+      await act(async () => captures.props.onSelect(snapshotId));
+      expect(await settle(`${id}.native.backup.path.input`), diagnostics()).not.toBeNull();
+      expect(screen.findByTestId(`${id}.native.backup.test`)).toBeNull();
+      expect(screen.findByTestId(`${id}.native.backup.initialize`)).toBeNull();
+      expect(saved).toEqual([]);
+      await act(async () => screen.changeTextByTestId(`${id}.native.backup.path.input`, '/preview-backups'));
+      await act(async () => screen.changeTextByTestId(`${id}.native.backup.prefix`, 'pull-requests'));
+      await screen.pressByTestIdAsync(`${id}.native.backup.role.repositoryPassword.choose`);
+      expect(await settle(`saved-secret:${ref}`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`saved-secret:${ref}`);
+      await screen.pressByTestIdAsync(`${id}.native.backup.save`);
+      await vi.waitFor(() => expect(saved).toHaveLength(1));
+      expect(saved[0]!.data).toEqual([{ kind: 'template', templateRef: expect.objectContaining({ sourceId, itemId: 'postgresql', version: expect.any(String) }),
+        dataExportNames: Object.keys(app.exports ?? {}), copyFrom: { environmentId: sourceDetail.environment.id, targetLinkId: sourceLink.id,
+          deploymentId: 'source-deploy', snapshotId, backupOperationId: 'source-capture' },
+        destinationBackup: { configuration: { configRevision: 1, destinationRef: { pluginId: PLUGIN_MANIFEST.id, localId: 'local' }, occurrenceId: 'local',
+          config: { path: '/preview-backups' }, sources: [{ kind: 'dump', sourceId: JSON.stringify(['dump', app.data!.service]), service: app.data!.service, consistency: 'logical' }],
+          credentialBindings: [{ purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword' }], retention: { kind: 'keepEverything' } },
+          prefix: 'pull-requests', bindings: [{ purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword',
+            source: { kind: 'secret', ref, resourceRevision: 7 } }] } }]);
+      expect(homes.requests.filter(request => /\/v1\/actions\/deployments\.(templates\.instantiate|backups\.(configure|run|restore))($|\/)/.test(request.path))).toEqual([]);
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
+  it.each(['saved', 'initial'] as const)('opens the database catalog for an unseeded native preview choice (%s)', async phase => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Native preview database', serverUrl: 'https://native-preview-database.test', serverIdentityId: 'srv_native_entry',
+      accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const base = createDeploymentEnvironmentDetailV1({ environment: { ...createDeploymentEnvironmentHeaderV1(), serverId } });
+    const detail = phase === 'initial' ? base : createDeploymentEnvironmentDetailV1({ environment: base.environment, content: { ...base.content, previewTemplate: {
+      v: 1, enabled: true, forkPreviews: 'off', repository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/shop' },
+      runtimeTargetLinkId: base.environment.runtimeTargetLinkId!, domain: null, bindingBlueprints: [], data: [],
+    } } });
+    homes.answer(serverId, `GET /v1/projects/sources/${detail.environment.projectSourceId}`, { body: { ok: true, canManage: true,
+      source: { id: detail.environment.projectSourceId, revision: 1, name: 'shop', audience: [], createdByAccountId: 'account-owner',
+        repository: { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+          repository: { nameWithOwner: 'acme/shop' }, protocol: 'https' } } } });
+    homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, {
+      body: { ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) },
+    });
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
+      actionId: 'deployments.environments.update', tokenEpoch: 0, execute: async raw => {
+        const { DeploymentActionInputSchemasV1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+        const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(raw);
+        expect(input.mode).toBe('preview');
+        return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision,
+          creationDefaults: { values: { retainPreviousDeployments: 1, previewDatabase: 'own' },
+            sources: { retainPreviousDeployments: 'builtin', previewDatabase: 'account' } },
+          forkEligibility: { kind: 'unavailable', reason: 'placement_unavailable' } };
+      } });
+    const actions = (await import('./deploymentActions')).createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId);
+    const { screen, controller, settle } = await renderTab('settings', detail, {}, { serverId, environmentActions: actions, lifetime: account.accountLifetime });
+    const id = 'project-deployments.environment.settings.previews.template';
+    try {
+      if (phase === 'initial') {
+        expect(await settle(`${id}.setup`)).not.toBeNull();
+        await screen.pressByTestIdAsync(`${id}.setup`);
+      }
+      expect(await settle(`${id}.data`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.data:own`);
+      expect(await settle(`${id}.native.picker`)).not.toBeNull();
+      if (phase === 'initial') {
+        // Dismissal is the native modal boundary; the real setup draft and segmented control remain mounted.
+        const { Modal } = await import('@/modal');
+        await act(async () => Modal.hideAll());
+        expect(screen.findByTestId(`${id}.native.picker`)).toBeNull();
+        expect(screen.findByTestId(`${id}.setup.save`)?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync(`${id}.data:own`);
+        expect(await settle(`${id}.native.picker`)).not.toBeNull();
+      }
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
@@ -1420,6 +1752,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
     const warning = 'project-deployments.environment.settings.preview-enrollment';
     try {
       expect(await settle(warning)).not.toBeNull();
+      expect(screen.findByTestId(warning)?.props.action).toBeUndefined();
       expect(homes.requestsFor('/v3/automations/query').length).toBeGreaterThan(0);
       await updateTab('overview');
       await updateTab('settings');
@@ -1448,7 +1781,9 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(await settle(id)).not.toBeNull();
       await screen.pressByTestIdAsync(`${id}.add`);
       await vi.waitFor(() => expect(screen.findHostByTestId(`${id}.add.plain`)).not.toBeNull());
-      await screen.pressByTestIdAsync(`${id}.add.plain`);
+      const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+      const menu = screen.findAllByType(DropdownMenu).find(node => node.props.items?.some((item: { id: string }) => item.id === 'plain'))!;
+      await act(async () => menu.props.onSelect('plain'));
       await act(async () => {
         screen.changeTextByTestId(`${id}.add.name`, 'PREVIEW_MODE');
         screen.changeTextByTestId(`${id}.add.value`, 'true');

@@ -17,6 +17,7 @@ import { AutomationEventSourceInstanceIdV1Schema } from '../automations/automati
 import { AutomationTriggerIdSchema } from '../automations/automationTriggerIdentity.js';
 import { AutomationIdV1Schema } from '../automations/automationIdV1.js';
 import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
+import { DeploymentReceiptOperationV1Schema, DeploymentStateV1Schema } from './deploymentStateV1.js';
 export { DeploymentReceiptSettlementFailureDetailsV1Schema, readDeploymentReceiptFailureCodeV1 } from './deploymentReceiptResultV1.js';
 
 /** Private parser diagnostics contain schema facts, never rejected values or prose. */
@@ -73,16 +74,20 @@ export const DEPLOYMENT_RECEIPT_EVENT_REFS_V1 = {
   failed: { pluginId: 'happier.machine.services', localId: 'deployment-failed' },
   succeeded: { pluginId: 'happier.machine.services', localId: 'deployment-succeeded' },
 } as const;
+/** Current receipt changes serve preview publication independently of platform outcome notices. */
+export const DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 = {
+  pluginId: 'happier.machine.services', localId: 'deployment-receipt-changed',
+} as const;
 const sourceAddress = { v: z.literal(1), serverId: id, environmentId: id };
 const periodMs = lazyZodSchema(() => z.number().check(z.int(), z.positive(), z.maximum(Number.MAX_SAFE_INTEGER)));
 export const DeploymentReceiptEventSetupV1Schema = lazyZodSchema(() => z.strictObject({
-  ...sourceAddress, targetLinkId: z.optional(id), periodMs: z.optional(periodMs),
+  ...sourceAddress, targetLinkId: z.optional(id), periodMs: z.optional(periodMs), previewChildren: z.optional(z.literal(true)),
 }));
 export const DeploymentReceiptEventSourceConfigV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...sourceAddress, observingSince: timestamp, periodMs: z.optional(periodMs),
-    targetLinkId: z.optional(z.never()), credentialPrincipal: z.optional(z.never()) }),
+    targetLinkId: z.optional(z.never()), credentialPrincipal: z.optional(z.never()), previewChildren: z.optional(z.literal(true)) }),
   z.strictObject({ ...sourceAddress, observingSince: timestamp, periodMs: z.optional(periodMs),
-    targetLinkId: id, credentialPrincipal: DeploymentTargetCredentialPrincipalV1Schema }),
+    targetLinkId: id, credentialPrincipal: DeploymentTargetCredentialPrincipalV1Schema, previewChildren: z.optional(z.never()) }),
 ]));
 export type DeploymentReceiptEventSetupV1 = z.infer<typeof DeploymentReceiptEventSetupV1Schema>;
 export type DeploymentReceiptEventSourceConfigV1 = z.infer<typeof DeploymentReceiptEventSourceConfigV1Schema>;
@@ -132,8 +137,12 @@ export function readDeploymentReceiptEventPendingObservationV1(sourceConfig: unk
     ? { periodMs: config.data.periodMs ?? null } : null;
 }
 const receipt = { environmentId: id, deploymentId: id, targetLinkId: id, receiptRevision: revision, observedAt: timestamp };
+export const DeploymentReceiptChangedEventV1Schema = lazyZodSchema(() => z.strictObject({ ...receipt,
+  operation: DeploymentReceiptOperationV1Schema, state: DeploymentStateV1Schema,
+}));
+export const DeploymentReceiptChangedEventV1ProtocolSchema = projectZodProtocolSchema(DeploymentReceiptChangedEventV1Schema);
 export const DeploymentFailedEventV1Schema = lazyZodSchema(() => z.strictObject({ ...receipt,
-  operation: z.enum(['deploy', 'rollback', 'promote', 'teardown']), state: z.literal('failed'),
+  operation: DeploymentReceiptOperationV1Schema, state: z.literal('failed'),
   phase: z.nullable(DeploymentReceiptFailureV1Schema.shape.phase),
   failureCode: z.nullable(DeploymentReceiptFailureV1Schema.shape.code),
 }));

@@ -13,6 +13,7 @@ import { DEPLOYMENT_BACKUP_CONFIGURE_INTENT_OPTIONS_V1 } from '../../deployments
 
 const deploymentDeployActionCompletionV1 = createDeploymentDeployActionCompletionV1(DeploymentActionOutputSchemasV1['deployments.deploy']);
 const deploymentDeployDescription = 'Deploy an existing saved Environment to a linked target. Discover the named Environment with deployments.environments.list, then use deployments.environments.get to choose its linked target. To deploy that saved definition, supply only serverId, environmentId and targetLinkId from those results. The Action prepares the exact deployment candidate, revisions and hashes for review. The contentArtifactId/contentHeaderVersion/contentBodyVersion input branch accepts an already prepared deployment candidate; Environment and target content Artifacts are not deployment candidates. No caller-authored candidate or shell hash calculation is needed.';
+const deploymentBackupConfigureDescription = 'Configure backups for a saved Environment, including before its first deployment. Test proves the selected repository without saving configuration; initializeAndSave explicitly creates a missing repository. Retain returned destinationSetup and setupOperation when continuing receiver setup. After kind: "configured", a captured nonnull review.creationDefaults.values.backupSchedule is a separate follow-up: resolve the Nightly backups starter through workflow.starters.list and workflow.starters.resolve, then call workflow.trigger.add with that exact schedule, backupEnvironment: { serverId, environmentId }, and backupPolicy containing the returned configuration except configRevision. Include verificationLevel: "manifestReadBack". The standing approval binds the Environment and destination policy; each occurrence resolves its current deployment. A null schedule means no schedule Action. If schedule authoring fails, retry only workflow.trigger.add; do not repeat Configure. Stopping after Configure leaves the backup configured with no schedule.';
 
 type DeploymentActionSpec<TId extends DeploymentActionIdV1> = ActionSpecProjectionMetadata & Readonly<{
   id: TId;
@@ -36,7 +37,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     } : undefined;
   const secretPath = id === 'deployments.bindings.set' ? 'set.[].source.ref'
     : id === 'deployments.templates.instantiate' || id === 'deployments.environments.create' ? 'bindings.[].source.ref' : null;
-  const inputHints = backupConfigure ? { fields: [
+  const inputHints = backupConfigure ? { description: deploymentBackupConfigureDescription, fields: [
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
       { path: 'expectedRevision', title: 'Environment revision', widget: 'number', required: true },
@@ -222,6 +223,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
   return {
     id, title, safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'write',
     ...(id === 'deployments.deploy' ? { description: deploymentDeployDescription } : {}),
+    ...(backupConfigure ? { description: deploymentBackupConfigureDescription } : {}),
     ...(previewForInput ? { safetyForInput: (input: unknown): 'safe' | 'danger' => previewForInput(input) ? 'safe' : 'danger' } : {}),
     ...(id === 'deployments.environments.update' ? { permissionChangingForInput: (input: unknown): boolean => {
       const parsed = DeploymentActionInputSchemasV1['deployments.environments.update'].safeParse(input);
@@ -239,7 +241,13 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       executionPlacements: ['account', 'machine'],
       executionPlacementForInput: (input: unknown): 'account' | 'machine' => {
         const intent = readRecord(input);
-        return intent.copyFrom !== undefined || intent.contentArtifactId === undefined ? 'machine' : 'account';
+        return intent.copyFrom !== undefined || intent.preview !== undefined || intent.contentArtifactId === undefined ? 'machine' : 'account';
+      },
+      machineRuntimeDemandForInput: (input: unknown) => {
+        const parsed = DeploymentActionInputSchemasV1['deployments.environments.create'].safeParse(input);
+        return parsed.success && 'contentArtifactId' in parsed.data && parsed.data.preview
+          ? { target: { kind: 'machine' as const, machineId: parsed.data.controllerMachineId }, serverId: parsed.data.serverId }
+          : null;
       },
     } : {}),
     ...(id === 'deployments.teardown' ? { executionPlacements: ['account', 'machine'],

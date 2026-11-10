@@ -1633,7 +1633,8 @@ async function verifyCommon(
         ? acceptedPreparationRead && isDeploymentDomainMetadataReadActionIdV1(acceptedPreparationRead.actionId)
             ? { rootActionId: 'deployments.environments.create', effectActionId: effectActionId.data }
             : await readDeploymentCreateHttpPurposeInTx(db, binding, effectActionId.data, proof, isReadOnlyArtifactHttpPurpose,
-            () => isDeploymentNativeHttpPurpose({ binding, effectActionId: effectActionId.data }, proof)
+            (_nativeProof, readActionId) => readActionId ? isAccountActionHttpOperation(readActionId, proof)
+                : isDeploymentNativeHttpPurpose({ binding, effectActionId: effectActionId.data }, proof)
                 || signedChildPurpose.sibling.deploymentRead
                     && isAccountActionHttpOperation(effectActionId.data, proof)) : null;
     // Effect-family admission already decided this relationship. The signed

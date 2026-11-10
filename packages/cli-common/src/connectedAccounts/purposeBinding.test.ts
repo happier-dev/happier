@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { PluginConnectedAccountAuthenticationV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
-import { captureConnectedAccountInvocationPurposeBinding, createConnectedAccountPurposePort, type ConnectedAccountInvocationPurposeBinding } from './purposeBinding.js';
+import { captureConnectedAccountInvocationPurposeBinding, createConnectedAccountPurposePort, readDeclaredConnectedAccountActionSelection,
+  assertConnectedAccountPurposeTargetAuthorized,
+  type ConnectedAccountInvocationPurposeBinding } from './purposeBinding.js';
 
 const service = { pluginId: 'acme.cloud', localId: 'cloud-account' };
 const purpose = { consumer: { pluginId: 'acme.compute', localId: 'create' }, purpose: 'cloud-api' };
@@ -16,6 +18,26 @@ const profile = QualifiedConnectedAccountProfileV4Schema.parse({ ref: account, a
   configurationReady: true, configurationRevision: null, kind: 'token', expiresAt: null, displayName: 'Cloud', scopes: [] });
 
 describe('Account purpose selection through the shared Credentials owner', () => {
+  it('selects the one declared credential operand across ordinary source and configured-instance inputs', () => {
+    const mapping = { path: 'instance.binding.account', alternativePaths: ['sourceConfig.credentialRef'],
+      nativeServicePath: 'instance.binding.service', purpose: 'cloud-api' };
+    expect(readDeclaredConnectedAccountActionSelection({ sourceConfig: { credentialRef: account } }, mapping, [service]))
+      .toEqual({ kind: 'account', account });
+    expect(readDeclaredConnectedAccountActionSelection({ instance: { binding: { account } } }, mapping, [service]))
+      .toEqual({ kind: 'account', account });
+    expect(readDeclaredConnectedAccountActionSelection({ instance: { binding: { service } } }, mapping, [service]))
+      .toEqual({ kind: 'native' });
+    for (const input of [{}, { sourceConfig: { credentialRef: account }, instance: { binding: { account } } },
+      { sourceConfig: { credentialRef: account }, instance: { binding: { service } } }]) {
+      expect(readDeclaredConnectedAccountActionSelection(input, mapping, [service])).toEqual({ kind: 'invalid' });
+    }
+    const foreign = readDeclaredConnectedAccountActionSelection({ sourceConfig: { credentialRef: {
+      ...account, service: { ...service, pluginId: 'foreign.cloud' },
+    } } }, mapping, [service]);
+    if (foreign.kind !== 'account') throw new Error('expected exact Account selection');
+    expect(() => assertConnectedAccountPurposeTargetAuthorized(foreign, [service]))
+      .toThrow(expect.objectContaining({ code: 'plugin_connected_account_binding_out_of_scope' }));
+  });
   it('captures the exact invocation receiver and launch binding without admitting a foreign consumer', () => {
     let current = true;
     let managedCurrent = true;

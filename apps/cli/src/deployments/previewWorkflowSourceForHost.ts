@@ -1,6 +1,7 @@
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema,
+    DeploymentDomainListResultV1Schema, type DeploymentEnvironmentListInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
@@ -12,6 +13,10 @@ import { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
 import { readDeploymentTargetV1 } from './targets/deploymentTargetCatalog';
 import { resolvePreviewWorkflowForHost, type PreviewLifecycleEventForHost, type PreviewTemplateRefForHost } from './previewWorkflowForHost';
 import { readPreviewCloseWorkflowForHost } from './previewCloseWorkflowForHost';
+import { readPreviewCopyReadinessForHost } from './previewCopyReadinessForHost';
+import { preparePreviewNativeDataPlacementsForHost } from './templates/previewCreate';
+import { readPreviewDomainForHost } from './previewDomainForHost';
+import { readDeploymentDomainInventoryForHost } from './targets/ownServer/domainRouteSelection';
 
 /** Account reads use the same Action transport and Artifact codecs as native preparation. */
 export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Readonly<{
@@ -34,13 +39,12 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
             return detail;
         }, open, assertCurrent: async () => { input.signal?.throwIfAborted(); },
     });
-    const readChildren = async () => {
+    const readEnvironments = async (selection: Omit<DeploymentEnvironmentListInputV1, 'serverId' | 'cursor'>) => {
         const environments: Extract<ReturnType<typeof DeploymentEnvironmentListResultV1Schema.parse>, { ok: true }>['items'] = [];
         let cursor: string | undefined;
         do {
-            const result = await input.executor.execute('deployments.environments.list', { serverId: input.templateRef.serverId,
-                previewRepository: input.event.baseRepository, previewPullRequestIds: [input.event.id],
-                previewTemplateEnvironmentId: input.templateRef.environmentId, ...(cursor ? { cursor } : {}) }, context);
+            const result = await input.executor.execute('deployments.environments.list', { ...selection,
+                serverId: input.templateRef.serverId, ...(cursor ? { cursor } : {}) }, context);
             if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
             const page = DeploymentEnvironmentListResultV1Schema.parse(result.result);
             if (!page.ok) throw Object.assign(new Error(page.error), { code: page.error });
@@ -49,7 +53,16 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
         } while (cursor);
         return environments;
     };
+    const readChildren = (includeDeleted = false) => readEnvironments({ previewRepository: input.event.baseRepository,
+        previewPullRequestIds: [input.event.id], previewTemplateEnvironmentId: input.templateRef.environmentId,
+        ...(includeDeleted ? { includeDeleted: true } : {}) });
+    const readCompanions = (environmentId: string) => readEnvironments({ previewCompanionOfEnvironmentId: environmentId });
     let selectedTemplate: Awaited<ReturnType<typeof readEnvironment>> | undefined;
+    const readInvocations = async (request: Readonly<{ runId: string; cursor?: string }>) => {
+        const result = await input.executor.execute('workflow.run.invocations.list', { ...request, includeContent: true }, context);
+        if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+        return WorkflowInvocationListResultV1Schema.parse(result.result);
+    };
     return resolvePreviewWorkflowForHost({ templateRef: input.templateRef, event: input.event, occurrenceKey: input.occurrenceKey,
         readEnvironment: async reference => { selectedTemplate = await readEnvironment(reference); return selectedTemplate; },
         readTargetLink: async reference => {
@@ -61,18 +74,43 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
             return { header, provider: DeploymentTargetLinkProviderContentV1Schema.parse(opened.content) };
         },
         readTargetDeclaration: async source => readDeploymentTargetV1(source, input.contributes.deploymentTargets),
-        readExistingPreview: async () => (await readChildren())[0] ?? null,
+        readPreviewDomain: request => readPreviewDomainForHost(request, {
+            readMetadata: async operand => {
+                const result = await input.executor.execute('deployments.domains.get', operand, context);
+                if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+                return result.result;
+            }, open,
+        }),
+        readNativeDataPlacements: request => preparePreviewNativeDataPlacementsForHost({ ...request, context }, {
+            credentials: input.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl,
+        }),
+        readExistingPreview: async () => {
+            const existing = (await readChildren())[0];
+            if (!existing) return null;
+            const child = await readEnvironment({ serverId: input.templateRef.serverId, environmentId: existing.id });
+            const companionHeader = (await readCompanions(existing.id))[0];
+            const companion = companionHeader
+                ? await readEnvironment({ serverId: input.templateRef.serverId, environmentId: companionHeader.id }) : null;
+            const domains = selectedTemplate?.content.previewTemplate?.domain
+                ? await readDeploymentDomainInventoryForHost({ serverId: input.templateRef.serverId,
+                    environmentId: existing.id, signal: input.signal, list: async query => {
+                        const result = await input.executor.execute('deployments.domains.list', query, context);
+                        if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+                        return DeploymentDomainListResultV1Schema.parse(result.result);
+                    } }) : undefined;
+            if (domains && domains.kind !== 'ready') throw Object.assign(new Error(domains.reason), { code: domains.reason });
+            const domain = domains?.kind === 'ready' ? domains.domains.find(domain => domain.id === existing.id) : undefined;
+            return { environment: child.environment,
+                ...(domain ? { domainRevision: domain.revision } : {}),
+                nativeData: await readPreviewCopyReadinessForHost(child, readInvocations, companion) ? 'ready' : 'incomplete' };
+        },
         readCloseDefinition: async () => readPreviewCloseWorkflowForHost({
-            readEnvironments: readChildren,
+            readEnvironments: () => readChildren(true), readCompanions,
             readEnvironment: async environmentId => {
                 const child = await readEnvironment({ serverId: input.templateRef.serverId, environmentId });
                 return { ...child, targetLinks: child.targetLinks.map(targetLink => ({ targetLink })) };
             },
-            readInvocations: async request => {
-                const result = await input.executor.execute('workflow.run.invocations.list', { ...request, includeContent: true }, context);
-                if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
-                return WorkflowInvocationListResultV1Schema.parse(result.result);
-            },
+            readInvocations,
         }),
     });
 }

@@ -25,7 +25,8 @@ import { createPrepareEnvironmentContentForHost } from './prepareEnvironmentCont
 import { createCliDeploymentActionDeps } from './createCliDeploymentActionDeps';
 import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
-import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema,
+    createDeploymentEnvironmentContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
@@ -64,7 +65,11 @@ it.each(['plain', 'e2ee'] as const)('prepares %s preview intent from the selecte
     template.content.definition = { kind: 'repository', ref: 'main', compose: {
         path: 'deploy/compose.yaml', profiles: [], services: ['app'], primaryService: 'app' } };
     template.content.previewTemplate = { v: 1, enabled: true, forkPreviews: 'off', repository,
-        runtimeTargetLinkId: template.environment.runtimeTargetLinkId, domain: null, bindingBlueprints: [], data: [] };
+        runtimeTargetLinkId: template.environment.runtimeTargetLinkId,
+        domain: { domainId: 'selected-domain', templateSlug: 'app', hostnamePattern: 'pr-{number}-{template-slug}' }, bindingBlueprints: [
+            { purpose: 'variable', phase: 'runtime', name: 'PREVIEW_LABEL', source: { kind: 'value', value: 'review-app' } },
+            { purpose: 'variable', phase: 'runtime', name: 'PREVIEW_URL', source: { kind: 'deploymentFact', fact: 'domainUrl', domainId: 'selected-domain' } },
+        ], data: [] };
     const providerContent = DeploymentTargetLinkProviderContentV1Schema.parse({
         credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
             consumer: { pluginId: 'happier.deploy.supabase', localId: 'branches-create' }, purpose: 'deploy-manage' },
@@ -127,6 +132,8 @@ it.each(['plain', 'e2ee'] as const)('prepares %s preview intent from the selecte
     const artifact = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => store.read(prepared.contentArtifactId,
         { prepareRecipients: false, includeSharedAudience: false }));
     const opened = readDeploymentEnvironmentArtifactV1(prepared, artifact);
+    // Explicit blueprints join the admitted bindings writer after child creation;
+    // this private candidate cannot bypass its installation-grant admission.
     expect(opened).toMatchObject({ ok: true, content: { name: 'pr-44', bindings: [], previewProvenance: provenance,
         previewCreationRunId: 'preview-creation-run',
         definition: { kind: 'repository', ref: 'a'.repeat(40), compose: template.content.definition.compose } } });
@@ -151,6 +158,70 @@ it.each(['plain', 'e2ee'] as const)('prepares %s preview intent from the selecte
         context: {}, projectOwner: { kind: 'account', accountId: 'owner' } }))
         .resolves.toMatchObject({ ok: false, errorCode: 'deployment_access_denied' });
     expect(artifacts.size, 'failed template admission writes no child content').toBe(written);
+});
+
+it.each(['plain', 'e2ee'] as const)('prepares an opted-in %s fork without template data or inherited secret bindings', async mode => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null
+        : { type: 'legacy', secret: new Uint8Array(32).fill(61) } };
+    const artifacts = new Map<string, Record<string, unknown>>();
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+        const path = new URL(url).pathname;
+        if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode }) };
+        if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 0 } };
+        const artifact = artifacts.get(decodeURIComponent(path.slice('/v1/artifacts/'.length)));
+        if (!artifact) throw new Error('Forks must not open any parent data or secret Artifact');
+        return { status: 200, data: artifact };
+    });
+    vi.spyOn(axios, 'post').mockImplementation(async (_url, body: unknown) => {
+        if (!body || typeof body !== 'object' || !('id' in body) || typeof body.id !== 'string') throw new Error('Expected Artifact');
+        artifacts.set(body.id, { ...body, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none', encryptionMode: mode,
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+        return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } };
+    });
+    const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/app' };
+    const template = createDeploymentEnvironmentDetailV1();
+    template.content.definition = { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } };
+    template.content.previewTemplate = { v: 1, enabled: true, forkPreviews: 'approveEachCommit', repository,
+        runtimeTargetLinkId: template.environment.runtimeTargetLinkId!, domain: null, bindingBlueprints: [
+            createDeploymentSecretVariableBindingV1({ name: 'EXPLICIT_SECRET', phase: 'runtime', resourceId: 'private-secret', resourceRevision: 1 }),
+            { purpose: 'variable', phase: 'runtime', name: 'EXPLICIT_VALUE', source: { kind: 'value', value: 'parent-value' } },
+        ],
+        data: [{ kind: 'managed', dataTargetLinkId: 'production-database', ownership: 'happierManaged',
+            parentBranchRef: { providerProjectId: 'project', branchId: 'production' } }] };
+    template.content.bindings = [createDeploymentSecretVariableBindingV1({ name: 'PRODUCTION_SECRET', phase: 'runtime',
+        resourceId: 'production-secret', resourceRevision: 1 })];
+    const input = DeploymentEnvironmentCreateIntentInputV1Schema.parse({ serverId: template.environment.serverId,
+        projectSourceId: template.environment.projectSourceId, requestKey: 'fork-create', mode: 'apply', name: 'pr-17',
+        purpose: 'preview', protection: 'nonProduction', deployerMode: 'managers', preview: {
+            templateEnvironmentId: template.environment.id, expectedTemplateRevision: template.environment.revision,
+            runtimeTargetLinkId: template.environment.runtimeTargetLinkId, pullRequestId: '17', headSha: 'a'.repeat(40),
+            provenance: { v: 1, templateEnvironmentId: template.environment.id,
+                runtimeTargetLinkId: template.environment.runtimeTargetLinkId, repository,
+                headRepository: { ...repository, repository: 'contributor/app' }, pullRequestId: '17', pullRequestNumber: 17,
+                author: { id: 'contributor', login: 'contributor' } } } });
+    const host = {
+        credentials, serverHttpBaseUrl: 'https://home.test',
+        assertCurrent: async () => {}, resolveRequestHeaders: () => ({ Authorization: `Bearer ${token}` }),
+        readPreviewTemplate: async () => ({ ...template, targetLinks: template.targetLinks.map(row => row.targetLink) }),
+    };
+    const resolved = await resolveEnvironmentCreatePreviewForHost({ input, context: {} }, host);
+    expect(resolved).not.toHaveProperty('errorCode');
+    if ('errorCode' in resolved) throw new Error(resolved.errorCode);
+    expect(resolved.dataTargetLinks).toEqual([]);
+    expect(resolved.nativeTemplate).toMatchObject({ data: [], selections: [], preparations: [], explicitBindings: [
+        { purpose: 'variable', phase: 'runtime', name: 'EXPLICIT_VALUE', source: { kind: 'value', value: 'parent-value' } },
+    ] });
+    const prepared = await createPrepareEnvironmentCreateForHost(host)({ input: { ...resolved.input, retainPreviousDeployments: 0 },
+        context: {}, admittedPreview: resolved, projectOwner: { kind: 'account', accountId: 'owner' } });
+    if ('errorCode' in prepared) throw new Error(prepared.errorCode);
+    const store = createCredentialedAccountArtifactStore(credentials);
+    const opened = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, async () => readDeploymentEnvironmentArtifactV1(prepared,
+        await store.read(prepared.contentArtifactId, { prepareRecipients: false, includeSharedAudience: false })));
+    expect(opened).toMatchObject({ ok: true, content: { bindings: [], definition: { ref: 'a'.repeat(40) } } });
+    if (!opened.ok) throw new Error(opened.error);
+    expect(opened.content.template).toBeUndefined();
+    expect(prepared.previewDataTargetLinks).toBeUndefined();
 });
 
 describe('authored Environment creation through protected preparation and the existing storage carrier', () => {
@@ -289,6 +360,8 @@ describe('authored Environment creation through protected preparation and the ex
         const prepared = await createPrepareEnvironmentCreateForHost(host)({ input: { ...captured.input,
             controllerMachineId: 'new-controller' }, context: requesterContext, projectOwner: { kind: 'account', accountId: 'owner' }, copy: captured });
         if ('errorCode' in prepared) throw new Error(prepared.errorCode);
+        expect(prepared.contentArtifactId).toBe(createDeploymentEnvironmentContentArtifactIdV1({ ...authorization.binding,
+            actionId: 'deployments.environments.create' }));
         expect(prepared.copyIntentCommitment).toMatch(/^[A-Za-z0-9_-]{43}$/u);
         const store = createCredentialedAccountArtifactStore(credentials);
         const artifact = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => store.read(prepared.contentArtifactId,
@@ -339,7 +412,7 @@ describe('authored Environment creation through protected preparation and the ex
             return result;
         };
         const retried = await materializeCopy();
-        expect(retried.contentArtifactId).not.toBe(prepared.contentArtifactId);
+        expect(retried.contentArtifactId).toBe(prepared.contentArtifactId);
         expect(retried.copyIntentCommitment).toBe(prepared.copyIntentCommitment);
         expect((await materializeCopy(captured, 'Changed copy')).copyIntentCommitment).not.toBe(prepared.copyIntentCommitment);
         expect((await materializeCopy(rebound)).copyIntentCommitment).not.toBe(prepared.copyIntentCommitment);
@@ -366,7 +439,7 @@ describe('authored Environment creation through protected preparation and the ex
             credentials: { ...credentials, encryption: null },
             accountArtifacts: createCredentialedAccountArtifactStore({ ...credentials, encryption: null }) }))
             .resolves.toMatchObject({ ok: false, errorCode: 'client_required' });
-        expect(artifacts.size).toBe(4);
+        expect(artifacts.size).toBe(1);
     });
     it.each((['plain', 'e2ee'] as const).flatMap(mode => [false, true].map(adopted => ({ mode, adopted }))))(
         'preserves $mode definition owners and protected origin (adopted=$adopted) on storage retry', async ({ mode, adopted }) => {

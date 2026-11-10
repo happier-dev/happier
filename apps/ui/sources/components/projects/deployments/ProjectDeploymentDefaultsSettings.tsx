@@ -27,8 +27,9 @@ import { useDeploymentAccountDefaults } from './useDeploymentAccountDefaults';
 /** Project overrides use the existing Source leaf and encrypted Artifact Actions. */
 export function ProjectDeploymentDefaultsSettings(props: Readonly<{ lifetime: ServerAccountScopeLifetime | null; sourceId: string; demand: DeploymentReadDemandV1;
     /** This page's Environments: triggers belong to each one, so the Project leads to theirs (ORCH-TOP 11-07 15:13). */
-    environments?: readonly Readonly<{ id: string; title: string }>[];
-    onOpenEnvironment?: (environmentId: string) => void; }>) {
+    environments?: readonly Readonly<{ id: string; title: string; previewTemplateConfigured?: boolean }>[];
+    onOpenEnvironment?: (environmentId: string) => void;
+    onOpenPreviews?: (environmentId: string) => void; }>) {
     const { theme } = useUnistyles();
     const { lifetime, sourceId } = props;
     const presented = isDeploymentReadDemandActiveV1(props.demand);
@@ -100,6 +101,13 @@ export function ProjectDeploymentDefaultsSettings(props: Readonly<{ lifetime: Se
                 title={environment.title} icon={<Icon name="lightning" size={18} color={theme.colors.text.secondary} />}
                 onPress={() => props.onOpenEnvironment?.(environment.id)} />)}
         </ItemGroup> : null}
+        {props.onOpenPreviews && props.environments?.some(environment => environment.previewTemplateConfigured === true)
+          ? <ItemGroup title={t('projects.deployments.sectionPreviews')}>
+            {props.environments.filter(environment => environment.previewTemplateConfigured === true).map(environment =>
+              <Item key={environment.id} testID={`project-deployment-defaults.previews.${environment.id}`}
+                title={environment.title} icon={<Icon name="git-pull-request" size={18} color={theme.colors.text.secondary} />}
+                onPress={() => props.onOpenPreviews?.(environment.id)} />)}
+          </ItemGroup> : null}
         <ItemGroup><Item testID="deployment-defaults.notifications" title={t('projects.deployments.defaultsEditor.alertChannels')}
             icon={<Icon name="bell" size={18} color={theme.colors.text.secondary} />}
             onPress={() => router.push(SETTINGS_ROUTES.notifications)} /></ItemGroup>

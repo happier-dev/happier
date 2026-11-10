@@ -344,33 +344,31 @@ function isExactOrNullableQualifiedConnectedAccountRefInputLeaf(
     && alternatives.some(isExactQualifiedConnectedAccountRefInputLeaf) === true;
 }
 
-function resolveOptionalDeclaredInputLeaves(
+/** Paths sharing an object traverse its union arms together, never independently. */
+function resolveDeclaredSelections(
   inputSchema: PluginJsonSchemaV2,
-  segments: readonly string[],
-): readonly (PluginJsonSchemaV2 | undefined)[] {
-  if (segments.length === 0) return [inputSchema];
-  const [segment, ...remaining] = segments;
+  paths: readonly (readonly string[])[],
+): readonly (readonly (PluginJsonSchemaV2 | undefined)[])[] {
+  if (paths.every(path => path.length === 0)) return [paths.map(() => inputSchema)];
   return expandDeclaredInputAlternatives(inputSchema).flatMap((arm) => {
-    const property = arm.type === 'object' && segment !== undefined ? arm.properties?.[segment] : undefined;
-    return property ? resolveOptionalDeclaredInputLeaves(property, remaining) : [undefined];
-  });
-}
-
-/** Preserve correlation while both paths traverse the same union-shaped selection. */
-function resolveDeclaredSelectionPairs(
-  inputSchema: PluginJsonSchemaV2,
-  accountPath: readonly string[],
-  nativePath: readonly string[],
-): readonly Readonly<{ account?: PluginJsonSchemaV2; native?: PluginJsonSchemaV2 }>[] {
-  return expandDeclaredInputAlternatives(inputSchema).flatMap((arm) => {
-    if (accountPath.length > 0 && accountPath[0] === nativePath[0]) {
-      const segment = accountPath[0]!;
+    let selections: (PluginJsonSchemaV2 | undefined)[][] = [paths.map(path => path.length === 0 ? arm : undefined)];
+    const groups = new Map<string, { index: number; remaining: readonly string[] }[]>();
+    paths.forEach(([segment, ...remaining], index) => {
+      if (segment === undefined) return;
+      const group = groups.get(segment) ?? [];
+      group.push({ index, remaining });
+      groups.set(segment, group);
+    });
+    for (const [segment, group] of groups) {
       const property = arm.type === 'object' ? arm.properties?.[segment] : undefined;
-      return property ? resolveDeclaredSelectionPairs(property, accountPath.slice(1), nativePath.slice(1)) : [{}];
+      const nested = property ? resolveDeclaredSelections(property, group.map(entry => entry.remaining)) : [group.map(() => undefined)];
+      selections = selections.flatMap(selection => nested.map(leaves => {
+        const result = [...selection];
+        group.forEach((entry, index) => { result[entry.index] = leaves[index]; });
+        return result;
+      }));
     }
-    return resolveOptionalDeclaredInputLeaves(arm, accountPath).flatMap((account) => (
-      resolveOptionalDeclaredInputLeaves(arm, nativePath).map((native) => ({ account, native }))
-    ));
+    return selections;
   });
 }
 
@@ -378,20 +376,45 @@ function hasValidPurposeBindingInputLeaves(
   inputSchema: PluginJsonSchemaV2,
   binding: PluginActionConnectedAccountPurposeBindingV2,
 ): boolean {
-  if (!binding.nativeServicePath) {
+  if (!binding.nativeServicePath && !binding.alternativePaths?.length) {
     const leaves = resolveDeclaredInputLeaves(inputSchema, binding.path);
     return leaves !== null && leaves.every(isExactOrNullableQualifiedConnectedAccountRefInputLeaf)
       && declaredInputLeavesAgree(leaves);
   }
-  const pairs = resolveDeclaredSelectionPairs(inputSchema, binding.path.split('.'), binding.nativeServicePath.split('.'));
-  if (pairs.length === 0 || !pairs.every(({ account, native }) => (
-    account !== undefined && native === undefined && isExactQualifiedConnectedAccountRefInputLeaf(account)
-    || account === undefined && native !== undefined && isExactQualifiedServiceInputLeaf(native)
-  ))) return false;
-  const accounts = pairs.flatMap(({ account }) => account ? [account] : []);
-  const services = pairs.flatMap(({ native }) => native ? [native] : []);
+  const accountPaths = [binding.path, ...(binding.alternativePaths ?? [])];
+  const paths = [...accountPaths, ...(binding.nativeServicePath ? [binding.nativeServicePath] : [])];
+  const selections = resolveDeclaredSelections(inputSchema, paths.map(path => path.split('.')));
+  if (selections.length === 0 || !selections.every(leaves => {
+    const selected = leaves.flatMap((leaf, index) => leaf === undefined ? [] : [{ leaf, index }]);
+    if (selected.length !== 1) return false;
+    const selection = selected[0]!;
+    return selection.index < accountPaths.length ? isExactQualifiedConnectedAccountRefInputLeaf(selection.leaf)
+      : isExactQualifiedServiceInputLeaf(selection.leaf);
+  })) return false;
+  const accounts = selections.flatMap(leaves => leaves.slice(0, accountPaths.length).flatMap(leaf => leaf ? [leaf] : []));
+  const services = selections.flatMap(leaves => leaves.slice(accountPaths.length).flatMap(leaf => leaf ? [leaf] : []));
   return (accounts.length === 0 || declaredInputLeavesAgree(accounts))
     && (services.length === 0 || declaredInputLeavesAgree(services));
+}
+
+function purposeBindingIdentityIssues(bindings: readonly PluginActionConnectedAccountPurposeBindingV2[]): readonly Readonly<{
+  index: number; field: 'path' | 'purpose';
+}>[] {
+  const paths = new Set<string>();
+  const purposes = new Set<string>();
+  const issues: { index: number; field: 'path' | 'purpose' }[] = [];
+  bindings.forEach((binding, index) => {
+    const declaredPaths = [binding.path, ...(binding.alternativePaths ?? []), ...(binding.nativeServicePath ? [binding.nativeServicePath] : [])];
+    let duplicatePath = false;
+    for (const path of declaredPaths) {
+      if (paths.has(path)) duplicatePath = true;
+      paths.add(path);
+    }
+    if (duplicatePath) issues.push({ index, field: 'path' });
+    if (purposes.has(binding.purpose)) issues.push({ index, field: 'purpose' });
+    purposes.add(binding.purpose);
+  });
+  return issues;
 }
 
 /**
@@ -406,16 +429,7 @@ export function hasValidPluginConnectedAccountPurposeBindingsV2(
 ): boolean {
   if (purposeBindings.length === 0) return true;
 
-  const bindingPaths = new Set<string>();
-  const bindingPurposes = new Set<string>();
-  for (const binding of purposeBindings) {
-    if (bindingPaths.has(binding.path) || bindingPurposes.has(binding.purpose)
-      || binding.nativeServicePath === binding.path
-      || (binding.nativeServicePath !== undefined && bindingPaths.has(binding.nativeServicePath))) return false;
-    bindingPaths.add(binding.path);
-    if (binding.nativeServicePath) bindingPaths.add(binding.nativeServicePath);
-    bindingPurposes.add(binding.purpose);
-  }
+  if (purposeBindingIdentityIssues(purposeBindings).length > 0) return false;
 
   const traversableInputSchema = declaresTraversableObjectInput(inputSchema)
     ? inputSchema
@@ -620,28 +634,11 @@ export const PluginActionContributionV2Schema = lazyZodSchema(() => z.strictObje
     }
   }
   const purposeBindings = value.connectedAccountPurposeBindings ?? [];
-  const bindingPaths = new Set<string>();
-  const bindingPurposes = new Set<string>();
-  purposeBindings.forEach((binding, index) => {
-    if (bindingPaths.has(binding.path) || binding.nativeServicePath === binding.path
-      || (binding.nativeServicePath !== undefined && bindingPaths.has(binding.nativeServicePath))) {
-      ctx.addIssue({
-        code: "custom",
-        path: ['connectedAccountPurposeBindings', index, 'path'],
-        message: 'Connected Account credential-ref paths must map to exactly one purpose.',
-      });
-    }
-    bindingPaths.add(binding.path);
-    if (binding.nativeServicePath) bindingPaths.add(binding.nativeServicePath);
-    if (bindingPurposes.has(binding.purpose)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ['connectedAccountPurposeBindings', index, 'purpose'],
-        message: 'Connected Account purposes must map to exactly one credential-ref path.',
-      });
-    }
-    bindingPurposes.add(binding.purpose);
-  });
+  for (const { index, field } of purposeBindingIdentityIssues(purposeBindings)) {
+    ctx.addIssue({ code: 'custom', path: ['connectedAccountPurposeBindings', index, field],
+      message: field === 'path' ? 'Connected Account credential-ref paths must map to exactly one purpose.'
+        : 'Connected Account purposes must map to exactly one credential selection.' });
+  }
   const traversableInputSchema = declaresTraversableObjectInput(inputSchema) ? inputSchema : undefined;
   value.confirmation?.inputFields?.forEach((field, index) => {
     if (traversableInputSchema && resolveDeclaredInputLeaves(traversableInputSchema, field.path, 'review-field')) return;

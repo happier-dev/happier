@@ -7,7 +7,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createCliDeploymentActionDeps } from './createCliDeploymentActionDeps';
 import { createPrepareEnvironmentContentForHost } from './prepareEnvironmentContentForHost';
-import { DeploymentPrepareInputV1Schema, DeploymentEnvironmentCreationReviewV1Schema, DeploymentReceiptListResultV1Schema,
+import { DeploymentPrepareInputV1Schema, DeploymentEnvironmentCreationReviewV1Schema, DeploymentReceiptListResultV1Schema, DeploymentActionOutputSchemasV1,
     ArtifactJsonCreateHttpInputV1Schema } from '@happier-dev/protocol';
 import { resolveDeploymentCreationDefaultsV1 } from '@happier-dev/deployments';
 import { DeploymentEnvironmentContentV1Schema, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
@@ -408,7 +408,7 @@ it.each(['deployments.environments.controller.set', 'deployments.restart', 'depl
             }, async dispatchReceipt() { throw new Error('Approval preparation cannot dispatch'); } });
         expect(await deps.resolveEnvironmentApprovalScope!({ actionId,
             input: { serverId: environment.serverId, environmentId: environment.id }, context: {}, phase: 'prepare' }))
-            .toEqual({ scope: { kind: 'environment', environmentId: 'template' } });
+            .toEqual({ scope: { kind: 'environment', environmentId: environment.id, inheritedEnvironmentId: 'template' } });
         expect(signedEffects).toEqual([actionId]);
         expect(http).toHaveBeenCalledTimes(1);
         expect(http.mock.calls[0]?.[0].url).toBe(`https://home.test/v1/deployments/environments/${environment.id}?serverId=${environment.serverId}&projection=approvalScope`);
@@ -432,19 +432,31 @@ it('returns retained pending admission without dispatching or claiming an active
     expect(update).not.toHaveBeenCalled();
 });
 
-it('changes only build placement without opening unchanged private definition content', async () => {
-    const { environment, targetLinks } = createDeploymentEnvironmentDetailV1();
+it('admits build placement from current private content without publishing replacement content', async () => {
+    const { environment, targetLinks, content } = createDeploymentEnvironmentDetailV1();
     const originalRevision = environment.revision;
     let current = environment;
     let issuedMutations = 0;
     const context = { onTransportIssued() { issuedMutations += 1; } };
-    const credentials = { token: 'fixture-bearer', encryption: null };
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
     const authorizedActions: string[] = [];
     const resolveRequestHeaders = async (_context: unknown, actionId: string) => {
         authorizedActions.push(actionId);
-        return { Authorization: 'Bearer fixture-bearer' };
+        return { Authorization: `Bearer ${credentials.token}` };
     };
-    const bodyReads = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Private definition content is not needed for placement'));
+    const bodyReads = vi.spyOn(axios, 'get').mockImplementation(async url => {
+        if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200,
+            data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+        if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+        expect(new URL(url).pathname).toBe(`/v1/artifacts/${environment.contentArtifactId}`);
+        return { status: 200, data: { id: environment.contentArtifactId, ownerAccountId: 'owner', access: 'owner',
+            publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: encodePlainArtifactStoredContent({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: content.name }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify(content) }),
+            headerVersion: environment.contentHeaderVersion, bodyVersion: environment.contentBodyVersion,
+            seq: 1, createdAt: 1, updatedAt: 1 } };
+    });
+    const contentWrites = vi.spyOn(axios, 'post').mockRejectedValue(new Error('Placement retains its existing private content'));
     const requests = vi.spyOn(axios, 'request').mockImplementation(async request => {
         if (request.method === 'GET') return { status: 200, data: { ok: true, environment: current,
             targetLinks: targetLinks.map(item => item.targetLink) } };
@@ -463,7 +475,8 @@ it('changes only build placement without opening unchanged private definition co
         contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
         contentBodyVersion: environment.contentBodyVersion, patch: { buildMachineId: 'future-builder' },
     }, context)).resolves.toEqual({ ok: true, environmentId: environment.id, revision: originalRevision + 1 });
-    expect(bodyReads).not.toHaveBeenCalled();
+    expect(bodyReads).toHaveBeenCalled();
+    expect(contentWrites).not.toHaveBeenCalled();
     expect(requests.mock.calls.filter(([request]) => request.method === 'PATCH')).toHaveLength(1);
     expect(issuedMutations, 'metadata preparation cannot claim mutation custody').toBe(1);
     // Supplying new private content alongside the placement edit still needs
@@ -472,7 +485,7 @@ it('changes only build placement without opening unchanged private definition co
         serverId: environment.serverId, environmentId: environment.id, expectedRevision: current.revision,
         contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
         contentBodyVersion: environment.contentBodyVersion + 1, patch: { buildMachineId: 'future-builder' },
-    }, context)).resolves.toMatchObject({ ok: false, errorCode: 'deployment_content_unavailable' });
+    }, context)).resolves.toMatchObject({ ok: false, errorCode: 'deployment_conflict' });
     expect(bodyReads).toHaveBeenCalled();
     expect(requests.mock.calls.filter(([request]) => request.method === 'PATCH')).toHaveLength(1);
     expect(issuedMutations).toBe(1);
@@ -513,17 +526,20 @@ it.each(['plain', 'e2ee'] as const)('admits an ingress-only update against its r
         resolveRequestHeaders, prepareEnvironment: createPrepareEnvironmentContentForHost({ credentials,
             serverHttpBaseUrl: 'https://home.test', resolveRequestHeaders }),
         async dispatchReceipt() { throw new Error('An ingress edit cannot dispatch a deployment receipt'); } });
-    await expect(deps.deploymentAction!('deployments.environments.update', { serverId: detail.environment.serverId,
+    const updated = await deps.deploymentAction!('deployments.environments.update', { serverId: detail.environment.serverId,
         environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
         contentArtifactId: detail.environment.contentArtifactId, contentHeaderVersion: detail.environment.contentHeaderVersion,
-        contentBodyVersion: detail.environment.contentBodyVersion, patch: { ingress: { kind: 'edgeCaddy', edgeMachineId: 'edge' } } }, {}))
-        .resolves.toMatchObject({ ok: true });
+        contentBodyVersion: detail.environment.contentBodyVersion, patch: { ingress: { kind: 'edgeCaddy', edgeMachineId: 'edge' } } }, {});
+    const acknowledged = DeploymentActionOutputSchemasV1['deployments.environments.update'].parse(updated);
     expect(privateWrites).toHaveBeenCalledTimes(1);
     const writes = requests.mock.calls.filter(([request]) => request.method === 'PATCH');
     expect(writes).toHaveLength(1);
     expect(writes[0]?.[0].data).toMatchObject({ contentArtifactId: expect.any(String), contentHeaderVersion: 1,
         contentBodyVersion: 1, patch: { ingress: { kind: 'edgeCaddy', edgeMachineId: 'edge' } } });
     expect(writes[0]?.[0].data.contentArtifactId).not.toBe(detail.environment.contentArtifactId);
+    expect(acknowledged).toMatchObject({ ok: true, revision: detail.environment.revision + 1, preparedArtifact: {
+        contentArtifactId: writes[0]?.[0].data.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1,
+    } });
 });
 
 

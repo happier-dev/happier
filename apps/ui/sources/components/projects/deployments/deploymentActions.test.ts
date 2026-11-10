@@ -16,6 +16,10 @@ import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invoc
 import { parse } from 'yaml';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { DeploymentBackupConfigurationV1Schema } from '@happier-dev/deployment-protocol';
+import { createWorkflowAutomationHttpBoundary } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
+import { AutomationStoredWorkflowDefinitionV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal'))
     .createModalModuleMock({ confirmResult: true }).module);
@@ -82,8 +86,47 @@ describe('deployment UI Action callbacks', () => {
             } });
         await expect(createDeploymentActions(lifetime, environment.projectSourceId)
             .configureBackup(environment, { intent: 'markNotNeeded' })).resolves.toMatchObject({ kind: 'notNeeded' });
-        expect(homes.requests.filter(request => request.path === `/v1/deployments/environments/${environment.id}`)).toHaveLength(1);
+        expect(homes.requests.filter(request => new URL(request.path, request.serverUrl).pathname
+            === `/v1/deployments/environments/${environment.id}`)).toHaveLength(1);
         expect(homes.artifacts(serverId).list()).toEqual([]);
+    });
+
+    it('authors the captured schedule with stable Environment and destination policy before the first deployment', async () => {
+        const serverId = await homes.addHome({ name: 'Backup schedule', serverUrl: 'https://backup-schedule.test',
+            serverIdentityId: `srv_${'4'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+        const environment = createDeploymentEnvironmentHeaderV1({ serverId, runtimeTargetLinkId: undefined });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const automations = createWorkflowAutomationHttpBoundary();
+        homes.answer(serverId, `GET /v1/machines/${environment.controllerMachineId}`, {
+            body: { machine: createPlainMachineRowFixture({ id: environment.controllerMachineId, accountId: 'owner' }) },
+        });
+        homes.answer(serverId, 'POST /v3/automations', { select: async (input, request) => {
+            const response = await automations.handle(new URL(request.url), { ...request.init, body: JSON.stringify(input) });
+            if (!response) throw new Error('Expected canonical Automation persistence boundary');
+            return { status: response.status, body: await response.json() };
+        } });
+        const configuration = DeploymentBackupConfigurationV1Schema.parse({ configRevision: 3,
+            destinationRef: { pluginId: 'com.acme.backups', localId: 'archive' }, occurrenceId: 'archive', config: { path: '/backups' },
+            credentialBindings: [{ purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword' }],
+            ownership: { environmentId: environment.id, prefix: '' }, retention: { kind: 'keep', daily: 14 },
+            sources: [{ kind: 'volume', sourceId: 'content', service: 'web', volume: 'content', consistency: 'stopDuringCopy' }] });
+        const schedule = { kind: 'cron' as const, scheduleExpr: '30 3 * * *', everyMs: null, timezone: 'Europe/Amsterdam' };
+        await createDeploymentActions(lifetime, environment.projectSourceId).addBackupSchedule({ environmentId: environment.id,
+            controllerMachineId: environment.controllerMachineId, configuration, schedule });
+        expect(automations.creates).toHaveLength(1);
+        const created = automations.creates[0]!;
+        expect(created.triggers[0]?.trigger).toMatchObject({ kind: 'schedule', enabled: true, schedule });
+        const workflow = created.executionRecipe?.v === 2 ? created.executionRecipe.workflow : null;
+        expect(workflow?.t).toBe('plain');
+        if (workflow?.t !== 'plain') throw new Error('Expected plain Account Workflow envelope');
+        const stored = AutomationStoredWorkflowDefinitionV2Schema.parse(workflow.v);
+        expect(stored.inputs).toMatchObject({ backupEnvironment: { serverId, environmentId: environment.id },
+            backupPolicy: { destinationRef: configuration.destinationRef, config: configuration.config,
+                retention: configuration.retention, ownership: configuration.ownership } });
+        expect(stored.inputs).not.toHaveProperty('backupTarget');
+        expect(stored.inputs?.backupPolicy).not.toHaveProperty('configRevision');
+        expect(homes.requests.filter(request => request.path.includes('/deployments/environments'))).toEqual([]);
     });
 
     it('hands Prepare and Import to the selected workspace Machine with direct person consent', async () => {
@@ -695,5 +738,27 @@ describe('deployment UI Action callbacks', () => {
             targetLinkId: 'link-a', expectedTargetLinkRevision: 4, requestKey: 'rollback-a', deploymentId: 'old-receipt' }))
             .rejects.toMatchObject({ code: 'action_account_scope_changed' });
         expect(homes.requests.filter(request => request.path.startsWith('/v1/deployments'))).toHaveLength(issued);
+    });
+
+    it.each([false, true])('preserves attempted provider effects through the real UI Action adapter (attempted: %s)', async attempted => {
+        const serverId = await homes.addHome({ name: 'Provider recovery', serverUrl: 'https://provider-recovery.test',
+            serverIdentityId: `srv_${'4'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+        const environment = createDeploymentEnvironmentHeaderV1({ serverId });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, {
+            body: { ok: true, environment, targetLinks: [] },
+        });
+        const providerVariables = { v: 1, variables: [], failures: [], persisted: false };
+        const failure = { errorCode: 'deployment_conflict', error: 'deployment_conflict', effectAttempted: attempted,
+            ...(attempted ? { details: { providerVariables } } : {}) };
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: environment.controllerMachineId,
+            actionId: 'deployments.bindings.set', tokenEpoch: 0, execute: () => ({}), failure: () => failure });
+        const { runDeploymentAction } = await import('./deploymentActionOutcome');
+        const outcome = await runDeploymentAction(() => createDeploymentActions(lifetime, environment.projectSourceId)
+            .setBindings({ environmentId: environment.id, expectedRevision: environment.revision, set: [], remove: [],
+                providerVariables: { useOurs: ['MODE'], keepTheirs: [] } }));
+        expect(outcome).toMatchObject({ kind: 'refused', code: 'deployment_conflict', failure: { effectAttempted: attempted } });
+        if (attempted) expect(outcome).toMatchObject({ failure: { details: { providerVariables } } });
     });
 });

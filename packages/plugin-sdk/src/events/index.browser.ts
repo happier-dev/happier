@@ -1,5 +1,7 @@
+export { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from './deploymentReceipts.js';
 export { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from './deploymentReceipts.js';
 export { DeploymentFailedEventV1ProtocolSchema } from './deploymentReceipts.js';
+export { DeploymentReceiptChangedEventV1ProtocolSchema } from './deploymentReceipts.js';
 export { DeploymentReceiptEventSetupV1ProtocolSchema } from './deploymentReceipts.js';
 export type { DeploymentReceiptEventSourceConfigV1 } from './deploymentReceipts.js';
 export { DeploymentReceiptEventSourceConfigV1ProtocolSchema } from './deploymentReceipts.js';
@@ -39,4 +41,5 @@ export { deploymentInProgressStates } from './deploymentReceipts.js';
 export { isAutomationEventSourcesListPageProgressingV1 } from '../eventAutomation.js';
 export { projectPluginEventAdmissionSourceStatusV1 } from '../eventAutomation.js';
 export { projectPluginEventSourceConnectionStatusV1 } from '../eventAutomation.js';
+export { readDeploymentAccountChangeV1 } from './deploymentReceipts.js';
 export { readDeploymentReceiptEventFailureV1 } from './deploymentReceipts.js';

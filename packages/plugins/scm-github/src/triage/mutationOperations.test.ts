@@ -177,6 +177,75 @@ describe('GitHub preview-status registered Action', () => {
     expect(stub.materializeCount()).toBeGreaterThan(0);
   });
 
+  it.each([
+    { operation: 'deploy', receiptState: 'running', pullRequestState: 'open', status: 'pending' },
+    { operation: 'deploy', pullRequestState: 'open', status: 'pending' },
+    { operation: 'deploy', domainState: 'active', pullRequestState: 'open', status: 'ready' },
+    { operation: 'deploy', receiptState: 'failed', pullRequestState: 'open', status: 'failed' },
+    { tombstoned: true, status: 'removed' },
+  ] as const)('publishes $status from an ordinary receipt Event using its retained Forge source', async ({ status, ...options }) => {
+    const stub = previewStatusTransport(options);
+    const result = await invokeRegisteredGithubMutation('github/pull-request/preview-status', {
+      v: 1, serverId: 'srv_preview', environmentId: 'preview-child', deploymentId: 'preview-teardown',
+      templateEnvironmentId: 'preview-template',
+      sourceConfig: { v: 1, credentialRef: CONFIGURED_ACCOUNT, repository: { v: 1, repositoryId: '4210',
+        owner: GITHUB_FIXTURE_OWNER, name: GITHUB_FIXTURE_REPOSITORY, nameWithOwner: REPOSITORY_KEY } },
+    }, stub);
+    expect(result).toMatchObject({ kind: 'applied', publication: { status, expectedHeadSha: OBSERVED_HEAD } });
+    expect(stub.requests.filter(request => request.method === 'POST')).toHaveLength(1);
+    expect(stub.materializations).toMatchObject([{ account: CONFIGURED_ACCOUNT }]);
+  });
+
+  it.each([
+    { options: { foreignReceipt: true }, templateEnvironmentId: 'preview-template', deploymentId: 'preview-teardown', reason: 'preview_context_changed' },
+    { options: {}, templateEnvironmentId: 'other-template', deploymentId: 'preview-teardown', reason: 'preview_context_changed' },
+    { options: {}, templateEnvironmentId: 'preview-template', deploymentId: 'old-receipt', reason: 'preview_context_changed' },
+    { options: { headSha: ADVANCED_HEAD }, templateEnvironmentId: 'preview-template', deploymentId: 'preview-teardown', reason: 'head_advanced' },
+  ])('refuses a stale or foreign receipt Event before publishing ($reason)', async ({ options, templateEnvironmentId, deploymentId, reason }) => {
+    const stub = previewStatusTransport(options);
+    const result = await invokeRegisteredGithubMutation('github/pull-request/preview-status', {
+      v: 1, serverId: 'srv_preview', environmentId: 'preview-child', templateEnvironmentId, deploymentId,
+      sourceConfig: { v: 1, credentialRef: CONFIGURED_ACCOUNT, repository: { v: 1, repositoryId: '4210',
+        owner: GITHUB_FIXTURE_OWNER, name: GITHUB_FIXTURE_REPOSITORY, nameWithOwner: REPOSITORY_KEY } },
+    }, stub);
+    expect(result).toMatchObject({ kind: 'refused', reason });
+    expect(stub.requests.filter(request => request.method === 'POST')).toHaveLength(0);
+  });
+
+  it('refuses an old removal when a newer live child owns the same template target', async () => {
+    const stub = previewStatusTransport({ tombstoned: true, replacementChild: true });
+    expect(await invokeRegisteredGithubMutation('github/pull-request/preview-status', previewStatusInput(), stub))
+      .toEqual({ kind: 'refused', reason: 'preview_context_changed' });
+    expect(stub.requests.filter(request => request.method === 'POST')).toHaveLength(0);
+  });
+
+  it('offers an exact publication retry independently of app readiness and observes its result without redeploying', async () => {
+    const stub = previewStatusTransport({ operation: 'deploy', pullRequestState: 'open', domainState: 'active' });
+    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: stub.context.services });
+    try {
+      const before = await testkit.invokeAction('github/pull-request/preview', { ...stateInput(), serverId: 'srv_preview' });
+      expect(before).toMatchObject({ kind: 'preview', previews: [{ state: 'ready', publication: {
+        kind: 'unpublished', input: { environmentId: 'preview-child', deploymentId: 'preview-teardown',
+          expectedHeadSha: OBSERVED_HEAD, status: 'ready', targetUrl: 'https://pr-1284.example.test/' },
+      } }] });
+      if (before.kind !== 'preview' || before.previews[0]?.kind !== 'preview' || !before.previews[0].publication
+        || before.previews[0].publication.kind === 'current') throw new Error('Expected publication retry');
+      expect(await testkit.invokeAction('github/pull-request/preview-status', before.previews[0].publication.input))
+        .toMatchObject({ kind: 'applied' });
+      expect(await testkit.invokeAction('github/pull-request/preview', { ...stateInput(), serverId: 'srv_preview' }))
+        .toMatchObject({ kind: 'preview', previews: [{ state: 'ready', publication: { kind: 'current' } }] });
+      expect(stub.requests.filter(request => request.method === 'POST')).toHaveLength(1);
+    } finally { await testkit.dispose(); }
+  });
+
+  it.each([false, true])('publishes the retained successful teardown after tombstoning only for its own child (foreign=%s)', async foreignReceipt => {
+    const stub = previewStatusTransport({ tombstoned: true, foreignReceipt });
+    expect(await invoke(previewStatusInput(), stub)).toMatchObject(foreignReceipt
+      ? { kind: 'refused', reason: 'preview_context_changed' }
+      : { kind: 'applied', publication: { status: 'removed', environmentId: 'preview-child' } });
+    expect(stub.requests.filter(request => request.method === 'POST')).toHaveLength(foreignReceipt ? 0 : 1);
+  });
+
   it('publishes successful cleanup while the pull request remains open', async () => {
     const stub = previewStatusTransport({ pullRequestState: 'open' });
     expect(await invoke(previewStatusInput(), stub)).toMatchObject({ kind: 'applied', publication: { status: 'removed', targetUrl: null } });
@@ -209,8 +278,8 @@ describe('GitHub preview-status registered Action', () => {
     expect(readRecordedJsonBody(sent[0]!)).toMatchObject({ state, description, target_url: null });
   });
 
-  it('refuses a pending status backed by a settled successful receipt', async () => {
-    const stub = previewStatusTransport({ operation: 'deploy', pullRequestState: 'open' });
+  it('refuses a pending status when the settled successful receipt already has its serving Domain', async () => {
+    const stub = previewStatusTransport({ operation: 'deploy', pullRequestState: 'open', domainState: 'active' });
     expect(await invoke({ ...previewStatusInput(), status: 'pending' }, stub)).toMatchObject({ kind: 'refused', reason: 'preview_context_changed' });
     expect(stub.requests.filter(request => request.method === 'POST')).toHaveLength(0);
   });
@@ -222,7 +291,7 @@ describe('GitHub preview-status registered Action', () => {
     ['foreign receipt Environment', { foreignReceipt: true }],
     ['changed Artifact revision', { artifactRevision: 2 }],
     ['provider-native runtime', { native: true }],
-    ['deleted child', { deletedChild: true }],
+    ['deleted child without successful cleanup', { deletedChild: true, operation: 'deploy', pullRequestState: 'open' }],
     ['deleted template', { deletedTemplate: true }],
     ['retired runtime relation', { retiredLink: true }],
   ] as const)('makes zero provider writes for %s', async (_label, options) => {

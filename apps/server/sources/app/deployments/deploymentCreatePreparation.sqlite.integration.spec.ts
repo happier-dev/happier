@@ -6,11 +6,13 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, encodePlainArtifactStoredContent,
-    DeploymentTargetLinkInputV1Schema, ArtifactJsonCreateHttpInputV1Schema, ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol';
+    DeploymentTargetLinkInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema,
+    ArtifactJsonCreateHttpInputV1Schema, ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { EnvironmentSecretClientBindingsInputV1Schema } from '@happier-dev/deployment-protocol';
 import { ExternalActionExecutionAuthorizationBindingV1Schema, projectDeploymentPreparationAdmissionV1,
-    createDeploymentCandidatePublicationV1, createDeploymentLinkContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
+    createDeploymentCandidatePublicationV1, createDeploymentLinkContentArtifactIdV1,
+    createDeploymentEnvironmentContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { auth } from '@/app/auth/auth';
 import { MachineProvisionerContributionV1Schema, defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV1Schema,
     MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -69,8 +71,8 @@ describe('reviewed create preparation authority', () => {
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: actor.id,
             metadata: encodePlainMachineStoredContent({ host: 'Create carrier', platform: 'linux', happyCliVersion: 'test', homeDir: '/tmp', happyHomeDir: '/tmp/happier' }),
             dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), installationId: crypto.randomUUID(), installationPublicKey: key.publicKey } });
-        const artifact = async (accountId: string, kind = 'deployment-environment.v1') => {
-            const created = await createArtifact({ actorUserId: accountId, artifactId: crypto.randomUUID(),
+        const artifact = async (accountId: string, kind = 'deployment-environment.v1', artifactId = crypto.randomUUID()) => {
+            const created = await createArtifact({ actorUserId: accountId, artifactId,
                 kind: `v1:other:${kind}`,
                 header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Copy' })),
                 body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({
@@ -97,6 +99,60 @@ describe('reviewed create preparation authority', () => {
         return { owner, actor, source, destination, original, input, admission, binding, machine, key, artifact };
     }
 
+    it.each(['copy', 'catalog', 'fork', 'repository'] as const)('limits the %s Create candidate read to its original consuming request and input', async kind => {
+        const preview = kind === 'fork' ? await previewFixture() : undefined;
+        const f = preview?.f ?? await fixture();
+        const { copyFrom: _copy, ...base } = f.input;
+        const repository = { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' };
+        const input = DeploymentEnvironmentCreateIntentInputV1Schema.parse(preview ? { ...base, purpose: 'preview',
+            preview: { templateEnvironmentId: preview.template.id, expectedTemplateRevision: preview.template.revision,
+                runtimeTargetLinkId: preview.runtime.id, pullRequestId: '17', headSha: 'a'.repeat(40),
+                provenance: { v: 1, templateEnvironmentId: preview.template.id, runtimeTargetLinkId: preview.runtime.id,
+                    repository, headRepository: { ...repository, repository: 'contributor/app' }, pullRequestId: '17',
+                    pullRequestNumber: 17, author: { id: 'contributor', login: 'contributor' } } } }
+            : kind === 'copy' ? f.input : kind === 'repository' ? { ...base, definition: { from: 'repository', ref: 'main',
+                compose: { path: 'compose.yaml', profiles: [], services: [] } } } : { ...base, definition: { from: 'catalogApp' as const,
+            templateRef: { sourceId: 'apps', itemId: 'web', version: '1',
+                ref: { kind: 'content' as const, digest: `sha256:${'c'.repeat(64)}` } } } });
+        const mint = async (requestId: string, rootInput = input) => {
+            const envelope = { v: 1 as const, requestId, target: f.binding.target, input: rootInput };
+            return auth.mintExternalActionExecutionAuthorization({ ...f.binding, requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(f.binding.actionId, rootInput) }, { input: rootInput });
+        };
+        const authorization = await mint(f.binding.requestId);
+        const candidate = await f.artifact(f.actor.id, 'deployment-environment.v1',
+            createDeploymentEnvironmentContentArtifactIdV1({ ...authorization.binding, actionId: 'deployments.environments.create' }));
+        const unrelated = await f.artifact(f.actor.id);
+        const anotherRequest = await mint(crypto.randomUUID());
+        const anotherInput = await mint(f.binding.requestId, input.preview
+            ? { ...input, preview: { ...input.preview, headSha: 'b'.repeat(40) } }
+            : { ...input, name: 'Another reviewed input' });
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            const read = (root: typeof authorization, artifactId: string) => {
+                const path = `/v1/artifacts/${artifactId}`;
+                return app.inject({ method: 'GET', url: path, headers: {
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: root.binding.actionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(root.binding.target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                        effectActionId: root.binding.actionId, target: root.binding.target, installationId: f.machine.installationId!,
+                        requestId: root.binding.requestId, method: 'GET', path, privateKey: f.key.secretKey }),
+                } });
+            };
+            const candidateRead = await read(authorization, candidate.contentArtifactId);
+            expect(candidateRead.statusCode, candidateRead.body).toBe(kind === 'catalog' ? 401 : 200);
+            if (kind === 'catalog') expect(candidateRead.json()).toMatchObject({ error: 'invalid_token',
+                authorizationRefusal: 'deployment_preparation' });
+            for (const [root, artifactId] of [[authorization, unrelated.contentArtifactId],
+                [anotherRequest, candidate.contentArtifactId], [anotherInput, candidate.contentArtifactId]] as const) {
+                const refused = await read(root, artifactId);
+                expect(refused.statusCode, refused.body).toBe(401);
+                expect(refused.json()).toMatchObject({ error: 'invalid_token', authorizationRefusal: 'deployment_preparation' });
+            }
+        }, { authentication: 'real' });
+    });
+
     async function previewFixture() {
         const f = await fixture();
         const template = await db.deploymentEnvironment.create({ data: { projectSourceId: f.destination.source.id,
@@ -121,15 +177,17 @@ describe('reviewed create preparation authority', () => {
             requestId: envelope.requestId, target: envelope.target, machineId: f.machine.id,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
             deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input) }, { input });
-        const readPath = (path: string, effectActionId = 'deployments.environments.list') => {
+        const readPath = (path: string, effectActionId = 'deployments.environments.list',
+            reviewedChild?: Parameters<typeof encodeReviewedActionChildHttpProofV1>[0]) => {
             return { path, headers: {
                 [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
                 [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
                 [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(envelope.target),
+                ...(reviewedChild ? { [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(reviewedChild) } : {}),
                 [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
                     authorizationToken: authorization.token, effectActionId, target: envelope.target,
                     installationId: f.machine.installationId!, requestId: envelope.requestId,
-                    method: 'GET', path, privateKey: f.key.secretKey }),
+                    method: 'GET', path, reviewedChild, privateKey: f.key.secretKey }),
             } };
         };
         const read = (machineId: string) => readPath(`/v1/deployments/environments?serverId=${encodeURIComponent(serverId)}&machineId=${encodeURIComponent(machineId)}`);
@@ -308,12 +366,35 @@ describe('reviewed create preparation authority', () => {
             expect(await verify(selected.role, { ...body, contentBodyVersion: 2 })).toBeNull();
         }
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const deploy = cases[0];
+            const reviewedChild = { actionId: deploy.actionId, role: deploy.role,
+                inputDigest: computeActionInputApprovalDigestV1(deploy.actionId, deploy.input) };
+            for (const [environmentId, childProof, status] of [
+                [child.id, reviewedChild, 200], [f.original.id, reviewedChild, 401],
+                [child.id, { ...reviewedChild, role: 'preview.bindings' }, 401], [child.id, undefined, 401],
+            ] as const) {
+                const request = readPath(`/v1/deployments/environments/${environmentId}?serverId=${serverId}`,
+                    deploy.actionId, childProof);
+                const response = await app.inject({ method: 'GET', url: request.path, headers: request.headers });
+                expect(response.statusCode, response.body).toBe(status);
+                if (status === 401) expect(response.json()).toMatchObject({ error: 'invalid_token',
+                    authorizationRefusal: 'deployment_preparation' });
+            }
             for (const [domainId, status] of [[domain.id, 200], [`${domain.id}-missing`, 404]] as const) {
                 const request = readPath(`/v1/deployments/environments/${child.id}/domains/${domainId}?serverId=${serverId}`,
                     'deployments.domains.get');
                 const response = await app.inject({ method: 'GET', url: request.path, headers: request.headers });
                 expect(response.statusCode, response.body).toBe(status);
             }
+            const list = readPath(`/v1/deployments/environments/${child.id}/domains?serverId=${serverId}`,
+                'deployments.domains.list');
+            const listed = await app.inject({ method: 'GET', url: list.path, headers: list.headers });
+            expect(listed.statusCode, listed.body).toBe(200);
+            expect(listed.json()).toMatchObject({ ok: true, domains: [{ id: domain.id }] });
+            const foreign = readPath(`/v1/deployments/environments/${f.original.id}/domains?serverId=${serverId}`,
+                'deployments.domains.list');
+            const refused = await app.inject({ method: 'GET', url: foreign.path, headers: foreign.headers });
+            expect(refused.statusCode, refused.body).toBe(401);
         }, { authentication: 'real' });
     });
 

@@ -5,6 +5,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { EnvironmentMachineChoice } from './EnvironmentMachineChoice';
+import { DeploymentExtraDefaultsRows } from './DeploymentExtraDefaultsRows';
 import { DeploymentCreationDefaultsV1Schema, type DeploymentCreationDefaultsV1 } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
 
 type CreationDefaults =
@@ -58,10 +59,11 @@ export function renderDeploymentDefaultsEditorRows(props: Readonly<{
         // The acknowledged preference replaces this value when the Action settles.
         return props.preferences.retainPreviousDeployments?.toString() ?? '';
       }} />
+    <DeploymentExtraDefaultsRows {...props} sourceLabel={sourceWord} />
   </>;
 }
 
-function sourceWord(from: DefaultSource | undefined): string | undefined {
+export function sourceWord(from: DefaultSource | undefined): string | undefined {
   if (from === undefined) return undefined;
   if (from === 'explicit')
     return t('projects.deployments.creationReview.fromExplicit');

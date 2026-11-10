@@ -77,7 +77,7 @@ export async function prepareTargetLinkForHost(request: Readonly<{ input: LinkIn
             artifacts: host.artifacts, owner: current.environment.owner, assertCurrent: () => host.assertCurrent(context), publication: 'create',
             content: { ...(binding?.actionId === 'deployments.targets.link' && admission
                     ? { artifactId: createDeploymentLinkContentArtifactIdV1({ ...binding, deploymentLinkAdmission: admission }) } : {}),
-                header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: '' },
+        header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'title' in input ? input.title ?? '' : '' },
                 body: JSON.stringify(provider ?? {}), signal: context.signal,
                 beforeWrite: () => host.assertCurrent(context), authorizationHeaders: host.artifactAuthorization(context) },
         }));
