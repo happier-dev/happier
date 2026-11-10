@@ -106,6 +106,26 @@ describe('NativeWebViewEngine', () => {
         clearWebViewRefOnUnmount = false;
     });
 
+    it('allows external pages and cross-origin redirects with the browser wildcard', async () => {
+        const { NativeWebViewEngine } = await import('./NativeWebViewEngine');
+        const onBlockedNavigation = vi.fn();
+        await renderScreen(<NativeWebViewEngine title="Browser" url="https://google.com" testID="external-frame" originWhitelist={['*']} onBlockedNavigation={onBlockedNavigation} />);
+        const guard = lastWebViewProps?.onShouldStartLoadWithRequest as (request: { url: string }) => boolean;
+        for (const url of ['https://google.com', 'https://www.google.com/', 'https://example.com/', 'http://example.com/']) {
+            expect(guard({ url }), url).toBe(true);
+        }
+        expect(onBlockedNavigation).not.toHaveBeenCalled();
+    });
+
+    it('keeps non-web schemes blocked with the external browser wildcard', async () => {
+        const { NativeWebViewEngine } = await import('./NativeWebViewEngine');
+        await renderScreen(<NativeWebViewEngine title="Browser" url="https://example.com" testID="external-frame" originWhitelist={['*']} />);
+        const guard = lastWebViewProps?.onShouldStartLoadWithRequest as (request: { url: string }) => boolean;
+        for (const url of ['file:///private/item', 'javascript:alert(1)', 'data:text/html,unsafe', 'about:blank', 'invalid']) {
+            expect(guard({ url }), url).toBe(false);
+        }
+    });
+
     it('applies an origin allowlist and blocks navigation outside the allowlist', async () => {
         const { NativeWebViewEngine } = await import('./NativeWebViewEngine');
         const onBlockedNavigation = vi.fn();

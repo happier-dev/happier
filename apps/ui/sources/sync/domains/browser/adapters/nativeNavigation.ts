@@ -35,7 +35,9 @@ export function createBrowserNativeNavigationGuard(
             return false;
         }
         const origin = readOrigin(url);
-        if (origin && allowedOrigins.has(origin)) {
+        if (origin && (allowedOrigins.has(origin) || (
+            allowedOrigins.has('*') && (origin.startsWith('https://') || origin.startsWith('http://'))
+        ))) {
             return true;
         }
         if (url.length > 0) {
