@@ -79,7 +79,8 @@ export function sourceTypecheckCompilerOptions(options, configPath, sources, { d
  * publication owner. Authored identity remains available for diagnostics. */
 export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
   const sources = await readWorkspaceTypecheckSources(cwd);
-  if (!sources.repoRoot) return;
+  if (!sources.repoRoot) return [];
+  const failures = [];
   const preparedDeclarations = new Set();
   for (const project of projects) {
     const options = typecheckCompilerOptions(project.args, cwd);
@@ -93,7 +94,8 @@ export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
         // Declaration consumers share publication/currentness rather than
         // silently accepting an earlier producer's output.
         const { prepareWorkspaceTypecheckDeclarations } = await import('./prepareReferencedTypecheckDeclarations.mjs');
-        await prepareWorkspaceTypecheckDeclarations(componentDir);
+        const result = await prepareWorkspaceTypecheckDeclarations(componentDir);
+        if (!result.ok) failures.push({ component: componentDir, ...result.failure });
         preparedDeclarations.add(componentDir);
       }
     }
@@ -118,4 +120,5 @@ export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
     if (!replaced) project.args.push('--project', target);
     project.project = target;
   }
+  return failures;
 }

@@ -178,10 +178,15 @@ async function pruneObsoleteDeclarations(pkg, project, config) {
  */
 export async function prepareWorkspaceTypecheckDeclarations(componentDir, options = {}) {
   await waitForDependencyRefresh({ installDir: resolveDependencyInstallRoot(componentDir), env: options.env, signal: options.signal });
-  if (options.underLock) return await prepareWorkspaceTypecheckDeclarationsPass(componentDir, options);
-  // A retry starts outside publication/admission scopes. Child emitters report
-  // drift to this phase owner instead of starting a second convergence loop.
-  return await withSingleTrailingBuildPass({ run: () => prepareWorkspaceTypecheckDeclarationsPass(componentDir, options) });
+  try {
+    if (options.underLock) return await prepareWorkspaceTypecheckDeclarationsPass(componentDir, options);
+    // A retry starts outside publication/admission scopes. Child emitters report
+    // drift to this phase owner instead of starting a second convergence loop.
+    return await withSingleTrailingBuildPass({ run: () => prepareWorkspaceTypecheckDeclarationsPass(componentDir, options) });
+  } catch (error) {
+    if (error.code !== 'TYPECHECK_DECLARATION_EMIT_FAILED') throw error;
+    return { ok: false, failure: error.failure };
+  }
 }
 
 async function prepareWorkspaceTypecheckDeclarationsPass(componentDir, {
@@ -229,7 +234,11 @@ async function prepareWorkspaceTypecheckDeclarationsPass(componentDir, {
       if (env.HAPPIER_TYPESCRIPT_CLI_MEASURE_RSS === '1') process.stderr.write(`[typecheck-declarations] starting ${JSON.stringify({ at: new Date().toISOString(), declarations: pending.length })}\n`);
       const result = await runCommand(invocation.command, [...invocation.argsPrefix, ...args], { cwd: repoDir, env, signal, stdio: 'inherit' });
       if (result.error) throw result.error;
-      if (result.signal || result.status !== 0) throw Object.assign(new Error('Dependency declaration emission failed'), { exitCode: result.status, signal: result.signal });
+      if (result.signal) throw Object.assign(new Error('Dependency declaration emission interrupted'), { signal: result.signal });
+      if (result.status !== 0) throw Object.assign(new Error('Dependency declaration emission failed'), {
+        code: 'TYPECHECK_DECLARATION_EMIT_FAILED',
+        failure: { step: 'declaration-emission', status: result.status, projects: pending.map(({ pkg }) => pkg.name) },
+      });
       for (const { pkg, key, project, config } of pending) {
         const outputs = await pruneObsoleteDeclarations(pkg, project, config);
         const outputKey = await declarationOutputKey(pkg);
@@ -274,6 +283,7 @@ async function prepareWorkspaceTypecheckDeclarationsPass(componentDir, {
           });
           const failure = readTerminalBuildFailure(record);
           if (failure) throw failure;
+          if (record?.ok === false && record.failure?.step === 'declaration-emission') return record;
         }
         throw Object.assign(new Error('Dependency declaration preparation failed'), { exitCode: result.status, signal: result.signal });
       }
@@ -302,10 +312,12 @@ if (process.argv[2] === '--prepare-for-typecheck' && process.argv[1]
     });
     cancellation.signal.throwIfAborted();
     process.stderr.write(`[typecheck-preparation] ${JSON.stringify({ component: componentDir, packageBuilds: 0,
-      declarations: result.declarations.length, elapsedMs: Math.round(performance.now() - started), at: new Date().toISOString() })}\n`);
+      ...(result.ok ? { declarations: result.declarations.length } : { failure: result.failure }),
+      elapsedMs: Math.round(performance.now() - started), at: new Date().toISOString() })}\n`);
     process.stderr.write(`[typescript] starting ${JSON.stringify({ at: new Date().toISOString() })}\n`);
-    exitWithCommandResult(await runCommand(command, args, { cwd: process.cwd(), env: process.env,
-      signal: cancellation.signal, stdio: 'inherit', ownedProcessGroup: true }));
+    const checked = await runCommand(command, args, { cwd: process.cwd(), env: process.env,
+      signal: cancellation.signal, stdio: 'inherit', ownedProcessGroup: true });
+    exitWithCommandResult(!result.ok && checked.status === 0 ? { ...checked, status: result.failure.status } : checked);
   } catch (error) {
     if (!cancelledSignal) process.stderr.write(`[typecheck-preparation] failed ${error.stack ?? error}\n`);
     exitWithCommandResult({ error: !cancelledSignal && error.exitCode === undefined ? error : undefined,
@@ -319,6 +331,10 @@ if (process.argv[2] === '--workspace-declarations' && process.argv[1]
   && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   try {
     const result = await prepareWorkspaceTypecheckDeclarations(resolve(process.argv[3]), { underLock: true });
+    if (!result.ok) {
+      if (process.argv[4]) await writeJsonAtomic(process.argv[4], result);
+      exitWithCommandResult({ status: result.failure.status, signal: null });
+    }
     process.stderr.write(`[typecheck-declarations] ${JSON.stringify({ emitted: result.declarations, elapsedMs: result.elapsedMs })}\n`);
   } catch (error) {
     const failure = serializeTerminalBuildFailure(error, { includeRetryableDrift: true });

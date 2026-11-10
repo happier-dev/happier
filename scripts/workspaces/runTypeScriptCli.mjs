@@ -210,7 +210,13 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
     failureStep = 'declaration-preparation';
     const producers = cancelled ? [] : await prepareReferencedTypecheckDeclarations(projects, process.cwd(), inventory ?? uiInventory);
     const orderedProjects = cancelled ? [] : producers.length ? orderTypecheckProjects([...producers, ...projects]) : projects;
-    if (!cancelled && sourceTypecheck) await prepareWorkspaceSourceTypecheckProjects([...producers, ...projects], process.cwd());
+    if (!cancelled && sourceTypecheck) {
+      const failures = await prepareWorkspaceSourceTypecheckProjects([...producers, ...projects], process.cwd());
+      for (const failure of failures) {
+        process.stderr.write(`[typecheck-declaration-failure] ${JSON.stringify(failure)}\n`);
+        result = { status: failure.status, signal: null };
+      }
+    }
     let inputObservation;
     if (!cancelled && sourceTypecheck) {
       try { inputObservation = await createTypecheckInputObservation([...producers, ...projects]); }

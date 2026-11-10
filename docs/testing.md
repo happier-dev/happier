@@ -1552,6 +1552,13 @@ Explicit declaration aliases retain their authored targets. Consumer strictness 
 diagnostics remain intact; the compiler boundary removes foreign implementation
 checks rather than filtering their output.
 
+In 0.3 development, workspace declaration emission diagnostics are reported as
+`[typecheck-declaration-failure]` with their phase, compiler status and producer
+projects. They leave the overall check nonzero while the consumer still checks
+its own projects and publishes its diagnostic locations. Failed emission does
+not publish a current declaration cache record. Cancellation, launch failures
+and preparation failures outside compiler emission still stop the batch.
+
 Before a source compiler batch starts, the runner records an in-memory filesystem
 observation of its selected project roots and authored/generated configs. Its
 terminal `[typecheck-inputs]` report gives `capturedAt` and the selected paths whose
