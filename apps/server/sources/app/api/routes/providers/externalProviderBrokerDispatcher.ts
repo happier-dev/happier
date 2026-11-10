@@ -312,7 +312,7 @@ export function createExternalProviderBrokerDispatcher(input: Readonly<{
     env: NodeJS.ProcessEnv;
     createRelayTransport: PeerTcpTunnelRelayTransportFactory;
     enabled: ProviderBrokerRelayEnabled;
-}>): ExternalProviderBrokerDispatch {
+}>): (input: Parameters<ExternalProviderBrokerDispatch>[0]) => Promise<ProviderBrokerCarrierDispatchResult> {
     const dispatch = createProviderBrokerCarrierDispatch(input);
     return async ({ request: rawRequest, target, signal }) => {
         const request = TeamCredentialExternalProviderApplicationRequestV1Schema.parse(rawRequest);

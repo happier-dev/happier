@@ -9,7 +9,7 @@ import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStore
 import { tryWriteServerEnabledBitInPlace} from '@happier-dev/protocol/features/serverEnabledBit';
 import { openSavedSecretResourceStoredContentV1, sealSavedSecretResourceStoredContentV1} from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import {
-    StoredApprovalRequestSchema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+    StoredApprovalRequestSchema, ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { listAccountSettingsSavedSecretReferences } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
@@ -264,8 +264,8 @@ describe('Saved Secret native responsibility review through its real delete owne
             approved = true;
             source = { ...source, secrets: [] };
             const settledAt = request.createdAtMs + 1;
-            const settled: ApprovalRequestV2 = { ...request, status: 'executed', updatedAtMs: settledAt, decision: { kind: 'approve', decidedAtMs: settledAt },
-                execution: { ok: true, executedAtMs: settledAt, result: { resourceId, settingsVersion: 5 } } };
+            const settled = ApprovalRequestV2Schema.parse({ ...request, status: 'executed', updatedAtMs: settledAt, decision: { kind: 'approve', decidedAtMs: settledAt },
+                execution: { ok: true, executedAtMs: settledAt, result: { resourceId, settingsVersion: 5 } } });
             const observation: DecryptedArtifact = { id: artifact.id, header: buildApprovalRequestArtifactHeaderV1(settled), body: JSON.stringify(settled),
                 title: buildApprovalRequestArtifactHeaderV1(settled).title,
                 headerVersion: 2, bodyVersion: 2, seq: 2, createdAt: 1, updatedAt: 2, isDecrypted: true };

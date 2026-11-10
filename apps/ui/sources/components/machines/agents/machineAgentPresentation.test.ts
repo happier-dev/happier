@@ -50,7 +50,7 @@ describe('machine agent presentation', () => {
         const installed = agent({ installed: true, version: '1.0.0', latestVersion: '2.0.0',
             update: { supported: true, command: null },
             signIn: { status: 'signedIn', via: { kind: 'native', accountLabel: null }, nativeLogin: 'terminal', connectedServices: [] } });
-        for (const outcome of [null, { kind: 'failed', code: 'download_failed', stepId: null, message: 'Update failed' }] as const) {
+        for (const outcome of [null, { kind: 'failed', code: 'download_failed', stepId: 'download', message: 'Update failed' }] as const) {
             const job: NonNullable<MachineAgent['job']> = { jobId: 'optional-update', intent: 'update',
                 startedAtMs: 1, steps: [], logLine: null, outcome };
             const row = { ...installed, job, state: resolveMachineAgentState({ ...installed, job }) };
@@ -64,7 +64,7 @@ describe('machine agent presentation', () => {
     });
     it('keeps transport diagnostics out of the shared status copy used by the composer and Machine rows', () => {
         expect(formatMachineAgentStatus({ kind: 'unavailable', tone: 'quiet',
-            reason: { reason: 'projection_unavailable', errorCode: 'transport-error' } })).toBe(t('machineAgents.unknown'));
+            reason: { reason: 'probe_failed', errorCode: 'transport-error' } })).toBe(t('machineAgents.unknown'));
     });
     it('preserves the inventory-owned classified failure in its status instead of presenting unknown', () => {
         const row = agent({ installed: true, state: 'unknown', stale: true, staleReason: 'error',

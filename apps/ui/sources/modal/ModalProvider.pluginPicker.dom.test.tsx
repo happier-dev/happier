@@ -46,7 +46,7 @@ it('lets a custom picker in the foreground modal select by pointer and keyboard 
         handleRequest: async request => {
             const payload = request.payload;
             if (request.method === 'settleEphemeralInput' && payload && typeof payload === 'object'
-                && !Array.isArray(payload) && typeof payload.input === 'string') selected.push(payload.input);
+                && 'input' in payload && typeof payload.input === 'string') selected.push(payload.input);
             return null;
         },
     });

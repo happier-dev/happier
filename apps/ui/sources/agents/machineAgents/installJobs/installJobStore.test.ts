@@ -65,7 +65,7 @@ beforeEach(async () => {
             : url.pathname === '/v1/actions/machines.agents.install.cancel' ? RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL : null;
         if (home && method) {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
-            if (request.target.kind !== 'machine') throw new Error('Unexpected install job target');
+            if (request.target?.kind !== 'machine') throw new Error('Unexpected install job target');
             const schema = method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ ? DaemonAgentInstallReadRequestSchema : DaemonAgentInstallCancelRequestSchema;
             const { machineId: _machineId, ...operands } = request.input as { machineId: string };
             // HTTP is the Home/daemon boundary; the real API, Account capture,
@@ -96,6 +96,71 @@ afterEach(() => {
 });
 
 describe('agent install job owner', () => {
+    it('recovers the admitted update job after an observation refusal without another installer start', async () => {
+        const server = await addJobHome({ serverUrl: 'https://refused-update-observation.example.test' });
+        const target = { serverId: server.id, accountId: 'store-account', machineId: 'refused-update-observation', agentId: 'codex' };
+        let refused = true;
+        boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
+            if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START) return { ok: true, jobId: 'replacement-update-job' };
+            if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST) return { ok: true, jobs: [{ ...wireJob('codex', 'admitted-update-job'), intent: 'update' }] };
+            if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ) return refused
+                ? { ok: false, errorCode: 'install_unavailable', error: 'Configured Agent jobs require current Account admission.' }
+                : { ok: true, steps: [], progress: [], events: [], nextCursor: 0, done: true,
+                    outcome: { kind: 'succeeded', version: '2.0' } };
+            if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: {} };
+            throw new Error(`Unexpected update recovery fixture RPC ${method}`);
+        });
+        await ensureMachineAgentInstallJobs(target);
+        await vi.waitFor(() => expect(readAgentInstallJob(target)?.readFailure).toBe('install_unavailable'));
+        refused = false;
+        const { startMachineAgentItemUpdate } = await import('@/updates/machineUpdateRuns');
+        const job = await startMachineAgentItemUpdate({
+            id: 'refused-update', subject: { kind: 'agent-cli', agentId: 'codex' }, machineId: target.machineId,
+            title: 'Codex', currentVersion: '1.0', latestVersion: '2.0', state: 'available', progressPercent: null,
+            step: null, managedBy: 'happier', action: { kind: 'run', verb: 'update' }, failure: null, skipped: false,
+        }, target, { consent: { vendorRecipe: true } });
+        expect(job.jobId).toBe('admitted-update-job');
+        await expect(waitForAgentInstallJob(target)).resolves.toEqual({ kind: 'succeeded', version: '2.0' });
+        expect(boundary.rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START)).toBe(false);
+    });
+
+    it.each(['completed', 'missing'] as const)('retains an admitted job but settles a refused observation until the person retries (%s)', async recovery => {
+        vi.useFakeTimers();
+        const server = await addJobHome({ serverUrl: `https://refused-observation-${recovery}.example.test` });
+        const target = { serverId: server.id, accountId: 'store-account', machineId: `refused-observation-${recovery}`, agentId: 'codex' };
+        let refused = true;
+        const missingRead = createDeferred<{ ok: false; errorCode: 'job_not_found'; error: string }>();
+        boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
+            if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START) return { ok: true, jobId: 'refused-observation-job' };
+            if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST) return { ok: true, jobs: !refused && recovery === 'missing' ? [] : [wireJob('codex', 'refused-observation-job')] };
+            if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ) return refused
+                ? { ok: false, errorCode: 'install_unavailable', error: 'Configured Agent jobs require current Account admission.' }
+                : recovery === 'missing' ? missingRead.promise
+                : { ok: true, steps: [], progress: [], events: [], nextCursor: 0, done: true,
+                    outcome: { kind: 'succeeded', version: '2.0' } };
+            throw new Error(`Unexpected observation fixture RPC ${method}`);
+        });
+        const observer = await renderHook(() => useAgentInstallJob(target));
+        await act(async () => { await ensureMachineAgentInstallJobs(target); });
+        expect(observer.getCurrent().job).toMatchObject({ jobId: 'refused-observation-job', outcome: null, readFailure: 'install_unavailable' });
+        await expect(waitForAgentInstallJob(target)).rejects.toMatchObject({ code: 'install_unavailable' });
+        const reads = () => boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ).length;
+        const before = reads();
+        await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+        expect(reads()).toBe(before);
+        refused = false;
+        await act(async () => { await observer.getCurrent().refresh(); });
+        if (recovery === 'missing') {
+            // An empty discovery is not a terminal outcome or proof that this admitted job disappeared.
+            expect(observer.getCurrent().job?.jobId).toBe('refused-observation-job');
+            await act(async () => { missingRead.resolve({ ok: false, errorCode: 'job_not_found', error: 'The daemon has no retained job.' }); });
+            expect(observer.getCurrent().job).toBeNull();
+        } else expect(observer.getCurrent().job).toMatchObject({ jobId: 'refused-observation-job', outcome: { kind: 'succeeded', version: '2.0' } });
+        expect(observer.getCurrent().job?.readFailure).toBeUndefined();
+        expect(boundary.rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START)).toBe(false);
+        await observer.unmount();
+    });
+
     it('shares one poll while presented, reads nothing for 60s hidden or unmounted, and resumes its cursor until terminal', async () => {
         vi.useFakeTimers();
         const server = await addJobHome({ serverUrl: 'https://pf58-presentation.example.test' });

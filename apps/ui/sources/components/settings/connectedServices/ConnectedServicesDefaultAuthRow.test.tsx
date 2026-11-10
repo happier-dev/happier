@@ -218,6 +218,7 @@ const CODEX_V4_GROUP: AccountProfile['connectedAccountGroupsV4'][number] = {
 
 const TEAM_RESOURCE: TeamCredentialResourceCatalogEntryV1 = {
     id: 'resource-a',
+    sourceOwnerDisplayName: null,
     teamId: 'team-a',
     displayName: 'Team Codex',
     resourceRevision: 7,

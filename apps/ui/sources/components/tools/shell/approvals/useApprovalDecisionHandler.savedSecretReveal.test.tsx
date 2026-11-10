@@ -203,7 +203,7 @@ describe('approved Agent/MCP Saved Secret reveal', () => {
       'agent-reveal-1',
     );
     const { ModalProvider } = await import('@/modal');
-    const screen = await renderScreen(<ModalProvider />);
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     const hook = await renderHook(() =>
       useApprovalDecisionHandler(
         { id: artifactId, header: null },
@@ -250,7 +250,7 @@ describe('approved Agent/MCP Saved Secret reveal', () => {
       'agent-reveal-deny',
     );
     const { ModalProvider } = await import('@/modal');
-    const screen = await renderScreen(<ModalProvider />);
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     const hook = await renderHook(() =>
       useApprovalDecisionHandler(
         { id: artifactId, header: null },

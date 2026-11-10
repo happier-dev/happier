@@ -23,4 +23,11 @@ describe('providerProbeFailureHealthState', () => {
       { observedAt: 1_000 },
     )).not.toHaveProperty('retryAt');
   });
+
+  it('does not infer endpoint health from unavailable credential transport', () => {
+    expect(providerProbeFailureHealthState(
+      new ProviderProbeClientError('provider_credential_transport_unavailable'),
+      { observedAt: 1_000 },
+    )).toBeNull();
+  });
 });

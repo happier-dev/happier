@@ -1,3 +1,4 @@
+import { setTimeout, clearTimeout } from 'node:timers';
 import { stat } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 

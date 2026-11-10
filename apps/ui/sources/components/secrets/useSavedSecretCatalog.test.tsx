@@ -41,6 +41,7 @@ describe('useSavedSecretCatalog resource authority', () => {
         await home.addOwnerResource();
         const { SavedSecretCatalogEntryV1Schema } = await import('@happier-dev/protocol/account/settings/savedSecretCatalogV1');
         const resource = home.resources[0];
+        if (!resource || !('resourceId' in resource)) throw new Error('Expected healthy owner resource');
         const entry = SavedSecretCatalogEntryV1Schema.parse({ ...resource.entry,
             relationship: 'recipient', ownerAccountId: 'sharing-account',
             capabilities: { use: true, reveal: true, rename: false, rotate: false, manageAccess: false, delete: false },

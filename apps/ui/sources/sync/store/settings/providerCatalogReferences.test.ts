@@ -2,6 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { DEFAULT_PROVIDER_SETTINGS_V1 } from '@happier-dev/protocol/providers/settings/v1';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { ProviderConnectionsCatalogV1Schema, splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
@@ -28,7 +29,7 @@ it('reads an exact connection/model without inventory work and keeps an unrelate
     let inventoryReads = 0;
     const counted = { ...catalog,
         connections: catalog.connections.map(connection => ({ ...connection, get id() { inventoryReads += 1; return connection.id; } })),
-        manualModelsByConnectionId: { pc_0: catalog.manualModelsByConnectionId.pc_0!.map(model => ({ ...model,
+        manualModelsByConnectionId: { pc_0: catalog.manualModelsByConnectionId[ProviderConnectionIdSchema.parse('pc_0')]!.map(model => ({ ...model,
             get id() { inventoryReads += 1; return model.id; } })) },
     };
     applyProviderCatalogSnapshot(scope, { status: 'ready', revision: 1, catalog: counted }, true);

@@ -3,7 +3,7 @@ import type * as React from 'react';
 import type { PopoverAnchor } from '@/components/ui/popover';
 import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import type { TeamResourceConnectedServiceSelectionV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedServiceBindingSelectionV2, TeamResourceConnectedServiceSelectionV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { TeamCredentialResourceCatalogEntryV1, TeamCredentialRouteV1 } from '@happier-dev/protocol/teams';
 
 import {
@@ -113,7 +113,7 @@ export type BuildNewSessionConnectedServicesSelectionListModelParams = Readonly<
     quotaSnapshotsByKey?: Readonly<Record<string, PoolQuotaSnapshot | null | undefined>>;
     quotaErrorsByKey?: Readonly<Record<string, string | null | undefined>>;
     renderPoolFreshness?: (freshness: PoolUsageFreshness, subtitle: string, serviceTitle: string) => React.ReactNode;
-    setBindingForService: (serviceId: string, binding: ConnectedServicesServiceBinding) => void;
+    setBindingForService: (serviceId: string, binding: ConnectedServiceBindingSelectionV2) => void;
     onOpenSettings: (serviceId: string, anchor?: PopoverAnchor) => void;
     translate: ConnectedServicesSelectionListTranslate;
     resolveServiceTitle: (serviceId: string) => string;
@@ -266,7 +266,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                 source: 'connected',
                 selection: 'group',
                 groupId,
-            } satisfies ConnectedServicesServiceBinding;
+            } satisfies ConnectedServiceBindingSelectionV2;
             const availability = resolveAvailability({
                 serviceId,
                 optionId,
@@ -424,7 +424,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             if (!profileId) continue;
             const optionId = createConnectedServiceOptionId(serviceId, profileId);
             const selected = bindingsActive && usesConnectedProfile && effectiveProfileId === profileId;
-            const optionBinding = { source: 'connected', selection: 'profile', profileId } satisfies ConnectedServicesServiceBinding;
+            const optionBinding = { source: 'connected', selection: 'profile', profileId } satisfies ConnectedServiceBindingSelectionV2;
             const availability = resolveAvailability({
                 serviceId,
                 optionId,
@@ -475,7 +475,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
         if (params.includeNativeAuthOption !== false && !params.nativeRoute) {
             const nativeOptionId = createNativeServiceOptionId(serviceId);
             const nativeSelected = params.bindingsKnown !== false && !teamRouteApplied && !usesConnectedProfile && !usesConnectedGroup && !usesTeamResource;
-            const nativeBinding = { source: 'native' } satisfies ConnectedServicesServiceBinding;
+            const nativeBinding = { source: 'native' } satisfies ConnectedServiceBindingSelectionV2;
             const nativeAvailability = resolveAvailability({
                 serviceId,
                 optionId: nativeOptionId,

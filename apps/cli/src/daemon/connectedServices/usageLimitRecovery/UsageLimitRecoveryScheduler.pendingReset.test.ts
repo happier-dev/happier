@@ -16,6 +16,38 @@ function snapshot(at: number, resetsAt: number): ProviderAccountUsageSnapshotV1 
 describe('UsageLimitRecoveryScheduler Pending reset demand', () => {
   afterEach(() => vi.useRealTimers());
 
+  it('joins concurrent pending reset reconciliation without a cancellation signal', async () => {
+    let enterSession: (() => void) | undefined;
+    let releaseSession: (() => void) | undefined;
+    const entered = new Promise<void>(resolve => { enterSession = resolve; });
+    const released = new Promise<void>(resolve => { releaseSession = resolve; });
+    const scheduler = new UsageLimitRecoveryScheduler({
+      nowMs: () => 0,
+      pendingResetStarts: { withSession: async (_sessionId, run) => {
+        enterSession?.();
+        await released;
+        await run({
+          read: async () => [],
+          readAuthority: async () => true,
+          readWitness: async () => null,
+          readCurrent: async () => null,
+          release: async () => {},
+        });
+      } },
+    });
+    try {
+      const first = scheduler.reconcilePendingResetStarts('session');
+      await entered;
+      const second = scheduler.reconcilePendingResetStarts('session').then(
+        () => ({ status: 'fulfilled' }),
+        error => ({ status: 'rejected', error }),
+      );
+      releaseSession?.();
+      await first;
+      expect(await second).toEqual({ status: 'fulfilled' });
+    } finally { releaseSession?.(); scheduler.dispose(); }
+  });
+
   it.each([1_000, 2_000])('releases the original Pending hold at fresh window %s, including after sleeping through its reset', async resumedAt => {
     vi.useFakeTimers(); vi.setSystemTime(500);
     const previous = snapshot(500, 1_000);

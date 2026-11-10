@@ -1,3 +1,4 @@
+import { setTimeout, clearTimeout } from 'node:timers';
 import { isDeepStrictEqual } from 'node:util';
 import { classifyDaemonServerWorkError } from '@/daemon/serverWork';
 import type {

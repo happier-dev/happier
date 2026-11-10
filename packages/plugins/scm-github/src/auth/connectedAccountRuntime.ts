@@ -2,6 +2,7 @@ import { GITHUB_TOKEN_CREDENTIAL_KEY as TOKEN_CREDENTIAL_KEY, materializeGithubC
 import type {
   ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
   ConnectedAccountRuntime as PluginConnectedAccountRuntime,
+  ConnectedAccountMaterialization,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { resolveGhNativeToken } from '@happier-dev/plugin-sdk/exec';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -111,7 +112,7 @@ const githubConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
     return readHealth(context, options);
   },
   materialize: materializeGithubCredential,
-  async materializeNative(request, context, options) {
+  async materializeNative(request, context, options): Promise<ConnectedAccountMaterialization> {
     if (request.kind !== 'httpHeaders') throw new PluginError({
       code: 'plugin_connected_account_binding_out_of_scope',
       message: 'Native GitHub credentials require an authorized HTTPS header request',

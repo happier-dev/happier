@@ -1,4 +1,5 @@
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { AgentProviderCredentialTransport } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ProviderCredentialTransportV1, ProviderErrorV1, ProviderWireProtocol, ProviderSettingsV1 } from '@happier-dev/protocol';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
 import { prepareProviderConnectionsCatalogForCli } from '@/providers/settings/hydrate';
@@ -62,7 +63,7 @@ export type ResolveProviderConnectionBrokerSourceInput = Readonly<{
   machineId: string;
   endpointTemplateId: string;
   protocol: ProviderWireProtocol;
-  expectedCredentialTransport?: ProviderCredentialTransportV1;
+  expectedCredentialTransport?: AgentProviderCredentialTransport;
   accountSettings: unknown;
   providerSettings: ProviderSettingsV1;
   savedSecretMaterializer: SavedSecretMaterializerV1;
@@ -116,7 +117,7 @@ function fail(
 function selectCredential(input: Readonly<{
   record: ResolvedProviderConnectionRecord;
   protocol: ProviderWireProtocol;
-  expectedTransport?: ProviderCredentialTransportV1;
+  expectedTransport?: AgentProviderCredentialTransport;
 }>): Readonly<{ slotId: string; transport: ProviderCredentialTransportV1 }> | null {
   const credential = input.record.source.kind === 'contribution'
     ? input.record.source.definition.credential

@@ -1,5 +1,6 @@
 import type { ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { DaemonProviderModelProjectionRowV1 } from '@happier-dev/protocol/rpc/providers';
+import { isProviderSourceModelCatalogConfidenceUsable } from '@happier-dev/protocol/rpc/providers';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
@@ -31,7 +32,8 @@ export function createProviderSourceCatalogRevision(input: Readonly<{
 export type ProviderSourceModelCatalog = Readonly<{
   application: ProviderBrokerSourceApplicationBindingV1;
   sourceRevision: string;
-  rows: readonly (Omit<DaemonProviderModelProjectionRowV1, 'ref' | 'application' | 'nativeSource'> & Readonly<{
+  rows: readonly (Omit<DaemonProviderModelProjectionRowV1, 'ref' | 'application' | 'nativeSource' | 'descriptor'> & Readonly<{
+    descriptor: ProviderModelDescriptorV1;
     application: ProviderBrokerSourceApplicationBindingV1;
   }>)[];
 }>;
@@ -49,15 +51,17 @@ export type ProviderSourceModelCatalogResult = Readonly<
   | { status: 'error'; error: ProviderErrorV1 }
 >;
 
-/** Shared membership rule for Provider and native Agent catalog publication. */
-export function isProviderSourceModelCatalogConfidenceUsable(confidence: DaemonProviderModelProjectionRowV1['confidence'] | undefined): boolean {
-  return confidence !== 'account_unverified';
-}
+export { isProviderSourceModelCatalogConfidenceUsable } from '@happier-dev/protocol/rpc/providers';
 
 /** Source execution consumes current membership; unverified and stale rows are diagnostic only. */
-export function projectCurrentProviderSourceModelCatalogs(catalogs: readonly ProviderSourceModelCatalog[]): ProviderSourceModelCatalogResult {
+export function projectCurrentProviderSourceModelCatalogs(catalogs: readonly ProviderSourceModelCatalog[]): Readonly<{
+  status: 'success';
+  catalogs: readonly (Omit<ProviderSourceModelCatalog, 'rows'> & Readonly<{
+    rows: readonly (ProviderSourceModelCatalog['rows'][number] & Readonly<{ visibility: 'visible' }>)[];
+  }>)[];
+}> {
   return { status: 'success', catalogs: catalogs.flatMap(catalog => {
-    const rows = catalog.rows.filter(row => isProviderSourceModelCatalogConfidenceUsable(row.confidence)
+    const rows = catalog.rows.filter((row): row is typeof row & Readonly<{ visibility: 'visible' }> => isProviderSourceModelCatalogConfidenceUsable(row.confidence)
       && !row.catalog.stale && row.visibility === 'visible'
       && row.compatibility.result.status !== 'incompatible');
     return rows.length > 0 ? [{ ...catalog, rows }] : [];

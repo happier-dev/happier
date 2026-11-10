@@ -148,13 +148,13 @@ describe("qualified Connected Account credential repository", () => {
                 expect(accounts[0]).not.toHaveProperty(field);
             }
             expect(JSON.stringify(accounts)).not.toContain('synthetic-token');
-            const held = await inTx(tx => buildAccountConnectedServicesProjection({ tx, accountId: owner.id, includeGroups: true }));
+            const held = await inTx(tx => buildAccountConnectedServicesProjection({ tx, accountId: owner.id, includeGroups: true, env: process.env }));
             expect(held.connectedAccountsV4).toEqual(accounts);
             expect(AccountProfileSchema.parse({ id: owner.id, ...held }).connectedAccountsV4).toEqual(accounts);
         }
         const other = await db.account.create({ data: { encryptionMode: 'plain' } });
         expect(await listQualifiedConnectedAccounts({ accountId: other.id, service })).toEqual([]);
-        const otherHeld = await inTx(tx => buildAccountConnectedServicesProjection({ tx, accountId: other.id, includeGroups: true }));
+        const otherHeld = await inTx(tx => buildAccountConnectedServicesProjection({ tx, accountId: other.id, includeGroups: true, env: process.env }));
         expect(AccountProfileSchema.parse({ id: other.id, ...otherHeld }).connectedAccountsV4).toEqual([]);
         for (const status of ['needs_reauth', 'connected'] as const) {
             expect(await mutateQualifiedConnectedServiceCredentialHealth({ ...basis,

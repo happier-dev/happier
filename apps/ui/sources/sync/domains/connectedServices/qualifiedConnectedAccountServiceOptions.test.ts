@@ -166,7 +166,6 @@ describe('applyProjectedCredentialKindRestrictions', () => {
                 ],
             },
             connectedAccounts: [{
-                purpose: 'primary',
                 service: { pluginId: 'acme.review', localId: 'reviewer-service' },
                 credentialKinds: ['token'],
             }],

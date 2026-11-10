@@ -1,3 +1,4 @@
+import { setTimeout, clearTimeout } from 'node:timers';
 import { randomUUID } from 'node:crypto';
 
 import { sanitizeConnectedServiceDiagnosticString } from '../runtimeAuth/sanitizeConnectedServiceDiagnosticString';

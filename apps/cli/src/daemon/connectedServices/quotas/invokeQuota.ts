@@ -1,3 +1,4 @@
+import { setTimeout, clearTimeout } from 'node:timers';
 import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
 import type { QualifiedConnectedAccountEstablishedInvocationBasis } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
 import type { ScheduledQualifiedAccountHealth } from '../refresh/ConnectedServiceRefreshCoordinator';

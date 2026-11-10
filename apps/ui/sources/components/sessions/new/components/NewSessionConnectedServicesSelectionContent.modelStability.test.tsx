@@ -118,9 +118,9 @@ describe('NewSessionConnectedServicesSelectionContent model stability', () => {
 
     it('reuses the built step tree when only the caller handler identities change', async () => {
         const rendered = await renderScreen(await buildElement(makeChurningHandlers(), STABLE_BINDINGS));
-        const first = rendered.findByType(SelectionList).props;
+        const first = rendered.findByType(SelectionList).props as SelectionListProps;
         await rendered.update(await buildElement(makeChurningHandlers(), STABLE_BINDINGS));
-        const last = rendered.findByType(SelectionList).props;
+        const last = rendered.findByType(SelectionList).props as SelectionListProps;
 
         // Handlers are behaviour, not data: recreating them must not rebuild the
         // step tree, because every option's `icon` / `rightAccessory` element
@@ -141,7 +141,7 @@ describe('NewSessionConnectedServicesSelectionContent model stability', () => {
         const next = makeChurningHandlers();
         await rendered.update(await buildElement(next, STABLE_BINDINGS));
 
-        const last = rendered.findByType(SelectionList).props;
+        const last = rendered.findByType(SelectionList).props as SelectionListProps;
         await React.act(async () => {
             findStaticOption(last, ':profile:').onSelect?.();
             findStaticOption(last, ':reauth:').onSelect?.();
@@ -163,7 +163,7 @@ describe('NewSessionConnectedServicesSelectionContent model stability', () => {
         await rendered.update(await buildElement(handlers, {
             anthropic: { source: 'connected', selection: 'profile', profileId: 'work' },
         }));
-        const after = rendered.findByType(SelectionList).props;
+        const after = rendered.findByType(SelectionList).props as SelectionListProps;
 
         expect(after.rootStep).not.toBe(before);
         expect(after.selectedOptionId).toBe('connected-service:anthropic:profile:work');
@@ -176,7 +176,7 @@ describe('NewSessionConnectedServicesSelectionContent model stability', () => {
         const rendered = await renderScreen(await buildElement(handlers, STABLE_BINDINGS));
         await rendered.update(await buildElement(handlers, STABLE_BINDINGS, false));
 
-        const last = rendered.findByType(SelectionList).props;
+        const last = rendered.findByType(SelectionList).props as SelectionListProps;
         await React.act(async () => {
             findStaticOption(last, ':reauth:').onSelect?.();
         });

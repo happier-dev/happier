@@ -48,7 +48,7 @@ describe('Connected configuration Account transport', () => {
         home.answer(serverId, 'POST /v1/account/entity-rows/connected-accounts/configurations', { select: input => {
             const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(input);
             writes.push(mutation);
-            if (mutation.savedSecretRevisions.some(proof => !entries.some(entry => entry.ref === `happier:shared-secret:v1:${proof.resourceId}`
+            if (mutation.savedSecretRevisions?.some(proof => !entries.some(entry => entry.ref === `happier:shared-secret:v1:${proof.resourceId}`
                 && entry.revision === proof.expectedRevision))) return { body: { status: 'invalid-reference' } };
             const revision = Number(mutation.expectedRevision) + 1;
             row = ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'present', revision, content: mutation.content });

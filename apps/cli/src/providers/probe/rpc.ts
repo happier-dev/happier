@@ -4,7 +4,7 @@ import { ProviderObservationAuthorizationFingerprintV1Schema } from '@happier-de
 import { createProviderProbeObservationIdentityV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from '@happier-dev/protocol/providers/ids';
-import type { ProviderErrorV1, ProviderObservationAuthorizationFingerprintV1, ProviderProbeObservationIdentityV1 } from '@happier-dev/protocol';
+import type { ProviderErrorV1, ProviderModelDescriptorV1, ProviderObservationAuthorizationFingerprintV1, ProviderProbeObservationIdentityV1 } from '@happier-dev/protocol';
 import type { DaemonProviderModelRowV1, DaemonProviderModelsResponseV1 } from '@happier-dev/protocol/rpc/providers';
 
 import type {
@@ -58,7 +58,9 @@ export type ResolvedProviderProbeRpcRequest = Readonly<{
   }>;
 }>;
 
-export type ProviderSavedModelsRpcRow = Readonly<DaemonProviderModelRowV1>;
+export type ProviderSavedModelsRpcRow = Readonly<Omit<DaemonProviderModelRowV1, 'descriptor'> & {
+  descriptor?: ProviderModelDescriptorV1;
+}>;
 
 /** Host projections accept string identities and immutable rows; the RPC
  * schema owns validation/branding and all wire fields and discriminants. */

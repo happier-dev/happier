@@ -67,7 +67,7 @@ function createKeys() {
     contentPublicKeySig,
     fingerprint: verified.contentPublicKeyFingerprint,
     row: {
-      publicKey: privacyKit.encodeHex(signing.publicKey),
+      publicKey: privacyKit.encodeHex(new Uint8Array(signing.publicKey)),
       contentPublicKey: new Uint8Array(content.publicKey),
       contentPublicKeySig: new Uint8Array(contentPublicKeySig),
     },
@@ -289,8 +289,8 @@ describe('Saved Secret resources follow Account.encryptionMode (SQLite)', () => 
       settingsContent: null,
       keyProof: {
         v: 1,
-        publicKey: privacyKit.encodeBase64(keys.signing.publicKey),
-        contentPublicKey: privacyKit.encodeBase64(keys.content.publicKey),
+        publicKey: privacyKit.encodeBase64(new Uint8Array(keys.signing.publicKey)),
+        contentPublicKey: privacyKit.encodeBase64(new Uint8Array(keys.content.publicKey)),
         contentPublicKeySig: privacyKit.encodeBase64(keys.contentPublicKeySig),
       },
       connectedServices: {
@@ -332,7 +332,7 @@ describe('Saved Secret resources follow Account.encryptionMode (SQLite)', () => 
     return attachAccountEncryptionMigrateProofSignatureV1({
       request: unsigned,
       signature: privacyKit.encodeBase64(
-        tweetnacl.sign.detached(signingInput, keys.signing.secretKey),
+        new Uint8Array(tweetnacl.sign.detached(signingInput, keys.signing.secretKey)),
       ),
     });
   }

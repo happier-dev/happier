@@ -112,12 +112,17 @@ function branch(value: unknown, projectId: string, operations: readonly { status
 function operations(body: RecordValue) {
   return list(body.operations ?? []).map(value => { const operation = record(value); return { id: text(operation.id), status: text(operation.status) }; });
 }
-export async function projects(input: Input & { cursor?: string; search?: string; projectId?: string }, context: Context) {
+export async function projects(input: Input & { cursor?: string; search?: string; projectId?: string; includeBranches?: boolean }, context: Context) {
   if (input.projectId) {
     const body = await request(context, projectPath(input.projectId));
     const found = project(body.project, account(input));
     if (found.providerProjectId !== input.projectId) throw new PluginError({ code: 'deployment_conflict' });
-    return { projects: [found], unavailableProjectIds: [] };
+    if (!input.includeBranches) return { projects: [found], unavailableProjectIds: [] };
+    const query = new URLSearchParams();
+    if (input.cursor) query.set('cursor', input.cursor);
+    const observed = await request(context, `${projectPath(input.projectId)}/branches${query.size ? `?${query}` : ''}`);
+    return { projects: [found], unavailableProjectIds: [], branches: list(observed.branches).map(value => branch(value, input.projectId!)),
+      ...next(observed, 'branches') };
   }
   const query = new URLSearchParams({ org_id: account(input) });
   if (input.cursor) query.set('cursor', input.cursor);
@@ -311,6 +316,10 @@ async function recoverBranch(input: Input & CreateBranchInput, context: Context)
   return { ...configured(input, selected.providerProjectId, text(candidates[0]!.id), { branch: candidates[0], operations: [] }, true),
     correlation: input.correlation };
 }
+// Admission parsed the union; its base branch structurally includes the save branch.
+function hasCreatedSaveIntent(input: CreateBranchInput): input is CreateBranchInput & CreatedSaveIntent {
+  return 'id' in input;
+}
 export async function createBranch(input: Input & CreateBranchInput, context: Context) {
   if (input.recover) return recoverBranch(input, context);
   const selected = input.parentBranchRef ?? selection(input);
@@ -322,7 +331,7 @@ export async function createBranch(input: Input & CreateBranchInput, context: Co
       endpoints: [{ type: 'read_write' }], annotation_value: annotation(input, input.correlation) });
     const branchId = mutationResponse(() => branchIdentity(record(body.branch), selected.providerProjectId));
     known.branchId = branchId;
-    if ('id' in input) captured = await captureCreated(body, selected.providerProjectId, branchId, input, context);
+    if (hasCreatedSaveIntent(input)) captured = await captureCreated(body, selected.providerProjectId, branchId, input, context);
     return { ...mutationResponse(() => configured(input, selected.providerProjectId, branchId, body)), correlation: input.correlation, ...captured };
   } catch (error) {
     if (!isPluginError(error) || error.code !== 'outcome_unknown') throw error;

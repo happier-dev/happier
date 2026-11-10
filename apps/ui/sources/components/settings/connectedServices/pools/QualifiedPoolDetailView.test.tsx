@@ -180,18 +180,19 @@ async function renderPoolDetail(
     viewOverrides: ViewOverrides = {},
 ) {
     const group = createGroup(overrides);
+    const props: React.ComponentProps<typeof QualifiedPoolDetailView> = {
+        accounts: ACCOUNTS,
+        serviceLabel: 'Codex',
+        now: NOW,
+        ...viewOverrides,
+        group,
+        mutations: createMutations(),
+    };
     const screen = await renderScreen(
-        <QualifiedPoolDetailView
-            accounts={ACCOUNTS}
-            serviceLabel="Codex"
-            now={NOW}
-            {...viewOverrides}
-            group={group}
-            mutations={createMutations()}
-        />,
+        <QualifiedPoolDetailView {...props} />,
     );
     await flush(2);
-    return { screen, group };
+    return { screen, group, props };
 }
 
 it.each(['claude-subscription', 'anthropic'].flatMap((localId) =>
@@ -836,8 +837,7 @@ describe('QualifiedPoolDetailView', () => {
             work: snapshot('work', [{ id: '5h', label: 'Session', left: 86, resetsInMs: 90 * MIN }], { staleAfterMs: 2 * MIN }),
             backup: snapshot('backup', [{ id: '5h', label: 'Session', left: 0, resetsInMs: 30 * MIN }]),
         });
-        const { screen, group } = await renderPoolDetail({}, { memberQuotaByAccountId });
-        const currentProps = screen.findAllByType(QualifiedPoolDetailView)[0]!.props;
+        const { screen, group, props: currentProps } = await renderPoolDetail({}, { memberQuotaByAccountId });
         expect(screen.getTextContent()).toContain('connectedServicesPool.roomCount(count=1,total=2)');
         await screen.update(<QualifiedPoolDetailView {...currentProps} now={NOW + 2 * MIN}
             memberQuotaByAccountId={{ ...memberQuotaByAccountId, work: { ...memberQuotaByAccountId.work!, loading: true } }} />);
@@ -889,8 +889,7 @@ describe('QualifiedPoolDetailView', () => {
             work: snapshot('work', [{ id: '5h', label: 'Session', left: 86, resetsInMs: 90 * MIN }], { fetchedAt: at, staleAfterMs: MIN }),
             backup: snapshot('backup', [{ id: '5h', label: 'Session', left: 0, resetsInMs: 30 * MIN }], { fetchedAt: at - 30_000, staleAfterMs: MIN }),
         });
-        const { screen } = await renderPoolDetail({}, { memberQuotaByAccountId: reading(NOW - 10_000) });
-        const currentProps = screen.findAllByType(QualifiedPoolDetailView)[0]!.props;
+        const { screen, props: currentProps } = await renderPoolDetail({}, { memberQuotaByAccountId: reading(NOW - 10_000) });
         const observed: string[] = [];
         // Pushes every 30 s; between them each reading passes its one-minute freshness deadline.
         for (let step = 0; step < 7; step++) {

@@ -4,6 +4,7 @@ import { setProviderExperimentalConfirmationV1 } from '@happier-dev/protocol/pro
 import { ProviderConnectionsCatalogV1Schema, splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { ProviderProbeObservationIdentityV1Schema } from '@happier-dev/protocol/providers/fingerprints';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { createProviderConnectionsDescribeFixture, createProviderConnectionViewFixture } from '@/dev/testkit/harness/providerSettingsHarness';
 import { buildCustomProviderTemplate, createCustomProviderDraft } from '@/providers/authoring/state';
 import { applyAcknowledgedProviderCatalog, applyProviderCatalogSnapshot, beginProviderCatalogLoad, getProviderCatalogSnapshot, readProviderCatalogConnection,
@@ -124,7 +125,7 @@ describe('scoped Provider row publication', () => {
         const template = buildCustomProviderTemplate({ ...createCustomProviderDraft('openai-chat'),
             name: 'Acme', baseUrl: 'https://models.example/v1', requiresApiKey: false });
         const confirmed = setProviderExperimentalConfirmationV1(DEFAULT_PROVIDER_SETTINGS_V1, {
-            connectionId: 'connected-source:recipient', catalogSourceKey: 's'.repeat(43),
+            connectionId: ProviderConnectionIdSchema.parse('connected-source:recipient'), catalogSourceKey: 's'.repeat(43),
             agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model-a',
             compatibilityFingerprint: 'compatibility:v1:experimental', confirmedAt: 1,
         });
@@ -169,13 +170,14 @@ describe('scoped Provider row publication', () => {
             applyAcknowledgedProviderCatalog(scope, reordered, 3, true, null);
             expect(getProviderCatalogSnapshot(scope)!.data!.connections[200]).toBe(admitted.connections[199]);
             const modelChange = structuredClone(changed);
-            modelChange.manualModelsByConnectionId.pc_200![0] = { ...modelChange.manualModelsByConnectionId.pc_200![0]!, name: 'Renamed model' };
+            const changedConnectionId = ProviderConnectionIdSchema.parse('pc_200');
+            modelChange.manualModelsByConnectionId[changedConnectionId]![0] = { ...modelChange.manualModelsByConnectionId[changedConnectionId]![0]!, name: 'Renamed model' };
             modelChange.accountGrants = [];
             applyProviderCatalogSnapshot(scope, { status: 'ready', revision: 4, catalog: modelChange }, true);
             const revised = getProviderCatalogSnapshot(scope)!.data!;
             expect(revised.accountGrants).toEqual([]);
-            expect(revised.manualModelsByConnectionId.pc_200?.[0]?.name).toBe('Renamed model');
-            expect(revised.manualModelsByConnectionId.pc_200?.[1]).toBe(admitted.manualModelsByConnectionId.pc_200?.[1]);
+            expect(revised.manualModelsByConnectionId[changedConnectionId]?.[0]?.name).toBe('Renamed model');
+            expect(revised.manualModelsByConnectionId[changedConnectionId]?.[1]).toBe(admitted.manualModelsByConnectionId[changedConnectionId]?.[1]);
             applyProviderCatalogSnapshot(scope, { status: 'unavailable', reason: 'forbidden' }, true);
             expect(publications).toBe(4);
             expect(names.at(-1)).toBe('withdrawn');

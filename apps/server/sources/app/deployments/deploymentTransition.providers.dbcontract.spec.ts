@@ -11,6 +11,7 @@ import { signMachineInstallationProof } from '@happier-dev/protocol/machines/ide
 import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres } from '@/storage/db';
 import { inTx, type Tx } from '@/storage/inTx';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import type { Fastify } from '@/app/api/types';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { registerSavedSecretResourceRoutes } from '@/app/api/routes/account/registerSavedSecretResourceRoutes';
 import { observeLazyPrismaQuery, withAccountPublicationBeforeTransactionSql } from '@/app/changes/accountPublicationContention.testkit';
@@ -77,7 +78,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
         const input = { serverId, environmentId: environment.id, targetLinkId: link.id, expectedRevision: 1,
             expectedTargetLinkRevision: 1, requestKey: randomUUID(), actionOperationId: randomUUID(),
             ...(operation === 'teardown' ? { reason: 'manual' as const } : {}), ...content } satisfies DeploymentDeployAdmissionInputV1 | DeploymentTeardownAdmissionInputV1;
-        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async (app: Fastify) => {
             const request = (payload = input) => app.inject({ method: 'POST',
                 url: `/v1/deployments/environments/${environment.id}/${operation}`,
                 headers: { 'x-test-user-id': owner.id }, payload });
@@ -124,7 +125,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
             contentHeaderVersion: 1, contentBodyVersion: 1,
             ...(newProject ? { newProject: { requestKey: randomUUID(), name: 'New install Project', owner: { kind: 'account' as const, accountId: owner.id } } }
                 : { projectSourceId: source.source.id }) } satisfies DeploymentEnvironmentCreateStorageInputV1;
-        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async (app: Fastify) => {
             const request = (payload: DeploymentEnvironmentCreateStorageInputV1 = input) => app.inject({ method: 'POST', url: '/v1/deployments/environments',
                 headers: { 'x-test-user-id': owner.id }, payload });
             const atPublication = (sql: string) => sql.includes('FROM "Account"') && sql.includes('FOR NO KEY UPDATE');
@@ -173,7 +174,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
             controllerMachineId: machine.id, ...await content() } });
         const input = { serverId, environmentId: environment.id, expectedRevision: 1, ...await content(),
             referencedSavedSecretRevisions: [], grants: [] };
-        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async (app: Fastify) => {
             const request = () => app.inject({ method: 'POST', url: `/v1/deployments/environments/${environment.id}/bindings`,
                 headers: { 'x-test-user-id': owner.id }, payload: input });
             const atPublication = (sql: string) => sql.includes('FROM "Account"') && sql.includes('FOR NO KEY UPDATE');
@@ -385,7 +386,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
         expect(await db.deployment.findUniqueOrThrow({ where: { id: receipt.id } })).toEqual(beforeReceipt);
         expect(await db.artifact.findUniqueOrThrow({ where: { id: content.contentArtifactId } })).toEqual(beforeArtifact);
         expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: link.id } })).toEqual(beforeLink);
-        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async (app: Fastify) => {
             const request = () => app.inject({ method: 'POST',
                 url: `/v1/deployments/environments/${environment.id}/deployments/${receipt.id}/transitions`,
                 headers: { 'x-test-user-id': owner.id }, payload: settle });

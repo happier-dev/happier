@@ -15,6 +15,20 @@ import { AgentInstallJobRpcError } from './api';
 import { presentAgentInstallJobFailure, presentAgentInstallJobRpcFailure } from './presentAgentInstallJobFailure';
 
 describe('agent install failure presentation', () => {
+    it('preserves the recovery cause for refused installation changes', () => {
+        for (const [code, body] of [
+            ['in_use', 'agentInstallJob.inUseBody'],
+            ['not_managed', 'agentInstallJob.notManagedBody'],
+            ['definition_version_changed', 'agentInstallJob.definitionChangedBody'],
+        ]) {
+            expect(presentAgentInstallJobRpcFailure(new AgentInstallJobRpcError(code)).body).toBe(body);
+        }
+        expect(presentAgentInstallJobFailure({ kind: 'failed', code: 'in_use', stepId: 'cli', message: null }))
+            .toMatchObject({ body: 'agentInstallJob.inUseBody', recovery: { kind: 'retry' } });
+        expect(presentAgentInstallJobFailure({ kind: 'failed', code: 'not_managed', stepId: 'cli', message: null }))
+            .toMatchObject({ body: 'agentInstallJob.notManagedBody', recovery: { kind: 'chooseAgent' } });
+    });
+
     it('explains an extraction size refusal without exposing raw paths', () => {
         expect(presentAgentInstallJobFailure({ kind: 'failed', code: 'archive_expanded_byte_limit', stepId: 'cli', message: 'Extraction failed in C:\\private\\install.log.' })).toMatchObject({
             body: 'agentInstallJob.archiveExpandedByteLimitBody',

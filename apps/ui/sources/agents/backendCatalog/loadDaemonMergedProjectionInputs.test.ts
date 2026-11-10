@@ -201,11 +201,11 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             accountLifetime: account.lifetime, sections: ['agentsById'] });
         expect(loaded?.kind).toBe('ready');
         const request = { tool: 'Shell', arguments: { command: 'pwd' }, createdAt: 10_500, source: 'acme_bridge' };
-        const ownerMetadata = { flavor: agentId, runtimeDescriptorV1: { v: 1, agentId, agent: {} },
-            machineId: projectionScope.machineId } as import('@happier-dev/session-core/state').Metadata;
+        const ownerMetadata = { path: '/fixture', host: 'fixture', flavor: agentId, runtimeDescriptorV1: { v: 1, agentId, agent: {} },
+            machineId: projectionScope.machineId } satisfies import('@happier-dev/session-core/state').Metadata;
         const session = createSessionFixture({ serverId: projectionScope.serverId, active: true, metadataLayoutVersion,
             metadata: metadataLayoutVersion === 1
-                ? { v: 1, agentPresentation: { agentId } } as import('@happier-dev/session-core/state').Metadata
+                ? { path: '/fixture', host: 'fixture', v: 1, agentPresentation: { agentId } }
                 : ownerMetadata,
             ...(metadataLayoutVersion === 1 ? { ownerMetadataView: ownerMetadata } : {}),
             agentState: { requests: { pending: request }, completedRequests: { pending: {

@@ -77,7 +77,7 @@ export function applyActiveModelFacts(
                 // so this hand-enumerated projection must carry it through verbatim.
                 ...(option.overridesWhenOn === undefined
                   ? {}
-                  : { overridesWhenOn: option.overridesWhenOn }),
+                  : { overridesWhenOn: { ...option.overridesWhenOn, optionIds: [...option.overridesWhenOn.optionIds] } }),
               })),
             }),
       }

@@ -56,7 +56,7 @@ const mutation = {
     },
 };
 const policy = {
-    v: 1 as const,
+    v: 2 as const,
     strategy: 'least_limited' as const,
     autoSwitch: false,
     switchOn: {

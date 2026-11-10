@@ -263,7 +263,7 @@ describe('CurrentUiContextProvider', () => {
         const reader = requireCurrentUiContextReader(hook.getCurrent().reader);
         const publication = hook.getCurrent().publisher!.createMount();
         const commands = Array.from({ length: 128 }, (_, index) => ({ title: `Filter ${index}`,
-            command: { kind: 'hostLocal' as const, invoke: () => true } }));
+            command: { kind: 'hostLocal' as const, invoke: () => ({ ok: true as const }) } }));
         try {
             await act(async () => { publication.publish({ entity: { kind: 'usage_summary', label: 'Usage' }, commands }); });
             const admitted = reader.readCurrentUiContext()!;
@@ -288,7 +288,7 @@ describe('CurrentUiContextProvider', () => {
         const refreshCost = async (count: number) => {
             const commands = Array.from({ length: count }, (_, index) => ({
                 title: `Filter ${index}`,
-                command: { kind: 'hostLocal' as const, invoke: () => true },
+                command: { kind: 'hostLocal' as const, invoke: () => ({ ok: true as const }) },
             }));
             const publish = () => publication.publish({ entity: { kind: 'usage_summary', label: 'Usage' }, commands });
             await act(async () => { publish(); });
@@ -1021,7 +1021,7 @@ describe('CurrentUiContextProvider', () => {
             const reader = requireCurrentUiContextReader(hook.getCurrent().reader);
             const publication = hook.getCurrent().publisher!.createMount();
             await act(async () => {
-                publication.publish({ commands: [{ title: 'Refresh', command: { kind: 'hostLocal', invoke: () => true } }] });
+                publication.publish({ commands: [{ title: 'Refresh', command: { kind: 'hostLocal', invoke: () => ({ ok: true }) } }] });
             });
             expect(reader.readCurrentUiContext()!.commands.map(command => command.title)).toEqual(['Refresh', 'Send draft']);
             providerState.focusedDetailsWorkspace = true;

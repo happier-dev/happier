@@ -14,11 +14,14 @@ import {
   resolveConnectedServiceSettingsErrorMessage,
 } from './connectedServiceSettingsErrors';
 
+const neonConfigurationValues: ConnectedAccountAuthenticationContext['configuration']['values'] = { organizationId: 'org-example' };
+const supabaseConfigurationValues: ConnectedAccountAuthenticationContext['configuration']['values'] = { organizationSlug: 'org-example' };
+
 describe('connected-service settings errors', () => {
   it.each([
-    { runtime: neonPortableRuntime, pluginId: 'happier.deploy.neon', localId: 'neon', values: { organizationId: 'org-example' },
+    { runtime: neonPortableRuntime, pluginId: 'happier.deploy.neon', localId: 'neon', values: neonConfigurationValues,
       status: 503, code: 'neon_unavailable', key: 'connectedServices.errors.accountAuthenticationUnavailable', recovery: 'retry' },
-    { runtime: supabasePortableRuntime, pluginId: 'happier.deploy.supabase', localId: 'supabase', values: { organizationSlug: 'org-example' },
+    { runtime: supabasePortableRuntime, pluginId: 'happier.deploy.supabase', localId: 'supabase', values: supabaseConfigurationValues,
       status: 401, code: 'supabase_invalid_token', key: 'connectedServices.errors.accountAuthenticationRejected', recovery: 'edit' },
   ] as const)('presents the actual $localId authentication producer refusal', async row => {
     const http = createPluginHttpFixture({ async request() {

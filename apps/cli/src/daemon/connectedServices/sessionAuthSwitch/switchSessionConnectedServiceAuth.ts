@@ -118,13 +118,13 @@ type NextConnectedServiceChildSelection =
 type ConnectedServiceAccountSwitchMode = 'hot_apply' | 'restart_resume' | 'spawn_next_turn';
 export type SessionConnectedServiceRuntimeAuthSelectionMaterializerMode = 'apply' | 'preflight';
 export type ConnectedServiceRuntimeAuthApplyReason =
+  | ConnectedServiceSessionAuthSwitchReason
   | 'usage_limit'
   | 'soft_threshold'
   | 'same_provider_account_exhausted'
   | 'auth_expired'
   | 'account_changed'
   | 'refresh_failed'
-  | 'manual'
   | 'diagnostic';
 type ConnectedServiceSwitchAttemptAction = 'restart_requested' | 'hot_applied' | 'metadata_updated';
 type ConnectedServiceSwitchAttemptPublicReason =
@@ -566,7 +566,7 @@ type EffectiveBinding = Readonly<{
   groupId: string | null;
   resourceId?: string;
   deliveryMode?: Extract<ConnectedServiceBinding, Readonly<{ source: 'team_resource' }>>['deliveryMode'];
-  disclosedMember?: Extract<ConnectedServiceBinding, Readonly<{ source: 'team_resource' }>>['disclosedMember'];
+  disclosedMember?: Extract<ConnectedServiceBinding, Readonly<{ source: 'team_resource'; deliveryMode: 'direct' }>>['disclosedMember'];
 }>;
 type ConnectedServiceGroupRuntimeMetadata = Readonly<{
   groupId: string;
@@ -966,7 +966,7 @@ function toEffectiveBinding(
       groupId: null,
       resourceId: binding.resourceId,
       deliveryMode: binding.deliveryMode,
-      ...(binding.disclosedMember ? { disclosedMember: binding.disclosedMember } : {}),
+      ...(binding.deliveryMode === 'direct' ? { disclosedMember: binding.disclosedMember } : {}),
     };
   }
   if (binding.selection === 'group') {
@@ -1381,7 +1381,7 @@ async function normalizeRequestedBindings(input: Readonly<{
         groupId: null,
         resourceId: binding.resourceId,
         deliveryMode: binding.deliveryMode,
-        ...(binding.disclosedMember ? { disclosedMember: binding.disclosedMember } : {}),
+        ...(binding.deliveryMode === 'direct' ? { disclosedMember: binding.disclosedMember } : {}),
       });
       continue;
     }

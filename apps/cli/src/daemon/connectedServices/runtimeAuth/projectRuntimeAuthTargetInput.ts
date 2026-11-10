@@ -102,6 +102,7 @@ export function projectConnectedServiceRuntimeAuthTargetInput(input: Readonly<{
       : {}),
   });
   const applyAuthGenerationSource = sourceSelection.applyConnectedServiceAuthGeneration;
+  const selectedProfileId = selection.activeProfileId ?? selection.profileId;
   const applyReason = readApplyReason(selection.applyReason);
   const selectedServiceId = selection.serviceId
     ?? (credential.success
@@ -123,11 +124,11 @@ export function projectConnectedServiceRuntimeAuthTargetInput(input: Readonly<{
         serviceId: selectedServiceId,
         reason: applyReason ?? 'diagnostic',
         expected: {
-          ...(selection.activeProfileId ?? selection.profileId
-            ? { profileId: selection.activeProfileId ?? selection.profileId }
+          ...(selectedProfileId
+            ? { profileId: selectedProfileId }
             : {}),
           ...(selection.groupId ? { groupId: selection.groupId } : {}),
-          ...(selection.generation === undefined ? {} : { generation: selection.generation }),
+          ...(selection.generation == null ? {} : { generation: selection.generation }),
           ...(selection.credentialRevision ? { credentialRevision: selection.credentialRevision } : {}),
         },
         authGeneration: {

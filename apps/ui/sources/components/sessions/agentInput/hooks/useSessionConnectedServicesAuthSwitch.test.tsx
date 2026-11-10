@@ -78,7 +78,7 @@ async function renderHook<Value, Props = void>(
         profileScope: { serverId: 'server-1', accountId: 'account-a' },
         profile: AccountProfileSchema.parse({ ...profileDefaults, id: 'account-a', ...profileState.current }),
     });
-    return renderBaseHook(useValue, options);
+    return renderBaseHook<Value, Props>(useValue, options);
 }
 
 function v4Account(params: Readonly<{
@@ -389,6 +389,7 @@ type PopoverConnectedBinding = {
 type PopoverTeamResourceBinding = {
     source: 'team_resource';
     resourceId: string;
+    deliveryMode: 'brokered' | 'direct';
     disclosedMember: {
         service: { pluginId: string; localId: string };
         accountId: string;
@@ -493,7 +494,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 profileOptionsByServiceId: { [CODEX_SERVICE_KEY]: [{ profileId: 'happier', status: 'connected', label: 'Happier', providerEmail: 'codex4@happier.dev' }] },
                 groupOptionsByServiceId: {}, bindingsByServiceId: props.bindingsByServiceId,
                 includeNativeAuthOption: false, resolveOptionAvailability: props.resolveOptionAvailability,
-                setBindingForService: vi.fn(), onOpenSettings: vi.fn(), translate: (key) => key,
+                setBindingForService: vi.fn(), onOpenSettings: vi.fn(), translate: t,
                 resolveServiceTitle: () => 'Codex', renderRowIcon: () => null, renderBrowseMark: () => null, renderSettingsIcon: () => null,
             });
             expect(foldUnavailableSelectionRows(model.rootStep.sections, model.optionAvailabilityById, 'Unavailable')
@@ -628,7 +629,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
         const selection = { source: 'team_resource' as const, resourceId: 'resource-1', deliveryMode: 'brokered' as const };
         const resource = {
-            id: 'resource-1', teamId: 'team-1', displayName: 'Shared Claude', resourceRevision: 4,
+            id: 'resource-1', teamId: 'team-1', displayName: 'Shared Claude', sourceOwnerDisplayName: null, resourceRevision: 4,
             readiness: { kind: 'available' as const }, recoveryAction: null,
             mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered' as const,
             sessionUsePolicy: 'personal_allowed' as const, providerModels: [],
@@ -2454,6 +2455,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             id: 'resource-1',
             teamId: 'team-1',
             displayName: 'Shared Claude',
+            sourceOwnerDisplayName: null,
             resourceRevision: 4,
             readiness: { kind: 'available' as const },
             recoveryAction: null,
@@ -3052,6 +3054,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 throw Object.assign(new Error('RPC timeout'), { rpcErrorCode: 'timeout' });
             });
             type HookProps = Readonly<{ events: readonly SessionIntentionalRestartSourceEvent[] }>;
+            const initialProps: HookProps = { events: [] };
             const hook = await renderHook((props: HookProps) => useSessionConnectedServicesAuthSwitch({
                 applyBinding: setSessionConnectedServiceAuthBindingMock,
                 sessionId: 'session-1', agentId: 'claude', machineId: 'machine-1', serverId: 'server-1',
@@ -3060,7 +3063,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 settings: { connectedServicesDefaultProfileByServiceId: {} },
                 switchingDisabledReason: null, sessionActive: false,
                 intentionalRestartSignals: deriveSessionIntentionalRestartSignals({ runtimeIssue: null, events: props.events }),
-            }), { initialProps: { events: [] } });
+            }), { initialProps });
             const props = renderChipPopover(hook);
             await act(async () => {
                 props.setBindingForService(CLAUDE_SERVICE_KEY, { source: 'connected', selection: 'profile', profileId: 'work' });
@@ -3102,6 +3105,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 recoveryEvidenceAtMs: number | null;
                 sessionMetadata: unknown;
             }>;
+            const initialProps: HookProps = { events: [], recoveryEvidenceAtMs: null, sessionMetadata: nativeMetadata };
             const hook = await renderHook((props: HookProps) => useSessionConnectedServicesAuthSwitch({
                 applyBinding: setSessionConnectedServiceAuthBindingMock,
                 sessionId: 'session-1', agentId: 'claude', machineId: 'machine-1', serverId: 'server-1',
@@ -3110,7 +3114,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 switchingDisabledReason: null, sessionActive: false,
                 intentionalRestartSignals: deriveSessionIntentionalRestartSignals({ runtimeIssue: null, events: props.events }),
                 intentionalRestartRecoveryEvidenceAtMs: props.recoveryEvidenceAtMs,
-            }), { initialProps: { events: [], recoveryEvidenceAtMs: null, sessionMetadata: nativeMetadata } });
+            }), { initialProps });
             await act(async () => {
                 renderChipPopover(hook).setBindingForService(CLAUDE_SERVICE_KEY, { source: 'connected', selection: 'profile', profileId: 'work' });
             });

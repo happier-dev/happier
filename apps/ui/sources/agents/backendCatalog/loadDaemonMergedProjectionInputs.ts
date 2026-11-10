@@ -587,7 +587,7 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
                 cached.retirement?.dispose();
             }
         }) : undefined;
-        const published = Object.freeze({
+        const published: ProjectionCacheEntry = Object.freeze({
             ...entry,
             // Freshness starts when the admitted answer becomes usable, not
             // before a cold describe and its section hydration have finished.

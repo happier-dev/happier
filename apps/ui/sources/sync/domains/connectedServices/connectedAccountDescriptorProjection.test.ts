@@ -231,7 +231,6 @@ describe('connectedAccountDescriptorProjection', () => {
       executable: true, supportsToken: true, projectionStatus: 'ready',
     });
     expect(getConnectedAccountAuthentication({ pluginId: 'acme.accounts', localId: 'account' }, {
-      scopeKey: state.scopeKey, status: state.status, errorReason: state.errorReason,
       entries: projectConnectedServiceRegistryEntries(state),
     })).toEqual(projected.authentication);
   });
@@ -350,7 +349,7 @@ describe('connectedAccountDescriptorProjection', () => {
       );
       const entries = projectConnectedServiceRegistryEntries(state);
       const authentication = getConnectedAccountAuthentication(service, {
-        scopeKey: state.scopeKey, status: state.status, errorReason: state.errorReason, entries,
+        entries,
       });
       expect(state.status).toBe('ready');
       const entry = entries.find(value => value.service?.pluginId === service.pluginId && value.service?.localId === service.localId);

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import * as React from 'react';
+import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
@@ -60,9 +61,11 @@ async function mount(phone = true, referenceTargets?: readonly unknown[],
   const { createDeploymentActions } = await import('./deploymentActions');
   const { ModalProvider } = await import('@/modal');
   const actions = createDeploymentActions(lifetime, detail.environment.projectSourceId);
+  let readBindings: () => readonly EnvironmentSecretBindingV1[] = () => detail.content.bindings;
   function Page() {
     const draft = useEnvironmentSecretBindingsDraft({ environmentId: detail.environment.id, lifetime,
       snapshot: { status: 'ready', value: detail, failure: null }, setBindings: actions.setBindings });
+    readBindings = () => draft.editor.rows.map(row => row.binding);
     return <DeploymentVariablesPanel draft={draft} phone={phone} environmentName={() => null} sealedOn={null}
       review={{ pendingId: null, request() {}, open() {} }} environmentId={detail.environment.id} scope={scope} lifetime={lifetime}
       referenceTargets={referenceTargets as never}
@@ -74,9 +77,24 @@ async function mount(phone = true, referenceTargets?: readonly unknown[],
   });
   await act(async () => refreshSavedSecretCatalog(scope, { includeMaterial: false }));
   await measureMountedCollections(screen);
-  return { screen, entry, scope };
+  return { screen, entry, scope, readBindings: () => readBindings() };
 }
 const prefix = 'project-deployments.environment.variable.API_KEY';
+
+it('authors a deployment fact in the shared Variables draft without reading secret material', async () => {
+  const { screen, readBindings } = await mount();
+  await screen.pressByTestIdAsync('project-deployments.environment.variables.add');
+  await vi.waitFor(() => expect(screen.findHostByTestId('project-deployments.environment.variables.add.fact')).not.toBeNull());
+  await screen.pressByTestIdAsync('project-deployments.environment.variables.add.fact');
+  await act(async () => screen.changeTextByTestId('project-deployments.environment.variables.add.name', 'PREVIEW_URL'));
+  await screen.pressByTestIdAsync('project-deployments.environment.variables.add.save');
+  await measureMountedCollections(screen);
+  expect(screen.findByTestId('project-deployments.environment.variable.PREVIEW_URL')).not.toBeNull();
+  expect(readBindings()).toContainEqual({ purpose: 'variable', name: 'PREVIEW_URL', phase: 'runtime',
+    source: { kind: 'deploymentFact', fact: 'primaryUrl' } });
+  expect(materialReads()).toBe(0);
+  await screen.unmount();
+});
 function materialReads() {
   return home!.request.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/account/saved-secrets/resources/materials').length;
 }

@@ -3,6 +3,7 @@ import { closeSync, existsSync, mkdtempSync, openSync, readdirSync, readSync, rm
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { clearTimeout, setTimeout } from 'node:timers';
 
 export type RealClaudeToolUseBlock = { toolUseId: string | null; name: string; input: unknown };
 export type RealClaudeToolResultBlock = { toolUseId: string | null; result: unknown };

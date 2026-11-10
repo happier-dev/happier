@@ -50,10 +50,11 @@ async function mount(options: { mode?: 'plain' | 'e2ee'; ask?: boolean; handleRe
     const audience = { accounts: [{ kind: 'account' as const, accountId: 'account-ready', name: 'Ready', firstName: 'Ready', lastName: null, username: null, avatarUrl: null }], teams: [], groups: [] };
     const resource = account.resources[0];
     if (!resource || !('resourceId' in resource)) throw new Error('Expected healthy owner resource');
-    resource.entry = SavedSecretCatalogEntryV1Schema.parse({ ...entry, audience });
+    account.resources[0] = { ...resource, entry: SavedSecretCatalogEntryV1Schema.parse({ ...entry, audience }) };
     await refreshSavedSecretCatalog(account.scope);
-    const decoded = getSavedSecretCatalogSnapshot(account.scope)?.data?.find(row => row.ref === entry.ref);
-    if (!decoded) throw new Error('Expected real decoded catalog row');
+    const decodedRow = getSavedSecretCatalogSnapshot(account.scope)?.data?.find(row => row.ref === entry.ref);
+    if (!decodedRow) throw new Error('Expected real decoded catalog row');
+    const decoded = decodedRow;
     const closed = vi.fn();
     const converted = vi.fn();
     const scope = account.scope;
@@ -97,7 +98,9 @@ describe('SavedSecretAccessEditor recipient readiness', () => {
         }
         await vi.waitFor(() => expect(screen.findByTestId('saved-secret-access-failure')).toBeTruthy());
         expect(announce).not.toHaveBeenCalled();
-        expect(account.resources[0]?.entry.audience?.accounts.map(row => row.accountId)).toEqual(['account-ready']);
+        const retainedResource = account.resources[0];
+        if (!retainedResource || !('resourceId' in retainedResource)) throw new Error('Expected healthy owner resource');
+        expect(retainedResource.entry.audience?.accounts.map(row => row.accountId)).toEqual(['account-ready']);
         await screen.pressByTestIdAsync('saved-secret-access-save');
         await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce());
         expect(screen.findByTestId('saved-secret-access-editor-body')).toBeNull();

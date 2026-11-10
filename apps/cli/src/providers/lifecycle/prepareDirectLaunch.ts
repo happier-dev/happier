@@ -125,7 +125,7 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
     dependencies.retainCleanup?.(scope.retire);
     for (const resource of dependencies.initialResources ?? []) scope.register(resource);
     const { scope: executionScope, ...providerLaunchInput } = input;
-    const prepared = await trace('provider_authorization', () => prepareProviderLaunch({
+    const prepared = await trace('provider_authorization', () => prepareProviderLaunch<never>({
       ...providerLaunchInput,
       ...(executionScope.kind === 'session' ? { sessionId: executionScope.sessionId } : {}),
       resolvePrerequisites: async (context) => {

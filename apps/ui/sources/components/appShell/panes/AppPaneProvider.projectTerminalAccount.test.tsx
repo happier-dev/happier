@@ -83,11 +83,11 @@ describe('Project terminal private presentation at the existing pane Account bou
                 } } });
             });
             expect(screen.findAllByType(WorkspaceEmbeddedTerminalPane)).toHaveLength(1);
-            expect(screen.root.findAll(node => node.type === 'XtermBoundary')).toHaveLength(1);
+            expect(screen.root.findAll(node => typeof node.type === 'string' && String(node.type) === 'XtermBoundary')).toHaveLength(1);
             await act(async () => { dispatch!({ type: 'openRight', scopeId, tabId: 'terminal' }); });
             expect(screen.findByTestId('retained-terminal-bottom')).not.toBeNull();
             expect(screen.findAllByType(WorkspaceEmbeddedTerminalPane)).toHaveLength(1);
-            expect(screen.findByTestId('retained-terminal-bottom')!.findAll(node => node.type === 'XtermBoundary')).toHaveLength(0);
+            expect(screen.findByTestId('retained-terminal-bottom')!.findAll(node => typeof node.type === 'string' && String(node.type) === 'XtermBoundary')).toHaveLength(0);
             await act(async () => { dispatch!({ type: 'openDetailsTab', scopeId, openAs: 'pinned', tab: {
                 key: 'terminal:owned-shell', kind: 'terminal', title: 'Shell',
                 resource: { kind: 'terminal', terminalInstanceId: 'owned-shell' },

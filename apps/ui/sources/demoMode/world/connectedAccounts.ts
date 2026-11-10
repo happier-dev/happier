@@ -191,7 +191,7 @@ export function buildDemoConnectedMetadataCatalog(): ConnectedMetadataCatalogV1 
         accountLabel(GITHUB_SERVICE, 'personal', 'Personal'),
     ] });
     return { presentation: { status: 'ready', entries: presentation.entries, revision: 0, diagnostics: [] },
-        acknowledgements: { status: 'ready', entries: [], revision: 0, diagnostics: [] }, disclosure: [] };
+        acknowledgements: { status: 'ready', entries: [], revision: 0, diagnostics: [] } };
 }
 
 export type DemoWorldProfile = Pick<Profile, 'connectedServicesV2' | 'connectedAccountsV4' | 'connectedAccountGroupsV4'>;

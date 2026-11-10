@@ -75,7 +75,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
                 actionOperationId: randomUUID(), requestId: randomUUID() }, content, desired: true, listener: 'privateOrigin',
                 installationPublicKey: privacyKit.encodeBase64(new Uint8Array(32)) }] } });
         const requests: { action: string; model?: string; args: unknown }[] = [];
-        const stop = observePrismaRequests(db, { before: request => requests.push(request) });
+        const stop = observePrismaRequests(db, { before: request => { requests.push(request); } });
         try {
             const remove = (id: string, expectedRevision: number) => inTx(tx => removeDeploymentDomainInTx(tx, owner.id,
                 { serverId, environmentId: environment.id, domainId: id, expectedRevision, expectedDomainRevision: 1,
@@ -233,14 +233,14 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         expect(captured).toMatchObject({ ok: true, artifact: { headerVersion: 1, bodyVersion: 1, access: 'view' } });
         if (!captured.ok) throw new Error(captured.error);
         expect(await updateArtifact({ actorUserId: owner.id, artifactId: created.artifact.id,
-            expectedRevision: { headerVersion: 1, bodyVersion: 1 }, body: { bytes: content({ body: 'replacement' }), expectedVersion: 1 } }))
+            body: { bytes: content({ body: 'replacement' }), expectedVersion: 1 } }))
             .toMatchObject({ ok: true });
         expect(await readArtifactForCaller(input)).toMatchObject({ ok: true, artifact: { bodyVersion: 1, body: captured.artifact.body } });
         expect(await readArtifactForCaller({ actorAccountId: requester.id, artifactId: created.artifact.id }))
             .toEqual({ ok: false, error: 'artifact_not_found' });
         expect(await readArtifactForCaller({ ...input, artifactId: randomUUID() })).toEqual({ ok: false, error: 'artifact_not_found' });
         expect(await updateArtifact({ actorUserId: owner.id, artifactId: created.artifact.id,
-            expectedRevision: { headerVersion: 1, bodyVersion: 2 }, header: { bytes: content({ title: 'Changed header' }), expectedVersion: 1 } }))
+            header: { bytes: content({ title: 'Changed header' }), expectedVersion: 1 } }))
             .toMatchObject({ ok: true });
         expect(await readArtifactForCaller(input)).toMatchObject({ ok: false, error: 'artifact_content_unavailable' });
     });

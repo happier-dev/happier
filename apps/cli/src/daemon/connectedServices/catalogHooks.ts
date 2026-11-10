@@ -256,7 +256,8 @@ export async function verifyResumeReachableThroughCatalog(
   const catalogId = resolveCatalogAgentId(agentId);
   if (!catalogId) return null;
   return await readCurrentCatalogHook(catalogId, async (entry) => {
-    if (!entry.verifyResumeReachable) return null;
+    const verifyResumeReachable = entry.verifyResumeReachable;
+    if (!verifyResumeReachable) return null;
     const stateSharingDescriptor = await entry.getConnectedServiceStateSharingDescriptor?.();
     if (!stateSharingDescriptor && !input.nativeInspection) {
       return { ok: false, reason: REACHABILITY_CHECK_NOT_IMPLEMENTED_REASON };
@@ -267,7 +268,7 @@ export async function verifyResumeReachableThroughCatalog(
       stateSharingDescriptor: stateSharingDescriptor ?? undefined,
       vendorResumeId: input.vendorResumeId,
       ...(input.runtimeDescriptorV1 ? { runtimeDescriptorV1: input.runtimeDescriptorV1 } : {}),
-      verifyResumeReachable: entry.verifyResumeReachable,
+      verifyResumeReachable,
       ...(nativeInspection ? { nativeInspection } : {}),
     });
     const adapter = input.nativeInspection ? await entry.getPreflightSessionControlsProbeAdapter?.() : undefined;

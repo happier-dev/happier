@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db, getDbProviderFromEnv, initDbPostgres } from '@/storage/db';
 import { inTx, readPostgresTransactionSqlState, type Tx } from '@/storage/inTx';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import type { Fastify } from '@/app/api/types';
 import { observeLazyPrismaQuery, withAccountPublicationBeforeTransactionSql } from '@/app/changes/accountPublicationContention.testkit';
 import { registerSavedSecretResourceRoutes } from '@/app/api/routes/account/registerSavedSecretResourceRoutes';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -46,7 +47,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
                 accountId: owner.id, resourceId, displayName: content.name, kind: content.kind,
                 encryptionMode: 'plain', storedContent: { t: 'plain', v: content }, accountGrants,
             }))).toMatchObject({ ok: true });
-            const app = createAuthenticatedTestApp();
+            const app: Fastify = createAuthenticatedTestApp();
             registerSavedSecretResourceRoutes(app);
             const rotate = () => app.inject({ method: 'POST', url: '/v1/account/saved-secrets/resources/update',
                 headers: { 'x-test-user-id': owner.id }, payload: {

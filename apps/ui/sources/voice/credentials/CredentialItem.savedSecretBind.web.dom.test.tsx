@@ -510,7 +510,7 @@ describe('Voice credential row → Connect → account-settings write', () => {
             await waitForCredentialChange();
             expect(onChanged).toHaveBeenCalledOnce();
             expect(account!.creations).toHaveLength(1);
-            expect(account!.resources[0]?.entry.ref).toBe(`happier:shared-secret:v1:${account!.creations[0]!.resourceId}`);
+            expect(account!.resources[0]?.entry).toMatchObject({ ref: `happier:shared-secret:v1:${account!.creations[0]!.resourceId}` });
         }
         await waitForCredentialChange();
         const binding = appliedVoiceBinding();

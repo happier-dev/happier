@@ -127,7 +127,7 @@ export const MACHINE_SERVICE_ACTION_INPUT_SCHEMAS = {
   'machines.services.detail': MachineServicesDetailInputV1Schema,
   'machines.services.watch': MachineServiceWatchInputV1Schema,
   'machines.services.unwatch': MachineServiceUnwatchInputV1Schema,
-  'machines.services.adopt': MachineServiceAdoptInputV1Schema,
+  get 'machines.services.adopt'() { return MachineServiceAdoptInputV1Schema; },
 } as const;
 export const MACHINE_SERVICE_ACTION_OUTPUT_SCHEMAS = {
   'machines.services.list': MachineServicesListResultV1Schema,
@@ -135,7 +135,7 @@ export const MACHINE_SERVICE_ACTION_OUTPUT_SCHEMAS = {
   'machines.services.detail': MachineServicesDetailResultV1Schema,
   'machines.services.watch': MachineServiceWatchMutationResultV1Schema,
   'machines.services.unwatch': MachineServiceWatchMutationResultV1Schema,
-  'machines.services.adopt': MachineServiceAdoptResultV1Schema,
+  get 'machines.services.adopt'() { return MachineServiceAdoptResultV1Schema; },
 } as const;
 export type MachineServiceActionInput = z.infer<(typeof MACHINE_SERVICE_ACTION_INPUT_SCHEMAS)[MachineServiceActionId]>;
 export type MachineServiceActionOutput = z.infer<(typeof MACHINE_SERVICE_ACTION_OUTPUT_SCHEMAS)[MachineServiceActionId]>;

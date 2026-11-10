@@ -32,7 +32,10 @@ export function createTeamCredentialNativeSourceServices(input: Readonly<{
   acquireRuntimeLease(): Promise<PluginRuntimeRegistryLease>;
   projectSourceModels(request: DaemonProviderModelProjectionRequestV1, signal?: AbortSignal): Promise<DaemonProviderModelProjectionResponseV1>;
   resolveAddresses?: (hostname: string) => Promise<readonly string[]>;
-}>) {
+}>): Readonly<{
+  prepare(request: z.input<typeof DaemonProviderModelProjectionRequestV1Schema>, signal?: AbortSignal): Promise<PrepareTeamCredentialNativeProviderSourceResult>;
+  projectModels(request: DaemonProviderModelProjectionRequestV1, signal?: AbortSignal): Promise<DaemonProviderModelProjectionResponseV1>;
+}> {
   const fail = () => ({ ok: false as const,
     error: createProviderErrorV1('provider_authorization_changed', { machineId: input.machineId }) });
   const sourceRequest = (request: DaemonProviderModelProjectionRequestV1): DaemonProviderModelProjectionRequestV1 => {

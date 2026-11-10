@@ -249,7 +249,7 @@ describe('AppPaneProvider persistence', () => {
         const recipient = await renderHook(() => useAppPaneScope(scopeId), { wrapper: recipientWrapper });
         await act(async () => recipient.getCurrent().patchDetailsTabState(tabKey, { editorText: 'recipient draft', scrollTop: 92 }));
         await act(async () => source.getCurrent().pane.setDetailsTabState(sibling, { text: 'source sibling draft' }));
-        await act(async () => setPaneTabWindowPresentation(source.getCurrent().owner, address, null));
+        await act(async () => { setPaneTabWindowPresentation(source.getCurrent().owner, address, null); });
         expect(source.getCurrent().pane.scopeState?.details.tabState[tabKey]).toEqual({ accountId: 'account-a',
             isEditingFile: true, editorText: 'recipient draft', editorOriginalHash: 'base-hash', scrollTop: 92 });
         expect(source.getCurrent().pane.scopeState?.details.tabState[sibling]).toEqual({ text: 'source sibling draft' });
@@ -754,8 +754,6 @@ describe('AppPaneProvider persistence', () => {
     });
     it('reveals accepted terminal selections through the matching mounted session driver, never a foreign Home', async () => {
         const { AppPaneProvider, useAppPaneContext } = await import('./AppPaneProvider');
-        const accountLifetime = captureActiveServerAccountScopeLifetime();
-        if (!accountLifetime) throw new Error('Expected real Account lifetime');
         const calls: string[] = [];
         let dispatch: ReturnType<typeof useAppPaneContext>['dispatch'] | undefined;
         let scopeId = '';
@@ -765,10 +763,7 @@ describe('AppPaneProvider persistence', () => {
             const catalog = React.useMemo(() => resolveSessionCockpitMobileCatalog({ terminalTabAvailable: true }), []);
             const readColumn = React.useCallback(() => ({ present: true, visible: true, available: true, setVisible: () => {} }), []);
             React.useEffect(() => register({ sessionId: 'same-session', serverId: props.home, activeSurface: 'chat', terminalTabAvailable: true, catalog, readColumn, openDetailsTabCount: 0, switchSurface }), [props.home, register, switchSurface, catalog, readColumn]);
-            scopeId = useRegisterSessionPaneDriver('same-session', serverId, undefined, {
-                pluginUiProjection: null, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
-                machineId: 'machine-a', serverId, platform: 'ios', accountLifetime,
-            });
+            scopeId = useRegisterSessionPaneDriver('same-session', serverId);
             dispatch = useAppPaneContext().dispatch;
             return null;
         }

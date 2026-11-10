@@ -52,7 +52,7 @@ describe('NewSessionConnectedServicesSelectionContent on a Team route', () => {
                 nativeAgentTargetKey="agent:happier.agent.codex/codex"
                 appliedRoute={appliedRoute}
                 teamCredentialResources={[{
-                    id: 'resource-1', teamId: 'team-1', displayName: 'QA43 Leeroy brokered', resourceRevision: 1,
+                    id: 'resource-1', teamId: 'team-1', displayName: 'QA43 Leeroy brokered', sourceOwnerDisplayName: null, resourceRevision: 1,
                     readiness: { kind: 'available' }, recoveryAction: null,
                     mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered',
                     sessionUsePolicy: 'personal_allowed', providerModels: [],

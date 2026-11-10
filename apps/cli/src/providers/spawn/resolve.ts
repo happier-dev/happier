@@ -965,6 +965,7 @@ type ProviderSpawnSelectionResult = Readonly<
       connectionId: NonNullable<SessionModelSelectionV1['ref']['providerConnectionId']>;
       providerSettings: ProviderSettingsV1;
       record: ResolvedProviderConnectionRecord;
+      authorization: Extract<ResolvedProviderConnectionRecord['authorization'], { authorized: true }>;
       errorContext: Readonly<{ connectionId: string; machineId: string }>;
       adapter: NonNullable<ReturnType<typeof readLeasedAgentProviderBindingAdapter>>;
       facts: ResolvedProviderSourceFacts;
@@ -979,7 +980,7 @@ type ProviderSpawnSelectionResult = Readonly<
 
 /** Resolve the existing model/protocol decision before admitting its required secrets. */
 export function resolveProviderSpawnSelection(
-  input: ResolveProviderSpawnAuthorizationInput,
+  input: Omit<ResolveProviderSpawnAuthorizationInput, 'savedSecretMaterializer'>,
 ): ProviderSpawnSelectionResult {
   // The cold definitive-rejection phase is deliberately not re-run here.  It
   // answers the same questions from strictly less evidence — no resolved
@@ -1005,9 +1006,10 @@ export function resolveProviderSpawnSelection(
     return { ok: false, error: providerConnectionResolutionError(resolution, input.machineId) };
   }
   const record = resolution.record;
+  const authorization = record.authorization;
   const errorContext = { connectionId, machineId: input.machineId };
-  if (!record.authorization.authorized) {
-    return { ok: false, error: createProviderErrorV1(record.authorization.errorCode, errorContext) };
+  if (!authorization.authorized) {
+    return { ok: false, error: createProviderErrorV1(authorization.errorCode, errorContext) };
   }
 
   let adapter: ReturnType<typeof readLeasedAgentProviderBindingAdapter>;
@@ -1067,7 +1069,7 @@ export function resolveProviderSpawnSelection(
   }) : null;
   if (facts.credential && !selectedCredentialTransport) return { ok: false,
     error: createProviderErrorV1('provider_credential_transport_unavailable', errorContext) };
-  return { ok: true, selection: { connectionId, providerSettings, record, errorContext, adapter, facts,
+  return { ok: true, selection: { connectionId, providerSettings, record, authorization, errorContext, adapter, facts,
     modelNameCatalog, model, modelSettings, compatibility, compatibilityResult, selectedCredentialTransport } };
 }
 
@@ -1076,7 +1078,7 @@ export function resolveProviderSpawnAuthorization(
 ): ProviderSpawnAuthorizationResult {
   const resolved = resolveProviderSpawnSelection(input);
   if (!resolved.ok) return resolved;
-  const { connectionId, providerSettings, record, errorContext, adapter, facts, modelNameCatalog, model,
+  const { connectionId, providerSettings, record, authorization: connectionAuthorization, errorContext, adapter, facts, modelNameCatalog, model,
     modelSettings, compatibility, compatibilityResult, selectedCredentialTransport } = resolved.selection;
   if (record.deployment.kind === 'managedLocal') {
     const managedPurposeBindingSnapshot = input.managedPurposeBindingSnapshot;
@@ -1213,7 +1215,7 @@ export function resolveProviderSpawnAuthorization(
       machineId: input.machineId,
       connectionSecurityFingerprint: record.connectionSecurityFingerprint,
       bindingSecurityFingerprint,
-      grantFingerprint: record.authorization.grantFingerprint,
+      grantFingerprint: connectionAuthorization.grantFingerprint,
       selectedSecretBindingId: null,
       selectedSecretRecordFingerprint: null,
     });
@@ -1367,7 +1369,7 @@ export function resolveProviderSpawnAuthorization(
     machineId: input.machineId,
     connectionSecurityFingerprint: record.connectionSecurityFingerprint,
     bindingSecurityFingerprint,
-    grantFingerprint: record.authorization.grantFingerprint,
+    grantFingerprint: connectionAuthorization.grantFingerprint,
     selectedSecretBindingId: reference.kind === 'apiKey' ? reference.secretId : null,
     selectedSecretRecordFingerprint: reference.kind === 'apiKey' ? providerCredentialReferenceFingerprint(reference) : null,
   });

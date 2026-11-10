@@ -1,8 +1,7 @@
-import { createElement, type ComponentType } from 'react';
+import { createElement, type ComponentType, type ReactElement } from 'react';
 import {
   type ComposerRefV1,
   type RenderContext,
-  type RenderSurface,
 } from '@happier-dev/plugin-sdk/ui';
 import { PluginUiProviderInternal } from './components/PluginUiProvider.js';
 import { WidgetPresentationProvider } from './components/WidgetPresentation.js';
@@ -83,7 +82,7 @@ function resolveMountedComposerRef(context: RenderContext): ComposerRefV1 | null
   return (Reflect.get(context, PLUGIN_UI_PRIVATE_MOUNTED_COMPOSER_REF_KEY) as ComposerRefV1 | undefined) ?? null;
 }
 
-export function defineUiSurface(Surface: UiSurfaceComponent): RenderSurface {
+export function defineUiSurface(Surface: UiSurfaceComponent): (context: RenderContext) => ReactElement {
   return (context) => {
     const authorContext = createAuthorRenderContext(context);
     const dataClient = resolveHostedWebDataClient(context);

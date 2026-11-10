@@ -2,6 +2,8 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
+import { presentAgentInstallJobFailure, presentAgentInstallJobRpcFailure } from '@/agents/machineAgents/installJobs/presentAgentInstallJobFailure';
+import { AgentInstallJobRpcError } from '@/agents/machineAgents/installJobs/api';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
@@ -14,7 +16,7 @@ import {
   AgentSetupFormView,
   type AgentSetupFormHandlers,
 } from './AgentSetupFormView';
-import { resolveMachineAgentPickerPlacement } from './machineAgentPresentation';
+import { resolveMachineAgentPickerPlacement, resolveMachineAgentRowAction } from './machineAgentPresentation';
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -54,6 +56,7 @@ function pi(
     signIn?: 'unknown' | 'signedOut';
     job?: Job | null;
     checking?: boolean;
+    guideUrl?: string;
   }>,
 ) {
   const facts = MachineAgentInventoryItemSchema.parse({
@@ -72,7 +75,7 @@ function pi(
       available: true,
       mode: 'managed',
       sizeBytes: null,
-      guideUrl: null,
+      guideUrl: input.guideUrl ?? null,
     },
     dependencies: [],
   });
@@ -128,6 +131,69 @@ async function stepsOf(agent: MachineAgent) {
 }
 
 describe('agent setup steps', () => {
+  it('offers recovery for a refused observation without claiming the installer failed', async () => {
+    const onRetry = vi.fn();
+    const agent = pi({ job: { ...job([step(cliStep, 'Pi CLI', 'running')]), readFailure: 'install_unavailable' } });
+    expect(agent.state).toBe('unknown');
+    expect(agent.job?.outcome).toBeNull();
+    expect(resolveMachineAgentRowAction(agent)).toEqual({ kind: 'retry' });
+    expect(resolveMachineAgentPickerPlacement(agent).opensSetup).toBe(true);
+    const screen = await renderScreen(<AgentSetupFormView testID="setup" agent={agent} machineName="devbox"
+      layout="compact" handlers={{ ...HANDLERS, onRetry }} />);
+    try {
+      expect(screen.getTextContent()).toContain(presentAgentInstallJobRpcFailure(new AgentInstallJobRpcError('install_unavailable')).body);
+      expect(screen.findByTestId('setup.cancel')).toBeNull();
+      await screen.pressByTestIdAsync('setup.retry');
+      expect(onRetry).toHaveBeenCalledOnce();
+    } finally { await screen.unmount(); }
+  });
+
+  it('uses the failure presenter instead of raw installer diagnostics for recovery guidance', async () => {
+    const failure = { kind: 'failed', code: 'in_use', stepId: cliStep, message: 'Raw installer output from a private machine path' } as const;
+    const screen = await renderScreen(<AgentSetupFormView testID="setup"
+      agent={pi({ job: job([], failure) })} machineName="devbox" layout="compact" handlers={HANDLERS} />);
+    try {
+      expect(screen.getTextContent()).toContain(presentAgentInstallJobFailure(failure).body);
+      expect(screen.getTextContent()).not.toContain(failure.message);
+    } finally { await screen.unmount(); }
+  });
+
+  it('opens the known installation guide when the terminal failure omits its URL', async () => {
+    const onOpenGuide = vi.fn(), onRetry = vi.fn();
+    const guideUrl = 'https://example.com/install';
+    const agent = pi({ guideUrl, job: job([], { kind: 'failed', code: 'not_managed', stepId: cliStep, message: 'Agent is not managed' }) });
+    const screen = await renderScreen(<AgentSetupFormView testID="setup" agent={agent} machineName="devbox"
+      layout="compact" handlers={{ ...HANDLERS, onOpenGuide, onRetry }} />);
+    try {
+      await screen.pressByTestIdAsync('setup.failure.guide');
+      expect(onOpenGuide).toHaveBeenCalledWith(guideUrl);
+      expect(onRetry).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
+  });
+
+  it.each([true, false])('chooses another Agent instead of retrying an unsupported installation when selection is available: %s', async canChoose => {
+    const onRetry = vi.fn(), onSetUpAnother = vi.fn();
+    const agent = pi({ job: job([], { kind: 'failed', code: 'unsupported_platform', stepId: cliStep, message: 'Platform is unsupported' }) });
+    const screen = await renderScreen(<AgentSetupFormView testID="setup" agent={agent} machineName="devbox"
+      layout="compact" handlers={{ ...HANDLERS, onRetry, ...(canChoose ? { onSetUpAnother } : {}) }} />);
+    try {
+      expect(screen.findByTestId('setup.retry')).toBeNull();
+      if (canChoose) {
+        await screen.pressByTestIdAsync('setup.chooseAgent');
+        expect(onSetUpAnother).toHaveBeenCalledOnce();
+      } else expect(screen.findByTestId('setup.chooseAgent')).toBeNull();
+      expect(onRetry).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
+    const retryScreen = await renderScreen(<AgentSetupFormView testID="setup"
+      agent={pi({ job: job([], { kind: 'failed', code: 'download_failed', stepId: cliStep, message: 'Download failed' }) })}
+      machineName="devbox" layout="compact" handlers={{ ...HANDLERS, onRetry, onSetUpAnother }} />);
+    try {
+      await retryScreen.pressByTestIdAsync('setup.retry');
+      expect(onRetry).toHaveBeenCalledOnce();
+      expect(onSetUpAnother).toHaveBeenCalledTimes(canChoose ? 1 : 0);
+    } finally { await retryScreen.unmount(); }
+  });
+
   it('drives one step list from the plan through the job into sign-in', async () => {
     const plan = await stepsOf(pi({}));
     expect(plan.steps).toEqual([

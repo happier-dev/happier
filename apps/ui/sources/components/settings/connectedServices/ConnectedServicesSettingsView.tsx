@@ -219,6 +219,8 @@ const ConnectedServicesSettingsBody = React.memo(function ConnectedServicesSetti
       model={indexModel}
       targetSelection={index.targetSelection}
       layout={firstRun ? 'firstRun' : 'section'}
+      request={null}
+      onRequestHandled={() => {}}
       onConnected={settleFromPanel}
       onOpenChange={setSetupOpen}
       loading={projectionLoading}

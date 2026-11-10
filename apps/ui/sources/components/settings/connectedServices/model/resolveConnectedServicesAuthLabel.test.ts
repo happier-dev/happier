@@ -186,8 +186,8 @@ describe('resolveConnectedServicesAuthLabel', () => {
         const input = {
             supportedServiceIds: [serviceId],
             profileOptionsByServiceId: { [serviceId]: [
-                { profileId: 'work', status: 'connected', label: 'Work' },
-                { profileId: 'backup', status: 'connected', label: 'Backup' },
+                { profileId: 'work', status: 'connected' as const, label: 'Work' },
+                { profileId: 'backup', status: 'connected' as const, label: 'Backup' },
             ] },
             accountGroupOptionsByServiceId: { [serviceId]: [{
                 groupId: 'team', label: 'Team pool', activeProfileId: 'work',

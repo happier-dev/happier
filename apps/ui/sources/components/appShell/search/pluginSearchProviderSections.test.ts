@@ -188,7 +188,7 @@ it.each(['account', 'machine', 'home', 'home partial'] as const)('queries Accoun
             const queryNumber = ++queries;
             if (providerPlacement === 'home partial' && queryNumber === 2) throw new Error('source unavailable');
             nestedRead = await context.services.actions.execute({ pluginId, localId: 'read-setting' }, {});
-            const query = value && typeof value === 'object' && !Array.isArray(value) ? value.query : null;
+            const query = value && typeof value === 'object' && !Array.isArray(value) ? Reflect.get(value, 'query') : null;
             if (typeof query !== 'string') throw new Error('Expected admitted Search query');
             if (query === 'hold') await gate;
             return { items: [{ id: 'match', title: query, command: { kind: 'executeAction', action: 'query', input: { query: 'activate', limit: 1 } } }], truncated: false };

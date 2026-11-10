@@ -24,7 +24,7 @@ export type PostSwitchVerificationEffectiveBinding = Readonly<{
   groupId: string | null;
   resourceId?: string;
   deliveryMode?: Extract<ConnectedServiceBindingSelectionV2, Readonly<{ source: 'team_resource' }>>['deliveryMode'];
-  disclosedMember?: Extract<ConnectedServiceBindingSelectionV2, Readonly<{ source: 'team_resource' }>>['disclosedMember'];
+  disclosedMember?: Extract<ConnectedServiceBindingSelectionV2, Readonly<{ source: 'team_resource'; deliveryMode: 'direct' }>>['disclosedMember'];
 }>;
 
 export type RuntimeAuthSelectionsByServiceId = ReadonlyMap<ConnectedAccountServiceKey, unknown>;

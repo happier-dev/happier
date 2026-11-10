@@ -17,6 +17,7 @@ describe('Pool members menu', () => {
             const screen = await renderScreen(<PoolMembersSelectField testID="members" candidates={[{ accountId: 'one', title: 'Personal' }]} selectedAccountIds={['one']} onCommit={commit} onConnectAccount={connect} open renderTrigger={() => React.createElement('View')} />);
             await act(async () => reportPopoverContentLayout(screen, { width: 320, height: 280 }));
             const menuTriggerRef = screen.root.findByType(Popover).props.anchorRef;
+            if (!menuTriggerRef) throw new Error('Expected menu trigger anchor');
             const trigger = { getBoundingClientRect: () => ({ left: 10, top: 20, width: 80, height: 32 }) };
             await act(async () => { screen.findHostByTestId('members:connect')!.props.onPress({ currentTarget: trigger }); });
             expect(connect).toHaveBeenCalledWith({ kind: 'view', ref: menuTriggerRef });

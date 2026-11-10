@@ -26,7 +26,7 @@ describe('resolveVoiceProviderReadinessPresentation', () => {
     const translateWithService = (key: string, params?: { service: string }) =>
       key === 'voice.readiness.settings_missing_required_setting' ? `Finish setting up ${params?.service} to start.` : key;
     expect(resolveVoiceProviderReadinessPresentation({
-      role: 'realtime_conversation', providerId: 'example/provider', status: 'unavailable',
+      status: 'unavailable',
       code: 'settings_missing_required_setting', reasonKey: 'voice.readiness.settings_missing_required_setting',
       recoveryAction: 'open_provider_settings',
     }, translateWithService, 'ElevenLabs Voice').summary).toBe('Finish setting up ElevenLabs Voice to start.');
@@ -34,8 +34,6 @@ describe('resolveVoiceProviderReadinessPresentation', () => {
 
   it('renders the canonical readiness reason and recovery action when a provider is unavailable', () => {
     expect(resolveVoiceProviderReadinessPresentation({
-      role: 'realtime_conversation',
-      providerId: 'example/provider',
       status: 'unavailable',
       code: 'server_feature_disabled',
       reasonKey: 'voice.readiness.server_feature_disabled',
@@ -50,8 +48,6 @@ describe('resolveVoiceProviderReadinessPresentation', () => {
 
   it('does not add readiness noise to a ready provider', () => {
     expect(resolveVoiceProviderReadinessPresentation({
-      role: 'realtime_conversation',
-      providerId: 'example/provider',
       status: 'ready',
       code: 'ready',
       reasonKey: 'voice.readiness.ready',
@@ -75,8 +71,6 @@ describe('resolveVoiceProviderReadinessPresentation', () => {
     ['runtime_unknown', 'voice.readiness.short.cantCheck'],
   ])('gives a list one short status for %s', (code, short) => {
     expect(resolveVoiceProviderReadinessPresentation({
-      role: 'realtime_conversation',
-      providerId: 'example/provider',
       status: 'unavailable',
       code,
       reasonKey: `voice.readiness.${code}`,

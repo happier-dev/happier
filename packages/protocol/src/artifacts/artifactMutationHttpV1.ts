@@ -8,10 +8,13 @@ import { ArtifactIdScopeV1Schema } from './idScope.js';
 import { ApprovalTranscriptVisualPublicationV1Schema } from '../sessions/messages/transcriptObservationV1.js';
 export { ArtifactIdScopeV1Schema, deriveAccountScopedArtifactIdV1, resolveAccountScopedArtifactIdV1, artifactIdScopeMatchesAccountV1, type ArtifactIdScopeV1 } from './idScope.js';
 
+type MemoryDecisionSourceSchema<Required extends boolean> = Required extends true
+    ? typeof CoordinationMessageRefV1Schema : z.ZodMiniOptional<z.ZodMiniNever>;
+
 /** Canonical JSON wire grammar shared by Artifact routes and atomic domain transactions. */
-export function createArtifactCreateHttpInputV1Schema(input: Readonly<{
+export function createArtifactCreateHttpInputV1Schema<const RequiresMemoryDecisionSource extends boolean>(input: Readonly<{
     requiresBlob: boolean;
-    requiresMemoryDecisionSource: boolean;
+    requiresMemoryDecisionSource: RequiresMemoryDecisionSource;
 }>) {
     return z.strictObject({
         id: ArtifactCreateIdV1Schema,
@@ -23,7 +26,8 @@ export function createArtifactCreateHttpInputV1Schema(input: Readonly<{
         body: z.string(),
         dataEncryptionKey: z.string(),
         blob: z.optional(ArtifactBlobWriteV1Schema),
-        memoryDecisionSource: input.requiresMemoryDecisionSource ? CoordinationMessageRefV1Schema : z.optional(z.never()),
+        // TypeScript cannot correlate the runtime branch with a generic boolean.
+        memoryDecisionSource: (input.requiresMemoryDecisionSource ? CoordinationMessageRefV1Schema : z.optional(z.never())) as MemoryDecisionSourceSchema<RequiresMemoryDecisionSource>,
         provenance: z.optional(z.nullable(z.string())),
         provenanceDataEncryptionKey: z.optional(z.nullable(z.string())),
     }).check(z.refine(value => input.requiresBlob ? value.blob !== undefined : value.blob === undefined));
@@ -34,9 +38,9 @@ export const ArtifactJsonCreateHttpInputV1Schema = createArtifactCreateHttpInput
     requiresMemoryDecisionSource: false,
 });
 
-export function createArtifactUpdateHttpInputV1Schema(input: Readonly<{
+export function createArtifactUpdateHttpInputV1Schema<const RequiresMemoryDecisionSource extends boolean>(input: Readonly<{
     requiresBlob: boolean;
-    requiresMemoryDecisionSource: boolean;
+    requiresMemoryDecisionSource: RequiresMemoryDecisionSource;
 }>) {
     return z.strictObject({
         transcriptVisualPublication: z.optional(ApprovalTranscriptVisualPublicationV1Schema),
@@ -50,8 +54,9 @@ export function createArtifactUpdateHttpInputV1Schema(input: Readonly<{
         provenance: z.optional(z.nullable(z.string())),
         provenanceDataEncryptionKey: z.optional(z.nullable(z.string())),
         blob: z.optional(z.nullable(ArtifactBlobWriteV1Schema)),
-        memoryDecisionSource: input.requiresMemoryDecisionSource
-            ? CoordinationMessageRefV1Schema : z.optional(z.never()),
+        // TypeScript cannot correlate the runtime branch with a generic boolean.
+        memoryDecisionSource: (input.requiresMemoryDecisionSource
+            ? CoordinationMessageRefV1Schema : z.optional(z.never())) as MemoryDecisionSourceSchema<RequiresMemoryDecisionSource>,
     }).check(z.refine(value => input.requiresBlob ? value.blob !== undefined : value.blob === undefined));
 }
 

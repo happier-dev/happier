@@ -4,12 +4,7 @@ import type { Tx } from '@/storage/inTx';
 type ActiveBrokerJobRow = Readonly<{
     tokenEpoch: number | bigint;
     status: string;
-    resourceId: string | null;
-    teamId: string | null;
-    custodianAccountId: string | null;
     enabled: number | bigint;
-    revision: number | bigint | null;
-    sourceBindingJson: string | null;
     brokerMachineId: string | null;
     brokerPoolId: string | null;
     sessionAccountId: string | null;
@@ -21,7 +16,19 @@ type ActiveBrokerJobRow = Readonly<{
     usageActorAccountId: string | null;
     teamCredentialResourceId: string | null;
     credentialDeliveryMode: string | null;
-}>;
+}> & (Readonly<{
+    resourceId: string;
+    teamId: string;
+    custodianAccountId: string;
+    revision: number | bigint;
+    sourceBindingJson: string;
+}> | Readonly<{
+    resourceId: null;
+    teamId: null;
+    custodianAccountId: null;
+    revision: null;
+    sourceBindingJson: null;
+}>);
 
 // One indexed read of the admitted job, not another permission evaluation.
 // Values remain bound parameters; only the database dialect changes SQL syntax.

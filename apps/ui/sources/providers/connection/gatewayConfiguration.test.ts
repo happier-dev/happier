@@ -45,7 +45,7 @@ describe('gateway configuration Action request', () => {
         const row = { id: descriptor.id, source: 'probe' as const, stale: false,
             loadState: 'unknown' as const, visibility: 'visible' as const, descriptor };
         const result = presentProviderGatewayFamilyFacts({ contributionKey: 'example.gateway/gateway', purposes, localize,
-            catalogSnapshot: { status: 'success', connectionId: 'pc_gateway', connectionRevision: 1,
+            catalogSnapshot: { status: 'success', connectionId: ProviderConnectionIdSchema.parse('pc_gateway'), connectionRevision: 1,
                 manualModelPolicy: 'catalog-only', modelLoadAction: 'descriptor_absent', models: [row],
                 sourceCatalogs: [
                     { purpose: 'absent', catalogObserved: false, models: [] },

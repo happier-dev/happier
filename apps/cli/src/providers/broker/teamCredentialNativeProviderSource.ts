@@ -120,14 +120,14 @@ export async function prepareTeamCredentialNativeProviderSource(
       registry, dnsEvidenceByEndpointUrl });
     if (!authorized.ok) return authorized;
     const { authorization } = authorized;
-    if (authorization.deployment.kind !== 'external' || authorization.credentialReference.kind !== 'apiKey') {
+    const endpoint = authorization.binding.endpoint;
+    if (!('normalizedUrl' in endpoint) || authorization.credentialReference.kind !== 'apiKey') {
       return fail('provider_credential_transport_unavailable');
     }
     const transport = authorization.binding.runtimeCredentialTransport;
     if (!transport || transport.destination.kind !== 'httpHeader' || transport.additionalCredentials?.length) {
       return fail('provider_credential_transport_unavailable');
     }
-    const endpoint = authorization.binding.endpoint;
     if (!endpoint.normalizedUrl.startsWith('https://')) return fail('provider_endpoint_unavailable');
     if (endpoint.endpointTemplateId !== input.application.endpointTemplateId || endpoint.protocol !== input.application.protocol) return fail();
     const resolved = resolveProviderConnectionBrokerSource({ source: resource.source, machineId: input.controllerMachineId,

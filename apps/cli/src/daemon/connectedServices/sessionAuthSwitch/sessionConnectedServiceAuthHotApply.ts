@@ -251,7 +251,7 @@ export function createSessionConnectedServiceAuthHotApply(deps: Readonly<{
         serviceResultsByServiceId[serviceId] = {
           status: 'failed',
           errorCode: errorCode === 'hot_apply_failed'
-            ? readString(result.reason) ?? readString(result.errorCode) ?? errorCode
+            ? readString(result.reason) ?? readString('errorCode' in result ? result.errorCode : undefined) ?? errorCode
             : errorCode,
         };
         for (const remaining of targetBindings.slice(index + 1)) {

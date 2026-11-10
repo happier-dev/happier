@@ -10,7 +10,7 @@ const diagnosticGrantId = z.uuid();
 /** Observe only the private endpoint demand; inference keeps its existing logs. */
 export function providerBrokerEndpointPhaseDiagnostic(
     authority: ProviderBrokerRouteGrantPayloadV1,
-    request: Readonly<{ method: string; pathAndQuery: string }>,
+    request: Readonly<{ method?: string; pathAndQuery: string }>,
 ): ProviderBrokerApplicationPhaseDiagnostic | undefined {
     if (request.method !== 'GET' || request.pathAndQuery !== PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH) return undefined;
     const grantId = diagnosticGrantId.safeParse(authority.grantId);

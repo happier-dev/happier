@@ -5,7 +5,7 @@ import {
 } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 /** Whether a connected account's credential has stopped working until someone signs in again. */
-export function isConnectedAccountSignedOut(status: ConnectedServiceCredentialHealthStatusV1 | null | undefined): boolean {
+export function isConnectedAccountSignedOut(status: ConnectedServiceCredentialHealthStatusV1 | null | undefined): status is 'needs_reauth' {
     return status != null && !isConnectedServiceCredentialHealthStatusUsable(status);
 }
 

@@ -116,7 +116,7 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
     // its cancellable payload stream and retain its secure JSON decoder.
     const parseJson = app.getDefaultJsonParser('error', 'error');
     app.removeContentTypeParser('application/json');
-    app.addContentTypeParser('application/json', async (request, payload) => {
+    app.addContentTypeParser('application/json', async (request: FastifyRequest, payload: Readable) => {
         const chunks: Buffer[] = [];
         for await (const chunk of payload) {
             if (Buffer.isBuffer(chunk)) chunks.push(chunk);

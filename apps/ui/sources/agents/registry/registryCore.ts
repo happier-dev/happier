@@ -2,6 +2,7 @@ import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { TranslationKey, TranslationKeyNoParams } from '@/text';
 import type { Href } from 'expo-router';
 import type { ConnectedAccountServiceKey, ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { PluginAgentAcpDefinitionV2 } from '@happier-dev/protocol';
 
 import {
     AGENT_IDS as SHARED_AGENT_IDS,
@@ -13,7 +14,6 @@ import {
     type AgentCore as SharedAgentCore,
     type AgentId,
     type AgentModelConfig,
-    type PermissionIntent,
     type AgentSessionStorage,
     type AgentToolsDelivery,
     type AgentToolsSupportLevel,
@@ -121,7 +121,7 @@ export type AgentCoreConfig = Readonly<{
     permissions: Readonly<{
         promptProtocol: PermissionPromptProtocol;
         /** Manifest-declared ACP policy mapping; null leaves the provider policy in place. */
-        permissionModeMapping?: Readonly<Partial<Record<PermissionIntent, string | null>>>;
+        permissionModeMapping?: PluginAgentAcpDefinitionV2['permissionModeMapping'];
     }>;
     runtimeInput?: Readonly<{
         /**

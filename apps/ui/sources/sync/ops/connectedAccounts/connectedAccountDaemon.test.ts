@@ -298,7 +298,7 @@ describe('connected-account daemon machine RPC', () => {
     it.each([
         { path: '/oauth/connected-account/callback', prefix: 'connected-account-oauth-callback' },
         { path: '/oauth/mcp/callback', prefix: 'mcp-oauth-callback' },
-    ])('warm callback $path offers Paste after the same-Account lookup finds no attempt', async ({ path, prefix }) => {
+    ] as const)('warm callback $path offers Paste after the same-Account lookup finds no attempt', async ({ path, prefix }) => {
         const { BaseNavigationContainer, createNavigationContainerRef, createNavigatorFactory,
             getPathFromState, useNavigationBuilder } = await import('@react-navigation/core');
         const { StackActions, StackRouter } = await import('@react-navigation/routers');
@@ -337,12 +337,14 @@ describe('connected-account daemon machine RPC', () => {
         function Credentials() { return React.createElement(DestinationInstanceHost, {
             tabId: 'warm-callback', ref: { kind: 'settings', params: { pageId: 'connected-services' } },
             pathname: '/settings/connected-services', focused: true, visible: true, navigation,
-        }, React.createElement(React.Fragment)); }
+            children: React.createElement(React.Fragment),
+        }); }
         const projectNavigation = () => { browser.location = new URL(getPathFromState(native.getRootState(), config), 'https://app.happier.dev'); };
-        const screen = await renderScreen(React.createElement(BaseNavigationContainer, { ref: native, onStateChange: projectNavigation },
-            React.createElement(Stack.Navigator, { initialRouteName: 'credentials' },
+        const screen = await renderScreen(React.createElement(BaseNavigationContainer, { ref: native, onStateChange: projectNavigation,
+            children: React.createElement(Stack.Navigator, { initialRouteName: 'credentials' },
                 React.createElement(Stack.Screen, { name: 'credentials', component: Credentials }),
-                React.createElement(Stack.Screen, { name: 'callback', component: Route }))));
+                React.createElement(Stack.Screen, { name: 'callback', component: Route })),
+        }));
         const query = '?code=code&state=missing-attempt.nonce&iss=https%3A%2F%2Fissuer.example';
         try {
             await act(async () => { navigation.push(`${path}${query}`); });

@@ -30,6 +30,7 @@ export function providerProbeFailureHealthState(
     case 'provider_probe_response_invalid':
       return { ...common, status: 'invalid_response', errorCode: error.code };
     case 'provider_contribution_unavailable':
+    case 'provider_credential_transport_unavailable':
       return null;
   }
 }

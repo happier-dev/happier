@@ -87,8 +87,9 @@ export function isExactAcceptedConnectedServiceAccountVerification(
 }
 
 function readApplicationServiceKey(value: unknown): string | null {
-  const service = typeof value === 'string' ? value : QualifiedConnectedAccountServiceRefSchema.safeParse(value).data;
-  return !service ? null : typeof service === 'string' ? service : buildQualifiedPluginContributionKey(service);
+  if (typeof value === 'string') return value || null;
+  const parsed = QualifiedConnectedAccountServiceRefSchema.safeParse(value);
+  return parsed.success ? buildQualifiedPluginContributionKey(parsed.data) : null;
 }
 
 export function readExactConnectedServiceGenerationApplication(input: Readonly<{

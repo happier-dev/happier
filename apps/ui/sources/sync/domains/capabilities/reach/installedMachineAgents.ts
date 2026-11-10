@@ -3,7 +3,7 @@ import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentI
 import { BackendTargetRefV2Schema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 type PublishedMachineAgentInventory = MachinePublishedMetadataV1['agentInventory']
-  | Pick<NonNullable<MachinePublishedMetadataV1['agentInventory']>, 'installedAgentIds'>;
+  | Readonly<{ installedAgentIds: readonly string[] }>;
 
 /** Factory availability does not establish any of its configured executable instances. */
 export function readInstalledMachineAgentInventory(

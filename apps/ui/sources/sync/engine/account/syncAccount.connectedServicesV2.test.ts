@@ -55,7 +55,7 @@ function createConnectedAccountGroupV4(): Profile['connectedAccountGroupsV4'][nu
     incarnation: 'qualified-group-row-fallback',
     displayName: null,
     policy: {
-      v: 1,
+      v: 2,
       strategy: 'least_limited',
       autoSwitch: false,
       switchOn: {

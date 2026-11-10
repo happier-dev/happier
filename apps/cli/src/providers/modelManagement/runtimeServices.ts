@@ -229,7 +229,8 @@ export type RuntimeProviderModelManagementServices = Readonly<{
   resolveTeamCredentialRequestPolicySupport(
     request: DaemonProviderTeamCredentialRequestPolicySupportRequestV1,
     signal?: AbortSignal,
-  ): Promise<DaemonProviderTeamCredentialRequestPolicySupportResponseV1>;
+  ): Promise<Exclude<DaemonProviderTeamCredentialRequestPolicySupportResponseV1, { status: 'success' }>
+    | Readonly<{ status: 'success'; models: readonly ProjectedTeamCredentialRequestPolicySupportV1[] }>>;
   resolveTeamCredentialResourceTestCandidate(
     request: DaemonProviderTeamCredentialResourceTestCandidateRequestV1,
     signal?: AbortSignal,

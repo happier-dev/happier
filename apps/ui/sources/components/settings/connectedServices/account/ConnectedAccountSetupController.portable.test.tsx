@@ -216,7 +216,7 @@ async function restorePortableFixture(requestedService = service, homeClient = f
         createPlainMachineRowFixture({ id, accountId, machine: createMachineFixture({ id, active: id !== offlineMachineId, activeAt: id === offlineMachineId ? 0 : Date.now(),
             operationProtocolCapabilitiesRevision: 111,
             ...(machinePresence !== 'legacy' ? { operationProtocolCapabilities: { connectedAccountAuthentication: { protocolVersions: [1] } } }
-                : { metadata: { ...createMachineFixture().metadata, host: 'legacy-controller', happyCliVersion: '0.2.10' } }),
+                : { metadata: { ...createMachineFixture().metadata!, host: 'legacy-controller', happyCliVersion: '0.2.10' } }),
             ...(machinePresence === 'guests' || machinePresence === 'mixed' && index === 1 ? {
                 access: { custodian: { accountId: 'other-custodian', displayName: 'Other custodian' },
                     role: index === 0 ? 'use' : 'manage', resourceMode: 'plain', accessState: 'ready' },

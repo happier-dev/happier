@@ -25,7 +25,9 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: DropdownMenuProps) => React.createElement('DropdownMenu', props,
         props.open ? props.header : null,
         props.open && props.renderContent ? props.renderContent({ maxHeight: 500, maxWidth: 400, placement: 'bottom', presentation: 'anchored', requestClose: () => props.onOpenChange(false) }) : null,
-        props.open ? props.footer : null),
+        props.open ? typeof props.footer === 'function'
+            ? props.footer({ anchor: { kind: 'rect', rect: { left: 0, top: 0 } } })
+            : props.footer : null),
 }));
 
 vi.mock('@/components/ui/buttons/IconButton', () => ({
@@ -221,7 +223,7 @@ describe('SessionAgentsLaunchMenu — Second opinion and Run a workflow ›', ()
         let tree: renderer.ReactTestRenderer | undefined;
         act(() => { tree = renderer.create(<SessionAgentsLaunchMenu launcher={start} />); });
         await openWorkflowPicker(tree!);
-        await act(async () => { await tree!.root.findByType(SelectionList).props.onSelect('wf-1'); });
+        await act(async () => { await tree!.root.findByType(SelectionList).props.onSelect('wf-1', { id: 'wf-1', label: 'Workflow wf-1' }); });
         expect(executeMock.mock.calls.filter(([actionId]) => actionId === 'workflow.definition.get')).toHaveLength(0);
         // The Start tab is named after the chosen workflow, never a generic "Workflow".
         expect(start.startWorkflow).toHaveBeenCalledWith({ source: { kind: 'saved', definitionId: 'wf-1', revision: saved.revision }, name: 'Workflow wf-1' });
@@ -237,7 +239,7 @@ describe('SessionAgentsLaunchMenu — Second opinion and Run a workflow ›', ()
         let tree: renderer.ReactTestRenderer | undefined;
         act(() => { tree = renderer.create(<SessionAgentsLaunchMenu launcher={start} />); });
         await openWorkflowPicker(tree!);
-        await act(async () => { await tree!.root.findByType(SelectionList).props.onSelect('builtin:plan-with-a-panel'); });
+        await act(async () => { await tree!.root.findByType(SelectionList).props.onSelect('builtin:plan-with-a-panel', { id: 'builtin:plan-with-a-panel', label: 'Plan with a panel' }); });
         expect(start.startWorkflow).toHaveBeenCalledWith(expect.objectContaining({ source: { kind: 'catalog', workflow: 'builtin:plan-with-a-panel' }, name: expect.any(String) }));
         expect(routerPush).not.toHaveBeenCalled();
         act(() => tree?.unmount());

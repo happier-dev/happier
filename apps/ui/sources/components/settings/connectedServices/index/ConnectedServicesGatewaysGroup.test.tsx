@@ -54,7 +54,7 @@ describe('ConnectedServicesGatewaysGroup', () => {
   it('says what each gateway draws on, and holds its place while the gateways load', async () => {
     const listed = await renderScreen(
       <ConnectedServicesGatewaysGroup
-        gateways={[{ connectionId: 'pc_gateway', title: 'Main gateway', detailRoute: '/x', revision: 1, slotServices: [], summary: 'Claude · ChatGPT', agents: [] }]}
+        gateways={[{ connectionId: 'pc_gateway', title: 'Main gateway', detailRoute: '/x', revision: 1, slotServices: [], summary: 'Claude · ChatGPT', agents: [], enabled: true }]}
         onOpen={vi.fn()}
       />,
     );

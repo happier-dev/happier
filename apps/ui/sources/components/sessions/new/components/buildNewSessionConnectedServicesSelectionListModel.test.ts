@@ -115,7 +115,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         expect(renderPoolFreshness).toHaveBeenCalledTimes(0);
         const pool = firstStaticSection(model).options.find(row => row.id === createConnectedServiceGroupOptionId('anthropic', 'pool-999'))!;
         expect(typeof pool.subtitleContent).toBe('function');
-        if (typeof pool.subtitleContent === 'function') pool.subtitleContent({ selected: false });
+        if (typeof pool.subtitleContent === 'function') pool.subtitleContent();
         expect(renderPoolFreshness).toHaveBeenCalledTimes(1);
     });
     it('shows only the pool selected limits, retains raw account limits and passes the reading age to the row', () => {
@@ -139,7 +139,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         expect(pool.subtitle).not.toContain('Session');
         expect(rows.find(row => row.id === createConnectedServiceOptionId('anthropic', 'work'))?.subtitle).toContain('Session');
         expect(typeof pool.subtitleContent).toBe('function');
-        if (typeof pool.subtitleContent === 'function') pool.subtitleContent({ selected: false });
+        if (typeof pool.subtitleContent === 'function') pool.subtitleContent();
         expect(renderPoolFreshness).toHaveBeenCalledWith(expect.objectContaining({ asOf: snapshot.fetchedAt, isStale: true, notAnswering: true }), expect.any(String), expect.any(String));
         vi.restoreAllMocks();
     });
@@ -185,7 +185,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
                 resetsAt: Date.now() + 3600_000, status: 'ok', details: {}, windowDurationMs: 604800_000 }],
         });
         const model = buildModel({ quotaSnapshotsByKey: { 'anthropic/work': snapshot,
-            'anthropic/signed-out': { ...snapshot, profileId: 'signed-out', meters: snapshot.meters.map(meter => ({ ...meter, remainingPct: 100 })) } },
+            'anthropic/signed-out': { ...snapshot, meters: snapshot.meters.map(meter => ({ ...meter, remainingPct: 100 })) } },
             profileOptionsByServiceId: { anthropic: [{ profileId: 'work', status: 'connected' }, { profileId: 'signed-out', status: 'needs_reauth' }] },
             groupOptionsByServiceId: { anthropic: [{ groupId: 'pool', label: 'Pool', status: 'ready',
                 activeProfileId: 'work', memberProfileIds: ['work', 'signed-out'], enabledMemberCount: 2, autoSwitch: true }] },
@@ -338,7 +338,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             id,
             teamId: 'team-1',
             displayName,
-            resourceRevision: 7,
+            sourceOwnerDisplayName: null, resourceRevision: 7,
             readiness: { kind: 'available' as const },
             recoveryAction: null,
             deliveryMode: 'brokered' as const,
@@ -425,7 +425,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             setBindingForService,
             teamCredentialResources: [{
                 id: 'resource-1', teamId: 'team-1', displayName: 'Shared mail',
-                resourceRevision: 7, readiness: { kind: 'available' }, recoveryAction: null,
+                sourceOwnerDisplayName: null, resourceRevision: 7, readiness: { kind: 'available' }, recoveryAction: null,
                 mayBroker: false, mayReceiveDirect: true,
                 directMaterialState: 'current', directDeliveryRecorded: true, sessionUsePolicy: 'personal_allowed',
                 providerModels: [],
@@ -457,7 +457,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             supportedServiceIds: ['service.plugin/mail'], profileOptionsByServiceId: {}, bindingsByServiceId: {},
             includeNativeAuthOption: false, setBindingForService: vi.fn(),
             teamCredentialResources: [{
-                id: 'resource-1', teamId: 'team-1', displayName: 'Shared mail', resourceRevision: 7,
+                id: 'resource-1', teamId: 'team-1', displayName: 'Shared mail', sourceOwnerDisplayName: null, resourceRevision: 7,
                 readiness: { kind: 'available' }, recoveryAction: null, mayBroker: false, mayReceiveDirect: true,
                 directMaterialState: 'current', directDeliveryRecorded: true, sessionUsePolicy: 'personal_allowed',
                 providerModels: [], sourcePresentation: { kind: 'connected_service', service: selection.disclosedMember.service },
@@ -487,7 +487,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             },
         };
         const resource = {
-            id: 'resource-1', teamId: 'team-1', displayName: 'Shared mail', resourceRevision: 7,
+            id: 'resource-1', teamId: 'team-1', displayName: 'Shared mail', sourceOwnerDisplayName: null, resourceRevision: 7,
             readiness: { kind: 'source_unavailable' as const }, recoveryAction: 'source_owner_action' as const,
             deliveryMode: 'direct' as const, mayBroker: false, mayReceiveDirect: true,
             directMaterialState: 'stale' as const, sessionUsePolicy: 'personal_allowed' as const,
@@ -524,7 +524,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             id: selection.resourceId,
             teamId: 'team-1',
             displayName: 'Shared build account',
-            resourceRevision: 8,
+            sourceOwnerDisplayName: null, resourceRevision: 8,
             readiness: { kind: 'available' as const },
             recoveryAction: null,
             mayBroker: true,
@@ -592,7 +592,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             id: binding.resourceId,
             teamId: 'team-1',
             displayName: 'Shared build account',
-            resourceRevision: 8,
+            sourceOwnerDisplayName: null, resourceRevision: 8,
             readiness: { kind: 'source_unavailable' as const },
             recoveryAction: 'source_owner_action' as const,
             mayBroker: true,
@@ -904,7 +904,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
     it('folds signed-out accounts and unusable Team resources into one trailing Unavailable section', () => {
         const selection = { source: 'team_resource' as const, resourceId: 'resource-1', deliveryMode: 'brokered' as const };
         const resource = {
-            id: 'resource-1', teamId: 'team-1', displayName: 'Shared Codex', resourceRevision: 1,
+            id: 'resource-1', teamId: 'team-1', displayName: 'Shared Codex', sourceOwnerDisplayName: null, resourceRevision: 1,
             readiness: { kind: 'broker_unavailable' as const }, recoveryAction: 'source_owner_action' as const,
             deliveryMode: 'brokered' as const, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'none' as const, sessionUsePolicy: 'personal_allowed' as const,

@@ -48,6 +48,7 @@ const { resetConnectedAccountCatalogEngineForTests } = await import('@/sync/engi
 const { resetConnectedAccountCatalogSnapshotsForTests } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
 const gitlab = PluginPortableReleaseManifestV1Schema.parse(GITLAB_MANIFEST);
 const features = createRootLayoutFeaturesResponse({ capabilities: { connectedServices: {
+    credentialDelete: { revisionGuard: false },
     qualifiedAccounts: { protocolVersion: 4 },
 } } });
 function installPurposeDeclarations() {

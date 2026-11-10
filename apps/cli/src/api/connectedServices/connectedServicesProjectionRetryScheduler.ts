@@ -1,3 +1,4 @@
+import { setTimeout, clearTimeout } from 'node:timers';
 type ProjectionWork = (signal: AbortSignal) => Promise<void>;
 
 export type ConnectedServicesProjectionRetryScheduler = Readonly<{

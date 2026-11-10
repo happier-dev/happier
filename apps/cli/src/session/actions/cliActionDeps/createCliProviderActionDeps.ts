@@ -64,7 +64,7 @@ export function createCliProviderActionExecuteV1(params: Readonly<{
         if (request.actionId === 'providers.models.refresh' && 'connectionId' in request.input) {
           return params.readProviderForAccount!({ actionId: request.actionId, input: request.input }, context);
         }
-        if (request.actionId === 'providers.models.projection' || request.actionId === 'providers.models.refresh') {
+        if ((request.actionId === 'providers.models.projection' || request.actionId === 'providers.models.refresh') && !('connectionId' in request.input)) {
           return params.projectModelsForAccount!({ ...request.input, machineId }, context);
         }
       }

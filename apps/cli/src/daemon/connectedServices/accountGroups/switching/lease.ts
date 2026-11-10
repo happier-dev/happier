@@ -1,3 +1,4 @@
+import { setTimeout, clearTimeout } from 'node:timers';
 import type { ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
 import type { ConnectedServiceAuthGroupCandidateDecisionTrace } from '../selection/selectConnectedServiceAuthGroupCandidate';
 import type { ConnectedServiceAuthGroupSwitchResult } from './ConnectedServiceAuthGroupSwitchCoordinator';
@@ -65,7 +66,7 @@ function buildLeaseResultCompletion(
 ): LeaseResultCompletion {
     return {
         kind: 'result',
-        activeProfileId: context?.activeProfileId ?? ('activeProfileId' in result ? result.activeProfileId : null),
+        activeProfileId: context?.activeProfileId ?? ('activeProfileId' in result ? result.activeProfileId ?? null : null),
         generation: context?.generation ?? result.generation,
         result,
     };

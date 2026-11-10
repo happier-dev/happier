@@ -178,6 +178,8 @@ afterEach(async () => {
 
 type CapturedPurposeTargetModalConfig = Readonly<{
   props: Readonly<{
+    onSelect: React.ComponentProps<typeof SelectionList>['onSelect'];
+    refresh: Readonly<{ onRefresh: () => void }> | null;
     rootStep: Readonly<{
       sections: readonly [Readonly<{
         virtualization?: string;
@@ -197,7 +199,14 @@ function latestPurposeTargetModalConfig(): CapturedPurposeTargetModalConfig {
   const config = modalSpies.show.mock.calls.at(-1)?.[0];
   if (!config) throw new Error('Expected the purpose-target modal to be shown');
   const captured = config as ModalBoundaryConfig;
-  return { ...captured, props: { ...captured.props, ...modalScreen.findByType(SelectionList).props } } as CapturedPurposeTargetModalConfig;
+  const props = modalScreen.findByType(SelectionList).props;
+  const section = props.rootStep?.sections[0];
+  if (!section || section.kind !== 'static') throw new Error('Expected a static purpose-target list');
+  const refresh = captured.props.refresh;
+  const refreshProps = refresh && typeof refresh === 'object' ? refresh : null;
+  const onRefresh = refreshProps ? Reflect.get(refreshProps, 'onRefresh') : null;
+  return { ...captured, props: { ...captured.props, ...props, onSelect: props.onSelect, rootStep: { sections: [section] },
+    refresh: typeof onRefresh === 'function' ? { ...refreshProps, onRefresh: () => { onRefresh(); } } : null } };
 }
 
 function findItemByTestId(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
@@ -419,17 +428,13 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
     await act(async () => {
       findItemByTestId(screen, props.testID)?.props.onPress();
     });
-    const config = latestPurposeTargetModalConfig() as Readonly<{
-      props: Readonly<{
-        rootStep: CapturedPurposeTargetModalConfig['props']['rootStep'];
-        onSelect: (id: string) => void;
-      }>;
-    }>;
+    const config = latestPurposeTargetModalConfig();
     const teamOption = config.props.rootStep.sections[0].options
       .find((option) => option.label === 'Acme shared pool');
     expect(teamOption).toEqual(expect.objectContaining({ disabled: false }));
+    if (!teamOption) throw new Error('Expected the entitled Team option');
     await act(async () => {
-      config.props.onSelect(teamOption!.id);
+      config.props.onSelect(teamOption.id, teamOption);
     });
     // The Team choice reaches the writer as the canonical Team selection of
     // its Team, never as a purpose target (lane 10 child 02 :271).

@@ -8,7 +8,7 @@ import { openSavedSecretResourceStoredContentV1,
     sealSavedSecretResourceStoredContentV1, type SavedSecretResourceStoredContentV1, type SavedSecretResourceContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { tryWriteServerEnabledBitInPlace} from '@happier-dev/protocol/features/serverEnabledBit';
 import { StoredApprovalRequestSchema,
-    type ApprovalRequestV2} from '@happier-dev/protocol/approvals/approvalRequestV1';
+    ApprovalRequestV2Schema, type ApprovalRequestV2} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { SharedSavedSecretCreateInputV1Schema, SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretListOutputV1Schema,
@@ -1937,9 +1937,9 @@ describe('Saved Secret operations through their real Account and Action owners',
             } } } }],
         });
         const settledAt = request.createdAtMs + 1;
-        const settled: ApprovalRequestV2 = { ...request, status: 'executed', updatedAtMs: settledAt,
+        const settled = ApprovalRequestV2Schema.parse({ ...request, status: 'executed', updatedAtMs: settledAt,
             decision: { kind: 'approve', decidedAtMs: settledAt }, execution: { ok: true, executedAtMs: settledAt,
-                result: { resourceId: input.resourceId, settingsVersion: 23 } } };
+                result: { resourceId: input.resourceId, settingsVersion: 23 } } });
         const observation: DecryptedArtifact = { id: artifact.id, header: buildApprovalRequestArtifactHeaderV1(settled),
             title: buildApprovalRequestArtifactHeaderV1(settled).title,
             body: JSON.stringify(settled), headerVersion: 2, bodyVersion: 2, seq: 2, createdAt: 1, updatedAt: 2, isDecrypted: true };
@@ -2369,7 +2369,7 @@ describe('Saved Secret operations through their real Account and Action owners',
         publishHomeAccountChange(account.scope.serverId, undefined, { source: 'snapshot' });
         await refreshCatalogAndWaitForLegacyImport(account.scope);
         const { scopedHomeActionExecutor } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
-        const replayed = await scopedHomeActionExecutor(account.scope)(original.actionId, original.actionArgs, {
+        const replayed = await scopedHomeActionExecutor(account.scope)(ApprovalRequestV2Schema.parse(original).actionId, original.actionArgs, {
             surface: 'ui', authority: 'present_user', serverId: account.scope.serverId,
             actionRequestId: original.executionOriginV1.requestId,
         });
@@ -3841,8 +3841,8 @@ describe('Saved Secret operations through their real Account and Action owners',
             ? Reflect.get(request.actionArgs, 'resourceId') : 'resource-a';
         const result = operation === 'delete' ? { resourceId } : { resourceId, revision: 4 };
         const settledAt = request.createdAtMs + 1;
-        const settled: ApprovalRequestV2 = { ...request, status: 'executed', updatedAtMs: settledAt,
-            decision: { kind: 'approve', decidedAtMs: settledAt }, execution: { ok: true, executedAtMs: settledAt, result } };
+        const settled = ApprovalRequestV2Schema.parse({ ...request, status: 'executed', updatedAtMs: settledAt,
+            decision: { kind: 'approve', decidedAtMs: settledAt }, execution: { ok: true, executedAtMs: settledAt, result } });
         const observation: DecryptedArtifact = { id: artifact.id, header: buildApprovalRequestArtifactHeaderV1(settled),
             title: buildApprovalRequestArtifactHeaderV1(settled).title,
             body: JSON.stringify(settled), headerVersion: 2, bodyVersion: 2, seq: 2, createdAt: 1, updatedAt: 2, isDecrypted: true };

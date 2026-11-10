@@ -172,7 +172,8 @@ async function renderView(child?: React.ReactElement) {
     const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
     const { router } = await import('expo-router');
     const { tree } = await renderScreen(<DestinationInstanceContext.Provider value={{ tabId: 'services-overview',
-        ref: { kind: 'settings', params: connectedServicesModuleState.searchParams }, pathname: '/settings/connected-services',
+        ref: { kind: 'settings', params: Object.fromEntries(Object.entries(connectedServicesModuleState.searchParams)
+            .filter((entry): entry is [string, string] => typeof entry[1] === 'string')) }, pathname: '/settings/connected-services',
         focused: true, isFocused: () => true, visible: true, navigation: router,
     }}><InjectedAuthProvider credentials={null}>{child ?? <ConnectedServicesSettingsView />}</InjectedAuthProvider></DestinationInstanceContext.Provider>);
     return tree;

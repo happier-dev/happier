@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { assessProviderEndpoint } from '@happier-dev/protocol/providers/safety/url';
 import { createProviderErrorV1, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { ConnectedServiceBindingsV2Schema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
-import type { AgentProviderBindingMaterializationV1, ConnectedServiceBindingsV2, ConnectedServiceId, ProviderErrorV1, PluginExecutionScopeV1, QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
+import type { AgentProviderBindingMaterializationV1, ConnectedServiceBindingsV2, ProviderErrorV1, PluginExecutionScopeV1, QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 import type {
   AgentProviderBindingCredential,
   AgentProviderBindingResolvedFacts,
@@ -92,10 +92,10 @@ function isManagedProviderSpawnAuthorization(
 
 export function filterSuppressedConnectedServiceBindings(input: Readonly<{
   bindings: ConnectedServiceBindingsV2;
-  suppressConnectedServiceIds: readonly ConnectedServiceId[];
+  suppressConnectedServiceIds: readonly string[];
 }>): Readonly<{
   bindings: ConnectedServiceBindingsV2 | null;
-  suppressedServiceIds: readonly ConnectedServiceId[];
+  suppressedServiceIds: readonly string[];
 }> {
   const parsed = ConnectedServiceBindingsV2Schema.parse(input.bindings);
   const suppressionByServiceKey = new Map(
@@ -771,7 +771,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     const runtimeModelDescriptor =
       remotePlacement ? runtimeModelObservation?.model ?? null
         : input.runtimeModelDescriptor ?? runtimeModelObservation?.model ?? null;
-    const authorizationInput: ResolveProviderSpawnAuthorizationInput = {
+    const authorizationInput: Parameters<typeof resolveProviderSpawnSelection>[0] = {
       selection: input.selection,
       ...(input.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: input.sessionConfigOptionOverrides } : {}),
       machineId: input.machineId,

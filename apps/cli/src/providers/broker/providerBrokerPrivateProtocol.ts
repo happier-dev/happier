@@ -46,7 +46,7 @@ export async function readProviderBrokerEndpointUrl(input: Readonly<{
   fetchImpl?: typeof fetch;
   onRefusal?: (code: ProviderBrokerAdmissionFailureCodeV1) => void;
 }>): Promise<string> {
-  const response = await fetchWithCredentialRedirectRefusal(new URL(PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH, input.localOrigin), {
+  const response = await fetchWithCredentialRedirectRefusal(new URL(PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH, input.localOrigin).href, {
     method: 'GET', headers: input.headers, signal: input.signal,
   }, input.fetchImpl, new Set([MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]));
   const declaredPath = response.headers.get(PROVIDER_BROKER_ENDPOINT_PATH_HEADER);

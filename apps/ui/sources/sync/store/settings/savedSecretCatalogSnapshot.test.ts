@@ -52,7 +52,7 @@ describe('savedSecretCatalogSnapshot', () => {
         expect(resolveSavedSecretReference(undefined, [], ref).resolving).toBe(false);
         beginSavedSecretCatalogLoad(scope);
         expect(resolveSavedSecretReference(scope, [], ref)).toMatchObject({ status: 'temporarily_unavailable', resolving: true });
-        applySavedSecretCatalogFailure({ scope, error: { kind: 'network', retryable: true } });
+        applySavedSecretCatalogFailure({ scope, error: { kind: 'unreachable', retryable: true } });
         expect(resolveSavedSecretReference(scope, [], ref)).toMatchObject({ status: 'temporarily_unavailable', resolving: false });
     });
 

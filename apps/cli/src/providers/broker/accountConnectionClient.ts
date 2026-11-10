@@ -188,7 +188,7 @@ export async function openAccountConnectionProviderBrokerAccess(input: Parameter
           const target = new URL(path, localOrigin);
           if (target.origin !== localOrigin || target.hash !== '') throw unavailable();
           const signal = request.signal ? AbortSignal.any([input.signal, request.signal]) : input.signal;
-          const response = await fetchWithCredentialRedirectRefusal(target, {
+          const response = await fetchWithCredentialRedirectRefusal(target.href, {
             method: request.method ?? 'GET', headers: { ...request.headers, ...binding.headers },
             ...(request.body ? { body: new Uint8Array(request.body) } : {}), signal,
           }, input.fetchImpl, new Set(Object.keys(binding.headers).map(name => name.toLowerCase())));

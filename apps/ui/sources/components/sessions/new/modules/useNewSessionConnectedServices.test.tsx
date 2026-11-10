@@ -818,6 +818,7 @@ describe('useNewSessionConnectedServices', () => {
         storage.setState({
             sessions: Object.fromEntries(Array.from({ length: 1_000 }, (_, index) => {
                 const fixture = createSessionFixture({ id: `quiet-session-${index}` });
+                if (!fixture.metadata) throw new Error('Expected readable Session fixture metadata');
                 const session = { ...fixture, metadata: { ...fixture.metadata, machineId: `quiet-machine-${index % 121}` } };
                 return [session.id, session];
             })),
@@ -1025,7 +1026,7 @@ describe('useNewSessionConnectedServices', () => {
         const hook = await renderHook((props: Readonly<{ selected: boolean; suppresses: boolean; available: boolean; extraPurpose: boolean }>) => useNewSessionConnectedServices({
             agentCore: null, defaultAuthAgentId: 'codex', defaultAuthConsumer: { pluginId: 'happier.agent.codex', localId: 'codex' },
             connectedAccounts: [nativePurpose, ...(props.extraPurpose ? NOVEL_CONNECTED_ACCOUNTS : [])], agentOptionState: null,
-            modelSelection: props.selected ? { ...source.rows[0]!.ref, source: 'account_provider_connection' as const } : null,
+            modelSelection: props.selected ? source.rows[0]!.ref : null,
             providerSources: [{ ...source, rows: props.available ? source.rows : [],
                 suppressedConnectedServiceIds: props.suppresses ? source.suppressedConnectedServiceIds : [] }],
             sourceMachineId: 'machine-remote',
@@ -1057,7 +1058,7 @@ describe('useNewSessionConnectedServices', () => {
         const { TeamCredentialResourceCatalogEntryV1Schema } = await import('@happier-dev/protocol/teams');
         const target = 'agent:happier.agent.codex/codex';
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id: 'shared-model', teamId: 'engineering', displayName: 'Engineering models', resourceRevision: 2,
+            id: 'shared-model', teamId: 'engineering', displayName: 'Engineering models', sourceOwnerDisplayName: null, resourceRevision: 2,
             readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', sourcePresentation: null,
             providerModels: [{ selection: { kind: 'team_credential_provider_model', teamId: 'engineering', resourceId: 'shared-model',
@@ -2088,7 +2089,7 @@ describe('useNewSessionConnectedServices', () => {
             },
         };
         const resource = {
-            id: 'resource-1', teamId: 'team-1', displayName: 'Shared Claude', resourceRevision: 4,
+            id: 'resource-1', teamId: 'team-1', displayName: 'Shared Claude', sourceOwnerDisplayName: null, resourceRevision: 4,
             readiness: { kind: 'available' as const }, recoveryAction: null,
             deliveryMode: 'direct' as const, mayBroker: false, mayReceiveDirect: true,
             directMaterialState: 'never_delivered' as const,
@@ -2144,7 +2145,7 @@ describe('useNewSessionConnectedServices', () => {
             },
         };
         const resource = {
-            id: 'resource-1', teamId: 'team-1', displayName: 'Shared Claude', resourceRevision: 4,
+            id: 'resource-1', teamId: 'team-1', displayName: 'Shared Claude', sourceOwnerDisplayName: null, resourceRevision: 4,
             readiness: { kind: 'available' as const }, recoveryAction: null,
             deliveryMode: 'direct' as const, mayBroker: false, mayReceiveDirect: true,
             directMaterialState: 'current' as const,

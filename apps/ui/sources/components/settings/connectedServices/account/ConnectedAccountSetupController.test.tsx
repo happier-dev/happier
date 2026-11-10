@@ -47,7 +47,6 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import type { ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { ArtifactCreateRequest } from '@/sync/domains/artifacts/artifactTypes';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -1018,7 +1017,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
     }
 
     function installApprovalBoundary() {
-        const approvals: ApprovalRequestV2[] = [];
+        const approvals: Extract<ReturnType<typeof StoredApprovalRequestSchema.parse>, { v: 2 }>[] = [];
         handleHttp = async (rawUrl, init) => {
             const url = new URL(String(rawUrl));
             if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());

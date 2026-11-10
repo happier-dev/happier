@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Pressable, View, type GestureResponderEvent } from 'react-native';
+import { Pressable, View } from 'react-native';
+import type { HappierPressableProps } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
@@ -45,7 +46,7 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
     /** "3 connected" (the page's catalog); Home's first accounts have none to count. */
     showCount: boolean;
     localizePluginText?: PluginLocalizedTextResolver;
-    onConnect: (event?: GestureResponderEvent) => void;
+    onConnect: NonNullable<HappierPressableProps['onPress']>;
 }>) {
     const { entry } = props;
     const card = props.layout === 'card';

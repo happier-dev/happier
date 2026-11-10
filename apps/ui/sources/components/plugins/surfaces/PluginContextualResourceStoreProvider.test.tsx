@@ -1860,7 +1860,7 @@ describe('PluginContextualResourceStoreProvider', () => {
             await vi.waitFor(() => { expect(snapshot?.digest).toBe(`sha256:${'b'.repeat(64)}`); });
             // A boundary that ignores cancellation must not replace the recovery result later.
             await act(async () => { finishRead(resourceResponse('c')); });
-            expect(snapshot?.digest).toBe(`sha256:${'b'.repeat(64)}`);
+            expect(readSnapshot()?.digest).toBe(`sha256:${'b'.repeat(64)}`);
             expect(tree.root.findAll(node => node.props.testID === 'native-frame.refreshing')).toHaveLength(0);
             expect(tree.root.findByType(NativeResourceBody)).toBe(body);
             expect(machineResourceRpc.read).toHaveBeenCalledTimes(baselineReads + 2);

@@ -6,6 +6,8 @@ import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { DaemonProviderUsageRefreshRequestV1Schema, DaemonProviderUsageRefreshResponseV1Schema,
   type DaemonProviderUsageRefreshRequestV1, type DaemonProviderUsageRefreshResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import type { ProviderCatalogRefreshResult } from '@/providers/probe/catalog';
+import type { RuntimeProviderServices } from '@/providers/probe/runtimeServices';
+import type { RuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
 import type {
   ProviderModelLoadRequest,
   ProviderModelLoadResult,
@@ -34,16 +36,13 @@ export type MachineProviderRpcServices = Readonly<{
     input: DaemonProviderDraftProbeRequestV1,
     waiterLifetime?: ProviderProbeWaiterLifetime,
   ): Promise<ProviderCatalogRefreshResult>;
-  models(input: Readonly<{ connectionId: string; machineId: string }>, signal?: AbortSignal): Promise<ProviderSavedModelsRpcResult>;
+  models: RuntimeProviderServices['models'];
   loadModel(input: ProviderModelLoadRequest): Promise<ProviderModelLoadResult>;
   cancelModelLoad(input: ProviderModelLoadRequest): Promise<ProviderModelLoadResult>;
   describeConnections(input: DaemonProviderConnectionsDescribeRequestV1, signal?: AbortSignal): Promise<DaemonProviderConnectionsDescribeResponseV1>;
   mutateConnection(input: DaemonProviderConnectionMutationRequestV1): Promise<DaemonProviderConnectionMutationResponseV1>;
   projectModels(input: DaemonProviderModelProjectionRequestV1, signal?: AbortSignal, context?: RpcHandlerContext): Promise<DaemonProviderModelProjectionResponseV1>;
-  resolveTeamCredentialRequestPolicySupport(
-    input: DaemonProviderTeamCredentialRequestPolicySupportRequestV1,
-    signal?: AbortSignal,
-  ): Promise<DaemonProviderTeamCredentialRequestPolicySupportResponseV1>;
+  resolveTeamCredentialRequestPolicySupport: RuntimeProviderModelManagementServices['resolveTeamCredentialRequestPolicySupport'];
   resolveTeamCredentialResourceTestCandidate(
     input: DaemonProviderTeamCredentialResourceTestCandidateRequestV1,
     signal?: AbortSignal,

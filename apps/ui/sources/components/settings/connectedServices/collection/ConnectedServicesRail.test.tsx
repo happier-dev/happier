@@ -88,7 +88,7 @@ describe('ConnectedServicesRailView (lab csvc C1 rail)', () => {
             ref: 'saved:deploy', source: 'personal', relationship: 'owner', name: 'QA_DEPLOY', kind: 'apiKey',
             revision: 1, materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true },
         })] }, gateways: [{ connectionId: 'gateway', title: 'Team gateway', summary: 'Gateway',
-            detailRoute: '/(app)/settings/providers/gateway', revision: 1, slotServices: [], agents: [] }],
+            detailRoute: '/(app)/settings/providers/gateway', revision: 1, slotServices: [], agents: [], enabled: true }],
             onAddGateway: vi.fn(), renderNewPool: () => null });
         const search = async (value: string) => act(async () => {
             screen.findAllByType(CollectionList)[0]!.props.search.onChangeText(value);
@@ -271,7 +271,7 @@ describe('ConnectedServicesRailView (lab csvc C1 rail)', () => {
 
     it('lists gateways after the pools they compose and opens the pressed one; without any the group is absent', async () => {
         const onOpenGateway = vi.fn();
-        const gateway = { connectionId: 'pc_gateway', title: 'Main gateway', detailRoute: '/(app)/settings/providers/pc_gateway', revision: 3, slotServices: [], summary: 'Not set', agents: [] };
+        const gateway = { connectionId: 'pc_gateway', title: 'Main gateway', detailRoute: '/(app)/settings/providers/pc_gateway', revision: 3, slotServices: [], summary: 'Not set', agents: [], enabled: true };
         const screen = await render({ gateways: [gateway], onOpenGateway });
 
         screen.pressByTestId('connected-services-rail:gateway:pc_gateway');
@@ -282,7 +282,7 @@ describe('ConnectedServicesRailView (lab csvc C1 rail)', () => {
     });
 
     it('says under each gateway what it draws on, and keeps the group in place while its catalog loads', async () => {
-        const gateway = { connectionId: 'pc_gateway', title: 'Main gateway', detailRoute: '/(app)/settings/providers/pc_gateway', revision: 3, slotServices: [CLAUDE], summary: 'Claude · ChatGPT', agents: [] };
+        const gateway = { connectionId: 'pc_gateway', title: 'Main gateway', detailRoute: '/(app)/settings/providers/pc_gateway', revision: 3, slotServices: [CLAUDE], summary: 'Claude · ChatGPT', agents: [], enabled: true };
         const listed = await render({ gateways: [gateway] });
         expect(listed.getTextContent()).toContain('Claude · ChatGPT');
 

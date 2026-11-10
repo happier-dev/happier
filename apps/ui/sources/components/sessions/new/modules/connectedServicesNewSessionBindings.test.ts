@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { AGENTS_CORE } from '@happier-dev/agents';
 import { connectedServiceProfileKey } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
+import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import {
     buildConnectedServiceAccountGroupOptionsByServiceId,
@@ -425,7 +426,8 @@ describe('connectedServicesNewSessionBindings', () => {
                     },
                 ],
             }],
-            supportedConnectedServiceIds: AGENTS_CORE.opencode.connectedServices?.supportedServiceIds ?? [],
+            supportedConnectedServiceIds: (AGENTS_CORE.opencode.connectedServices?.supportedServiceIds ?? [])
+                .map(serviceId => ConnectedServiceIdSchema.parse(serviceId)),
             labelsByKey: { [connectedServiceProfileKey({ serviceId: 'claude-subscription',
                 profileId: 'claude-pro-oauth' })]: 'Personal subscription' },
         });
@@ -475,7 +477,7 @@ describe('composeConnectedServiceTeamCredentialBindingIntents', () => {
         );
         expect(bindings).not.toBeNull();
         const resource = {
-            id: 'resource-acme', teamId: 'team-acme', displayName: 'Acme', resourceRevision: 5,
+            id: 'resource-acme', teamId: 'team-acme', displayName: 'Acme', sourceOwnerDisplayName: null, resourceRevision: 5,
             readiness: { kind: 'available' as const }, recoveryAction: null,
             mayBroker: false, mayReceiveDirect: true, directMaterialState: 'current' as const,
             sessionUsePolicy: 'personal_allowed' as const, providerModels: [],

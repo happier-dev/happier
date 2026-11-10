@@ -429,7 +429,7 @@ function buildCredentialHealthFromPluginStatus(
   const details = result.diagnostic?.details;
   const failureKind = ConnectedServiceCredentialRefreshFailureKindV1Schema.safeParse(
     details !== null && typeof details === 'object' && !Array.isArray(details)
-      ? details.credentialRefreshFailureKind : undefined,
+      && 'credentialRefreshFailureKind' in details ? details.credentialRefreshFailureKind : undefined,
   );
   const failureHealth = failureKind.success ? { lastRefreshFailureKind: failureKind.data } : {};
   if (
@@ -463,7 +463,7 @@ function buildCredentialHealthFromPluginRefresh(
   const details = settlement.result.diagnostic?.details;
   const providerHttpStatus = ConnectedServiceCredentialHealthV1Schema.shape.providerHttpStatus.safeParse(
     details !== null && typeof details === 'object' && !Array.isArray(details)
-      ? details.providerHttpStatus : undefined,
+      && 'providerHttpStatus' in details ? details.providerHttpStatus : undefined,
   );
   return {
     ...health,

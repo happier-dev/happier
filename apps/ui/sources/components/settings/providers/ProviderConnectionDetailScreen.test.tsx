@@ -4,6 +4,8 @@ import { act } from 'react-test-renderer';
 import { NavigationContext, useNavigation } from '@react-navigation/native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { ProviderProbeObservationIdentityV1Schema } from '@happier-dev/protocol/providers/fingerprints';
+import { SavedSecretCatalogEntryV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpc/errors';
 import { DaemonProviderConnectionViewV1Schema, DaemonProviderUsageRefreshResponseV1Schema, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/connections/v1';
@@ -597,7 +599,7 @@ describe('ProviderConnectionDetailScreen', () => {
         const view = createProviderConnectionViewFixture({ connectionId: saved.id, contributionKey: saved.source.kind === 'contribution' ? saved.source.contributionKey : null,
             revision: saved.revision,
             displayName: saved.displayName, displayNameMode: saved.displayNameMode, role: saved.role,
-            probeObservationIdentity: 'probe-observation:v1:gateway-custody',
+            probeObservationIdentity: ProviderProbeObservationIdentityV1Schema.parse('probe-observation:v1:gateway-custody'),
             deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null },
             gatewayPlacement: saved.gatewayPlacement,
             // The connection is enabled on its hub, not the machine inspected by this page.
@@ -920,7 +922,7 @@ describe('ProviderConnectionDetailScreen', () => {
             providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_MODELS, async () => pendingModels.promise);
             const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
             await waitForHomeGovernance(() => expect(screen.findByTestId(helperTestId)).toBeTruthy());
-            await pressAndFlush(screen.findByTestId(helperTestId));
+            await pressAndFlush(screen.findByTestId(helperTestId) ?? undefined);
             await waitForHomeGovernance(() => expect(providerHarness.state.requests.some(
                 request => request.method === RPC_METHODS.DAEMON_PROVIDERS_MODELS)).toBe(true));
             const controls = () => screen.findAll(node => typeof node.props.onChangeHelperModels === 'function')[0];
@@ -985,8 +987,11 @@ describe('ProviderConnectionDetailScreen', () => {
         const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(unavailableReason));
         const button = screen.findByTestId('provider-gateway-slot:passive-upstream:connect');
+        if (!button) throw new Error('Expected passive Provider connection control');
         expect(button.props.disabled).toBe(true);
-        expect(screen.findByTestId(`provider-gateway-slot:${purpose.purpose}:connect`).props.disabled).not.toBe(true);
+        const availableButton = screen.findByTestId(`provider-gateway-slot:${purpose.purpose}:connect`);
+        if (!availableButton) throw new Error('Expected available Provider connection control');
+        expect(availableButton.props.disabled).not.toBe(true);
         expect(providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_MODELS)).toHaveLength(0);
     });
 
@@ -3347,9 +3352,9 @@ describe('ProviderConnectionDetailScreen', () => {
         installSavedSecretCatalogHttpBoundary({ home: account.home, serverId: account.serverId, resources: [{
             resourceId: 'provider-key', encryptionMode: 'plain', recipientEnvelope: null,
             storedContent: { t: 'plain', v: { v: 1, name: 'Provider key', kind: 'apiKey', value: 'private-key' } },
-            entry: { ref, source: 'shared_resource', relationship: 'owner', name: 'Provider key', kind: 'apiKey',
+            entry: SavedSecretCatalogEntryV1Schema.parse({ ref, source: 'shared_resource', relationship: 'owner', name: 'Provider key', kind: 'apiKey',
                 revision: 1, materialStatus: 'ready',
-                capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+                capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } }),
         }] });
         const { Modal } = await import('@/modal');
         const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
@@ -3367,9 +3372,9 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(sheet.request).toMatchObject({ anchor: { kind: 'view', ref: { current: trigger } } });
         const onResult = sheet.onResult;
         await act(async () => { onResult({ kind: 'selected', secretRef: ref }); });
-        await waitForHomeGovernance(() => expect(stored.catalog.secretBindingsByConnectionId.pc_a?.account?.apiKey).toBe(ref));
+        await waitForHomeGovernance(() => expect(stored.catalog.secretBindingsByConnectionId[stored.catalog.connections[0]!.id]?.account?.apiKey).toBe(ref));
         expect(stored.writes).toBe(1);
-        expect(stored.catalog.secretBindingsByConnectionId.pc_a?.byMachineId ?? {}).toEqual({});
+        expect(stored.catalog.secretBindingsByConnectionId[stored.catalog.connections[0]!.id]?.byMachineId ?? {}).toEqual({});
     });
 
     it('offers separate same-source and custom duplication actions', async () => {
@@ -3520,9 +3525,9 @@ describe('ProviderConnectionDetailScreen', () => {
             installSavedSecretCatalogHttpBoundary({ home: account.home, serverId: account.serverId, resources: [{
                 resourceId: 'billing-key', encryptionMode: 'plain', recipientEnvelope: null,
                 storedContent: { t: 'plain', v: { v: 1, name: 'OpenRouter management', kind: 'token', value: 'private-key' } },
-                entry: { ref, source: 'shared_resource', relationship: 'owner', name: 'OpenRouter management', kind: 'token',
+                entry: SavedSecretCatalogEntryV1Schema.parse({ ref, source: 'shared_resource', relationship: 'owner', name: 'OpenRouter management', kind: 'token',
                     revision: 1, materialStatus: 'ready',
-                    capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+                    capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } }),
             }] });
             const { Modal } = await import('@/modal');
             const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId="pc_a" />);
@@ -3596,9 +3601,9 @@ describe('ProviderConnectionDetailScreen', () => {
             installSavedSecretCatalogHttpBoundary({ home: account.home, serverId: account.serverId, resources: [{
                 resourceId: 'api-key', encryptionMode: 'plain', recipientEnvelope: null,
                 storedContent: { t: 'plain', v: { v: 1, name: 'OpenRouter key', kind: 'token', value: 'private-key' } },
-                entry: { ref, source: 'shared_resource', relationship: 'owner', name: 'OpenRouter key', kind: 'token',
+                entry: SavedSecretCatalogEntryV1Schema.parse({ ref, source: 'shared_resource', relationship: 'owner', name: 'OpenRouter key', kind: 'token',
                     revision: 1, materialStatus: 'ready',
-                    capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+                    capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } }),
             }] });
             providerHarness.setResponse(RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH, DaemonProviderUsageRefreshResponseV1Schema.parse({ status: 'success', sources: [
                 { sourceId: 'key-usage', status: 'error', error: createProviderErrorV1('provider_secret_missing', {}) },

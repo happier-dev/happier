@@ -130,7 +130,7 @@ it('opens one secret with one real census, zero fetches and no rereads on render
         }] }) });
         applyConnectedMetadataCatalogSnapshot(scope, { presentation: { status: 'ready', revision: 1,
             entries: [{ v: 1, subject: { kind: 'account', account }, label: 'Work credential' }], diagnostics: [] },
-            acknowledgements: { status: 'loading' }, disclosure: [] }, true);
+            acknowledgements: { status: 'loading' } }, true);
     });
     expect(hook.getCurrent()).toMatchObject([{ owner: 'connectedAccountCredential',
         referrer: { id: JSON.stringify(['account', account.service.pluginId, account.service.localId, account.accountId]), displayName: 'Work credential' } }]);

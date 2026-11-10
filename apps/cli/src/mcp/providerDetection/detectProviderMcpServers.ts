@@ -1,3 +1,4 @@
+import { setTimeout, clearTimeout } from 'node:timers';
 import { DaemonMcpServersDetectWarningV1Schema, McpDetectedProviderV1Schema } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { PluginMcpServerTransportV1Schema } from '@happier-dev/protocol/plugins/contributions/mcp';

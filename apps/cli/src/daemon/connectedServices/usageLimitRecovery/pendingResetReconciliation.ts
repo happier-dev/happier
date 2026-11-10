@@ -40,7 +40,7 @@ export class PendingResetReconciliation {
     const existing = this.reconciliations.get(sessionId);
     if (existing) {
       // The incumbent operation belongs to another live wake; cancel only this borrow.
-      await waitForSharedOperation(existing, signal);
+      await (signal ? waitForSharedOperation(existing, signal) : existing);
       return await this.reconcile(sessionId, signal);
     }
     const operation = this.reconcileOnce(sessionId, signal);

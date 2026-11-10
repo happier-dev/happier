@@ -18,7 +18,7 @@ describe('same-manifest narrow Search coverage', () => {
                     : { id, pluginId: 'qa.search', occurrenceId: 'qa.search:7', contributionKind: 'translations' }])) } } : {},
         }),
         deferredProjection: { manifest: { protocolVersion: 1 as const, deferredSections: true as const,
-            projectionDigest: digest, sections: Object.fromEntries(['base', 'installedPackagesById', 'agentsById',
+            projectionDigest: digest, sectionFrameVersion: 2 as const, sections: Object.fromEntries(['base', 'installedPackagesById', 'agentsById',
                 'actionsById', 'familiesById.pluginUi', 'searchProviders'].map(id => [id, digest])) }, loadedSections },
     });
     it('preserves exact Search Actions when a concurrent Agent read finishes first', () => {
