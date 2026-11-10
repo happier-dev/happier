@@ -49,6 +49,9 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
 
     const selected = filter.options?.find((option) => option.id === filter.selectedId) ?? null;
     const valueLabel = filter.valueLabel ?? selected?.label ?? '';
+    // A search's scope chip is compact: until it has a value it names the filter, not a placeholder sentence.
+    const shownValueLabel = filter.pairsWithSearch && filter.muted ? filter.label
+        : props.placement === 'row' ? filter.rowValueLabel ?? valueLabel : valueLabel;
     const leading = filter.icon ?? selected?.icon ?? null;
     const iconOnly = filter.iconOnly === true && leading !== null;
     const hasChooser = filter.renderPopoverContent !== undefined
@@ -146,7 +149,7 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
                     {leading}
                     {iconOnly ? null : <>
                     {filter.showLabel ? <Text style={[styles.label, styles.labelMuted, styles.name]} numberOfLines={1}>{filter.label}</Text> : null}
-                    <Text style={[styles.label, filter.muted || (toggleable && !toggledOn) ? styles.labelMuted : null, filter.active ? { color: theme.colors.text.link } : null]} numberOfLines={1}>{props.placement === 'row' ? filter.rowValueLabel ?? valueLabel : valueLabel}</Text>
+                    <Text style={[styles.label, filter.muted || (toggleable && !toggledOn) ? styles.labelMuted : null, filter.active ? { color: theme.colors.text.link } : null]} numberOfLines={1}>{shownValueLabel}</Text>
                     {filter.valueQualifier ? <Text style={[styles.label, filter.muted ? styles.labelMuted : null, filter.active ? { color: theme.colors.text.link } : null, styles.qualifier]} numberOfLines={1}>{`· ${filter.valueQualifier}`}</Text> : null}
                     {filter.note ? <Text style={[styles.label, styles.labelMuted, styles.note]} numberOfLines={1}>{filter.note}</Text> : null}
                     {filter.count !== undefined || filter.reserveCount

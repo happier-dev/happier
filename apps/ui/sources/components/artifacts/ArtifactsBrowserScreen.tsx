@@ -18,8 +18,13 @@ import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { CollectionCreateButton, CollectionSearchToggle } from '@/components/ui/lists/collection/CollectionList';
+import { CollectionTitleButton } from '@/components/ui/lists/collection/CollectionTitleButton';
+import { usePublishPageCreateAction, type PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
 import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
-import { usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
+import { PhonePageBackLine, usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -121,14 +126,20 @@ export function ArtifactsBrowser(props: Readonly<{
 }>): React.ReactElement {
     const router = useRouter();
     const { theme } = useUnistyles();
-    // The phone's browser has no native header (its PageHeader owns the identity), so its Back sits on the title line
-    // and never strands a direct load: with no history it goes Home.
+    // The phone's browser has no native header (its PageHeader owns the identity), so its Back sits on the page's head
+    // line and never strands a direct load: with no history it goes Home.
     const deviceType = useDeviceType();
     const phoneLayout = deviceType === 'phone';
     const inheritedBack = useNavigationBackControl();
     const phoneBack = usePhoneDestinationBack('artifacts:back');
     const { artifacts, loaded, loadFailed, usage } = props;
     const [query, setQuery] = React.useState('');
+    // A main screen's search waits behind its magnifier; a query keeps it open, closing it clears the query.
+    const [searchOpened, setSearchOpened] = React.useState(false);
+    const searchOpen = searchOpened || query.length > 0;
+    const toggleSearch = React.useCallback(() => {
+        if (searchOpen) { setQuery(''); setSearchOpened(false); } else setSearchOpened(true);
+    }, [searchOpen]);
     const [kind, setKind] = React.useState<ArtifactBrowserKind | 'all'>('all');
     const [sort, setSort] = React.useState<ArtifactBrowserSort>('updated_desc');
     const [view, setView] = useLocalSettingMutable('artifactsBrowserViewV1');
@@ -170,6 +181,11 @@ export function ArtifactsBrowser(props: Readonly<{
     const collectionPresentation = presentation === 'grid' ? 'grid' : phoneLayout ? 'list' : 'table';
     const anatomy = useBrowserAnatomy(presentation === 'grid' ? 'grid' : 'list');
     const newDocument = React.useCallback(() => router.push('/artifacts/new' as never), [router]);
+    // The title row's "+" and, on a phone, the bar's "+" beside the tabs run the same action.
+    const create = React.useMemo<PageCreateAction>(() => ({
+        label: t('artifacts.browser.newDocument'), testID: 'artifacts:new', onPress: newDocument,
+    }), [newDocument]);
+    usePublishPageCreateAction(phoneLayout ? create : null);
 
     const viewSwitch = <ArtifactViewSwitch presentation={presentation} onPresentationChange={setPresentation} />;
     const firstVisit = loaded && total === 0 && !loadFailed;
@@ -186,13 +202,18 @@ export function ArtifactsBrowser(props: Readonly<{
                 // unread list keeps the line's space, so the toolbar and grid do not move when it arrives.
                 showPresent={total > 0}
                 reservePresent={!loaded && !loadFailed}
-                onNewDocument={newDocument}
+                create={create}
+                search={firstVisit ? null : { open: searchOpen, onToggle: toggleSearch }}
+                // A phone's title opens the library's choices (kind and order), as every main screen's title does.
+                titleFilters={phoneLayout && !firstVisit ? { kind, onKindChange: setKind, counts, sort, onSortChange: setSort } : null}
                 // A phone's view switch sits with the count, below the choices (lab A1p keeps the search a full row).
                 viewSwitch={firstVisit ? null : viewSwitch}
                 toolbar={firstVisit ? null : (
                     <BrowserToolbar
                         query={query}
                         onQueryChange={setQuery}
+                        searchOpen={searchOpen}
+                        searchAutoFocus={searchOpened && query.length === 0}
                         kind={kind}
                         onKindChange={setKind}
                         counts={counts}
@@ -289,8 +310,11 @@ export function ArtifactsBrowser(props: Readonly<{
     );
 
     return (
-        <NavigationBackChromeProvider control={phoneBack ?? inheritedBack}>
+        // A phone's head line stands under the status bar, as every main screen's does (its Back on a page it pushes),
+        // so the title stands where My work's does; wider hosts keep their inherited Back in the header.
+        <NavigationBackChromeProvider control={phoneLayout ? null : inheritedBack}>
         <View style={stylesheet.screen}>
+        {phoneLayout ? <PhonePageBackLine control={phoneBack} page /> : null}
         <DetailsPaneHost
             testID="artifacts:detailPane"
             mainColumn={{
@@ -370,7 +394,10 @@ function BrowserHeader(props: Readonly<{
     usage: ArtifactStorageUsageV1 | null;
     showPresent: boolean;
     reservePresent: boolean;
-    onNewDocument: () => void;
+    create: PageCreateAction;
+    /** The title row's magnifier; absent while the library is empty (nothing to search yet). */
+    search: Readonly<{ open: boolean; onToggle: () => void }> | null;
+    titleFilters: ArtifactTitleFiltersProps | null;
     /** A phone shows the Grid | List | Folders switch on the line with the count. */
     viewSwitch: React.ReactNode;
     toolbar: React.ReactNode;
@@ -378,10 +405,6 @@ function BrowserHeader(props: Readonly<{
     const styles = stylesheet;
     const limit = props.usage?.limitBytes ?? null;
     const phone = useDeviceType() === 'phone';
-    const { onNewDocument } = props;
-    const newDocumentAction = React.useMemo(() => ({
-        title: t('artifacts.browser.newDocument'), icon: 'plus' as const, onPress: onNewDocument, testID: 'artifacts:new',
-    }), [onNewDocument]);
     const present = props.showPresent ? (
         <View style={styles.present} testID="artifacts:present">
             <Text style={styles.presentText}>
@@ -400,15 +423,33 @@ function BrowserHeader(props: Readonly<{
     ) : undefined;
     return (
         <View>
-            <PageHeader
-                testID="artifacts:header"
-                title={t('artifacts.title')}
-                alwaysShowTitle
-                description={phone && (props.showPresent || props.reservePresent) ? undefined : t('artifacts.browser.description')}
-                details={phone ? undefined : present}
-                // The page's one labelled action, in its header at every width: a phone's shell already floats its own +.
-                primaryAction={newDocumentAction}
-            />
+            {/* A phone's main screen leads with the large title every main screen has; its title row ends with the
+                magnifier and the "+" (the bar's "+" runs the same create action). */}
+            <NavigationLargeTitleProvider largeTitle={phone}>
+                <PageHeader
+                    testID="artifacts:header"
+                    title={t('artifacts.title')}
+                    titleControl={props.titleFilters ? <ArtifactTitleFilters {...props.titleFilters} /> : undefined}
+                    alwaysShowTitle
+                    description={phone && (props.showPresent || props.reservePresent) ? undefined : t('artifacts.browser.description')}
+                    details={phone ? undefined : present}
+                    actionsPlacement="page"
+                    actionsLayout="inline"
+                    actions={(
+                        <>
+                            {props.search ? (
+                                <CollectionSearchToggle
+                                    testID="artifacts:search:toggle"
+                                    open={props.search.open}
+                                    onPress={props.search.onToggle}
+                                    accessibilityLabel={t('artifacts.browser.searchPlaceholder')}
+                                />
+                            ) : null}
+                            <CollectionCreateButton create={props.create} />
+                        </>
+                    )}
+                />
+            </NavigationLargeTitleProvider>
             {props.toolbar}
             {/* Under the toolbar, on the grid's edges (lab A8): it blocks saving, not finding. */}
             {props.usage !== null && limit !== null && props.usage.usedBytes >= limit ? (
@@ -474,9 +515,100 @@ function ArtifactViewSwitch(props: Readonly<{
     );
 }
 
+/** The kinds the library can narrow to: only kinds that hold something; a kind that empties keeps its choice until changed. */
+function useArtifactKindOptions(counts: ReadonlyMap<ArtifactBrowserKind, number>, kind: ArtifactBrowserKind | 'all') {
+    const { theme } = useUnistyles();
+    return React.useMemo(() => [
+        { id: 'all', label: artifactKindFilterLabel('all') },
+        ...ARTIFACT_BROWSER_KINDS.filter((candidate) => (counts.get(candidate) ?? 0) > 0 || candidate === kind)
+            .map((candidate) => ({
+                id: candidate,
+                label: artifactKindFilterLabel(candidate),
+                icon: <Icon name={ARTIFACT_KIND_ICONS[candidate]} size={16} color={theme.colors.text.secondary} />,
+            })),
+    ], [counts, kind, theme.colors.text.secondary]);
+}
+
+function readArtifactKind(id: string): ArtifactBrowserKind | 'all' {
+    return ARTIFACT_BROWSER_KINDS.find((candidate) => candidate === id) ?? 'all';
+}
+
+function readArtifactSort(id: string): ArtifactBrowserSort {
+    return SORTS.find((candidate) => candidate === id) ?? 'updated_desc';
+}
+
+type ArtifactTitleFiltersProps = Readonly<{
+    kind: ArtifactBrowserKind | 'all';
+    onKindChange: (kind: ArtifactBrowserKind | 'all') => void;
+    counts: ReadonlyMap<ArtifactBrowserKind, number>;
+    sort: ArtifactBrowserSort;
+    onSortChange: (sort: ArtifactBrowserSort) => void;
+}>;
+
+const KIND_ITEM_PREFIX = 'kind:';
+const SORT_ITEM_PREFIX = 'sort:';
+
+/** A phone's title: "Artifacts ⌄" opens the library's choices, the same kind and order the toolbar's chips set. */
+function ArtifactTitleFilters(props: ArtifactTitleFiltersProps) {
+    const [open, setOpen] = React.useState(false);
+    const kindOptions = useArtifactKindOptions(props.counts, props.kind);
+    const items = React.useMemo<readonly DropdownMenuItem[]>(() => [
+        ...kindOptions.map((option): DropdownMenuItem => ({
+            id: `${KIND_ITEM_PREFIX}${option.id}`,
+            testID: `artifacts:title-menu:kind:${option.id}`,
+            title: option.label,
+            ...('icon' in option ? { icon: option.icon } : {}),
+            checked: option.id === props.kind,
+            category: 'kind',
+        })),
+        ...SORTS.map((candidate): DropdownMenuItem => ({
+            id: `${SORT_ITEM_PREFIX}${candidate}`,
+            testID: `artifacts:title-menu:sort:${candidate}`,
+            title: sortLabel(candidate),
+            checked: candidate === props.sort,
+            category: 'sort',
+        })),
+    ], [kindOptions, props.kind, props.sort]);
+    const { onKindChange, onSortChange } = props;
+    const select = React.useCallback((itemId: string) => {
+        setOpen(false);
+        if (itemId.startsWith(KIND_ITEM_PREFIX)) onKindChange(readArtifactKind(itemId.slice(KIND_ITEM_PREFIX.length)));
+        else if (itemId.startsWith(SORT_ITEM_PREFIX)) onSortChange(readArtifactSort(itemId.slice(SORT_ITEM_PREFIX.length)));
+    }, [onKindChange, onSortChange]);
+    return (
+        <DropdownMenu
+            open={open}
+            onOpenChange={setOpen}
+            items={items}
+            onSelect={select}
+            variant="slim"
+            search={false}
+            separateCategories
+            matchTriggerWidth={false}
+            popoverPortalWebTarget="body"
+            placement="bottom"
+            popoverAnchorAlign="start"
+            popoverAccessibilityLabel={t('artifacts.title')}
+            trigger={({ toggle }) => (
+                <CollectionTitleButton
+                    testID="artifacts:title"
+                    label={t('artifacts.title')}
+                    accessibilityLabel={t('artifacts.title')}
+                    expanded={open}
+                    hasPopup="menu"
+                    onPress={toggle}
+                />
+            )}
+        />
+    );
+}
+
 function BrowserToolbar(props: Readonly<{
     query: string;
     onQueryChange: (query: string) => void;
+    searchOpen: boolean;
+    /** Opened by its magnifier just now (not restored with a query): the field takes the caret. */
+    searchAutoFocus: boolean;
     kind: ArtifactBrowserKind | 'all';
     onKindChange: (kind: ArtifactBrowserKind | 'all') => void;
     counts: ReadonlyMap<ArtifactBrowserKind, number>;
@@ -493,30 +625,22 @@ function BrowserToolbar(props: Readonly<{
     const compactFolders = phone && props.presentation === 'folders';
     const styles = stylesheet;
     const folders = useArtifactFolderCommands();
-    // Only kinds that hold something are offered; a kind that empties keeps its choice until changed.
-    const kindOptions = React.useMemo(() => [
-        { id: 'all', label: artifactKindFilterLabel('all') },
-        ...ARTIFACT_BROWSER_KINDS.filter((candidate) => (props.counts.get(candidate) ?? 0) > 0 || candidate === props.kind)
-            .map((candidate) => ({
-                id: candidate,
-                label: artifactKindFilterLabel(candidate),
-                icon: <Icon name={ARTIFACT_KIND_ICONS[candidate]} size={16} color={theme.colors.text.secondary} />,
-            })),
-    ], [props.counts, props.kind, theme.colors.text.secondary]);
+    const kindOptions = useArtifactKindOptions(props.counts, props.kind);
     const sortOptions = React.useMemo(() => SORTS.map((candidate) => ({ id: candidate, label: sortLabel(candidate) })), []);
-    const search = (
+    const search = props.searchOpen ? (
         <CompactSearchField
             testID="artifacts:search"
             value={props.query}
             onChangeText={props.onQueryChange}
             placeholder={t('artifacts.browser.searchPlaceholder')}
             style={[styles.search, phone ? styles.phoneSearch : null]}
+            {...(props.searchAutoFocus ? { autoFocus: true } : {})}
         />
-    );
+    ) : null;
     return (
         <View style={styles.toolbar} testID="artifacts:toolbar">
             {/* A phone gives the search its own full row (lab A1p); the choices and the view switch share the row below. */}
-            {phone ? <View style={styles.phoneSearchRow}>{search}</View> : search}
+            {phone && search ? <View style={styles.phoneSearchRow}>{search}</View> : search}
             <View style={styles.toolbarChoices}>
                 <SelectionListFilterChip filter={{
                     id: 'artifacts-kind',
@@ -524,7 +648,7 @@ function BrowserToolbar(props: Readonly<{
                     label: t('artifacts.browser.kindLabel'),
                     options: kindOptions,
                     selectedId: props.kind,
-                    onChange: (id) => props.onKindChange(id === 'all' ? 'all' : ARTIFACT_BROWSER_KINDS.find((candidate) => candidate === id) ?? 'all'),
+                    onChange: (id) => props.onKindChange(readArtifactKind(id)),
                 }} />
                 {compactFolders ? null : (
                     <SelectionListFilterChip filter={{
@@ -533,7 +657,7 @@ function BrowserToolbar(props: Readonly<{
                         label: t('artifacts.browser.sort.label'),
                         options: sortOptions,
                         selectedId: props.sort,
-                        onChange: (id) => props.onSortChange(SORTS.find((candidate) => candidate === id) ?? 'updated_desc'),
+                        onChange: (id) => props.onSortChange(readArtifactSort(id)),
                     }} />
                 )}
                 <View style={styles.grow} />

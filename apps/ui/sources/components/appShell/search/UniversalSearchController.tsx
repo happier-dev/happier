@@ -1036,6 +1036,8 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
                     machineNameById.get(choice.scope.machineId)].filter(Boolean).join(' · ') }
                 : { id: choice.key, label: choice.label }),
         selectedId: scopeKey,
+        // The Home is where the search looks: its chip stays on the field's row at every width.
+        pairsWithSearch: true,
         open: scopePickerOpen,
         onOpenChange: setScopePickerOpen,
         onChange: (choiceKey: string) => {

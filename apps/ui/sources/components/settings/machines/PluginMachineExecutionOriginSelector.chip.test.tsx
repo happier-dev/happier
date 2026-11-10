@@ -265,7 +265,7 @@ describe('PluginMachineExecutionOriginSelector header chip', () => {
         await pinned.unmount();
     }));
 
-    it('lets a phone header chip shrink to its glyph while still naming the Machine and announcing that Happier picked it', () => withPopoverWebGlobals(async () => {
+    it('keeps a phone header chip\'s Machine name without the Auto word, still announcing that Happier picked it', () => withPopoverWebGlobals(async () => {
         const fixture = createSelection();
         const origin = composePluginMachineExecutionOriginV1(fixture.candidates[0]!.materialization);
         const selection: PluginMachineExecutionOriginSelectionV1 = { ...fixture.selection, selectedOrigin: origin,
@@ -276,8 +276,9 @@ describe('PluginMachineExecutionOriginSelector header chip', () => {
         expect(wide.getTextContent()).not.toBe('');
         await wide.unmount();
         const compact = await renderScreen(<PluginMachineExecutionOriginSelectorView selection={selection} presentation="chip" compact testIDPrefix="compact.execution" />);
-        // Beside the page title and the page's action there is no room for a name: the glyph stands for it.
-        expect(compact.getTextContent()).toBe('');
+        // Like every Machine chip it names the Machine (owner 11-10); only the quiet Auto word gives way to the title.
+        expect(compact.getTextContent()).not.toBe('');
+        expect(compact.getTextContent()).not.toContain('settingsPlugins.surfaces.runOnAuto');
         const compactName = compact.findHostByTestId('compact.execution.chip')?.props.accessibilityLabel;
         expect(compactName).toBeTruthy();
         expect(wideName).toContain(compactName);

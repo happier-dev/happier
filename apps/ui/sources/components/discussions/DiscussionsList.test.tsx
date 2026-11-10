@@ -379,6 +379,11 @@ describe('DiscussionsList and its Session anchor consumer', () => {
         const reads = discussionApi.list.mock.calls.length;
         vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
         try {
+            // A main screen's filter button ends its search field (as Sessions' funnel does), not the title row;
+            // the title row keeps the magnifier and the "+".
+            expect(screen.findByTestId('discussions-column-space-filter-open')).toBeNull();
+            expect(screen.findByTestId('session-discussion-new:header')).not.toBeNull();
+            await screen.pressByTestIdAsync('discussions-column-search:toggle');
             await screen.pressByTestIdAsync('discussions-column-space-filter-open');
             const editor = () => screen.findAll(node => node.props.testID === 'discussions-column-space-editor' && node.props.model)[0]!;
             await screen.pressByTestIdAsync('collection-filter-add');

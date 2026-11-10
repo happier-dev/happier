@@ -7,7 +7,7 @@ import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useWorkflowsDestinationAccess } from '@/components/workflows/gating/workflowsDestinationAccess';
 import { useOptionalBotsRosterRuntime } from '@/components/sessions/bots/BotsRosterRuntime';
 import {
-    commitCompactAppDestinationSources, readCommittedCompactAppDestinations, isCompactDestinationSourcePublished,
+    commitCompactAppDestinationSources, readCommittedCompactAppDestinations, isCompactDestinationSourcePublished, isAppDestinationRootPath,
     subscribeCompactAppDestinations, type AppDestinationActivationOwners, type AppBuiltinDestinationAvailability,
     type CompactAppDestinationSources, type CompactAppDestination,
 } from './compactAppDestinationCatalog';
@@ -76,4 +76,10 @@ export function useCompactAppDestinationCatalog(owners: AppDestinationActivation
 export function useCompactAppDestinations(owners: AppDestinationActivationOwners = {}): readonly CompactAppDestination[] {
     const { subscribe, read } = useCompactDestinationSource(owners);
     return React.useSyncExternalStore(subscribe, read, read);
+}
+
+/** Whether the page at `pathname` is a main screen ({@link isAppDestinationRootPath}); the one answer every page head reads. */
+export function useIsAppDestinationRootPath(pathname: string | null | undefined): boolean {
+    const catalog = useCompactAppDestinations();
+    return typeof pathname === 'string' && isAppDestinationRootPath(catalog, pathname);
 }

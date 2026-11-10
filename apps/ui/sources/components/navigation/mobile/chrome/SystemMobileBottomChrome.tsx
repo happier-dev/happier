@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useTabBarNewSessionPress } from '@/components/ui/navigation/TabBarNewSessionButton';
+import { usePageCreateAction } from './pageCreateAction';
 import { formatBadgeCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
 import { ProjectPageChromeCounts } from '@/components/projects/navigation/ProjectPageChromeCounts';
@@ -61,6 +62,7 @@ function nativeBadge(badge: CockpitTabBadge | Readonly<{ kind: 'dot' }> | undefi
 const MainPresentation = React.memo(function MainPresentation(props: React.ComponentProps<typeof MainAppTabBar> & Publication) {
     const tabs = useMainAppTabDefinitions();
     const newSessionPress = useTabBarNewSessionPress();
+    const pageCreate = usePageCreateAction();
     const more = usePhoneDestinationsMore({ native: true });
     React.useLayoutEffect(() => {
         const items: SystemTabItem[] = tabs.map(tab => ({ id: tab.key, title: tab.label, sfSymbol: tab.sfSymbol,
@@ -72,14 +74,17 @@ const MainPresentation = React.memo(function MainPresentation(props: React.Compo
         const destinationId = props.selectedDestinationId ?? props.activeTab;
         const selectedId = items.some(item => item.id === destinationId) ? destinationId : 'more';
         if (selectedId === 'sessions') items.push({ id: 'newSession', title: t('newSession.title'), sfSymbol: 'square.and.pencil', action: true });
+        // Any other main screen lends the bar its own create action (owner 11-10).
+        else if (pageCreate) items.push({ id: 'pageCreate', title: pageCreate.label, sfSymbol: 'plus', action: true });
         props.onPresentation({ items, selectedId, onPress: id => {
             if (id === 'newSession' && selectedId === 'sessions') { newSessionPress(); return; }
+            if (id === 'pageCreate') { pageCreate?.onPress(); return; }
             if (id === 'more') { more.open(); return; }
             const tab = tabs.find(tab => tab.key === id);
             if (tab) props.onTabPress(tab.key);
             else more.bar.onPress(id);
         } });
-    }, [tabs, newSessionPress, more.available, more.open, more.bar.tabs, more.bar.onPress, props.activeTab, props.selectedDestinationId, props.onTabPress, props.onPresentation]);
+    }, [tabs, newSessionPress, pageCreate, more.available, more.open, more.bar.tabs, more.bar.onPress, props.activeTab, props.selectedDestinationId, props.onTabPress, props.onPresentation]);
     return more.menu;
 });
 
@@ -107,7 +112,8 @@ const SessionPresentation = React.memo(function SessionPresentation(props: React
     const { visibility, tabForEntry, menu, openMore, pageTabs } = useSessionCockpitBarPresentation(props, true);
     // UIKit owns available rail capacity. User-hidden entries stay hidden; pinned and overflow keep their canonical order.
     const topMode = pageTabs === 'top';
-    const tabs = [...visibility.visible, ...(topMode ? [] : visibility.overflow)].map(tabForEntry);
+    // The open tool from More already rides the visible items; UIKit lists every overflow tool once.
+    const tabs = [...visibility.visible, ...(topMode ? [] : visibility.overflow.filter(entry => !visibility.visible.includes(entry)))].map(tabForEntry);
     React.useLayoutEffect(() => {
         const items: SystemTabItem[] = tabs.map(tab => ({ id: tab.id, title: tab.label, sfSymbol: tab.sfSymbol,
             accessibilityLabel: tab.accessibilityLabel, badge: nativeBadge(tab.badge), disabled: tab.disabled }));

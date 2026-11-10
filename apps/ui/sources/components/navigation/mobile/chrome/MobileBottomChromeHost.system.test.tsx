@@ -191,7 +191,8 @@ describe('system bottom chrome through the real host', () => {
         await act(async () => storage.setState({ localSettings: { ...storage.getState().localSettings, navigationSurfacePlacementsV1: {
             phoneLauncher: { orderedIds: [], placements: { settings: 'overflow', artifacts: 'hidden' } },
         } } }));
-        expect(bar.props.hidden).toBe(true);
+        // Settings' own page is a main screen (owner 11-10): unpinned, it keeps the bar from More.
+        expect(bar.props.hidden).toBe(false);
         route.pathname = '/';
         await h.update();
         expect(ids()).not.toContain('settings');

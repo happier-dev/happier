@@ -6,7 +6,8 @@ import type { Href } from 'expo-router';
 
 import { useDestinationFocus } from '@/components/appShell/workspace/destinationInstanceContext';
 import { BACK_GLYPH_INK_INSET_PX, DefaultBackButton } from '@/components/navigation/Header';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useIsAppDestinationRootPath } from '@/components/appShell/destinations/useCompactAppDestinations';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useDeviceType } from '@/utils/platform/responsive';
 import type { NavigationBackControl } from './NavigationBackChrome';
@@ -38,15 +39,17 @@ export function usePageBackControl(testID: string, onBack: () => void): Navigati
 }
 
 /**
- * The Back of a phone page that a tab bar does not follow to and that hides the native header (a More
- * destination): its page head is the only way out, and a direct load with no history goes to `fallbackHref`
- * (Home unless the page names the thing it belongs to). Null on wider hosts, which keep whatever Back they inherit.
+ * The Back of a phone page that hides the native header: its page head is the way out, and a direct load with
+ * no history goes to `fallbackHref` (Home unless the page names the thing it belongs to). A main screen (a rail
+ * destination's own route: Boards, Discussions, People) has none: the tab bar is its way around (owner 11-10).
+ * Null on wider hosts, which keep whatever Back they inherit.
  */
 export function usePhoneDestinationBack(testID: string, fallbackHref: Href = '/'): NavigationBackControl | null {
     const router = useRouter();
     const phone = useDeviceType() === 'phone';
+    const mainScreen = useIsAppDestinationRootPath(usePathname());
     const control = usePageBackControl(testID, () => safeRouterBack({ router, fallbackHref }));
-    return phone ? control : null;
+    return phone && !mainScreen ? control : null;
 }
 
 const backLineStyles = StyleSheet.create(() => ({
@@ -66,11 +69,18 @@ export function PhoneDestinationBackLine(props: Readonly<{ control: NavigationBa
 }
 
 /**
- * The Back line of a whole phone page with no native bar above it (Discussions, Boards): it stands under the
- * status bar, in every state the page shows (its list, or a whole-page state in the list's place).
+ * The head line of a whole phone page with no native bar above it (Discussions, Boards): it stands under the
+ * status bar, in every state the page shows (its list, or a whole-page state in the list's place). A main screen
+ * keeps the line's height with nothing on it, so every main screen's title stands where My work's does; a page
+ * it pushes carries its Back there. `page` false (a column beside a page) draws nothing.
  */
-export function PhonePageBackLine(props: Readonly<{ control: NavigationBackControl | null }>) {
+export function PhonePageBackLine(props: Readonly<{ control: NavigationBackControl | null; page?: boolean }>) {
     const topInset = useChromeSafeAreaInsets().top;
-    if (!props.control) return null;
-    return <View style={{ paddingTop: topInset }}><PhoneDestinationBackLine control={props.control} /></View>;
+    const phone = useDeviceType() === 'phone';
+    if (!props.control && !(props.page && phone)) return null;
+    return (
+        <View style={{ paddingTop: topInset }}>
+            {props.control ? <PhoneDestinationBackLine control={props.control} /> : <View style={backLineStyles.line} />}
+        </View>
+    );
 }

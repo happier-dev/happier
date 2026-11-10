@@ -1618,6 +1618,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             connecting: { title: '正在連線這台機器', reason: '機器回應後，此檢視就會開啟。' },
             sourceRequired: { title: '選擇執行位置', reason: '有多個來源可以執行它。請選擇一個來載入它。' },
       namedUnavailable: ({ name }: { name: string }) => `無法開啟 ${name}`,
+      namedPageUnavailable: ({ name }: { name: string }) => `${name} 未提供此頁面`,
       namedFailed: ({ name }: { name: string }) => `無法載入 ${name}`,
     },
     offlineSnapshot: {
@@ -14837,6 +14838,8 @@ settingsSession: {
       viewNotCurrent: "所選外掛檢視已不是目前版本。請重新開啟頁面、在執行它的機器上更新外掛，或選擇另一台機器。",
       unavailableGeneric: '可能仍在啟動。',
       crashLoop: '外掛因反覆當機已停止。',
+      homeUnreachableTitle: "暫時無法連線到此 Home",
+      homeUnreachableReason: "請檢查網路連線以及 Home 是否正在執行，然後再試一次。",
       disabledByPolicy: '目前設定或相容性已停用此外掛檢視。',
       hostedWebUnavailableTitle: '託管外掛檢視無法使用',
       hostedWebPolicyDenied: '此外掛檢視無法在此介面中使用。請檢查其可用性設定或使用支援的介面。',

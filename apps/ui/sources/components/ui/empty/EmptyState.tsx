@@ -70,9 +70,10 @@ type EmptyStateProps = Readonly<{
      */
     primaryAction?: EmptyStatePrimaryAction;
     /**
-     * A quiet second way forward under the primary action, as a text button (for example, opening the
-     * setting that would let everyone do this). Only rendered with a `primaryAction`, except in the
-     * `line` layout, where it is a second inline link.
+     * A second way forward beside the primary action (for example, opening the setting that would let
+     * everyone do this): the same size, in the secondary (bordered) style, moving beneath it when the
+     * column is too narrow for both. Only rendered with a `primaryAction`, except in the `line` layout,
+     * where it is a second inline link.
      */
     secondaryAction?: EmptyStatePrimaryAction;
     /**
@@ -224,12 +225,12 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
         />
     ) : null;
     const actionContent = primaryButton && props.secondaryAction ? (
-        <View style={stylesheet.actionStack}>
+        <View style={stylesheet.actionRow}>
             {primaryButton}
             <RoundButton
                 testID={props.secondaryAction.testID}
-                size="small"
-                display="inverted"
+                size="normal"
+                display="secondary"
                 title={props.secondaryAction.label}
                 accessibilityLabel={props.secondaryAction.label}
                 disabled={props.secondaryAction.disabled}
@@ -319,9 +320,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...HAPPIER_EMPTY_STATE_FRAME.pageAdd,
         borderColor: theme.colors.border.default,
     },
-    actionStack: {
+    // Primary then secondary on one line, centred; a column too narrow for both puts the secondary beneath.
+    actionRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'center',
         alignItems: 'center',
-        gap: theme.space.s4,
+        gap: theme.space.s8,
     },
     unavailableReason: {
         ...Typography.default(),

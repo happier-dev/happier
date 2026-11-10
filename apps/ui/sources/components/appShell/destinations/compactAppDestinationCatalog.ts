@@ -859,6 +859,17 @@ export function resolveCurrentAppDestination(
     return current;
 }
 
+/**
+ * A main screen (owner 11-10): the page is a rail destination's own route (Boards, not a board; the Store, not a
+ * listing). The tab bar is its way around, so it draws no Back; a page it pushes, an entry inside a column (Browse
+ * external sessions) and a route no destination claims keep theirs.
+ */
+export function isAppDestinationRootPath(catalog: readonly CompactAppDestination[], pathname: string): boolean {
+    const current = resolveCurrentAppDestination(catalog, pathname);
+    if (!current || current.placement.kind !== 'rail' || current.activation !== 'navigate') return false;
+    return normalizePathname(current.routePath.split('?')[0]!) === normalizePathname(pathname.split(/[?#]/, 1)[0]!);
+}
+
 function decodeSegment(segment: string): string | null {
     try {
         return decodeURIComponent(segment);

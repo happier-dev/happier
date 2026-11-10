@@ -502,7 +502,14 @@ const PLUGIN_RUNTIME_KEYS = {
     plugin_uninstalled: 'pluginRuntime.retired',
     revoked: 'pluginRuntime.retired',
     uninstalled: 'pluginRuntime.retired',
+    // The Account's mode read failed: the Home (its server) did not answer, so nothing on the page can open yet.
+    account_encryption_mode_unavailable: 'pluginRuntime.homeUnreachableReason',
 } as const satisfies Record<string, PluginRuntimeMessageKey>;
+
+/** A cause that is not the plugin's names itself in the card's title, in place of "{plugin} can't open". */
+const PLUGIN_RUNTIME_TITLE_KEYS = {
+    account_encryption_mode_unavailable: 'pluginRuntime.homeUnreachableTitle',
+} as const satisfies Record<string, 'pluginRuntime.homeUnreachableTitle'>;
 
 type SimulatorPreviewMessageKey =
     | 'simulatorPreview.availability.noDevices'
@@ -545,6 +552,7 @@ type PluginRuntimeMessageKey =
     | 'pluginRuntime.incompatible'
     | 'pluginRuntime.authorFailure'
     | 'pluginRuntime.retired'
+    | 'pluginRuntime.homeUnreachableReason'
     | 'pluginRuntime.unavailableGeneric';
 
 /** Picker rows and the surrounding surface explain the same Administration refusal. */
@@ -665,6 +673,7 @@ function resolvePluginSurfaceRecoveryAction(
         case 'local_artifact_failure':
         case 'render_error':
         case 'hosted_web_artifact_load_failed':
+        case 'account_encryption_mode_unavailable':
             return Object.freeze({ kind: 'retry', label: t('common.retry') });
         case 'artifact_source_integrity_invalid':
         case 'artifact_graph_mismatch':
@@ -961,7 +970,11 @@ export function resolvePluginSurfaceStatePresentation(input: Readonly<{
         kind: input.reasonKind ?? 'pluginRuntime',
     });
     const subjectName = input.subjectName?.trim();
-    const namedTitle = !subjectName
+    const causeTitleKey = input.reasonKind !== 'widget' && reasonCode
+        ? PLUGIN_RUNTIME_TITLE_KEYS[reasonCode as keyof typeof PLUGIN_RUNTIME_TITLE_KEYS] : undefined;
+    const namedTitle = causeTitleKey && (input.state === 'unavailable' || input.state === 'failedRetry')
+        ? t(causeTitleKey)
+        : !subjectName
         ? undefined
         : input.state === 'unavailable'
             ? reasonCode === 'plugin_app_page_unavailable'

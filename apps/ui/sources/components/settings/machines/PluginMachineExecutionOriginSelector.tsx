@@ -320,8 +320,8 @@ export function PluginMachineExecutionOriginSelectorView(props: Readonly<{
     presentation?: 'section' | 'chip';
     /**
      * A chip in a phone's navigation header, where the page title and the page's own action have the
-     * room's priority: the chip is its glyph (with the offline dot and the open caret) and its accessible
-     * name carries the Machine and how it was chosen. The full name and the choice stay in the picker.
+     * room's priority: it names the Machine like every Machine chip, without the quiet "Auto" word; how
+     * it was chosen stays in its accessible hint and in the picker (owner 11-10: the picker keeps its label).
      */
     compact?: boolean;
     machineCandidates?: readonly MachineAdministrationCandidateV1[];
@@ -421,7 +421,6 @@ export function PluginMachineExecutionOriginSelectorView(props: Readonly<{
                 accessibilityHint: t('settingsPlugins.surfaces.runOnAutoHint'),
             } : {}),
             icon: <Icon name="desktop" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
-            ...(props.compact ? { iconOnly: true } : {}),
             muted: !current.selected,
             // Plugin availability does not establish Machine presence; an unknown Machine keeps no dot.
             ...(current.presence ? { presence: current.presence } : {}),

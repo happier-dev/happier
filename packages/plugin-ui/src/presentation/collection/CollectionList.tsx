@@ -74,6 +74,12 @@ export type HappierCollectionListHost = Readonly<{
   /** The list's own ground (theme-bound). */
   surfaceStyle: HappierStyleProp;
   /**
+   * The list's ground read while rendering, for a host whose theme can change under a mounted list (a runtime
+   * light/dark switch): a style resolved once at module scope keeps the theme it was first read under on native.
+   * A host that provides it provides it on every variant it may switch between, so the hook order holds.
+   */
+  useSurfaceStyle?: () => HappierStyleProp;
+  /**
    * The quiet ink of a group label's own glyphs (its disclosure chevron), read while rendering so it
    * follows the host's theme. A host without one draws no chevron and keeps the label's press.
    */
@@ -241,6 +247,8 @@ export const HAPPIER_COLLECTION_LIST_METRICS = Object.freeze({
   rowGlyphGap: PHONE_COLUMN ? HAPPIER_PAGE_METRICS.rowLeadingGapPx : 10,
   /** The header's title row (title, count, the header action's 30px icon buttons). */
   titleRowHeight: COLUMN_TITLE_ROW_HEIGHT_PX,
+  /** Between the title row's trailing icon buttons (Search, then "+" or "⋯"): one cluster at the row's end. */
+  headerActionGap: 2,
   /** The narrowest a column's title gets before a control beside it yields: "My work" and its chevron. */
   titleFloor: 88,
   /**
@@ -430,6 +438,8 @@ const headerStyle: ViewStyle = {
 };
 // Several actions (a filter and a "+") sit together at the row's end; the header's space-between would spread them.
 const headerActionStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center' };
+// The search toggle and the header action are one trailing cluster, so the magnifier never floats mid-row.
+const headerTrailingStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center', gap: M.headerActionGap, flexShrink: 0 };
 const headingStyle: ViewStyle = { flexDirection: 'row', alignItems: 'baseline', gap: 8, flexShrink: 1 };
 // With a control beside it the heading takes the row's free width, so its measured width is the title's room.
 const headingWithAccessoryStyle: ViewStyle = { flexGrow: 1, flexBasis: 0, minWidth: 0 };
@@ -578,9 +588,10 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
     }
   }, [onSearchChange, searchOpen]);
   const SearchToggle = host.SearchToggle;
+  const surfaceStyle = host.useSurfaceStyle ? host.useSurfaceStyle() : host.surfaceStyle;
   return (
     <HappierCollectionListRowContext.Provider value>
-    <View testID={props.testID} style={[railStyle, host.surfaceStyle]}>
+    <View testID={props.testID} style={[railStyle, surfaceStyle]}>
       {showHeader ? (
         <View style={props.subtitle ? [headerStyle, headerWithSubtitleStyle] : headerStyle}>
           <View style={hasAccessory ? [headingStyle, headingWithAccessoryStyle] : headingStyle}
@@ -592,11 +603,15 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
             ) : null}
           </View>
           {accessoryInRow ? <View style={titleAccessoryStyle} onLayout={onAccessoryLayout}>{props.titleAccessory}</View> : null}
-          {searchCollapses && SearchToggle && search ? (
-            <SearchToggle open={searchOpen} onPress={onToggleSearch} accessibilityLabel={search.placeholder}
-              {...(search.testID === undefined ? {} : { testID: `${search.testID}:toggle` })} />
+          {(searchCollapses && SearchToggle && search) || props.headerAction != null ? (
+            <View style={headerTrailingStyle}>
+              {searchCollapses && SearchToggle && search ? (
+                <SearchToggle open={searchOpen} onPress={onToggleSearch} accessibilityLabel={search.placeholder}
+                  {...(search.testID === undefined ? {} : { testID: `${search.testID}:toggle` })} />
+              ) : null}
+              {props.headerAction != null ? <View style={headerActionStyle}>{props.headerAction}</View> : null}
+            </View>
           ) : null}
-          {props.headerAction != null ? <View style={headerActionStyle}>{props.headerAction}</View> : null}
         </View>
       ) : null}
       {showHeader && props.subtitle ? (
@@ -630,7 +645,7 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
       ) : null}
       {showFilters ? <View style={showHeader || (props.search && searchOpen) || props.strip ? tools.filters : tools.untitledFilters}>{props.filters!.content}</View> : null}
       {props.scrollContent !== undefined ? props.scrollContent : (
-        <Scroller style={[scrollerStyle, host.surfaceStyle]}>
+        <Scroller style={[scrollerStyle, surfaceStyle]}>
           {props.children}
           <View style={footerStyle} />
         </Scroller>

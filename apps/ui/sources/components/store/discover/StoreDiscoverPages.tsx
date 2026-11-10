@@ -6,7 +6,10 @@ import { View } from 'react-native';
 import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { Stack, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useIsAppDestinationRootPath } from '@/components/appShell/destinations/useCompactAppDestinations';
+import { CollectionSearchToggle } from '@/components/ui/lists/collection/CollectionList';
+import { PhonePageBackLine } from '@/components/ui/layout/usePageBackControl';
 import {
   RegistryShelf,
   resolveRegistryShelfUnavailable,
@@ -356,7 +359,7 @@ function PhoneInstalledRow(props: Readonly<{ onOpen: () => void; onOpenUpdates: 
 }
 
 function DiscoverSearch(
-  props: Readonly<{ onSubmit: (query: string) => void; short?: boolean }>,
+  props: Readonly<{ onSubmit: (query: string) => void; short?: boolean; autoFocus?: boolean }>,
 ) {
   const [query, setQuery] = React.useState('');
   return (
@@ -367,6 +370,7 @@ function DiscoverSearch(
         value={query}
         onChangeText={setQuery}
         placeholder={t(props.short ? 'capabilities.store.discover.searchShort' : 'capabilities.store.discover.search')}
+        {...(props.autoFocus ? { autoFocus: true } : {})}
         onSubmitEditing={() => {
           if (!query.trim()) return;
           props.onSubmit(query.trim());
@@ -461,11 +465,25 @@ function DiscoverLoading(props: Readonly<{ testID: string }>) {
  * Store → Discover (S40 §9 order): header, search, one featured card, project suggestions, Browse by job, Happier
  * picks, then the category directories. Every slot is the admitted curation's; an absent slot is simply absent.
  */
-export const StoreDiscoverPage = React.memo(function StoreDiscoverPage(props: Readonly<{ project: QualifiedProjectKeyV1 | null }>) {
-  return <StoreDiscover demand={PRESENTED} project={props.project}>
-    {({ curation, suggestions, presented }) => <StoreDiscoverView curation={curation} suggestions={suggestions} presented={presented} />}
-  </StoreDiscover>;
+export const StoreDiscoverPage = React.memo(function StoreDiscoverPage(props: Readonly<{
+  project: QualifiedProjectKeyV1 | null;
+  /** The Store's own page (`/plugins`), not a Discover pushed from another Store page (`?view=discover`). */
+  storeRoot?: boolean;
+}>) {
+  // The Store is a main screen (a rail destination's own route): the tab bar is its way around, so it has no bar
+  // and no Back; its title row stands on the shared head line, where My work's does (owner 11-10). Store pages
+  // pushed over it (its `?view=` pages, a Discover opened from Installed) keep their bar and Back.
+  const mainScreen = useIsAppDestinationRootPath(usePathname()) && props.storeRoot !== false;
+  return <>
+    {mainScreen ? <Stack.Screen options={STORE_MAIN_SCREEN_BAR} /> : null}
+    <StoreDiscover demand={PRESENTED} project={props.project}>
+      {({ curation, suggestions, presented }) => <StoreDiscoverView curation={curation} suggestions={suggestions}
+        presented={presented} mainScreen={mainScreen} />}
+    </StoreDiscover>
+  </>;
 });
+
+const STORE_MAIN_SCREEN_BAR = Object.freeze({ headerShown: false });
 
 /** The Store page's presentation over the catalog facts admitted by its read owner. */
 export const StoreDiscoverView = React.memo(function StoreDiscoverView(props: Readonly<{
@@ -473,9 +491,14 @@ export const StoreDiscoverView = React.memo(function StoreDiscoverView(props: Re
   suggestions: Parameters<Parameters<typeof StoreDiscover>[0]['children']>[0]['suggestions'];
   /** Live acquisition comes from StoreDiscover; the tour's static preview has no read demand. */
   presented?: boolean;
+  /** The Store's own route on a phone draws its main-screen title row (see `StoreDiscoverPage`). */
+  mainScreen?: boolean;
 }>) {
   const nav = useStoreNavigation();
   const columnVisible = useAppShellColumn().columnVisible;
+  // A phone's main-screen title row keeps the search behind its magnifier; a query moves on to the Search page.
+  const [searchOpen, setSearchOpen] = React.useState(false);
+  const toggleSearch = React.useCallback(() => setSearchOpen(open => !open), []);
   const page = React.useMemo(() => projectStoreDiscover(props.curation.curation, props.suggestions),
     [props.curation.curation, props.suggestions]);
   const identityItems = React.useMemo(() => [
@@ -485,15 +508,31 @@ export const StoreDiscoverView = React.memo(function StoreDiscoverView(props: Re
   return (
     <DiscoverFrame title={t('capabilities.store.discover.title')} testID="store.discover"
       identityItems={identityItems} presented={props.presented}>
-        {/* A phone's navigation bar already says Store (lab sp:home): the page opens on its search. */}
         {columnVisible ? (
           <DiscoverHeader
             testID="store.discover.header"
             title={t('capabilities.store.discover.title')}
             description={t('capabilities.store.discover.purpose')}
           />
+        ) : props.mainScreen ? (
+          <>
+            {/* A phone's Store is a main screen: the shared head line, then its title row with the search behind the magnifier. */}
+            <PhonePageBackLine control={null} page />
+            <PageHeader
+              testID="store.discover.header"
+              title={t('settingsPlugins.surfaces.storeTitle')}
+              alwaysShowTitle
+              actionsPlacement="page"
+              actionsLayout="inline"
+              actions={<CollectionSearchToggle testID="store.discover.searchToggle" open={searchOpen}
+                onPress={toggleSearch} accessibilityLabel={t('capabilities.store.discover.searchShort')} />}
+            />
+            <View style={styles.inset}><StoreProjectScopeChip /></View>
+          </>
         ) : <View style={styles.inset}><StoreProjectScopeChip /></View>}
-        <DiscoverSearch onSubmit={nav.search} short={!columnVisible} />
+        {columnVisible || searchOpen || !props.mainScreen
+          ? <DiscoverSearch onSubmit={nav.search} short={!columnVisible} autoFocus={searchOpen} />
+          : null}
         {/* A phone has no Store column: Installed, Updates and the kinds are pinned under the search. */}
         {columnVisible ? null : <PhoneInstalledRow onOpen={nav.openInstalled} onOpenUpdates={nav.openUpdates} onOpenKind={nav.openKind} />}
         <DiscoverBody curation={props.curation} page={page} nav={nav} presented={props.presented === true} />

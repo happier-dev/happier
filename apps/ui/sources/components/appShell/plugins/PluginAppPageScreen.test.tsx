@@ -74,6 +74,7 @@ const {
 
 const targetedContributionsReadMock = vi.hoisted(() => vi.fn<(machineId: string,
     options: Readonly<{ pluginId: string; serverId?: string | null }>) => Promise<unknown>>());
+const preparationRpc = vi.hoisted(() => ({ answer: null as null | ((method: string, payload: unknown) => Promise<unknown>) }));
 // The daemon answers a target read with its current occurrence: the one the
 // most recently built fixture projection names.
 const fixtureDaemonGeneration = vi.hoisted(() => ({ value: 9 }));
@@ -199,6 +200,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
             const payload = DaemonPluginUiTargetedContributionsReadRequestSchema.parse(params.payload);
             return targetedContributionsReadMock(params.machineId, { ...payload, serverId: params.serverId });
         }
+        if (preparationRpc.answer) return preparationRpc.answer(params.method, params.payload);
         throw new Error(`Unexpected AppPage fixture RPC: ${params.method}`);
     });
 });
@@ -792,6 +794,7 @@ async function openFromMountedPage(
 }
 
 beforeEach(async () => {
+    preparationRpc.answer = null;
     reactNativeSurfaceProps.length = 0;
     reactNativeSurfaceInstanceRefs.length = 0;
     routerPushes.length = 0;
@@ -1016,6 +1019,19 @@ describe('plugin app page host route (EU-5b)', () => {
         } finally { releaseRead(); }
     });
 
+    it('draws no Back on a rail page\'s own route and keeps it on a location under it', async () => {
+        // A main screen (the rail destination's own route) is left through the tab bar, never Back (owner 11-10).
+        routerLocation.pathname = NOTES_PAGE_PATH;
+        await renderPage();
+        await vi.waitFor(() => expect(stackOptions.at(-1)?.headerBackVisible).toBe(false));
+
+        stackOptions.length = 0;
+        routerLocation.pathname = `${NOTES_PAGE_PATH}/work`;
+        await renderPage({ subPath: 'work' });
+        await vi.waitFor(() => expect(stackOptions.length).toBeGreaterThan(0));
+        expect(stackOptions.at(-1)?.headerBackVisible).not.toBe(false);
+    });
+
     it('tells a mounted phone toolbar page that its navigation leaves the name to the page\'s large title', async () => {
         const { NavigationTitleChromeProvider } = await import('@/components/ui/layout/navigationTitleChrome');
         const phone = (children: React.ReactNode) => <NavigationTitleChromeProvider showsTitle>{children}</NavigationTitleChromeProvider>;
@@ -1053,6 +1069,96 @@ describe('plugin app page host route (EU-5b)', () => {
         expect(screen.findByTestId('plugin-app-page-unavailable')).toBeNull();
         expect(readRenderContext().surface.target).toEqual({ kind: 'app' });
         await expect(readRenderContext().hostApi.executeAction('refresh', {})).rejects.toMatchObject({ code: 'unavailable' });
+    });
+
+    it('delivers the original prepared composer once after the retained page is hidden for Review', async () => {
+        const { act } = await import('react-test-renderer');
+        const { createActionOperationStore } = await import('../../../../../cli/src/actions/operations/actionOperationStore');
+        const { createActionOperationRunner } = await import('../../../../../cli/src/actions/operations/actionOperationRunner');
+        const { ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
+        const { DaemonPluginStructuredMessageActionExecuteRequestSchema } = await import('@happier-dev/protocol/plugins/actions/daemonInvocationV1');
+        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+        const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+        await prepareSessionDraftPersistenceStorage();
+        const wire = PluginProjectionV2Schema.parse(daemonProjection());
+        const actionId = `${NOTES_PLUGIN_ID}/refresh`;
+        const action = wire.actionsById[actionId]!;
+        action.operation = { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' } };
+        const family = wire.familiesById.pluginUi!;
+        const bundle = family.entriesById[`reactNativeBundle:${NOTES_PLUGIN_ID}:notes-renderer`]!;
+        // The external renderer requests the navigation capability it uses.
+        Object.assign(bundle, { hostApi: { minVersion: '1.0.0', methods: ['context', 'executeAction', 'openNewSession'] } });
+        contributionProjectionDescribeMock.mockResolvedValue({ protocolVersion: 1, projection: wire });
+        const scope = { accountId: pluginSurfaceAccountLifetime.value!.scope.accountId, machineId: 'machine-1' };
+        const store = createActionOperationStore();
+        const runner = createActionOperationRunner({ store, resolveAction: () => ({ actionId, title: 'Prepare review', operation: action.operation }) });
+        const approval = createDeferred<void>();
+        let effects = 0;
+        preparationRpc.answer = async (method, payload) => {
+            if (method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) return { ok: true, inputSchema: { type: 'object' } };
+            if (method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
+                const request = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(payload);
+                return runner.observe({ actionId, requestId: request.requestId, input: request.input, scope, execute: async context => {
+                    effects++;
+                    const receipt = { kind: 'approval_request_created', artifactId: 'review-approval', actionId: 'workspace.materialize' } as const;
+                    context.updateProgress({ phase: 'waiting_for_approval', label: 'Waiting for approval', approval: receipt });
+                    context.operationAcceptance?.accept(receipt);
+                    await approval.promise;
+                    return { ok: true, result: { kind: 'prepared', repositoryPath: '/workspaces/review-final' } };
+                } });
+            }
+            if (method === ACTION_OPERATION_RPC_METHODS_V2.list) return store.list({ ...scope, ...(payload as { requestIdentity?: { actionId: string; requestId: string } }) });
+            if (method === ACTION_OPERATION_RPC_METHODS_V2.get) {
+                const request = payload as { operationId: string; waitForTerminal?: boolean };
+                const operation = request.waitForTerminal ? await runner.waitForTerminal(scope, request.operationId) : store.get(scope, request.operationId);
+                return operation ? { kind: 'found', operation } : { kind: 'not_found' };
+            }
+            throw new Error(`Unexpected preparation RPC: ${method}`);
+        };
+        let visible = true;
+        const render = await createPageRenderer({ projection: wire, wrap: children => <DestinationInstanceHost
+            tabId="review-origin" ref={{ kind: `plugin:${NOTES_PLUGIN_ID}:notes`, params: { pluginId: NOTES_PLUGIN_ID, localId: 'notes' } }}
+            pathname={NOTES_PAGE_PATH} focused={visible} visible={visible}
+            navigation={{ push: value => { routerPushes.push(value); }, replace() {}, back() {} }}>{children}</DestinationInstanceHost> });
+        const model = composeAppProjection(wire);
+        const screen = await renderScreen(render(model));
+        try {
+            await vi.waitFor(() => expect(reactNativeSurfaceProps.length).toBeGreaterThan(0));
+            const context = readRenderContext();
+            // Use the mounted controller's canonical raw request boundary: the
+            // fixture supplies the external renderer's already selected input.
+            const mounted = screen.root.findAll(node => node.props.hostApi?.handleRequest && node.props.requestSurface)[0]!;
+            const host = mounted.props.hostApi as import('@/components/plugins/surfaces/createPluginSurfaceHostApi').PluginSurfaceHostApiV1;
+            const custody = wire.installedPackagesById[NOTES_PLUGIN_ID]!.sourceCustody!;
+            const operation = { point: { pointId: 'review', protocol: { id: 'review', version: 1 } },
+                contributor: { pluginId: NOTES_PLUGIN_ID, contributionId: 'review-source', occurrenceId: action.occurrenceId!, sourceCustody: custody },
+                role: 'prepareReviewWorkspace', action: { pluginId: NOTES_PLUGIN_ID, localId: 'refresh' } } as const;
+            let result: unknown;
+            const pending = Promise.resolve(host.handleRequest({ version: 1, requestId: 'original-review', method: 'openNewSession',
+                surface: mounted.props.requestSurface, payload: { checkoutIntent: 'preparedReviewWorkspace', prompt: 'Review PR #42' } }, {
+                targetedOperation: operation, selectedActionInput: { kind: 'submitted', action: operation.action, input: {},
+                    selection: { target: { pluginId: NOTES_PLUGIN_ID, sourceCustody: custody }, point: operation.point,
+                        contributor: { pluginId: NOTES_PLUGIN_ID, contributionId: 'review-source', sourceCustody: custody } },
+                    connectedAccount: { kind: 'none' }, presentation: { connectedAccountLabel: null, machineDisplayName: 'Development' } },
+            })).then(value => { result = value; });
+            await vi.waitFor(() => expect(effects, JSON.stringify(result)).toBe(1));
+            await vi.waitFor(() => expect(screen.findByTestId('plugin-surface-approval-pending')).not.toBeNull());
+            await screen.pressByTestIdAsync('plugin-surface-approval-pending.open');
+            visible = false;
+            await screen.update(render(model));
+            expect(context.signal.aborted).toBe(false);
+            await act(async () => { approval.resolve(); await pending; });
+            visible = true;
+            await screen.update(render(model));
+            const composers = routerPushes.filter((route): route is { pathname: '/new'; params: { draftId: string } } =>
+                typeof route === 'object' && route !== null && 'pathname' in route && route.pathname === '/new');
+            expect(composers).toHaveLength(1);
+            expect(readNewSessionDraftFromRepository({ scope: pluginSurfaceAccountLifetime.value!.scope, draftId: composers[0]!.params.draftId }))
+                .toMatchObject({ input: 'Review PR #42', selectedPath: '/workspaces/review-final' });
+            expect(effects).toBe(1);
+            await screen.unmount();
+            expect(context.signal.aborted).toBe(true);
+        } finally { approval.resolve(); preparationRpc.answer = null; }
     });
 
     it('keeps singleton page mount identity shared when hosted in distinct workspace tabs', async () => {

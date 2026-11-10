@@ -16,6 +16,13 @@ import { PageFrame } from '@/components/ui/layout/PageFrame';
  * (`CoreCollectionScope` on a settings page): a Collection whose page scroller opens this column insets its header
  * and sections from here, never cancelling an inset nobody drew. A scope mounted inside the column states its own.
  */
+const PageContentColumnContext = React.createContext(false);
+
+/** Inside a page content column: it draws no edge, so a scope mounted in it has no column edge to state. */
+export function useInPageContentColumn(): boolean {
+  return React.useContext(PageContentColumnContext);
+}
+
 export function PageContentColumn(
   props: Readonly<{
     children?: React.ReactNode;
@@ -29,7 +36,9 @@ export function PageContentColumn(
       testID={props.testID}
       style={props.style}
     >
-      <HappierColumnEdgeContext.Provider value={0}>{props.children}</HappierColumnEdgeContext.Provider>
+      <PageContentColumnContext.Provider value>
+        <HappierColumnEdgeContext.Provider value={0}>{props.children}</HappierColumnEdgeContext.Provider>
+      </PageContentColumnContext.Provider>
     </PageFrame>
   );
 }

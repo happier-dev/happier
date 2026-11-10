@@ -21,7 +21,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { useWindowFoldMetrics } from '@/utils/platform/useWindowFoldMetrics';
 import { isMobileWorkspaceCockpitEnabled } from '@/components/workspaceCockpit/mobileWorkspaceExperience';
 import type { TabType } from '@/components/ui/navigation/tabTypes';
-import { TabBarNewSessionButton } from '@/components/ui/navigation/TabBarNewSessionButton';
+import { TabBarNewSessionButton, TabBarPageCreateButton } from '@/components/ui/navigation/TabBarNewSessionButton';
 import {
     useSessionCockpitBottomChromeHeightSetter,
     useSessionCockpitChromeRegistration,
@@ -37,7 +37,7 @@ import {
 import { parseSessionPaneUrlState, serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 
 import { PhoneMainAppTabBar, usePhoneLauncherDestinationPinned } from '@/components/appShell/destinations/PhoneDestinationsMenu';
-import { resolveCurrentAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { isAppDestinationRootPath, resolveCurrentAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { useCompactAppDestinations } from '@/components/appShell/destinations/useCompactAppDestinations';
 import { PHONE_HOME_ROUTE } from '@/components/navigation/shell/PhoneHomeLogoButton';
 import { useMainAppTabState } from './MainAppTabStateProvider';
@@ -151,8 +151,11 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     const routeDestination = React.useMemo(() => (typeof anchorPathname === 'string' && anchorPathname !== PHONE_HOME_ROUTE
         ? resolveCurrentAppDestination(destinationCatalog, anchorPathname) : null), [anchorPathname, destinationCatalog]);
     const destinationPinned = usePhoneLauncherDestinationPinned(routeDestination);
+    // Settings' pushed pages keep their own Back and no bar unless Settings is pinned; its own page is a main screen
+    // like the others (owner 11-10), decided by the catalog's one root answer.
     const sectionPage = anchorPathname === PHONE_HOME_ROUTE
-        || (routeDestination !== null && (routeDestination.column !== 'settings' || destinationPinned));
+        || (routeDestination !== null && (routeDestination.column !== 'settings' || destinationPinned
+            || (typeof anchorPathname === 'string' && isAppDestinationRootPath(destinationCatalog, anchorPathname))));
     // The root route is shared by the tabs, so the remembered tab answers there; any other page is its own destination,
     // and on one that isn't on the bar (More's Home included) no tab claims to be here.
     const selectedDestinationId = anchorPathname === '/' ? null : routeDestination?.id ?? (sectionPage ? PHONE_HOME_ROUTE : null);
@@ -269,9 +272,9 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
                 activeTab={tab}
                 selectedDestinationId={selectedDestinationId}
                 onTabPress={handleMainAppTabPress}
-                // Session creation belongs to the sessions surface; the other tabs keep the bar as
-                // a pure navigation control.
-                trailingAccessory={tab === 'sessions' && (selectedDestinationId === null || selectedDestinationId === 'sessions') ? <TabBarNewSessionButton /> : undefined}
+                // Session creation belongs to the sessions surface; any other main screen lends the "+" its own
+                // create action (owner 11-10), and a page without one leaves the cell empty.
+                trailingAccessory={tab === 'sessions' && (selectedDestinationId === null || selectedDestinationId === 'sessions') ? <TabBarNewSessionButton /> : <TabBarPageCreateButton />}
             />
         );
         return {

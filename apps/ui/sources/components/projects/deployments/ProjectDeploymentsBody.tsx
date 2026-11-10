@@ -25,8 +25,6 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { Item } from '@/components/ui/lists/Item';
-import { Icon } from '@/components/ui/icons/Icon';
 import { useCollectionRailWidth } from '@/components/ui/lists/collection/useCollectionRailWidth';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
@@ -386,22 +384,24 @@ const ProjectDeploymentsPage = React.memo(
       />
     ) : null;
     if (!selection.defaults && !environmentId && items.length === 0 && !selection.drafting) {
+      const emptySettingsAction = {
+        label: t('projects.deployments.defaultsEditor.projectTitle'),
+        onPress: openDefaults,
+        testID: 'project-deployments.empty.settings',
+      };
       return (
         <ItemList testID="project-deployments.empty">
-          <ItemGroup><Item testID="project-deployments.empty.settings" title={t('projects.deployments.defaultsEditor.projectTitle')}
-            icon={<Icon name="sliders-horizontal" size={18} color={theme.colors.text.secondary} />}
-            onPress={openDefaults} /></ItemGroup>
           {preparation ? <ItemGroup header="none">{preparation}</ItemGroup> : null}
           <EmptyState
             layout="page"
             scene="shipped"
             title={t('projects.deployments.emptyTitle')}
             subtitle={t('projects.deployments.emptyBody')}
-            {...(newWorkEnabled && props.actions?.prepareCreate ? { primaryAction: {
-              label: t('projects.deployments.add'),
-              onPress: startDraft,
-              testID: 'project-deployments.empty.add',
-            } } : {})}
+            // Settings is the second way forward beside Add environment, or the one action when adding isn't open.
+            {...(newWorkEnabled && props.actions?.prepareCreate ? {
+              primaryAction: { label: t('projects.deployments.add'), onPress: startDraft, testID: 'project-deployments.empty.add' },
+              secondaryAction: emptySettingsAction,
+            } : { primaryAction: emptySettingsAction })}
           />
         </ItemList>
       );

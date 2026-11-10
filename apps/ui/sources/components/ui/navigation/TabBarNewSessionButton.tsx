@@ -16,6 +16,7 @@ import {
 } from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
 import { useOpenNewSession } from '@/components/sessions/new/navigation/newSessionEntry';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { usePageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
 
 /**
  * The "+" capsule that sits beside the floating tab bar on the sessions surface: the phone's one,
@@ -72,6 +73,33 @@ export function useTabBarNewSessionPress() {
         });
     }, [openNewSession]);
 }
+
+/**
+ * The bar's "+" capsule for a main screen's own create action (`usePageCreateAction`): the same capsule as Sessions'
+ * new-session "+", running whatever the page in front lends it, and an empty cell while it lends nothing.
+ */
+export const TabBarPageCreateButton = React.memo(function TabBarPageCreateButton() {
+    const action = usePageCreateAction();
+    const { theme } = useUnistyles();
+    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
+    if (!action) return <View />;
+    return (
+        <GlassPanel radius={CAPSULE_RADIUS} frameStyle={styles.capsule}>
+            <HappierPressable
+                testID={`tabbar-create:${action.testID}`}
+                accessibilityLabel={action.label}
+                onPress={action.onPress}
+                style={(state) => [
+                    styles.press,
+                    state.pressed ? styles.pressed : null,
+                    focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
+                ]}
+            >
+                <Icon name="plus" size={metrics.iconSize} color={theme.colors.text.primary} />
+            </HappierPressable>
+        </GlassPanel>
+    );
+});
 
 export const TabBarNewSessionButton = React.memo(function TabBarNewSessionButton(props: Readonly<{
     placement?: 'tabBar' | 'sidebar';

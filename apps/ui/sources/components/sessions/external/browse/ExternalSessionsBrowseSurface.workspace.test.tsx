@@ -13,12 +13,13 @@ vi.mock('@/utils/web/reactDomCjs', () => ({ requireReactDOM: () => ({ createPort
 vi.mock('@/utils/web/radixCjs', async () => (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsModuleMock());
 const navigatorBoundary = vi.hoisted(() => ({ rejectAmbient: false }));
 const deviceState = vi.hoisted(() => ({ type: 'tablet' as 'phone' | 'tablet' }));
+const routeState = vi.hoisted(() => ({ pathname: '/' }));
 vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/utils/platform/responsive')>(),
     useDeviceType: () => deviceState.type,
 }));
 vi.mock('expo-router', async () => {
-    const module = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module;
+    const module = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ pathname: () => routeState.pathname }).module;
     return { ...module, useRouter: () => {
         if (navigatorBoundary.rejectAmbient) throw new Error('Browse body has no Expo navigator');
         return module.useRouter();
@@ -29,6 +30,7 @@ const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSi
 await loadSyncSingletonForTests();
 const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
 const { ExternalSessionsBrowseSurface } = await import('./ExternalSessionsBrowseModal');
+const { ExternalSessionsBrowseScreen } = await import('./ExternalSessionsBrowseScreen');
 const { CustomModal } = await import('@/modal/components/CustomModal');
 const { storage } = await import('@/sync/domains/state/storageStore');
 beforeEach(() => {
@@ -62,6 +64,17 @@ describe('Browse surface workspace host', () => {
         expect((await render()).findHostByTestId('external-sessions-browse:back')).not.toBeNull();
         deviceState.type = 'tablet';
         expect((await render()).findHostByTestId('external-sessions-browse:back')).toBeNull();
+    });
+
+    // A navigator screen (the native modal route, the new-session picker) has a header whose close or Back is the way out.
+    it('draws no Back of its own on a phone navigator screen, whose header already closes it', async () => {
+        deviceState.type = 'phone';
+        routeState.pathname = '/external/browse';
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen onRequestClose={() => {}} />);
+        deviceState.type = 'tablet';
+        routeState.pathname = '/';
+        expect(screen.findByTestId('direct-sessions-browse-modal')).not.toBeNull();
+        expect(screen.findHostByTestId('external-sessions-browse:back')).toBeNull();
     });
 
     it('keeps the web modal presentation outside a workspace destination', async () => {

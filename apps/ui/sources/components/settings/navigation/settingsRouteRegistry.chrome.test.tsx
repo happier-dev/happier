@@ -243,8 +243,10 @@ describe('a page that heads itself on a phone', () => {
         } finally { await act(async () => { tree.unmount(); }); }
     });
 
-    it('keeps the Settings hub titled by the bar: it is not a subpage', async () => {
+    // Owner 11-10: the hub is a main screen; its own title row heads it, and its pages' Back still names it.
+    it('draws no bar above the Settings hub, which keeps its title for the pages it opens', async () => {
         const hub = getSettingsStackScreenDefinitions(identity).find((candidate) => candidate.name === 'index');
+        expect(hub?.options.headerShown).toBe(false);
         expect(hub?.options.headerTitle).toBe('settings.title');
     });
 });

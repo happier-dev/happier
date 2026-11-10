@@ -31,6 +31,10 @@ export function resolveHappierCollectionTitleStyles<Label extends HappierPortabl
       justifyContent: 'flex-start' as const,
       gap: 6,
     },
+    // The label, its chevron and a trailing state share the title's baseline: the chevron's foot and the quiet
+    // state's text stand on the line the title stands on, whatever the title's size (a column heading or a phone's
+    // large title), while the trigger centres the whole line in its row.
+    labelRow: { flexDirection: 'row' as const, alignItems: 'baseline' as const, gap: 6, minWidth: 0, flexShrink: 1 },
     triggerPressed: { backgroundColor: ink.pressed },
     triggerLabel: { ...ink.label, minWidth: 0, flexShrink: 1, color: ink.text },
     phoneTriggerLabel: ink.phoneLabel,
@@ -78,16 +82,20 @@ export const HappierCollectionTitleButton = React.memo(function HappierCollectio
     onPress={props.onPress} hitSlop={hitArea.hitSlop} onLayout={hitArea.onLayout}
     style={({ pressed }) => [styles.trigger, pressed ? styles.triggerPressed : null]}>
     {hitArea.frame}
-    <Text numberOfLines={1} style={labelStyle}>{props.label}</Text>
-    {props.chevron}
-    {props.trailing ?? null}
+    <View style={styles.labelRow}>
+      <Text numberOfLines={1} style={labelStyle}>{props.label}</Text>
+      {props.chevron}
+      {props.trailing ?? null}
+    </View>
     {reportNaturalWidth ? <View style={styles.naturalClip} pointerEvents="none" aria-hidden
       accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
       <View style={styles.naturalRow}>
         <View testID={`${props.testID}-natural`} onLayout={handleNaturalLayout} style={[styles.trigger, styles.naturalTrigger]}>
-          <Text numberOfLines={1} style={labelStyle}>{props.label}</Text>
-          {props.chevron}
-          {props.trailing ?? null}
+          <View style={styles.labelRow}>
+            <Text numberOfLines={1} style={labelStyle}>{props.label}</Text>
+            {props.chevron}
+            {props.trailing ?? null}
+          </View>
         </View>
       </View>
     </View> : null}

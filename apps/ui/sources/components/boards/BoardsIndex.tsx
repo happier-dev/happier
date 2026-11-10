@@ -8,7 +8,7 @@ import { useLocalSearchParams } from '@/components/appShell/workspace/destinatio
 import { BoardScreen, FilteredBoardScreen } from './BoardScreen';
 import { readFilteredBoardRoute } from './boardsRoutes';
 import { BoardReadState } from './BoardReadState';
-import { BoardsColumn, useCreateBoard } from './BoardsColumn';
+import { BoardsColumn, BoardsEmptyState } from './BoardsColumn';
 import { useWorkBoardReadState, useWorkBoardSummaries } from './model/useWorkBoards';
 
 /**
@@ -30,18 +30,8 @@ const SavedBoardsIndex = React.memo(function SavedBoardsIndex() {
     const columnVisible = useAppShellColumn().columnVisible;
     const first = useWorkBoardSummaries()[0] ?? null;
     const read = useWorkBoardReadState();
-    const createBoard = useCreateBoard();
     if (!columnVisible) return <BoardsColumn surface="page" />;
     if (first) return <BoardScreen boardId={first.id} />;
     if (read.status !== 'ready') return <BoardReadState />;
-    return (
-        <EmptyState
-            testID="boards-index-empty"
-            layout="page"
-            scene="emptyBoard"
-            title={t('boards.index.title')}
-            subtitle={t('boards.index.body')}
-            primaryAction={{ label: t('boards.newBoard'), onPress: createBoard }}
-        />
-    );
+    return <BoardsEmptyState testID="boards-index-empty" />;
 });

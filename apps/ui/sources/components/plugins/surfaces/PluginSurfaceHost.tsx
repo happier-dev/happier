@@ -3521,7 +3521,9 @@ function PluginSurfaceHostMount(props: Readonly<(
     const renderAccountEncryptionModeReadiness = (): React.ReactElement => (
         accountEncryptionModeReadiness.status === 'loading'
             ? renderUnavailable('account_encryption_mode_pending', 'loading')
-            : renderUnavailable('account_encryption_mode_unavailable')
+            // The Home did not answer the Account-mode read: Retry runs that read again now.
+            : renderUnavailable('account_encryption_mode_unavailable', 'unavailable',
+                accountEncryptionModeReadiness.status === 'unavailable' ? accountEncryptionModeReadiness.retry : undefined)
     );
     // Only a failed daemon answer can change on a re-ask; unsupported/idle/
     // invalid target answers keep no Retry because asking again cannot help.

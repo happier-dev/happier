@@ -7,7 +7,7 @@ import type { HeaderControlMetrics } from '@/components/ui/icons/iconButtonGlyph
 export const SESSION_LIST_COLUMN_METRICS = Object.freeze({
     titleRowHeightPx: HAPPIER_COLLECTION_LIST_METRICS.titleRowHeight,
     iconButtonSizePx: 30,
-    iconButtonGapPx: 2,
+    iconButtonGapPx: HAPPIER_COLLECTION_LIST_METRICS.headerActionGap,
     /** The narrowest the list title gets before the Projects/Recent segment yields (the shared column floor). */
     titleFloorPx: HAPPIER_COLLECTION_LIST_METRICS.titleFloor,
     fieldCloseButtonSizePx: 20,

@@ -122,8 +122,30 @@ describe('SettingsPageSearch', () => {
         );
     }
 
+    async function openSearchField(screen: Awaited<ReturnType<typeof renderSearch>>) {
+        await screen.pressByTestIdAsync('settings-page-search-toggle');
+    }
+
+    // Owner 11-10: Settings is a main screen, its search a magnifier on the title row, opening the field beneath.
+    it('keeps the search field behind the title row\'s magnifier until it is opened, and closing it clears the query', async () => {
+        const screen = await renderSearch();
+        expect(screen.findByTestId('settings-page-search')).toBeNull();
+        expect(screen.findByTestId('settings-overview-content')).toBeTruthy();
+
+        await openSearchField(screen);
+        await act(async () => {
+            screen.changeTextByTestId('settings-page-search', 'notif');
+        });
+        expect(screen.findByTestId('settings-page-search.result.notifications')).toBeTruthy();
+
+        await openSearchField(screen);
+        expect(screen.findByTestId('settings-page-search')).toBeNull();
+        expect(screen.findByTestId('settings-overview-content')).toBeTruthy();
+    });
+
     it('shows the page until a query is typed, then the pages and settings it finds instead', async () => {
         const screen = await renderSearch();
+        await openSearchField(screen);
         expect(screen.findByTestId('settings-overview-content')).toBeTruthy();
 
         await act(async () => {
@@ -142,6 +164,7 @@ describe('SettingsPageSearch', () => {
         const { SettingsPageSearch } = await import('./SettingsPageSearch');
         const { SettingsShell } = await import('./SettingsShell');
         const screen = await renderSearch();
+        await openSearchField(screen);
         await act(async () => {
             screen.changeTextByTestId('settings-page-search', 'itemDensity');
         });
@@ -164,7 +187,7 @@ describe('SettingsPageSearch', () => {
         expect(screen.findByTestId('settings-page-search.result.setting.appearance.density')).toBeTruthy();
     });
 
-    it('shades the search field\'s lower edge once the page scrolls beneath it', async () => {
+    it('shades the title row\'s lower edge once the page scrolls beneath it', async () => {
         const { StyleSheet } = await import('react-native');
         const screen = await renderSearch();
         const shade = () => {
@@ -179,6 +202,7 @@ describe('SettingsPageSearch', () => {
 
     it('says so when nothing matches', async () => {
         const screen = await renderSearch();
+        await openSearchField(screen);
         await act(async () => {
             screen.changeTextByTestId('settings-page-search', 'zzqxv-no-such-setting');
         });

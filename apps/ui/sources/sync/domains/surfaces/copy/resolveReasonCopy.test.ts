@@ -17,6 +17,20 @@ it('explains a local native artifact failure through the runtime reason owner', 
   expect(resolvePluginSurfaceStatePresentation({ state: 'failedRetry', reasonCode: 'local_artifact_failure' }).recoveryAction?.kind).toBe('retry');
 });
 
+it('says an unreadable Account mode is an unreachable Home, offers Retry and keeps the code for Details', () => {
+  const presentation = resolvePluginSurfaceStatePresentation({
+    state: 'unavailable', reasonCode: 'account_encryption_mode_unavailable', subjectName: 'PRs, Issues & Tasks',
+  });
+  // The cause is the Home, not the plugin: the title names the Home even when the page names its plugin.
+  expect(presentation.card).toMatchObject({
+    kind: 'unavailable',
+    title: t('pluginRuntime.homeUnreachableTitle'),
+    reason: t('pluginRuntime.homeUnreachableReason'),
+  });
+  expect(presentation.recoveryAction?.kind).toBe('retry');
+  expect(presentation.diagnosticCode).toBe('account_encryption_mode_unavailable');
+});
+
 describe('Preview sharing policy refusal copy', () => {
   it.each(SUPPORTED_LANGUAGE_CODES)('names only the refused port in %s', async language => {
     await preloadTranslations(language);

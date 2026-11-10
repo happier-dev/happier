@@ -196,7 +196,7 @@ describe('PhoneDestinationsMenu', () => {
         const menu = await renderMenu();
         expect(groups(menu)).toEqual({
             // Home leads More. Other destinations remain in More until the person places them on Bar.
-            pinned: ['phone-launcher-home'],
+            home: ['phone-launcher-home'],
             more: [
                 'sessions-search-all-button',
                 'compact-app-destination:bots',
@@ -208,6 +208,8 @@ describe('PhoneDestinationsMenu', () => {
                 'compact-app-destination:plugins',
                 'compact-app-destination:plugin:acme.board:board',
                 'compact-app-destination:rightSidebarTab:plugin:acme.review:review-panel',
+                // Settings is a main screen (owner 11-10): in More until it is pinned.
+                'compact-app-destination:settings',
             ],
             customize: ['phone-launcher-customize'],
             recovery: ['plugin-app-pages-menu'],
@@ -241,12 +243,39 @@ describe('PhoneDestinationsMenu', () => {
             },
         });
         const menu = await renderMenu();
-        const { pinned = [], more = [] } = groups(menu);
+        const { more = [] } = groups(menu);
         expect(menu.findHostByTestId('tabbar-tab-plugin:acme.board:board')).not.toBeNull();
-        expect(pinned).not.toContain('compact-app-destination:plugin:acme.board:board');
+        expect(more).not.toContain('compact-app-destination:plugin:acme.board:board');
         expect(more).toContain('compact-app-destination:friends');
         expect(more).toContain('compact-app-destination:artifacts');
-        expect([...pinned, ...more]).not.toContain('compact-app-destination:boards');
+        expect(more).not.toContain('compact-app-destination:boards');
+    });
+
+    // Owner 11-10: after pinning, More still reaches what is on the bar, last, under "Pinned", to open or unpin.
+    it('lists what is on the bar last, under Pinned, each with its pin to take it off', async () => {
+        vi.stubGlobal('window', { location: { pathname: '/', search: '', hash: '' }, addEventListener: () => {}, removeEventListener: () => {} });
+        onTestFinished(() => { vi.unstubAllGlobals(); });
+        setCatalog({ pages: [], navigationPlacements: { phoneLauncher: { orderedIds: [], placements: { artifacts: 'pinned' } } } });
+        const menu = await renderMenu();
+        const sections = groups(menu);
+        expect(Object.keys(sections)).toEqual(['home', 'more', 'onBar', 'customize']);
+        expect(sections.onBar).toEqual(['compact-app-destination:artifacts']);
+        expect(sections.more).not.toContain('compact-app-destination:artifacts');
+        expect(menuOf(menu).props.categoryTitles).toEqual({ onBar: t('phoneNav.bar.pinnedSection') });
+        await act(async () => { menuOf(menu).props.onOpenChange(true); });
+        expect(menu.findHostByTestId('phone-launcher-pin:artifacts')?.props.accessibilityState?.checked).toBe(true);
+        expect(menu.findHostByTestId('phone-launcher-pin:friends')?.props.accessibilityState?.checked).toBe(false);
+        await select(menu, 'compact-app-destination:artifacts');
+        expect(routeState.push).toHaveBeenLastCalledWith('/artifacts');
+    });
+
+    it('shows the open destination from More on the bar just before More, which stays More', async () => {
+        routeState.pathname = '/artifacts';
+        setCatalog({ pages: [] });
+        const menu = await renderMenu();
+        expect(menu.findHostByTestId('tabbar-tab-artifacts')).not.toBeNull();
+        expect(menu.findByTestId('phone-launcher-button')!.props.accessibilityLabel).toBe(t('common.more'));
+        expect(groups(menu).more).toContain('compact-app-destination:artifacts');
     });
 
     it.each([
@@ -320,7 +349,7 @@ describe('PhoneDestinationsMenu', () => {
         const screen = await renderMenu();
         const settings = screen.findHostByTestId('tabbar-tab-settings');
         expect(settings).not.toBeNull();
-        expect(itemFor(screen, 'compact-app-destination:settings')).toBeUndefined();
+        expect(itemFor(screen, 'compact-app-destination:settings')?.category).toBe('onBar');
         await act(async () => settings?.props.onPress());
         expect(routeState.push).toHaveBeenLastCalledWith('/settings');
     });

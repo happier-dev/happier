@@ -1,24 +1,26 @@
 import React from 'react';
-import { View, Pressable, Linking } from 'react-native';
+import { Linking, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { useOAuthProviderConfigured } from '@/hooks/server/useOAuthProviderConfigured';
-import { type FriendsUsernameHint } from './resolveFriendsIdentityGate';
+import { resolveFriendsIdentityConnectOption, type FriendsIdentityConnectOption, type FriendsUsernameHint } from './resolveFriendsIdentityGate';
 import { t } from '@/text';
-import { FriendsGateCentered, FriendsProviderConnectControls, FriendsProviderGate } from './FriendsGate';
 import { useAuth } from '@/auth/context/AuthContext';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { setAccountUsername } from '@/sync/api/account/apiUsername';
 import { HappyError } from '@/utils/errors/errors';
 import { Modal } from '@/modal';
-import { useUnistyles } from 'react-native-unistyles';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
-import { Text, TextInput } from '@/components/ui/text/Text';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { AccountUsernameField } from '@/components/account/AccountUsernameField';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 
 
 function translateUsernameHint(hint: FriendsUsernameHint): string {
@@ -30,24 +32,30 @@ function translateUsernameHint(hint: FriendsUsernameHint): string {
     }
 }
 
+/**
+ * The identity Friends needs, as one section of the page it stands on: the username claim (its field, Save, and the
+ * configured provider as the other way in), or, where the Home requires a provider, that provider by name. A provider
+ * this Home has not configured is never offered (`resolveFriendsIdentityConnectOption`).
+ */
 export function RequireFriendsIdentityForFriendsBase(props: {
     variant: 'provider' | 'username';
     isReady: boolean;
-    providerDisplayName?: string;
-    connectButtonColor?: string;
+    /** The Home's Friends features are still being read: the section holds its place without a form. */
+    loading?: boolean;
+    connect: FriendsIdentityConnectOption;
     initialUsername?: string;
     usernameHint?: string;
+    /** Why the last Save failed, under the field. */
+    usernameError?: string | null;
     onConnectProvider?: () => void;
     connectingProvider?: boolean;
     connectProviderDisabled?: boolean;
-    unavailableReason?: string;
     onSaveUsername?: (username: string) => void;
     savingUsername?: boolean;
     saveUsernameDisabled?: boolean;
     approvalNotice?: React.ReactNode;
     children: React.ReactNode;
 }) {
-    const { theme } = useUnistyles();
     const [username, setUsername] = React.useState(props.initialUsername ?? '');
 
     React.useEffect(() => {
@@ -59,106 +67,97 @@ export function RequireFriendsIdentityForFriendsBase(props: {
         return <>{props.children}</>;
     }
 
-    if (props.variant === 'provider') {
-        const provider = props.providerDisplayName ?? 'OAuth';
+    if (props.loading) {
         return (
-            <FriendsProviderGate
-                isConnected={props.isReady}
-                onConnect={props.onConnectProvider ?? (() => {})}
-                connecting={props.connectingProvider}
-                connectDisabled={props.connectProviderDisabled}
-                unavailableReason={props.unavailableReason}
-                title={t('friends.providerGate.title', { provider })}
-                body={t('friends.providerGate.body', { provider })}
-                connectLabel={t('friends.providerGate.connect', { provider })}
-                notAvailableLabel={t('friends.providerGate.notAvailable')}
-                connectButtonColor={props.connectButtonColor}
-                connectButtonMarginBottom={0}
-                notAvailableMarginTop={8}
-            >
-                {props.children}
-            </FriendsProviderGate>
+            <ItemGroup title={t('friends.title')}>
+                <SurfaceStateCard testID="friends-identity-loading" kind="loading" size="line" title={t('common.loading')} />
+            </ItemGroup>
         );
     }
 
-    const provider = props.providerDisplayName ?? 'OAuth';
-    const inputColors =
-        (theme.colors as any).input ??
-        ({
-            background: theme.colors.surface.base,
-            text: theme.colors.text.primary,
-            placeholder: theme.colors.text.primary,
-        } as const);
-    return (
-        <FriendsGateCentered title={t('friends.username.required')}>
-            {props.approvalNotice}
-            {props.usernameHint ? (
-                <Text style={{ textAlign: 'center', opacity: 0.7, marginBottom: theme.space.s12 }}>
-                    {props.usernameHint}
-                </Text>
-            ) : null}
+    const connect = props.connect;
+    const connectButton = connect.kind === 'connect' ? (
+        <RoundButton
+            testID="friends-identity-connect"
+            size="small"
+            display={props.variant === 'provider' ? 'default' : 'secondary'}
+            title={t('friends.providerGate.continueWith', { provider: connect.providerName })}
+            accessibilityLabel={t('friends.providerGate.continueWith', { provider: connect.providerName })}
+            loading={props.connectingProvider === true}
+            disabled={props.connectProviderDisabled === true}
+            onPress={props.onConnectProvider}
+        />
+    ) : null;
 
-            <TextInput
-                accessibilityLabel={t('profile.username')}
-                value={username}
-                onChangeText={setUsername}
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={{
-                    width: '100%',
-                    maxWidth: 360,
-                    borderWidth: 1,
-                    borderColor: theme.colors.border.default,
-                    borderRadius: 10,
-                    backgroundColor: inputColors.background,
-                    color: inputColors.text,
-                    paddingHorizontal: theme.space.s12,
-                    paddingVertical: theme.space.s10,
-                    marginBottom: theme.space.s12,
-                }}
-                placeholder={t('profile.username')}
-                placeholderTextColor={inputColors.placeholder}
-            />
-
-            <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={t('common.save')}
-                onPress={() => props.onSaveUsername?.(username)}
-                disabled={props.savingUsername === true || props.saveUsernameDisabled === true}
-                style={{
-                    paddingHorizontal: theme.space.s16,
-                    paddingVertical: theme.space.s12,
-                    borderRadius: 10,
-                    backgroundColor: theme.colors.button.primary.background,
-                    minWidth: 180,
-                    alignItems: 'center',
-                    marginBottom: theme.space.s12,
-                    opacity: props.savingUsername === true ? 0.6 : 1,
-                }}
+    if (props.variant === 'provider') {
+        const provider = connect.kind === 'none' ? null : connect.providerName;
+        return (
+            <ItemGroup
+                testID="friends-identity-provider"
+                title={t('friends.title')}
+                description={provider ? t('friends.providerGate.body', { provider }) : undefined}
             >
-                {props.savingUsername ? (
-                    <ActivitySpinner size="small" color={theme.colors.button.primary.tint} />
-                ) : (
-                    <Text style={{ color: theme.colors.button.primary.tint, fontWeight: '600' }}>
-                        {t('common.save')}
-                    </Text>
-                )}
-            </Pressable>
+                {connect.kind === 'notConfigured' ? (
+                    <SurfaceStateCard
+                        testID="friends-identity-provider-unavailable"
+                        kind="unavailable"
+                        size="line"
+                        title={t('friends.providerGate.notConfigured', { provider: connect.providerName })}
+                    />
+                ) : connectButton ? (
+                    <SectionContentRow><View style={styles.actions}>{connectButton}</View></SectionContentRow>
+                ) : null}
+            </ItemGroup>
+        );
+    }
 
-            <FriendsProviderConnectControls
-                onConnect={props.onConnectProvider}
-                connecting={props.connectingProvider}
-                connectDisabled={props.connectProviderDisabled}
-                unavailableReason={props.unavailableReason}
-                connectLabel={t('friends.providerGate.connect', { provider })}
-                notAvailableLabel={t('friends.providerGate.notAvailable')}
-                connectButtonColor={props.connectButtonColor}
-                connectButtonMarginBottom={0}
-                notAvailableMarginTop={8}
-            />
-        </FriendsGateCentered>
+    const save = () => props.onSaveUsername?.(username);
+    return (
+        <ItemGroup
+            testID="friends-identity-username"
+            title={t('friends.usernameClaimTitle')}
+            description={props.usernameHint ?? t('friends.usernameClaimDescription')}
+        >
+            {props.approvalNotice}
+            <SectionContentRow>
+                <AccountUsernameField
+                    testID="friends-username-field"
+                    value={username}
+                    onChangeText={setUsername}
+                    currentUsername={null}
+                    check={null}
+                    error={props.usernameError}
+                    editable={props.savingUsername !== true}
+                    onSubmitEditing={save}
+                />
+            </SectionContentRow>
+            <SectionContentRow>
+                <View style={styles.actions}>
+                    {connectButton}
+                    <RoundButton
+                        testID="friends-username-save"
+                        size="small"
+                        title={t('common.save')}
+                        accessibilityLabel={t('common.save')}
+                        loading={props.savingUsername === true}
+                        disabled={props.saveUsernameDisabled === true || username.trim().length === 0}
+                        onPress={save}
+                    />
+                </View>
+            </SectionContentRow>
+        </ItemGroup>
     );
 }
+
+const styles = StyleSheet.create((theme) => ({
+    // The section's operations close it on its trailing edge, as the Account profile editor's do.
+    actions: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'flex-end',
+        gap: theme.space.s8,
+    },
+}));
 
 export function RequireFriendsIdentityForFriends(props: { children: React.ReactNode }) {
     const auth = useAuth();
@@ -215,50 +214,49 @@ export function RequireFriendsIdentityForFriends(props: { children: React.ReactN
         }
     }, [auth.credentials, oauthSupported, requiredProviderId]);
 
+    const [usernameError, setUsernameError] = React.useState<string | null>(null);
     const onSaveUsername = React.useCallback(async (username: string) => {
         if (!auth.credentials) return;
         const trimmed = username.trim();
         if (!trimmed) return;
+        setUsernameError(null);
         if (isMountedRef.current) setSavingUsername(true);
         try {
             await setAccountUsername(auth.credentials, trimmed, profileExecution);
         } catch (e) {
-            if (e instanceof HappyError) {
-                const msg =
-                    e.message === 'username-taken' ? t('friends.username.taken')
-                        : e.message === 'invalid-username' ? t('friends.username.invalid')
-                            : e.message === 'username-disabled' ? t('friends.username.disabled')
-                                : e.message === 'friends-disabled' ? t('friends.disabled')
-                                    : t('errors.operationFailed');
-                await Modal.alert(t('common.error'), msg);
-            } else {
-                await Modal.alert(t('common.error'), t('errors.operationFailed'));
-            }
+            const code = e instanceof HappyError ? e.message : null;
+            const message =
+                code === 'username-taken' ? t('friends.username.taken')
+                    : code === 'invalid-username' ? t('friends.username.invalid')
+                        : code === 'username-disabled' ? t('friends.username.disabled')
+                            : code === 'friends-disabled' ? t('friends.disabled')
+                                : t('errors.operationFailed');
+            if (isMountedRef.current) setUsernameError(message);
         } finally {
             if (isMountedRef.current) setSavingUsername(false);
         }
     }, [auth.credentials, profileExecution.execute]);
 
+    const connect = resolveFriendsIdentityConnectOption({
+        gateVariant: gate.gateVariant,
+        requiredProviderId,
+        requiredProviderName: friendsIdentityReadiness.requiredProviderDisplayName,
+        providerConnected: friendsIdentityReadiness.requiredProviderConnected,
+        providerConfigured: requiredProviderId ? oauthSupported : null,
+    });
+
     return (
         <RequireFriendsIdentityForFriendsBase
             variant={gate.gateVariant}
             isReady={gate.isReady}
-            providerDisplayName={
-                requiredProviderId ? (getAuthProvider(requiredProviderId)?.displayName ?? requiredProviderId) : undefined
-            }
-            connectButtonColor={requiredProviderId ? getAuthProvider(requiredProviderId)?.connectButtonColor : undefined}
+            loading={friendsIdentityReadiness.isLoadingFeatures}
+            connect={connect}
             initialUsername={gate.initialUsername}
             usernameHint={gate.usernameHint ? translateUsernameHint(gate.usernameHint) : undefined}
+            usernameError={usernameError}
             onConnectProvider={() => void onConnectProvider()}
             connectingProvider={connectingProvider}
-            connectProviderDisabled={oauthSupported === false || !auth.credentials || !requiredProviderId}
-            unavailableReason={
-                oauthSupported === false && requiredProviderId
-                    ? t('friends.providerGate.notConfigured', {
-                          provider: getAuthProvider(requiredProviderId)?.displayName ?? requiredProviderId,
-                      })
-                    : undefined
-            }
+            connectProviderDisabled={!auth.credentials}
             onSaveUsername={(u) => void onSaveUsername(u)}
             savingUsername={savingUsername && !profileExecution.approval.approvalPending}
             saveUsernameDisabled={savingUsername || !profileExecution.ready}

@@ -67,19 +67,17 @@ describe('/friends redirect', () => {
             </DestinationInstanceHost>
         </InjectedAuthProvider>);
 
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain('friends.emptyTitle'));
+        await vi.waitFor(() => expect(screen.findByTestId('people-friends-empty')).not.toBeNull());
         expect(navigation.replace).not.toHaveBeenCalledWith('/inbox');
-        const buttons = screen.findAllHostsByTestId('friends-add-friend');
+        // The title row's "+" adds people (the phone bar's "+" runs the same action).
+        const buttons = screen.findAllHostsByTestId('friends-add-friend:header');
         expect(buttons).toHaveLength(1);
-        expect(screen.findByTestId('friends-add-friend')?.props.disabled).toBe(false);
-        await screen.pressByTestIdAsync('friends-add-friend');
+        await screen.pressByTestIdAsync('friends-add-friend:header');
         expect(navigation.push).toHaveBeenCalledWith('/friends/search');
 
+        // Without a username nobody can be added yet: the "+" leaves and the claim section asks for one.
         await act(async () => { storage.getState().applyProfile({ ...profile, username: null, linkedProviders: [] }); });
-        const button = screen.findByTestId('friends-add-friend');
-        expect(button?.props.disabled).toBe(true);
-        navigation.push.mockClear();
-        await screen.pressByTestIdAsync('friends-add-friend');
-        expect(navigation.push).not.toHaveBeenCalled();
+        expect(screen.findByTestId('friends-add-friend:header')).toBeNull();
+        expect(screen.findByTestId('friends-identity-username')).not.toBeNull();
     });
 });

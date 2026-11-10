@@ -162,7 +162,9 @@ describe('MobileBottomChromeHost mounted chrome', () => {
         await navigateTo('/workflows');
         await screen.update(<Harness />);
         expect(screen.findByType(MainAppTabBar).props.activeTab).toBe('workflows');
-        expect(screen.findByType(MainAppTabBar).props.trailingAccessory).toBeUndefined();
+        // Off Sessions the "+" is the page's own create action, and a page that lends none leaves the cell empty.
+        expect(screen.findHostByTestId('tabbar-start-new-session')).toBeNull();
+        expect(screen.root.findAll(node => typeof node.props.testID === 'string' && node.props.testID.startsWith('tabbar-create:'))).toHaveLength(0);
     });
     it('keeps the bar on a More destination without claiming Sessions is here (QA-PHONE P1)', async () => {
         const screen = await renderScreen(<Harness />);
@@ -171,7 +173,7 @@ describe('MobileBottomChromeHost mounted chrome', () => {
         await finishAnimations();
         expect(screen.findByType(MainAppTabBar)).toBeTruthy();
         expect(screen.findByTestId('tabbar-tab-sessions').props.selected).toBe(false);
-        expect(screen.findByType(MainAppTabBar).props.trailingAccessory).toBeUndefined();
+        expect(screen.findHostByTestId('tabbar-start-new-session')).toBeNull();
     });
     it('offers More from the bar itself on Sessions and on a tab with its own route', async () => {
         const screen = await renderScreen(<Harness />);
@@ -209,6 +211,13 @@ describe('MobileBottomChromeHost mounted chrome', () => {
     // Owner 11-06: Session history is a Sessions page and Home is a More page; both keep the main bar.
     it.each(['/session/archived', '/session/recent', '/home'])('keeps the main bar on %s', async pathname => {
         route.pathname = pathname; enableCockpit();
+        const screen = await renderScreen(<Harness />);
+        expect(screen.findAllByType(MainAppTabBar)).toHaveLength(1);
+        expect(screen.findAllByType(SessionCockpitTabBar)).toHaveLength(0);
+    });
+    // Owner 11-10: Settings is a main screen like the others; the bar stands on its own page, its pushed pages keep their Back.
+    it.each([false, true])('keeps the main bar on the Settings main screen (cockpit: %s)', async cockpit => {
+        route.pathname = '/settings'; if (cockpit) enableCockpit();
         const screen = await renderScreen(<Harness />);
         expect(screen.findAllByType(MainAppTabBar)).toHaveLength(1);
         expect(screen.findAllByType(SessionCockpitTabBar)).toHaveLength(0);

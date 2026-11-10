@@ -119,13 +119,14 @@ export function SearchFriendsScreen() {
         searchError === 'searchFailed' ? t('errors.searchFailed') : null;
 
     return (
-        <RequireFriendsIdentityForFriends>
-            <KeyboardAwareScrollView
-                style={styles.container}
-                ScrollViewComponent={FriendsSearchKeyboardAwareItemList}
-                keyboardShouldPersistTaps="handled"
-            >
-                <PageHeader title={t('friends.addFriend')} alwaysShowTitle description={t('friends.findInstructions')} />
+        <KeyboardAwareScrollView
+            style={styles.container}
+            ScrollViewComponent={FriendsSearchKeyboardAwareItemList}
+            keyboardShouldPersistTaps="handled"
+        >
+            <PageHeader title={t('friends.addFriend')} alwaysShowTitle description={t('friends.findInstructions')} />
+            {/* Finding people needs a username first: the claim stands under this page's own title. */}
+            <RequireFriendsIdentityForFriends>
                 <CompactSearchField
                     placement="page"
                     value={searchQuery}
@@ -153,8 +154,8 @@ export function SearchFriendsScreen() {
                         <EmptyState layout="line" title={t('friends.noUserFound')} subtitle={t('friends.checkUsername')} />
                     </ItemGroup>
                 ) : null}
-            </KeyboardAwareScrollView>
-        </RequireFriendsIdentityForFriends>
+            </RequireFriendsIdentityForFriends>
+        </KeyboardAwareScrollView>
     );
 }
 

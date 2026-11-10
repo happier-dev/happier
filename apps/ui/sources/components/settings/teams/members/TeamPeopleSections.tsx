@@ -15,20 +15,26 @@ import { getPreferredLanguage, t } from '@/text';
 
 import { teamViewerStandingLabel } from '../teamLabels';
 import type { TeamsDirectoryRow } from '../teamsDirectoryViewState';
-import { teamsUnavailableHomeReason } from '../teamsDirectoryViewState';
+import { teamsUnavailableHomeReason, teamsUnavailableHomeStateKind } from '../teamsDirectoryViewState';
 import {
   teamMemberDetailPath,
   teamMembersPath,
   teamsCreatePath,
 } from '../teamsRoutes';
 import { TeamMemberRow } from './TeamMemberRow';
+import { matchesPeopleQuery } from '@/components/friends/peopleQuery';
+import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 
 /**
  * The People page's teammates: one section per Team you belong to, drawn from the same Teams
  * directory and roster owners the Members page reads. Roles, encryption and membership changes stay
  * on the Members page and each person's page, which every row and section opens.
  */
-export const TeamPeopleSections = React.memo(function TeamPeopleSections() {
+export const TeamPeopleSections = React.memo(function TeamPeopleSections(props: Readonly<{
+  /** The People page's search: only matching teammates show, and a Team with none drops out. */
+  query?: string;
+}>) {
+  const query = props.query ?? '';
   const router = useRouter();
   const directory = useTeamsDirectory();
   // No Home the viewer can reach offers Teams: there is nothing to invite them to here.
@@ -60,12 +66,13 @@ export const TeamPeopleSections = React.memo(function TeamPeopleSections() {
           <SurfaceStateCard
             key={home.serverId}
             testID={`people-teams-unavailable:${home.serverId}`}
-            kind="unavailable"
+            kind={teamsUnavailableHomeStateKind(home)}
             size="line"
+            // One Home: the cause is the one message. Several: the Home's name says which one it is about.
             title={
-              directory.multiHome ? home.homeName : t('teams.unavailable.title')
+              directory.multiHome ? home.homeName : teamsUnavailableHomeReason(home)
             }
-            reason={teamsUnavailableHomeReason(home)}
+            reason={directory.multiHome ? teamsUnavailableHomeReason(home) : undefined}
             action={
               home.retryable
                 ? { label: t('common.retry'), onPress: directory.refresh }
@@ -77,6 +84,8 @@ export const TeamPeopleSections = React.memo(function TeamPeopleSections() {
     ) : null;
 
   if (directory.kind === 'empty' && directory.rows.length === 0) {
+    // A search is about people already here: inviting to a new Team is not an answer to it.
+    if (query.trim().length > 0) return unavailableLines;
     return (
       unavailableLines ?? (
         <ItemGroup title={t('teams.title')}>
@@ -107,6 +116,7 @@ export const TeamPeopleSections = React.memo(function TeamPeopleSections() {
             row={row}
             scope={scope}
             showHome={directory.multiHome}
+            query={query}
           />
         );
       })}
@@ -132,6 +142,7 @@ const TeamPeopleSection = React.memo(function TeamPeopleSection(
     row: TeamsDirectoryRow;
     scope: ServerAccountScope | null;
     showHome: boolean;
+    query: string;
   }>,
 ) {
   const router = useRouter();
@@ -192,7 +203,8 @@ const TeamPeopleSection = React.memo(function TeamPeopleSection(
       />,
     );
   }
-  if (others === 0 || scope === null) return frame(null, 'none');
+  const searching = props.query.trim().length > 0;
+  if (others === 0 || scope === null) return searching ? null : frame(null, 'none');
 
   // Reads ∝ need: a Team's roster is read once its section nears the screen. Until then, and while
   // the read is out, the rows the count expects are reserved (at most the roster's first page).
@@ -214,6 +226,7 @@ const TeamPeopleSection = React.memo(function TeamPeopleSection(
         teamKey={teamKey}
         frame={frame}
         loadingRows={loadingRows}
+        query={props.query}
       />
     </LazyMountOnScreen>
   );
@@ -227,6 +240,7 @@ const TeamPeopleRoster = React.memo(function TeamPeopleRoster(
     teamKey: string;
     frame: (children: React.ReactNode, surface?: 'none') => React.ReactNode;
     loadingRows: React.ReactNode;
+    query: string;
   }>,
 ) {
   const router = useRouter();
@@ -245,7 +259,17 @@ const TeamPeopleRoster = React.memo(function TeamPeopleRoster(
     [router, row.address],
   );
   const others = roster.rows.filter(
-    (membership) => membership.accountId !== scope.accountId,
+    (membership) =>
+      membership.accountId !== scope.accountId &&
+      matchesPeopleQuery(
+        props.query,
+        resolveAccountDisplayName({
+          profile: membership.account,
+          accountId: membership.accountId,
+          viewerAccountId: scope.accountId,
+        }).name,
+        membership.account.username,
+      ),
   );
 
   if (roster.rows.length === 0) {
@@ -264,7 +288,8 @@ const TeamPeopleRoster = React.memo(function TeamPeopleRoster(
     }
     if (roster.status === 'loading') return props.frame(props.loadingRows);
   }
-  if (others.length === 0) return props.frame(null, 'none');
+  if (others.length === 0)
+    return props.query.trim().length > 0 ? null : props.frame(null, 'none');
   return props.frame(
     others.map((membership) => (
       <TeamMemberRow

@@ -28,9 +28,10 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
 });
+const route = vi.hoisted(() => ({ pathname: '/boards/alpha' }));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ pathname: '/boards/alpha' }).module;
+    return createExpoRouterMock({ pathname: () => route.pathname }).module;
 });
 // The applied connection is a network/environment boundary. Keep Account lifetime and readers real,
 // as in workflowLibraryReads.test.tsx, while declaring this HTTP fixture's Home connected.
@@ -54,6 +55,7 @@ let liveBoard: WorkBoardV1 | null = null;
 let bodyGate: Promise<void> | null = null;
 let indexGate: Promise<void> | null = null;
 let failIndex = false;
+let noBoards = false;
 let previousStorageState = getStorage().getState();
 
 const deviceState = vi.hoisted(() => ({ type: 'tablet' as 'phone' | 'tablet' }));
@@ -70,12 +72,14 @@ describe('BoardsColumn collection search', () => {
         bodyGate = null;
         indexGate = null;
         failIndex = false;
+        noBoards = false;
+        route.pathname = '/boards/alpha';
         const artifactBoundary = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
         home = await serveActionHomes({
             homes: [{ key: 'boards', serverUrl: 'https://boards-column.test', accountId: 'owner' }],
             route: async request => {
                 if (request.path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-                const rows = artifacts.map(artifact => liveBoard && artifact.id === liveBoard.id ? {
+                const rows = (noBoards ? [] : artifacts).map(artifact => liveBoard && artifact.id === liveBoard.id ? {
                     ...artifact, header: encodePlainArtifactStoredContent(buildWorkBoardArtifactHeaderV1(liveBoard)),
                     body: encodePlainArtifactStoredContent({ body: JSON.stringify(liveBoard) }),
                 } : artifact);
@@ -125,37 +129,71 @@ describe('BoardsColumn collection search', () => {
         expect(column.findHostByTestId('boards-column:back')).toBeNull();
     });
 
-    it('filters real acknowledged Board names while keeping one stable creation row', async () => {
+    it('keeps search behind its toggle, filters real Board names and creates from the header instead of a list row', async () => {
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><BoardsColumn /></InjectedAuthProvider>);
         await flushHookEffects({ runOnlyPendingTimers: true });
         await flushHookEffects({ runOnlyPendingTimers: true });
         expect(screen.findHostByTestId('boards-column:board:alpha')).not.toBeNull();
         expect(screen.findHostByTestId('boards-column:board:beta')).not.toBeNull();
-        expect(screen.findHostByTestId('boards-column:search')).not.toBeNull();
+        // A main screen's search waits behind its magnifier; the "+" in the title row is how a board is made.
+        expect(screen.findHostByTestId('boards-column:search')).toBeNull();
+        expect(screen.findHostByTestId('boards-column:new:header')).not.toBeNull();
+        expect(screen.findHostByTestId('boards-column:new-row')).toBeNull();
         const { Item } = await import('@/components/ui/lists/Item');
         const navigation = screen.findAllByType(Item).filter(node => node.props.testID?.startsWith('boards-column:board:'));
         expect(navigation).toHaveLength(2);
         expect(navigation.every(node => node.props.rowRole === 'item' && node.props.titleLines === 1)).toBe(true);
         // Every Board would carry the same Boards glyph, so no row draws a leading mark and the names start on
-        // the list's edge (LIST-ICONS-1108); the creation row keeps its "+".
+        // the list's edge (LIST-ICONS-1108).
         expect(navigation.flatMap(node => node.findAll(child => typeof child.props.name === 'string').map(child => child.props.name))).toEqual([]);
-        expect(screen.findAll(node => node.props.testID === 'boards-column:new-row')[0]!
-            .findAll(child => child.props.name === 'plus').length).toBeGreaterThan(0);
 
+        screen.pressByTestId('boards-column:search:toggle');
+        await flushHookEffects();
         screen.changeTextByTestId('boards-column:search', '  ALPHA  ');
         await flushHookEffects();
         expect(screen.findHostByTestId('boards-column:board:alpha')).not.toBeNull();
         expect(screen.findHostByTestId('boards-column:board:beta')).toBeNull();
-        expect(screen.findHostByTestId('boards-column:new-row')).not.toBeNull();
-        expect(screen.findHostByTestId('boards-column:new')).toBeNull();
 
         screen.changeTextByTestId('boards-column:search', 'not a board');
         await flushHookEffects();
         expect(screen.findHostByTestId('boards-column:board:alpha')).toBeNull();
-        expect(screen.findHostByTestId('boards-column:new-row')).not.toBeNull();
         screen.changeTextByTestId('boards-column:search', '');
         await flushHookEffects();
         expect(screen.findHostByTestId('boards-column:board:beta')).not.toBeNull();
+    });
+
+    it('selects no row on the phone main screen while the column beside a page selects the board it shows', async () => {
+        route.pathname = '/boards';
+        const selectedRows = async (surface: 'page' | 'plane') => {
+            const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><BoardsColumn surface={surface} /></InjectedAuthProvider>);
+            await flushHookEffects({ runOnlyPendingTimers: true });
+            await flushHookEffects({ runOnlyPendingTimers: true });
+            const { Item } = await import('@/components/ui/lists/Item');
+            expect(screen.findHostByTestId('boards-column:board:alpha')).not.toBeNull();
+            return screen.findAllByType(Item).filter(node => node.props.testID?.startsWith('boards-column:board:') && node.props.selected === true)
+                .map(node => node.props.testID);
+        };
+        // On the main screen nothing is open, so nothing is selected; beside a page the first board is what it shows.
+        deviceState.type = 'phone';
+        expect(await selectedRows('page')).toEqual([]);
+        deviceState.type = 'tablet';
+        expect(await selectedRows('plane')).toHaveLength(1);
+    });
+
+    it('gives the empty phone page the Boards empty state with its New board action', async () => {
+        noBoards = true;
+        deviceState.type = 'phone';
+        const page = await renderScreen(<InjectedAuthProvider credentials={credentials}><BoardsColumn surface="page" /></InjectedAuthProvider>);
+        await flushHookEffects({ runOnlyPendingTimers: true });
+        await flushHookEffects({ runOnlyPendingTimers: true });
+        expect(page.findHostByTestId('boards-column:empty')).not.toBeNull();
+        expect(page.findHostByTestId('boards-column:empty:new')).not.toBeNull();
+        deviceState.type = 'tablet';
+        // Beside the page, the page's own empty state says it once; the column stays quiet.
+        const column = await renderScreen(<InjectedAuthProvider credentials={credentials}><BoardsColumn /></InjectedAuthProvider>);
+        await flushHookEffects({ runOnlyPendingTimers: true });
+        await flushHookEffects({ runOnlyPendingTimers: true });
+        expect(column.findHostByTestId('boards-column:empty')).toBeNull();
     });
 
     it('renders the index names while every Board body is still pending', async () => {

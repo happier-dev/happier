@@ -13667,6 +13667,11 @@ const enBrowserShell = {
       denied: 'Denied',
     },
     management: {
+      profileExists: "A profile with this identity already exists. Choose another name.",
+      profileNotFound: "This profile was removed. Reopen Privacy to refresh the list.",
+      profileUnavailable: "This profile is unavailable. Choose another profile.",
+      profilePurgeFailed: "The profile could not be deleted. Close its browser tabs and try again.",
+      managedBrowserRequired: "Saved profiles require a managed browser.",
       createProfile: 'Create profile',
       selectProfile: 'Select profile',
 selectWarning: "Switching profiles closes this session’s browser tabs and reopens this page with the selected profile.",
@@ -19662,6 +19667,9 @@ const enFriends = {
   peopleCreateTeam: "Create a Team",
   peopleTeamMembers: "All members",
   peopleTeamOnlyYou: "Only you",
+  usernameClaimTitle: "Your username",
+  usernameClaimDescription: "People on this Home find you and share with you by your username.",
+  peopleSearchPlaceholder: "Search people",
   peopleTeamMembersLoading: "Loading members",
   peopleTeamMembersFailed: "Couldn’t load members",
   myFriends: 'My friends',
@@ -19743,8 +19751,8 @@ const enFriends = {
       `Friends uses ${provider} usernames for discovery and sharing.`,
     connect: ({ provider }: { provider: string }) => `Connect ${provider}`,
     notAvailable: 'Not available?',
-    notConfigured: ({ provider }: { provider: string }) =>
-      `${provider} OAuth is not configured on this Home.`,
+    continueWith: ({ provider }: { provider: string }) => `Continue with ${provider}`,
+    notConfigured: ({ provider }: { provider: string }) => `This Home hasn’t set up ${provider} sign-in, so Friends isn’t available here yet.`,
   },
 };
 
@@ -23679,6 +23687,8 @@ const enPluginRuntime = {
   viewNotCurrent: "This plugin’s selected view is no longer current. Reopen the page, update the plugin on its machine, or choose another machine.",
   unavailableGeneric: 'It may still be starting.',
   crashLoop: 'The plugin was stopped after repeated crashes.',
+  homeUnreachableTitle: "Can’t reach this Home right now",
+  homeUnreachableReason: "Check your connection and that the Home is running, then try again.",
   disabledByPolicy:
     'This plugin view is disabled by current settings or compatibility.',
   hostedWebUnavailableTitle: 'Hosted plugin view unavailable',

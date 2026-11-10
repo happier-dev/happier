@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import { I18nManager, Platform, Pressable, StyleSheet, View, useWindowDimensions, type ViewStyle } from 'react-native';
 
-import type { HappierTypeEmphasis, HappierTypeRole } from '../text/typeScale.js';
+import { resolveHappierTypeScale, type HappierTypeEmphasis, type HappierTypeRole } from '../text/typeScale.js';
 
 import { useOptionalHappierUiLocalization, useOptionalHappierUiPalette } from '../../environment/context.js';
 import type { HappierUiTheme } from '../../environment/types.js';
@@ -700,6 +700,9 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
     return { width: '31%', maxWidth: '31%', flexGrow: 0, flexShrink: 0 };
   }, [fittedColumns, sheet, width]);
   const dividerColor = props.colors.divider ?? props.colors.tileBorder;
+  // When some tiles describe themselves, a tile without a description keeps that line empty, so every tile reads
+  // the same shape and choosing one never changes the group's layout.
+  const anySubtitle = props.options.some((option) => typeof option.subtitle === 'string' && option.subtitle.trim().length > 0);
 
   return (
     <View
@@ -720,6 +723,8 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
         const glyphColor = props.colors.glyph;
         const glyphSize = compact ? 16 : 29;
         const hasSubtitle = typeof option.subtitle === 'string' && option.subtitle.trim().length > 0;
+        // A reserved description line lays the tile out like its described siblings.
+        const subtitleLine = hasSubtitle || anySubtitle;
         const hasPreview = compact && option.preview != null;
         const footer = props.renderOptionFooter?.({ option, selected, disabled });
 
@@ -760,7 +765,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
               style={({ pressed }) => [
                 styles.tilePressable,
                 compact ? styles.tileCompact : null,
-                compact && !hasSubtitle ? styles.tileCompactWithoutSubtitle : null,
+                compact && !subtitleLine ? styles.tileCompactWithoutSubtitle : null,
                 sheet ? styles.sheetCellPressable : null,
                 // The frame above owns the column's share before measurement; the press target fills it
                 // (a second percentage here would take a share of the share).
@@ -768,13 +773,13 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                 { opacity: pressOpacity(disabled, pressed) },
               ]}
             >
-              <View style={[styles.headerRow, sheet || compact && (!hasSubtitle || hasPreview) ? styles.headerRowCentered : null]}>
+              <View style={[styles.headerRow, sheet || compact && (!subtitleLine || hasPreview) ? styles.headerRowCentered : null]}>
                 {hasPreview ? <View style={styles.cardPreview} pointerEvents="none" aria-hidden>{option.preview}</View> : null}
-                <View style={[styles.titleRow, sheet || compact && (!hasSubtitle || hasPreview) ? styles.titleRowCentered : null]}>
+                <View style={[styles.titleRow, sheet || compact && (!subtitleLine || hasPreview) ? styles.titleRowCentered : null]}>
                   {option.mark || glyph ? <View style={[styles.iconSlot, compact ? styles.iconSlotCompact : null]}>
                     {option.mark ?? (glyph ? props.renderGlyph({ glyph, size: glyphSize, color: glyphColor }) : null)}
                   </View> : null}
-                  <View style={[styles.textContainer, compact && !hasSubtitle ? styles.textContainerCentered : null]}>
+                  <View style={[styles.textContainer, compact && !subtitleLine ? styles.textContainerCentered : null]}>
                     {/* The name wraps in full (a long service name is never cut) and its badge follows it,
                         dropping to its own line only when the name leaves no room. */}
                     <View style={styles.titleLine}>
@@ -787,9 +792,14 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                         </View>
                       ) : null}
                     </View>
-                    {option.subtitle
-                      ? props.renderText({ role: 'cardSubtitle', text: option.subtitle, selected, compact, numberOfLines: props.subtitleLines ?? 4 })
-                      : null}
+                    {hasSubtitle
+                      ? props.renderText({ role: 'cardSubtitle', text: option.subtitle!, selected, compact, numberOfLines: props.subtitleLines ?? 4 })
+                      : anySubtitle ? (
+                        // An empty line of the description's height: no text, so the tile's name stays its own.
+                        <View pointerEvents="none" aria-hidden style={{ minHeight: resolveHappierTypeScale(
+                          resolveHappierSelectionTileText('cardSubtitle', { compact }).role, Platform.OS,
+                        ).lineHeight }} />
+                      ) : null}
                   </View>
                 </View>
                 <View style={styles.selectionAccessory} pointerEvents="none" aria-hidden>

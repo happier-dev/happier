@@ -5,6 +5,7 @@ import { HAPPIER_PAGE_METRICS, HappierColumnEdgeContext, useHappierPageSection }
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import { BareRowBleedContext, useBareRowBleedPx } from '@/components/ui/lists/bareRowBleed';
 import { useListPresentation, usePageListInsets } from '@/components/ui/lists/listPresentation';
+import { useInPageContentColumn } from '@/components/ui/lists/PageContentColumn';
 
 /**
  * Happier core's binding of the public `Collection` on a core page: the environment, host renderers and facts a
@@ -24,7 +25,9 @@ export const CoreCollectionScope = React.memo(function CoreCollectionScope(props
     // second inset; the column edge is told once, here, instead of each consumer cancelling it. Inside a sheet's
     // row (an expanded row's body) there is no column edge: its content draws its own.
     const inSheet = useHappierPageSection() !== null;
-    const onPageColumn = useListPresentation() === 'page' && usePageListInsets() === 'standard' && !inSheet;
+    // A page content column (`PageContentColumn`) draws no edge, so a Collection in it insets from its own edge.
+    const inContentColumn = useInPageContentColumn();
+    const onPageColumn = useListPresentation() === 'page' && usePageListInsets() === 'standard' && !inSheet && !inContentColumn;
     const inner = (
         <CorePluginUiPresentationScope renderPageScroller={props.renderPageScroller}>
             {props.children}

@@ -37,4 +37,14 @@ describe('CoreCollectionScope', () => {
         expect(await edgeUnder('page', { pageInsets: 'contained' })).toBe(0);
         expect(await edgeUnder('page', { inSheet: true })).toBe(0);
     });
+
+    it('states no edge inside a page content column, which draws none (Store rows sat 16 pt left of the page edge)', async () => {
+        const { PageContentColumn } = await import('@/components/ui/lists/PageContentColumn');
+        let edge = -1;
+        const screen = await renderScreen(<ListPresentationProvider value="page"><PageContentColumn>
+            <CoreCollectionScope><EdgeProbe onEdge={(px) => { edge = px; }} /></CoreCollectionScope>
+        </PageContentColumn></ListPresentationProvider>);
+        await screen.unmount();
+        expect(edge).toBe(0);
+    });
 });

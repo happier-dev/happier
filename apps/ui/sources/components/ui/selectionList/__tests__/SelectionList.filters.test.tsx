@@ -100,6 +100,21 @@ describe('SelectionList filters', () => {
         expect(header?.findAll((node) => node.props?.testID === 'sl:filters-row').length).toBeGreaterThan(0);
     });
 
+    it('keeps the filter that scopes the search on the field row when narrow, naming the filter until it has a value', async () => {
+        const machine: SelectionListFilter = { id: 'machine', label: 'Machine', valueLabel: 'Choose a machine', muted: true,
+            pairsWithSearch: true, testID: 'filter.machine' };
+        const screen = await renderScreen(<SelectionList {...props({ filters: [machine, agentFilter()] })} />);
+        const inside = (zone: string, chip: string) => screen.findByTestId(zone)?.findAll((node) => node.props?.testID === chip).length ?? 0;
+
+        await layoutRoot(screen, 390);
+        expect(inside('sl:inline-controls', 'filter.machine')).toBeGreaterThan(0);
+        expect(inside('sl:filters-row', 'filter.machine')).toBe(0);
+        expect(inside('sl:filters-row', 'filter.agent')).toBeGreaterThan(0);
+        expect(screen.getTextContent()).not.toContain('Choose a machine');
+        const chip = screen.findHostByTestId('filter.machine');
+        expect(chip?.props.accessibilityLabel ?? chip?.props['aria-label']).toBe('Machine: Choose a machine');
+    });
+
     it('draws the short value in the chip row while the accessible name and the wide chip keep the whole value', async () => {
         const scope = { id: 'source', label: 'Search', valueLabel: 'Text in happier · MacBook Pro', rowValueLabel: 'Text in happier',
             onClear: vi.fn(), testID: 'filter.source' };

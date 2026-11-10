@@ -154,6 +154,43 @@ describe('HappierCollectionList (list presentation)', () => {
     mount.unmount();
   });
 
+  it('keeps the magnifier and the add control together at the title row\'s end', () => {
+    const searchHost: HappierCollectionListHost = {
+      ...host,
+      SearchToggle: (props) => <Pressable testID={props.testID} onPress={props.onPress}><Text>find</Text></Pressable>,
+    };
+    const mount = mountThroughReactNativeWeb(
+      <HappierCollectionList host={searchHost} title="Boards" headerAction={<View testID="add" />}
+        search={{ testID: 'search', value: '', onChangeText: () => {}, placeholder: 'Search', collapsible: true }} />,
+    );
+    const toggle = mount.container.querySelector<HTMLElement>('[data-testid="search:toggle"]')!;
+    const add = mount.container.querySelector<HTMLElement>('[data-testid="add"]')!;
+    // One trailing cluster: the title row spreads the heading from it, never the magnifier from the "+".
+    expect(toggle.parentElement!.contains(add)).toBe(true);
+    expect(toggle.parentElement!.contains(mount.container.querySelector('[data-testid="text-title"]'))).toBe(false);
+    mount.unmount();
+  });
+
+  it('paints the list ground the host reads while rendering, so a theme switch repaints a mounted list', async () => {
+    let ground = 'rgb(20, 20, 20)';
+    const themedHost: HappierCollectionListHost = {
+      ...host,
+      Scroller: (props) => <ScrollView testID="scroller" style={props.style as never}>{props.children}</ScrollView>,
+      surfaceStyle: { backgroundColor: 'rgb(1, 1, 1)' },
+      useSurfaceStyle: () => ({ backgroundColor: ground }),
+    };
+    const list = () => <HappierCollectionList testID="list" host={themedHost} title="Boards"><Text>row</Text></HappierCollectionList>;
+    const mount = mountThroughReactNativeWeb(list());
+    const paint = (testID: string) => getComputedStyle(mount.container.querySelector<HTMLElement>(`[data-testid="${testID}"]`)!).backgroundColor;
+    expect(paint('list')).toBe('rgb(20, 20, 20)');
+    expect(paint('scroller')).toBe('rgb(20, 20, 20)');
+    ground = 'rgb(250, 250, 250)';
+    await mount.render(list());
+    expect(paint('list')).toBe('rgb(250, 250, 250)');
+    expect(paint('scroller')).toBe('rgb(250, 250, 250)');
+    mount.unmount();
+  });
+
   it('labels a group with its title and count', () => {
     const mount = mountThroughReactNativeWeb(
       <HappierCollectionListGroupLabel host={host} title="Available to install" count={4} first />,

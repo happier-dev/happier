@@ -95,7 +95,7 @@ vi.mock('@/components/ui/cards/UserCard', () => ({ UserCard: 'UserCard' }));
 vi.mock('@/components/account/RecoveryKeyReminderBanner', () => ({
     RecoveryKeyReminderBanner: 'RecoveryKeyReminderBanner',
 }));
-vi.mock('@/components/navigation/Header', () => ({ Header: 'Header' }));
+vi.mock('@/components/navigation/Header', async (importOriginal) => ({ ...await importOriginal<typeof import('@/components/navigation/Header')>(), Header: 'Header' }));
 vi.mock('@/components/inbox/cards/FeedItemCard', () => ({ FeedItemCard: 'FeedItemCard' }));
 vi.mock('@/components/friends/RequireFriendsIdentityForFriends', () => ({
     RequireFriendsIdentityForFriends: ({ children }: any) =>
@@ -104,7 +104,7 @@ vi.mock('@/components/friends/RequireFriendsIdentityForFriends', () => ({
 vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
     useFriendsIdentityReadiness: () => ({ isReady: true }),
 }));
-vi.mock('@/utils/platform/responsive', () => ({ useIsTablet: () => false, useDeviceType: () => 'tablet' }));
+vi.mock('@/utils/platform/responsive', async (importOriginal) => ({ ...await importOriginal<typeof import('@/utils/platform/responsive')>(), useIsTablet: () => false, useDeviceType: () => 'tablet' }));
 vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 960 },
     useLayoutMaxWidthStyle: () => ({ maxWidth: 960 }),

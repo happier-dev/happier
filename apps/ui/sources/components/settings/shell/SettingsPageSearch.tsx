@@ -9,11 +9,18 @@ import { PaneHeaderScrollScope, PaneHeaderShade } from '@/components/appShell/pa
 import { t } from '@/text';
 import { SettingsQueryResults, useSettingsSearch } from '@/components/settings/shell/SettingsSearchResults';
 import { useSettingsPageSearchQuery } from './SettingsPageSearchContext';
+import { SettingsPageHeader } from './SettingsPageHeader';
+import { CollectionSearchToggle } from '@/components/ui/lists/collection/CollectionList';
+import { NavigationTitleChromeProvider } from '@/components/ui/layout/navigationTitleChrome';
+import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
+import { PhonePageBackLine, usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 /**
- * Settings search where there is no rail (phones, or the rail turned off): a search field at the top
- * of the Settings page; while it holds a query, the results take the place of the page below it.
- * Same catalog search and result list as the rail.
+ * Settings where there is no rail (phones, or the rail turned off): a main screen like the others (owner 11-10). Its
+ * own title row, the title on the left and the search magnifier on the right, stands in for the native bar; opening
+ * the magnifier puts the search field beneath it, and while the field holds a query the results take the place of the
+ * page below. Same catalog search and result list as the rail. A query keeps the field open; closing it clears it.
  */
 export const SettingsPageSearch = React.memo(function SettingsPageSearch(props: Readonly<{
     children: React.ReactNode;
@@ -24,20 +31,54 @@ export const SettingsPageSearch = React.memo(function SettingsPageSearch(props: 
         queryState: useSettingsPageSearchQuery(),
         tag: 'SettingsPageSearch.open',
     });
-    // The field is fixed above the page body, so it is the bottom of the page's header: the body's scroll
-    // shades the field's lower edge (the pane header's shade), rather than rows sliding under it bare.
-    // A live query swaps the body for the windowed results list.
+    const [opened, setOpened] = React.useState(false);
+    const fieldOpen = opened || search.query.length > 0;
+    const setQuery = search.setQuery;
+    const toggleField = React.useCallback(() => {
+        if (fieldOpen) {
+            setQuery('');
+            setOpened(false);
+        } else {
+            setOpened(true);
+        }
+    }, [fieldOpen, setQuery]);
+    const phone = useDeviceType() === 'phone';
+    const phoneBack = usePhoneDestinationBack('settings:back');
+    const inheritedBack = useNavigationBackControl();
+    // The title row is fixed above the page body, the bottom of the page's header: the body's scroll shades its lower
+    // edge (the pane header's shade), rather than rows sliding under it bare. A live query swaps the body for the
+    // windowed results list. The page draws its own title, so no bar above it does.
     return (
+        <NavigationTitleChromeProvider showsTitle={false}>
         <PaneHeaderScrollScope>
         <View style={styles.page}>
             <View style={styles.searchBand}>
-                <CompactSearchField
-                    testID="settings-page-search"
-                    placement="page"
-                    value={search.query}
-                    onChangeText={search.setQuery}
-                    placeholder={t('settingsSearch.placeholder')}
-                />
+                <PhonePageBackLine control={null} page />
+                <NavigationBackChromeProvider control={phone ? phoneBack : inheritedBack}>
+                    <SettingsPageHeader
+                        testID="settings-page-header"
+                        actionsPlacement="page"
+                        actionsLayout="inline"
+                        actions={(
+                            <CollectionSearchToggle
+                                testID="settings-page-search-toggle"
+                                open={fieldOpen}
+                                onPress={toggleField}
+                                accessibilityLabel={t('settingsSearch.placeholder')}
+                            />
+                        )}
+                    />
+                </NavigationBackChromeProvider>
+                {fieldOpen ? (
+                    <CompactSearchField
+                        testID="settings-page-search"
+                        placement="page"
+                        value={search.query}
+                        onChangeText={search.setQuery}
+                        placeholder={t('settingsSearch.placeholder')}
+                        autoFocus={opened && search.query.length === 0}
+                    />
+                ) : null}
                 <PaneHeaderShade />
             </View>
             {search.active ? (
@@ -51,6 +92,7 @@ export const SettingsPageSearch = React.memo(function SettingsPageSearch(props: 
             ) : <ItemList testID="settings-page-body" style={styles.body}>{props.children}</ItemList>}
         </View>
         </PaneHeaderScrollScope>
+        </NavigationTitleChromeProvider>
     );
 });
 

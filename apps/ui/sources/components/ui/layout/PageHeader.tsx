@@ -58,6 +58,11 @@ export type PageHeaderPrimaryAction = NavigationHeaderAction;
 
 export type PageHeaderProps = Readonly<{
     title: string;
+    /**
+     * The title as a control (a main screen's "Artifacts ⌄", which opens its filters), drawn in the title's place.
+     * `title` still names the page for the navigation chrome and assistive technology.
+     */
+    titleControl?: React.ReactNode;
     /** An inline mark after the title, such as a release-channel badge. */
     titleAccessory?: React.ReactNode;
     /** One sentence saying what the page is for (a node only when the sentence itself animates). */
@@ -221,7 +226,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
                 : renderPageHeaderText(input),
         [descriptionLines],
     );
-    const titleNode = props.titleEditor
+    const titleNode = props.titleControl != null ? props.titleControl : props.titleEditor
         // The editable title stops where the read-only one does, until the person edits it.
         ? <InlineTextField editor={props.titleEditor} style={stylesheet.titleInput}
             restingLines={props.titleLines ?? PAGE_TITLE_MAX_LINES} />

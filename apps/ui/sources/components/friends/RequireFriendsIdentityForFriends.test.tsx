@@ -25,7 +25,7 @@ async function renderBase(overrides: Partial<BaseProps>) {
     const props: BaseProps = {
         variant: 'username',
         isReady: false,
-        providerDisplayName: 'GitHub',
+        connect: { kind: 'connect', providerId: 'github', providerName: 'GitHub' },
         onSaveUsername: () => {},
         onConnectProvider: () => {},
         children: <TextStub>CHILD</TextStub>,
@@ -34,18 +34,29 @@ async function renderBase(overrides: Partial<BaseProps>) {
     return renderScreen(<RequireFriendsIdentityForFriendsBase {...props} />);
 }
 
+const continueWithGitHub = () => t('friends.providerGate.continueWith', { provider: 'GitHub' });
+
 function TextStub(props: { children?: React.ReactNode }) {
     return <>{props.children}</>;
 }
 
 describe('RequireFriendsIdentityForFriendsBase', () => {
-    it('renders a username gate when identity is not ready and variant=username', async () => {
+    it('claims a username, and names the configured provider as the other way in', async () => {
         const screen = await renderBase({});
 
         expect(screen.tree.findAllByProps({ children: 'CHILD' })).toHaveLength(0);
         expect(screen.findAllByProps({ accessibilityLabel: t('profile.username') }).length).toBeGreaterThan(0);
         expect(screen.findAllByProps({ accessibilityLabel: t('common.save') }).length).toBeGreaterThan(0);
-        expect(screen.findAllByProps({ accessibilityLabel: t('friends.providerGate.connect', { provider: 'GitHub' }) }).length).toBeGreaterThan(0);
+        expect(screen.findAllByProps({ accessibilityLabel: continueWithGitHub() }).length).toBeGreaterThan(0);
+    });
+
+    it('offers no provider when this Home configured none', async () => {
+        const screen = await renderBase({ connect: { kind: 'none' } });
+
+        expect(screen.findAllByProps({ accessibilityLabel: t('common.save') }).length).toBeGreaterThan(0);
+        expect(screen.findAllByProps({ accessibilityLabel: continueWithGitHub() })).toHaveLength(0);
+        expect(screen.tree.findAll((node) => typeof node.props?.accessibilityLabel === 'string'
+            && node.props.accessibilityLabel.includes('OAuth'))).toHaveLength(0);
     });
 
     it('prefills the username input when initialUsername is provided', async () => {
@@ -62,37 +73,19 @@ describe('RequireFriendsIdentityForFriendsBase', () => {
         expect(screen.tree.findAllByProps({ children: 'That name is already taken' }).length).toBeGreaterThan(0);
     });
 
-    it('renders a provider-only gate when variant=provider', async () => {
-        const screen = await renderBase({
-            variant: 'provider',
-            providerDisplayName: 'GitHub',
-        });
+    it('asks only for the required provider on the provider step', async () => {
+        const screen = await renderBase({ variant: 'provider' });
 
         expect(screen.tree.findAllByProps({ children: 'CHILD' })).toHaveLength(0);
-        expect(screen.findAllByProps({ accessibilityLabel: t('friends.providerGate.connect', { provider: 'GitHub' }) }).length).toBeGreaterThan(0);
+        expect(screen.findAllByProps({ accessibilityLabel: continueWithGitHub() }).length).toBeGreaterThan(0);
         expect(screen.findAllByProps({ accessibilityLabel: t('common.save') })).toHaveLength(0);
     });
 
-    it('shows a configuration hint when Not available? is pressed', async () => {
-        const screen = await renderBase({
-            variant: 'provider',
-            unavailableReason: 'OAuth not configured',
-        });
+    it('says the required provider is missing instead of offering a control that cannot work', async () => {
+        const screen = await renderBase({ variant: 'provider', connect: { kind: 'notConfigured', providerName: 'GitHub' } });
 
-        expect(screen.tree.findAllByProps({ children: 'OAuth not configured' })).toHaveLength(0);
-
-        const hintButtons = screen.tree.findAll(
-            (node) =>
-                node.props?.accessibilityLabel === t('friends.providerGate.notAvailable') &&
-                typeof node.props?.onPress === 'function',
-        );
-        expect(hintButtons.length).toBeGreaterThan(0);
-
-        await act(async () => {
-            hintButtons[0]?.props?.onPress();
-        });
-
-        expect(screen.tree.findAllByProps({ children: 'OAuth not configured' }).length).toBeGreaterThan(0);
+        expect(screen.findAllByProps({ accessibilityLabel: continueWithGitHub() })).toHaveLength(0);
+        expect(screen.tree.findAllByProps({ title: t('friends.providerGate.notConfigured', { provider: 'GitHub' }) }).length).toBeGreaterThan(0);
     });
 
     it('renders children when identity is ready', async () => {

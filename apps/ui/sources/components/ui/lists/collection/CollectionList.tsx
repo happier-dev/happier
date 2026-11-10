@@ -54,8 +54,9 @@ function listText(role: keyof typeof HAPPIER_COLLECTION_LIST_TEXT) {
     };
 }
 
-import type { NavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
-import { PhonePageBackLine } from '@/components/ui/layout/usePageBackControl';
+import { PhonePageBackLine, usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
+import { usePublishPageCreateAction, type PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { useNavigationLeavesLargeTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { useTouchCompactRow } from '@/components/ui/lists/collection/CollectionRowContent';
 
@@ -71,11 +72,6 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.primary,
         // On the page's edge, where every phone page's title stands, not the rows' text edge.
         marginLeft: HAPPIER_PAGE_METRICS.pageTextInsetPx - HAPPIER_COLLECTION_LIST_METRICS.contentInset,
-    },
-    // A navigation column beside the page (the app shell's column) lies on the column's plane
-    // (`appShellColumnSurface`): the list draws no ground of its own there.
-    plane: {
-        backgroundColor: 'transparent',
     },
     title: {
         ...listText('title'),
@@ -206,13 +202,19 @@ const collectionListHost: HappierCollectionListHost = {
     // A column's Search icon, drawn like the Sessions header's and the filter beside it; selected while open.
     SearchToggle: (props) => <CollectionSearchToggle {...props} />,
     surfaceStyle: styles.surface,
+    // Read while rendering: a runtime light/dark switch repaints a mounted list's ground (header and rows alike).
+    useSurfaceStyle: useCollectionListSurfaceStyle,
     useGroupGlyphColor: useCollectionListGroupGlyphColor,
 };
 
 /** A column's search toggle under a precise pointer: the IconButton's own size with the header's `sm` glyph. */
 const COLLECTION_SEARCH_TOGGLE_CONTROL: HeaderControlMetrics = Object.freeze({ sizePx: HAPPIER_ICON_BUTTON_SIZE, glyphPx: ICON_SIZE.sm });
 
-function CollectionSearchToggle(props: React.ComponentProps<NonNullable<HappierCollectionListHost['SearchToggle']>>) {
+/**
+ * The title row's magnifier: a collection's own, and a main screen that is a page rather than a list (People,
+ * Settings) draws the same one beside its title.
+ */
+export function CollectionSearchToggle(props: React.ComponentProps<NonNullable<HappierCollectionListHost['SearchToggle']>>) {
     const control = useHeaderControlMetrics(COLLECTION_SEARCH_TOGGLE_CONTROL);
     return (
         <IconButton
@@ -229,12 +231,29 @@ function CollectionSearchToggle(props: React.ComponentProps<NonNullable<HappierC
     );
 }
 
+/** The list's own ground in the current theme. */
+function useCollectionListSurfaceStyle(): ViewStyle {
+    const base = useUnistyles().theme.colors.surface.base;
+    return React.useMemo(() => ({ backgroundColor: glassSurfaceBackgroundColor(base, 'content', true) }), [base]);
+}
+
+/**
+ * A navigation column beside the page (the app shell's column) lies on the column's plane
+ * (`appShellColumnSurface`): the list draws no ground of its own there, in every theme.
+ */
+const PLANE_SURFACE: ViewStyle = Object.freeze({ backgroundColor: 'transparent' });
+function useCollectionListPlaneSurfaceStyle(): ViewStyle {
+    return PLANE_SURFACE;
+}
+
 /** A group label's own glyphs (its disclosure chevron): the quiet tertiary ink of its count. */
 function useCollectionListGroupGlyphColor(): string {
     return useUnistyles().theme.colors.text.tertiary;
 }
 
-const collectionListPlaneHost: HappierCollectionListHost = { ...collectionListHost, surfaceStyle: styles.plane };
+const collectionListPlaneHost: HappierCollectionListHost = {
+    ...collectionListHost, surfaceStyle: PLANE_SURFACE, useSurfaceStyle: useCollectionListPlaneSurfaceStyle,
+};
 
 /** A list on a phone: its group labels read as section labels (`groupTitleTouch`). */
 const collectionListTouchHost: HappierCollectionListHost = {
@@ -262,24 +281,60 @@ export const COLLECTION_LIST_SEARCH_THRESHOLD = 8;
  */
 export const CollectionList = React.memo(function CollectionList(props: Omit<HappierCollectionListProps, 'host'> & Readonly<{
     surface?: 'page' | 'plane';
-    /** The way out of a list that is the whole page, on its own line above the title (`usePhoneDestinationBack`). */
-    pageBack?: NavigationBackControl | null;
+    /**
+     * The list is the whole phone page (a main screen: Boards, Discussions). Its head line stands under the status
+     * bar, empty on a main screen and carrying the Back on a page it pushes (`usePhoneDestinationBack`).
+     */
+    phonePage?: Readonly<{ backTestID: string }> | null;
+    /**
+     * The list's create action: the header "+" (unless `headerAction` names another), and on a phone main screen the
+     * bar's "+" beside the tabs (`usePublishPageCreateAction`), so both run the same thing.
+     */
+    create?: PageCreateAction | null;
 }>) {
-    const { surface, toolsInsetPx, pageBack: PageBack, ...listProps } = props;
+    const { surface, toolsInsetPx, phonePage, create, headerAction, ...listProps } = props;
     const largeTitle = useNavigationLeavesLargeTitle();
     const pageToolsInsetPx = React.useContext(CollectionPageToolsInsetContext);
     const resolvedToolsInsetPx = toolsInsetPx ?? pageToolsInsetPx;
+    const createAction = headerAction ?? (create ? <CollectionCreateButton create={create} /> : undefined);
     return (
         <>
-            <PhonePageBackLine control={PageBack ?? null} />
+            {phonePage ? <CollectionPhonePageHead backTestID={phonePage.backTestID} create={create ?? null} /> : null}
             <HappierCollectionList
-                host={surface === 'plane' ? collectionListPlaneHost : PageBack || largeTitle ? collectionListPhonePageHost : collectionListHost}
+                host={surface === 'plane' ? collectionListPlaneHost : phonePage || largeTitle ? collectionListPhonePageHost : collectionListHost}
                 {...(resolvedToolsInsetPx === undefined ? {} : { toolsInsetPx: resolvedToolsInsetPx })}
+                {...(createAction === undefined ? {} : { headerAction: createAction })}
                 {...listProps}
             />
         </>
     );
 });
+
+/** A whole phone page's head: its line under the status bar, and its create action lent to the bar's "+". */
+function CollectionPhonePageHead(props: Readonly<{ backTestID: string; create: PageCreateAction | null }>) {
+    const back = usePhoneDestinationBack(props.backTestID);
+    const phone = useDeviceType() === 'phone';
+    usePublishPageCreateAction(phone ? props.create : null);
+    return <PhonePageBackLine control={back} page />;
+}
+
+/** The header "+": the list's create action, drawn like the column's search toggle beside it. */
+/** A page that is not a list draws the same "+" on its title row (People). */
+export function CollectionCreateButton(props: Readonly<{ create: PageCreateAction }>) {
+    const control = useHeaderControlMetrics(COLLECTION_SEARCH_TOGGLE_CONTROL);
+    return (
+        <IconButton
+            testID={`${props.create.testID}:header`}
+            accessibilityLabel={props.create.label}
+            tooltip={props.create.label}
+            variant="plain"
+            size={control.sizePx}
+            iconSize={control.glyphPx}
+            iconName="plus"
+            onPress={props.create.onPress}
+        />
+    );
+}
 
 /**
  * A page that lists under its own title (a phone's settings collection) provides its gutter here, so every

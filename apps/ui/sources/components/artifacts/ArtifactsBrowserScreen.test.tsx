@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, onTestFailed, vi } from 'vitest';
 import { createDeferred, flushHookEffects, invokeTestInstanceHandler, pressTestInstanceAsync, renderHook, renderScreen } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { chooseDropdownMenuItem } from '@/dev/testkit/harness/dropdownMenuHarness';
 import { createArtifactListHttpResponse, createArtifactStoreBoundary, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { ArtifactQuotaExceededError } from '@/sync/api/artifacts/apiArtifacts';
@@ -554,6 +555,7 @@ describe('Artifacts browser recovery', () => {
                 expect(screen.findByTestId('artifacts:pending')).not.toBeNull();
                 expect(screen.getTextContent()).not.toContain('artifacts.countPlural');
                 // A search the unread remainder could still answer is not a definitive "no match".
+                await screen.pressByTestIdAsync('artifacts:search:toggle');
                 await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('artifacts:search'), 'onChangeText', 'Quarterly'); });
                 expect(screen.findByTestId('artifacts:noMatch')).toBeNull();
                 expect(screen.findByTestId('artifacts:noMatchSoFar')).not.toBeNull();
@@ -639,26 +641,50 @@ describe('Artifacts browser recovery', () => {
             .toEqual(['open', 'share', 'history', 'delete']);
     });
 
-    it('keeps phone search, choices and count while omitting the redundant introduction', async () => {
+    it('keeps phone search behind its magnifier, the choices and the count while omitting the redundant introduction', async () => {
         const viewport = { width: 390, height: 844, scale: 1, fontScale: 1 };
         vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue(viewport);
         vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue(viewport);
         const screen = await renderRows([artifactFixture('document')]);
         expect(screen.getTextContent()).not.toContain('artifacts.browser.description');
+        expect(screen.findByTestId('artifacts:search')).toBeNull();
+        await screen.pressByTestIdAsync('artifacts:search:toggle');
         expect(screen.findByTestId('artifacts:search')).not.toBeNull();
         expect(screen.findByTestId('artifacts:kind')).not.toBeNull();
         expect(screen.findByTestId('artifacts:present')).not.toBeNull();
     });
 
-    it('starts a phone document from the page header, never a second floating + over the shell\'s own, and keeps rows free of a permanent overflow', async () => {
+    it('opens the phone title\'s filters: a kind chosen there narrows the library as the kind chip does', async () => {
         const viewport = { width: 390, height: 844, scale: 1, fontScale: 1 };
         vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue(viewport);
         vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue(viewport);
-        const screen = await renderRows([artifactFixture('document')]);
-        // One labelled "New document" in the header's action slot is the page's only way to start one.
-        expect(screen.findByTestId('artifacts:new')).not.toBeNull();
+        const board = artifactFixture('board', { title: 'Launch', header: { v: 1, kind: 'work-board.v1', title: 'Launch',
+            pinnedInSessions: false, readsNeedsYou: false }, body: undefined, bodyVersion: undefined });
+        const screen = await renderRows([artifactFixture('document'), board]);
+        expect(screen.findHostByTestId('artifacts:row:document')).not.toBeNull();
+        await chooseDropdownMenuItem(screen, 'artifacts:title', 'kind:board');
+        expect(screen.findHostByTestId('artifacts:row:document')).toBeNull();
+        expect(screen.findHostByTestId('artifacts:row:board')).not.toBeNull();
+    });
+
+    it('starts a phone document from the title row\'s "+" and lends it to the bar\'s "+", and keeps rows free of a permanent overflow', async () => {
+        const viewport = { width: 390, height: 844, scale: 1, fontScale: 1 };
+        vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue(viewport);
+        vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue(viewport);
+        const { usePageCreateAction } = await import('@/components/navigation/mobile/chrome/pageCreateAction');
+        function BarCreateProbe() {
+            const action = usePageCreateAction();
+            return action ? <ReactNative.View testID={`bar:${action.testID}`} /> : null;
+        }
+        const screen = await renderScreen(<ReactNative.View><RecoveryBrowser artifacts={[artifactFixture('document')]} loadFailed={false} onRetry={() => {}} /><BarCreateProbe /></ReactNative.View>);
+        await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('artifacts:collection:stage'), 'onLayout', {
+            nativeEvent: { layout: { x: 0, y: 0, width: 1200, height: 800 } },
+        }); });
+        // One "+" in the title row; the bar's "+" runs the same action. No labelled button besides.
+        expect(screen.findByTestId('artifacts:new:header')).not.toBeNull();
+        expect(screen.findByTestId('bar:artifacts:new')).not.toBeNull();
         expect(screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === 'artifacts.browser.newDocument')).toHaveLength(1);
-        await screen.pressByTestIdAsync('artifacts:new');
+        await screen.pressByTestIdAsync('artifacts:new:header');
         expect(router.push).toHaveBeenLastCalledWith('/artifacts/new');
         expect(screen.findAll(node => node.props.testID === 'artifacts:row:document' && Array.isArray(node.props.secondaryActions))).toHaveLength(0);
         // The view switch sits with the choices, so the search keeps the whole row above them.
@@ -775,11 +801,16 @@ describe('Artifacts browser recovery', () => {
 });
 
 describe('Artifacts browser phone Back', () => {
-    // A retained Artifacts destination that is not in front must not draw (or publish) a Back of its own.
-    it.each([{ focused: true, drawn: 1 }, { focused: false, drawn: 0 }])('draws the phone Back only while its destination is in front (focused: $focused)', async ({ focused, drawn }) => {
+    // Artifacts is a main screen: the tab bar is its way around, so its own route draws no Back (owner 11-10).
+    // A route it is not the root of keeps one, and a retained destination not in front never draws (or publishes) it.
+    it.each([
+        { pathname: '/artifacts', focused: true, drawn: 0 },
+        { pathname: '/artifacts/new', focused: true, drawn: 1 },
+        { pathname: '/artifacts/new', focused: false, drawn: 0 },
+    ])('draws the phone Back only off a main screen while in front ($pathname, focused: $focused)', async ({ pathname, focused, drawn }) => {
         vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
         const screen = await renderScreen(
-            <DestinationInstanceContext.Provider value={{ tabId: 'artifacts', ref: { kind: 'home', params: {} }, pathname: '/artifacts', visible: true, focused, isFocused: () => focused,
+            <DestinationInstanceContext.Provider value={{ tabId: 'artifacts', ref: { kind: 'home', params: {} }, pathname, visible: true, focused, isFocused: () => focused,
                 navigation: { push: vi.fn(), replace: vi.fn(), back: vi.fn() } }}>
                 <RecoveryBrowser loadFailed={false} onRetry={() => {}} />
             </DestinationInstanceContext.Provider>,

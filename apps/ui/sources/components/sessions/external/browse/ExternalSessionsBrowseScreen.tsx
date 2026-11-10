@@ -73,6 +73,7 @@ import {
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { PhoneDestinationBackLine, usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
+import { useDestinationInstanceKey } from '@/components/appShell/workspace/destinationInstanceContext';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { useConversationSearch } from '@/sync/domains/search/useConversationSearch';
 import { hasConversationSearchScanFallback, isConversationSearchOnDemandOff } from '@/sync/domains/search/searchConversations';
@@ -131,8 +132,12 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const locked = Boolean(lockScope);
     const router = useRouter();
     const phone = useDeviceType() === 'phone';
-    // Opened from a phone's More, the page has no tab bar and no native header; a modal or wide host owns close.
-    const phoneBack = usePhoneDestinationBack('external-sessions-browse:back');
+    // Hosted as a workspace destination (a phone's More), the page has no tab bar and no navigator header: its
+    // Back is the way out. A navigator screen (the native modal, the new-session picker) has a header whose × or
+    // Back already does it, and the web modal and wide hosts own close.
+    const hostedDestination = useDestinationInstanceKey() !== null;
+    const destinationBack = usePhoneDestinationBack('external-sessions-browse:back');
+    const phoneBack = hostedDestination && !props.closeButton ? destinationBack : null;
     const paneContext = useOptionalAppPaneContext(value => ({
         fileFindSeedHandoff: value.fileFindSeedHandoff,
         fileFindSeedAccountBindings: value.fileFindSeedAccountBindings,
@@ -875,7 +880,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const machineFilter = useMachineAdministrationTargetFilter({
         selection: administrationTargetSelection,
         testIDPrefix: 'external-sessions.browse.administration.target',
-        groupTitle: t('externalSessions.browseMachines'),
+        groupTitle: t('machine.machineGroup'),
         chipOpen: machinePickerOpen,
         onChipOpenChange: setMachinePickerOpen,
     });
@@ -889,9 +894,10 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
             return [
                 {
                     id: 'machine',
-                    label: t('externalSessions.browseMachines'),
+                    label: t('machine.machineGroup'),
                     valueLabel: selectedMachineLabel ?? t('externalSessions.browseThisMachine'),
                     testID: 'external-sessions.browse.locked.machine',
+                    pairsWithSearch: true,
                 },
                 {
                     id: 'agent',
@@ -904,7 +910,8 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                 },
             ];
         }
-        const next: SelectionListFilter[] = [machineFilter];
+        // The machine is where the search looks: its chip stays on the field's row.
+        const next: SelectionListFilter[] = [{ ...machineFilter, pairsWithSearch: true }];
         if (effectiveSelectedMachineId && providerSelectItems.length > 0) {
             next.push({
                 id: 'agent',
@@ -1006,7 +1013,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                 // The band has no title; the dialog keeps its name.
                 accessibilityLabel={t('externalSessions.browseHeaderTitle')}
             >
-                {props.closeButton ? null : <PhoneDestinationBackLine control={phoneBack} />}
+                <PhoneDestinationBackLine control={phoneBack} />
                 <ExternalSessionBrowseCandidatesList
                     candidates={candidates}
                     loading={loading}

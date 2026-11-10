@@ -113,7 +113,7 @@ vi.mock('@/components/ui/cards/UserCard', () => ({ UserCard: 'UserCard' }));
 vi.mock('@/components/account/RecoveryKeyReminderBanner', () => ({
     RecoveryKeyReminderBanner: 'RecoveryKeyReminderBanner',
 }));
-vi.mock('@/components/navigation/Header', () => ({ Header: 'Header' }));
+vi.mock('@/components/navigation/Header', async (importOriginal) => ({ ...await importOriginal<typeof import('@/components/navigation/Header')>(), Header: 'Header' }));
 vi.mock('@/components/inbox/cards/FeedItemCard', () => ({ FeedItemCard: 'FeedItemCard' }));
 vi.mock('@/components/inbox/cards/ApprovalInboxCard', () => ({ ApprovalInboxCard: 'ApprovalInboxCard' }));
 vi.mock('@/components/friends/RequireFriendsIdentityForFriends', () => ({
@@ -123,7 +123,7 @@ vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
     useFriendsIdentityReadiness: () => ({ isReady: true }),
 }));
 vi.mock('@/hooks/server/useFriendsEnabled', () => ({ useFriendsEnabled: () => false }));
-vi.mock('@/utils/platform/responsive', () => ({ useIsTablet: () => false }));
+vi.mock('@/utils/platform/responsive', async (importOriginal) => ({ ...await importOriginal<typeof import('@/utils/platform/responsive')>(), useIsTablet: () => false, useDeviceType: () => 'tablet' }));
 
 function readScrollContentMaxWidth(tree: renderer.ReactTestRenderer): unknown {
     const scrollView = tree.root.find((node) => String(node.type) === 'ScrollView');

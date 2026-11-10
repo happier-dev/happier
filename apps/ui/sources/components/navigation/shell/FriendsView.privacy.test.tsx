@@ -21,10 +21,11 @@ const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const previous = storage.getState();
 beforeEach(async () => { await homes.reset(); });
 
-// People left the tabs (owner Q4): More opens it with no tab bar and no native header, so its head is the way out.
-it('gives the People page its own Back on a phone', async () => {
+// People is a main screen (owner 11-10): the tab bar is its way around, so its title row draws no Back on a phone.
+it('draws no Back on the People main screen on a phone', async () => {
     const screen = await renderScreen(<InjectedAuthProvider credentials={null}><FriendsView /></InjectedAuthProvider>);
-    expect(screen.findHostByTestId('people:back')).not.toBeNull();
+    expect(screen.findByTestId('people-page')).not.toBeNull();
+    expect(screen.findHostByTestId('people:back')).toBeNull();
 });
 
 it('leaves the pending account recovery reminder on Home when visiting People', async () => {

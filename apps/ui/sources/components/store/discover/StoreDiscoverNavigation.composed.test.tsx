@@ -33,6 +33,8 @@ const nav = vi.hoisted(() => {
   };
   return {
     stack,
+    /** What the page publishes to its native bar, newest last. */
+    stackOptions: [] as unknown[],
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => {
@@ -84,6 +86,12 @@ installPromptRegistriesCommonModuleMocks({
         back: nav.back,
         setParams: nav.setParams,
         canGoBack: () => nav.stack.length > 1,
+      },
+      stackOptionsCapture: {
+        record: (options) => { nav.stackOptions.push(typeof options === 'function' ? options() : options); },
+        reset: () => { nav.stackOptions.length = 0; },
+        getRaw: () => (nav.stackOptions.at(-1) ?? null) as never,
+        getResolved: () => (nav.stackOptions.at(-1) ?? null) as never,
       },
     });
     nav.resetOverrides.current = mock.resetParams;
@@ -520,6 +528,17 @@ it('pushes a Discover item as its own listing page where no pane fits, and Back 
   );
 });
 
+it('opens the Store as a main screen: no Back or bar title, its own title row whose search icon opens the field', async () => {
+  const { screen } = await renderDiscoverWithOneJob();
+  await waitForHomeGovernance(() => expect(screen.findAllHostsByTestId('store.discover.searchToggle').length).toBeGreaterThan(0));
+  // The tab bar is a main screen's way around (owner 11-10): no bar, no Back; the page's title row names the Store.
+  expect(nav.stackOptions.at(-1)).toMatchObject({ headerShown: false });
+  expect(screen.findAllByProps({ testID: 'store.discover.header' })[0]?.props.title).toBe('settingsPlugins.surfaces.storeTitle');
+  expect(screen.findAllHostsByTestId('store.discover.search')).toHaveLength(0);
+  await act(async () => { screen.findAllHostsByTestId('store.discover.searchToggle')[0]!.props.onPress?.(); });
+  expect(screen.findAllHostsByTestId('store.discover.search').length).toBeGreaterThan(0);
+});
+
 it('hands a submitted query to Search and leaves the retained Discover field empty', async () => {
   const { screen } = await renderDiscoverWithOneJob();
   // `pushRetainingCurrent` keeps this Discover instance mounted under Search; render it alone so it stays mounted too.
@@ -529,6 +548,8 @@ it('hands a submitted query to Search and leaves the retained Discover field emp
     </PluginSurfaceFocusEligibilityProvider>
   </NavigationContext.Provider>);
   const field = () => screen.findAllHostsByTestId('store.discover.search').find(node => typeof node.props.onChangeText === 'function')!;
+  await waitForHomeGovernance(() => expect(screen.findAllHostsByTestId('store.discover.searchToggle').length).toBeGreaterThan(0));
+  await act(async () => { screen.findAllHostsByTestId('store.discover.searchToggle')[0]!.props.onPress?.(); });
   await waitForHomeGovernance(() => expect(field()).toBeDefined());
   await act(async () => { field().props.onChangeText('goose'); });
   expect(field().props.value).toBe('goose');

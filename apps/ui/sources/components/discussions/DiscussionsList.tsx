@@ -26,7 +26,7 @@ import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
-import { COLLECTION_LIST_SEARCH_THRESHOLD, CollectionList, CollectionListGroupLabel, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
+import { CollectionList, CollectionListGroupLabel, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { PaneSectionHeader } from '@/components/ui/lists/PaneSectionHeader';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
@@ -55,7 +55,6 @@ import { useSessionConversationsAvailability } from '@/components/sessions/conve
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { PhonePageBackLine, usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
-import type { NavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useSessionDisplayNameProjections, useSetting } from '@/sync/domains/state/storage';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -63,7 +62,6 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 const SKELETON_ROWS = [0, 1, 2] as const;
 
 const styles = StyleSheet.create((theme) => ({
-    headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s2 },
     root: { flex: 1, minHeight: 0, minWidth: 0 },
     list: { flex: 1, minHeight: 0 },
     listContent: { flexGrow: 1, paddingBottom: theme.space.s8 },
@@ -207,7 +205,7 @@ export function DiscussionsList(props: Readonly<{
                 ? t('session.collaboration.discussion.scopeMismatch')
                 : null;
     if (unavailableReason || !binding) return <>
-        <PhonePageBackLine control={ownPageBack} />
+        <PhonePageBackLine control={ownPageBack} page={props.surface === 'page'} />
         <DiscussionsListPaneState footer={props.footer}><SurfaceStateCard
             testID="session-conversations-unavailable"
             kind="unavailable"
@@ -215,8 +213,10 @@ export function DiscussionsList(props: Readonly<{
             reason={unavailableReason ?? t('session.collaboration.discussion.bindingUnavailable')}
         /></DiscussionsListPaneState>
     </>;
-    return <DiscussionsListReady pageBack={ownPageBack} address={props.address} scope={props.scope} anchor={props.anchor} accountLifetime={binding} presentation={props.presentation ?? 'pane'} surface={props.surface ?? 'plane'} footer={props.footer ?? null} />;
+    return <DiscussionsListReady address={props.address} scope={props.scope} anchor={props.anchor} accountLifetime={binding} presentation={props.presentation ?? 'pane'} surface={props.surface ?? 'plane'} footer={props.footer ?? null} />;
 }
+
+const DISCUSSIONS_PHONE_PAGE = Object.freeze({ backTestID: 'discussions-column:back' });
 
 /** A whole-list state in the pane: the state, and the host's footer still in reach below it. */
 function DiscussionsListPaneState(props: Readonly<{ footer?: React.ReactElement | null; children: React.ReactElement }>) {
@@ -241,7 +241,6 @@ function DiscussionsListReady(props: Readonly<{
     presentation: DiscussionsListPresentation;
     surface: 'plane' | 'page';
     footer: React.ReactElement | null;
-    pageBack: NavigationBackControl | null;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const column = props.presentation === 'column';
@@ -282,6 +281,10 @@ function DiscussionsListReady(props: Readonly<{
         ? repository.loadMoreAnchoredList(anchorSessionId, state)
         : repository.loadMoreList(state), [anchorSessionId, repository]);
     const { openDiscussion, openNewDiscussion, activeDiscussionKey } = useOpenDiscussion({ address: props.address, anchor: props.anchor, sourceSurface: props.anchor ? 'collaboration' : 'discussions' });
+    // The column's create action: its title row's "+", and on a phone the bar's "+" beside the tabs.
+    const createDiscussion = React.useMemo(() => ({
+        label: t('session.collaboration.discussion.newDiscussion'), testID: 'session-discussion-new', onPress: openNewDiscussion,
+    }), [openNewDiscussion]);
     const [archivedExpanded, setArchivedExpanded] = React.useState(false);
     // The column's search (R6): what this device already opened for each Discussion (its title, the people
     // in it, its source), across the whole list; the list pages to its end while a query is typed.
@@ -596,7 +599,6 @@ function DiscussionsListReady(props: Readonly<{
         );
     }
     if (column) {
-        const searchable = query.length > 0 || active.nextCursor !== null || active.items.length > COLLECTION_LIST_SEARCH_THRESHOLD;
         const narrowedCount = projection.filterResult.coverage === 'complete' ? projection.filterResult.matchedCount : null;
         const whole = active.items.length === 0 && active.status === 'locked'
             ? <SurfaceStateCard testID="session-conversations-locked" size="line" kind="error" iconName="lock" title={t('session.collaboration.pane.lockedTitle')} action={{ label: t('session.collaboration.discussion.retry'), onPress: retryActive }} />
@@ -608,38 +610,30 @@ function DiscussionsListReady(props: Readonly<{
             <CollectionList
                 testID="discussions-column"
                 surface={props.surface}
-                pageBack={props.pageBack}
+                phonePage={props.surface === 'page' ? DISCUSSIONS_PHONE_PAGE : null}
                 title={t('session.collaboration.discussion.title')}
                 // The title names the space and opens its menu (R9, the Sessions title chevron).
                 titleControl={spaceHeader.titleControl}
                 strip={<>{spaceHeader.strip}{spaceHeader.conditionRow}{spaceHeader.overlays}</>}
                 // A narrowed column counts what it shows, once that answer is whole.
                 count={searching || filter !== 'all' ? narrowedCount : activeCount ?? null}
-                search={searchable ? {
+                // A main screen's search waits behind its magnifier; the space's conditions (R9, the Sessions editor)
+                // end its field, as the Sessions field ends with its funnel.
+                search={{
                     testID: 'discussions-column-search',
                     collapsible: true,
                     value: query,
                     onChangeText: setQuery,
                     placeholder: t('session.collaboration.discussion.home.search'),
-                } : null}
+                    trailing: spaceHeader.filterButton,
+                }}
                 // Whose Discussions these are, and who reads them (lab T2-A).
                 subtitle={{
                     testID: 'discussions-column-home',
                     text: `${homeLabel} · ${t('session.collaboration.discussion.home.audience')}`,
                     leading: <Icon name="house" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />,
                 }}
-                headerAction={<View style={styles.headerActions}>
-                    {/* The space's conditions, the same editor as Sessions (R9). */}
-                    {spaceHeader.filterButton}
-                    <IconButton
-                        testID="session-discussion-new"
-                        iconName="plus"
-                        variant="plain"
-                        accessibilityLabel={t('session.collaboration.discussion.newDiscussion')}
-                        tooltip={t('session.collaboration.discussion.newDiscussion')}
-                        onPress={openNewDiscussion}
-                    />
-                </View>}
+                create={createDiscussion}
                 scrollContent={whole ? <View style={collectionListStyles.stateLine}>{whole}</View> : (
                     <View style={styles.root} testID="session-discussion-activity-list">
                         {stale ? (

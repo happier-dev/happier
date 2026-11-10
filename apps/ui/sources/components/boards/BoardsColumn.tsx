@@ -5,7 +5,7 @@ import type { WorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import type { WorkBoardArtifactSummaryV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
 
 import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { Icon } from '@/components/ui/icons/Icon';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { CollectionList, CollectionNavigationRow, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
@@ -14,17 +14,16 @@ import { BoardsInboxBoundary } from './BoardsInboxBoundary';
 import { BOARDS_ROUTE, createBoardRoute, readOpenBoardId } from './boardsRoutes';
 import { describeBoardSummaryLine, hasWorkBoardContent } from './model/boardCards';
 import { useBoardLiveSummary } from './model/useBoardContent';
-import { useDispatchWorkBoardIntent, useWorkBoardSaveState, useWorkBoardSummaries, useWorkBoards } from './model/useWorkBoards';
+import { useDispatchWorkBoardIntent, useWorkBoardReadState, useWorkBoardSaveState, useWorkBoardSummaries, useWorkBoards } from './model/useWorkBoards';
 import { resolveCollectionSaveFailure } from './model/boardSaveFailure';
 import { BoardSaveFailureLine } from './BoardSaveFailureLine';
 import { BoardReadState } from './BoardReadState';
-import { usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
 
 /**
  * The Boards destination's column (lab `boards-B1`): your boards, the open one selected, with one live
  * line each — who needs you and how many items it holds ("3 need you · 9 items"); search finds a board
- * by name, and the last row makes a new board. Only the open destination's column is mounted. A board with no source reads
- * nothing; the others read their own membership/status summaries, sharing one Inbox work projection only while one of them shows
+ * by name behind its magnifier, and the title row's "+" (the phone bar's too) makes a new board. Only the open
+ * destination's column is mounted. A board with no source reads nothing; the others read their own membership/status summaries, sharing one Inbox work projection only while one of them shows
  * Needs you.
  */
 
@@ -75,22 +74,45 @@ export function useCreateBoard(): () => void {
     }, [dispatch, router]);
 }
 
+/**
+ * Boards with no board yet: the invitation to make one. Said once, wherever the destination's first screen is:
+ * the page beside the column, or the column itself when it is the page (a phone).
+ */
+export function BoardsEmptyState(props: Readonly<{ testID: string }>) {
+    const createBoard = useCreateBoard();
+    return (
+        <EmptyState
+            testID={props.testID}
+            layout="page"
+            scene="emptyBoard"
+            title={t('boards.index.title')}
+            subtitle={t('boards.index.body')}
+            primaryAction={{ label: t('boards.newBoard'), onPress: createBoard, testID: `${props.testID}:new` }}
+        />
+    );
+}
+
+const BOARDS_PHONE_PAGE = Object.freeze({ backTestID: 'boards-column:back' });
+
 export const BoardsColumn = React.memo(function BoardsColumn(props: Readonly<{
     /** `page`: the column is the destination's first screen (a phone, or a collapsed column). */
     surface?: 'plane' | 'page';
 }>) {
     const pathname = usePathname();
-    const pageBack = usePhoneDestinationBack('boards-column:back');
     const bodies = useWorkBoards().boards;
     const boards = useWorkBoardSummaries();
     const [query, setQuery] = React.useState('');
     const needle = query.trim().toLowerCase();
     const matchingBoards = needle ? boards.filter(board => board.name.toLowerCase().includes(needle)) : boards;
     const createBoard = useCreateBoard();
-    const openId = readOpenBoardId(pathname) ?? (pathname === BOARDS_ROUTE ? boards[0]?.id ?? null : null);
+    // Beside a page, /boards shows the first board, so its row is selected; as the page itself (a phone main
+    // screen) nothing is open yet, so nothing is selected.
+    const openId = readOpenBoardId(pathname) ?? (pathname === BOARDS_ROUTE && props.surface !== 'page' ? boards[0]?.id ?? null : null);
     // A refused save for a board that is not open (a delete the person was sent back from) is said here;
     // the open board says its own.
     const failure = resolveCollectionSaveFailure(useWorkBoardSaveState(), openId);
+    const create = React.useMemo(() => ({ label: t('boards.newBoard'), testID: 'boards-column:new', onPress: createBoard }), [createBoard]);
+    const empty = useWorkBoardReadState().status === 'ready' && boards.length === 0;
     return (
         <View testID="boards-column" style={styles.column}>
             {failure ? (
@@ -101,9 +123,10 @@ export const BoardsColumn = React.memo(function BoardsColumn(props: Readonly<{
             <CollectionList
                 testID="boards-column:list"
                 surface={props.surface ?? 'plane'}
-                pageBack={props.surface === 'page' ? pageBack : null}
+                phonePage={props.surface === 'page' ? BOARDS_PHONE_PAGE : null}
                 title={t('boards.title')}
-                search={{ value: query, onChangeText: setQuery, placeholder: t('common.search'), testID: 'boards-column:search' }}
+                create={create}
+                search={{ value: query, onChangeText: setQuery, placeholder: t('common.search'), testID: 'boards-column:search', collapsible: true }}
             >
                 <BoardReadState place="column" size="line" retained={boards.length > 0} />
                 {/* The board rows share Inbox membership without mounting its detail rows. */}
@@ -111,14 +134,8 @@ export const BoardsColumn = React.memo(function BoardsColumn(props: Readonly<{
                     {matchingBoards.map((summary) => <BoardRow key={summary.id} summary={summary}
                         board={bodies.find(board => board.id === summary.id) ?? null} selected={openId === summary.id} />)}
                 </BoardsInboxBoundary>
-                <CollectionNavigationRow
-                    rowRole="item"
-                    testID="boards-column:new-row"
-                    title={t('boards.newBoard')}
-                    icon={<Icon name="plus" />}
-                    selected={false}
-                    onPress={createBoard}
-                />
+                {/* Beside the page, the page says it (BoardsIndex); as the page itself, the column does. */}
+                {empty && props.surface === 'page' ? <BoardsEmptyState testID="boards-column:empty" /> : null}
             </CollectionList>
         </View>
     );

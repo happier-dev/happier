@@ -793,6 +793,12 @@ export type SelectionListFilter = Readonly<{
     iconOnly?: boolean;
     /** Draw the filter's name, quieter, before its value ("Agents  Claude, Codex"). */
     showLabel?: boolean;
+    /**
+     * The filter sets where the search looks (a Machine, a Home). It stays on the field's row at every
+     * width, while other filters move beneath a narrow field, and before it has a value the chip reads
+     * as the filter's name ("Machine") rather than the placeholder value; the accessible name keeps both.
+     */
+    pairsWithSearch?: boolean;
     /** The filter narrows what is shown: the chip takes the accent edge so a narrowed view is never missed. */
     active?: boolean;
     /** The value is a placeholder ("Choose a machine") rather than a choice. */

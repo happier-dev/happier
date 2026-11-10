@@ -9,7 +9,7 @@ export function resolveMobileBottomChromeModel(input: Readonly<{
     sessionDetailsKind?: string | null;
     mountedDetail?: Omit<Extract<MobileBottomChromeModel, { kind: 'detail' }>, 'kind'> | null;
     rootHostedDetail?: boolean;
-    /** A section or More destination claims this route (the destination catalog's answer), Settings aside. */
+    /** A section or More destination claims this route (the destination catalog's answer); Settings only on its own page or when pinned. */
     sectionPage?: boolean;
 }>): MobileBottomChromeModel {
     if (input.isAuthenticated !== true) {

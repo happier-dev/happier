@@ -40,6 +40,7 @@ import {
 import { selectionListTestId } from './_shared';
 import type {
     SelectionListDynamicSection,
+    SelectionListFilter,
     SelectionListKeyboardHint,
     SelectionListOption,
     SelectionListProps,
@@ -69,6 +70,8 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import type { CurrentUiContextCommandInvocation, CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { SelectionListActivationCommandContext, SelectionListCommandHost, type SelectionListCommandInvoke } from './SelectionListCommandHost';
 
+const EMPTY_FILTERS: ReadonlyArray<SelectionListFilter> = Object.freeze([]);
+
 const stylesheet = StyleSheet.create((theme) => ({
     // Filter chips, then the consumer's own trailing controls, inside the search field's suffix slot.
     inputSuffixWithFilters: {
@@ -78,6 +81,18 @@ const stylesheet = StyleSheet.create((theme) => ({
         // Measured at its natural width: the field gives way, and when it would drop under its
         // minimum the chips move to their own row instead of clipping the controls.
         flexShrink: 0,
+    },
+    // On a narrow field only the search's scope chip stays beside it, and gives way (ellipsizing) before the field does.
+    inputSuffixWithScopeFilter: {
+        flexShrink: 1,
+        minWidth: 0,
+    },
+    // The band's line closes the whole search region (field, its chips, its scope bar) off from the results;
+    // it never runs under the field itself, between the field and its own controls.
+    searchFieldWithoutDivider: { borderBottomWidth: 0 },
+    searchRegionDivider: {
+        borderBottomWidth: 1,
+        borderBottomColor: theme.colors.border.default,
     },
     container: {
         backgroundColor: theme.colors.surface.base,
@@ -395,18 +410,26 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         },
         [isInputControlled, props.onChangeInputValue],
     );
+    // A person's own press, keystroke, Back or close goes through the list's mounted command so agents and UI
+    // share one path, but never waits on whether that command is reachable: with no composition, or another
+    // overlay in front (a picker pushed inside an open + menu), the list handles it itself.
+    const runUiCommand = React.useCallback((key: string, input: Parameters<SelectionListCommandInvoke>[1], local: () => void) => {
+        const invoke = commandInvokeRef.current;
+        if (!invoke) { local(); return; }
+        void invoke(key, input).then(carried => { if (!carried) local(); });
+    }, []);
     const setUiInputValue = React.useCallback((next: string) => {
-        if (commandScope) { void commandInvokeRef.current?.('search', { value: next }); return; }
+        if (commandScope) { runUiCommand('search', { value: next }, () => setInputValue(next)); return; }
         setInputValue(next);
-    }, [commandScope, setInputValue]);
+    }, [commandScope, runUiCommand, setInputValue]);
     const popUiStep = React.useCallback(() => {
-        if (commandScope) { void commandInvokeRef.current?.('back'); return; }
+        if (commandScope) { runUiCommand('back', undefined, stack.popStep); return; }
         stack.popStep();
-    }, [commandScope, stack.popStep]);
+    }, [commandScope, runUiCommand, stack.popStep]);
     const closeUiList = React.useCallback(() => {
-        if (commandScope) { void commandInvokeRef.current?.('close'); return; }
+        if (commandScope) { runUiCommand('close', undefined, () => props.onRequestClose()); return; }
         props.onRequestClose();
-    }, [commandScope, props.onRequestClose]);
+    }, [commandScope, props.onRequestClose, runUiCommand]);
 
     const currentStep = stack.currentStep;
     // A consumer that mirrors its active step passes pagination for that step. Its mirror (and the
@@ -576,9 +599,9 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         [findOptionById, stack.pushStep, props.onSelect, requestInputAttention],
     );
     const handleUiActivate = React.useCallback((optionId: string) => {
-        if (commandScope) { void commandInvokeRef.current?.('activate', { id: optionId }); return; }
+        if (commandScope) { runUiCommand('activate', { id: optionId }, () => { handleActivate(optionId); }); return; }
         handleActivate(optionId);
-    }, [commandScope, handleActivate]);
+    }, [commandScope, handleActivate, runUiCommand]);
 
     const onCommandSelect = props.onCommandSelect;
     const handleCommandActivate = React.useMemo(() => (onCommandSelect ? (optionId: string) => {
@@ -1034,6 +1057,15 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     // sit beneath, so a wider list brings them back without oscillating.
     const hasFilters = (props.filters?.length ?? 0) > 0;
     const [filtersNarrow, setFiltersNarrow] = React.useState(false);
+    // A filter that scopes the search (Machine, Home) stays beside the field when the others move beneath it.
+    const filtersBesideNarrowField = React.useMemo(
+        () => props.filters?.filter((filter) => filter.pairsWithSearch === true) ?? EMPTY_FILTERS,
+        [props.filters],
+    );
+    const filtersBeneathNarrowField = React.useMemo(
+        () => props.filters?.filter((filter) => filter.pairsWithSearch !== true) ?? EMPTY_FILTERS,
+        [props.filters],
+    );
     const [detailPaneFits, setDetailPaneFits] = React.useState(false);
     const detailPaneMinWidth = props.detailPane?.minListWidthPx;
     const containerWidthRef = React.useRef<number | null>(null);
@@ -1320,14 +1352,20 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     // renders the SAME element — same query state, ref, key handler, listbox id
     // and active-descendant wiring — so a keyboard-seated surface cannot drift
     // into a second input or a second query owner.
+    // Docked at the bottom or seated in the body, nothing results-side follows the region: no line.
+    const searchRegionDivided = !seatInputInBody && props.inputPlacement !== 'bottom';
     const searchHeaderZone = showSearchHeader ? (
         <View
             testID={selectionListTestId(resolvedTestId, 'headerFrame')}
             collapsable={false}
             onLayout={measureNativeHeight ? measuredPopoverHeight.onHeaderLayout : undefined}
+            style={searchRegionDivided ? styles.searchRegionDivider : undefined}
         >
             <SelectionListSearchHeader
-                style={[surface === 'none' ? styles.bareSurface : null, seatInputInBody ? styles.bodySearchField : null]}
+                style={[
+                    surface === 'none' ? styles.bareSurface : null,
+                    seatInputInBody ? styles.bodySearchField : styles.searchFieldWithoutDivider,
+                ]}
                 testID={selectionListTestId(resolvedTestId, 'header')}
                 inputTestID={props.inputTestID}
                 value={inputValue}
@@ -1356,6 +1394,15 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                         <SelectionListFilterChips filters={props.filters!} placement="inline" />
                         {props.inputSuffix ?? null}
                     </View>
+                ) : filtersBesideNarrowField.length > 0 ? (
+                    // Not measured: the width that moved the other chips beneath is kept until the list widens.
+                    <View
+                        style={[styles.inputSuffixWithFilters, styles.inputSuffixWithScopeFilter]}
+                        testID={selectionListTestId(resolvedTestId, 'inline-controls')}
+                    >
+                        <SelectionListFilterChips filters={filtersBesideNarrowField} placement="inline" />
+                        {props.inputSuffix ?? null}
+                    </View>
                 ) : props.inputSuffix}
                 inputRef={searchInputRef}
                 onCaretAtEndChange={setCaretAtEnd}
@@ -1365,9 +1412,9 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                 activeDescendantId={activeDescendantId}
                 attentionNonce={inputAttentionNonce}
             />
-            {hasFilters && filtersNarrow ? (
+            {filtersNarrow && filtersBeneathNarrowField.length > 0 ? (
                 <SelectionListFilterChips
-                    filters={props.filters!}
+                    filters={filtersBeneathNarrowField}
                     placement="row"
                     testID={selectionListTestId(resolvedTestId, 'filters-row')}
                 />

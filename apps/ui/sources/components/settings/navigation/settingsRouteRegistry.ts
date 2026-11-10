@@ -278,6 +278,9 @@ export function getSettingsStackScreenDefinitions(
         if (definition.titleKey) {
             options.headerTitle = isHub ? t(definition.titleKey) : '';
         }
+        // The hub is a main screen (owner 11-10): its own title row (`SettingsPageSearch`) carries the title on the
+        // left and the search beside it, so no bar is drawn above it.
+        if (isHub) options.headerShown = false;
         if ((definition.name !== 'index' || definition.navigator) && options.headerShown !== false) {
             const accessibilityLabel = t('common.back');
             const renderBack = (tintColor: string | undefined) => React.createElement(SettingsParentBackButton, {

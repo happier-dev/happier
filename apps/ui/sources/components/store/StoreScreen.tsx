@@ -76,6 +76,6 @@ function StoreScreenContent({ focused }: Readonly<{ focused: boolean }>) {
     view === 'discover' ||
     (view === undefined && params.plugin === undefined)
   )
-    return <StoreDiscoverPage project={project} />;
+    return <StoreDiscoverPage project={project} storeRoot={view === undefined} />;
   return <PluginSettingsHomeScreen />;
 }

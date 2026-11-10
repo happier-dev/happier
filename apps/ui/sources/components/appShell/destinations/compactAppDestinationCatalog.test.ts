@@ -33,6 +33,7 @@ import {
     resolveAppRailBand,
     resolveCompactAppDestinations,
     resolveCurrentAppDestination,
+    isAppDestinationRootPath,
     resolveDestinationRefFromHref,
     hrefForDestinationRef,
     readDestinationInstanceTitle,
@@ -780,6 +781,19 @@ describe('resolveCurrentAppDestination', () => {
         expect(at('/plugins/acme.notes/notes')).toBe('plugin:acme.notes:notes');
         expect(at('/plugins/acme.notes/notes/history/1')).toBe('plugin:acme.notes:notes');
         expect(at('/plugins/acme.prompts/prompts')).toBe('plugin:acme.prompts:prompts');
+    });
+
+    it('calls a page a main screen only on a rail destination\'s own route', () => {
+        const together = resolveCompactAppDestinations({ builtins: { ...ALL_BUILTINS, discussions: true, friends: true }, pages: [page] });
+        const root = (pathname: string) => isAppDestinationRootPath(together, pathname);
+        for (const main of ['/boards', '/boards/', '/discussions', '/artifacts', '/friends', '/plugins', '/workflows', '/plugins/acme.notes/notes']) {
+            expect([main, root(main)]).toEqual([main, true]);
+        }
+        // Pages a main screen pushes, an entry inside a column, and routes no destination claims keep their Back.
+        for (const sub of ['/boards/board-1', '/discussions/d-1', '/artifacts/artifact-1', '/friends/search', '/plugins/listing',
+            '/plugins/acme.notes/notes/history/1', '/external/browse', '/plugins/bots', '/new/pick/server', '/settings/appearance']) {
+            expect([sub, root(sub)]).toEqual([sub, false]);
+        }
     });
 });
 

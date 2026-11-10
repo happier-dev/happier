@@ -240,10 +240,13 @@ describe('SettingsView profile header', () => {
 
         expect(phone.findAllByType(Avatar)).toHaveLength(1);
         expect(phone.getTextContent()).toContain('accountDisplay.yours');
-        expect(navigationState.headerRight).toEqual(expect.any(Function));
-        const header = await renderSettingsView(<>{navigationState.headerRight?.()}</>);
-        await header.pressByTestIdAsync('page-header-actions.trigger');
-        await vi.waitFor(() => expect(header.findByTestId('settings-overview-account')).toBeTruthy());
+        // The hub heads itself on a phone (owner 11-10): no bar above it to fold the Account action into.
+        expect(navigationState.headerRight).toBeNull();
+        expect(phone.findByTestId('settings-page-header')).toBeTruthy();
+        const push = vi.fn();
+        routerPush.spy = push;
+        phone.pressByTestId('settings-overview-account');
+        expect(push).toHaveBeenCalledWith('/settings/account');
     });
 
     it('says where the person stands with the Home\'s account service, as the account popover does', async () => {

@@ -58,14 +58,14 @@ describe('People destination (owner ruling Q6)', () => {
         </InjectedAuthProvider>);
         await vi.waitFor(() => {
             expect(screen.findByTestId('people-page')).not.toBeNull();
-            const controls = screen.findAllHostsByTestId('friends-add-friend').filter(node => (node.props.role ?? node.props.accessibilityRole) === 'button');
+            const controls = screen.findAllHostsByTestId('friends-add-friend:header').filter(node => (node.props.role ?? node.props.accessibilityRole) === 'button');
             expect(controls, screen.getTextContent()).toHaveLength(1);
         });
-        await screen.pressByTestIdAsync('friends-add-friend');
+        await screen.pressByTestIdAsync('friends-add-friend:header');
         expect(opened).toEqual(['/friends/search']);
 
         await act(async () => { storage.getState().applyProfile({ ...storage.getState().profile, username: null, linkedProviders: [] }); });
-        expect(screen.findByTestId('friends-add-friend')).toBeNull();
+        expect(screen.findByTestId('friends-add-friend:header')).toBeNull();
         expect(screen.findAllByProps({ accessibilityLabel: t('profile.username') }).length).toBeGreaterThan(0);
         // The identity gate replaces only the friends region; the page itself stays.
         expect(screen.findByTestId('people-page')).not.toBeNull();

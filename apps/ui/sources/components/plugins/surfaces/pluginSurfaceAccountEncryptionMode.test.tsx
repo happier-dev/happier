@@ -350,6 +350,39 @@ describe('usePluginSurfaceAccountEncryptionMode', () => {
         } finally { await hook.unmount(); }
     });
 
+    it('re-runs the same Account-mode read on Retry and stays unreachable until it answers', async () => {
+        const account = await currentAccount('account-a');
+        const answered = createDeferred<void>();
+        let reads = 0;
+        // The first read fails; the next one waits until the test answers, so only Retry can have sent it.
+        home.answer(serverId, modePath, { select: () => reads++ === 0
+            ? { status: 503, body: {} }
+            : { respondAfter: answered.promise, body: AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }) } });
+        const states: string[] = [];
+        const hook = await renderHook(() => {
+            const result = usePluginSurfaceAccountEncryptionMode({ accountLifetime: account.lifetime, isCurrent: () => true });
+            states.push(result.status);
+            return result;
+        });
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({ status: 'unavailable' }));
+            const unavailable = hook.getCurrent();
+            if (unavailable.status !== 'unavailable' || !unavailable.retry) throw new Error('Expected a Retry on the unreachable read');
+            await waitForHomeGovernance(() => expect(reads).toBe(2));
+            states.length = 0;
+            await act(async () => unavailable.retry!());
+            await waitForHomeGovernance(() => expect(reads).toBe(3));
+            expect(hook.getCurrent()).toMatchObject({ status: 'unavailable' });
+            await act(async () => answered.resolve());
+            await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual(expect.objectContaining({ status: 'ready', mode: 'plain' })));
+            // Retrying an unreachable Home never flashes the loading placeholder over the error.
+            expect(states).not.toContain('loading');
+        } finally {
+            await hook.unmount();
+            answered.resolve();
+        }
+    });
+
     it('reports a terminal refusal only after the pending mode request settles', async () => {
         const account = await currentAccount('account-a');
         const pending = createDeferred<void>();
