@@ -9,9 +9,12 @@ export function projectManifestAgentFields(params: Readonly<{
     provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
     pluginId: string;
+    /** Exact routing identity already selected by admission (not the manifest-local id). */
+    admittedAgentId?: string;
 }>): ResolvedAgentContribution {
     const localId = params.definition.id;
-    const agentId = resolveContributedAgentRoutingId({ pluginId: params.pluginId, localId, provenance: params.provenance });
+    const agentId = params.admittedAgentId
+        ?? resolveContributedAgentRoutingId({ pluginId: params.pluginId, localId, provenance: params.provenance });
     const cliMetadata = params.definition.cli ?? null;
     return Object.freeze({
         id: agentId,

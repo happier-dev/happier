@@ -1,3 +1,4 @@
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createProductionPluginSettingsHostFactory } from './invocation/services/settingsHost';
 import { createStablePluginEventsBroker } from './invocation/services/events';
 import { resolveAgentPluginSettingsFromService } from './agentPluginSettings';
@@ -623,7 +624,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
          */
         currentGlobalExternalSessionsRouter?: CurrentGlobalExternalSessionsRouter;
         /** The existing daemon publication owner for retained callers' next Action. */
-        runtimeRegistryController?: Pick<PluginReloadController, 'tryAcquireRuntimeRegistry'>;
+        runtimeRegistryController?: Pick<PluginReloadController, 'acquireRuntimeRegistry' | 'tryAcquireRuntimeRegistry' | 'isRuntimeRegistryCurrent' | 'subscribe'>;
         /** Invalidates projections after a same-generation lazy activation fails terminally. */
         onTerminalActivationFailure?: (pluginId: string) => void;
         /** Testable port for the canonical Account plugin-settings persistence owner. */
@@ -3513,10 +3514,23 @@ export async function resolveExecutablePluginRuntimeRegistry(
         ...(!params?.accountExecution ? { healthChecks: createSavedHealthChecksHost({
             serverId: sessionCredentialsServerId,
             resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet,
-            readKinds: () => (resolvedRuntimeRegistryOwner?.healthCheckKinds ?? []).map(entry => ({
+            readKinds: () => (authoritativeContributes.healthCheckKinds ?? []).map(entry => ({
                 pluginId: entry.pluginId, ...entry.definition,
             })),
             resolveSourceOwner: resolveHealthCheckSourceOwner,
+            readSavedSource: sourceInstanceId => automationAssembly.readHealthAlertSource(sourceInstanceId),
+            readAccountSettings: async signal => {
+                const credentials = await readHealthCheckCredentials();
+                if (!credentials) throw new PluginError({ code: 'account_settings_unavailable', message: 'Account settings are unavailable' });
+                const accountId = readAccountIdFromToken(credentials.token);
+                const snapshot = await runWithServerHttpBaseUrl(notificationServerHttpBaseUrl, () => bootstrapAccountSettingsContext({
+                    credentials, signal, mode: 'blocking', publication: 'invocation', refresh: 'force', honorAccountSettingsModeEnv: false,
+                }));
+                if (!accountId || snapshot.source === 'none' || snapshot.scopeKey !== resolveAccountSettingsScopeKey(credentials)) {
+                    throw new PluginError({ code: 'account_settings_unavailable', message: 'Account settings are unavailable' });
+                }
+                return { accountId, settings: snapshot.settings };
+            },
             enrollHeartbeat: heartbeatClient.enroll,
             readHeartbeatReceipt: heartbeatClient.read,
             manageHeartbeat: heartbeatClient.manage,
@@ -4372,6 +4386,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             ...(accountExecution ? { accountExecution: { ...accountExecution, isCurrent: async () => accountExecution.isCurrent() } } : {}),
             ...(params?.acquireServiceExportForward ? { acquireServiceExportForward: params.acquireServiceExportForward } : {}),
             readCurrentMachineId: () => machineId,
+            connectedAccountRuntimeRegistry: runtimeRegistryController,
         });
     };
     targetActionInvocations = buildTargetActionInvocationRegistry({
@@ -7143,10 +7158,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
                         : 'package',
                 },
                 pluginId: verified.binding.pluginId,
+                admittedAgentId: verified.binding.agentId,
                 systemTools: verified.manifest.contributes.systemTools,
                 hostAccess: verified.manifest.hostAccess,
             });
-            if (declaredAgent.id !== verified.binding.agentId) return null;
             const retainedLeaf = await loadRetainedAgentRuntimeLeaf({
                 paths,
                 binding: verified.binding,

@@ -4,6 +4,9 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { applyProjectedCredentialKindRestrictions, resolveCanonicalAgentIdFromFlavor } from '@happier-dev/agents';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { projectManifestAgentContribution } from '@/plugins/projection/registry/projectManifestAgentContribution';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { resolveEngineBackendIdForCatalogAgent } from '@/agent/runtime/registry/engineRegistry/contributions';
 
 import { BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from '@/plugins/projection/registry/sources/generatedBundledPlugins';
@@ -34,7 +37,13 @@ describe('registered Agent contribution contracts', () => {
       ));
       const activate = source.activate ?? module?.activate;
       expect(activate, metadata.pluginId).toBeTypeOf('function');
-      const manifest = normalizePluginManifestV2(source.PLUGIN_MANIFEST);
+      let manifest: ReturnType<typeof normalizePluginManifestV2>;
+      try {
+        manifest = normalizePluginManifestV2(source.PLUGIN_MANIFEST);
+      } catch (error) {
+        offenders.push(`${metadata.pluginId}: invalid manifest (${error instanceof Error ? error.message : String(error)})`);
+        continue;
+      }
       const fixture = await createPluginTestkit({ manifest: source.PLUGIN_MANIFEST, module: { activate: activate! } });
       try {
         for (const binding of bindings) {
@@ -43,6 +52,18 @@ describe('registered Agent contribution contracts', () => {
           const authoredDeclaration = source.PLUGIN_MANIFEST.contributes?.agents?.find(agent => agent.id === id);
           expect(declaration, `${metadata.pluginId}/${id}`).toBeDefined();
           if (!declaration) continue;
+          // Reconstruct the declaration exactly as an admitted runner does;
+          // package/local spelling must not replace its execution identity.
+          const projected = projectManifestAgentContribution({
+            definition: declaration, pluginId: metadata.pluginId,
+            provenance: 'first_party', source: { kind: 'bundled' },
+            admittedAgentId: binding.implementationOwnerId,
+            systemTools: manifest.contributes.systemTools,
+          });
+          const contributions = createResolvedContributionRegistry({ agents: [projected] });
+          expect(projected.identity).toEqual(binding.identity);
+          expect(projected.id, `${metadata.pluginId}/${id}: admitted runner identity`).toBe(binding.implementationOwnerId);
+          expect(resolveEngineBackendIdForCatalogAgent(contributions, projected.id)).toBe(binding.implementationOwnerId);
           if (!Array.isArray(authoredDeclaration?.connectedAccounts)) offenders.push(`${id}: account support omitted (use [] for unsupported)`);
           if (!declaration.catalog?.vendorResume) offenders.push(`${id}: resume support omitted`);
           for (const purpose of declaration.connectedAccounts ?? []) {
@@ -76,7 +97,7 @@ describe('registered Agent contribution contracts', () => {
           // Coding Agent installation accepts the package spelling (ohmypi /
           // ohMyPi) through its existing flavor owner. Finite reviewers use
           // their contributed id and do not participate in that flavor catalog.
-          if (declaration.primary !== 'executionRuns' && declaration.cli && resolveCanonicalAgentIdFromFlavor(binding.implementationOwnerId) !== null
+          if (declaration.primary !== 'executionRuns' && declaration.cli
             && resolveCanonicalAgentIdFromFlavor(metadata.pluginPackageId) !== binding.implementationOwnerId) {
             offenders.push(`${id}: package install identity does not resolve to the catalog identity`);
           }

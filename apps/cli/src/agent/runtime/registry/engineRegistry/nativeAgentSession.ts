@@ -6199,7 +6199,8 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             }
             } catch (error) {
                 const failure = originalConstructionFailure ?? error;
-                const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: failure });
+                const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: failure,
+                    startupPhase: 'client_start' });
                 // Lack of an effect acknowledgement is not proof of failed construction.
                 // Generation cancellation and native-mode refusal retain their existing owners.
                 if (!nativeOpenCompleted && sessionId && cwd && !params.generationSignal?.aborted

@@ -72,7 +72,7 @@ describe('Agent launch runtime home', () => {
       const result = await executeAgentLaunchPayload({ v: 1, executable: process.execPath,
         args: ['-e', 'process.stdout.write(JSON.stringify({home:process.env.HOME,config:process.env.XDG_CONFIG_HOME,data:process.env.XDG_DATA_HOME,state:process.env.XDG_STATE_HOME}))'],
         cwd: agentHome, runtimeHome: join(agentHome, 'runtime/operations', `read-${index}`),
-        environment: roots, selectedMaterials: [],
+        environment: { HOME: '/foreign/ambient/home', ...roots }, selectedMaterials: [],
       }, { agentHome, input: Readable.from([]), stdout: output, stderr: new PassThrough() });
       expect(result).toEqual({ code: 0, signal: null });
       observed.push(JSON.parse(Buffer.concat(chunks).toString()));

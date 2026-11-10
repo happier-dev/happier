@@ -6937,6 +6937,38 @@ describe('native Agent session host adapter', () => {
         expect(subscribers.size).toBe(0);
     });
 
+    it('attests the MCP catalog refusal before opening Codex for a nonempty exclusive recipe', async () => {
+        const runtime = await createCodexAgentRuntime({ plugin: { id: 'happier.agent.codex', version: '0.0.0' },
+            agent: { id: 'codex' }, signal: new AbortController().signal });
+        const contributions = createExternalContributionFixtures('codex');
+        const attestations: unknown[] = [];
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            runtime, lease: { ...createLease('codex'), pluginId: 'happier.agent.codex' },
+            backend: { ...contributions.backend, pluginId: 'happier.agent.codex', provenance: 'first_party', source: { kind: 'bundled' } },
+            agent: { ...contributions.agent, pluginId: 'happier.agent.codex', provenance: 'first_party', source: { kind: 'bundled' },
+                richDefinition: { ...contributions.agent.richDefinition, provenance: 'first_party' } },
+            sessionCapabilities: { open: ['create'], delivery: ['newTurn'] },
+            createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+            attestSessionOpen: async input => { attestations.push(input); },
+            sessionInput: buildPluginSessionBindingInput({ credentials, directory: '/repo',
+                backendTarget: { kind: 'backend', backendId: 'codex' } }),
+        });
+        // Real stdio connection closure reproduces reload178's failure before native open; no internal probe is mocked.
+        await expect(plan.config.createSessionRuntime({ directory: '/repo', metadata: {
+            allowedTools: ['mcp__context7__resolve-library-id'], unlistedTools: 'deny',
+        }, machineId: 'machine-1', session: createNativeSessionClientTestPort('codex-catalog-refusal'),
+            transcriptSession: {}, messageBuffer: {}, mcpServers: {
+                context7: { command: process.execPath, args: ['-e', 'process.exit(0)'] },
+            }, permissionHandler: {}, getPermissionMode: () => 'default', setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        } as never)).rejects.toMatchObject({ name: 'McpServerProbeError', phase: 'connect' });
+        expect(attestations).toContainEqual(expect.objectContaining({ phase: 'refused',
+            request: { kind: 'create', sessionId: 'codex-catalog-refusal', cwd: '/repo' },
+            failure: { phase: 'agent_runtime_open', code: 'mcp_tool_catalog_unavailable',
+                failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error' } } }));
+        expect(attestations).not.toContainEqual(expect.objectContaining({ phase: 'prepare' }));
+    });
+
     it.each(['before-open', 'factory-open', 'outcome-unknown', 'action-outcome-unknown', 'after-commit', 'commit-ack-lost', 'typed-startup', 'attestation-unavailable'] as const)(
         'preserves native startup outcome for %s without exposing the native error body', async phase => {
         const agentId = 'acme-failed-construction';
@@ -6980,8 +7012,8 @@ describe('native Agent session host adapter', () => {
             expect(attestations).toContainEqual(expect.objectContaining({ phase: 'refused',
                 request: { kind: 'create', sessionId: 'failed-construction', cwd: '/repo' }, providerSessionId: null,
                 failure: { phase: 'agent_runtime_open', code: phase === 'typed-startup' ? 'agent_startup_failed' : 'agent_session_error',
-                    ...(phase === 'typed-startup' ? { failureCause: { code: 'agent_startup_failed',
-                        phase: 'client_start', failureReason: 'unclassified_provider_error' } } : {}) } }));
+                    failureCause: { ...(phase === 'typed-startup' ? { code: 'agent_startup_failed' } : {}),
+                        phase: 'client_start', failureReason: 'unclassified_provider_error' } } }));
         }
         expect(JSON.stringify(attestations)).not.toContain('PRIVATE_');
     });

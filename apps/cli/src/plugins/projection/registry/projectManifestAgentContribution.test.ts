@@ -68,7 +68,7 @@ describe('projectManifestAgentContribution', () => {
         } as RawSessionRecord;
         expect(await adapter.checkNow?.({ token: 'token', sessionId: rawSession.id, rawSession, metadata: {},
             currentMachineId: 'machine', sessionMachineId: 'machine', cwd: '/repo', ctx: null, mode: 'plain' })).toMatchObject({
-            ok: true, status: 'waiting', metadata: { sessionUsageLimitRecoveryV1: { maxAttempts: 3,
+            ok: true, status: 'waiting', metadata: { sessionUsageLimitRecoveryV1: { maxAttempts: 0,
                 selectedAuth: { kind: 'group', serviceId: 'com.acme.agent/account', groupId: 'selected-pool', profileId: 'selected-profile' },
             } },
         });
@@ -128,6 +128,7 @@ describe('projectManifestAgentContribution', () => {
             backendIdForSessionRuntime: 'com.acme.agent/acme-agent',
             runtimeAuthorityAgentId: 'com.acme.agent/acme-agent',
             agentIdForAccountSettings: 'com.acme.agent/acme-agent',
+            resolveSessionRuntimePreferences: null,
             isExplicitCliSubcommand: true,
         });
     });

@@ -213,12 +213,14 @@ export async function materializeQualifiedConnectedAccountLaunchUses(input: Read
       relativePath: `files/${id}`, contentBase64: Buffer.from(contents).toString('base64'),
     }))),
   }) : undefined;
+  // Purpose cleanup removes inherited alternatives, never the material just acquired.
+  const materializedEnvironmentKeys = new Set(Object.keys(materializedEnvironment).map(key => key.toUpperCase()));
   return Object.freeze({
     env: Object.freeze(materializedEnvironment),
     producedPurposeKeys: Object.freeze([...producedPurposeKeys]),
     ...(agentLaunchMaterials ? { agentLaunchMaterials } : {}),
     unsetEnvKeys: normalizeUnsetEnvKeys((input.snapshot.environmentUnsetUses ?? [])
-      .filter(use => isPurposeBound(use.purpose))
+      .filter(use => isPurposeBound(use.purpose) && !materializedEnvironmentKeys.has(use.environmentKey.toUpperCase()))
       .map(use => use.environmentKey)),
   });
 }

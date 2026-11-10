@@ -50,7 +50,7 @@ describe('resolveNativeAgentLaunchEnvironment', () => {
         })).toEqual({ values: { PATH: 'D:\\SelectedTools', PathExt: '.CMD;.EXE', NODE_EXTRA_CA_CERTS: 'D:\\trust\\profile.pem' }, unset: [] });
     });
 
-    it.each(['linux', 'darwin', 'win32'] as const)('inherits Windows machine paths without ambient login homes or credentials on %s', platform => {
+    it.each(['linux', 'darwin', 'win32'] as const)('preserves native home discovery and Windows machine paths without ambient credentials on %s', platform => {
         const windowsEnvironment = {
             SystemRoot: 'D:\\Windows', ComSpec: 'D:\\Windows\\System32\\cmd.exe', PATHEXT: '.EXE;.CMD', WINDIR: 'D:\\Windows',
             ProgramFiles: 'D:\\Applications', 'ProgramFiles(x86)': 'D:\\Applications (x86)', ProgramW6432: 'D:\\Applications',
@@ -62,7 +62,14 @@ describe('resolveNativeAgentLaunchEnvironment', () => {
         const processEnv = { ...windowsEnvironment, HOME: 'D:\\Users\\private', USERPROFILE: 'D:\\Users\\private',
             APPDATA: 'D:\\Users\\private\\AppData\\Roaming', OPENAI_API_KEY: 'ambient-secret' };
         const result = resolveNativeAgentLaunchEnvironment({ processEnv, platform });
-        expect(result.values).toEqual(platform === 'win32' ? windowsEnvironment : {});
+        expect(result.values).toEqual(platform === 'win32'
+            ? { ...windowsEnvironment, HOME: processEnv.HOME, USERPROFILE: processEnv.USERPROFILE }
+            : { HOME: processEnv.HOME });
+        expect(resolveNativeAgentLaunchEnvironment({ processEnv, platform,
+            environmentVariables: { HOME: '/selected/home' }, unsetEnvironmentVariables: ['USERPROFILE'] }).values.HOME)
+            .toBe('/selected/home');
+        expect(resolveNativeAgentLaunchEnvironment({ processEnv, platform,
+            unsetEnvironmentVariables: ['HOME', 'USERPROFILE'] }).values).not.toHaveProperty('HOME');
         expect(processEnv.ProgramFiles).toBe('D:\\Applications');
         if (platform === 'win32') {
             const overridden = resolveNativeAgentLaunchEnvironment({ processEnv, platform,

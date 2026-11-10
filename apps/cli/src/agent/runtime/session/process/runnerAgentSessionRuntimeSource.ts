@@ -212,6 +212,7 @@ export async function createRunnerAgentSessionRuntimeBootstrap(input: Readonly<{
             provenance: descriptor.agentDeclaration.provenance,
             source: descriptor.agentDeclaration.source,
             pluginId: descriptor.pluginId,
+            admittedAgentId: descriptor.agentId,
         });
     // Engine composition captures this object before prepareForSession claims the runner.
     const bootstrapAgentContribution = Object.freeze({
@@ -832,6 +833,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                     : 'package',
             },
             pluginId: binding.pluginId,
+            admittedAgentId: binding.agentId,
         });
     let retainedCatalogEntry: AgentCatalogEntry | null | undefined;
     const verifiedAgentContribution = Object.freeze({

@@ -18,6 +18,9 @@ import { materializeGithubCredential } from '../../../../../../packages/plugins/
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { stripUnsetEnvironmentVariables } from '@/utils/processEnv/buildScopedProcessEnv';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
+import { resolveExplicitSpawnScopedEnvironmentFromProcessEnv } from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
+import { resolveNativeAgentLaunchEnvironment } from '@/agent/runtime/launchEnvironment';
 
 import {
   materializeQualifiedConnectedAccountLaunchUses,
@@ -75,8 +78,20 @@ describe('materializeQualifiedConnectedAccountLaunchUses', () => {
     const inherited = { GH_TOKEN: 'gho_other', GITHUB_TOKEN: 'github_pat_other', COPILOT_GITHUB_TOKEN: 'gho_native',
       COPILOT_PROVIDERS_CONFIG: '/other/providers.json', COPILOT_PROVIDER_BASE_URL: 'https://other.example',
       COPILOT_PROVIDER_API_KEY: 'other-key', HOME: '/native/home' };
-    // The same host preparation supplies the model-list process and the runtime child.
-    const probeEnvironment = { ...stripUnsetEnvironmentVariables(inherited, prepared.unsetEnvKeys), ...prepared.env };
+    // Run the prepared credentials through the actual daemon spawn and runner
+    // explicit-environment carrier before opening the native plugin.
+    const spawned = await resolveSpawnChildEnvironment({ options: { directory: '/workspace' },
+      profileEnvironmentVariables: { HOME: inherited.HOME }, daemonSpawnHooks: null, processEnv: inherited,
+      logDebug() {}, logInfo() {}, logWarn() {},
+      connectedServiceAuth: { env: { ...prepared.env }, unsetEnvKeys: prepared.unsetEnvKeys,
+        cleanupOnFailure: null, cleanupOnExit: null },
+    });
+    if (!spawned.ok) throw new Error(spawned.errorMessage);
+    const childEnvironment = { ...stripUnsetEnvironmentVariables(inherited, spawned.unsetEnvKeys), ...spawned.extraEnvForChild };
+    const scoped = resolveExplicitSpawnScopedEnvironmentFromProcessEnv(childEnvironment);
+    const launchEnvironment = resolveNativeAgentLaunchEnvironment({ processEnv: childEnvironment,
+      environmentVariables: scoped?.env, unsetEnvironmentVariables: scoped?.unsetEnvKeys });
+    const probeEnvironment = launchEnvironment.values;
     expect(probeEnvironment).toEqual({ COPILOT_GITHUB_TOKEN: 'gho_fixture-selected', HOME: '/native/home' });
     const models = await COPILOT_PREFLIGHT_SESSION_CONTROLS.probeModels({
       cwd: '/workspace',
@@ -97,7 +112,7 @@ describe('materializeQualifiedConnectedAccountLaunchUses', () => {
     } }, protocols: { acp: { open } } } as unknown as AgentSessionRuntimeContext;
     const runtime = await createCopilotAgentRuntime({} as never);
     await runtime.sessions.open({ kind: 'create', sessionId: 'copilot-selected', cwd: '/workspace',
-      connectedAccounts: [{ purpose: 'github-copilot', account }], launchEnvironment: { values: probeEnvironment, unset: prepared.unsetEnvKeys },
+      connectedAccounts: [{ purpose: 'github-copilot', account }], launchEnvironment,
       configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: 'native-model', updatedAtMs: 0 },
         permissionIntent: { value: 'read-only', updatedAtMs: 0 }, options: {} },
     }, context);

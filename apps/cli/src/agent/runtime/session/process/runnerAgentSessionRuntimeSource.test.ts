@@ -1969,6 +1969,8 @@ describe('runner Agent session runtime source', () => {
             agentId: 'ohMyPi',
             backendId: 'ohMyPi',
         });
+        expect(source?.agentContribution.id).toBe('ohMyPi');
+        expect(source?.agentContribution.identity).toEqual({ pluginId: 'happier.agent.ohmypi', localId: 'ohmypi' });
         await expect(source?.prepareForSession?.({
             sessionId: 'session-1',
             signal: new AbortController().signal,
@@ -1977,6 +1979,7 @@ describe('runner Agent session runtime source', () => {
             agentId: 'ohMyPi',
             backendId: 'ohMyPi',
         });
+        expect(source?.agentContribution.id).toBe('ohMyPi');
     });
 
     it.each([

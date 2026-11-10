@@ -24,9 +24,11 @@ import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpa
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { createExternalContributionFixtures, createLease, createNativeAgentRuntimeSessionPlanFixture, createNativeSessionClientTestPort, createSessionHostServiceOwners } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit';
+import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 
 describe('Session startup operation custody', () => {
-  it.each(['agent_session_error', 'agent_startup_failed'] as const)(
+  it.each(['agent_session_error', 'agent_startup_failed', 'mcp_tool_catalog_unavailable'] as const)(
     'settles rejected construction while the input receiver remains alive (%s)', async code => {
     const sessionId = 'construction-failed-child';
     // Only process liveness and marker persistence are substituted boundaries.
@@ -41,19 +43,25 @@ describe('Session startup operation custody', () => {
     const tracked: TrackedSession = { ...runner, startedBy: 'daemon', happySessionId: sessionId, childProcess: child,
       runnerAgentSourceCustodyV1: binding.sourceCustody,
       agentRuntimeDaemonServiceAuthorityFilePath: '/fixture/construction-authority' };
-    const failureCause = code === 'agent_startup_failed'
-      ? { code, phase: 'client_start', failureReason: 'unclassified_provider_error' } as const : undefined;
-    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', occurredAt: 1001,
-      error: new PluginError({ code, message: 'PRIVATE_CONSTRUCTION_BODY',
-        ...(failureCause ? { details: { failureCause } } : {}) }) });
-    const handler = createMachineSessionSpawnRpcHandler({ handlers: {
-      spawnSession: async () => {
+    const failureCause = { ...(code === 'agent_startup_failed' ? { code } : {}), phase: 'client_start',
+      failureReason: 'unclassified_provider_error' } as const;
+    const native = await createNativeAgentRuntimeSessionPlanFixture({ ...createExternalContributionFixtures('acme-agent'),
+      lease: { ...createLease('acme-agent'), sourceCustody: binding.sourceCustody },
+      createSessionHostServiceOwners,
+      runtime: { sessions: { open: async () => {
+        if (code === 'agent_session_error') throw new Error('PRIVATE_CONSTRUCTION_BODY');
+        if (code === 'mcp_tool_catalog_unavailable') throw new Error('MCP catalog must refuse before native open');
+        throw new PluginError({ code, message: 'PRIVATE_CONSTRUCTION_BODY', details: { failureCause } });
+      } } },
+      sessionCapabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+      sessionInput: buildPluginSessionBindingInput({ credentials: { token: 'token', encryption: null }, directory: '/project',
+        backendTarget: { kind: 'backend', backendId: 'acme-agent' } }),
+      attestSessionOpen: async input => {
         const request = AgentRuntimeDaemonServiceRequestV1Schema.parse({ v: 1,
           context: { token: 'a'.repeat(43), sessionId }, operation: { kind: 'session.open.attest',
-            requestId: 'construction-failed-open', phase: 'refused',
-            request: { kind: 'create', sessionId, cwd: '/project' }, providerSessionId: null,
-            failure: { phase: 'agent_runtime_open', code: issue.code,
-              ...(issue.failureCause ? { failureCause: issue.failureCause } : {}) } } });
+            requestId: 'construction-failed-open', phase: input.phase,
+            request: input.request, providerSessionId: input.providerSessionId,
+            ...(input.failure ? { failure: input.failure } : {}) } });
         if (request.operation.kind !== 'session.open.attest') throw new Error('Wrong attestation operation');
         await recordTrackedRunnerAgentSessionOpenAttestation({ tracked, retainedAgent: binding,
           runner: { ...runner, snapshotIdentity: 'construction-failed-runner' }, ...request.operation,
@@ -62,6 +70,17 @@ describe('Session startup operation custody', () => {
               .toEqual(attestation);
             return true;
           } });
+      },
+    });
+    const handler = createMachineSessionSpawnRpcHandler({ handlers: {
+      spawnSession: async () => {
+        await expect(native.config.createSessionRuntime({ directory: '/project', metadata: code === 'mcp_tool_catalog_unavailable'
+          ? { allowedTools: ['mcp__context7__resolve-library-id'], unlistedTools: 'deny' } : {}, machineId: 'machine',
+          session: createNativeSessionClientTestPort(sessionId), transcriptSession: {}, messageBuffer: {},
+          mcpServers: code === 'mcp_tool_catalog_unavailable'
+            ? { context7: { command: process.execPath, args: ['-e', 'process.exit(0)'] } } : {},
+          permissionHandler: {}, getPermissionMode: () => 'default', setThinking() {}, memoryRecallGuidanceEnabled: false,
+        } as never)).rejects.toBeDefined();
         return { type: 'success', sessionId };
       },
       stopSession: async () => { throw new Error('A failed construction receiver retains input custody'); },

@@ -17,6 +17,8 @@ export type MuseMspProcessScenario = 'approval-abort' | 'approval-late-child' | 
 export async function createMuseMspProcessFixture(options?: Readonly<{
     schema?: JsonValue;
     startupEvent?: boolean;
+    /** Recorded native startup refusal when neither data root nor home is supplied. */
+    requireDataDirectory?: boolean;
     /** Schema-derived busy startup; early turn requests retain the native queued disposition. */
     readinessGuard?: boolean;
     /** Schema-derived admission failures, optionally after the captured native turn/started frame. */
@@ -54,6 +56,7 @@ export async function createMuseMspProcessFixture(options?: Readonly<{
             ...(options?.turnFailure ? { MUSE_TEST_TURN_FAILURE: options.turnFailure } : {}),
             ...(options?.readinessGuard ? { MUSE_TEST_READINESS_GUARD: '1' } : {}),
             MUSE_TEST_STARTUP_EVENT: options?.startupEvent ? '1' : '0',
+            ...(options?.requireDataDirectory ? { MUSE_TEST_REQUIRE_DATA_DIRECTORY: '1' } : {}),
             ...(options?.auditPath ? { MUSE_TEST_AUDIT_PATH: options.auditPath } : {}),
             ...(options?.nativeNotificationPath ? { MUSE_TEST_NOTIFICATION_PATH: options.nativeNotificationPath } : {}),
             ...(options?.nativePolicyPath ? { MUSE_TEST_POLICY_PATH: options.nativePolicyPath } : {}),
@@ -139,6 +142,10 @@ export async function waitForMuseMspProcessAudit(
 /** Only the Muse side of the OS boundary. The SDK host owns all RPC transport. */
 export const MUSE_MSP_PLAYBACK_SCRIPT = String.raw`
 const readline = require('node:readline');
+if (process.env.MUSE_TEST_REQUIRE_DATA_DIRECTORY === '1' && !process.env.XDG_DATA_HOME && !process.env.HOME) {
+    process.stderr.write('resolve serve paths: no usable data directory from XDG_DATA_HOME or HOME');
+    process.exit(1);
+}
 ${MUSE_MSP_DECISION_PLAYBACK}
 const recordingPath = process.env.MUSE_TEST_RECORDING_PATH;
 const recordingBytes = recordingPath ? require('node:fs').readFileSync(recordingPath) : undefined;

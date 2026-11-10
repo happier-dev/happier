@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
+import { resolveNativeAgentLaunchEnvironment } from '@/agent/runtime/launchEnvironment';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 
 import { openMuseMsp } from './msp.js';
@@ -17,6 +18,20 @@ async function fixture(options?: { schema?: JsonValue; startupEvent?: boolean })
 }
 
 describe('Muse MSP native process transport', () => {
+    it('initializes a selected account with native home discovery retained by the launch producer', async () => {
+        const { launch, ...boundary } = await createMuseMspProcessFixture({ requireDataDirectory: true });
+        const environment = resolveNativeAgentLaunchEnvironment({
+            processEnv: { HOME: '/native/requester/home', PRIVATE_AMBIENT_TOKEN: 'must-not-leak' },
+            environmentVariables: { XDG_CONFIG_HOME: '/selected/account/config' }, platform: 'linux',
+        });
+        const exec = createStablePluginExecService({ signal: new AbortController().signal,
+            isOccurrenceCurrent: () => true, ...boundary, environment: environment.values });
+        const msp = await openMuseMsp({ exec, launch: { ...launch, env: { ...launch.env, ...environment.values } } });
+        try {
+            expect(msp.initializeResult).toMatchObject({ schema: { version: 1 } });
+            expect(environment.values).toEqual({ HOME: '/native/requester/home', XDG_CONFIG_HOME: '/selected/account/config' });
+        } finally { await msp.dispose(); }
+    });
     it('initializes once before reads, permits an additive fingerprint and preserves selected launch inputs', async () => {
         const msp = await openMuseMsp(await fixture({ schema: { fingerprint: 'sha256:additive-native-build' } }));
         try {

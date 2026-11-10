@@ -110,6 +110,8 @@ export function projectManifestAgentContribution(params: Readonly<{
     provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
     pluginId: string;
+    /** Preserve the canonical routing identity when reconstructing an admitted Agent. */
+    admittedAgentId?: string;
     /** The admitted runner's backend identity, when distinct from its manifest-local Agent id. */
     sessionRuntimeId?: string;
     /**

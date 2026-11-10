@@ -86,6 +86,7 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
         provenance: attested.manifestAuthority === 'bundled_first_party' ? 'first_party' : 'external',
         source: { kind: attested.manifestAuthority === 'bundled_first_party' ? 'bundled' : 'package' },
         pluginId: attested.manifest.id,
+        admittedAgentId: attested.binding.agentId,
         systemTools: attested.manifest.contributes.systemTools,
         hostAccess: attested.manifest.hostAccess,
     }).catalogEntry ?? null;
