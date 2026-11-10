@@ -26,6 +26,8 @@ import { createBrowserDaemonControlBroker } from '../control/broker';
 import { createBrowserDaemonControlRoutes } from '../control/routes';
 import { createDaemonControlApp } from '../../controlServer';
 import { ActionIdSchema, FeaturesResponseSchema } from '@happier-dev/protocol';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { DaemonBrowserViewListResponseV1Schema } from '@happier-dev/protocol/browser/control/v1';
 
 type BrowserDaemonRuntimeActionExecutorModule = Readonly<{
   createBrowserDaemonRuntimeActionExecutor?: (input: Readonly<{
@@ -153,13 +155,60 @@ function automationRequest(actionKind: string, payload: Record<string, unknown> 
   };
 }
 
+it.each([
+  { actionKind: 'type', changed: false }, { actionKind: 'type', changed: true },
+  { actionKind: 'click', changed: false }, { actionKind: 'click', changed: true },
+] as const)('binds approved $actionKind to the listed page after navigation (changed while pending: $changed)', async ({ actionKind, changed }) => {
+  const path = await createRealAutomationPath('Submit');
+  try {
+    const broker = createBrowserDaemonControlBroker();
+    broker.registerAdapter(path.control);
+    const records = new Map<string, ApprovalRequest>();
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+      runtimeActionExecute: createBrowserDaemonRuntimeActionExecutor({ featureGate: allowAllBrowserGate(),
+        automation: createBrowserAutomationRoutes({ service: path.service }),
+        control: createBrowserDaemonControlRoutes({ broker, automation: () => path.service }) }),
+      isActionApprovalRequired: actionId => actionId === (actionKind === 'type' ? 'browser.automation.type' : 'browser.automation.click'),
+      isApprovalExecutionOriginCurrent: async () => true,
+      approvalsCreate: async ({ request }) => { records.set('approval', request); return { artifactId: 'approval' }; },
+      approvalsGet: async ({ artifactId }) => records.get(artifactId) ?? null,
+      approvalsUpdate: async ({ artifactId, request }) => { records.set(artifactId, request); return { ok: true }; },
+    }));
+    const context = { surface: 'agent', authority: 'account_automation', serverId: 'home',
+      defaultSessionId: browserAutomationView.browserSessionId, defaultSessionMachineId: 'machine',
+      actionRequestId: 'navigation-type', actionCaller: { kind: 'host' } } as const;
+    expect(await executor.execute('browser.automation.navigate', {
+      ...automationRequest('navigate', { url: 'https://example.test/second' }), navigationGeneration: path.navigationGeneration,
+    }, { ...context, bypassApprovals: true })).toMatchObject({ ok: true, result: { status: 'succeeded' } });
+    path.notify({ method: 'Page.frameNavigated', sessionId: 'session_1',
+      params: { frame: { id: 'frame', loaderId: 'second', url: 'https://example.test/second' } } });
+    const listed = await executor.execute('browser.view.list', { browserSessionId: browserAutomationView.browserSessionId }, context);
+    if (!listed.ok) throw new Error(JSON.stringify(listed));
+    const observed = DaemonBrowserViewListResponseV1Schema.parse(listed.result).views[0]!.events
+      .filter(event => event.kind === 'navigationStateChanged').at(-1);
+    expect(observed).toMatchObject({ navigationGeneration: 1 });
+    expect(await executor.execute(actionKind === 'type' ? 'browser.automation.type' : 'browser.automation.click', {
+      ...automationRequest(actionKind, { selector: '#submit', ...(actionKind === 'type' ? { text: 'agent65' } : {}) }), navigationGeneration: observed?.navigationGeneration,
+    }, context)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    if (changed) path.notify({ method: 'Page.navigatedWithinDocument', sessionId: 'session_1',
+      params: { frameId: 'frame', url: 'https://example.test/second#changed' } });
+    await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' },
+      { surface: 'ui', authority: 'present_user' });
+    expect(records.get('approval'), JSON.stringify(records.get('approval'))).toMatchObject({ status: changed ? 'failed' : 'executed', execution: changed
+      ? { ok: false, errorCode: 'stale_navigation' } : { ok: true } });
+    expect(path.calls.filter(call => actionKind === 'type' ? call.method === 'Input.insertText'
+      : call.method === 'Input.dispatchMouseEvent' && call.params?.type === 'mousePressed'))
+      .toHaveLength(changed ? 0 : 1);
+  } finally { path.service.dispose(); path.control.dispose(); }
+});
+
 async function createRealAutomationPath(name: string, featureGate: BrowserDaemonFeatureGate = allowAllBrowserGate()) {
   const calls: Array<{ method: string; params?: Record<string, unknown> }> = [];
   const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
   const element = { id: 'submit', nodeType: 1, tagName: 'BUTTON', textContent: name, children: [], parentElement: null,
     getAttribute: () => null, getBoundingClientRect: () => ({ left: 20, top: 14, width: 40, height: 20 }),
-    getClientRects: () => [{ left: 20, top: 14, width: 40, height: 20 }], scrollIntoView: () => {}, focus: () => {} };
-  const document = { body: { innerText: 'Welcome back' }, querySelectorAll: (selector: string) => selector.startsWith('#') && selector !== '#submit' ? [] : [element], querySelector: (selector: string) => selector === '#submit' ? element : null };
+    getClientRects: () => [{ left: 20, top: 14, width: 40, height: 20 }], scrollIntoView: () => {}, focus: () => { document.activeElement = element; } };
+  const document = { activeElement: null as object | null, body: { innerText: 'Welcome back' }, querySelectorAll: (selector: string) => selector.startsWith('#') && selector !== '#submit' ? [] : [element], querySelector: (selector: string) => selector === '#submit' ? element : null };
   // Chromium's page realm and screenshot persistence are the only mocked system boundaries.
   const boundary = { openPage: async () => ({ targetId: 'target_1', sessionId: 'session_1' }), dispatchBrowserCommand: async () => ({}),
     subscribeCdpEvents: (listener: BrowserSidecarCdpEventSubscriber) => { listeners.add(listener); return () => { listeners.delete(listener); }; },

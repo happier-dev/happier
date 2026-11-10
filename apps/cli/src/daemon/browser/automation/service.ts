@@ -246,7 +246,8 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
   async function execute(request: BrowserAutomationActionRequestV1, context?: Readonly<{ signal?: AbortSignal }>) {
     const runtime = runtimeFor(request);
     const engineGeneration = input.adapter.getNavigationGeneration?.(request) ?? 0;
-    if (runtime.navigationGeneration !== engineGeneration) runtime.inputControl.invalidateObservation();
+    // The request binds the page generation below. A new page alone is not a
+    // human handback or an uncertain effect requiring recovery observation.
     runtime.navigationGeneration = engineGeneration;
     const controlEpoch = owners.getControlEpoch(request);
     if (owners.isObservationHeld(request)) await owners.tryReleaseConfidentiality(request);
@@ -489,7 +490,6 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
       }
       if (authority === 'present_user') await recordHumanInput({ ...view, authority });
       const navigationGeneration = input.adapter.getNavigationGeneration?.(view) ?? 0;
-      if (runtime.navigationGeneration !== navigationGeneration) runtime.inputControl.invalidateObservation();
       runtime.navigationGeneration = navigationGeneration;
       try {
         return await runtime.inputControl.execute({
