@@ -107,6 +107,107 @@ async function fixture(withApproval = true, encrypted = false) {
 }
 
 describe('Workflow approved operation private custody', () => {
+  it('spends saved Nightly consent on the current capture and holds changed Environment or destination policy', async () => {
+    const h = await fixture(false);
+    const policy = { destinationRef: { pluginId: 'example.backups', localId: 'repository' }, occurrenceId: 'installed',
+      config: { path: '/backups/app' }, credentialBindings: [],
+      sources: [{ kind: 'volume', sourceId: 'data', service: 'app', volume: 'data', consistency: 'stopDuringCopy' }],
+      ownership: { environmentId: 'environment', prefix: 'app' }, retention: { kind: 'keepEverything' } };
+    const address = { serverId: 'home', environmentId: 'environment' };
+    const references: Record<string, WorkflowAuthoredResultReference> = Object.fromEntries(
+      ['serverId', 'environmentId', 'expectedRevision', 'configRevision', 'machineId', 'installationId', 'targetLinkId', 'deploymentId']
+        .map(field => [field, { kind: 'result', producer: { blockId: 'current', scope: { kind: 'current' } },
+          path: ['backupTarget', field] } satisfies WorkflowAuthoredResultReference]));
+    const currentDefinition = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {}, inputs: [
+      { name: 'backupEnvironment', valueType: 'json', required: true }, { name: 'backupPolicy', valueType: 'json', required: true },
+    ], blocks: [
+      { kind: 'action', id: 'current', actionId: 'deployments.environments.get', input: {
+        serverId: { kind: 'input', name: 'backupEnvironment', path: ['serverId'] },
+        environmentId: { kind: 'input', name: 'backupEnvironment', path: ['environmentId'] },
+        backupPolicy: { kind: 'input', name: 'backupPolicy' },
+      } },
+      { kind: 'action', id: 'backup', actionId: 'deployments.backups.run', input: references },
+    ] });
+    const triggerId = 'nightly';
+    const automationId = 'nightly-backups';
+    // Persisted consent, accepted Run and invocation rows are storage boundary
+    // fixtures. Their real private readers, crypto, binding and approval route run.
+    const operation: WorkflowApprovedOperationV1 = { parent: { actionId: 'workflow.trigger.add', input: {
+      target: { kind: 'inline', definition: currentDefinition }, project: { machineId: 'host', directory: '/repo' },
+      trigger: { kind: 'schedule', enabled: true, schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } },
+      inputs: { backupEnvironment: address, backupPolicy: policy }, actionApproval: 'automatic',
+    } }, approvedBy: { accountId }, steps: [
+      { actionId: 'deployments.environments.get', input: { ...address, backupPolicy: policy } },
+      { actionId: 'deployments.backups.run', input: {}, binding: { kind: 'producer_result', references } },
+    ] };
+    const row = AutomationDefinitionDetailSchema.parse({ id: automationId, name: 'Nightly backups', description: null,
+      enabled: true, targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
+      assignments: [{ machineId: 'host', enabled: true, priority: 0, updatedAt: 1 }],
+      triggers: [{ id: triggerId, revision: 0, kind: 'schedule', enabled: true, createdAt: 1, updatedAt: 1,
+        schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null }, nextRunAt: 2, triggerDefinitionEnvelope: null }],
+      executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'plain', v: {
+        workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition: currentDefinition,
+        inputs: { backupEnvironment: address, backupPolicy: policy }, actionApprovals: [{ triggerId, operation }],
+      } } },
+    });
+    const unavailable = async (): Promise<never> => { throw new Error('Unexpected Automation mutation or inventory'); };
+    const triggers = createAccountWorkflowTriggerActions({ automations: { get: async () => row,
+      list: unavailable, listDetails: unavailable, create: unavailable, reconcile: unavailable, delete: unavailable },
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      resolveWorkflow: unavailable, randomBytes: size => new Uint8Array(size), newId: () => 'unused' });
+    const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerKind: 'schedule', triggerId, triggerRevision: 0,
+      occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: { v: 1, kind: 'schedule', scheduledFor: 1 } }),
+      occurredAt: 1, evidence: { scheduledFor: 1 } });
+    const { actionInput: _input, ...leaf } = h.approved.materializedLeaves[0]!;
+    for (const scenario of ['capture-a', 'capture-b', 'configRevision', 'environment', 'destination', 'home', 'account', 'actions'] as const) {
+      const actualPolicy = scenario === 'destination' ? { ...policy, config: { path: '/backups/changed' } } : policy;
+      const inputs = { backupEnvironment: scenario === 'environment' ? { ...address, environmentId: 'other' }
+        : scenario === 'home' ? { ...address, serverId: 'other-home' } : address, backupPolicy: policy };
+      const target = { ...inputs.backupEnvironment, expectedRevision: scenario === 'capture-a' ? 4 : 5,
+        configRevision: scenario === 'configRevision' ? 3 : 2,
+        machineId: 'machine', installationId: 'installation', targetLinkId: 'target', deploymentId: scenario };
+      const definition = scenario === 'actions' ? WorkflowDefinitionV1Schema.parse({ ...currentDefinition,
+        blocks: [...currentDefinition.blocks, { kind: 'action', id: 'added', actionId: 'machines.setup.apply',
+          input: Object.fromEntries(Object.entries(steps[0]!.input).map(([key, value]) => [key, { kind: 'literal', value }])) }] }) : currentDefinition;
+      const accepted = WorkflowAcceptedSnapshotV1Schema.parse({ ...h.approved, definition,
+        authoredDefinition: definition, inputs, approvedOperation: operation,
+        materializedLeaves: [
+          { ...leaf, blockId: 'current', actionId: 'deployments.environments.get', actionInput: { ...inputs.backupEnvironment, backupPolicy: policy } },
+          { ...leaf, blockId: 'backup', actionId: 'deployments.backups.run', actionInput: {} },
+          ...(scenario === 'actions' ? [{ ...leaf, blockId: 'added', actionId: 'machines.setup.apply', actionInput: steps[0]!.input }] : []),
+        ] });
+      const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+        ...h.mode, binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: accepted }));
+      const storage = createWorkflowRunStorageTestkit({ runId, accountId, machineId: 'host', state: 'running',
+        origin: { kind: 'automation', automationId, cause }, acceptedEnvelope,
+        keyCensus: createPlainWorkflowRunKeyCensusFixture({ runId, accountId }) });
+      const seal = (id: string, sequence: string, parentRecordId: string | null, memberOrdinal: string,
+        progress: Parameters<typeof sealWorkflowProgressStoredEnvelopeV1>[0]['progress']) =>
+        serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ ...h.mode,
+          binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: id, sequence, parentRecordId, memberOrdinal, attempt: '0' }, progress }));
+      await storage.execute({ operation: 'initialize', runId, expectedRevision: 0, checkpointEnvelope: '{}', rootInvocation: {
+        id: 'root', contentEnvelope: seal('root', '0', null, '0', { kind: 'happier.workflow-progress.v1', blockKind: 'root',
+          invocationPath: { blockId: '$root', scope: [] }, attempt: '0', logicalInvocationRecordId: 'root' }) } });
+      await storage.execute({ operation: 'invocations.admit', runId, expectedRevision: 1, parentAttempt: 0, checkpointEnvelope: '{}', invocations: [
+        { id: 'producer', sequence: '1', parentRecordId: 'root', memberOrdinal: '0', lifecycle: 'completed',
+          contentEnvelope: seal('producer', '1', 'root', '0', { kind: 'happier.workflow-progress.v1', blockKind: 'action',
+            invocationPath: { blockId: 'current', scope: [] }, attempt: '0', logicalInvocationRecordId: 'producer',
+            result: { ok: true, backupTarget: target, backupPolicy: actualPolicy } }) },
+        { id: invocationId, sequence: '2', parentRecordId: 'root', memberOrdinal: '1',
+          contentEnvelope: seal(invocationId, '2', 'root', '1', { kind: 'happier.workflow-progress.v1', blockKind: 'action',
+            invocationPath: { blockId: 'backup', scope: [] }, attempt: '0', logicalInvocationRecordId: invocationId }) },
+      ] });
+      const reader = createWorkflowApprovedOperationReader({ storage, resolveEncryption: async () => h.encryption,
+        readSavedTriggerConsent: input => triggers.readSavedConsent(input, input.context) });
+      const proof = await reader({ runId, actionId: 'deployments.backups.run', input: target,
+        context: { ...h.context, ...(scenario === 'account' ? { runtimeAccountId: 'other-account' } : {}) }, phase: 'prepare' });
+      const changed = scenario !== 'capture-a' && scenario !== 'capture-b' && scenario !== 'configRevision';
+      expect.soft(proof?.steps ?? null, scenario).toEqual(changed ? null : [{ actionId: 'deployments.backups.run', input: target }]);
+      expect.soft(resolveActionApprovalRouting({ actionId: 'deployments.backups.run', spec: getActionSpec('deployments.backups.run'), input: target,
+        context: { surface: 'agent', authority: 'account_automation' }, approvedOperation: proof }).required, scenario).toBe(changed);
+      expect(storage.operations()).not.toContain('invocations.list');
+    }
+  });
   it('continues an exact reviewed child with demanded work and holds a changed child', async () => {
     const h = await fixture(false);
     const actionId = 'prompt_doc.create' as const;

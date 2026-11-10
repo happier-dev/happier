@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { SessionInputAdmissionResultV1Schema } from '../../sessions/messages/sessionInputAdmission.js';
 import { createSessionMembershipReadFixture } from '../../sessions/read/sessionReadBatchV1.testkit.js';
 import { AutomationTriggerIdSchema } from '../../automations/automationTriggerIdentity.js';
 import type { AutomationDefinitionDetail, AutomationTriggerDetail, AutomationV3RunMutationResponse } from '../../automations/automationApiV3.js';
 import { WorkflowDefinitionV1Schema } from '../../workflows/workflowV1.js';
 import { resolveWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionResolverV1.js';
 import { createWorkflowTriggerActions, type WorkflowTriggerActionsDependencies } from './workflowTriggerActions.js';
-import { SessionTriggerAddRequestV1Schema, SessionTriggerListResultV1Schema, WorkflowTriggerListResultV1Schema, WorkflowTriggerAddRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerWriteResultV1Schema, WorkflowTriggerRemoveResultV1Schema } from '../../workflows/triggers/workflowTriggerActionsV1.js';
+import { SessionTriggerAddRequestV1Schema, SessionTriggerListResultV1Schema, WorkflowTriggerListRequestV1Schema, WorkflowTriggerListResultV1Schema, WorkflowTriggerAddRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerWriteResultV1Schema, WorkflowTriggerRemoveResultV1Schema } from '../../workflows/triggers/workflowTriggerActionsV1.js';
 import { normalizeUsageQuery } from '../../inputs/usageQuery.js';
 import { resolveUsagePageAggregation } from '../../usage/resolveUsagePageAggregation.js';
 import { ActionsSettingsV1Schema } from '../actionSettings.js';
@@ -27,11 +28,11 @@ import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1, readWor
 import { resolveActionCurrentSessionScopeFailure } from './sessionListAccess.js';
 import { AutomationStoredWorkflowDefinitionRecipeV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
 import { SessionInitialTriggerAdmissionV1Schema } from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
-import { createAccountWorkflowTriggerActions } from './workflowTriggerAccountHost.js';
+import { createAccountHealthCheckSourceReaderV1, createAccountWorkflowTriggerActions } from './workflowTriggerAccountHost.js';
 import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphertext } from '../../crypto/accountScopedCipher.js';
 import { isAvailableE2eeAutomationAccountEncryptionV1, type AvailableAutomationAccountEncryptionV1 } from '../../automations/automationAccountCurrentnessV1.js';
 import { AutomationSourceSelectorIdV1Schema } from '../../automations/automationOccurrenceV1.js';
-import { DeploymentEnvironmentHeaderV1Schema } from '../../deployments/deploymentActionsV1.js';
+import { DeploymentEnvironmentHeaderV1Schema, DeploymentBackupRunInputV1Schema } from '../../deployments/deploymentActionsV1.js';
 
 import type { ArtifactRevisionProvenanceV1, ArtifactSavedByV1 } from '../../artifacts/artifactBinaryV1.js';
 import { createNightlyBackupsWorkflowV1 } from '../../workflows/builtins/backupExamples.js';
@@ -61,6 +62,11 @@ const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
 const trigger = { kind: 'schedule' as const, enabled: true,
   schedule: { kind: 'interval' as const, scheduleExpr: null, everyMs: 60_000, timezone: null } };
 const project = { machineId: 'machine-one', directory: '/workspace' };
+const capturedBackup = () => WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {},
+  inputs: [{ name: 'backupTarget', valueType: 'json', required: true }],
+  blocks: [{ kind: 'action', id: 'backup', actionId: 'deployments.backups.run', input: Object.fromEntries(
+    Object.keys(DeploymentBackupRunInputV1Schema.shape).map(name => [name, { kind: 'input', name: 'backupTarget', path: [name] }])) }],
+});
 const workflow = '11111111-1111-4111-8111-111111111111';
 const ownCaller = { surface: 'agent' as const, sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
   agentStartContext: { caller: { kind: 'session' as const, sessionId: 'session-one', starterDepth: 0, turnDepth: 0 },
@@ -238,6 +244,33 @@ function fixture(savedDefinition = definition) {
 }
 
 describe('trigger source display provenance', () => {
+  it('reads two saved Environment health sources in one retained definition census', async () => {
+    const f = fixture();
+    let censusReads = 0;
+    const host = createAccountWorkflowTriggerActions({ automations: { ...f.deps.automations,
+      listDetails: async request => { censusReads++; return f.deps.automations.listDetails(request); } },
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      randomBytes: length => new Uint8Array(length).fill(3), resolveWorkflow: f.deps.resolveWorkflow,
+      newId: () => crypto.randomUUID() });
+    for (const environmentId of ['production', 'preview']) await host.add({ target: { kind: 'inline', definition }, project,
+      trigger: { kind: 'pluginEvent', enabled: true,
+        eventRef: { pluginId: 'happier.machine.services', localId: 'health-check-failed' },
+        sourceInstanceId: `health:${environmentId}`, sourceContractVersion: 1,
+        sourceConfig: { v: 1, subject: { kind: 'environment', environmentId }, checks: [{ checkId: 'http',
+          kind: { pluginId: 'happier.machine.services', localId: 'http' }, binding: { kind: 'healthCheck' },
+          config: { endpoint: 'https://app.test', expectStatus: 200 }, periodMs: 60000, consecutiveFailuresBeforeAlerting: 1 }] },
+        displayLabel: environmentId, filter: null, maximumObservationAgeMs: null,
+        observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+          machineId: 'observer', pluginId: 'happier.machine.services', materializationId: 'services' } } } });
+    censusReads = 0;
+    const result = await host.list(WorkflowTriggerListRequestV1Schema.parse({
+      healthSource: { sourceInstanceIds: ['health:production', 'health:preview'] } }));
+    expect(result).toMatchObject({ healthSources: [
+      { sourceInstanceId: 'health:production', source: { subject: { environmentId: 'production' } } },
+      { sourceInstanceId: 'health:preview', source: { subject: { environmentId: 'preview' } } },
+    ] });
+    expect(censusReads).toBe(1);
+  });
   it.each(['ui', 'mcp'] as const)('clears the Goal and detaches only Keep going through the %s Action', async surface => {
     const f = fixture();
     const actions = createWorkflowTriggerActions({ ...f.deps,
@@ -322,6 +355,46 @@ describe('trigger source display provenance', () => {
       .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
     expect(goalPresent).toBe(true);
   });
+  it.each(['plain', 'e2ee'] as const)('reads a retained %s health source with its remote observer and saved configuration', async mode => {
+    const f = fixture();
+    const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
+      ? { kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }
+      : { kind: 'available', witness: { mode: 'e2ee', version: 1, contentKeyFingerprint: 'current' },
+        material: createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+          material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } }) };
+    let nextId = 0;
+    const host = createAccountWorkflowTriggerActions({ automations: f.deps.automations, resolveEncryption: async () => encryption,
+      randomBytes: (length: number) => new Uint8Array(length).fill(3), resolveWorkflow: f.deps.resolveWorkflow,
+      newId: () => `00000000-0000-4000-8000-${String(++nextId).padStart(12, '0')}` });
+    const observer = { machineId: 'remote-observer', pluginId: 'happier.machine.services', materializationId: 'services' };
+    const source = { v: 1, subject: { kind: 'environment', environmentId: 'production' }, checks: [{
+      checkId: 'http', kind: { pluginId: 'happier.machine.services', localId: 'http' }, binding: { kind: 'healthCheck' },
+      config: { endpoint: 'https://app.test', expectStatus: 200 }, periodMs: 60000, consecutiveFailuresBeforeAlerting: 1,
+    }] };
+    const saved = await host.add({ target: { kind: 'inline', definition }, project, trigger: {
+      kind: 'pluginEvent', enabled: true, eventRef: { pluginId: 'happier.machine.services', localId: 'health-check-failed' },
+      sourceInstanceId: 'production-health', sourceContractVersion: 1, sourceConfig: source,
+      displayLabel: 'Production health', filter: null, maximumObservationAgeMs: null,
+      observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: observer },
+    } });
+    const result = WorkflowTriggerListResultV1Schema.parse(await host.list({ healthSource: { sourceInstanceIds: ['production-health'] } }));
+    expect(result).toMatchObject({ healthSources: [{ sourceInstanceId: 'production-health', source, observer,
+      enabled: true, automationId: saved.set.automationId, triggerId: saved.triggerId }] });
+    expect((await host.list({ healthSource: { sourceInstanceIds: ['missing'] } }))).toMatchObject({ healthSources: [] });
+    const read = createAccountHealthCheckSourceReaderV1({ automations: f.deps.automations,
+      resolveEncryption: async () => encryption });
+    expect(await read('production-health')).toEqual(result.healthSources![0]);
+    let witnessReads = 0;
+    const changed: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
+      ? { kind: 'available', witness: { mode: 'e2ee', version: 2, contentKeyFingerprint: 'changed' },
+        material: createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+          material: { type: 'legacy', secret: new Uint8Array(32).fill(8) } }) }
+      : { kind: 'available', witness: { mode: 'plain', version: 2, contentKeyFingerprint: null } };
+    const changing = createAccountHealthCheckSourceReaderV1({ automations: f.deps.automations,
+      resolveEncryption: async () => ++witnessReads === 1 ? encryption : changed });
+    await expect(changing('production-health')).rejects.toMatchObject({ code: 'content_unavailable' });
+  });
+
   it.each(['plain', 'e2ee'] as const)('projects each retained %s receipt Event subject without creating an Environment lifecycle binding', async mode => {
     const f = fixture();
     const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
@@ -392,12 +465,11 @@ describe('trigger source display provenance', () => {
     }
   });
   it('reads missed schedules for saved and inline backups by the actual bound backup Action target', async () => {
-    const nightly = createNightlyBackupsWorkflowV1();
+    const nightly = capturedBackup();
     const f = fixture(nightly);
     const target = { serverId: 'home', environmentId: 'env', machineId: project.machineId,
       installationId: 'installation', targetLinkId: 'runtime', deploymentId: 'deployment', configRevision: 1 };
-    const inputs = { backupTarget: { ...target, expectedRevision: 4 }, retention: { kind: 'keep', last: 7 },
-      verificationLevel: 'manifestReadBack' };
+    const inputs = { backupTarget: { ...target, expectedRevision: 4 } };
     const saved = await f.actions.add({ workflow, project, inputs, trigger });
     const inline = await f.actions.add({ target: { kind: 'inline', definition: nightly }, project,
       inputs: { ...inputs, backupTarget: { ...inputs.backupTarget, deploymentId: 'other' } }, trigger });
@@ -419,6 +491,48 @@ describe('trigger source display provenance', () => {
       project, inputs: { ...inputs, backupTarget: { ...inputs.backupTarget, deploymentId: 'nested' } }, trigger });
     expect(await executor.execute('workflow.trigger.list', { deploymentBackup: { ...target, deploymentId: 'nested' } }, ownCaller))
       .toMatchObject({ ok: true, result: { sets: [{ automationId: nested.set.automationId }] } });
+  });
+
+  it('finds an enabled Nightly Automation before a Target exists and excludes its paused trigger', async () => {
+    const nightly = createNightlyBackupsWorkflowV1();
+    const f = fixture(nightly);
+    const backupEnvironment = { serverId: 'home', environmentId: 'environment' };
+    const backupPolicy = { destinationRef: { pluginId: 'example.backups', localId: 'repository' }, occurrenceId: 'installed',
+      config: { path: '/backups/app' }, credentialBindings: [], sources: [{ kind: 'volume', sourceId: 'data',
+        service: 'app', volume: 'data', consistency: 'stopDuringCopy' }],
+      ownership: { environmentId: 'environment', prefix: 'app' }, retention: { kind: 'keepEverything' } };
+    const saved = await f.actions.add({ workflow, project, trigger,
+      inputs: { backupEnvironment, backupPolicy, verificationLevel: 'manifestReadBack' } });
+    const executor = f.executor(f.actions);
+    const listed = await executor.execute('workflow.trigger.list', { deploymentBackupEnvironment: backupEnvironment }, ownCaller);
+    expect(listed, JSON.stringify(listed)).toMatchObject({ ok: true, result: { sets: [{ automationId: saved.set.automationId }] } });
+    const row = f.rows.get(saved.set.automationId)!;
+    f.rows.set(row.id, { ...row, triggers: row.triggers.map(item => ({ ...item, enabled: false })) });
+    expect(await executor.execute('workflow.trigger.list', { deploymentBackupEnvironment: backupEnvironment }, ownCaller))
+      .toMatchObject({ ok: true, result: { sets: [] } });
+  });
+
+  it('finds active backup Automations for an Environment across captures and excludes paused definitions and triggers', async () => {
+    const nightly = capturedBackup();
+    const f = fixture(nightly);
+    const target = { serverId: 'home', environmentId: 'env', machineId: project.machineId,
+      installationId: 'installation', targetLinkId: 'runtime', deploymentId: 'previous-capture', configRevision: 1, expectedRevision: 4 };
+    const inputs = { backupTarget: target };
+    const active = await f.actions.add({ workflow, project, inputs, trigger });
+    const pausedDefinition = await f.actions.add({ target: { kind: 'inline', definition: nightly }, project, inputs, trigger });
+    const pausedTrigger = await f.actions.add({ target: { kind: 'inline', definition: nightly }, project, inputs, trigger });
+    const pausedRow = f.rows.get(pausedDefinition.set.automationId)!;
+    const { executionRecipe: _pausedRecipe, ...pausedWithoutSource } = pausedRow;
+    f.rows.set(pausedRow.id, { ...pausedWithoutSource, enabled: false });
+    const triggerRow = f.rows.get(pausedTrigger.set.automationId)!;
+    f.rows.set(triggerRow.id, { ...triggerRow, triggers: triggerRow.triggers.map(item => ({ ...item, enabled: false })) });
+    const executor = f.executor(f.actions);
+    const listed = await executor.execute('workflow.trigger.list', { deploymentBackupEnvironment: {
+      serverId: target.serverId, environmentId: target.environmentId } }, ownCaller);
+    expect(listed, JSON.stringify(listed)).toMatchObject({ ok: true, result: { sets: [{ automationId: active.set.automationId }] } });
+    expect(await executor.execute('workflow.trigger.list', { deploymentBackupEnvironment: {
+      serverId: 'other-home', environmentId: target.environmentId } }, ownCaller))
+      .toMatchObject({ ok: true, result: { sets: [] } });
   });
 
   it('reads missed schedules from the saved due cursor and actual last started Run through the Action executor', async () => {
@@ -488,7 +602,7 @@ describe('person-saved exact-input trigger consent', () => {
     const f = fixture();
     let approval: ApprovalRequest | null = null;
     const settings = ActionsSettingsV1Schema.parse({ v: 1,
-      actions: { 'workflow.trigger.add': { approvalRequiredSurfaces: ['ui'] } } });
+      actions: { 'workflow.trigger.add': { approvalRequiredSurfaces: ['cli'] } } });
     const executor = f.executor(f.actions, {
       isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
       approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'profile-review' }; },
@@ -499,7 +613,7 @@ describe('person-saved exact-input trigger consent', () => {
     const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home',
       runtimeAccountId: 'owner', actionRequestId: 'trigger-profile-review', actionCaller: { kind: 'host' as const },
       approvalProfileId: 'builtin:apply-safe' };
-    expect(await executor.execute('workflow.trigger.add', { workflow, project, trigger }, context))
+    expect(await executor.execute('workflow.trigger.add', { workflow, project, trigger }, { ...context, surface: 'cli' }))
       .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(f.rows.size).toBe(0);
     expect(await executor.execute('approval.request.decide', { artifactId: 'profile-review', decision: 'approve' },
@@ -974,6 +1088,30 @@ describe('person-saved deployment trigger consent', () => {
     expect(automated.set.context?.actionApprovals).toBeUndefined();
   });
 
+  it('holds changed backup schedules and allows explicit Automatic renewal without resupplying the schedule', async () => {
+    const f = fixture(capturedBackup());
+    const actions = createWorkflowTriggerActions({ ...f.deps,
+      nativeAccount: { accountId: 'owner', serverId: 'home', isCurrent: async () => true } });
+    const caller: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'owner', serverId: 'home', actionRequestId: 'save-backup-schedule' };
+    const backupTarget = { serverId: 'home', environmentId: 'environment', expectedRevision: 4, configRevision: 1,
+      machineId: project.machineId, installationId: 'installation', targetLinkId: 'target', deploymentId: 'deployment' };
+    const saved = await actions.add({ workflow, project, trigger, inputs: { backupTarget }, actionApproval: 'automatic' }, caller);
+    const scheduleTrigger = { kind: trigger.kind, schedule: trigger.schedule };
+    const unchanged = await actions.update({ automationId: saved.set.automationId, triggerId: saved.triggerId,
+      expectedRevision: saved.set.revision, patch: { trigger: scheduleTrigger } }, caller);
+    expect(unchanged.set.context?.actionApprovals).toEqual(saved.set.context?.actionApprovals);
+    const changed = await actions.update({ automationId: saved.set.automationId, triggerId: saved.triggerId,
+      expectedRevision: unchanged.set.revision,
+      patch: { trigger: { ...scheduleTrigger, schedule: { ...trigger.schedule, everyMs: 120_000 } } } }, caller);
+    expect(changed.set.context).not.toHaveProperty('actionApprovals');
+    const renewed = await actions.update({ automationId: saved.set.automationId, triggerId: saved.triggerId,
+      expectedRevision: changed.set.revision, patch: { actionApproval: 'automatic' } }, caller);
+    expect(renewed.set.context?.actionApprovals).toHaveLength(1);
+    expect(await actions.readSavedConsent({ automationId: saved.set.automationId, triggerId: saved.triggerId!,
+      ownerAccountId: 'owner', operation: renewed.set.context!.actionApprovals![0]!.operation }, caller)).not.toBeNull();
+  });
+
   it('retires saved proof when trigger execution operands or deployment routing change', async () => {
     const f = fixture(deploymentWorkflowDefinition());
     const actions = createWorkflowTriggerActions({ ...f.deps,
@@ -1395,7 +1533,7 @@ describe('workflow trigger Automation composition', () => {
     const request = { target: suggestion.target, project, trigger };
     let approval: ApprovalRequest | null = null;
     const settings = ActionsSettingsV1Schema.parse({ v: 1,
-      actions: { 'workflow.trigger.add': { approvalRequiredSurfaces: ['ui'] } } });
+      actions: { 'workflow.trigger.add': { approvalRequiredSurfaces: ['cli'] } } });
     const gated = f.executor(f.actions, {
       isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
       approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'digest-approval' }; },
@@ -1406,7 +1544,7 @@ describe('workflow trigger Automation composition', () => {
     });
     const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home',
       runtimeAccountId: 'owner', actionRequestId: 'digest-request', actionCaller: { kind: 'host' as const } };
-    const approvalResult = await gated.execute(suggestion.actionId, request, context);
+    const approvalResult = await gated.execute(suggestion.actionId, request, { ...context, surface: 'cli' });
     expect(approvalResult, JSON.stringify(approvalResult))
       .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(f.rows.size).toBe(0);
@@ -1418,7 +1556,7 @@ describe('workflow trigger Automation composition', () => {
     expect(await optedIn.execute(suggestion.actionId, { ...request, project: { ...project, directory: '' } }, context))
       .toMatchObject({ ok: false });
     expect(f.rows.size).toBe(0);
-    expect(await gated.execute(suggestion.actionId, request, { ...context, actionRequestId: 'digest-approved-request' }))
+    expect(await gated.execute(suggestion.actionId, request, { ...context, surface: 'cli', actionRequestId: 'digest-approved-request' }))
       .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(f.rows.size).toBe(0);
     const decided = await gated.execute('approval.request.decide', { artifactId: 'digest-approval', decision: 'approve' }, context);
@@ -1798,6 +1936,7 @@ describe('workflow trigger Automation composition', () => {
       update: async () => { throw new Error('Unexpected Artifact write'); }, delete: async () => ({ ok: true }),
     }, encodeListCursor: (row) => row.artifactId, assertDefinitionWriteAllowed: async () => undefined });
     let storedRequest: ApprovalRequest | null = null;
+    const publishedResults: Array<{ sessionId: string; accountId: string | undefined }> = [];
     let policyFactsAvailable = true;
     let currentTurnDepth = 0;
     const createExecutor = (
@@ -1809,6 +1948,11 @@ describe('workflow trigger Automation composition', () => {
       approvalsCreate: async ({ request }) => {
         storedRequest = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(request)));
         return { artifactId: 'session-agent-approval' };
+      },
+      // Session input transport is the external publication boundary.
+      sessionSendMessage: async ({ sessionId, localId, context }) => {
+        publishedResults.push({ sessionId, accountId: context?.runtimeAccountId });
+        return SessionInputAdmissionResultV1Schema.parse({ status: 'accepted', localId });
       },
       approvalsGet: async () => storedRequest,
       approvalsUpdate: async ({ request }) => {
@@ -1824,7 +1968,7 @@ describe('workflow trigger Automation composition', () => {
     });
     const executor = createExecutor();
     const context: ActionExecutorContext = { ...ownCaller, surface: 'cli', authority: 'account_automation',
-      serverId: 'home-one', actionRequestId: 'session-action-request', defaultSessionId: 'untrusted-default', callerPermissionMode: 'default',
+      runtimeAccountId: 'owner', serverId: 'home-one', actionRequestId: 'session-action-request', defaultSessionId: 'untrusted-default', callerPermissionMode: 'default',
       defaultSessionMachineId: project.machineId,
       approvalOrigin: { kind: 'transcript_tool_call', sessionId: 'session-one', toolCallId: 'tool-one' },
       actionCaller: { kind: 'session', sessionId: 'session-one', starterDepth: 0, turnDepth: 0 } };
@@ -1863,8 +2007,9 @@ describe('workflow trigger Automation composition', () => {
     // Account-owned replay is a new human invocation despite the exhausted Session.
     const replay = await createExecutor().execute('approval.request.decide', {
       artifactId: 'session-agent-approval', decision: 'approve',
-    }, { surface: 'ui', authority: 'present_user', serverId: 'home-one' });
+    }, { surface: 'ui', authority: 'present_user', runtimeAccountId: 'owner', serverId: 'home-one' });
     expect(replay, JSON.stringify(replay)).toMatchObject({ ok: true });
+    expect(publishedResults).toEqual([{ sessionId: 'session-one', accountId: 'owner' }]);
     expect(rows.size).toBe(2);
     expect(storedRequest).toMatchObject({ status: 'executed', execution: { ok: true }, executionOriginV1: {
       surface: 'agent', caller: { kind: 'session', sessionId: 'session-one', starterDepth: 0, turnDepth: 0 },
@@ -2111,10 +2256,16 @@ describe('workflow trigger Automation composition', () => {
       readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }),
     } }) });
     let storedRequest: ApprovalRequest | null = null;
+    const publishedResults: Array<{ sessionId: string; accountId: string | undefined }> = [];
     const executor = f.executor(actions, {
       approvalsCreate: async ({ request }) => {
         storedRequest = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(request)));
         return { artifactId: 'review-target-approval' };
+      },
+      // Session input transport is the external publication boundary.
+      sessionSendMessage: async ({ sessionId, localId, context }) => {
+        publishedResults.push({ sessionId, accountId: context?.runtimeAccountId });
+        return SessionInputAdmissionResultV1Schema.parse({ status: 'accepted', localId });
       },
       approvalsGet: async () => storedRequest,
       approvalsUpdate: async ({ request }) => {
@@ -2124,7 +2275,7 @@ describe('workflow trigger Automation composition', () => {
       isApprovalExecutionOriginCurrent: async ({ origin }) => origin.serverId === 'home'
         && origin.caller.kind === 'session' && origin.caller.sessionId === 'session-one',
     });
-    const caller: ActionExecutorContext = { ...ownCaller, serverId: 'home', defaultSessionId: 'session-one',
+    const caller: ActionExecutorContext = { ...ownCaller, runtimeAccountId: 'owner', serverId: 'home', defaultSessionId: 'session-one',
       defaultSessionMachineId: project.machineId, authority: 'account_automation', callerPermissionMode: 'default',
       actionRequestId: 'review-target-request', actionCaller: { ...ownCaller.agentStartContext.caller } };
     const request = { target: { kind: 'inline' as const, definition: authored }, project, trigger, inputs: { reviewSession: address } };
@@ -2139,9 +2290,10 @@ describe('workflow trigger Automation composition', () => {
       .toMatchObject({ ok: false });
     expect(f.rows.size).toBe(0);
     const replay = await executor.execute('approval.request.decide', { artifactId: 'review-target-approval', decision: 'approve' }, {
-      surface: 'ui', authority: 'present_user', serverId: 'home', actionCaller: { kind: 'host' },
+      surface: 'ui', authority: 'present_user', runtimeAccountId: 'owner', serverId: 'home', actionCaller: { kind: 'host' },
     });
     expect(replay, JSON.stringify(replay)).toMatchObject({ ok: true });
+    expect(publishedResults).toEqual([{ sessionId: 'session-one', accountId: 'owner' }]);
     expect([...f.rows.values()]).toMatchObject([{ executionRecipe: { v: 2,
       workflow: { t: 'plain', v: { inputs: { reviewSession: address } } },
     } }]);

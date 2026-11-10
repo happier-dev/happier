@@ -1,4 +1,4 @@
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentTextV1Schema as text } from './storedAppInputV1.js';
@@ -8,6 +8,8 @@ import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import type { DeploymentBackupActionIdV1 } from './deploymentActionIdsV1.js';
 import { DeploymentBackupHistoryResultV1Schema } from './deploymentBackupHistoryV1.js';
 import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
+import { DeploymentBackupRetentionV1Schema } from './deploymentBackupRetentionV1.js';
+export { DeploymentBackupRetentionV1Schema, type DeploymentBackupRetentionV1 } from './deploymentBackupRetentionV1.js';
 export * from './deploymentBackupHistoryV1.js';
 
 /** Shared backup evidence and policy: deployment-protocol consumes this same closed wire owner. */
@@ -16,15 +18,6 @@ export const DeploymentBackupSourceV1Schema = lazyZodSchema(() => z.discriminate
   z.strictObject({ kind: z.literal('volume'), sourceId: text, service: text, volume: text, consistency: z.literal('stopDuringCopy') }),
 ]));
 export type DeploymentBackupSourceV1 = z.infer<typeof DeploymentBackupSourceV1Schema>;
-const keepCount = lazyZodSchema(() => z.number().check(z.int(), z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER)));
-export const DeploymentBackupRetentionV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('keepEverything') }),
-  z.strictObject({ kind: z.literal('keep'), last: z.optional(keepCount), daily: z.optional(keepCount),
-    weekly: z.optional(keepCount), monthly: z.optional(keepCount) }).check(z.refine(policy =>
-    policy.last !== undefined || policy.daily !== undefined || policy.weekly !== undefined || policy.monthly !== undefined,
-  { message: 'A keep policy requires at least one person-selected count.' })),
-]));
-export type DeploymentBackupRetentionV1 = z.infer<typeof DeploymentBackupRetentionV1Schema>;
 /** Restic 0.19.1 repository, snapshot and tree identities are full SHA-256 hex strings. */
 const nativeDigest = lazyZodSchema(() => z.string().check(z.regex(/^[0-9a-f]{64}$/u)));
 const processedCount = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)));
@@ -104,6 +97,13 @@ export const DeploymentBackupConfigurationV1Schema = lazyZodSchema(() => z.stric
   ownership: z.strictObject({ environmentId: id, prefix: z.string() }), retention: DeploymentBackupRetentionV1Schema,
 }));
 export type DeploymentBackupConfigurationV1 = z.infer<typeof DeploymentBackupConfigurationV1Schema>;
+/** Standing backup intent excludes only the freshness revision resolved per occurrence. */
+export const DeploymentBackupPolicyV1Schema = lazyZodSchema(() => z.omit(DeploymentBackupConfigurationV1Schema, { configRevision: true }));
+export type DeploymentBackupPolicyV1 = z.infer<typeof DeploymentBackupPolicyV1Schema>;
+export function deploymentBackupPolicyV1(configuration: DeploymentBackupConfigurationV1): DeploymentBackupPolicyV1 {
+  const { configRevision: _configRevision, ...policy } = configuration;
+  return policy;
+}
 /** Original source/configuration/native target, retained without credential values. */
 export const DeploymentPreMigrationBackupV1Schema = lazyZodSchema(() => z.strictObject({
   source: DeploymentBackupManifestV1Schema, sourceFormat: z.literal('postgresCustom'),
@@ -114,6 +114,15 @@ export const DeploymentPreMigrationBackupV1Schema = lazyZodSchema(() => z.strict
   })) }),
 }));
 export type DeploymentPreMigrationBackupV1 = z.infer<typeof DeploymentPreMigrationBackupV1Schema>;
+/** A volume retains the same repository/configuration custody as a logical dump. */
+export const DeploymentBackupRestoreCaptureV1Schema = lazyZodSchema(() => z.union([
+  DeploymentPreMigrationBackupV1Schema,
+  z.strictObject({ source: DeploymentBackupManifestV1Schema, sourceFormat: z.literal('volume'),
+    target: z.strictObject({ service: text, adapter: z.literal('volume-v1'), volume: text }),
+    configuration: DeploymentBackupConfigurationV1Schema,
+    repository: DeploymentPreMigrationBackupV1Schema.shape.repository }),
+]));
+export type DeploymentBackupRestoreCaptureV1 = z.infer<typeof DeploymentBackupRestoreCaptureV1Schema>;
 
 /** Exact configured capture target; the installed host resolves configuration and credentials. */
 export const DeploymentBackupTargetV1Schema = lazyZodSchema(() => z.strictObject({
@@ -167,7 +176,7 @@ export const DeploymentBackupInventoryResultV1Schema = lazyZodSchema(() => z.str
 }));
 export const DeploymentBackupRunResultV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('verified'), operationId: id, manifests: z.array(DeploymentBackupManifestV1Schema).check(z.minLength(1)),
-  restoreCaptures: z.optional(z.array(DeploymentPreMigrationBackupV1Schema)),
+  restoreCaptures: z.optional(z.array(DeploymentBackupRestoreCaptureV1Schema)),
 }));
 export const DeploymentBackupVerifyResultV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('verified'), operationId: id, backupOperationId: id, environmentId: id, configRevision: revision,

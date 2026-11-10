@@ -60,7 +60,7 @@ import type { ManagedMachineV1 } from '../../machines/managed/managedMachineV1.j
 import { areServerProfileIdentifiersEquivalent } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
 import type { WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1.js';
 import type { WorkflowApprovedOperationV1 } from '../../actions/approvedOperationV1.js';
-import { z } from 'zod/mini';
+import { z } from '../../zodRuntimePolicy.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { readWorkflowTriggerConsentSteps, normalizeStoredWorkflowTriggerConsent } from './workflowTriggerConsent.js';
 import type { WorkflowApprovedOperationNativeAccountV1 } from './workflowRunActions.js';
@@ -962,6 +962,14 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         ...(scope?.onComplete === undefined ? {} : { onComplete: scope.onComplete }),
         ...(target.kind === 'inline' ? { inlineDefinition: target.definition } : {}) });
       if (Object.keys(contextPatch).length || nextTarget || nextProject || deployment !== undefined) withoutTriggerApprovals(context);
+      const previousTrigger = row.triggers.find(item => item.id === input.triggerId);
+      if (trigger !== undefined && (trigger.kind === 'schedule' || previousTrigger?.kind === 'schedule')
+        && !(trigger.kind === 'schedule' && previousTrigger?.kind === 'schedule'
+          && sameStrictJsonValue(trigger.schedule, previousTrigger.schedule)) && context.actionApprovals) {
+        context.actionApprovals = context.actionApprovals.filter(approval => approval.triggerId !== input.triggerId
+          || !approval.operation.steps.some(step => step.actionId === DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1));
+        if (context.actionApprovals.length === 0) delete context.actionApprovals;
+      }
       if (disabledSiblings.size && context.actionApprovals) {
         context.actionApprovals = context.actionApprovals.filter(row => !disabledSiblings.has(row.triggerId));
         if (context.actionApprovals.length === 0) delete context.actionApprovals;

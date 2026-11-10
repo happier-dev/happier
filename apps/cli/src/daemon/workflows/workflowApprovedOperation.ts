@@ -6,7 +6,8 @@ import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@ha
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { z } from 'zod/mini';
 export { prepareWorkflowApprovedOperationSnapshot } from '@happier-dev/protocol/actions/executor/workflowRunActions';
-import { bindWorkflowApprovedOperationSteps, matchesApprovedOperationStepV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import { bindWorkflowApprovedOperationSteps, matchesApprovedOperationStepV1,
+  projectWorkflowTriggerConsentSteps } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { sameStrictJsonValue, StrictJsonValueSchema, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowApprovedOperationV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { resolveWorkflowInvocationStructureV1, type WorkflowInvocationBindingRowV1 } from '@happier-dev/protocol/workflows/workflowInvocationStructureV1';
@@ -16,6 +17,9 @@ import type { createWorkflowRunStorageClient } from './workflowRunStorageClient'
 import { createWorkflowProducerBinding } from './workflowScopeBinding';
 import { resolveWorkflowValueReference, WorkflowInputResolutionError } from './input';
 import { createWorkflowActionAdmissionReader } from './workflowActionAdmission';
+import { readDeploymentBackupOccurrenceV1 } from '@happier-dev/protocol/workflows/builtins/backupExamples';
+import { DeploymentBackupPolicyV1Schema, DeploymentBackupRunInputV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+import { DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 function record(value: unknown): Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {};
@@ -101,8 +105,7 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
           execute: (_input, issuedContext) => execute(issuedContext),
         }) };
       };
-      if (actionId && operation.parent.actionId !== 'workflow.trigger.add' && operation.parent.actionId !== 'workflow.trigger.update'
-        && operation.steps.some(step => step.actionId === actionId && step.binding?.kind === 'producer_result')) {
+      if (actionId && operation.steps.some(step => step.actionId === actionId && step.binding?.kind === 'producer_result')) {
         // Reuse the interpreter's ancestry, slot and value-reference owners.
         // Only exact selected rows are opened; repeated operands share one read
         // during this admission, with no retained cache or Run inventory scan.
@@ -131,6 +134,12 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
           invocation: current, readInvocation, keyOfInvocation: row => row.index.id });
         if (structure?.leaf.kind !== 'action' || structure.leaf.actionId !== actionId) return null;
         const actionLeaf = structure.leaf;
+        const occurrence = savedTrigger ? readDeploymentBackupOccurrenceV1(structure.definition, actionLeaf) : null;
+        if (savedTrigger && !occurrence) return null;
+        if (occurrence && !sameStrictJsonValue(operation.steps, projectWorkflowTriggerConsentSteps({
+          definition: accepted.definition, children: accepted.frozenChildren, materializedLeaves: accepted.materializedLeaves,
+          deployment: operation.steps.some(step => step.binding?.kind === 'deployment_sha'),
+        }))) return null;
         const slots = new Map<string, Promise<Row | undefined>>();
         const producer = createWorkflowProducerBinding({ runId, frame: structure.frame, store: {
           readCurrent: async ({ blockId, scope, parentKey, memberOrdinal }) => {
@@ -160,6 +169,22 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
           && (execution?.kind !== 'action' || execution.actionId !== actionId || execution.actionRequestId !== requestId
             || !sameStrictJsonValue(execution.input, actual.data))
           || index.lifecycle === 'pending' && execution !== undefined) return null;
+        if (occurrence) {
+          const fixed = Object.fromEntries(await Promise.all(Object.entries(occurrence.producer.input).map(async ([field, reference]) =>
+            [field, await resolveWorkflowValueReference(reference, { inputs: structure.inputs,
+              resolveResult: async () => { throw new WorkflowInputResolutionError('invalid_reference_scope'); },
+              resolveWorkspace: async () => { throw new WorkflowInputResolutionError('invalid_reference_scope'); } })])));
+          const anchor = operation.steps.find(step => !step.binding && step.actionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
+            && sameStrictJsonValue(step.input, fixed));
+          if (!anchor) return null;
+          const selected = await producer.resolve({ blockId: occurrence.producer.id, scope: { kind: 'current' } });
+          if (selected?.index.lifecycle !== 'completed') return null;
+          const output = record(selected.progress.result);
+          const policy = DeploymentBackupPolicyV1Schema.safeParse(output.backupPolicy);
+          const target = DeploymentBackupRunInputV1Schema.safeParse(output.backupTarget);
+          if (!policy.success || !target.success || !sameStrictJsonValue(policy.data, anchor.input.backupPolicy)
+            || target.data.serverId !== anchor.input.serverId || target.data.environmentId !== anchor.input.environmentId) return null;
+        }
         for (const step of operation.steps) {
           if (step.actionId !== actionId || step.binding?.kind !== 'producer_result') continue;
           if (!Object.entries(step.binding.references).every(([field, reference]) =>
