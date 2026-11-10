@@ -1,13 +1,15 @@
 import {
   buildHappierReplayPromptFromDialog,
   planHappierReplayTranscriptCharBudget,
-  HAPPIER_REPLAY_SEED_DISPATCH_RESERVED_CHARS,
   type HappierReplayContinuity,
   type HappierReplayRetrievalPointerV1,
   type HappierReplayStrategy,
   type HappierReplayDialogItem,
 } from '@happier-dev/agents';
-import type { LlmTaskRunnerConfigV1, SessionWorkStateV1 } from '@happier-dev/protocol';
+import type { SessionWorkStateV1 } from '@happier-dev/protocol';
+import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
+import { logger } from '@/ui/logger';
+import { LlmTaskRunnerUnavailableError } from '@/agent/executionRuns/tasks/llmTaskRunner';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import type { StoredCredentials } from '@/persistence';
@@ -26,6 +28,11 @@ import { runReplaySummaryForDialog } from './summary/runReplaySummaryForDialog';
 function readHydratedSourceTitleText(value: unknown): string | null {
   const title = (value as { sourceTitleText?: unknown } | null)?.sourceTitleText;
   return typeof title === 'string' && title.trim().length > 0 ? title.trim() : null;
+}
+
+function readHydratedSourceAgentTargetKey(value: unknown): string | null {
+  const key = (value as { sourceAgentTargetKey?: unknown } | null)?.sourceAgentTargetKey;
+  return typeof key === 'string' && key.length > 0 ? key : null;
 }
 
 function readHydratedLastUserDialogItem(value: unknown): HappierReplayDialogItem | null {
@@ -164,7 +171,8 @@ export async function resolveReplaySeedDraft(params: Readonly<{
    * knows all three composes the pointer and hands it down.
    */
   retrieval?: HappierReplayRetrievalPointerV1 | null;
-  summaryRunner?: LlmTaskRunnerConfigV1 | null;
+  /** The person's replay summary runner choice; null means no summary (recent messages only). */
+  summaryRunner?: LlmTaskRunnerChoiceV1 | null;
   deps?: Readonly<{
     runReplaySummaryForDialog?: typeof runReplaySummaryForDialog;
   }>;
@@ -216,7 +224,6 @@ export async function resolveReplaySeedDraft(params: Readonly<{
             // to prevent. Same value the builder is handed below.
             returningAgentLastSeenSeq,
             maxPromptChars: params.maxSeedChars,
-            reservedChars: HAPPIER_REPLAY_SEED_DISPATCH_RESERVED_CHARS,
           }),
           ...(typeof params.source.upToSeqInclusive === 'number' ? { upToSeqInclusive: params.source.upToSeqInclusive } : {}),
           ...(returningAgentLastSeenSeq === null ? {} : { afterSeqExclusive: returningAgentLastSeenSeq }),
@@ -253,18 +260,24 @@ export async function resolveReplaySeedDraft(params: Readonly<{
     const hydratedSynopsis = typeof hydrated.synopsisText === 'string' ? hydrated.synopsisText.trim() : '';
     if (hydratedSynopsis) return hydratedSynopsis;
 
+    // Only a chosen runner (explicit Auto or one runner) starts an LLM summary; unset stays recent-only, as in 0.2.
     if (params.summaryRunner && resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env }).state === 'enabled') {
       try {
+        // Auto: the runner owner picks on this machine, preferring the source Session's own Agent on a tie.
         const generated = await (params.deps?.runReplaySummaryForDialog ?? runReplaySummaryForDialog)({
-          cwd: params.cwd,
           parentSessionId: sourceSessionId,
-          runner: params.summaryRunner,
+          choice: params.summaryRunner ?? null,
+          sessionAgentTargetKey: readHydratedSourceAgentTargetKey(hydrated),
           dialog: hydrated.dialog,
         });
         const trimmed = typeof generated === 'string' ? generated.trim() : '';
         if (trimmed) return trimmed;
-      } catch {
-        // Best-effort only.
+      } catch (error) {
+        // The seed falls back to recent messages; the reason stays visible.
+        logger.warn('[replay] summary unavailable; seeding recent messages', {
+          code: (error as { code?: unknown } | null)?.code ?? 'replay_summary_failed',
+          ...(error instanceof LlmTaskRunnerUnavailableError ? { reason: error.reason } : {}),
+        });
       }
     }
 
@@ -294,7 +307,6 @@ export async function resolveReplaySeedDraft(params: Readonly<{
     sourceAgentLabel: params.sourceAgentLabel ?? null,
     lastUserInstruction: readHydratedLastUserDialogItem(hydrated),
     maxPromptChars: params.maxSeedChars,
-    reservedChars: HAPPIER_REPLAY_SEED_DISPATCH_RESERVED_CHARS,
     // The retrieval owner is the only one that can see a hole; carrying the fact
     // here is what stops the seed from presenting partial history as the whole
     // conversation. A retrieval that cannot report it says nothing rather than
@@ -306,8 +318,8 @@ export async function resolveReplaySeedDraft(params: Readonly<{
     windowTruncated: readHydratedReachedSourceStart(hydrated) === false,
   }).trim();
 
-  // The source had dialog, but its frame and dispatch reservation could not
-  // fit the selected total. That is unavailable context, not an empty source.
+  // The source had dialog, but its actual frame could not fit the selected
+  // seed budget. That is unavailable context, not an empty source.
   if (!seedDraft) return { status: 'unavailable', reason: 'seed_budget_too_small' };
 
   return {

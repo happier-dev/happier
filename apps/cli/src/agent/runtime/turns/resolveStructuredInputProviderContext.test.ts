@@ -13,7 +13,6 @@ import { prepareComposerAttachmentDraftsForSendV1 } from '@/session/composer/pre
 import {
   HappierStructuredInputV1Schema,
   PluginManifestV2Schema,
-  MENTION_BOUNDS,
   MENTION_KIND_V1,
   buildComposerReferenceMentionPayloadV1,
   buildMentionRefForKindV1,
@@ -26,7 +25,6 @@ import { SessionSkillCatalogListResponseV1Schema } from '@happier-dev/protocol/s
 import { buildOpenCodePromptParts } from '../../../../../../packages/plugins/opencode/src/agent/runtime/server/promptParts';
 import { createOpenCodeServerClient, type OpenCodeRuntimeFetch } from '../../../../../../packages/plugins/opencode/src/agent/runtime/server/openCodeServerClient';
 import {
-  ResolvedMentionContextTooLargeError,
   StructuredInputMentionResolutionError,
   resolveStructuredInputProviderDispatchContext,
   type StructuredInputComposerAttachmentResolver,
@@ -691,7 +689,7 @@ describe('resolveStructuredInputProviderContext', () => {
     expect(result.structuredInput).toEqual({ v: 1 });
   });
 
-  it('shares one bounded model-context budget across plugin and Session references', async () => {
+  it('preserves plugin and Session references together in the model context', async () => {
     const resolveComposerReference = vi.fn(async () => ({
       id: 'issue:42',
       label: 'Issue 42',
@@ -707,11 +705,11 @@ describe('resolveStructuredInputProviderContext', () => {
     });
 
     expect(resolveComposerReference).toHaveBeenCalledTimes(1);
-    expect(Array.from(renderPromptContext(result)).length)
-      .toBeLessThanOrEqual(MENTION_BOUNDS.maxResolvedContextChars);
+    expect(renderPromptContext(result)).toContain('plugin-context '.repeat(40));
+    expect(renderPromptContext(result)).toContain('source-session');
   });
 
-  it('rejects when Session, skill, and vendor context exceed one shared bound', async () => {
+  it('preserves complete Session, skill, and vendor context without an invented aggregate cap', async () => {
     const references = {
       catalogs: {
         listSkills: async () => ({
@@ -725,8 +723,7 @@ describe('resolveStructuredInputProviderContext', () => {
     const skillMention = { ...SKILL_MENTION, start: 16, end: 23 };
     const vendorMention = { ...VENDOR_MENTION, start: 24, end: 31 };
 
-    // Neither resolved legacy array is too large with the Session tool hint on its own. The
-    // failure is the cross-kind sum, which a per-kind cap or a block-only check would miss.
+    // Each valid catalog selection and their combined selection reach the same owner.
     await expect(resolveStructuredInputProviderDispatchContext({
       structuredInput: envelope({ mentions: [SESSION_MENTION, skillMention] }),
       ...references,
@@ -736,21 +733,16 @@ describe('resolveStructuredInputProviderContext', () => {
       ...references,
     })).resolves.toBeDefined();
 
-    const resolved = resolveStructuredInputProviderDispatchContext({
+    const resolved = await resolveStructuredInputProviderDispatchContext({
       structuredInput: envelope({
         mentions: [SESSION_MENTION, skillMention, vendorMention],
       }),
       ...references,
     });
 
-    const error = await resolved.catch((thrown: unknown) => thrown);
-    expect(error).toBeInstanceOf(ResolvedMentionContextTooLargeError);
-    expect(error).toMatchObject({
-      code: 'mention_resolved_context_too_large',
-      maxChars: MENTION_BOUNDS.maxResolvedContextChars,
-    });
-    expect((error as ResolvedMentionContextTooLargeError).totalChars)
-      .toBeGreaterThan(MENTION_BOUNDS.maxResolvedContextChars);
+    expect(resolved.structuredInput?.skillMentions?.[0]?.description).toBe('skill-context '.repeat(75).trim());
+    expect(resolved.structuredInput?.vendorPluginMentions?.[0]?.label).toBe('vendor-context '.repeat(75).trim());
+    expect(renderPromptContext(resolved)).toContain('source-session');
   });
 
   it('resolves a qualified composer reference only into the ephemeral prompt block', async () => {

@@ -77,6 +77,25 @@ async function runGet(input: Readonly<{
 }
 
 describe('GitHub triage get', () => {
+  it('carries the complete already-read PR body only on authoritative get without another body request', async () => {
+    const body = `First paragraph.\n\n${'Complete native Markdown.\n'.repeat(1_000)}`;
+    const { observation, transport } = await runGet({ localRef: PULL_REQUEST_REF, respond: request => {
+      if (request.url.endsWith('/pulls/1284')) return { status: 200, body: { ...GITHUB_PULL_REQUEST_RESPONSE, body } };
+      if (request.url.endsWith('/graphql')) return githubChecksBatchResponse(request);
+      return undefined;
+    } });
+    if (observation.kind !== 'present') throw new Error('Native PR did not resolve');
+    const result = TriageGetResultV1Schema.parse(toTriageGetResult(observation, createTriageSourceV1Fixture().configuredInstance));
+    expect(result).toMatchObject({ kind: 'present', taskFields: { body } });
+    expect(toTriageObservation(observation)).not.toHaveProperty('taskFields');
+    expect(toTriageScanObservation(observation)).not.toHaveProperty('taskFields');
+    if (result.kind !== 'present') throw new Error('Native PR did not resolve');
+    expect(result.snapshot).not.toHaveProperty('summary');
+    expect(result.snapshot).not.toHaveProperty('taskCapabilities');
+    expect(transport.requests.filter(request => request.url.endsWith('/pulls/1284'))).toHaveLength(1);
+    expect(transport.requests.some(request => /\/(?:comments|files|events)(?:\?|$)/u.test(request.url))).toBe(false);
+  });
+
   it.each(['failing', 'running', 'passing', 'empty', 'partial', 'unavailable', 'superseded'] as const)('exposes %s checks through the exact detail result with one counts read', async (state) => {
     const { observation, transport } = await runGet({ localRef: PULL_REQUEST_REF, respond: request => {
       if (request.url.endsWith('/pulls/1284')) return { status: 200, body: {

@@ -47,6 +47,7 @@ import {
 export type GithubResponseFailureClassV1 = TriageSourceFailureClassV1;
 
 export type GithubResponseFailureV1 = Readonly<{
+  requestId?: string;
   class: GithubResponseFailureClassV1;
   code: string;
   /** Absolute epoch milliseconds, derived only from provider retry evidence. */
@@ -110,7 +111,8 @@ export function classifyGithubResponseFacts(
   facts: GithubResponseFactsV1,
   nowMs: number,
 ): GithubResponseFailureV1 {
-  const failure = classifyGithubResponseStatus(facts, nowMs);
+  const classified = classifyGithubResponseStatus(facts, nowMs);
+  const failure = facts.requestId === undefined ? classified : { ...classified, requestId: facts.requestId };
   const requestId = readTriageResponseHeaderV1(facts.headers, 'x-github-request-id');
   if (requestId === null || !/^[A-Za-z0-9][A-Za-z0-9:._-]*$/u.test(requestId)) return failure;
   const diagnostic = `GitHub request ID: ${requestId}`;
@@ -184,7 +186,13 @@ export function describeGithubRateLimitFailure(retryNotBeforeMs: number | undefi
 }
 
 /** A thrown transport/cancellation outcome, classified without inspecting a credential. */
-export function classifyGithubTransportFailure(error: unknown): GithubResponseFailureV1 {
+export function classifyGithubTransportFailure(error: unknown, requestId?: string): GithubResponseFailureV1 {
+  const failure = classifyGithubTransportOutcome(error);
+  return requestId === undefined || failure.requestId !== undefined
+    ? failure : Object.freeze({ ...failure, requestId });
+}
+
+function classifyGithubTransportOutcome(error: unknown): GithubResponseFailureV1 {
   if (error instanceof TriageSourceAuthorizationErrorV1) return error.failure;
   if (isBoundedInvocationDeadline(error)) {
     return Object.freeze({ class: 'transient', code: 'github_request_timed_out' });

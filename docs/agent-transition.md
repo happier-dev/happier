@@ -385,8 +385,8 @@ The brief is built by the existing replay owner: `resolveReplaySeedDraft` →
 in a window where the source is already stopped and the user is waiting.
 
 The current development Replay budget owner derives the writable preference minimum from the
-Session-reference dispatch reservation plus the smallest complete structural seed and one transcript
-line. The renderer consumes those same structural literals. Stored preferences below that minimum
+smallest complete structural seed and one transcript line. The renderer consumes those same
+structural literals; it reserves no guessed amount for future references. Stored preferences below that minimum
 read as the default; retained positive integer wire hints remain readable. No provider-sized ceiling
 is inferred. The transition composes its seed using the Account's
 `sessionReplayMaxSeedChars`, falling back to `configuration.replaySeedMaxChars` when no usable Account
@@ -396,11 +396,16 @@ budget is available; unlike fork, its request carries no `maxSeedChars` override
 The machine's operator cap remains authoritative at dispatch:
 `configuration.replaySeedMaxChars`, from `HAPPIER_REPLAY_MAX_SEED_CHARS` (default 120 000). Its configured
 usable integer is kept unchanged; an undersized operator setting uses the default. The seed's own
-framing and the Happier Session-reference block
+framing and the required current-input context frame
 count inside the **same** total; `fitHappierReplaySeedWithinTotalBudget` refits a sealed seed to the cap
-in force at dispatch. The reference block is never truncated, the transcript tail gives way, and an
-empty dispatch fit leaves the seed unsettled for the next dispatch. During composition, a nonempty
-source whose actual frame and reservation cannot fit returns `unavailable` with the typed
+in force at dispatch. Final dispatch and replay fitting share the same context renderer, including
+references, selected typed evidence, browser context, provenance and review notes. This is the
+existing replay operation's budget, not a mention or model-context ceiling: required current context
+is never truncated or refused to satisfy it. The transcript tail gives way; if no seed fits, current
+input still dispatches intact and the seed remains unsettled for the next dispatch. Without a
+selected-model context-window contract at its canonical owner, the Provider's own limit and error
+apply. During composition, a nonempty
+source whose structural frame and transcript cannot fit returns `unavailable` with the typed
 `seed_budget_too_small` reason, which the spawn recipe reports as a budget refusal; only a genuinely
 empty source returns `no_source_dialog`. No fixed minimum can establish feasibility for every frame
 and reservation.
@@ -409,20 +414,16 @@ The strict owner-metadata envelope carries the sealed seed without a separate `s
 The containing ciphertext and HTTP request admissions still apply; neither Account mode nor key
 ownership changes. These are development source contracts, not released or loaded-daemon certification.
 
-That total is counted in **UTF-16 code units**, and `packages/agents/.../happierReplayPrompt.ts` owns
-the unit: every length it measures and every slice it takes is `String.prototype.length`. The
-reservation `HAPPIER_REPLAY_SEED_DISPATCH_RESERVED_CHARS` is therefore equal to the reference block's
-bound only because the block's renderer enforces that bound in the same unit. The mention domain
-around it counts code points, so this is the one place the two meet: bounded in code points, a
-Session titled with emoji could render a block inside its own bound that still cost up to twice what
-was reserved, and the refit below — designed to be a no-op — would delete transcript the seed was
-entitled to. UTF-16 length dominates code-point length, so the stricter unit satisfies both
-contracts. The shared reference projection reports its bounded portion with
-`String.prototype.length`, keeping it in the reservation's unit.
+That replay total is counted in **UTF-16 code units**, and
+`packages/agents/.../happierReplayPrompt.ts` owns the unit: every length it measures and every slice
+it takes is `String.prototype.length`. Dispatch measures the actual rendered required context in
+that same unit, including its separator. There is no fixed reference reservation or separate
+reference-character charge. The former 2,000-character mention caps and their derived reservation
+were removed under the owner's 2026-11-10 correction and the standing no-invented-limits ruling;
+the cited D-27 concerned Claude UI synchronization, not mention context.
 
-That refit can still genuinely bite, and after the unit was settled that is the ONLY way it does: the
-seed is built against the budget of whichever ingress sealed it and fitted against the dispatching
-daemon's. A fork or UI `maxSeedChars` may be larger than this daemon's `replaySeedMaxChars`, and
+Refitting can give transcript space to the actual current context or to a smaller dispatching
+daemon budget. A fork or UI `maxSeedChars` may be larger than this daemon's `replaySeedMaxChars`, and
 because a sealed seed retires only on provider acceptance it also outlives a daemon restart — so an
 operator who lowers `HAPPIER_REPLAY_MAX_SEED_CHARS` makes the next dispatch of an already-sealed seed
 give way to the new, smaller total. That is the guard working rather than a defect: obeying the cap

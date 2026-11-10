@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { renderSessionInputContextPromptV1 } from './sessionInputPromptContextV1.js';
-import { buildMentionRefV1, MENTION_BOUNDS, MENTION_KIND_V1, type MentionRefV1 } from '../../runtime/input/mentionRefV1.js';
+import { buildMentionRefV1, MENTION_KIND_V1, type MentionRefV1 } from '../../runtime/input/mentionRefV1.js';
 import { formatInlineReferenceTokenV1 } from '../../runtime/input/inlineReferenceTokenV1.js';
 import { projectSessionInputReferencesV1 } from './sessionInputReferenceProjectionV1.js';
 
@@ -87,7 +87,7 @@ describe('session input inline reference projection', () => {
     expect(rendered).not.toContain('happier-ref:');
   });
 
-  it('leaves upload lines outside the resolved-context budget and preserves all thirty uploads', () => {
+  it('preserves every selected upload path', () => {
     const uploads = Array.from({ length: 30 }, (_, index) => ({
       id: `upload-${index}`, name: `${index}.txt`, path: `/uploads/${'x'.repeat(100)}/${index}.txt`, sizeBytes: index,
     }));
@@ -106,13 +106,6 @@ describe('session input inline reference projection', () => {
     expect(rendered).toMatch(/relative to the session working directory/i);
   });
 
-  it('does not introduce a resolved-context charge for file paths that previously lived in the text', () => {
-    const value = mention(MENTION_KIND_V1.file, 'file', 'src/file.ts', 'file.ts');
-    const projected = projectSessionInputReferencesV1({ text: value.token, references: { mentions: [value] } });
-    expect(projected.block).toContain('path="src/file.ts"');
-    expect(projected.resolvedContextChars).toBe(0);
-  });
-
   it('lists selected SessionMedia image details in its single attachment entry', () => {
     const selection = { v: 1 as const, instanceId: 'picture', attachment: { pluginId: 'acme.media', localId: 'picture' },
       key: 'media', value: {}, presentation: { label: 'picture.png', typeLabel: 'Image' } };
@@ -128,15 +121,18 @@ describe('session input inline reference projection', () => {
     expect(projected.block.match(/attachment_instance_id="picture"/g)).toHaveLength(1);
   });
 
-  it('fits Session context in the UTF-16 replay reservation without slicing an identity', () => {
+  it('preserves every selected Session identity and label without an invented reference budget', () => {
     const mentions = Array.from({ length: 32 }, (_, index) => mention(MENTION_KIND_V1.session, 'session', `session-${index}`, '😀'.repeat(60)));
     const rendered = renderSessionInputContextPromptV1({ references: { mentions }, transformedUserText: '' });
-    expect(rendered.length).toBeLessThanOrEqual(MENTION_BOUNDS.maxReferenceBlockChars);
-    expect(rendered).toContain('omitted');
+    for (let index = 0; index < mentions.length; index += 1) {
+      expect(rendered).toContain(`session_id="session-${index}"`);
+    }
+    expect(rendered.match(/inserted label=/g)).toHaveLength(mentions.length);
+    expect(rendered).not.toContain('omitted');
     expect(rendered).toContain('</happier_references>');
   });
 
-  it('keeps complete contributed attachment context, reports its charge, and never exposes private values', () => {
+  it('keeps complete contributed attachment context and never exposes private values', () => {
     const projected = projectSessionInputReferencesV1({ text: '', references: {
       composerAttachments: [{ attachment: {
         v: 1, instanceId: 'comment', attachment: { pluginId: 'acme.review', localId: 'comment' },
@@ -145,7 +141,6 @@ describe('session input inline reference projection', () => {
       }, context: `${'Context\n'.repeat(500)}end-of-attachment` }],
     } });
     expect(projected.block).toContain('end-of-attachment');
-    expect(projected.resolvedContextChars).toBeGreaterThan(MENTION_BOUNDS.maxResolvedContextChars);
     expect(projected.block).toContain('attachment_instance_id="comment"');
     expect(projected.block).not.toContain('privateValue');
     expect(projected.block).not.toContain('internalData');

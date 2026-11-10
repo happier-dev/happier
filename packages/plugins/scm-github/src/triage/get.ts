@@ -82,8 +82,12 @@ export type GithubGetDependenciesV1 = Readonly<{
 function unresolved(
   localRef: GithubTriageEntryLocalRefV1,
   failure: GithubTriageFailureV1,
+  requestId?: string,
 ): GithubTriageObservationV1 {
-  return Object.freeze({ kind: 'unresolved', localRef, failure });
+  return Object.freeze({ kind: 'unresolved', localRef,
+    failure: requestId === undefined || failure.requestId !== undefined
+      ? failure : Object.freeze({ ...failure, requestId }),
+  });
 }
 
 /** An observation that carries no pull-request facts, because none were read. */
@@ -233,12 +237,12 @@ export async function runGithubTriageGet(
   // Malformed supplied locators remain refusals rather than alternate routing.
   if (input.routingToken == null) {
     const repositoryId = readGithubRepositoryIdFromCollisionScope(input.localRef.collisionScope);
-    if (repositoryId === null) return { observation: unresolved(input.localRef, GITHUB_MISSING_LOCATOR_FAILURE) };
+    if (repositoryId === null) return { observation: unresolved(input.localRef, GITHUB_MISSING_LOCATOR_FAILURE, dependencies.client.requestId) };
     const repositories = dependencies.repositories ?? createGithubRepositoryReader({ client: dependencies.client, now: dependencies.now });
     const repository = await repositories.read({ repositoryId });
-    if (repository.kind !== 'readable') return { observation: unresolved(input.localRef, repository.failure) };
-    if (repository.repositoryId !== repositoryId) return { observation: unresolved(input.localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE) };
-    if (repository.repositoryKey === null) return { observation: unresolved(input.localRef, GITHUB_MISSING_LOCATOR_FAILURE) };
+    if (repository.kind !== 'readable') return { observation: unresolved(input.localRef, repository.failure, dependencies.client.requestId) };
+    if (repository.repositoryId !== repositoryId) return { observation: unresolved(input.localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE, dependencies.client.requestId) };
+    if (repository.repositoryKey === null) return { observation: unresolved(input.localRef, GITHUB_MISSING_LOCATOR_FAILURE, dependencies.client.requestId) };
     input = { ...input, routingToken: repository.repositoryKey };
     dependencies = { ...dependencies, repositories };
   }
@@ -246,15 +250,15 @@ export async function runGithubTriageGet(
     return { observation: await readGithubNonAlertTriageGet(input, dependencies) };
   }
   const route = parseGithubRoutingToken(input.routingToken);
-  if (route === null) return { observation: unresolved(input.localRef, GITHUB_MISSING_LOCATOR_FAILURE) };
+  if (route === null) return { observation: unresolved(input.localRef, GITHUB_MISSING_LOCATOR_FAILURE, dependencies.client.requestId) };
   const repositories = dependencies.repositories ?? createGithubRepositoryReader({ client: dependencies.client, now: dependencies.now });
   const repository = await repositories.read(route);
-  if (repository.kind !== 'readable') return { observation: unresolved(input.localRef, repository.failure) };
+  if (repository.kind !== 'readable') return { observation: unresolved(input.localRef, repository.failure, dependencies.client.requestId) };
   const read = await readGithubNativeSecurityAlert({ localRef: input.localRef, route,
     repositoryId: repository.repositoryId, repositoryKey: repository.repositoryKey ?? `${route.owner}/${route.name}` }, dependencies);
   return read.kind === 'readable'
     ? { observation: read.observation, dispatchEvidence: projectGithubSecurityAlertDispatchEvidence(read.alert) }
-    : { observation: unresolved(input.localRef, read.failure) };
+    : { observation: unresolved(input.localRef, read.failure, dependencies.client.requestId) };
 }
 
 async function readGithubNonAlertTriageGet(
@@ -264,7 +268,7 @@ async function readGithubNonAlertTriageGet(
   const route = parseGithubRoutingToken(input.routingToken);
   if (route === null) {
     // No outbound call: a path is never guessed from identity, display text or a remote.
-    return unresolved(input.localRef, GITHUB_MISSING_LOCATOR_FAILURE);
+    return unresolved(input.localRef, GITHUB_MISSING_LOCATOR_FAILURE, dependencies.client.requestId);
   }
   const repositories = dependencies.repositories
     ?? createGithubRepositoryReader({ client: dependencies.client, now: dependencies.now });
@@ -286,7 +290,7 @@ async function readGithubNonAlertTriageGet(
       ...read.observation.snapshot, rowFacts: Object.freeze([...read.observation.snapshot.rowFacts, ...facts]),
     }) });
   }
-  if (input.localRef.kindId !== 'issue') return unresolved(input.localRef, { class: 'unsupportedContract', code: 'github_detail_kind_unsupported' });
+  if (input.localRef.kindId !== 'issue') return unresolved(input.localRef, { class: 'unsupportedContract', code: 'github_detail_kind_unsupported' }, dependencies.client.requestId);
   const read = await readGithubIssue(input.localRef, route, repositories, dependencies);
   const observation = read.observation;
   if (observation.kind !== 'present') return observation;
@@ -461,7 +465,7 @@ export async function readGithubPullRequest(
   try {
     response = await dependencies.client.request({ url });
   } catch (error) {
-    return observed(unresolved(localRef, classifyGithubTransportFailure(error)));
+    return observed(unresolved(localRef, classifyGithubTransportFailure(error), dependencies.client.requestId));
   }
 
   if (response.status === 404) {
@@ -482,12 +486,14 @@ export async function readGithubPullRequest(
       confirmation === 'reassigned'
         ? GITHUB_ROUTE_BODY_MISMATCH_FAILURE
         : classifyGithubResponseFailure(response, dependencies.now()),
+      dependencies.client.requestId,
     ));
   }
   if (!isGithubSuccessStatus(response.status)) {
     return observed(unresolved(
       localRef,
       classifyGithubResponseFailure(response, dependencies.now()),
+      dependencies.client.requestId,
     ));
   }
 
@@ -495,21 +501,21 @@ export async function readGithubPullRequest(
   try {
     body = decodeGithubJsonResponse(response);
   } catch (error) {
-    return observed(unresolved(localRef, classifyGithubTransportFailure(error)));
+    return observed(unresolved(localRef, classifyGithubTransportFailure(error), dependencies.client.requestId));
   }
   const view = decodeGithubPullRequestBody(body);
   if (view === null) {
-    return observed(unresolved(localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE));
+    return observed(unresolved(localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE, dependencies.client.requestId));
   }
   if (view.number !== localRef.entryId) {
-    return observed(unresolved(localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE));
+    return observed(unresolved(localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE, dependencies.client.requestId));
   }
   const number = Number(view.number);
   if (!Number.isSafeInteger(number) || number < 1) {
-    return observed(unresolved(localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE));
+    return observed(unresolved(localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE, dependencies.client.requestId));
   }
   const resolved = await readRepositoryId(repositories, route, view.repositoryId);
-  if (resolved.kind === 'failed') return observed(unresolved(localRef, resolved.failure));
+  if (resolved.kind === 'failed') return observed(unresolved(localRef, resolved.failure, dependencies.client.requestId));
 
   const observedRef = buildGithubEntryLocalRef({
     kindId: 'pull-request',
@@ -517,7 +523,7 @@ export async function readGithubPullRequest(
     nativeItemId: view.number,
   });
   if (observedRef === null || observedRef.collisionScope !== localRef.collisionScope) {
-    return observed(unresolved(localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE));
+    return observed(unresolved(localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE, dependencies.client.requestId));
   }
 
   const record = isRecord(body) ? body : {};
@@ -526,7 +532,7 @@ export async function readGithubPullRequest(
     additionsDeletions: readAdditionsDeletions(record),
   });
   if (projection === null) {
-    return observed(unresolved(localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE));
+    return observed(unresolved(localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE, dependencies.client.requestId));
   }
 
   const facts = readGithubPullRequestFacts(record, view.nativeRevision, number);
@@ -546,6 +552,7 @@ export async function readGithubPullRequest(
           ...(branches?.truncated === true ? { projectionTruncated: true } : {}),
         }),
       viewer: Object.freeze({ involvement: Object.freeze([]) }),
+      ...(facts.body === null ? {} : { taskFields: Object.freeze({ body: facts.body }) }),
     }),
     facts,
     overview,
@@ -678,7 +685,7 @@ export async function readGithubIssue(
   try {
     response = await dependencies.client.requestWithoutFollowingRedirects({ url });
   } catch (error) {
-    return observedIssue(unresolved(input.localRef, classifyGithubTransportFailure(error)));
+    return observedIssue(unresolved(input.localRef, classifyGithubTransportFailure(error), dependencies.client.requestId));
   }
 
   if (response.status === 301) {
@@ -705,6 +712,7 @@ export async function readGithubIssue(
       confirmation === 'reassigned'
         ? GITHUB_ROUTE_BODY_MISMATCH_FAILURE
         : classifyGithubResponseFailure(response, dependencies.now()),
+      dependencies.client.requestId,
     ));
   }
   if (response.status === 404) {
@@ -716,12 +724,14 @@ export async function readGithubIssue(
     return observedIssue(unresolved(
       input.localRef,
       classifyGithubResponseFailure(response, dependencies.now()),
+      dependencies.client.requestId,
     ));
   }
   if (!isGithubSuccessStatus(response.status)) {
     return observedIssue(unresolved(
       input.localRef,
       classifyGithubResponseFailure(response, dependencies.now()),
+      dependencies.client.requestId,
     ));
   }
 
@@ -729,25 +739,25 @@ export async function readGithubIssue(
   try {
     body = decodeGithubJsonResponse(response);
   } catch (error) {
-    return observedIssue(unresolved(input.localRef, classifyGithubTransportFailure(error)));
+    return observedIssue(unresolved(input.localRef, classifyGithubTransportFailure(error), dependencies.client.requestId));
   }
   const view = decodeGithubIssueBody(body, route);
   if (view === null || view.kindId !== 'issue') {
-    return observedIssue(unresolved(input.localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE));
+    return observedIssue(unresolved(input.localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE, dependencies.client.requestId));
   }
   if (view.number !== input.localRef.entryId) {
-    return observedIssue(unresolved(input.localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE));
+    return observedIssue(unresolved(input.localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE, dependencies.client.requestId));
   }
   const resolved = await readRepositoryId(repositories, route, view.repositoryId);
   if (resolved.kind === 'failed') {
-    return observedIssue(unresolved(input.localRef, resolved.failure));
+    return observedIssue(unresolved(input.localRef, resolved.failure, dependencies.client.requestId));
   }
   if (buildGithubCollisionScope(resolved.repositoryId) !== input.localRef.collisionScope) {
     // An unrelated occupant of a recreated old path is not transfer evidence.
-    return observedIssue(unresolved(input.localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE));
+    return observedIssue(unresolved(input.localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE, dependencies.client.requestId));
   }
 
-  return projectIssuePresent(input.localRef, view, resolved.repositoryId, body);
+  return projectIssuePresent(input.localRef, view, resolved.repositoryId, body, dependencies.client.requestId);
 }
 
 /**
@@ -764,10 +774,11 @@ function projectIssuePresent(
   view: GithubRawEntityViewV1,
   repositoryId: string,
   body: unknown,
+  requestId?: string,
 ): GithubIssueReadV1 {
   const projection = projectGithubEntry(view, repositoryId);
   if (projection === null) {
-    return observedIssue(unresolved(localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE));
+    return observedIssue(unresolved(localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE, requestId));
   }
   const record = isRecord(body) ? body : {};
   const facts = readGithubIssueFacts(record);
@@ -801,7 +812,7 @@ async function followIssueTransfer(
   dependencies: GithubGetDependenciesV1,
 ): Promise<GithubIssueReadV1> {
   const mismatch = (): GithubIssueReadV1 => observedIssue(
-    unresolved(input.localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE),
+    unresolved(input.localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE, dependencies.client.requestId),
   );
   const destination = validateGithubIssueRedirect({
     location: readTriageResponseHeaderV1(response.headers, 'location'),
@@ -817,12 +828,13 @@ async function followIssueTransfer(
   try {
     destinationResponse = await dependencies.client.request({ url: destination.url });
   } catch (error) {
-    return observedIssue(unresolved(input.localRef, classifyGithubTransportFailure(error)));
+    return observedIssue(unresolved(input.localRef, classifyGithubTransportFailure(error), dependencies.client.requestId));
   }
   if (!isGithubSuccessStatus(destinationResponse.status)) {
     return observedIssue(unresolved(
       input.localRef,
       classifyGithubResponseFailure(destinationResponse, dependencies.now()),
+      dependencies.client.requestId,
     ));
   }
 
@@ -830,7 +842,7 @@ async function followIssueTransfer(
   try {
     destinationBody = decodeGithubJsonResponse(destinationResponse);
   } catch (error) {
-    return observedIssue(unresolved(input.localRef, classifyGithubTransportFailure(error)));
+    return observedIssue(unresolved(input.localRef, classifyGithubTransportFailure(error), dependencies.client.requestId));
   }
   const destinationView = decodeGithubIssueBody(destinationBody, destination.route);
   if (destinationView === null || destinationView.kindId !== 'issue') return mismatch();
@@ -856,7 +868,7 @@ async function followIssueTransfer(
     destinationRoute,
     destinationView.repositoryId,
   );
-  if (resolved.kind === 'failed') return observedIssue(unresolved(input.localRef, resolved.failure));
+  if (resolved.kind === 'failed') return observedIssue(unresolved(input.localRef, resolved.failure, dependencies.client.requestId));
   if (destination.repositoryId !== null && destination.repositoryId !== resolved.repositoryId) {
     return mismatch();
   }
@@ -879,6 +891,7 @@ async function followIssueTransfer(
       destinationView,
       resolved.repositoryId,
       destinationBody,
+      dependencies.client.requestId,
     );
   }
 

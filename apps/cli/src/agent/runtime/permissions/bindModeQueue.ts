@@ -8,7 +8,6 @@ import { normalizePendingRequestedActionV1 } from '@happier-dev/protocol/session
 import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { assertSessionInputAdmissionReceiptForAuthorityV1, readSessionInputCausalPermissionAuthorityV1, readSessionMessageProvenance, readSessionInputAuthority } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { resolveSessionInputPromptProvenanceV1, renderSessionInputContextBlockV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
-import { projectSessionInputReferencesV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
 import { fitHappierReplaySeedWithinTotalBudget } from '@happier-dev/agents';
 import { readSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
@@ -39,7 +38,7 @@ import type {
   PermissionModeQueuedPrompt,
   PermissionModeQueuedPromptMode,
 } from '@/agent/runtime/permissions/queuedPrompt';
-import { prepareSessionInputForProviderDispatch, resolveSessionInputForProviderDispatch, readStructuredInputPreparationFailure, type SessionInputDispatchServices } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
+import { prepareSessionInputForProviderDispatch, renderSessionInputProviderPrompt, resolveSessionInputForProviderDispatch, readStructuredInputPreparationFailure, type SessionInputDispatchServices } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 import type { RuntimeTurnPromptMeta } from '@/agent/runtime/turns/runtimeTurnOperations';
 import type { HostPreparedContext } from '@/agent/runtime/session/contextOnly/hostContextOnlyInput';
 import type { SessionProviderInputConsumer } from '@/api/session/sessionClientPort';
@@ -736,10 +735,10 @@ export function registerPermissionModeMessageQueueBinding(opts: {
             }
 
             if (replaySeedText !== null) {
-              const referenceChars = projectSessionInputReferencesV1({ text: '',
-                references: resolvedContext.promptContext.references }).boundedBlockChars;
+              const requiredFrame = renderSessionInputProviderPrompt({ prompt: queuedPrompt,
+                transformedUserText: '', providerNativeCommand, resolvedContext });
               const fitted = fitHappierReplaySeedWithinTotalBudget({ seedText: replaySeedText,
-                reservedChars: referenceChars ? referenceChars + 2 : 0, maxPromptChars: configuration.replaySeedMaxChars });
+                reservedChars: requiredFrame.length ? requiredFrame.length + 2 : 0, maxPromptChars: configuration.replaySeedMaxChars });
               if (fitted) providerText = `${fitted}\n\n${text}`;
               else {
                 // A seed that never reached the provider must not be retired on acceptance.

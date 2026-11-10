@@ -215,6 +215,7 @@ export function toTriageFailure(failure: GithubTriageFailureV1): TriageSourceFai
   return Object.freeze({
     class: failure.class,
     code: failure.code,
+    ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
     ...(failure.detail === undefined ? {} : { detail: failure.detail }),
     ...(failure.requiredPermissions === undefined ? {} : { requiredPermissions: failure.requiredPermissions }),
     ...(failure.retryNotBeforeMs === undefined
@@ -297,8 +298,8 @@ export function toTriageGetResult(
 ): TriageGetResultV1 {
   const projected = toTriageObservation(observation);
   if (observation.kind !== 'present' || projected.kind !== 'present') return projected;
-  if (observation.localRef.kindId !== 'pull-request') return { ...projected,
-    ...(observation.taskFields === undefined ? {} : { taskFields: observation.taskFields }),
+  const exact = observation.taskFields === undefined ? projected : { ...projected, taskFields: observation.taskFields };
+  if (observation.localRef.kindId !== 'pull-request') return { ...exact,
     ...(observation.taskFieldChoices === undefined ? {} : { taskFieldChoices: observation.taskFieldChoices }),
     ...(observation.detailData === undefined ? {} : { detailData: observation.detailData }) };
   const comparisonSource = buildGithubPullRequestComparisonSourceV1({
@@ -307,7 +308,7 @@ export function toTriageGetResult(
     routingToken: observation.locator.routingToken,
     revision: observation.snapshot.reviewRevision,
   });
-  return comparisonSource === null ? projected : Object.freeze({ ...projected, comparisonSource });
+  return comparisonSource === null ? exact : Object.freeze({ ...exact, comparisonSource });
 }
 
 /**

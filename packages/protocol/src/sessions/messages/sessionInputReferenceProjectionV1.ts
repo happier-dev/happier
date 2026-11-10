@@ -12,7 +12,6 @@ import {
   scanInlineReferenceTokensV1,
 } from '../../runtime/input/inlineReferenceTokenV1.js';
 import {
-  MENTION_BOUNDS,
   MENTION_KIND_V1,
   buildMentionRefV1,
   parseMentionRefV1,
@@ -126,15 +125,15 @@ function composerAttachmentEntry(value: ComposerAttachmentContextBlockEntryV1, i
   ].join('\n');
 }
 
-/** One marker projection and one context block, with uploads outside the existing budget. */
+/** One marker projection and one complete context block for selected references. */
 export function projectSessionInputReferencesV1(params: Readonly<{
   text: string;
   references?: SessionInputReferencesV1;
-}>): Readonly<{ text: string; block: string; boundedBlockChars: number; resolvedContextChars: number }> {
+}>): Readonly<{ text: string; block: string }> {
   const references = params.references ?? {};
   const mentions = sanitizeMentionRefsV1(references.mentions ?? []);
   const markers = new Map<string, Readonly<{ token?: string; marker: string }>>();
-  const boundedEntries: string[] = [];
+  const referenceEntries: string[] = [];
   const fileEntries: string[] = [];
   const sessionEntries: string[] = [];
   const uploadEntries: string[] = [];
@@ -152,12 +151,12 @@ export function projectSessionInputReferencesV1(params: Readonly<{
     } else if (mention.kind === MENTION_KIND_V1.workflow || mention.kind === MENTION_KIND_V1.widget) {
       const identity = readMentionRefOpaqueForKindV1(mention.kind, mention.ref);
       if (!identity) {
-        boundedEntries.push('- a reference is unavailable: its typed identity could not be read');
+        referenceEntries.push('- a reference is unavailable: its typed identity could not be read');
         continue;
       }
       const resolved = references.resolvedMentions?.find(entry => entry.ref === mention.ref);
       const readAction = resolved?.readAction ?? (mention.kind === MENTION_KIND_V1.workflow ? 'workflow.definition.get' : undefined);
-      boundedEntries.push(`- ${mention.kind === MENTION_KIND_V1.workflow ? 'workflow' : 'widget'}_id=${data(identity)}; label=${data(resolved?.label ?? mention.label ?? '')}; `
+      referenceEntries.push(`- ${mention.kind === MENTION_KIND_V1.workflow ? 'workflow' : 'widget'}_id=${data(identity)}; label=${data(resolved?.label ?? mention.label ?? '')}; `
         + (resolved?.available === false ? 'unavailable' : readAction ? `read_action=${data(readAction)}` : 'no read tool exists'));
     }
   }
@@ -165,7 +164,7 @@ export function projectSessionInputReferencesV1(params: Readonly<{
     const key = `reference:${entry.reference.pluginId}:${entry.reference.localId}:${entry.candidateId}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    boundedEntries.push(composerReferenceEntry(entry));
+    referenceEntries.push(composerReferenceEntry(entry));
   }
   for (const entry of references.composerAttachments ?? []) {
     const key = `attachment:${entry.attachment.instanceId}`;
@@ -174,23 +173,22 @@ export function projectSessionInputReferencesV1(params: Readonly<{
     const input = references.composerAttachmentInputs?.find(value => value.instanceId === entry.attachment.instanceId);
     const imageId = input?.content?.kind === 'sessionMedia' ? `session-media:${input.content.mediaId}` : entry.attachment.instanceId;
     const imageIndex = references.imageInputs?.findIndex(value => value.id === imageId) ?? -1;
-    boundedEntries.push(composerAttachmentEntry(entry, imageIndex < 0 ? undefined : references.imageInputs?.[imageIndex]));
+    referenceEntries.push(composerAttachmentEntry(entry, imageIndex < 0 ? undefined : references.imageInputs?.[imageIndex]));
     markers.set(buildMentionRefV1(INLINE_REFERENCE_ATTACHMENT_SCHEME_V1, entry.attachment.instanceId), {
       marker: imageIndex >= 0 ? `[Image #${imageIndex + 1}]` : `[File: ${entry.attachment.presentation.label}]`,
     });
   }
-  const contextEntriesBeforeCatalogs = [...boundedEntries];
   for (const skill of references.skillMentions ?? []) {
     const key = `skill:${skill.id ?? skill.path ?? skill.name}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    boundedEntries.push(`- skill=${data(skill.name)}${skill.path ? `; path=${data(skill.path)}` : ''}`);
+    referenceEntries.push(`- skill=${data(skill.name)}${skill.path ? `; path=${data(skill.path)}` : ''}`);
   }
   for (const plugin of references.vendorPluginMentions ?? []) {
     const key = `vendorPlugin:${plugin.vendorPluginRef}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    boundedEntries.push(`- vendor_plugin=${data(plugin.vendorPluginRef)}${plugin.label ? `; label=${data(plugin.label)}` : ''}`);
+    referenceEntries.push(`- vendor_plugin=${data(plugin.vendorPluginRef)}${plugin.label ? `; label=${data(plugin.label)}` : ''}`);
   }
   for (const upload of references.uploads ?? []) {
     // Retained 0.2 messages already carry their upload listing in the original text.
@@ -207,27 +205,15 @@ export function projectSessionInputReferencesV1(params: Readonly<{
     }
   }
 
-  const includedSessions: string[] = [];
-  let omitted = 0;
-  const renderBounded = (sessions: readonly string[], omissionCount: number, entries = boundedEntries) => [
-    OPEN, HEADER, ...sessions, ...entries,
-    ...(omissionCount ? [`- ${omissionCount} further reference(s) omitted to stay within the reference budget`] : []),
+  const referenceBlock = referenceEntries.length || sessionEntries.length ? [
+    OPEN, HEADER, ...sessionEntries, ...referenceEntries,
     ...(sessionEntries.length ? [SESSION_FOOTER] : []), CLOSE,
-  ].join('\n');
-  for (const entry of sessionEntries) {
-    if (renderBounded([...includedSessions, entry], omitted).length <= MENTION_BOUNDS.maxReferenceBlockChars) includedSessions.push(entry);
-    else omitted += 1;
-  }
-  while (includedSessions.length && renderBounded(includedSessions, omitted).length > MENTION_BOUNDS.maxReferenceBlockChars) {
-    includedSessions.pop();
-    omitted += 1;
-  }
-  const boundedBlock = boundedEntries.length || sessionEntries.length ? renderBounded(includedSessions, omitted) : '';
+  ].join('\n') : '';
   const block = uploadEntries.length || fileEntries.length
-    ? [boundedBlock ? boundedBlock.slice(0, -CLOSE.length) : `${OPEN}\n${HEADER}\n`,
+    ? [referenceBlock ? referenceBlock.slice(0, -CLOSE.length) : `${OPEN}\n${HEADER}\n`,
       ...fileEntries,
       ...(uploadEntries.length ? ['Attachments: open and analyze these files before answering. Relative paths are relative to the session working directory, not your home directory.', ...uploadEntries] : []), CLOSE].join('\n')
-    : boundedBlock;
+    : referenceBlock;
 
   let text = '';
   let cursor = 0;
@@ -238,11 +224,5 @@ export function projectSessionInputReferencesV1(params: Readonly<{
     cursor = token.end;
   }
   text += params.text.slice(cursor);
-  const resolvedBlock = contextEntriesBeforeCatalogs.length || sessionEntries.length
-    ? renderBounded(includedSessions, omitted, contextEntriesBeforeCatalogs) : '';
-  // Catalog records retain their incumbent serialized-context charge; their readable
-  // block lines are not charged a second time. Replay measures actual UTF-16 text.
-  const catalogChars = [references.skillMentions, references.vendorPluginMentions]
-    .reduce((total, records) => total + (records?.length ? Array.from(JSON.stringify(records)).length : 0), 0);
-  return { text, block, boundedBlockChars: boundedBlock.length, resolvedContextChars: Array.from(resolvedBlock).length + catalogChars };
+  return { text, block };
 }

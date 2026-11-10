@@ -1,6 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
-import { MENTION_BOUNDS } from '../runtime/input/mentionRefV1.js';
 
 /** Shared structural literals: the renderer and writable floor measure the same seed. */
 export const HAPPIER_REPLAY_SEED_FRAME = Object.freeze({
@@ -14,12 +13,10 @@ export const HAPPIER_REPLAY_SEED_FRAME = Object.freeze({
   tailGuidance: 'Continue from here. The transcript above is the latest tail of the conversation. Clarifying questions are available if important details are still missing.',
 });
 
-/** UTF-16 units: the dispatch reference block plus its two-newline join. */
-export const HAPPIER_REPLAY_SEED_DISPATCH_RESERVED_CHARS = MENTION_BOUNDS.maxReferenceBlockChars + 2;
 export const HAPPIER_REPLAY_MIN_TRANSCRIPT_LINE_CHARS = 'Assistant: '.length + 1;
 
 /** One-character source identity and one-character turn, with every structural line intact. */
-export const HAPPIER_REPLAY_MIN_SEED_CHARS = HAPPIER_REPLAY_SEED_DISPATCH_RESERVED_CHARS + [
+export const HAPPIER_REPLAY_MIN_SEED_CHARS = [
   HAPPIER_REPLAY_SEED_FRAME.recordingDisclaimer,
   HAPPIER_REPLAY_SEED_FRAME.sessionContextOpen,
   HAPPIER_REPLAY_SEED_FRAME.previousSessionHandoff,
@@ -34,7 +31,8 @@ export const HAPPIER_REPLAY_MIN_SEED_CHARS = HAPPIER_REPLAY_SEED_DISPATCH_RESERV
 ].join('\n').length;
 
 /**
- * New preferences must fit at least a structural seed and dispatch frame.
+ * New preferences must fit at least a structural seed. Dispatch fits that seed
+ * alongside the actual selected input frame within the same configured total.
  * Retained wire hints stay readable; actual frame feasibility remains the
  * renderer's decision. No provider capacity ceiling is inferred here.
  */

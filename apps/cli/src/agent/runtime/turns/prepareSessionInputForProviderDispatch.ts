@@ -18,7 +18,6 @@ import { DiscussionAttachmentPreparationError, type DiscussionAttachmentDispatch
   type DiscussionAttachmentDispatchResult } from '@/discussions/materializeDiscussionInputAttachments';
 import {
   resolveStructuredInputProviderDispatchContext,
-  ResolvedMentionContextTooLargeError,
   StructuredInputComposerReferenceUnavailableError,
   StructuredInputSessionMediaProjectionError,
   StructuredInputMentionResolutionError,
@@ -152,6 +151,42 @@ export async function resolveSessionInputForProviderDispatch(input: Readonly<{
   });
 }
 
+export type SessionInputProviderPromptInput = Readonly<{
+  prompt: PermissionModeQueuedPrompt;
+  transformedUserText: string;
+  providerNativeCommand: boolean;
+  resolvedContext: StructuredInputProviderDispatchContext;
+}>;
+
+/** The actual required frame, shared by replay fitting and final provider dispatch. */
+export function renderSessionInputProviderPrompt(input: SessionInputProviderPromptInput,
+  optionalContext: Pick<Parameters<typeof renderSessionInputContextPromptV1>[0], 'sessionFollowUpdates' | 'workerUpdates'> & {
+    runFollowDeliveries?: PermissionModeQueuedPrompt['followDeliveries'];
+  } = {}): string {
+  const context = input.resolvedContext;
+  const rendered = renderSessionInputContextPromptV1({
+    ...(input.prompt.inputContextBlock ? { provenanceBlock: input.prompt.inputContextBlock } : {}),
+    inputProvenance: input.prompt.inputProvenance,
+    returnedAnswer: input.prompt.returnedAnswer,
+    ...context.promptContext,
+    ...optionalContext,
+    returnedAnswers: [...input.prompt.returnedAnswerContext ?? [],
+      ...(input.prompt.returnedAnswer ? [{ reply: input.prompt.returnedAnswer,
+        text: projectSessionInputReferencesV1({ text: input.transformedUserText, references: context.promptContext.references }).text }] : [])],
+    transformedUserText: input.prompt.returnedAnswer ? '' : input.transformedUserText,
+    ...(input.providerNativeCommand ? { userTextPlacement: 'beforeContext' as const }
+      : input.prompt.discussionAddressing ? { userTextPlacement: 'alreadyRendered' as const } : {}),
+  });
+  const runFollowNotices = (optionalContext.runFollowDeliveries ?? []).map(({ delivery }) => renderRunFollowNotice(delivery)).filter(Boolean);
+  // Keep primary slash/native command grammar untouched in queue custody.
+  // Informational review facts join only the final actual provider input.
+  const reviewNoteText = input.providerNativeCommand ? ''
+    : (input.prompt.fileReviewNoteContext ?? []).map(({ note }) =>
+      `<happier_review_note>${JSON.stringify({ text: formatFileReviewNoteV1(note, 'agent') })
+        .replaceAll('<', '\\u003c').replaceAll('>', '\\u003e')}</happier_review_note>`).join('\n\n');
+  return [[rendered, reviewNoteText].filter(Boolean).join('\n\n'), ...runFollowNotices].filter(Boolean).join('\n');
+}
+
 /** The shared final host preparation boundary for normal input and in-flight steer. */
 export async function prepareSessionInputForProviderDispatch(input: Readonly<{
   prompt: PermissionModeQueuedPrompt;
@@ -168,31 +203,8 @@ export async function prepareSessionInputForProviderDispatch(input: Readonly<{
   const compositionScope = createPromptCompositionScope();
   let finalPrompt = '';
   const context = input.resolvedContext ?? await resolveSessionInputForProviderDispatch(input);
-  const renderPrompt = (optionalContext: Pick<Parameters<typeof renderSessionInputContextPromptV1>[0], 'sessionFollowUpdates' | 'workerUpdates'> & {
-    runFollowDeliveries?: PermissionModeQueuedPrompt['followDeliveries'];
-  } = {}) => {
-    const rendered = renderSessionInputContextPromptV1({
-      ...(input.prompt.inputContextBlock ? { provenanceBlock: input.prompt.inputContextBlock } : {}),
-      inputProvenance: input.prompt.inputProvenance,
-      returnedAnswer: input.prompt.returnedAnswer,
-      ...context.promptContext,
-      ...optionalContext,
-      returnedAnswers: [...input.prompt.returnedAnswerContext ?? [],
-        ...(input.prompt.returnedAnswer ? [{ reply: input.prompt.returnedAnswer,
-          text: projectSessionInputReferencesV1({ text: input.transformedUserText, references: context.promptContext.references }).text }] : [])],
-      transformedUserText: input.prompt.returnedAnswer ? '' : input.transformedUserText,
-      ...(input.providerNativeCommand ? { userTextPlacement: 'beforeContext' as const }
-        : input.prompt.discussionAddressing ? { userTextPlacement: 'alreadyRendered' as const } : {}),
-    });
-    const runFollowNotices = (optionalContext.runFollowDeliveries ?? []).map(({ delivery }) => renderRunFollowNotice(delivery)).filter(Boolean);
-    // Keep primary slash/native command grammar untouched in queue custody.
-    // Informational review facts join only the final actual provider input.
-    const reviewNoteText = input.providerNativeCommand ? ''
-      : (input.prompt.fileReviewNoteContext ?? []).map(({ note }) =>
-        `<happier_review_note>${JSON.stringify({ text: formatFileReviewNoteV1(note, 'agent') })
-          .replaceAll('<', '\\u003c').replaceAll('>', '\\u003e')}</happier_review_note>`).join('\n\n');
-    finalPrompt = [rendered, reviewNoteText].filter(Boolean).join('\n\n');
-    finalPrompt = [finalPrompt, ...runFollowNotices].filter(Boolean).join('\n');
+  const renderPrompt = (optionalContext: Parameters<typeof renderSessionInputProviderPrompt>[1] = {}) => {
+    finalPrompt = renderSessionInputProviderPrompt({ ...input, resolvedContext: context }, optionalContext);
     return finalPrompt;
   };
   const requiredPrompt = renderPrompt();
@@ -291,10 +303,7 @@ export function readStructuredInputPreparationFailure(error: unknown): Readonly<
       retryable: false,
     };
   }
-  if (
-    error instanceof StructuredInputMentionResolutionError
-    || error instanceof ResolvedMentionContextTooLargeError
-  ) {
+  if (error instanceof StructuredInputMentionResolutionError) {
     return {
       code: error.code,
       message: error.message,

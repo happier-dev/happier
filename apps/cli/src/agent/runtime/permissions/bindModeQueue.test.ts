@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { buildHappierReplayPromptFromDialog } from '@happier-dev/agents';
+import { configuration } from '@/configuration';
 
 import type { Metadata, PermissionMode, UserMessage } from '@/api/types';
 import { registerPermissionModeMessageQueueBinding } from './bindModeQueue';
@@ -1225,6 +1227,45 @@ describe('registerPermissionModeMessageQueueBinding', () => {
         localId: 'local-steer-1',
       },
     ]);
+  });
+
+  it('fits an in-flight replay against the actual typed Forge evidence frame', async () => {
+    const seedText = buildHappierReplayPromptFromDialog({ previousSessionId: 'parent', strategy: 'recent_messages',
+      recentMessagesCount: null, maxPromptChars: configuration.replaySeedMaxChars,
+      dialog: Array.from({ length: 180 }, (_unused, index) => ({ role: index % 2 ? 'User' as const : 'Assistant' as const,
+        createdAt: index, text: 'T'.repeat(2000) })) });
+    const harness = createSessionHarness({ permissionMode: 'default', permissionModeUpdatedAt: 0,
+      replaySeedV1: { v: 1, seedText, sourceSessionId: 'parent', sourceCutoffSeqInclusive: 3, createdAtMs: 1 },
+    } as unknown as Metadata);
+    const session = Object.assign(harness.session, { getMetadataSnapshot: harness.getMetadata,
+      readDurableProviderInputAcceptanceV1: async () => 'not_accepted' as const });
+    const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(() => 'mode', {
+      batcher: combinePermissionModeQueuedPrompts,
+    });
+    const steerText = vi.fn(async (_text: string) => undefined);
+    registerPermissionModeMessageQueueBinding({ session, queue,
+      getCurrentPermissionMode: () => 'default', setCurrentPermissionMode() {},
+      inFlightSteer: { isTurnInFlight: () => true, supportsInFlightSteer: () => true, steerText,
+        registerProviderAcceptedEffect() {},
+        readStructuredInputDispatchServices: () => ({ sessionId: 'receiver',
+          resolveComposerAttachmentForDispatch: async () => ({ attachments: [{ instanceId: 'entry-1', status: 'ready',
+            forgeEvidence: { v: 1, items: [{ source: { kind: 'entry', label: 'Selected entry' },
+              author: { kind: 'person' }, text: '<selected-evidence>🚀'.repeat(400) }] } }] }),
+        }),
+      },
+    });
+    const userText = 'continue this turn';
+    harness.emit({ role: 'user', localId: 'local-steer-evidence', content: { type: 'text', text: userText },
+      meta: { happierStructuredInputV1: { v: 1, composerAttachments: [{ v: 1, instanceId: 'entry-1',
+        attachment: { pluginId: 'acme.entries', localId: 'entry' }, key: 'entry-1', value: { entryId: 'entry-1' },
+        presentation: { label: 'Selected entry', typeLabel: 'Entry' } }] } },
+    } as UserMessage);
+    await vi.waitFor(() => expect(steerText).toHaveBeenCalledOnce());
+    const prompt = steerText.mock.calls[0]?.[0] ?? '';
+    expect(prompt).toContain('<happier_forge_evidence v="1">');
+    expect(prompt).toContain('<recent_transcript>');
+    expect(prompt.length - userText.length - 2).toBeLessThanOrEqual(configuration.replaySeedMaxChars);
+    expect(queue.size()).toBe(0);
   });
 
   it('releases a replay-seed association when steerability is lost before provider dispatch', async () => {

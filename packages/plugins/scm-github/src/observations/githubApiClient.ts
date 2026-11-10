@@ -24,6 +24,7 @@ import {
 import { createGithubRequestHeaders } from './githubRequestHeaders.js';
 
 export type GithubApiResponseV1 = Readonly<{
+  requestId?: string;
   status: number;
   statusText?: string;
   headers: Readonly<Record<string, string>>;
@@ -38,6 +39,7 @@ export type GithubApiResponseV1 = Readonly<{
  * project onto this instead.
  */
 export type GithubResponseFactsV1 = Readonly<{
+  requestId?: string;
   status: number;
   /** Lowercase-insensitive response headers; a carrier that has none supplies `{}`. */
   headers: Readonly<Record<string, string>>;
@@ -256,6 +258,8 @@ export function getGithubAccountRequestOwnerV1(scope: Readonly<{
 }
 
 export type GithubApiClientV1 = Readonly<{
+  /** Originating host-issued operation identity, distinct from provider request headers. */
+  requestId?: string;
   /** Immutable workflow definitions share this admitted account/materialization lifetime. */
   immutableDefinitionLifetime?: object;
   request(input: Readonly<{
@@ -332,6 +336,7 @@ export function readGithubApiResponseFacts(response: GithubApiResponseV1): Githu
     status: response.status,
     headers: response.headers,
     messages: readGithubBodyMessages(parsed),
+    ...(response.requestId === undefined ? {} : { requestId: response.requestId }),
   });
 }
 
@@ -491,11 +496,13 @@ function createGithubApiClientWithAuthorization(
       status: response.status,
       headers: response.headers,
       body: response.body,
+      ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
     });
   }
 
   return Object.freeze({
     immutableDefinitionLifetime: owner,
+    ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
     async requestMedia(input): Promise<GithubApiResponseV1> {
       const response = await send({ url: input.url, method: 'GET', media: input.media, redirect: 'manual' });
       if (response.status !== 302) return response;
@@ -608,7 +615,7 @@ export async function createGithubListedAccountApiClient(
     account: credentialRef,
     origin: GITHUB_API_ORIGIN,
     signal: context.signal,
-    invocationId: context.invocationId,
+    ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
   });
   if (!authorization.ok) {
     if (authorization.failure !== undefined) throw new TriageSourceAuthorizationErrorV1(authorization.failure);

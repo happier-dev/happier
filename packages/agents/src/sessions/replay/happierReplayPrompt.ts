@@ -618,29 +618,6 @@ const SESSION_TITLE_BUDGET_SHARE = 16;
 const RETRIEVAL_BUDGET_SHARE = 2;
 
 /**
- * What the Session-reference block can still claim from the same total at
- * dispatch (`fitHappierReplaySeedWithinTotalBudget`).
- *
- * The seed is sealed into Session metadata long before that block exists, so a
- * seed built against the whole total is refitted — and trimmed a second time —
- * on the way out. Reserving the block's own hard bound up front makes that
- * refit a no-op in the normal case instead of a third, unplanned truncation.
- *
- * **Unit: UTF-16 code units**, `MENTION_BOUNDS.maxReferenceBlockChars` for the
- * block plus 2 for the `\n\n` that joins it to the seed. This module owns that
- * unit for the whole replay budget — every length it measures and every slice it
- * takes is `String.prototype.length` — and the reservation is only equal to the
- * mention bound because the block's renderer
- * (`projectSessionInputReferencesV1`, Protocol) enforces that
- * bound in this unit rather than in the mention domain's code points. Were it
- * enforced in code points, a single astral character would cost two reserved
- * units while spending one counted one, and a block inside its own bound could
- * cost up to twice this reservation. The shared reference projection reports
- * its bounded portion using String.prototype.length in this same unit.
- */
-export { HAPPIER_REPLAY_SEED_DISPATCH_RESERVED_CHARS } from '@happier-dev/protocol/sessions/replay-seed-budget';
-
-/**
  * The most recent user turn, carried in the FRAME rather than the tail.
  *
  * A character-budget window fills from the newest end, and on a long agent-led

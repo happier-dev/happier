@@ -48,9 +48,6 @@ export const MENTION_BOUNDS = {
   maxRefChars: MAX_MENTION_REF_CHARS,
   maxTokenChars: 2 * MAX_MENTION_LABEL_CHARS + MAX_MENTION_REF_CHARS + 16,
   maxLabelChars: MAX_MENTION_LABEL_CHARS,
-  maxReferenceBlockChars: 2_000,
-  /** Bounds the sum of all resolved reference context in one message (D-27). */
-  maxResolvedContextChars: 2_000,
 } as const;
 
 /**

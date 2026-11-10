@@ -73,7 +73,7 @@ export class TriageSourceAuthorizationErrorV1 extends PluginError {
   }
 }
 
-function projectHostRefusal(rejection: unknown, invocationId: string | undefined): TriageSourceFailureV1 | undefined {
+function projectHostRefusal(rejection: unknown, requestId: string | undefined): TriageSourceFailureV1 | undefined {
   if (typeof rejection !== 'object' || rejection === null) return undefined;
   const diagnostic = TriageListInvocationErrorV1Schema.safeParse({
     code: Reflect.get(rejection, 'code'), retryable: Reflect.get(rejection, 'retryable') === true,
@@ -86,12 +86,12 @@ function projectHostRefusal(rejection: unknown, invocationId: string | undefined
     ? 'transient' : 'authentication';
   const request = TriageListInvocationErrorV1Schema.safeParse({
     code: diagnostic.data.code,
-    requestId: readPluginErrorRequestIdV1(rejection) ?? invocationId,
+    requestId: readPluginErrorRequestIdV1(rejection) ?? requestId,
   });
   const failure = TriageSourceFailureV1Schema.safeParse({
     class: classification, code: diagnostic.data.code,
     ...(request.success && request.data.requestId !== undefined
-      ? { detail: `Happier Request ID: ${request.data.requestId}` } : {}),
+      ? { detail: `Happier Request ID: ${request.data.requestId}`, requestId: request.data.requestId } : {}),
   });
   return failure.success ? failure.data : { class: classification, code: diagnostic.data.code };
 }
@@ -148,7 +148,7 @@ export async function materializeTriageSourceAuthorizationV1(input: Readonly<{
   account: ConnectedAccountRef;
   /** The origin the credential is minted for, and the only one it may be sent to. */
   origin: string;
-  invocationId?: string;
+  requestId?: string;
   signal?: AbortSignal;
 }>): Promise<TriageSourceAuthorizationOutcomeV1> {
   if (isAborted(input.signal)) {
@@ -173,7 +173,7 @@ export async function materializeTriageSourceAuthorizationV1(input: Readonly<{
     // The rejection itself is never returned: a materialization error can carry the very
     // material it failed to deliver, and every caller reports failures to a user.
     const cancelled = isAbortLikeError(rejection) || isAborted(input.signal);
-    const failure = cancelled ? undefined : projectHostRefusal(rejection, input.invocationId);
+    const failure = cancelled ? undefined : projectHostRefusal(rejection, input.requestId);
     return Object.freeze({
       ok: false as const,
       reason: cancelled ? ('cancelled' as const) : ('materializationFailed' as const),

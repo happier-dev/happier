@@ -2,13 +2,12 @@ import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaq
 import { AgentDispatchStructuredInputV1Schema, readStructuredInputMentionSourcesV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { buildComposerAttachmentDedupeKeyV1, ComposerAttachmentInputV1Schema, ResolvedComposerAttachmentDispatchV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 import { COMPOSER_REFERENCE_MENTION_KIND_V1, readComposerReferenceMentionV1 } from '@happier-dev/protocol/runtime/input/composerReferenceProviderV1';
-import { MENTION_BOUNDS, MENTION_KIND_V1, readMentionRefOpaqueForKindV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import { MENTION_KIND_V1, readMentionRefOpaqueForKindV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import { resolveSkillCatalogItemIdentityV1 } from '@happier-dev/protocol/runtime/catalog/skills';
 import type { ComposerAttachmentResolveRequestV1, ComposerAttachmentResolveRequestV2, ComposerAttachmentContextBlockEntryV1, ComposerAttachmentInputV1, ComposerAttachmentResolveResultV1, ComposerAttachmentValueV1, ComposerReferenceContextBlockEntryV1, ComposerReferenceResolutionV1, HappierStructuredInputV1, BrowserScreenshotMediaReferenceV1, MentionRefV1, PluginContributionIdentityV1, PluginExecutionScopeV1, ResolvedComposerAttachmentDispatchV1, SessionMediaItemV1, StructuredInputDispatchContextV1 } from '@happier-dev/protocol';
 import { ComposerAttachmentResolveResultV1Schema } from '@happier-dev/protocol/plugins/contributions/composerAttachmentRuntimeV1';
 import { SessionSkillCatalogListResponseV1Schema, SessionVendorPluginCatalogListResponseV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { SESSION_ATTACHMENT_UPLOAD_STRUCTURED_INPUT_PROVENANCE_KIND } from '@happier-dev/protocol/runtime/input/imageInputV1';
-import { projectSessionInputReferencesV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
 import type { SessionAttachmentDescriptorV1 } from '@happier-dev/protocol/messages/structured/sessionAttachmentsInputV1';
 import { WorkflowDefinitionGetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { isSameWidgetDefinitionV1, parseWidgetInstanceRefKeyV1, WidgetInstanceActionOutputSchemasV1 } from '@happier-dev/protocol/widgets';
@@ -151,26 +150,6 @@ export class StructuredInputMentionResolutionError extends Error {
     super(`Unresolved composer reference(s): ${unresolvedRefs.join(', ')}`);
     this.name = 'StructuredInputMentionResolutionError';
     this.unresolvedRefs = unresolvedRefs;
-  }
-}
-
-/**
- * The resolved provider context consists of the Session tool hint, public composer-reference
- * block, and the exact skill/vendor records a provider consumes. The dispatch owner sees all
- * of those projections together, so it is the only place that can enforce one message budget.
- */
-export class ResolvedMentionContextTooLargeError extends Error {
-  readonly code = 'mention_resolved_context_too_large' as const;
-
-  constructor(
-    readonly totalChars: number,
-    readonly maxChars: number,
-  ) {
-    super(
-      `Resolved composer reference context is ${totalChars} characters, over the ${maxChars} `
-      + 'character limit for one message. Remove some references and send again.',
-    );
-    this.name = 'ResolvedMentionContextTooLargeError';
   }
 }
 
@@ -933,10 +912,6 @@ export async function resolveStructuredInputProviderDispatchContext(params: Read
     skillMentions: structuredInput.skillMentions ?? [],
     vendorPluginMentions: structuredInput.vendorPluginMentions ?? [],
   });
-  const resolvedContextChars = projectSessionInputReferencesV1({ text: '', references }).resolvedContextChars;
-  if (resolvedContextChars > MENTION_BOUNDS.maxResolvedContextChars) {
-    throw new ResolvedMentionContextTooLargeError(resolvedContextChars, MENTION_BOUNDS.maxResolvedContextChars);
-  }
   const promptContext = Object.freeze({
     references,
     ...(envelope.browserContext ? { browserContext: envelope.browserContext } : {}),

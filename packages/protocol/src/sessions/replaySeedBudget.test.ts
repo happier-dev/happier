@@ -11,12 +11,12 @@ import {
 } from './replaySeedBudget.js';
 
 describe('Replay seed budget bounds', () => {
-  it.each([120_000, 512 * 1024])('accepts the usable budget %s without a provider safety ceiling', (budget) => {
+  it.each([1024, 2002, 120_000, 512 * 1024])('accepts the usable budget %s without a provider safety ceiling', (budget) => {
     expect(HappierReplayWritableMaxSeedCharsSchema.safeParse(budget).success).toBe(true);
     expect(HappierReplayWireMaxSeedCharsSchema.safeParse(budget).success).toBe(true);
   });
 
-  it.each([1, 1024, 2002])('refuses a new preference that cannot contain a seed at %s, while reading the retained wire budget', budget => {
+  it.each([1])('refuses a new preference that cannot contain a seed at %s, while reading the retained wire budget', budget => {
     expect(HappierReplayWritableMaxSeedCharsSchema.safeParse(budget).success).toBe(false);
     expect(HappierReplayWireMaxSeedCharsSchema.safeParse(budget).success).toBe(true);
     expect(accountSettingsParse({ sessionReplayMaxSeedChars: budget }).sessionReplayMaxSeedChars).toBe(120_000);

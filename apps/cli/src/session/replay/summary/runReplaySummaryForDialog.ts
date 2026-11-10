@@ -1,8 +1,8 @@
-import { LlmTaskRunnerConfigV1Schema, type LlmTaskRunnerConfigV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
-import { convertBackendTargetRefV2ToV1, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import type { EphemeralExecutionRunTextPromptStartAction } from '@/agent/runtime/bridges/executionRun/runtime/textPrompt';
 
-import { runEphemeralExecutionRunTextPromptWithRunnerConfig } from '@/agent/executionRuns/tasks/textPromptWithRunnerConfig';
+import { runLlmTaskTextPrompt } from '@/agent/executionRuns/tasks/textPromptWithRunnerConfig';
+import type { LlmTaskRunnerMachineCandidates } from '@/agent/executionRuns/tasks/llmTaskRunner';
 
 import type { HappierReplayDialogItem } from '../types';
 
@@ -50,38 +50,32 @@ function buildReplaySummaryPrompt(params: Readonly<{
   return lines.join('\n');
 }
 
+/**
+ * Summarizes a Replay dialog. The person's choice (Auto or one runner) goes to
+ * the background-task runner owner; nothing ready ⇒ LlmTaskRunnerUnavailableError.
+ */
 export async function runReplaySummaryForDialog(params: Readonly<{
-  cwd: string;
   parentSessionId: string;
-  runner: LlmTaskRunnerConfigV1;
+  choice: LlmTaskRunnerChoiceV1 | null | undefined;
+  /** The parent Session's own Agent: it wins Auto's cost ties. */
+  sessionAgentTargetKey?: string | null;
   dialog: readonly HappierReplayDialogItem[];
   deps?: Readonly<{
     executeStart?: EphemeralExecutionRunTextPromptStartAction;
+    readCandidates?: () => Promise<LlmTaskRunnerMachineCandidates>;
   }>;
 }>): Promise<string> {
-  const runner = LlmTaskRunnerConfigV1Schema.parse(params.runner);
-  const modelSelection = runner.modelSelection;
-  const backendTarget = convertBackendTargetRefV2ToV1(readBackendTargetRefV2(parseBackendTargetKeyV2(modelSelection.agentTargetKey)));
-  const permissionMode =
-    typeof params.runner.permissionMode === 'string' && params.runner.permissionMode.trim().length > 0
-      ? params.runner.permissionMode.trim()
-      : 'no_tools';
-
-  const prompt = buildReplaySummaryPrompt({
-    parentSessionId: params.parentSessionId,
-    dialog: params.dialog,
-  });
-
-  const out = await runEphemeralExecutionRunTextPromptWithRunnerConfig({
-    cwd: params.cwd,
+  const out = await runLlmTaskTextPrompt({
+    task: 'session_replay_summary',
+    choice: params.choice,
+    sessionAgentTargetKey: params.sessionAgentTargetKey ?? null,
     sessionId: params.parentSessionId,
-    runner: { backendTarget, modelSelection, permissionMode },
     // Replay summary is a generic bounded task; it does not own a separate
     // execution-run lifecycle or intent vocabulary.
     intent: 'task',
-    prompt,
+    prompt: buildReplaySummaryPrompt({ parentSessionId: params.parentSessionId, dialog: params.dialog }),
     ...(params.deps?.executeStart ? { executeStart: params.deps.executeStart } : {}),
+    ...(params.deps?.readCandidates ? { readCandidates: params.deps.readCandidates } : {}),
   });
-
   return String(out ?? '').trim();
 }

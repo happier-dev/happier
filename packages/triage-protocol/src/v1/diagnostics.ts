@@ -41,6 +41,8 @@ export const TriageSourceFailureClassV1ProtocolSchema = defineProtocolUnion([
 export const TriageSourceFailureV1Schema = defineProtocolObject({
     class: TriageSourceFailureClassV1ProtocolSchema,
     code: TriageIdentifierV1ProtocolSchema,
+    /** Originating host-issued Action request identity, diagnostic only. */
+    requestId: TriageIdentifierV1ProtocolSchema.optional(),
     detail: defineTriageSingleLineStringV1(MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1).optional(),
     /** Provider-reported permission requirement, diagnostic only, never admission authority. */
     requiredPermissions: defineTriageSingleLineStringV1(MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1).optional(),

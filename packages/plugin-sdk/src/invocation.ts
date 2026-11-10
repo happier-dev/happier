@@ -129,6 +129,8 @@ export interface PluginInvocationContext {
      * callback kinds. This identity grants no authority or permission to replay.
      */
     readonly invocationId?: string;
+    /** Originating host request identity for diagnostics only; absent when none was issued. */
+    readonly requestId?: string;
     readonly caller?: PluginInvocationCaller;
     readonly session?: Readonly<{ id: string }>;
     /** Exact declared Session operands admitted by the host Action executor. */

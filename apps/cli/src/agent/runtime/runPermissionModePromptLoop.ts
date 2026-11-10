@@ -51,7 +51,6 @@ import {
   type ReplaySeedSettlementOutcome,
 } from '@/agent/runtime/replaySeed/replaySeedV1';
 import type { UnsettledReplaySeedRetirement } from '@/agent/runtime/replaySeed/unsettledReplaySeedRetirement';
-import { projectSessionInputReferencesV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
 import { isAgentNativeResumeIdentityMismatchError } from '@/session/agentTransition/agentNativeReturn';
 import {
@@ -75,7 +74,7 @@ import {
   type AssistantTextSnapshotTurnScope,
 } from '@/agent/runtime/turns/assistantTextSnapshotTurnScope';
 import type { StructuredInputCatalogReaders, StructuredInputComposerReferenceResolver } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
-import { prepareSessionInputForProviderDispatch, resolveSessionInputForProviderDispatch, readStructuredInputPreparationFailure, type ComposerAttachmentDispatchResolver } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
+import { prepareSessionInputForProviderDispatch, renderSessionInputProviderPrompt, resolveSessionInputForProviderDispatch, readStructuredInputPreparationFailure, type ComposerAttachmentDispatchResolver } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 import { logger } from '@/ui/logger';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import type { AgentCompositionToolSelection } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
@@ -1407,23 +1406,22 @@ export async function runPermissionModePromptLoop(opts: {
           prompt: message.message, signal: dispatchAbortSignal,
           localId: localIds.length === 1 ? localId : null, services: referenceServices,
         });
-        // Replay and dispatch consume the same current projection. Only its bounded
-        // context spends the existing UTF-16 reservation; upload listings remain outside.
+        // Replay and final dispatch measure the same required frame, including
+        // selected evidence and file listings, in UTF-16 code units.
         promptFailurePhase = 'replay_seed_fitting';
         let replaySeedWasOmitted = false;
         const seedResolution = ((): { providerPrompt: string } => {
           if (!resolvedReplaySeed) return { providerPrompt: message.message.text };
           if (!resolvedReplaySeed.seedApplied) return resolvedReplaySeed;
-          const referenceChars = projectSessionInputReferencesV1({
-            text: '', references: resolvedInputContext.promptContext.references,
-          }).boundedBlockChars;
+          const requiredFrame = renderSessionInputProviderPrompt({ prompt: message.message,
+            transformedUserText: '', providerNativeCommand, resolvedContext: resolvedInputContext });
           const fittedSeedText = fitHappierReplaySeedWithinTotalBudget({
             seedText: resolvedReplaySeed.seedText,
             // A persisted seed may have been sealed under a larger Account or
             // wire cap than this daemon allows. Even without a Session
             // reference it therefore goes through the one dispatch budget;
-            // only the actual rendered reference block consumes a reservation.
-            reservedChars: referenceChars === 0 ? 0 : referenceChars + 2,
+            // only the actual required input frame consumes a reservation.
+            reservedChars: requiredFrame.length === 0 ? 0 : requiredFrame.length + 2,
             maxPromptChars: configuration.replaySeedMaxChars,
           });
           if (!fittedSeedText) {

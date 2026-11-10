@@ -1,5 +1,7 @@
 import type { ExecutionRunIntent } from '@happier-dev/protocol';
-import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import { convertBackendTargetRefV2ToV1, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { LlmTaskRunnerChoiceV1, LlmTaskRunnerConfigV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
+import type { LlmTaskIdV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerSelection';
 
 import {
   runEphemeralExecutionRunTextPrompt,
@@ -7,45 +9,32 @@ import {
 } from '@/agent/runtime/bridges/executionRun/runtime/textPrompt';
 import type { StoredCredentials } from '@/persistence';
 
-function normalizeNonEmptyString(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
+import { LlmTaskRunnerUnavailableError, resolveLlmTaskRunnerOnThisMachine, type LlmTaskRunnerMachineCandidates } from './llmTaskRunner';
 
-export async function runEphemeralExecutionRunTextPromptWithRunnerConfig(params: Readonly<{
-  cwd: string;
-  sessionId: string;
-  runner: Readonly<{
-    backendTarget: {
-      kind: 'builtInAgent';
-      agentId: string;
-    } | {
-      kind: 'configuredAcpBackend';
-      backendId: string;
-    };
-    modelId?: string;
-    modelSelection?: ProviderBoundModelRef;
-    permissionMode?: string;
-  }>;
+type TextPromptRunParams = Readonly<{
+  /** The hosting Session, or `null` for the daemon-owned detached scope. */
+  sessionId: string | null;
   intent: ExecutionRunIntent;
   prompt: string;
   credentials?: StoredCredentials | null;
   signal?: AbortSignal;
   timeoutMs?: number | null;
   executeStart?: EphemeralExecutionRunTextPromptStartAction;
-}>): Promise<string> {
-  const backendTarget = params.runner?.backendTarget;
-  if (!backendTarget) return '';
-  const modelId = normalizeNonEmptyString(params.runner?.modelId) ?? undefined;
-  const permissionMode = normalizeNonEmptyString(params.runner?.permissionMode) ?? 'no_tools';
+}>;
 
+/** Runs one bounded text prompt with an already resolved runner. */
+export async function runEphemeralExecutionRunTextPromptWithRunnerConfig(params: TextPromptRunParams & Readonly<{
+  runner: LlmTaskRunnerConfigV1;
+}>): Promise<string> {
+  const { runner } = params;
+  const backendTarget = convertBackendTargetRefV2ToV1(readBackendTargetRefV2(parseBackendTargetKeyV2(runner.modelSelection.agentTargetKey)));
   return await runEphemeralExecutionRunTextPrompt({
     sessionId: params.sessionId,
     backendTarget,
-    modelId,
-    ...(params.runner.modelSelection ? { modelSelection: params.runner.modelSelection } : {}),
-    permissionMode,
+    modelSelection: runner.modelSelection,
+    ...(runner.connectedServices !== undefined ? { connectedServices: runner.connectedServices } : {}),
+    ...(runner.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: runner.sessionConfigOptionOverrides } : {}),
+    permissionMode: runner.permissionMode ?? 'no_tools',
     intent: params.intent,
     prompt: params.prompt,
     ...(params.credentials !== undefined ? { credentials: params.credentials } : {}),
@@ -53,4 +42,26 @@ export async function runEphemeralExecutionRunTextPromptWithRunnerConfig(params:
     timeoutMs: params.timeoutMs,
     ...(params.executeStart ? { executeStart: params.executeStart } : {}),
   });
+}
+
+/**
+ * A background task's text prompt: the task names itself and the person's
+ * choice; the runner owner decides what runs. Nothing ready ⇒ a typed failure.
+ */
+export async function runLlmTaskTextPrompt(params: TextPromptRunParams & Readonly<{
+  task: LlmTaskIdV1;
+  choice: LlmTaskRunnerChoiceV1 | null | undefined;
+  sessionAgentTargetKey?: string | null;
+  readCandidates?: () => Promise<LlmTaskRunnerMachineCandidates>;
+}>): Promise<string> {
+  const resolved = await resolveLlmTaskRunnerOnThisMachine({
+    task: params.task,
+    choice: params.choice,
+    ...(params.sessionAgentTargetKey !== undefined ? { sessionAgentTargetKey: params.sessionAgentTargetKey } : {}),
+    ...(params.credentials !== undefined ? { credentials: params.credentials } : {}),
+    ...(params.signal ? { signal: params.signal } : {}),
+    ...(params.readCandidates ? { readCandidates: params.readCandidates } : {}),
+  });
+  if (!resolved.ok) throw new LlmTaskRunnerUnavailableError(params.task, resolved.reason, resolved.unavailableAgents);
+  return await runEphemeralExecutionRunTextPromptWithRunnerConfig({ ...params, runner: resolved.runner });
 }

@@ -1,10 +1,11 @@
 import { isPluginError, PluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import { renderSessionInputContextPromptV1, type SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
+import type { SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import {
     normalizeTriageSingleLineV1,
     type TriageConfiguredSourceInstanceV1,
     type TriageEntryRefV1,
+    type TriageEntryLocatorV1,
     type TriageGetInputV1,
     type TriageGetResultV1,
     type TriageRowFactV1,
@@ -95,7 +96,7 @@ export type TriageEntryDispatchRequestV1 = Readonly<{
 }>;
 
 export type TriageEntryDispatchOutcomeV1 =
-    | Readonly<{ instanceId: string; status: 'ready'; context: string; forgeEvidence?: SessionInputForgeEvidenceV1 }>
+    | Readonly<{ instanceId: string; status: 'ready'; context?: string; forgeEvidence?: SessionInputForgeEvidenceV1 }>
     | Readonly<{
         instanceId: string;
         status: 'unavailable' | 'notFound' | 'invalid' | 'failed';
@@ -116,30 +117,38 @@ export type TriageEntryDispatchResultV1 = Readonly<{
  * like "fix CI" needs the model to have, and it arrives resolved fresh at
  * dispatch rather than stringified into a prompt by a launch path. No prompt
  * framing, delimiter fence or instruction wrapper — the host owns escaping and
- * framing, and a resolver that writes its own makes two owners of it. No
- * locator either: a web URL or routing token is mutable routing, not an
- * identity or status fact, and the attachment value deliberately carries
- * neither.
+ * framing, and a resolver that writes its own makes two owners of it. A fresh
+ * source-owned public URL is a navigation hint beside the facts, never identity
+ * or authority; opaque routing tokens stay out. An already-read body contributes
+ * its first paragraph only when the source supplies no row summary.
  */
 export function projectTriageDispatchContext(input: Readonly<{
     entryRef: TriageEntryRefV1;
     snapshot: TriageSourceEntrySnapshotV1;
+    locator?: TriageEntryLocatorV1;
+    body?: string;
 }>): string {
     const { entryRef, snapshot } = input;
     const state = snapshot.state.nativeLabel ?? snapshot.state.presentation;
+    // Exact get may already carry a complete body. Keep its first paragraph as
+    // useful context when the source has no row summary, without another read
+    // or a second character budget. Later paragraphs remain available to tools.
+    const bodyHead = snapshot.summary === undefined ? input.body?.trim().split(/\r?\n[\t ]*\r?\n/u, 1)[0] : undefined;
     const lines = [
         `${entryRef.kindId} ${entryRef.entryId} in ${snapshot.scopeLabel}`,
         `state: ${state}`,
         `title: ${snapshot.title}`,
-        ...(snapshot.summary === undefined ? [] : [`summary: ${snapshot.summary}`]),
+        ...(input.locator?.webUrl === undefined ? [] : [`url: ${input.locator.webUrl}`]),
+        ...(snapshot.summary === undefined
+            ? bodyHead ? [`body: ${bodyHead}`] : []
+            : [`summary: ${snapshot.summary}`]),
         ...snapshot.facts.flatMap((fact: TriageRowFactV1): string[] => {
             const line = projectTriageRowFactLine(fact);
             return line === null ? [] : [line];
         }),
     ];
-    // Provider text is already single-line by contract, but this resolver is the
-    // last hop before model-visible text and normalizing is cheap insurance
-    // against a line break turning one fact into two.
+    // Row facts are single-line by contract; a complete body paragraph can span
+    // lines. Normalize once so each projected field occupies one context line.
     const projected = lines.map(normalizeTriageSingleLineV1).join('\n');
     return projected;
 }
@@ -228,9 +237,7 @@ export async function resolveTriageEntryForDispatch(
             throwIfAborted(signal);
             const selectedEvidence = evidence[index];
             if (selectedEvidence != null) {
-                attachments.push({ instanceId: attachment.instanceId, status: 'ready',
-                    forgeEvidence: selectedEvidence,
-                    context: renderSessionInputContextPromptV1({ transformedUserText: '', forgeEvidence: selectedEvidence }) });
+                attachments.push({ instanceId: attachment.instanceId, status: 'ready', forgeEvidence: selectedEvidence });
                 continue;
             }
             attachments.push(await resolveOne(attachment, {
@@ -356,11 +363,9 @@ async function resolveOne(
             return {
                 instanceId: attachment.instanceId,
                 status: 'ready',
-                context: renderSessionInputContextPromptV1({ transformedUserText: '', forgeEvidence: { v: 1, items: [{
-                    source: { kind: 'entry', label: observation.snapshot.scopeLabel },
-                    author: { kind: 'unknown' },
-                    text: projectTriageDispatchContext({ entryRef, snapshot: observation.snapshot }),
-                }, ...(observation.dispatchEvidence?.items ?? [])] } }),
+                context: projectTriageDispatchContext({ entryRef, snapshot: observation.snapshot, locator: observation.locator,
+                    body: observation.taskFields?.body }),
+                ...(observation.dispatchEvidence === undefined ? {} : { forgeEvidence: observation.dispatchEvidence }),
             };
         }
         case 'absent':
