@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { ActionExecutorContext, ActionExecuteFailure, ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions';
 import { DeploymentBackupRestoreInputV1Schema, DeploymentBackupRestoreResultV1Schema,
-    DeploymentRestoreStepV1Schema, DeploymentBackupRunResultV1Schema,
+    DeploymentRestoreStepV1Schema, DeploymentBackupRunResultV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1,
     type DeploymentBackupRestoreInputV1, type DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isRecord } from '@happier-dev/protocol/inputs/inputRecords';
@@ -82,8 +82,10 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
                     return step.success ? [step.data] : [];
                 }) : [];
             const projected = projectDeploymentFailure(context.signal?.aborted ? 'cancelled' : code, error, 'deployment.restore');
-            return { ...projected, ...(steps.length ? {
-                details: { ...(isRecord(projected.details) ? projected.details : {}), steps },
+            const nativeFailure = readDeploymentBackupMaintenanceFailureEvidenceV1(error)?.nativeFailure;
+            return { ...projected, ...(steps.length || nativeFailure ? {
+                details: { ...(isRecord(projected.details) ? projected.details : {}), steps,
+                    ...(nativeFailure ? { nativeFailure } : {}) },
             } : {}) };
         }
     };

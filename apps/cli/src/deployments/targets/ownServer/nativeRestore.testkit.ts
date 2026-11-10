@@ -137,8 +137,11 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
     else if (argv[0] === 'createdb') { state.names.push(argv.at(-1)); save(); }
     else if (argv[0] === 'pg_restore') {
         let bytes = 0;
-        process.stdin.on('data', data => { bytes += data.length; });
-        process.stdin.on('end', () => { event({kind:'imported',bytes}); });
+        // Custom archives are self-delimiting: pg_restore can finish before
+        // the restic/Docker producer closes stdout. It does not await pipe EOF.
+        process.stdin.on('data', data => { bytes += data.length;
+            if (bytes >= Buffer.from(state.archive,'base64').length) { event({kind:'imported',bytes}); process.exit(0); }
+        });
     } else if (argv[0] === 'psql') {
         const sql = argv.at(-1);
         if (sql.startsWith('SELECT COALESCE')) process.stdout.write(JSON.stringify(state.names));

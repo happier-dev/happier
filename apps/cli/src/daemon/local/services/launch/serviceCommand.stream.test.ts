@@ -12,6 +12,48 @@ import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
 import { logger } from '@/ui/logger';
 
 describe('host service command stream', () => {
+    it.each([0, 1] as const)('settles a self-terminating archive reader with exit %s, drains the producer and releases both native captures', async exitCode => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-archive-stream-'));
+        const consumerEnded = join(root, 'consumer-ended');
+        const keys = [{ kind: 'composeProject' as const, dockerEndpoint: 'archive-stream-engine', projectName: root }];
+        const secret = 'archive-reader-credential-sentinel';
+        const redaction = createProviderRedactionLease({ values: [secret] });
+        let released = 0;
+        let producerExit!: () => void;
+        const producerEnded = new Promise<void>(resolve => { producerExit = resolve; });
+        const originalSpawn = childProcessBoundary.spawn;
+        const consumerScript = `process.stdin.once("data",()=>{process.stderr.write(${JSON.stringify(`pg_restore: archive ${secret}`)},()=>process.exit(${exitCode}));});process.stdin.resume();`;
+        const spawn = vi.spyOn(childProcessBoundary, 'spawn').mockImplementation((...args) => {
+            const child: ReturnType<typeof originalSpawn> = Reflect.apply(originalSpawn, childProcessBoundary, args);
+            if (Array.isArray(args[1]) && args[1][1] === consumerScript) {
+                child.once('exit', () => { void writeFile(consumerEnded, 'exited'); });
+            } else child.once('exit', producerExit);
+            return child;
+        });
+        syncBuiltinESMExports();
+        const bytes = Buffer.alloc(1024 * 1024, 255);
+        const producerScript = `const fs=require('node:fs');const w=fs.watch(${JSON.stringify(root)},(_,f)=>{if(String(f)==='consumer-ended'){w.close();process.stdout.end(Buffer.alloc(${bytes.length},255));}});process.stdout.write(Buffer.alloc(1,255));`;
+        try {
+            await machineNativeEffectAdmission.run({ operation: { operationId: root, kind: 'restore' }, keys }, async context => {
+                const capture = (script: string) => commands.admitNativeServiceCommandForHost({ context,
+                    async assertCurrent() {}, async launch() { return { command: process.execPath, args: ['-e', script], env: {},
+                        secretRedactionLease: redaction, release() { released++; } }; } });
+                const result = await commands.executeAdmittedServiceCommand(commands.admitServiceCommandStreamForHost({
+                    producer: capture(producerScript), consumer: capture(consumerScript),
+                }));
+                expect(result).toMatchObject({ kind: 'completed', exitCode, stderr: 'pg_restore: archive [REDACTED]',
+                    stderrTruncated: false, producer: { exitCode: 0,
+                    bytes: bytes.length + 1, checksumSha256: createHash('sha256').update(Buffer.concat([Buffer.from([255]), bytes])).digest('hex') } });
+            });
+            expect(released).toBe(2);
+            // A subsequent real admission must not inherit failed stream custody.
+            await machineNativeEffectAdmission.run({ operation: { operationId: `next-${root}`, kind: 'backup' }, keys }, async () => {});
+        } finally {
+            await writeFile(consumerEnded, 'exited'); await producerEnded;
+            await machineNativeEffectAdmission.reconcileUnknown({ keys, async observeSettled() { return true; } });
+            spawn.mockRestore(); syncBuiltinESMExports(); redaction.close(); await rm(root, { recursive: true, force: true });
+        }
+    });
     it('redacts a completed native read failure before releasing its lease while preserving raw binary stdout measurements', async () => {
         const secret = 'native-read-credential-sentinel';
         const bytes = Buffer.concat([Buffer.from([0, 255, 195, 40, 128]), Buffer.from(secret)]);
@@ -249,7 +291,8 @@ describe('host service command stream', () => {
                     expect(result.producer).toMatchObject({ exitCode: 0, bytes: 129 * 65536,
                         checksumSha256: JSON.parse(result.stdout).checksum });
                 } else {
-                    expect(result.kind).toBe('outcome_unknown');
+                    if (exitCode === 'consumerExit') expect(result).toMatchObject({ kind: 'completed', exitCode: 1, producer: { exitCode: 0 } });
+                    else expect(result.kind).toBe('outcome_unknown');
                     if (exitCode === 7) {
                         expect(localLog).toHaveBeenCalledWith('[Service command stream] Native stream failed', expect.objectContaining({
                             operationId: context.operation.operationId, producerExitCode: 7,
@@ -259,7 +302,7 @@ describe('host service command stream', () => {
                     await expect(readFile(eof)).rejects.toMatchObject({ code: 'ENOENT' });
                     if (exitCode !== 'consumerExit') expect(await readFile(stopped, 'utf8')).toBe('stopped');
                 }
-                expect(released).toBe(exitCode === 0 ? 2 : exitCode === 7 ? 1 : 0);
+                expect(released).toBe(exitCode === 0 || exitCode === 'consumerExit' ? 2 : exitCode === 7 ? 1 : 0);
             });
         } finally { watcher.close(); redaction.close(); await rm(root, { recursive: true, force: true }); }
     });

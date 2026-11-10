@@ -134,7 +134,7 @@ export function SurfaceStateCard(props: Readonly<{
     reasonContent?: React.ReactNode;
     /** Raw machine reason code — collapsed Details disclosure and testID marker only. */
     diagnosticCode?: string | null;
-    /** Opaque correlation (a request id) shown with the code inside a line's Details; never spoken. */
+    /** Sanitized diagnostics or correlation shown with the code inside Details; never spoken. */
     diagnosticDetail?: string | null;
     /** Optional sanitized supplemental detail. Never pass a raw machine code. */
     detail?: string;

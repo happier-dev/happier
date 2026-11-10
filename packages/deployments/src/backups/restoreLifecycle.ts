@@ -1,10 +1,11 @@
-import type { DeploymentRestoreStepV1, DeploymentBackupManifestV1 } from '@happier-dev/deployment-protocol';
+import { readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupNativeFailureV1,
+    type DeploymentRestoreStepV1, type DeploymentBackupManifestV1 } from '@happier-dev/deployment-protocol';
 export { deploymentRestoreStepProgressV1, readDeploymentRestoreStepProgressV1 } from '@happier-dev/deployment-protocol';
 
 import { runDeploymentBackupV1, type DeploymentBackupNativeResultV1, type DeploymentBackupRunInputV1,
     type DeploymentBackupRunResultV1 } from '../actions/backups.js';
 import { readResticNativeJsonV1 } from './manifestV1.js';
-import { verifyDeploymentBackupV1 } from './verificationV1.js';
+import { readBackupNativeFailureEvidenceV1, verifyDeploymentBackupV1 } from './verificationV1.js';
 import { buildResticRequestV1, type ResticAccessV1, type ResticRequestV1 } from './resticExecutor.js';
 
 /** Exact native identities and supported tools are captured by P41/P30 at admission.
@@ -61,7 +62,7 @@ type RestoreFailureCode = 'backup_required' | 'backup_failed' | 'backup_integrit
     | 'stale_input' | 'cancelled' | 'outcome_unknown' | 'unsupported_action';
 export type DeploymentRestoreResultV1 = Readonly<{
     source: DeploymentBackupManifestV1; destination: DeploymentRestoreDestinationV1;
-    safetyBackup?: DeploymentBackupRunResultV1; code?: RestoreFailureCode;
+    safetyBackup?: DeploymentBackupRunResultV1; code?: RestoreFailureCode; nativeFailure?: DeploymentBackupNativeFailureV1;
     steps?: readonly DeploymentRestoreStepV1[];
 }> & (Readonly<{ kind: 'restored'; verified: true; nextAction: 'none' }>
     | Readonly<{ kind: 'rolledBack' | 'outcome_unknown' | 'recoveryRequired'; verified: false;
@@ -98,7 +99,8 @@ function restoreSteps(input: Pick<RestoreCapture, 'onStep'>, previous: readonly 
 }
 function completed(result: DeploymentRestoreNativeResultV1) {
     if (result.kind !== 'completed') return refuse('outcome_unknown');
-    if (result.exitCode !== 0) return refuse('restore_failed');
+    if (result.exitCode !== 0) throw Object.assign(new Error('restore_failed'), { code: 'restore_failed',
+        details: readBackupNativeFailureEvidenceV1(result) });
     return result;
 }
 function identifier(value: string) { return `"${value.replaceAll('"', '""')}"`; }
@@ -185,8 +187,11 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
     if (!sameSource(input.source, prepare.source) || input.sourceFormat !== prepare.sourceFormat
         || !sameDestination(destination, prepare.destination)) refuse('stale_input');
     if (destination.hasMeaningfulData && !prepare.safetyBackup) refuse('backup_required');
-    const result = (kind: DeploymentRestoreResultV1['kind'], nextAction: DeploymentRestoreResultV1['nextAction'], code?: RestoreFailureCode): DeploymentRestoreResultV1 => {
+    const result = (kind: DeploymentRestoreResultV1['kind'], nextAction: DeploymentRestoreResultV1['nextAction'],
+        code?: RestoreFailureCode, error?: unknown): DeploymentRestoreResultV1 => {
+        const nativeFailure = readDeploymentBackupMaintenanceFailureEvidenceV1(error)?.nativeFailure;
         const evidence = { source: prepare.source, destination, steps: steps.snapshot(),
+            ...(nativeFailure ? { nativeFailure } : {}),
             ...(prepare.safetyBackup ? { safetyBackup: prepare.safetyBackup } : {}), ...(code ? { code } : {}) };
         return kind === 'restored' ? { ...evidence, kind, verified: true, nextAction: 'none' }
             : { ...evidence, kind, verified: false, nextAction };
@@ -204,7 +209,7 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
         if (!Array.isArray(names) || names.some(name => typeof name !== 'string')) return refuse('outcome_unknown');
         return { canonical: names.includes(destination.database), stage: names.includes(destination.stagingDatabase), old: names.includes(destination.recoveryDatabase) };
     };
-    const undo = async (names: Awaited<ReturnType<typeof observeNames>>, code?: RestoreFailureCode) => {
+    const undo = async (names: Awaited<ReturnType<typeof observeNames>>, code?: RestoreFailureCode, error?: unknown) => {
         const fullSwap = names.canonical && !names.stage && names.old === destination.databaseExists;
         const halfSwap = !names.canonical && names.stage && names.old && destination.databaseExists;
         if (fullSwap || halfSwap) {
@@ -214,21 +219,21 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
             }
             if (fullSwap) completed(await execute(rename(destination, destination.database, destination.stagingDatabase)));
             if (names.old) completed(await execute(rename(destination, destination.recoveryDatabase, destination.database)));
-            return result('rolledBack', 'checkServiceHealth', code);
+            return result('rolledBack', 'checkServiceHealth', code, error);
         }
         return names.canonical === destination.databaseExists && names.stage && !names.old
-            ? result('recoveryRequired', 'inspectStagingDatabase', code)
-            : result('outcome_unknown', 'observeDatabaseNames', code);
+            ? result('recoveryRequired', 'inspectStagingDatabase', code, error)
+            : result('outcome_unknown', 'observeDatabaseNames', code, error);
     };
     const recoveryFailure = (error: unknown) => {
         const code = codeOf(error);
-        return code === 'outcome_unknown' ? result('outcome_unknown', 'observeDatabaseNames', code)
-            : result('recoveryRequired', input.signal.aborted ? 'observeDatabaseNames' : 'restoreRecoveryDatabase', code);
+        return code === 'outcome_unknown' ? result('outcome_unknown', 'observeDatabaseNames', code, error)
+            : result('recoveryRequired', input.signal.aborted ? 'observeDatabaseNames' : 'restoreRecoveryDatabase', code, error);
     };
     const restartWriters = async (outcome: DeploymentRestoreResultV1) => {
         if (!writersStopped || input.signal.aborted) return { ...outcome, steps: steps.snapshot() };
         try { await steps.run('start', async () => completed(await execute({ kind: 'writers', operation: 'start', services: destination.writerServices }))); }
-        catch (error) { return result('recoveryRequired', 'checkServiceHealth', codeOf(error)); }
+        catch (error) { return result('recoveryRequired', 'checkServiceHealth', codeOf(error), error); }
         return { ...outcome, steps: steps.snapshot() };
     };
     try {
@@ -294,18 +299,18 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
             } catch (error) {
                 steps.failRunning();
                 const code = codeOf(error);
-                outcome = result('recoveryRequired', 'inspectStagingDatabase', code);
+                outcome = result('recoveryRequired', 'inspectStagingDatabase', code, error);
                 if (activationAttempted && !input.signal.aborted) {
                     // Unknown exit is not permission to replay a rename. Observe
                     // the exact operation-bound names, then undo only a proven swap.
-                    try { outcome = await undo(await observeNames(), code); }
+                    try { outcome = await undo(await observeNames(), code, error); }
                     catch (recoveryError) { outcome = recoveryFailure(recoveryError); }
-                } else if (activationAttempted) outcome = result('recoveryRequired', 'observeDatabaseNames', code);
+                } else if (activationAttempted) outcome = result('recoveryRequired', 'observeDatabaseNames', code, error);
             }
             return restartWriters(outcome);
         });
     } catch (error) {
         steps.failRunning();
-        return result('recoveryRequired', 'inspectStagingDatabase', codeOf(error));
+        return result('recoveryRequired', 'inspectStagingDatabase', codeOf(error), error);
     }
 }

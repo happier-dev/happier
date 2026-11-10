@@ -346,7 +346,8 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
               kind: 'rolledBack',
               verified: false,
               nextAction: 'none',
-              evidence: {},
+              evidence: { code: 'restore_failed', nativeFailure: { exitCode: 1,
+                stderr: 'pg_restore: native import failed [REDACTED]', stderrTruncated: false } },
               steps: [
                 { id: 'safety', status: 'completed' },
                 { id: 'stop', status: 'completed' },
@@ -366,6 +367,10 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
       expect(view.screen.findByTestId('project-deployments.restore.steps')).toBeNull();
       await view.screen.pressByTestIdAsync('project-deployments.restore.confirm');
       await view.until('project-deployments.restore.result.rolledBack');
+      expect(view.screen.getTextContent()).not.toContain('pg_restore: native import failed');
+      await view.screen.pressByTestIdAsync('project-deployments.restore.result.rolledBack-details-toggle');
+      expect(view.screen.getTextContent()).toContain('restore_failed');
+      expect(view.screen.getTextContent()).toContain('pg_restore: native import failed [REDACTED]');
       expect(['safety', 'stop', 'restore', 'start'].map((id) =>
         view.screen.findByTestId(`project-deployments.restore.step.${id}`) !== null)).toEqual([true, true, true, true]);
       expect(view.screen.findByTestId('project-deployments.restore.step.health')).toBeNull();

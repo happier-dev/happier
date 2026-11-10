@@ -190,7 +190,8 @@ describe('native restore adapter', () => {
                                 },
                             });
                             if (mode === 'dumpFailure') {
-                                await expect(backup).rejects.toMatchObject({ code: 'outcome_unknown' });
+                                await expect(backup).rejects.toMatchObject({ code: 'backup_failed',
+                                    details: { nativeFailure: { exitCode: 7, stderr: '', stderrTruncated: false } } });
                                 expect(JSON.parse(await readFile(boundary.stateFile, 'utf8')).safetySnapshot).toBeUndefined();
                                 expect(await docker.readOperationContainerIds()).toEqual([]);
                                 return;
@@ -292,7 +293,8 @@ describe('native restore adapter', () => {
                                     destination: prepared.destination, prepare: prepared }), stopped,
                             ]);
                             expect(result).toMatchObject(mode === 'failure'
-                                ? { kind: 'recoveryRequired', verified: false, code: 'restore_failed' }
+                                ? { kind: 'recoveryRequired', verified: false, code: 'restore_failed',
+                                    nativeFailure: { exitCode: 1, stderr: '', stderrTruncated: false } }
                                 : mode === 'healthFailure' || mode === 'cancelPublication' ? { kind: 'rolledBack', verified: false, code: 'restore_failed' }
                                     : { kind: 'restored', verified: true });
                             if (mode === 'success') {

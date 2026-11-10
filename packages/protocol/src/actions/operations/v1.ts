@@ -586,7 +586,8 @@ export function projectDeploymentBackupFailureResultV1(actionId: string, errorCo
   details: unknown): DeploymentBackupFailureResultV1 | DeploymentRestoreFailureResultV1 | undefined {
   if (!details || typeof details !== 'object' || Array.isArray(details)) return undefined;
   if (actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1) {
-    const parsed = DeploymentRestoreFailureResultV1Schema.safeParse({ steps: 'steps' in details ? details.steps : undefined });
+    const parsed = DeploymentRestoreFailureResultV1Schema.safeParse({ steps: 'steps' in details ? details.steps : undefined,
+      ...readDeploymentBackupMaintenanceFailureEvidenceV1({ details }) });
     return parsed.success ? parsed.data : undefined;
   }
   if (!isDeploymentBackupActionIdV1(actionId) || !('step' in details) || typeof details.step !== 'string') return undefined;

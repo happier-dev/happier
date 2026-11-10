@@ -52,13 +52,13 @@ describe('SurfaceStateCard', () => {
         function Reader() { reader = useOptionalCurrentUiContextReader(); return null; }
         try {
             const screen = await renderMountedCurrentUiContext(<><Reader /><SurfaceStateCard testID="agent-details"
-                size={size} kind="error" title="Could not read usage" diagnosticCode="usage_query_failed" /></>);
+                size={size} kind="error" title="Could not read usage" diagnosticCode="usage_query_failed" diagnosticDetail="request-123" /></>);
             expect(screen.findByTestId('agent-details-details-code')).toBeNull();
             const command = reader!.readCurrentUiContext()!.commands.find(row => row.title.startsWith('Could not read usage: '));
             expect(command).toBeDefined();
             await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
                 input: { commandId: command!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
-            expect(screen.findByTestId('agent-details-details-code')?.props.children).toBe('usage_query_failed');
+            expect(screen.findByTestId('agent-details-details-code')?.props.children).toBe('usage_query_failed\nrequest-123');
             await screen.pressByTestIdAsync('agent-details-details-toggle');
             expect(screen.findByTestId('agent-details-details-code')).toBeNull();
             await screen.update(<Reader />);

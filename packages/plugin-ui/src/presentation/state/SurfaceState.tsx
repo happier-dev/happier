@@ -158,7 +158,7 @@ export type HappierSurfaceStateProps = Readonly<{
   learnMore?: HappierSurfaceStateAction;
   /** Raw machine code: a collapsed disclosure on a failure, a testID marker otherwise. Never the sentence. */
   diagnosticCode?: string | null;
-  /** An opaque correlation shown with the code inside Details (a request id). Never spoken or the sentence. */
+  /** Sanitized diagnostics or correlation shown with the code inside Details. Never spoken or the sentence. */
   diagnosticDetail?: string | null;
   accessibilitySemantics?: 'status' | 'alert';
   bindings: HappierSurfaceStateBindings;
@@ -191,6 +191,10 @@ function isLiveModel(value: unknown): value is HappierSurfaceStateLive {
 /** Kinds whose diagnostic is a support detail behind a disclosure, not just a QA marker. */
 function disclosesDiagnostic(kind: HappierSurfaceStateKind) {
   return kind === 'error' || kind === 'unavailable' || kind === 'warning';
+}
+
+function diagnosticText(code: string, detail?: string | null) {
+  return detail ? `${code}\n${detail}` : code;
 }
 
 /** The present: a working ring (when busy) and one tabular line. */
@@ -268,7 +272,7 @@ export function HappierSurfaceState(props: HappierSurfaceStateProps) {
       markerTestID={props.testID ? `${props.testID}-diagnostic-${props.diagnosticCode}` : undefined}
       label={bindings.detailsLabel}
       align={props.layout === 'inline' ? 'start' : 'center'}
-      details={props.diagnosticCode}
+      details={diagnosticText(props.diagnosticCode, props.diagnosticDetail)}
       renderCaret={bindings.renderDetailsCaret}
       renderLabel={(label) => bindings.renderText({ role: 'details', children: label })}
       focusColor={bindings.focusRing}
@@ -525,7 +529,7 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
   ) : null;
   // A line among a menu's rows stays one sentence; a failure line anywhere else keeps its code one press away.
   const details = props.diagnosticCode && disclosesDiagnostic(props.kind) && props.lineDensity !== 'menu'
-    ? props.diagnosticDetail ? `${props.diagnosticCode}\n${props.diagnosticDetail}` : props.diagnosticCode
+    ? diagnosticText(props.diagnosticCode, props.diagnosticDetail)
     : null;
   // With Details the sentence, Details and the recovery all read in the body face, so the block has one type.
   const textMetrics = details ? BLOCK_TEXT_METRICS : HAPPIER_STATE_LINE_METRICS.text;

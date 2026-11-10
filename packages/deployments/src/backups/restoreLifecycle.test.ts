@@ -61,6 +61,7 @@ function boundary(options: Readonly<{ healthFails?: boolean; streamFails?: boole
             return { ...complete(), stdoutChecksumSha256: checksum, stdoutBytes: 123 };
         }
         if (request.kind === 'restoreStream') return { ...complete(), exitCode: options.streamFails ? 1 : 0,
+            ...(options.streamFails ? { stderr: 'pg_restore: native import failed [REDACTED]', stderrTruncated: false } : {}),
             producer: { exitCode: 0, checksumSha256: checksum, bytes: 123 } };
         if (request.kind === 'health') return { kind: 'health', status: options.healthFails ? 'unhealthy' : 'healthy' };
         if (request.kind === 'writers') {
@@ -260,7 +261,8 @@ describe('exact PostgreSQL restore semantic owner', () => {
 
     it('never activates a failed import and preserves the original database', async () => {
         const native = boundary({ streamFails: true }); const receipt = await prepare(native);
-        expect(await confirm(native, receipt)).toMatchObject({ kind: 'recoveryRequired', verified: false });
+        expect(await confirm(native, receipt)).toMatchObject({ kind: 'recoveryRequired', verified: false, code: 'restore_failed',
+            nativeFailure: { exitCode: 1, stderr: 'pg_restore: native import failed [REDACTED]', stderrTruncated: false } });
         expect(native.names).toContain('app');
         expect(native.effects.some(effect => effect.includes('ALTER DATABASE'))).toBe(false);
     });

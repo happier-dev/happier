@@ -23,6 +23,18 @@ export async function executeServiceCommandStream(input: Readonly<{
     const releases: HostAuthorizedPluginExecLaunch['release'][] = [];
     let producerOutcome: ChildOutcome | undefined;
     let consumerOutcome: ChildOutcome | undefined;
+    const checksum = createHash('sha256');
+    let bytes = 0;
+    const naturalExit = (outcome: ChildOutcome | undefined) => outcome?.termination.requestedBy.kind === 'none'
+        && outcome.termination.observed.kind === 'exit';
+    const result = (exitCode: number, diagnostic: ChildOutcome): ServiceCommandResultV1 => {
+        if (!producerOutcome || producerOutcome.termination.observed.kind !== 'exit' || !consumerOutcome) return { kind: 'outcome_unknown' };
+        return { kind: 'completed', exitCode,
+            stdout: Buffer.from(consumerOutcome.stdout).toString('utf8'), stderr: Buffer.from(diagnostic.stderr).toString('utf8'),
+            stdoutTruncated: consumerOutcome.stdoutTruncated, stderrTruncated: diagnostic.stderrTruncated,
+            producer: { exitCode: producerOutcome.termination.observed.exitCode, bytes, checksumSha256: checksum.copy().digest('hex'),
+                stderr: Buffer.from(producerOutcome.stderr).toString('utf8'), stderrTruncated: producerOutcome.stderrTruncated } };
+    };
     let producerSettled = false;
     let stopping: Promise<void> | undefined;
     const stop = () => stopping ??= (async () => {
@@ -32,6 +44,9 @@ export async function executeServiceCommandStream(input: Readonly<{
             await captures[index]!.stopNative?.();
             await child.dispose();
             await child.waitForSettlement();
+            const outcome = await child.handle.wait();
+            if (index === 0) consumerOutcome = outcome;
+            else producerOutcome = outcome;
         }
     })();
     let rejectCancellation!: (reason: unknown) => void;
@@ -59,23 +74,25 @@ export async function executeServiceCommandStream(input: Readonly<{
         const [consumer, producer] = children as [Child, Child];
         // The supervisor has no diagnostic subscription to raw stdout in this
         // mode. Each awaited write provides OS-stream backpressure.
-        const checksum = createHash('sha256');
-        let bytes = 0;
+        const consumerExit = consumer.handle.wait().then(outcome => { consumerOutcome = outcome; return outcome; });
         const transfer = (async () => {
             for await (const chunk of producer.child.stdout) {
                 signal.throwIfAborted();
                 const data: Buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-                await consumer.handle.write(data);
+                // A custom-archive reader may finish before pipe EOF. Drain the
+                // producer anyway: its complete bytes/checksum and exit own success.
+                if (!naturalExit(consumerOutcome)) {
+                    try { await consumer.handle.write(data); }
+                    catch (error) { if (!naturalExit(await consumerExit)) throw error; }
+                }
                 checksum.update(data);
                 bytes += data.byteLength;
             }
         })();
-        const consumerExit = consumer.handle.wait().then(outcome => { consumerOutcome = outcome; return outcome; });
-        const prematureExit = consumer.handle.waitForExit().then(() => { throw new Error('Service stream consumer exited before producer success'); });
         const producerExit = producer.handle.wait().then(outcome => { producerOutcome = outcome; return outcome; });
         signal.addEventListener('abort', onAbort, { once: true });
         if (signal.aborted) onAbort();
-        const [, produced] = await Promise.race([Promise.all([transfer, producerExit]), prematureExit, cancelled]);
+        const [, produced] = await Promise.race([Promise.all([transfer, producerExit]), cancelled]);
         if (produced.termination.requestedBy.kind !== 'none' || produced.termination.observed.kind !== 'exit') {
             throw new Error('Service stream producer did not settle');
         }
@@ -86,30 +103,19 @@ export async function executeServiceCommandStream(input: Readonly<{
         signal.throwIfAborted();
         await consumer.handle.closeStdin();
         const consumed = await Promise.race([consumerExit, cancelled]);
-        if (consumed.termination.requestedBy.kind !== 'none' || consumed.termination.observed.kind !== 'exit'
-            || consumed.termination.observed.exitCode !== 0) throw new Error('Service stream consumer did not succeed');
+        if (consumed.termination.requestedBy.kind !== 'none' || consumed.termination.observed.kind !== 'exit') {
+            throw new Error('Service stream consumer did not settle');
+        }
         await consumer.dispose();
         await consumer.waitForSettlement();
         for (const launch of launches) await launch.retireDeploymentRuntimeFiles?.();
         for (const release of releases) await release();
-        return { kind: 'completed', exitCode: consumed.termination.observed.exitCode,
-            stdout: Buffer.from(consumed.stdout).toString('utf8'), stderr: Buffer.from(consumed.stderr).toString('utf8'),
-            stdoutTruncated: consumed.stdoutTruncated, stderrTruncated: consumed.stderrTruncated,
-            producer: { exitCode: 0, bytes, checksumSha256: checksum.digest('hex'),
-                stderr: Buffer.from(produced.stderr).toString('utf8'), stderrTruncated: produced.stderrTruncated } };
+        return result(consumed.termination.observed.exitCode, consumed);
     } catch (error) {
         if (!children.length) {
             for (const release of releases) await release();
             throw error;
         }
-        // Keep only typed cause/exit facts in the private daemon file. Raw
-        // stream data, stderr, argv and credential-bearing messages stay out.
-        logger.warnLocalFile('[Service command stream] Native stream failed', {
-            operationId: input.producer.context.operation.operationId,
-            failureCause: projectActionFailureCauseV1(error, 'service.stream'),
-            producerExitCode: producerOutcome?.termination.observed.kind === 'exit' ? producerOutcome.termination.observed.exitCode : null,
-            consumerExitCode: consumerOutcome?.termination.observed.kind === 'exit' ? consumerOutcome.termination.observed.exitCode : null,
-        });
         let nativeCleanupSettled = false;
         try {
             await stop();
@@ -123,11 +129,24 @@ export async function executeServiceCommandStream(input: Readonly<{
                 failureCause: projectActionFailureCauseV1(cleanupError, 'service.stream.cleanup'),
             });
         }
+        // Join cleanup before recording termination, otherwise the producer's
+        // observation is lost on an early reader exit. Never log native bytes.
+        logger.warnLocalFile('[Service command stream] Native stream failed', {
+            operationId: input.producer.context.operation.operationId,
+            failureCause: projectActionFailureCauseV1(error, 'service.stream'),
+            producerExitCode: producerOutcome?.termination.observed.kind === 'exit' ? producerOutcome.termination.observed.exitCode : null,
+            consumerExitCode: consumerOutcome?.termination.observed.kind === 'exit' ? consumerOutcome.termination.observed.exitCode : null,
+            producerTerminationKind: producerOutcome?.termination.observed.kind,
+            consumerTerminationKind: consumerOutcome?.termination.observed.kind,
+        });
+        let allReleased = true;
         for (const [index, release] of releases.entries()) {
             // A natural producer exit or the native owner's successful stop,
             // followed by physical child settlement, already proves custody.
-            // Ordinary Docker exec has no native-stop proof; keep it unknown.
-            if ((index === 1 && producerSettled) || (nativeCleanupSettled && captures[index]!.stopNative)) {
+            // A naturally exited consumer is the same positive proof. A killed
+            // ordinary Docker exec still has no native-stop proof; keep it unknown.
+            const outcome = index === 0 ? consumerOutcome : producerOutcome;
+            if ((index === 1 && producerSettled) || (nativeCleanupSettled && (naturalExit(outcome) || captures[index]!.stopNative))) {
                 try { await release(); continue; } catch (releaseError) {
                     logger.warnLocalFile('[Service command stream] Native release failed', {
                         operationId: input.producer.context.operation.operationId,
@@ -135,9 +154,15 @@ export async function executeServiceCommandStream(input: Readonly<{
                     });
                 }
             }
+            allReleased = false;
             const observeNativeSettlement = captures[index]!.observeNativeSettlement;
             machineNativeEffectAdmission.markUnsettled(input.producer.context, { releaseAfterNativeSettlement: release,
                 ...(observeNativeSettlement ? { observeNativeSettlement } : {}) });
+        }
+        if (allReleased) {
+            const failed = [consumerOutcome, producerOutcome].find(outcome => naturalExit(outcome)
+                && outcome?.termination.observed.kind === 'exit' && outcome.termination.observed.exitCode !== 0);
+            if (failed?.termination.observed.kind === 'exit') return result(failed.termination.observed.exitCode, failed);
         }
         return { kind: 'outcome_unknown' };
     } finally { signal.removeEventListener('abort', onAbort); }

@@ -2,6 +2,7 @@ import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
+import { DeploymentBackupNativeFailureV1Schema } from './deploymentBackupActionsV1.js';
 
 const restoreTarget = () => ({ serverId: id, environmentId: id, machineId: id, installationId: id,
   targetLinkId: id, deploymentId: id, restoreBackupId: id, expectedRevision: revision,
@@ -41,6 +42,7 @@ export function readDeploymentRestoreStepProgressV1(phase: unknown): DeploymentR
 /** Restore failure evidence uses the same native step facts as successful results. */
 export const DeploymentRestoreFailureResultV1Schema = lazyZodSchema(() => z.strictObject({
   steps: z.array(DeploymentRestoreStepV1Schema),
+  nativeFailure: z.optional(DeploymentBackupNativeFailureV1Schema),
 }));
 export type DeploymentRestoreFailureResultV1 = z.infer<typeof DeploymentRestoreFailureResultV1Schema>;
 const restoreSteps = () => ({ steps: z.optional(z.array(DeploymentRestoreStepV1Schema)) });

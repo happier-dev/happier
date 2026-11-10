@@ -17,17 +17,23 @@ export function backupOperationFailureV1(code: string, step: string, evidence?: 
     throw Object.assign(new Error(code), { code, step, ...(evidence ? { details: evidence } : {}) });
 }
 
+/** The admitted process owner has already redacted stderr; retain only its closed failure facts. */
+export function readBackupNativeFailureEvidenceV1(nativeResult?: Extract<DeploymentBackupNativeResultV1, { kind: 'completed' }>)
+    : Pick<DeploymentBackupMaintenanceFailureEvidenceV1, 'nativeFailure'> | undefined {
+    const native = nativeResult && nativeResult.exitCode !== 0
+        ? DeploymentBackupNativeFailureV1Schema.safeParse({ exitCode: nativeResult.exitCode,
+            stderr: nativeResult.stderr, stderrTruncated: nativeResult.stderrTruncated }) : undefined;
+    return native?.success ? { nativeFailure: native.data } : undefined;
+}
+
 /** Native stdout stays private; only the admitted adapter's closed, redacted failure facts cross a catch. */
 export async function backupOperationStepV1<T>(step: string, effect: () => T | Promise<T>,
     nativeResult?: Extract<DeploymentBackupNativeResultV1, { kind: 'completed' }>): Promise<T> {
     try { return await effect(); } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
             ? error.code : 'outcome_unknown';
-        const native = nativeResult && nativeResult.exitCode !== 0
-            ? DeploymentBackupNativeFailureV1Schema.safeParse({ exitCode: nativeResult.exitCode,
-                stderr: nativeResult.stderr, stderrTruncated: nativeResult.stderrTruncated }) : undefined;
         return backupOperationFailureV1(code, step, { ...readDeploymentBackupMaintenanceFailureEvidenceV1(error),
-            ...(native?.success ? { nativeFailure: native.data } : {}) });
+            ...readBackupNativeFailureEvidenceV1(nativeResult) });
     }
 }
 

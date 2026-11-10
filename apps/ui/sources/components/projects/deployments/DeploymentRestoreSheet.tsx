@@ -2,6 +2,9 @@ import * as React from 'react';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { View } from 'react-native';
 import type { DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isRecord } from '@happier-dev/protocol/inputs/inputRecords';
+import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import {
   readDeploymentRestoreStepProgressV1,
   type DeploymentRestoreStepV1,
@@ -74,7 +77,7 @@ type Step =
   | Readonly<{ kind: 'check' }>
   | Readonly<{ kind: 'prepared'; preparation: DeploymentRestorePreparation }>
   | Readonly<{ kind: 'settled'; result: Settled }>;
-type Refusal = Readonly<{ code: string; stale: boolean }>;
+type Refusal = Readonly<{ code: string; stale: boolean; failure?: ActionExecuteFailure }>;
 type RestoreStep = DeploymentRestoreStepV1;
 
 const STEP_ORDER: readonly RestoreStep['id'][] = ['safety', 'stop', 'restore', 'start', 'health'];
@@ -203,7 +206,7 @@ function DeploymentRestoreSheet(
         const stale = isDeploymentRestoreCheckStale(outcome.code);
         // A check that is no longer current cannot be confirmed; the person checks again.
         if (stale) setStep({ kind: 'check' });
-        setRefusal({ code: outcome.code, stale });
+        setRefusal({ code: outcome.code, stale, failure: outcome.failure });
       }
     } finally {
       stopObserving.current?.();
@@ -362,6 +365,9 @@ function DeploymentRestoreSheet(
   if (step.kind === 'settled') {
     const { result } = step;
     const restored = result.kind === 'restored';
+    const code = isRecord(result.evidence) && typeof result.evidence.code === 'string' ? result.evidence.code : result.kind;
+    const failure = restored ? null : presentActionFailureOutcome({ ok: false, errorCode: code, error: code,
+      details: result.evidence }, 'deployment');
     return (
       <ListPresentationProvider value="page" pageInsets="contained">
         <View testID="project-deployments.restore" style={deploymentSheetStyles.body}>
@@ -388,6 +394,8 @@ function DeploymentRestoreSheet(
                     : t('projects.deployments.restoreRecoveryRequired')
             }
             reason={t('projects.deployments.restoreCodeUnchanged')}
+            diagnosticCode={restored ? undefined : code}
+            diagnosticDetail={failure?.technicalDetails.map(line => `${line.label}: ${line.value}`).join('\n')}
           />
           {stepRows}
           {setChrome ? null : footer}
@@ -434,6 +442,8 @@ function DeploymentRestoreSheet(
                   : t('projects.deployments.restoreRefused')
             }
             diagnosticCode={refusal.code}
+            diagnosticDetail={refusal.failure ? presentActionFailureOutcome(refusal.failure, 'deployment')
+              .technicalDetails.map(line => `${line.label}: ${line.value}`).join('\n') : undefined}
           />
         ) : null}
         {setChrome ? null : footer}

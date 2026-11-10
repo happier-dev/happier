@@ -8,7 +8,8 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { DeploymentExecutionFailureDetailsV1Schema, DeploymentReviewConflictFailureDetailsV1Schema, DeploymentSourceAdmissionFailureV1Schema,
     DeploymentReceiptSettlementFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
-import { DeploymentTeardownEnvironmentPartialDetailsV1Schema, DeploymentBackupFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentTeardownEnvironmentPartialDetailsV1Schema, DeploymentBackupFailureDetailsV1Schema,
+    readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -61,7 +62,8 @@ export function presentActionFailureTechnicalDetails(failure: ApprovalFailureDia
     add('failure-error-class', t('approvals.failureTechnicalLabels.errorClass'), cause?.errorClass);
     add('failure-cause-code', t('approvals.failureTechnicalLabels.causeCode'), cause?.errorCode
         ?? (domainFailure && 'errorCode' in domainFailure ? domainFailure.errorCode : undefined));
-    const nativeFailure = backup?.success ? backup.data.nativeFailure : undefined;
+    const nativeFailure = scope === 'deployment'
+        ? readDeploymentBackupMaintenanceFailureEvidenceV1({ details: failure.details })?.nativeFailure : undefined;
     add('failure-native-exit-code', t('tools.structuredResult.exit'), nativeFailure?.exitCode);
     add('failure-native-stderr', t('tools.structuredResult.stderr'), nativeFailure?.stderr);
     add('failure-native-stderr-truncated', t('browserDiagnostics.host.fields.truncated'), nativeFailure?.stderrTruncated);

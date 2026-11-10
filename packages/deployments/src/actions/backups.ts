@@ -92,7 +92,7 @@ export async function runDeploymentBackupV1(input: DeploymentBackupRunInputV1): 
                 readResticRepositoryConfigV1(configResult.stdout, configResult.exitCode, configResult.stdoutTruncated), configResult);
         for (const { source, filename } of recipes) {
             const backup = await execute({ kind: 'backupStdin', sourceId: source.sourceId, filename }, source);
-            if (!backup.producer || backup.producer.exitCode !== 0) return refuse('backup_failed', 'producer');
+            if (!backup.producer || backup.producer.exitCode !== 0) return backupOperationStepV1('producer', () => refuse('backup_failed', 'producer'), backup);
             const summary = await backupOperationStepV1('backup', () => readResticBackupSummaryV1(backup.stdout, backup.exitCode, backup.stdoutTruncated), backup);
             snapshots.push({ environmentId: input.environmentId, sourceId: source.sourceId,
                 configRevision: input.configuration.configRevision, repositoryId, snapshotId: summary.snapshotId });
