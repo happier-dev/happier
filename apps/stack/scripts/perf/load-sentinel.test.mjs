@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../packages/cli-common/fileChangeObserver.mjs';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { createLoadSentinel, sentinelGraphs, isSentinelSource, watchLoadSentinel } from './load-sentinel.mjs';
 import { ENTRY_GRAPHS } from './entry-load.mjs';
+import { postBoardEntry } from '../../../../scripts/board/postBoardEntry.mjs';
 
 async function fixtureGraph(t) {
   const fixture = await createTempFixture(t, { prefix: 'load-sentinel-' });
@@ -42,6 +43,60 @@ test('real graph load transitions post one failure and one clear; unchanged fail
   assert.match(posts[1], /cleared/);
   assert.match(posts[1], /— RESULT —/);
   assert.doesNotMatch(posts[1], /URGENT/);
+});
+
+test('real board writer accepts the sentinel break and cleared RESULT', async t => {
+  const { fixture, graph, entry } = await fixtureGraph(t);
+  const board = fixture.path('HANDOFF.md');
+  const postFile = fixture.path('notice.md');
+  await writeFile(board, '# Fixture board\n');
+  const sentinel = createLoadSentinel({ repoDir: fixture.root, graphs: [graph], signal: t.signal,
+    post: async notice => {
+      await writeFile(postFile, notice);
+      await postBoardEntry(board, postFile);
+    } });
+  await writeFile(entry, 'throw new ReferenceError("boardBinding is not defined");');
+  await sentinel.request();
+  await writeFile(entry, 'export {};');
+  await sentinel.request();
+  await sentinel.request();
+  const published = await readFile(board, 'utf8');
+  assert.equal((published.match(/— URGENT —/g) ?? []).length, 1);
+  assert.equal((published.match(/— RESULT —/g) ?? []).length, 1);
+});
+
+for (const failedState of ['broken', 'cleared']) test(`a failed ${failedState} board write preserves announced state and sampling`, async t => {
+  const { fixture, graph, entry } = await fixtureGraph(t);
+  const published = [];
+  const diagnostics = [];
+  t.mock.method(console, 'error', line => diagnostics.push(JSON.parse(line)));
+  let rejected = false;
+  let attempts = 0;
+  let probes = 0;
+  const sentinel = createLoadSentinel({ repoDir: fixture.root, graphs: [graph], signal: t.signal,
+    onResult: () => { probes++; },
+    post: async notice => {
+      attempts++;
+      if (!rejected && notice.includes(` ${failedState} [`)) {
+        rejected = true;
+        throw Object.assign(new Error('private filesystem diagnostic'), { code: 'EACCES' });
+      }
+      published.push(notice);
+    } });
+  await writeFile(entry, 'throw new ReferenceError("retryBinding is not defined");');
+  await sentinel.request();
+  if (failedState === 'cleared') await writeFile(entry, 'export {};');
+  else assert.equal(published.length, 0);
+  await sentinel.request();
+  await sentinel.request();
+  const afterRetry = attempts;
+  const probesAfterRetry = probes;
+  await sentinel.request();
+  assert.equal(attempts, afterRetry, 'successful retry is deduplicated');
+  assert.ok(probes > probesAfterRetry, 'sampling continues after publication failure');
+  assert.equal(published.filter(notice => notice.includes(` ${failedState} [`)).length, 1);
+  assert.deepEqual(diagnostics, [{ event: 'load-sentinel-board-write-failed', graph: graph.id,
+    state: failedState, code: 'EACCES' }]);
 });
 
 test('a transient real graph failure that passes confirmation publishes nothing', async t => {

@@ -74,7 +74,19 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
   let pending = false;
   let running;
   let notice = 0;
-  const announce = (graph, state, details) => post(formatPost(graph, state, details, ++notice));
+  async function announce(graph, state, details) {
+    try {
+      await post(formatPost(graph, state, details, ++notice));
+      return true;
+    } catch (error) {
+      // Publication is best effort; only successful posts advance announced state.
+      // Never print writer messages, which can contain private paths or entry bytes.
+      const code = error?.code ?? error?.name;
+      console.error(JSON.stringify({ event: 'load-sentinel-board-write-failed', graph, state,
+        code: isPublicRuntimeImportDiagnostic(code) && /^[\w-]+$/.test(code) ? code : 'redacted' }));
+      return false;
+    }
+  }
   async function run() {
     do {
       pending = false;
@@ -98,10 +110,9 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
         if (result.status === 'passed') {
           if (previous) {
             for (const [key, details] of previous) {
-              await announce(graph.id, 'cleared', details);
-              previous.delete(key);
+              if (await announce(graph.id, 'cleared', details)) previous.delete(key);
             }
-            failures.delete(graph.id);
+            if (previous.size === 0) failures.delete(graph.id);
           }
           continue;
         }
@@ -113,7 +124,7 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
         const details = `graph=${graph.id}; importing module=${module}; code=${code}; symbol=${symbol}\n`
           + recent.files.map(file => `- ${file.path} — ${new Date(file.mtimeMs).toISOString()}`).join('\n')
           + (recent.complete ? '' : '\n- Import trace incomplete; only the observed failing module is attributed.');
-        await announce(graph.id, 'broken', details);
+        if (!await announce(graph.id, 'broken', details)) continue;
         const activeFailures = previous ?? new Map();
         activeFailures.set(key, details);
         failures.set(graph.id, activeFailures);
@@ -133,8 +144,8 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
 function formatPost(graph, state, details, notice) {
   const timestamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
   // Board readers remember whole headings; distinguish same-minute transitions.
-  return `### ${timestamp} UTC — LOAD-SENTINEL-1110 → ALL leads — ${state === 'broken' ? 'URGENT' : 'RESULT'} — ${graph} ${state} [${process.pid}:${notice}]\n`
-    + `- ${state === 'broken' ? 'Inspect the named import path and repair the shared-source load break.' : 'No action; the previously reported break cleared.'}\n`
+  return `### ${timestamp} UTC — LOAD-SENTINEL-1110 → ${state === 'broken' ? 'ALL leads' : 'ORCH-TOP'} — ${state === 'broken' ? 'URGENT' : 'RESULT'} — ${graph} ${state} [${process.pid}:${notice}]\n`
+    + `- ${state === 'broken' ? 'Inspect the named import path and repair the shared-source load break.' : 'ORCH-TOP: release any reload hold for this cleared break.'}\n`
     + `${details}\n`;
 }
 
