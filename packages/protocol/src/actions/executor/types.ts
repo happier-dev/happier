@@ -763,6 +763,8 @@ export type ActionExecutorContext = Readonly<{
     actionId?: string;
     /** Same-input failed creation receipt retained by the host; never transported or accepted from Action input. */
     previousSessionCreationFailure?: Extract<SessionSpawnNewResultV1, Readonly<{ type: 'error' }>>;
+    /** Provider outcome retained by this exact held restore; never Action input or RPC authority. */
+    previousRestoreSnapshot?: import('../../plugins/contributions/machineProvisioners.js').MachineProvisionerSnapshotResultV1;
     accept(result: unknown): void;
   }>;
   /** Receiving host's in-process runner port. Never serialized or accepted from Action input. */
@@ -824,8 +826,8 @@ export type ActionExecutorContext = Readonly<{
    */
   presentUserConfirmation?: Readonly<{
     actionId: ActionId;
-    /** Host confirmation binds normalized input. Plugin Account action.invoke binds the
-     * exact wrapper, portable source and whole canonical declaration at current-intent. */
+    /** Host confirmation binds normalized input; Plugin Account action.invoke binds
+     * the exact wrapper once when the approval is consumed. */
     inputDigest?: string;
     requestId?: string;
     accountId?: string;
@@ -1013,6 +1015,8 @@ export type ActionExecutorContext = Readonly<{
 
   /** Host-only approved proposal reference. Original caller facts supply defaults, never execution authority or policy. */
   approvedActionReplay?: Readonly<{ artifactId?: string;
+    /** Exact daemon candidate accepted by the native or Artifact review owner. */
+    pluginInstallReview?: import('../actionApprovalPresentation.js').PluginInstallApprovalPendingReview;
     /** Validated stored review facts; comparison evidence, never effect authority. */
     deploymentReview?: import('../../json/strictJsonValue.js').JsonValue;
     /** Exact demanded children recovered from this parent's approved preview. */
@@ -1361,6 +1365,8 @@ export type ActionAdmittedExecutionV1 = Readonly<{
 
 /** Review facts and bound operands enter the existing Artifact; execution closures stay invocation-local. */
 export type HostReviewedChildrenPreparationV1 = HostReviewedChildrenPlanV1 & Readonly<{
+  /** Host-only person-review floor for this exact prepared original; never a public operand or stored policy. */
+  requiredByPolicy?: true;
   /** Host-resolved operands retained in the existing approval input for replay. */
   input?: unknown;
   /** Admitted domain content disclosed with the parent review, never an effect operand. */
@@ -2053,6 +2059,10 @@ export type ActionExecutorDeps = Readonly<{
   /** Target-daemon semantic owner; no generic storage or approval bypass. */
   deploymentRestore?: (input: import('../../deployments/deploymentActionsV1.js').DeploymentBackupRestoreInputV1,
     context: ActionExecutorContext) => Promise<import('../../deployments/deploymentActionsV1.js').DeploymentBackupRestoreResultV1 | ActionExecuteFailure>;
+  prepareDeploymentRestore?: (request: Readonly<{
+    input: import('../../deployments/deploymentBackupRestoreV1.js').DeploymentBackupRestoreInputV1; context: ActionExecutorContext;
+  }>) => Promise<Readonly<{ input: import('../../deployments/deploymentBackupRestoreV1.js').DeploymentBackupRestoreInputV1;
+    preview: import('../../json/strictJsonValue.js').JsonValue }> | ActionExecuteFailure>;
   projectReadinessRead?: (input: import('../../projects/readinessV1.js').ProjectReadinessReadInputV1,
     context: ActionExecutorContext,
     executeCanonicalAction: (actionId: ActionId, input: unknown) => Promise<ActionExecuteResult>) =>
@@ -2064,7 +2074,13 @@ export type ActionExecutorDeps = Readonly<{
   deploymentTemplateInstantiate?: (input: DeploymentTemplateInstantiateInputV1, context: ActionExecutorContext,
     review?: import('../../deployments/deploymentTemplateInstantiationV1.js').DeploymentTemplateInstantiationReviewV1) =>
     Promise<DeploymentTemplateInstantiateResultV1 | ActionApprovalRequestCreatedResult | ActionExecuteFailure>;
-  prepareDeploymentTemplateInstantiation?: (request: Readonly<{ input: DeploymentTemplateInstantiateInputV1; context: ActionExecutorContext }>) =>
+  /** The Environment controller composes repository export and the sole definition switch. */
+  deploymentMoveToRepository?: (input: import('../../deployments/deploymentMoveToRepositoryV1.js').DeploymentMoveToRepositoryInputV1,
+    context: ActionExecutorContext,
+    executeCanonicalAction: (actionId: ActionId, input: unknown) => Promise<ActionExecuteResult>) => Promise<import('../../deployments/deploymentMoveToRepositoryV1.js').DeploymentMoveToRepositoryResultV1
+      | ActionApprovalRequestCreatedResult | ActionExecuteFailure>;
+  prepareDeploymentTemplateInstantiation?: (request: Readonly<{ input: DeploymentTemplateInstantiateInputV1; context: ActionExecutorContext;
+    executeCanonicalAction?: (actionId: ActionId, input: unknown) => Promise<ActionExecuteResult> }>) =>
     Promise<Readonly<{ input: DeploymentTemplateInstantiateInputV1; preview: import('../../json/strictJsonValue.js').JsonValue;
       hostReviewedChildren?: HostReviewedChildrenPreparationV1 }> | ActionExecuteFailure>;
   /** Creation resolves once and retains exact protected Artifact operands through review and execution. */
@@ -2181,6 +2197,8 @@ export type ActionExecutorDeps = Readonly<{
     backendTargetKey: string;
   }> | null;
   agentsBackendsList?: (args: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>) => Promise<AgentsBackendsListOutput>;
+  /** Per Agent routing id: the Account's connected-service default satisfies authentication, cannot be read, or is native. */
+  agentsConnectedDefaultRoutesRead?: (args: Readonly<{ agentIds: readonly string[]; signal?: AbortSignal }>, context: ActionExecutorContext) => Promise<Readonly<Record<string, 'connected' | 'unavailable' | 'native'>>>;
   machineAgentSignInStart?: (args: MachinesAgentsSignInStartInput & { serverId?: string; signal?: AbortSignal }) => Promise<MachinesAgentsSignInStartOutput>;
   machineAgentSignInStatus?: (args: MachinesAgentsSignInStatusInput & { serverId?: string; signal?: AbortSignal }, context: ActionExecutorContext) => Promise<AgentSignInStatusResponse>;
   machineAgentSignInCancel?: (args: MachinesAgentsSignInCancelInput & { serverId?: string; signal?: AbortSignal }) => Promise<MachinesAgentsSignInCancelOutput>;
@@ -2209,7 +2227,10 @@ export type ActionExecutorDeps = Readonly<{
     effectActionId?: 'machines.agents.install.cancel';
   }) => Promise<DaemonAgentInstallCancelResponse | ActionExecuteFailure>;
   agentsModelsList?: (args: Readonly<{
-    purpose?: 'scm_diff_summary';
+    purpose?: 'scm_diff_summary' | 'llm_task_runner';
+    task?: import('../../llm/tasks/llmTaskRunnerSelection.js').LlmTaskIdV1;
+    choice?: import('../../llm/tasks/llmTaskRunnerConfigV1.js').LlmTaskRunnerChoiceV1;
+    sessionAgentTargetKey?: string;
     discoveryTargetKey?: string;
     modelSelector?: import('../../scm/diffSummary.js').ScmDiffSummaryModelSelector;
     agentId?: string;
@@ -3559,7 +3580,7 @@ export type ActionExecutorDeps = Readonly<{
    * Host-admitted consequence defaults are resolved against the hook's current persisted policy.
    */
   isActionApprovalRequired?: (actionId: ActionId, ctx: ActionExecutorContext, input?: unknown, defaultUiConfirmation?: boolean,
-    approvedOperation?: Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> | null, approvalScope?: import('../actionSettings.js').ActionApprovalScopeV1,
+    approvedOperation?: Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> | null, approvalScope?: import('../actionApprovalPolicy.js').ActionApprovalPolicyScopeV1,
     defaultSafety?: import('../actionSpecs.js').ActionSpec['safety']) => boolean;
 
   /** Fresh owner read of exact approved effects; missing evidence never grants consent. */

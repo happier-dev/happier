@@ -1,5 +1,5 @@
 import type { ActionId } from '../actionIds.js';
-import type { ActionApprovalScopeV1 } from '../actionSettings.js';
+import type { ActionApprovalPolicyScopeV1 } from '../actionApprovalPolicy.js';
 import type { ActionSpec } from '../actionSpecs.js';
 import { MachineServiceLogsReadInputV1Schema, MachineServiceControlInputV1Schema } from '../specs/machine/services.js';
 import { MachineServiceExecInputV1Schema } from '../specs/machine/services.js';
@@ -8,7 +8,7 @@ import type { ActionHomeEquivalence } from './coreInvocation.js';
 import type { ActionExecuteFailure, ActionExecutorContext, ActionExecutorDeps } from './types.js';
 
 type ApprovalScopeAdmission = Readonly<{
-  approvalScope?: ActionApprovalScopeV1;
+  approvalScope?: ActionApprovalPolicyScopeV1;
 }>;
 
 /** Scope comes from the admitted owner, never caller context or a policy snapshot. */
@@ -36,7 +36,8 @@ export async function readActionApprovalScopeAdmissionV1(args: Readonly<{
     if (!resolved) return { ok: false, errorCode: 'service_admission_unavailable', error: 'service_admission_unavailable' };
     return 'ok' in resolved ? resolved : { approvalScope: resolved };
   }
-  if (spec.approvalScope === 'environment') {
+  if (spec.approvalScope === 'environment'
+    || actionId === 'deployments.environments.create' && readRecord(input).purpose === 'preview') {
     if (!deps.resolveEnvironmentApprovalScope) return unavailable();
     const admission = await deps.resolveEnvironmentApprovalScope({ actionId, input, context, phase: args.phase });
     if ('ok' in admission) return admission;

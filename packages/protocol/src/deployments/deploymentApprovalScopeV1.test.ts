@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDeploymentApprovalScopeResolverV1, resolveInitialDeploymentApprovalV1 } from './deploymentApprovalScopeV1.js';
+import { createDeploymentApprovalScopeResolverV1, readDeploymentEnvironmentApprovalScopeV1, resolveInitialDeploymentApprovalV1 } from './deploymentApprovalScopeV1.js';
 import { DeploymentEnvironmentHeaderV1Schema } from './deploymentActionsV1.js';
 import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '../actions/actionSettings.js';
 import { resolveActionApprovalRouting } from '../actions/actionApprovalPolicy.js';
@@ -35,6 +35,29 @@ describe('initial deployment approval', () => {
 });
 
 describe('preview template approval scope', () => {
+  it('uses the projected main template for a named companion while preserving its own stricter approval', async () => {
+    // The canonical header reader supplies this derived template relationship, not a stored companion preview row.
+    const companion = { ...environment('companion'), previewCompanionOfEnvironmentId: 'main-preview',
+      previewTemplateEnvironmentId: 'template' };
+    const admitted = readDeploymentEnvironmentApprovalScopeV1(companion);
+    expect(admitted).toEqual({ scope: { kind: 'environment', environmentId: companion.id, inheritedEnvironmentId: 'template' } });
+    // Home approval metadata is the boundary; its strict parser and resolver stay real.
+    const resolve = createDeploymentApprovalScopeResolverV1(async () => { throw new Error('Expected the metadata read'); },
+      async () => ({ ok: true, environment: { id: companion.id, projectSourceId: companion.projectSourceId,
+        purpose: companion.purpose, previewCompanionOfEnvironmentId: companion.previewCompanionOfEnvironmentId,
+        previewTemplateEnvironmentId: companion.previewTemplateEnvironmentId } }));
+    expect(await resolve({ actionId: 'deployments.deploy', input: { serverId: 'home', environmentId: companion.id },
+      context: {}, phase: 'prepare' })).toEqual(admitted);
+    if ('ok' in admitted || !admitted.scope) throw new Error('Expected companion template scope');
+    const settings = setScopedActionApprovalPreference({ settings: ActionsSettingsV1Schema.parse({ v: 1 }),
+      actionId: 'deployments.deploy', scope: { kind: 'environment', environmentId: 'template' }, surface: 'agent', mode: 'waived' });
+    expect(resolveActionApprovalRouting({ actionId: 'deployments.deploy', spec: getActionSpec('deployments.deploy'),
+      input: {}, context: { surface: 'agent' }, settings, approvalScope: admitted.scope }).required).toBe(false);
+    const stricter = setScopedActionApprovalPreference({ settings, actionId: 'deployments.deploy',
+      scope: { kind: 'environment', environmentId: companion.id }, surface: 'agent', mode: 'required' });
+    expect(resolveActionApprovalRouting({ actionId: 'deployments.deploy', spec: getActionSpec('deployments.deploy'),
+      input: {}, context: { surface: 'agent' }, settings: stricter, approvalScope: admitted.scope }).required).toBe(true);
+  });
   it('retains the typed Environment validation refusal before a Link replay', async () => {
     const refusal = { ok: false as const, error: 'deployment_invalid' as const,
       diagnostic: { step: 'target_link.environment_read' as const, field: 'serverId', rule: 'invalid_type' as const } };
@@ -62,10 +85,15 @@ describe('preview template approval scope', () => {
     for (const child of children) {
       const admitted = await resolve({ actionId: 'deployments.deploy',
         input: { serverId: 'home', environmentId: child.id }, context: {}, phase: 'prepare' });
-      expect(admitted).toEqual({ scope });
+      expect(admitted).toEqual({ scope: { kind: 'environment', environmentId: child.id,
+        inheritedEnvironmentId: template.id } });
       if ('ok' in admitted || !admitted.scope) throw new Error('Expected admitted template scope');
       expect(resolveActionApprovalRouting({ actionId: 'deployments.deploy', spec: getActionSpec('deployments.deploy'),
         input: {}, context: { surface: 'agent' }, settings, approvalScope: admitted.scope }).required).toBe(false);
+      const stricter = setScopedActionApprovalPreference({ settings, actionId: 'deployments.deploy',
+        scope: { kind: 'environment', environmentId: child.id }, surface: 'agent', mode: 'required' });
+      expect(resolveActionApprovalRouting({ actionId: 'deployments.deploy', spec: getActionSpec('deployments.deploy'),
+        input: {}, context: { surface: 'agent' }, settings: stricter, approvalScope: admitted.scope }).required).toBe(true);
     }
     settings = setScopedActionApprovalPreference({ settings, actionId: 'deployments.deploy', scope,
       surface: 'agent', mode: 'required' });

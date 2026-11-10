@@ -1,4 +1,6 @@
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure } from '../actions/executor/types.js';
+import type { ActionEnvironmentApprovalScopeAdmissionV1 } from '../actions/actionApprovalPolicy.js';
+import { readActionFailureEnvelope } from '../actions/executor/actionFailureEnvelope.js';
 import { artifactSavedByFromActionContextV1 } from '../artifacts/artifactBinaryV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { z } from 'zod/mini';
@@ -16,11 +18,23 @@ export const DeploymentApprovalEnvironmentResultV1Schema = lazyZodSchema(() => z
   z.strictObject({ ok: z.literal(true), environment: z.strictObject({
     id: DeploymentIdentifierV1Schema, projectSourceId: DeploymentIdentifierV1Schema,
     purpose: z.enum(['standard', 'preview']), previewTemplateEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
+    previewCompanionOfEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
   }) }), DeploymentActionFailureV1Schema,
 ]));
 export type DeploymentApprovalEnvironmentResultV1 = z.infer<typeof DeploymentApprovalEnvironmentResultV1Schema>;
 type ApprovalMetadataRead = (input: Readonly<{ serverId: string; environmentId: string; context: ActionExecutorContext }>) =>
   Promise<DeploymentApprovalEnvironmentResultV1 | ActionExecuteFailure>;
+
+/** Shared by execution and policy presenters after the Environment owner admits its header. */
+export function readDeploymentEnvironmentApprovalScopeV1(environment: Readonly<{
+  id: string; purpose: 'standard' | 'preview'; previewTemplateEnvironmentId?: string;
+  previewCompanionOfEnvironmentId?: string;
+}>): ActionEnvironmentApprovalScopeAdmissionV1 | ActionExecuteFailure {
+  const inheritsTemplate = environment.purpose === 'preview' || Boolean(environment.previewCompanionOfEnvironmentId);
+  if (inheritsTemplate && !environment.previewTemplateEnvironmentId) return failure('deployment_unavailable');
+  return { scope: { kind: 'environment', environmentId: environment.id,
+    ...(inheritsTemplate ? { inheritedEnvironmentId: environment.previewTemplateEnvironmentId } : {}) } };
+}
 
 type EnvironmentApprovalRead = Readonly<{
   serverId: string; environmentId: string; context: ActionExecutorContext;
@@ -36,7 +50,8 @@ function readApprovalEnvironment(input: EnvironmentApprovalRead & Readonly<{ rea
 async function readApprovalEnvironment(input: EnvironmentApprovalRead & Readonly<{ readMetadata?: ApprovalMetadataRead }>) {
   const loaded = input.readMetadata ? await input.readMetadata(input)
     : await input.read('deployments.environments.get', { serverId: input.serverId, environmentId: input.environmentId }, input.context);
-  if ('errorCode' in loaded) return loaded;
+  const transportFailure = readActionFailureEnvelope(loaded);
+  if (transportFailure) return transportFailure;
   const current = (input.readMetadata ? DeploymentApprovalEnvironmentResultV1Schema : DeploymentEnvironmentGetResultV1Schema).safeParse(loaded);
   if (!current.success) return failure('invalid_action_output');
   if (!current.data.ok) return failure(current.data.error, current.data);
@@ -62,11 +77,15 @@ export function createDeploymentApprovalScopeResolverV1(
   read: NonNullable<ActionExecutorDeps['deploymentAction']>,
   readMetadata?: ApprovalMetadataRead,
 ): NonNullable<ActionExecutorDeps['resolveEnvironmentApprovalScope']> {
-  return async ({ actionId, input, context }) => {
+  return async ({ actionId, input, context }): Promise<ActionEnvironmentApprovalScopeAdmissionV1 | ActionExecuteFailure> => {
     const target = readRecord(input);
     const serverId = actionId === 'deployments.prepare' ? context.serverId : target.serverId;
     if (typeof serverId !== 'string') return failure('invalid_parameters');
     let environmentId = typeof target.environmentId === 'string' ? target.environmentId : undefined;
+    if (actionId === 'deployments.environments.create') {
+      const preview = readRecord(target.preview);
+      environmentId = typeof preview.templateEnvironmentId === 'string' ? preview.templateEnvironmentId : undefined;
+    }
     if (actionId === 'deployments.templates.instantiate') {
       const environment = readRecord(target.environment);
       if (environment.kind === 'create') return { scope: null };
@@ -81,7 +100,8 @@ export function createDeploymentApprovalScopeResolverV1(
       if (typeof target.deploymentId !== 'string') return failure('invalid_parameters');
       const loaded = await read('deployments.receipts.get', { serverId, deploymentId: target.deploymentId,
         ...(environmentId === undefined ? {} : { environmentId }) }, context);
-      if ('errorCode' in loaded) return loaded;
+      const transportFailure = readActionFailureEnvelope(loaded);
+      if (transportFailure) return transportFailure;
       const receipt = DeploymentReceiptGetResultV1Schema.safeParse(loaded);
       if (!receipt.success) return failure('invalid_action_output');
       if (!receipt.data.ok) return failure(receipt.data.error, receipt.data);
@@ -93,15 +113,10 @@ export function createDeploymentApprovalScopeResolverV1(
     const current = await readApprovalEnvironment({ read, readMetadata, serverId, environmentId, context });
     if (!current.ok) return current;
     const environment = current.environment;
-    if ((actionId === 'deployments.prepare' || actionId === 'deployments.templates.instantiate')
+    if ((actionId === 'deployments.prepare' || actionId === 'deployments.templates.instantiate'
+      || actionId === 'deployments.environments.create')
       && environment.projectSourceId !== target.projectSourceId) return failure('deployment_access_denied');
-    // The metadata owner admits the non-content child/template relation.
-    // All previews spend the template's live preference, never a copied waiver.
-    if (environment.purpose === 'preview') {
-      if (!environment.previewTemplateEnvironmentId) return failure('deployment_unavailable');
-      return { scope: { kind: 'environment', environmentId: environment.previewTemplateEnvironmentId } };
-    }
-    return { scope: { kind: 'environment', environmentId: environment.id } };
+    return readDeploymentEnvironmentApprovalScopeV1(environment);
   };
 }
 

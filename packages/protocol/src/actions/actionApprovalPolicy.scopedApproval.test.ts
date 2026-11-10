@@ -5,49 +5,63 @@ import { getActionSpec } from './actionSpecs.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { setScopedActionApprovalPreference } from './actionSettings.js';
 import { WorkflowApprovedOperationV1Schema } from './approvedOperationV1.js';
-import { readActionApprovalScopeAdmissionV1 } from './executor/approvalScope.js';
+import { createDeploymentApprovalScopeResolverV1 } from '../deployments/deploymentApprovalScopeV1.js';
 
 describe('admitted scoped Actions approval', () => {
-  it('projects only the admitted Environment scope without dormant inheritance or mandatory flags', async () => {
-    const scope = { kind: 'environment', environmentId: 'staging' } as const;
-    const boundaryAdmission = { scope, previewTemplateEnvironmentId: 'template', mandatoryApprovalRequired: true } as const;
-    const admitted = await readActionApprovalScopeAdmissionV1({
-      actionId: 'deployments.deploy', spec: getActionSpec('deployments.deploy'), input: {},
-      context: { surface: 'cli' }, phase: 'prepare', isSameHome: (left, right) => left === right,
-      deps: { resolveEnvironmentApprovalScope: async () => boundaryAdmission },
-    });
-    expect(admitted).toEqual({ approvalScope: scope });
-  });
-
-  it('lets the Environment owner waive deployment confirmation independently of unrelated template preferences', async () => {
-    const scope = { kind: 'environment', environmentId: 'staging' } as const;
-    const settings = normalizeActionsSettingsV1({ v: 1, actions: {}, scopedApprovalPreferences: [
-      { actionId: 'deployments.deploy', scope, approvalRequiredSurfaces: [], approvalWaivedSurfaces: ['cli'] },
-      { actionId: 'deployments.deploy', scope: { kind: 'environment', environmentId: 'template' },
-        approvalRequiredSurfaces: ['cli'], approvalWaivedSurfaces: [] },
-    ] });
-    const boundaryAdmission = { scope, previewTemplateEnvironmentId: 'template', mandatoryApprovalRequired: true } as const;
+  // P44-C27: inherited Allow is live; only stricter child policy can override it.
+  it('routes a real preview deploy through live parent policy and preserves stricter child Ask', async () => {
+    const scope = { kind: 'environment', environmentId: 'pr-one' } as const;
+    const parentScope = { kind: 'environment', environmentId: 'template' } as const;
+    let templateEnvironmentId: string = parentScope.environmentId;
+    let settings = setScopedActionApprovalPreference({ settings: normalizeActionsSettingsV1({ v: 1 }),
+      actionId: 'deployments.deploy', scope: parentScope, surface: 'cli', mode: 'waived' });
     const effects: unknown[] = [];
+    const deploymentAction: NonNullable<ActionExecutorDeps['deploymentAction']> = async (_actionId, input) => {
+      effects.push(input);
+      return { ok: false, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' };
+    };
+    const resolveEnvironmentApprovalScope = createDeploymentApprovalScopeResolverV1(deploymentAction,
+      async ({ environmentId }) => ({ ok: true, environment: { id: environmentId, projectSourceId: 'source',
+        purpose: environmentId === 'unrelated' ? 'standard' : 'preview',
+        ...(environmentId === 'unrelated' ? {} : { previewTemplateEnvironmentId: templateEnvironmentId }) } }));
+    const approvals: unknown[] = [];
     const executor = createActionExecutor({
-      resolveEnvironmentApprovalScope: async () => boundaryAdmission,
-      deploymentAction: async (_actionId, input) => {
-        effects.push(input);
-        return { ok: false, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' };
-      },
+      resolveEnvironmentApprovalScope, deploymentAction,
+      approvalsCreate: async ({ request }) => { approvals.push(request); return { artifactId: `approval-${approvals.length}` }; },
     });
-    const result = await executor.prepare('deployments.deploy', {
+    const input = {
       serverId: 'home', environmentId: scope.environmentId, expectedRevision: 1,
       targetLinkId: 'target', expectedTargetLinkRevision: 1, requestKey: 'deploy',
       contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1,
-    }, { surface: 'cli', serverId: 'home', actionsSettings: settings });
-    expect(result.kind).toBe('ready');
-    if (result.kind === 'ready') expect(await result.invocation.run())
-      .toMatchObject({ ok: false, errorCode: 'deployment_unavailable' });
+    };
+    const context = { surface: 'cli' as const, authority: 'account_automation' as const,
+      serverId: 'home', machineId: 'controller', runtimeAccountId: 'owner', actionRequestId: 'preview-policy',
+      get actionsSettings() { return settings; } };
+    expect(await executor.execute('deployments.deploy', input, context)).toMatchObject({ ok: false, errorCode: 'deployment_unavailable' });
     expect(effects).toHaveLength(1);
-    const required = setScopedActionApprovalPreference({ actionId: 'deployments.deploy', scope,
+    settings = setScopedActionApprovalPreference({ actionId: 'deployments.deploy', scope,
       surface: 'cli', mode: 'required', settings });
-    expect(resolveActionApprovalRouting({ actionId: 'deployments.deploy', spec: getActionSpec('deployments.deploy'),
-      context: { surface: 'cli' }, settings: required, approvalScope: scope }).required).toBe(true);
+    const stricterChild = await executor.execute('deployments.deploy', input, context);
+    expect(effects).toHaveLength(1);
+    expect(stricterChild, JSON.stringify(stricterChild)).toMatchObject({ ok: true,
+      result: { kind: 'approval_request_created' } });
+    settings = setScopedActionApprovalPreference({ actionId: 'deployments.deploy', scope,
+      surface: 'cli', mode: 'waived', settings });
+    settings = setScopedActionApprovalPreference({ actionId: 'deployments.deploy', scope: parentScope,
+      surface: 'cli', mode: 'required', settings });
+    expect(await executor.execute('deployments.deploy', input, context)).toMatchObject({ ok: true,
+      result: { kind: 'approval_request_created' } });
+    expect(effects).toHaveLength(1);
+    expect(approvals).toHaveLength(2);
+    expect(await executor.execute('deployments.deploy', { ...input, environmentId: 'unrelated' }, context))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(effects).toHaveLength(1);
+    settings = setScopedActionApprovalPreference({ actionId: 'deployments.deploy', scope: parentScope,
+      surface: 'cli', mode: 'waived', settings });
+    templateEnvironmentId = 'other-template';
+    expect(await executor.execute('deployments.deploy', input, context))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(effects).toHaveLength(1);
   });
 
   it('keeps unavailable Environment admission closed even when its approval preference is waived', async () => {
@@ -69,6 +83,48 @@ describe('admitted scoped Actions approval', () => {
     }) });
     expect(result).toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'deployment_unavailable' } });
     expect(effects).toEqual([]);
+  });
+
+  it('uses the admitted template policy for preview Create before a child Environment exists', async () => {
+    let settings = setScopedActionApprovalPreference({ settings: normalizeActionsSettingsV1({ v: 1 }),
+      actionId: 'deployments.environments.create', scope: { kind: 'environment', environmentId: 'template' },
+      surface: 'cli', mode: 'waived' });
+    let sourceId = 'source';
+    const effects: unknown[] = [];
+    const deploymentAction: NonNullable<ActionExecutorDeps['deploymentAction']> = async (_actionId, input) => {
+      effects.push(input);
+      return { ok: false, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' };
+    };
+    const approvals: unknown[] = [];
+    const executor = createActionExecutor({ deploymentAction,
+      resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(deploymentAction,
+        async ({ environmentId }) => ({ ok: true, environment: {
+          id: environmentId, projectSourceId: sourceId, purpose: 'standard',
+        } })),
+      approvalsCreate: async ({ request }) => { approvals.push(request); return { artifactId: 'create-approval' }; },
+    });
+    const input = { serverId: 'home', projectSourceId: 'source', requestKey: 'preview-create',
+      contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1,
+      protection: 'nonProduction' as const, purpose: 'preview' as const, deployerMode: 'managers' as const,
+      controllerMachineId: 'controller', preview: { templateEnvironmentId: 'template', expectedTemplateRevision: 1,
+        pullRequestId: 'pull-request', runtimeTargetLinkId: 'runtime' } };
+    const context = { surface: 'cli' as const, authority: 'account_automation' as const,
+      serverId: 'home', machineId: 'controller', runtimeAccountId: 'owner', actionRequestId: 'preview-create-policy',
+      get actionsSettings() { return settings; } };
+    const allowed = await executor.execute('deployments.environments.create', input, context);
+    expect(effects, JSON.stringify(allowed)).toHaveLength(1);
+    expect(allowed).toMatchObject({ ok: false, errorCode: 'deployment_unavailable' });
+    settings = setScopedActionApprovalPreference({ settings, actionId: 'deployments.environments.create',
+      scope: { kind: 'environment', environmentId: 'template' }, surface: 'cli', mode: 'required' });
+    expect(await executor.execute('deployments.environments.create', input, context))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(effects).toHaveLength(1);
+    expect(approvals).toHaveLength(1);
+    sourceId = 'other-source';
+    expect(await executor.execute('deployments.environments.create', input, context))
+      .toMatchObject({ ok: false, errorCode: 'deployment_access_denied' });
+    expect(effects).toHaveLength(1);
+    expect(approvals).toHaveLength(1);
   });
 
   it('consumes a token-owned exact operation without inventing Workflow origin and rechecks live stricter policy', async () => {

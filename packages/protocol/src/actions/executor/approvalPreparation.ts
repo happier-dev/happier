@@ -18,7 +18,6 @@ import { DeploymentActionInputSchemasV1, DeploymentDeployInputV1Schema, Deployme
 import { DeploymentTemplateInstantiationReviewV1Schema } from '../../deployments/deploymentTemplateInstantiationV1.js';
 import { WidgetSurfaceReadV1Schema, readWidgetActionSurfaceV1 } from '../../widgets/actionsV1.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '../../json/strictJsonValue.js';
-import type { RuntimeActionExecuteArgs } from './types.js';
 import type { ActionExecuteFailure } from './types.js';
 import { DaemonLocalServiceLauncherStartRequestV1Schema, LocalServiceStartApprovalReviewV1Schema } from '../../local/services/launcher/v1.js';
 import { admitWidgetActionSurfaceV1, readWidgetActionSurfaceAdmissionV1 } from '../../widgets/widgetActionScopeV1.js';
@@ -116,6 +115,7 @@ export async function resolveComputerActionSelection(
 
 export async function readDeploymentPreparation(deps: ActionExecutorDeps, actionId: ActionId, input: unknown,
   context: ActionExecutorContext, retainedReview?: JsonValue,
+  executeCanonicalAction?: (actionId: ActionId, input: unknown) => Promise<import('./types.js').ActionExecuteResult>,
 ): Promise<
   | Readonly<{ input: unknown; preview: JsonValue; hostReviewedChildren?: HostReviewedChildrenPreparationV1 }>
   | ActionExecuteFailure
@@ -160,6 +160,15 @@ export async function readDeploymentPreparation(deps: ActionExecutorDeps, action
     return { input: reviewed.data, preview: projectNativeJsonValueForTransport(review.data),
       ...(prepared.hostReviewedChildren ? { hostReviewedChildren: prepared.hostReviewedChildren } : {}) };
   }
+  if (actionId === 'deployments.backups.restore' && deps.prepareDeploymentRestore) {
+    const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
+    if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    const prepared = await deps.prepareDeploymentRestore({ input: parsed.data, context });
+    if ('errorCode' in prepared) return prepared;
+    const reviewed = DeploymentActionInputSchemasV1[actionId].safeParse(prepared.input);
+    return reviewed.success ? { input: reviewed.data, preview: prepared.preview }
+      : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+  }
   if (actionId === 'deployments.teardown' && deps.prepareDeploymentTeardown) {
     const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
     if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
@@ -192,7 +201,7 @@ export async function readDeploymentPreparation(deps: ActionExecutorDeps, action
     const parsed = schema.safeParse(input);
     if (!parsed.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     if (parsed.data.mode === 'preview') return null;
-    const prepared = await deps.prepareDeploymentTemplateInstantiation({ input: parsed.data, context });
+    const prepared = await deps.prepareDeploymentTemplateInstantiation({ input: parsed.data, context, executeCanonicalAction });
     if ('errorCode' in prepared) return prepared;
     const review = DeploymentTemplateInstantiationReviewV1Schema.safeParse(prepared.preview);
     if (!review.success) return { ok: false as const, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
@@ -234,7 +243,7 @@ export async function prepareApprovalRequest(params: Readonly<{
   deploymentReview?: JsonValue;
   hostReviewedChildren?: HostReviewedChildrenPlanV1;
   hostReviewedContent?: JsonValue;
-  executeCanonicalAction?: RuntimeActionExecuteArgs['executeCanonicalAction'];
+  executeCanonicalAction?: Parameters<NonNullable<ActionExecutorDeps['prepareDeploymentTemplateInstantiation']>>[0]['executeCanonicalAction'];
 }>): Promise<Readonly<{ actionArgs: unknown; preview: unknown }> | ActionExecuteFailure | null> {
   const spec = getActionSpec(params.actionId);
   const teamCredentialSources = [
@@ -322,9 +331,10 @@ export async function prepareApprovalRequest(params: Readonly<{
     ? params.actionId === 'machines.setup.apply' && params.deps.prepareMachineSetupApply
       || params.actionId === 'deployments.templates.instantiate' && params.deps.prepareDeploymentTemplateInstantiation
       || params.actionId === 'deployments.environments.create' && params.deps.prepareDeploymentEnvironmentCreate
+      || params.actionId === 'deployments.backups.restore' && params.deps.prepareDeploymentRestore
       || params.actionId === 'deployments.teardown' && params.deps.prepareDeploymentTeardown
       || (params.actionId === 'deployments.deploy' || params.actionId === 'deployments.rollback' || params.actionId === 'deployments.promote') && params.deps.prepareDeploymentAction
-      ? await readDeploymentPreparation(params.deps, params.actionId, params.input, params.context) : null
+      ? await readDeploymentPreparation(params.deps, params.actionId, params.input, params.context, undefined, params.executeCanonicalAction) : null
     : { input: params.actionArgs, preview: params.deploymentReview };
   // Observation callbacks stay host-private; review only the ordinary Action input.
   if (deployment && !('observePendingOperation' in deployment)) {

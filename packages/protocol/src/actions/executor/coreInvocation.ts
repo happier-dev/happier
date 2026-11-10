@@ -1,6 +1,6 @@
 import { type ActionId } from '../actionIds.js';
 import type { ActionExecutorContext, ActionPreparedInvocation, ActionPrepareResult } from './types.js';
-import type { ActionApprovalScopeV1 } from '../actionSettings.js';
+import type { ActionApprovalPolicyScopeV1 } from '../actionApprovalPolicy.js';
 import { type MemoryWriteAdmissionV1 } from './memoryDocumentActions.js';
 import { type DiscussionModelParticipantLaunchV1 } from '../../discussions/modelParticipantLaunch.js';
 import type { ActionExecutorDeps } from './types.js';
@@ -28,7 +28,7 @@ export type PreparedCoreAdmission = Readonly<{
     workflowSessionScope?: WorkflowSessionScopeV1 | null;
     /** Private parent-child admission survives preparation; never caller-authored or persisted. */
     hostInternal?: true;
-    approvalScope?: ActionApprovalScopeV1;
+    approvalScope?: ActionApprovalPolicyScopeV1;
     memoryAdmission?: MemoryWriteAdmissionV1;
     /** Keep the original creation consequence after effective policy narrows the input. */
     visualAdmission?: SessionVisualAdmissionV1;

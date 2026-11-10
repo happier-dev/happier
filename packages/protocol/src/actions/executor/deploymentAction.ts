@@ -3,6 +3,7 @@ import { readDeploymentArtifactHeaderV1 } from '../../deployments/deploymentArti
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '../../artifacts/deploymentArtifactKindsV1.js';
 import type { DeploymentTransportActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from './types.js';
+import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
 
 /** Shared admitted deployment transport and domain-result owner, including file-export reads. */
 export async function executeDeploymentAction(
@@ -15,7 +16,8 @@ export async function executeDeploymentAction(
 ): Promise<ActionExecuteResult> {
   if (!deps.deploymentAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
   const result = await deps.deploymentAction(actionId, input, context, review);
-  if ('errorCode' in result) return result;
+  const failure = readActionFailureEnvelope(result);
+  if (failure) return failure;
   if ('kind' in result) return { ok: true, result };
   if (!result.ok) return { ok: false, errorCode: result.error, error: result.error, details: result,
     ...('effectAttempted' in result && result.effectAttempted === false ? { effectAttempted: false } : {}) };

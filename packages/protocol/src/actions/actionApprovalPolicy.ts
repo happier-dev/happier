@@ -32,10 +32,15 @@ export type ActionApprovalRoutingDecision = Readonly<{
   profile?: ApprovalProfileResolutionV1;
 }>;
 
+/** Host-private scope and live inheritance proved at admission; never persisted or caller-authored. */
+export type ActionApprovalPolicyScopeV1 =
+  | Extract<ActionApprovalScopeV1, { kind: 'machine' }>
+  | (Extract<ActionApprovalScopeV1, { kind: 'environment' }> & Readonly<{ inheritedEnvironmentId?: string }>);
+
 /** Host-private result of current Environment admission. */
 export type ActionEnvironmentApprovalScopeAdmissionV1 = Readonly<{
-  /** The Environment owns its preferences. Null is an admitted global-only operation. */
-  scope: Extract<ActionApprovalScopeV1, { kind: 'environment' }> | null;
+  /** Retains the child identity and its admitted template. Null is an admitted global-only operation. */
+  scope: Extract<ActionApprovalPolicyScopeV1, { kind: 'environment' }> | null;
 }>;
 
 type ApprovalInvocationContext = Pick<ActionExecutorContext,
@@ -57,7 +62,7 @@ export type ResolveActionApprovalRoutingArgs = Readonly<{
   input?: unknown;
   settings?: ActionsSettingsV1 | null;
   /** Exact scope proved by the host's Action admission, never raw caller context. */
-  approvalScope?: ActionApprovalScopeV1;
+  approvalScope?: ActionApprovalPolicyScopeV1;
   context?: ApprovalInvocationContext & Pick<ActionExecutorContext, 'bypassApprovals' | 'isPluginSettingsIntentCurrent' | 'machineServiceLogsResource' | 'approvalProfileId' | 'approvalProfileChange'> | null;
   requiredByPolicy?: boolean;
   /** Explicit Artifact creation requests approval, independently of target execution defaults. */
@@ -215,7 +220,7 @@ export function isApprovalRequiredByActionsSettings(
   _defaultUiConfirmation?: boolean,
   defaultConfirmation?: boolean,
   approvedOperation?: Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> | null,
-  approvalScope?: ActionApprovalScopeV1,
+  approvalScope?: ActionApprovalPolicyScopeV1,
 ): boolean {
   // The parent owner admitted this exact role at its natural
   // preparation boundary. It is not a new independently approvable operation.
@@ -254,7 +259,7 @@ export function readExplicitActionApprovalPreferenceV1(
   actionId: ActionSettingsActionId,
   settings: ActionsSettingsV1,
   ctx?: ApprovalInvocationContext | null,
-  approvalScope?: ActionApprovalScopeV1,
+  approvalScope?: ActionApprovalPolicyScopeV1,
 ): boolean | undefined {
   if (ctx?.callerSurface === 'foreign_session_html') {
     const choice = settings.callerSurfacePolicies?.foreign_session_html?.[actionId];
@@ -265,7 +270,13 @@ export function readExplicitActionApprovalPreferenceV1(
   const scoped = approvalScope ? readScopedActionApprovalPreference(settings, actionId, approvalScope) : undefined;
   if (surface.kind !== 'ambiguous') {
     if (scoped?.approvalRequiredSurfaces.includes(surface.surface)) return true;
-    if (scoped?.approvalWaivedSurfaces.includes(surface.surface)) return false;
+    // A preview inherits its template's current choice. A child's explicit Ask
+    // can tighten it; an old child waiver cannot weaken the inherited policy.
+    const inheritedEnvironmentId = approvalScope?.kind === 'environment' ? approvalScope.inheritedEnvironmentId : undefined;
+    const effective = inheritedEnvironmentId ? readScopedActionApprovalPreference(settings, actionId,
+      { kind: 'environment', environmentId: inheritedEnvironmentId }) : scoped;
+    if (effective?.approvalRequiredSurfaces.includes(surface.surface)) return true;
+    if (effective?.approvalWaivedSurfaces.includes(surface.surface)) return false;
   }
   const override: ActionSettingsOverride | undefined = settings.actions?.[actionId];
   const required = Array.isArray(override?.approvalRequiredSurfaces) ? override.approvalRequiredSurfaces : [];

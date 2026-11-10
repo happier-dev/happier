@@ -3,17 +3,18 @@ import { SessionSpawnNewActionInputV2Schema } from '../../sessions/creation/sess
 import { MachineSetupPlanResultV1Schema } from '../../machines/managed/actionsV1.js';
 import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
 import { formatQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
-import { readExplicitActionApprovalPreferenceV1, resolveActionApprovalRouting } from '../actionApprovalPolicy.js';
+import { readExplicitActionApprovalPreferenceV1, resolveActionApprovalRouting, type ActionApprovalPolicyScopeV1 } from '../actionApprovalPolicy.js';
 import { resolveApprovalSurface } from '../actionApprovalSurface.js';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1, type ActionId } from '../actionIds.js';
 import { getActionSpec, type ActionSpec } from '../actionSpecs.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import { readActionApprovalScopeAdmissionV1 } from './approvalScope.js';
 import type { ActionHomeEquivalence, PreparedCoreAdmission } from './coreInvocation.js';
-import type { ActionApprovalScopeV1, ActionSettingsActionId } from '../actionSettings.js';
+import type { ActionSettingsActionId } from '../actionSettings.js';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure, ActionExecuteResult, HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1, HostReviewedChildInvocationV1 } from './types.js';
 import { isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildV1, readHostReviewedChildOperationV1, retainHostReviewedChildCredentialScopeAdmissionV1, type HostReviewedChildPolicyV1 } from './deploymentRoleChild.js';
 import { HostReviewedChildrenPlanV1Schema } from './hostReviewedChildrenV1.js';
+import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
 
 /** Stored review facts are closed; they never create a host invocation port. */
 export function readHostReviewedChildrenPlanV1(value: unknown): HostReviewedChildrenPlanV1 | undefined {
@@ -22,7 +23,7 @@ export function readHostReviewedChildrenPlanV1(value: unknown): HostReviewedChil
 }
 /** Resolve demanded child policy once at the parent's natural preparation boundary. */
 export function prepareHostReviewedChildPolicyV1(child: HostReviewedChildrenPlanV1['children'][number],
-  context: ActionExecutorContext, approvalScope?: ActionApprovalScopeV1, reviewAdmitted = false,
+  context: ActionExecutorContext, approvalScope?: ActionApprovalPolicyScopeV1, reviewAdmitted = false,
   defaultSafety?: ActionSpec['safety']): (HostReviewedChildPolicyV1 & Readonly<{ requiredActionIds: readonly string[] }>) | null {
   const settings = context.actionsSettings;
   const surface = resolveApprovalSurface(context);
@@ -49,10 +50,11 @@ export function prepareHostReviewedChildPolicyV1(child: HostReviewedChildrenPlan
 /** Prepare demanded effects once; prepared dispatch retains this exact admission. */
 export async function prepareHostReviewedChildrenV1(params: Readonly<{
   actionId: ActionId; input: unknown; context: ActionExecutorContext; deps: ActionExecutorDeps;
+  prepared?: HostReviewedChildrenPreparationV1;
   declaredChildren?: HostReviewedChildrenPlanV1['children'];
   /** The root's exact native confirmation answers demanded defaults, never explicit Require. */
   reviewAdmitted?: boolean;
-  approvalScope?: ActionApprovalScopeV1;
+  approvalScope?: ActionApprovalPolicyScopeV1;
   existing?: PreparedCoreAdmission; approvalReplay: boolean; isSameHome: ActionHomeEquivalence;
   invokePreparationChild(child: HostReviewedChildInvocationV1): Promise<ActionExecuteResult>;
   admitChildCredentialScope(child: HostReviewedChildInvocationV1): Promise<ActionExecuteFailure | null>;
@@ -62,6 +64,7 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
   prepareExecutionContext?: HostReviewedChildrenPreparationV1['prepareExecutionContext'];
   approvalPreview?: HostReviewedChildrenPreparationV1['approvalPreview'];
   admittedReviewedChild?: true;
+  requiredByPolicy?: true;
   reviewRequired: boolean }> | ActionExecuteResult> {
   const { actionId, context, deps, existing } = params;
   if (existing) return { plan: existing.hostReviewedChildren, policies: existing.hostReviewedChildPolicies,
@@ -71,13 +74,17 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
   const reviewedChild = readHostReviewedChildOperationV1(context, actionId, params.input);
   const admittedLeaf = readHostAdmittedReviewedChildV1(context);
   // The exact admitted child consumes its original closed plan, not another preparation or review.
-  if (isHostAdmittedReviewedChildPolicyV1(reviewedChild, actionId, params.input)
-    || admittedLeaf?.actionId === actionId && sameStrictJsonValue(admittedLeaf.input, params.input))
+  const admittedChild = isHostAdmittedReviewedChildPolicyV1(reviewedChild, actionId, params.input)
+    || admittedLeaf?.actionId === actionId && sameStrictJsonValue(admittedLeaf.input, params.input);
+  // Create retains its exact-head person requirement. Configure retains its
+  // demanded bindings writer after the destination proof and backup save.
+  if (admittedChild && actionId !== DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
+    && actionId !== DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1)
     return { admittedReviewedChild: true, reviewRequired: false };
   // A private-schema host original is still original work.
   const machineRuntimeDemand = reviewedChild ? null
     : getActionSpec(actionId).machineRuntimeDemandForInput?.(params.input, context);
-  const prepared = actionId === 'template.instantiate' && deps.prepareBotTemplateInstantiation
+  const prepared = params.prepared ?? (actionId === 'template.instantiate' && deps.prepareBotTemplateInstantiation
     ? await deps.prepareBotTemplateInstantiation({ input: params.input,
       invokeChild: params.invokePreparationChild,
       context: { ...context, runActionOperation: context.runActionOperation ?? deps.runActionOperation } })
@@ -88,7 +95,7 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
         invokeChild: params.invokePreparationChild,
         context: { ...context, runActionOperation: context.runActionOperation ?? deps.runActionOperation } })
     : await deps.prepareHostReviewedChildren?.({ actionId, input: params.input, context,
-      ...(machineRuntimeDemand ? { machineRuntimeDemand } : {}) });
+      ...(machineRuntimeDemand ? { machineRuntimeDemand } : {}) }));
   if (prepared && 'ok' in prepared) return prepared;
   let approvalPreview = prepared?.approvalPreview;
   const setup = actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
@@ -144,10 +151,13 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
       && witness.inputDigest === computeActionInputApprovalDigestV1(actionId, params.input)));
   if (retained && !reviewAccepted || params.approvalReplay && plan && !reviewAccepted)
     return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
+  const personReviewRequired = prepared?.requiredByPolicy === true && !reviewAccepted && params.reviewAdmitted !== true;
   return { ...(plan ? { plan, policies } : {}),
+    ...(admittedChild && !personReviewRequired ? { admittedReviewedChild: true as const } : {}),
+    ...(personReviewRequired ? { requiredByPolicy: true as const } : {}),
     ...(prepared?.input === undefined ? {} : { input: prepared.input }),
     ...(prepared?.prepareExecutionContext ? { prepareExecutionContext: prepared.prepareExecutionContext } : {}),
     ...(approvalPreview === undefined ? {} : { approvalPreview }),
     ...(prepared?.executeAdmittedAction ? { executeAdmittedAction: prepared.executeAdmittedAction } : {}),
-    reviewRequired: !reviewAccepted && policies.some(policy => (policy.requiredActionIds?.length ?? 0) > 0) };
+    reviewRequired: personReviewRequired || !reviewAccepted && policies.some(policy => (policy.requiredActionIds?.length ?? 0) > 0) };
 }

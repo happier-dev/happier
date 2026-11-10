@@ -329,7 +329,7 @@ import { parseInputTypeOptionsSourceId } from '../inputs/inputTypes.js';
 import { readInputFieldOptionsSourceId } from '../inputs/inputTypeRuntime.js';
 import { isSharedRequesterActionV1, resolveActionApprovalRouting, type ActionApprovalRoutingDecision } from './actionApprovalPolicy.js';
 import { readActionCallerLedSubtreeSessionIds } from './executor/sessionLedSubtree.js';
-import { resolveApprovalRequestApproveAdmission } from './actionApprovalPresentation.js';
+import { resolveApprovalRequestApproveAdmission, readPluginInstallApprovalPendingReview } from './actionApprovalPresentation.js';
 import { resolveRequestedSessionModeId } from './sessionModeIds.js';
 import {
   findSpawnConfigOptionAliasConflicts,
@@ -1797,6 +1797,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const retainedLogsContext = resolveRetainedLogsReplayContext({ retainsHostInvocation,
       retainedLogsLifetime: retainedLogsLifetime !== undefined,
       currentOrigin: origin?.success && originIsCurrent ? origin.data : undefined, context: args.ctx });
+    const approvedPluginInstallReview = request.actionId === 'plugins.install'
+      ? readPluginInstallApprovalPendingReview(request.preview) : null;
     let executionContext: ActionExecutorContext = {
       approvalOrigin: request.origin ?? null,
       ...(origin?.success && origin.data.callerSurface ? { callerSurface: origin.data.callerSurface } : {}),
@@ -1928,7 +1930,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       bypassApprovals: true,
       ...(origin?.success && originIsCurrent && request.v === 2
         && request.status === 'executing' && request.decision?.kind === 'approve'
-        ? { approvedActionReplay: { artifactId: args.artifactId, origin: {
+        ? { approvedActionReplay: { artifactId: args.artifactId,
+          ...(approvedPluginInstallReview ? { pluginInstallReview: approvedPluginInstallReview } : {}), origin: {
             surface: origin.data.surface, caller: origin.data.caller,
             ...(origin.data.accountId ? { accountId: origin.data.accountId } : {}),
             ...(origin.data.sessionId ? { sessionId: origin.data.sessionId } : {}),
@@ -2559,6 +2562,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if ((!existingAdmission || actionId === 'deployments.templates.instantiate' && !existingAdmission.executeAdmittedAction) && (actionId === 'machines.setup.apply' && deps.prepareMachineSetupApply
       || actionId === 'deployments.templates.instantiate' && deps.prepareDeploymentTemplateInstantiation && readRecord(admittedInput).mode === 'apply'
       || actionId === 'deployments.environments.create' && deps.prepareDeploymentEnvironmentCreate
+      || actionId === 'deployments.backups.restore' && deps.prepareDeploymentRestore
       || actionId === 'deployments.teardown' && deps.prepareDeploymentTeardown
       || (actionId === 'deployments.deploy' || actionId === 'deployments.rollback' || actionId === 'deployments.promote') && deps.prepareDeploymentAction)) {
       const prepared = await readDeploymentPreparation(deps, actionId, admittedInput, ctx, retainedDeploymentReview,
@@ -3148,7 +3152,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return admitted.ok ? null : admitted;
       },
       reviewAdmitted: nativeReview !== null,
-      ...(preparedHostReviewedChildren ? { declaredChildren: preparedHostReviewedChildren.children } : {}),
+      ...(preparedHostReviewedChildren ? { prepared: preparedHostReviewedChildren } : {}),
       ...(approvalScope ? { approvalScope } : {}),
       ...(existingAdmission ? { existing: existingAdmission } : {}), approvalReplay: options?.approvalReplay === true,
       isSameHome: (left, right) => isSameHome(left, right, ctx) });
@@ -3166,6 +3170,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // The native flow and deferred decision record the same reviewed parent.
     // Child dispatch consumes its existing issuer, never a new confirmation path.
     if (nativeReview) ctx = { ...ctx, presentUserApproval: nativeReview, approvedActionReplay: {
+      ...(ctx.approvedActionReplay?.pluginInstallReview ? { pluginInstallReview: ctx.approvedActionReplay.pluginInstallReview } : {}),
       ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
       ...(deploymentReview === undefined ? {} : { deploymentReview }),
     } };
@@ -3215,7 +3220,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ? { required: false, flow: 'deferred' as const, result: 'none' as const }
       : resolveBaseApprovalRouting(ctx, readHostReviewedChildOperationV1(ctx, actionId, admittedInput));
     let invokeReviewedOperationChild: NonNullable<Awaited<ReturnType<NonNullable<ActionExecutorDeps['readApprovedOperation']>>>>['invokeReviewedChild'];
-    if (baseApprovalRouting.required && deps.readApprovedOperation) {
+    if (baseApprovalRouting.required && !childrenPreparation.requiredByPolicy && deps.readApprovedOperation) {
       let approvedOperation: Awaited<ReturnType<NonNullable<ActionExecutorDeps['readApprovedOperation']>>> = null;
       try {
         approvedOperation = await deps.readApprovedOperation({ ...(workflowRunId ? { runId: workflowRunId } : {}),
@@ -3353,13 +3358,17 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               }
               if ('ok' in policyReview) return policyReview;
               const confirmationInput = policyReview.actionArgs;
+              const pluginInstallReview = actionId === 'plugins.install'
+                ? readPluginInstallApprovalPendingReview(policyReview.preview) : null;
               const confirmed = await confirm({ actionId, input: confirmationInput, context: ctx, preview: policyReview.preview });
               if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
               if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' };
               // Review projections omit live-only operands. Keep execution on
               // the admitted invocation, just as blocking approvals do.
               const executionInput = spec.approvalInputCustody === 'live_only' ? admittedInput : confirmationInput;
-              const executionContext = { ...confirmedContext, ...(ctx.actionRequestId ? {
+              const executionContext = { ...confirmedContext,
+                ...(pluginInstallReview ? { approvedActionReplay: { pluginInstallReview } } : {}),
+                ...(ctx.actionRequestId ? {
                   presentUserApproval: recordPresentUserApprovalV1({ actionId, input: executionInput,
                     requestId: ctx.actionRequestId, requestSurface: ctx.surface,
                     ...(ctx.runtimeAccountId ? { decidingAccountId: ctx.runtimeAccountId } : {}) }),
