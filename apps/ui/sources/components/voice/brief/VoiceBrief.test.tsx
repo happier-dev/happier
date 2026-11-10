@@ -21,19 +21,18 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
-import { registerVoiceAdapters, resetVoiceAdapterRegistryForTests } from '@/voice/session/voiceAdapterRegistry';
-import { createVoiceSessionLifecycleController, type VoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleController';
-import { setVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
+import { resetVoiceAdapterRegistryForTests } from '@/voice/session/voiceAdapterRegistry';
+import type { VoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleController';
+import { getVoiceSessionLifecycleController, resetVoiceSessionLifecycleControllerStoreForTests } from '@/voice/session/voiceSessionLifecycleControllerStore';
 import { setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 import { installVoiceWebRtcBrowserBoundary, TestVoiceWebRtcPeer } from '@/dev/testkit/harness/voiceWebRtcHarness';
+import type { CreateMicSessionOptions } from '@/voice/runtime/mic/MicSession';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { answerVoiceRealtimePreparationHttpRequest } from '@/dev/testkit/harness/voiceRealtimePreparationHttpBoundary';
 import { createSessionFixture } from '@/dev/testkit';
-import { createBundledConversationRuntimeHostLease, getCurrentBundledConversationRuntimeHost } from '@/voice/registry/bundledConversationRuntimeHost';
-import { createExternalVoiceProviderActivationScope } from '@/voice/registry/externalVoiceProviderActivation.testkit';
-import { getExternalVoiceProviderRegistration } from '@/voice/registry/externalVoiceProviderRegistrations';
+import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } from '@/voice/registry/generatedBundledVoiceRuntimeEntries';
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
 import { saveAndUseAccountVoiceCredential, applyAccountVoiceCredentialSourceSelection } from '@/voice/credentials/accountVoiceCredential';
@@ -82,6 +81,11 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 vi.mock('expo-audio', () => ({ AudioModule: { setAudioModeAsync: vi.fn(async () => undefined) } }));
+// Node resolves the native platform entry. Select the canonical browser boundary's
+// real WebMicSession, including capture, mute and teardown; only media ports are fake.
+vi.mock('@/voice/runtime/mic/createRealtimeMicSession', () => ({
+    createRealtimeMicSession: (options: CreateMicSessionOptions = {}) => browser.createMicSession(options),
+}));
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ confirmResult: true }).module;
@@ -94,12 +98,11 @@ await loadSyncSingletonForTests();
 const disposeActionLoader = await installRealActionExecutorModuleLoader();
 afterAll(disposeActionLoader);
 let browser: ReturnType<typeof installVoiceWebRtcBrowserBoundary>;
-let disposeRuntime: (() => Promise<void>) | null = null;
 let observePeerCreated: (peer: TestVoiceWebRtcPeer) => void = () => {};
 
 // Only browser media/WebRTC and provider HTTP are synthetic. The shipped leaf,
 // credentials, registration, mic, conversation controller and lifecycle are real.
-async function transport() {
+function transport() {
     const peers = browser.peers;
     const starts: Array<{ requestedTargetSessionAddress: SessionAddress | null; controlSessionId: string }> = [];
     observePeerCreated = () => {
@@ -107,22 +110,6 @@ async function transport() {
         if (!binding) throw new Error('WebRTC started before its Voice conversation was bound');
         starts.push({ requestedTargetSessionAddress: binding.targetSessionAddress, controlSessionId: binding.controlSessionId });
     };
-    const hostLease = createBundledConversationRuntimeHostLease();
-    const scope = createExternalVoiceProviderActivationScope({
-        pluginId: entry.pluginId, occurrenceId: 'brief-openai', declarations: [entry.declaration], hostPlatform: 'web',
-        runtimeHost: {
-            ...hostLease.host,
-            createMicSession: () => browser.micSession,
-        },
-        isRuntimeHostCurrent: () => getCurrentBundledConversationRuntimeHost() === hostLease.host,
-        hostBindingsByLocalId: { [entry.declaration.id]: { recipientContract: createBundledVoiceRecipientContract({ pluginId: entry.pluginId, declaration: entry.declaration }), descriptor: 'bundled' } },
-    });
-    const { loadBundledVoiceRuntimeActivate } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
-    (await loadBundledVoiceRuntimeActivate(entry))(scope.api);
-    await scope.commit();
-    const adapter = getExternalVoiceProviderRegistration(entry.providerId)?.adapter;
-    if (!adapter) throw new Error('OpenAI Voice adapter was not activated');
-    disposeRuntime = async () => { await scope.unwind(); hostLease.revoke(); };
     const messages = (role: string) => peers.flatMap(peer => peer.channel.sent.flatMap(value => {
         const event = JSON.parse(value) as { type: string; item?: { role: string; content: Array<{ text?: string }> } };
         return event.type === 'conversation.item.create' && event.item?.role === role
@@ -130,7 +117,7 @@ async function transport() {
     }));
     const usablePeer = () => browser.peerCreated(peers.at(-1)?.channel.readyState === 'closed'
         ? peers.length : Math.max(0, peers.length - 1));
-    return { adapter, starts,
+    return { starts,
         get spoken() { return messages('user'); },
         get interrupted() { return peers.flatMap((peer, index) => peer.channel.sent.flatMap(value => JSON.parse(value).type === 'response.cancel' ? [starts[index]!.controlSessionId] : [])); },
         async waitForSpoken() {
@@ -186,8 +173,8 @@ async function transport() {
 }
 
 let screen: RenderScreenResult | null = null;
+let runtimeScreen: RenderScreenResult | null = null;
 let lifecycle: VoiceSessionLifecycleController | null = null;
-let unsubscribe: (() => void) | null = null;
 let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 let accountSettingsHttp: ReturnType<typeof createAccountSettingsHttpBoundary>;
 let accountSettingsVersion = 1;
@@ -219,6 +206,8 @@ beforeEach(async () => {
         initialAccounts: [{ accountId: 'account-a', snapshot: { version: accountSettingsVersion,
             content: { t: 'plain', v: { voice: { providerId: 'off' } } } } }],
     });
+    const machine = createMachineFixture({ id: 'brief-machine', activeAt: Date.now() });
+    const machineRow = createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine });
     const providerFetch = vi.fn<typeof fetch>(async (url) => {
         const path = new URL(String(url)).pathname;
         if (path === '/v1/realtime/client_secrets') return Response.json({ value: 'ek_brief', expires_at: Math.floor(Date.now() / 1000) + 60,
@@ -234,6 +223,15 @@ beforeEach(async () => {
         if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: 'account-a' }));
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
         if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        if (path === '/v1/machines') return Response.json([machineRow]);
+        if (path === '/v1/machines/read-batch' && init?.method === 'POST') {
+            return createMachineReadBatchResponseFixture(init.body, id => id === machine.id ? machineRow : null);
+        }
+        if (path === `/v1/machines/${machine.id}`) return Response.json({ machine: machineRow });
+        if (path === `/v1/machines/${machine.id}/access`) {
+            return Response.json({ machineId: machine.id, custodian: machineRow.access!.custodian,
+                access: machineRow.access, canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [] });
+        }
         const settingsResponse = accountSettingsHttp.handle(url, init);
         if (settingsResponse) return settingsResponse;
         if (path.endsWith('/messages') && init?.method !== 'POST') return Response.json(SessionMessagesPageV1Schema.parse({ messages: [], hasMore: false }));
@@ -281,10 +279,9 @@ beforeEach(async () => {
 afterEach(async () => {
     await screen?.unmount(); screen = null;
     restorePopoverGlobals?.(); restorePopoverGlobals = null;
-    unsubscribe?.(); unsubscribe = null;
+    await runtimeScreen?.unmount(); runtimeScreen = null;
     await lifecycle?.dispose(); lifecycle = null;
-    await disposeRuntime?.(); disposeRuntime = null;
-    setVoiceSessionLifecycleController(null);
+    resetVoiceSessionLifecycleControllerStoreForTests();
     resetVoiceAdapterRegistryForTests();
     setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
     // The retirement test renews this same Home's Account lifetime. Its old
@@ -296,13 +293,12 @@ afterEach(async () => {
 });
 
 async function installTransport() {
-    const speech = await transport();
-    registerVoiceAdapters([speech.adapter]);
-    lifecycle = createVoiceSessionLifecycleController();
-    setVoiceSessionLifecycleController(lifecycle);
-    lifecycle.setConfiguredProviderId(entry.providerId);
-    const controller = lifecycle;
-    unsubscribe = controller.subscribe(() => setVoiceSessionSnapshot(controller.getSnapshot()));
+    const speech = transport();
+    // The mounted Runtime owns readiness, provider activation and publication.
+    const { VoiceSessionRuntime } = await import('@/voice/session/VoiceSessionRuntime');
+    runtimeScreen = await renderScreen(<VoiceSessionRuntime />);
+    lifecycle = getVoiceSessionLifecycleController();
+    if (!lifecycle) throw new Error('Mounted Voice lifecycle unavailable');
     return speech;
 }
 const render = () => <React.StrictMode><AuthProvider initialCredentials={account!.credentials}>
