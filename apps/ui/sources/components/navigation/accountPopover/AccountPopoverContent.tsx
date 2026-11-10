@@ -478,9 +478,11 @@ function useAccountPopoverHomeRows(props: React.ComponentProps<typeof AccountPop
             const mark = isAllHomesSelectionTarget(target) ? (
                 <Icon name="stack" size={16} color={theme.colors.text.secondary} />
             ) : (
+                // The menu's glyph column, like every row beside it: the bare glyph, not the entity mark's box.
                 <HomeMark
                     serverUrl={profile ? profile.canonicalServerUrl ?? profile.serverUrl : null}
                     glyph={target.kind === 'server' ? 'house' : 'stack'}
+                    size="list"
                 />
             );
             const onPress = () => {

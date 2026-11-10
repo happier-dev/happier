@@ -25,9 +25,9 @@ export const SESSION_LIST_SHEET_INSET_PX = HAPPIER_COLLECTION_LIST_METRICS.rowIn
  * glyphs sit on the rows' trailing text edge (lab: glyph right edge on `R = W - 22`).
  */
 const SESSION_LIST_HEADER_PADDING_RIGHT_PX = SESSION_LIST_SHEET_INSET_PX + 4;
-/** The search field spans the sheets' width: outset from the header's text inset back to the sheet edge. */
-const SESSION_LIST_FIELD_OUTSET_LEFT_PX = SESSION_LIST_SHEET_INSET_PX - SESSION_LIST_TEXT_INSET_PX;
-const SESSION_LIST_FIELD_OUTSET_RIGHT_PX = SESSION_LIST_SHEET_INSET_PX - SESSION_LIST_HEADER_PADDING_RIGHT_PX;
+/** The search field stands on the list's tools edge (a phone's box edge): outset from the header's insets back to it. */
+const SESSION_LIST_FIELD_OUTSET_LEFT_PX = HAPPIER_COLLECTION_LIST_METRICS.toolsInset - SESSION_LIST_TEXT_INSET_PX;
+const SESSION_LIST_FIELD_OUTSET_RIGHT_PX = HAPPIER_COLLECTION_LIST_METRICS.toolsInset - SESSION_LIST_HEADER_PADDING_RIGHT_PX;
 
 /**
  * The list paints no plane of its own: it lies transparent over its host, which owns one background
@@ -215,8 +215,11 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         ...Typography.default(),
     },
     // The quiet meta line under the list's controls (its filter summary, a search's status): the row-meta role.
+    // It grows into a row and shrinks from its own width; a zero basis (`flex: 1`) collapsed it inside the
+    // content-sized summary trigger ("Runs · You" drawn as "R…", L4).
     searchChromeStatusText: {
-        flex: 1,
+        flexGrow: 1,
+        flexShrink: 1,
         minWidth: 0,
         color: theme.colors.text.tertiary,
         ...Typography.variant('meta'),

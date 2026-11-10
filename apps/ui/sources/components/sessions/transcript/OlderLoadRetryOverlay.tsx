@@ -1,7 +1,6 @@
 import * as React from 'react';
-import { View } from 'react-native';
 
-import { TRANSCRIPT_TOP_GUTTER_PX } from '@/components/sessions/transcript/_constants';
+import { TranscriptTopBannerSlot } from '@/components/sessions/transcript/TranscriptTopBannerSlot';
 import { useTranscriptFindActive } from '@/components/sessions/transcript/find/TranscriptFindContext';
 import { WarningActionBanner } from '@/components/sessions/shell/view/WarningActionBanner';
 import { t } from '@/text';
@@ -24,33 +23,17 @@ export const OlderLoadRetryOverlay = React.memo(function OlderLoadRetryOverlay(p
 }>) {
     if (useTranscriptFindActive()) return null;
     return (
-        <View
-            testID="transcript-older-load-retry-overlay"
-            // `box-none` so the banner stays pressable while the surrounding overlay area
-            // keeps passing scroll gestures through to the list underneath.
-            pointerEvents="box-none"
-            style={{
-                alignItems: 'center',
-                left: 0,
-                paddingHorizontal: 8,
-                position: 'absolute',
-                right: 0,
-                top: TRANSCRIPT_TOP_GUTTER_PX,
-                zIndex: 2,
-            }}
-        >
-            <View style={{ width: '100%', maxWidth: 560 }}>
-                <WarningActionBanner
-                    testID="transcript.olderLoad.failed"
-                    floating
-                    title={t('session.transcript.olderLoadFailedTitle')}
-                    body={t('session.transcript.olderLoadFailedBody')}
-                    actionLabel={t('common.retry')}
-                    actionAccessibilityLabel={t('common.retry')}
-                    actionTestID="transcript.olderLoad.failed.retry"
-                    onActionPress={props.onRetry}
-                />
-            </View>
-        </View>
+        <TranscriptTopBannerSlot testID="transcript-older-load-retry-overlay">
+            <WarningActionBanner
+                testID="transcript.olderLoad.failed"
+                floating
+                title={t('session.transcript.olderLoadFailedTitle')}
+                body={t('session.transcript.olderLoadFailedBody')}
+                actionLabel={t('common.retry')}
+                actionAccessibilityLabel={t('common.retry')}
+                actionTestID="transcript.olderLoad.failed.retry"
+                onActionPress={props.onRetry}
+            />
+        </TranscriptTopBannerSlot>
     );
 });

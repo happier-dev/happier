@@ -46,7 +46,9 @@ export function HappierSurfaceStateFrame(props: Readonly<{
       : { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <View testID={props.testID ? `${props.testID}-card` : undefined} style={metrics
         ? { width: '100%', alignItems: 'center', maxWidth: metrics.measurePx }
-        : { maxWidth: 560, alignSelf: 'center', padding: 24 }}>
+        // Unsized, the card still takes its frame's width up to the measure: a centred card with no width
+        // shrink-wraps, and on iOS its words then lay out at their natural width past the screen's edges.
+        : { width: '100%', maxWidth: 560, alignSelf: 'center', padding: 24 }}>
         {props.children}
       </View>
     </View>

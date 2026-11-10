@@ -8,7 +8,14 @@ import { t } from '@/text';
 import { useBrandPaneTokens } from './brandPaneTokens';
 
 const TRUST_CLAIM_SEPARATOR = ' · ';
-const MOBILE_WRAP = { flexDirection: 'row', flexWrap: 'wrap', columnGap: 8 } as const;
+/** The box each claim's " · " stands in, before the claim. */
+const MOBILE_SEPARATOR_WIDTH_PX = 16;
+// Every claim carries its separator before it, and the row starts one separator box to the left under a clip:
+// a separator that would open a line is never seen, so no line starts or ends on "·" (as the pane header's facts).
+const MOBILE_CLIP = { overflow: 'hidden' } as const;
+const MOBILE_WRAP = { flexDirection: 'row', flexWrap: 'wrap', marginLeft: -MOBILE_SEPARATOR_WIDTH_PX } as const;
+const MOBILE_CLAIM = { flexDirection: 'row' } as const;
+const MOBILE_SEPARATOR = { width: MOBILE_SEPARATOR_WIDTH_PX, textAlign: 'center' } as const;
 
 export type BrandTrustStripProps = Readonly<{
     /** Allow up to two lines on the mobile hero where width is tighter. */
@@ -35,12 +42,15 @@ export const BrandTrustStrip = React.memo(function BrandTrustStrip(props: BrandT
         // On a phone it wraps between its claims, never inside one ("SELF-" / "HOSTABLE").
         const claims = t('welcome.brandTrustStrip').split(TRUST_CLAIM_SEPARATOR);
         return (
-            <View testID="brand-trust-strip" style={MOBILE_WRAP}>
-                {claims.map((claim, index) => (
-                    <Text key={claim} style={style} numberOfLines={1}>
-                        {index < claims.length - 1 ? `${claim} ·` : claim}
-                    </Text>
-                ))}
+            <View testID="brand-trust-strip" style={MOBILE_CLIP}>
+                <View style={MOBILE_WRAP}>
+                    {claims.map((claim) => (
+                        <View key={claim} style={MOBILE_CLAIM}>
+                            <Text style={[style, MOBILE_SEPARATOR]} accessibilityElementsHidden importantForAccessibility="no">·</Text>
+                            <Text style={style} numberOfLines={1}>{claim}</Text>
+                        </View>
+                    ))}
+                </View>
             </View>
         );
     }

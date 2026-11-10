@@ -506,7 +506,9 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                     case 'operation': return [t('sessionGitPane.fidelity.operation', { operation: t(fact.operation === 'cherry_pick' ? 'sessionGitPane.flow.conflicts.cherryPick' : fact.operation === 'merge' ? 'sessionGitPane.flow.conflicts.merge' : fact.operation === 'rebase' ? 'sessionGitPane.flow.conflicts.rebase' : 'sessionGitPane.flow.conflicts.revert'), source: fact.sourceRef ?? '' })];
                 }
             });
-            return { leading: headerBranchButton, segments };
+            // The branch is words: the line joins it to its facts with " · ", so on a phone a fact that does not fit
+            // moves whole to the next line instead of wrapping beside the branch (L4).
+            return { leading: headerBranchButton, leadingSeparated: true, segments };
         }
         // Not a repository yet: say which folder, and where it lives.
         if (effectiveScmSnapshot && !isRepo && workspaceFolderName) {

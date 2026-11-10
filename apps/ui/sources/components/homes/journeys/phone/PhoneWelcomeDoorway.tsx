@@ -71,7 +71,9 @@ export function PhoneWelcomeDoorway(props: Readonly<{
                 </View>
             </View>
             <ListPresentationProvider value="page">
-            <ItemGroup>
+            {/* The welcome panel already draws the box edge its buttons stand on; the sheet stands there too,
+                not a page's sheet inset further in (L2: card at 40 under buttons at 24). */}
+            <ItemGroup containerStyle={styles.doorwaySheet}>
             <Item
                 testID="welcome-doorway-direct"
                 title={t('homesJourneys.pathDirectTitle')}
@@ -97,6 +99,9 @@ export function PhoneWelcomeDoorway(props: Readonly<{
 }
 
 const styles = StyleSheet.create((theme) => ({
+    doorwaySheet: {
+        marginHorizontal: 0,
+    },
     signIn: {
         gap: theme.space.s8,
     },

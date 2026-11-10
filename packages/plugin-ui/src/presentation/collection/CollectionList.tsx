@@ -138,8 +138,8 @@ export type HappierCollectionListProps = Readonly<{
   search?: HappierCollectionListSearch | null;
   filters?: HappierCollectionListFilters | null;
   /**
-   * Where the search field and the filters start, from the list's edge. A column keeps the rows' gutter
-   * ({@link HAPPIER_COLLECTION_LIST_METRICS.rowInset}); a page that lists under its own title sets the page's
+   * Where the search field and the filters start, from the list's edge. A column keeps its tools' edge
+   * ({@link HAPPIER_COLLECTION_LIST_METRICS.toolsInset}); a page that lists under its own title sets the page's
    * gutter, so its tools stand on the same edge as the cards above them (lab `sf-ph390 .top`).
    */
   toolsInsetPx?: number;
@@ -176,6 +176,12 @@ export const HAPPIER_COLLECTION_LIST_METRICS = Object.freeze({
    * (the iOS column of the type scale) the list shares the page's text edge instead (phone-system lab: 8 / 18).
    */
   rowInset: PHONE_COLUMN ? 8 : 10,
+  /**
+   * The list's tools (its search field and filters), from its outer edge. In a column they keep the rows' gutter;
+   * on the phone a field is a box and stands on the page's box edge, with every sheet and card (phone-system lab:
+   * boxes 16, text 18), not on the rows' hover gutter.
+   */
+  toolsInset: PHONE_COLUMN ? HAPPIER_PAGE_METRICS.sheetInsetPx : 10,
   /**
    * The list's text edge, from its outer edge: the title, every group label and each row's leading
    * glyph start here, so a row's own horizontal padding is `contentInset - rowInset`. On the phone it is the
@@ -433,9 +439,9 @@ const subtitleStyle: ViewStyle = {
   paddingRight: M.rowInset,
   marginBottom: M.headerGap,
 };
-const searchStyle: HappierPortableStyle = { marginHorizontal: M.rowInset, marginBottom: M.headerGap };
+const searchStyle: HappierPortableStyle = { marginHorizontal: M.toolsInset, marginBottom: M.headerGap };
 const untitledSearchStyle: HappierPortableStyle = { ...searchStyle, marginTop: M.headerPaddingTop };
-const filtersStyle: ViewStyle = { marginHorizontal: M.rowInset, marginBottom: M.headerGap };
+const filtersStyle: ViewStyle = { marginHorizontal: M.toolsInset, marginBottom: M.headerGap };
 // Leading an untitled list (a page under its own header), the view switch keeps the search field's air above it
 // rather than touching the header (D12).
 const untitledFiltersStyle: ViewStyle = { ...filtersStyle, marginTop: M.headerPaddingTop };

@@ -601,6 +601,19 @@ const TABLE = Object.freeze({
   glyphBadgeCutout: 1.5,
 });
 
+/**
+ * A table's group band (its "Pinned", "Needs you"): a filled surface, so it takes the one radius base and stands
+ * where a row's fill does, the rows' gutter in from the list's edges, instead of a full-bleed ruled rectangle
+ * (owner 2026-11-10). Its words keep the text edge they had (`textInsetPx` from the list's edge).
+ */
+function groupBandFrame(textInsetPx: number) {
+  return {
+    marginHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset,
+    borderRadius: HAPPIER_COLLECTION_LIST_METRICS.rowRadius,
+    paddingHorizontal: textInsetPx - HAPPIER_COLLECTION_LIST_METRICS.rowInset,
+  } as const;
+}
+
 const SLOT_COLUMNS = Object.freeze({
   where: { minWidth: 150, priority: 4, maxWidth: 224 },
   reason: { minWidth: 172, priority: 5 },
@@ -1073,11 +1086,16 @@ const lineStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'cen
 const singleLineRowContentStyle: HappierPortableStyle = { paddingTop: 0, paddingBottom: 0, alignItems: 'center' };
 /**
  * The resting list (a phone, a narrow page) sits on the page's own edges (DESIGN.md: title, sections and sheets
- * share one edge): its group heading, row marks and trailing facts line up with the toolbar, not a band's inset.
- * The row's 1 pt focus-ring band is the only inset left. A row with an accessory cell after it keeps that cell's.
+ * share one edge): the Collection stands on the sheet edge, and its group heading, row marks and trailing facts
+ * stand on the page text edge just inside it (`headingOpticalInsetPx`; lab phone-system flat rows: 18, title 50).
+ * The row's 1 pt focus-ring band is part of that inset. A row with an accessory cell after it keeps that cell's.
+ * The mark takes the page row's leading column, so a flat list's titles share a sheet row's mark-to-title step.
  */
-const restingListContentStyle: HappierPortableStyle = { paddingLeft: 0 };
-const restingListTrailingStyle: HappierPortableStyle = { paddingLeft: 0, paddingRight: 0 };
+const restingListContentStyle: HappierPortableStyle = { paddingLeft: HAPPIER_PAGE_METRICS.headingOpticalInsetPx - 1 };
+const restingListTrailingStyle: HappierPortableStyle = {
+  paddingLeft: HAPPIER_PAGE_METRICS.headingOpticalInsetPx - 1,
+  paddingRight: HAPPIER_PAGE_METRICS.headingOpticalInsetPx - 1,
+};
 /**
  * A page section's row: the page row's inset, rhythm and leading column (`HAPPIER_PAGE_METRICS`). The row's
  * press target already draws a 1 pt edge inside the sheet, so the inset gives that point back.
@@ -1381,6 +1399,8 @@ function ListCells<Item>(props: Readonly<{
   // other sheet on the page, so a collection's sheet and an `ItemGroup` below it read as one anatomy. The list
   // never travels there (no table), so its rows size to their text.
   const page = props.pageSection;
+  // The resting list on the page's canvas (rows parted by air): its marks take the page row's leading column.
+  const restingFlat = props.wrapTitle && !page && props.ruledInsetPx === null;
   const secondLine = page ? { ...resolveHappierPageTextStyle('rowDescription', typography), flexShrink: 1 } : undefined;
   const metaOnRow = anatomy.titleMetaAlign === 'row' && !catalog && !singleLine && meta !== null;
   const metaCell = meta === null ? null : (
@@ -1422,7 +1442,7 @@ function ListCells<Item>(props: Readonly<{
         : (props.ownsTrailingInset ? restingListTrailingStyle : restingListContentStyle)) : null,
       singleLine ? singleLineRowContentStyle : null]}>
       {leadingControl === null ? null : (
-        <View pointerEvents={layer?.control} style={catalog ? catalogMarkStyle : [glyphStyle, { justifyContent: 'flex-start' }, page ? pageRowGlyphStyle : null]}>
+        <View pointerEvents={layer?.control} style={catalog ? catalogMarkStyle : [glyphStyle, { justifyContent: 'flex-start' }, page || restingFlat ? pageRowGlyphStyle : null]}>
           {/* A control in the glyph's place wears the glyph's badge; a second leading column would push the title off its edge. */}
           {badge === null ? leadingControl : (
             <View style={glyphWithBadgeStyle}>
@@ -1433,7 +1453,7 @@ function ListCells<Item>(props: Readonly<{
         </View>
       )}
       {leadingControl !== null || (glyph === null && badge === null) ? null : (
-        <View pointerEvents={layer?.leaf} style={catalog ? catalogMarkStyle : [glyphStyle, { justifyContent: 'flex-start' }, page ? pageRowGlyphStyle : null]}>
+        <View pointerEvents={layer?.leaf} style={catalog ? catalogMarkStyle : [glyphStyle, { justifyContent: 'flex-start' }, page || restingFlat ? pageRowGlyphStyle : null]}>
           {badge === null ? glyph : (
             <View style={glyphWithBadgeStyle}>
               {glyph}
@@ -2435,10 +2455,8 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
       sectionHeaderStyle: {
         height: metrics.groupHeader,
         justifyContent: 'center' as const,
-        paddingHorizontal: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx,
+        ...groupBandFrame(HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx),
         backgroundColor: palette.inset,
-        borderBottomWidth: 1,
-        borderBottomColor: palette.rowDivider,
       },
       pageSheet: { colors: palette, header: pageSheetHeader, flatSheet: enclosingPageSheet === null, oneSheet: true },
     } : pageSections && palette !== null ? {
@@ -2466,9 +2484,9 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
         height: metrics.groupHeader,
         justifyContent: 'flex-end' as const,
         paddingBottom: LIST_LINE_GAP,
-        // On the page's edges, with its rows' marks and trailing facts (`restingListContentStyle`); a ruled list
+        // On the page's text edge, with its rows' marks and trailing facts (`restingListContentStyle`); a ruled list
         // keeps its rows' own inset; a catalog side list stands on its rows' mark edge.
-        paddingHorizontal: catalogSideList ? TABLE.insetStart : ruledInsetPx ?? 0,
+        paddingHorizontal: catalogSideList ? TABLE.insetStart : ruledInsetPx ?? HAPPIER_PAGE_METRICS.headingOpticalInsetPx,
         // Pinned over scrolling rows, so on an opaque ground it paints that ground (the page role); a translucent
         // material's plane is its own, and the heading is not pinned there.
         ...(containingMaterial === undefined ? { backgroundColor: palette?.page ?? theme.colors.surface } : {}),
@@ -2478,14 +2496,13 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
       sectionHeaderStyle: {
         height: metrics.groupHeader,
         justifyContent: 'center' as const,
-        paddingHorizontal: TABLE.insetStart,
+        ...groupBandFrame(TABLE.insetStart),
         // A list beside its detail reserves each row's ⋯ place after its meta; the band's hint ends on that meta's
         // edge rather than past it, so the group's words and its rows' ages share one right edge.
-        ...(rowGeometry === 'list' && props.useRowActions !== undefined ? { paddingRight: TABLE.insetStart + ROW_ACTIONS_WIDTH } : {}),
-        // A quiet band a hair off the rows (lab `.grp`), closed by the rows' own hairline colour.
+        ...(rowGeometry === 'list' && props.useRowActions !== undefined
+          ? { paddingRight: TABLE.insetStart + ROW_ACTIONS_WIDTH - HAPPIER_COLLECTION_LIST_METRICS.rowInset } : {}),
+        // A quiet band of the rows' own fill, a hair off them (lab `.grp`).
         backgroundColor: paintColor(palette?.inset ?? theme.colors.elevatedSurface),
-        borderBottomWidth: 1,
-        borderBottomColor: palette?.rowDivider ?? theme.colors.divider,
       },
     }),
     ...(props.groupAction === undefined ? {} : {

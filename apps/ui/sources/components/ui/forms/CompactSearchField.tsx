@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
-import { HAPPIER_SEARCH_FIELD_METRICS, HappierPressable, HappierSearchFieldBox } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_SEARCH_FIELD_METRICS, HappierPressable, HappierSearchFieldBox, resolveHappierFieldTextInputMetrics } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Icon } from '@/components/ui/icons/Icon';
@@ -184,12 +184,12 @@ const CompactSearchFieldFrame = React.memo(function CompactSearchFieldFrame(prop
 });
 
 const compactSearchFieldStyles = StyleSheet.create((theme) => ({
+    // Every field's text step, filling the drawn well (plugin-ui fields draw the same), so a placeholder sits
+    // on the field's own line instead of the platform default cut at its baseline in a shorter box.
     input: {
+        ...resolveHappierFieldTextInputMetrics({}),
         flex: 1,
         minWidth: 0,
-        padding: 0,
-        margin: 0,
-        minHeight: 20,
         color: theme.colors.text.primary,
     },
     pageBand: {

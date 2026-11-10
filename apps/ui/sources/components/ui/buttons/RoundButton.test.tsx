@@ -37,6 +37,27 @@ describe('RoundButton', () => {
         expect(disabledFill.luminosity()).toBeGreaterThan(Color(lightTheme.colors.button.primary.background).luminosity());
         expect(disabledFill.luminosity()).toBeLessThan(Color(lightTheme.colors.surface.base).luminosity());
     });
+    it('stands a bare text button on the content edge: no pill padding before its words, like the quiet danger text (L2)', async () => {
+        // "Show archived", "All members ›", "Change service" and "+ Add account" stood 10 pt past the text edge
+        // (27–30 on a phone) because a pill with no fill still padded its words (PHONE-GEOMETRY-1110 L2).
+        const screen = await renderScreen(<>
+            <RoundButton title="Show archived" size="small" display="inverted" testID="link" onPress={() => {}} />
+            <RoundButton title="Leave" size="small" display="quietDestructive" testID="quiet" onPress={() => {}} />
+            <RoundButton title="Save" size="small" display="secondary" testID="pill" onPress={() => {}} />
+        </>);
+        const contentPadding = (id: string) => {
+            const label = screen.findByTestId(id)!.findAll(node => String(node.type) === 'Text' && node.props.children === (id === 'link' ? 'Show archived' : id === 'quiet' ? 'Leave' : 'Save'))[0]!;
+            // The content container: the label's nearest ancestor drawn with the pill's content radius.
+            let node = label.parent;
+            while (node && flattenTestStyle(node.props.style).borderRadius !== 9999) node = node.parent;
+            return flattenTestStyle(node!.props.style).paddingHorizontal ?? 0;
+        };
+        expect(contentPadding('quiet')).toBe(0);
+        expect(contentPadding('link')).toBe(0);
+        // A pill keeps its padding.
+        expect(contentPadding('pill')).toBeGreaterThan(0);
+    });
+
     it('forwards the press event to modifier-aware actions', async () => {
         const onPress = vi.fn();
         const event = { nativeEvent: { metaKey: true } };

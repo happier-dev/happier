@@ -171,8 +171,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     contentContainerInCapsule: {
         paddingVertical: 0,
     },
-    // Quiet danger text has no pill to fill, so its words stand on the content edge like the links beside it;
-    // the hit area still reaches the touch target around them.
+    // A bare text button (a link, quiet danger text) has no pill to fill, so its words stand on the content
+    // edge; the hit area still reaches the touch target around them.
     contentContainerQuietText: {
         paddingHorizontal: 0,
     },
@@ -475,7 +475,7 @@ export const RoundButton = React.memo((props: {
                             resolvedSize === 'small' ? styles.contentContainerSmall : null,
                             props.size === 'mini' ? styles.contentContainerMini : null,
                             props.capsuleHeight !== undefined ? styles.contentContainerInCapsule : null,
-                            props.display === 'quietDestructive' ? styles.contentContainerQuietText : null,
+                            props.display === 'quietDestructive' || props.display === 'inverted' ? styles.contentContainerQuietText : null,
                         ]}
                     >
                         {state.busy && !busyTradesMark && (

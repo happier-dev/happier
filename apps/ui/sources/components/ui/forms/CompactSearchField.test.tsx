@@ -21,7 +21,8 @@ const inputFocus = vi.hoisted(() => ({ calls: 0 }));
 
 // The app `TextInput` adds font scaling (a settings boundary); the host input's focus handle is what
 // the field's frame drives.
-vi.mock('@/components/ui/text/Text', () => ({
+vi.mock('@/components/ui/text/Text', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/components/ui/text/Text')>()),
     TextInput: React.forwardRef((props: Record<string, unknown>, ref) => {
         React.useImperativeHandle(ref, () => ({ focus: () => { inputFocus.calls += 1; } }), []);
         return React.createElement('TextInput', props);
@@ -50,6 +51,24 @@ describe('CompactSearchField', () => {
         const field = screen.findByTestId('search.field');
         expect(flattenTestStyle(field!.props.style)).not.toHaveProperty('marginLeft');
         expect(field!.props.onPress).toEqual(expect.any(Function));
+    });
+
+    it("sets its text on the shared field's text step and fills the drawn well, like every other field (L6)", async () => {
+        // Without a step of its own the input drew the platform default inside a 20 pt box, and iOS cut the
+        // placeholder at its baseline ("Go to file", PHONE-GEOMETRY-1110 L6).
+        const { CompactSearchField } = await import('./CompactSearchField');
+        const { flattenTestStyle } = await import('@/dev/testkit');
+        const { resolveHappierFieldTextInputMetrics } = await import('@happier-dev/plugin-ui/presentation');
+        const screen = await renderScreen(
+            <CompactSearchField testID="search" value="" onChangeText={() => {}} placeholder="Go to file" />,
+        );
+        const input = screen.tree.root.findByType('TextInput' as never);
+        const field = resolveHappierFieldTextInputMetrics({});
+        expect(flattenTestStyle(input.props.style)).toMatchObject({
+            fontSize: field.fontSize,
+            lineHeight: field.lineHeight,
+            minHeight: field.minHeight,
+        });
     });
 
     it('runs an explicit search on submit and stays read-only while the list cannot be searched', async () => {
