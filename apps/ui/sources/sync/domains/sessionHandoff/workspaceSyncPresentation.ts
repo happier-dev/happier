@@ -42,6 +42,7 @@ export type WorkspaceSyncErrorTranslationKey =
     | 'workspaceSync.error.rootNoLongerAuthorized'
     | 'workspaceSync.error.conflictNeedsAttention'
     | 'workspaceSync.error.updateRequired'
+    | 'workspaceSync.error.requesterAccessUnavailable'
     | 'sessionHandoff.failure.partialLinked'
     | 'workspaceSync.error.needsAttention';
 
@@ -131,6 +132,8 @@ export function resolveWorkspaceSyncErrorTranslationKey(value: unknown): Workspa
             return 'workspaceSync.error.updateRequired';
         case 'workspace_sync_partial_route_blocked':
             return 'sessionHandoff.failure.partialLinked';
+        case 'relationship_not_owned':
+            return 'workspaceSync.error.requesterAccessUnavailable';
         case 'engine_problems':
         case 'relationship_not_ready':
         case 'workspace_root_in_use':

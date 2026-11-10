@@ -5064,6 +5064,14 @@ snapshot. A subsequent operation must verify current authority again before usin
 that snapshot. An explicit denial or changed Account, Session or installation
 still retires the captured material. The Machine verifier's existing boolean/null
 adapters remain fail closed; requester custody uses its error-preserving reader.
+Workspace Sync source and target custody make the same distinction. An
+unavailable exact-credential Account observation preserves the private recovery
+record without admitting execution; definite Machine access withdrawal still
+retires it. Another valid credential's observation does not prove withdrawal.
+Cold binding consumes its own fresh HTTP identity when it has no registered
+holder. When it borrows a live observation, the observation owner keeps that
+exact credential reference and identity current through the binding's other
+reads; a surviving peer cannot extend a retired borrower's lifetime.
 This is a development-source contract, not loaded-runtime certification.
 Signed-root, Session, grant and installation checks remain at their existing
 admission and effect owners; observing encryption currentness does not replace

@@ -17491,6 +17491,7 @@ const pt = completeWorkspaceSyncTranslation({
         authorizationExpired: 'A autorização do espaço de trabalho expirou. Inicia novamente a operação.',
         rootNoLongerAuthorized: 'A pasta do espaço de trabalho mudou e deixou de estar autorizada. Revê a ligação antes de tentar novamente.',
         conflictNeedsAttention: 'Este conflito mudou. Atualiza-o antes de escolher uma versão.',
+        requesterAccessUnavailable: "O Happier não conseguiu restaurar o acesso a este vínculo de sincronização. Verifique se está usando a conta original ou peça a um administrador da máquina para verificar o acesso.",
         needsAttention: 'A sincronização do espaço de trabalho requer atenção. Atualiza o estado e tenta novamente.',
     },
     start: { blocked: {

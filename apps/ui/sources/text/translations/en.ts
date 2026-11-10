@@ -9751,6 +9751,7 @@ const enSession = {
       resource_mismatch: "The request does not match the current resource. Review the selection before retrying.",
       action_outcome_unknown: "The external operation could not be confirmed. Check its status before retrying.",
       teamCredential: 'The shared Team credential refused the request.',
+      // Isolation causes share errors.agentIsolationUnavailable in the presentation owner.
     } satisfies Record<AgentStartupFailureCode | RequesterSessionRuntimeRefusalCode
       | Exclude<keyof typeof SESSION_PREPARATION_FAILURE_PREVIEWS,
         'agent_isolation_unavailable' | 'filesystem_identity_custody_unavailable'>, string> & Record<string, string>,

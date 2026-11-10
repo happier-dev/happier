@@ -17511,6 +17511,7 @@ const pl = completeWorkspaceSyncTranslation({
         authorizationExpired: 'Autoryzacja obszaru roboczego wygasła. Uruchom operację ponownie.',
         rootNoLongerAuthorized: 'Folder obszaru roboczego zmienił się i nie jest już autoryzowany. Sprawdź łącze przed ponowną próbą.',
         conflictNeedsAttention: 'Ten konflikt zmienił się. Odśwież go przed wybraniem wersji.',
+        requesterAccessUnavailable: "Nie udało się przywrócić dostępu do tego połączenia synchronizacji w Happier. Sprawdź, czy używasz pierwotnego konta, lub poproś administratora maszyny o sprawdzenie dostępu.",
         needsAttention: 'Synchronizacja obszaru roboczego wymaga uwagi. Odśwież jej stan i spróbuj ponownie.',
     },
     start: { blocked: {

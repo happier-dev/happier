@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { t } from '@/text';
 
 import {
     formatWorkspaceSyncRelationshipTitle,
@@ -12,6 +13,14 @@ import {
 } from './workspaceSyncPresentation';
 
 describe('workspaceSyncPresentation', () => {
+    it('explains unavailable requester access while preserving the original relationship refusal', () => {
+        const code = 'relationship_not_owned';
+        expect(resolveWorkspaceSyncErrorTranslationKey(code)).toBe('workspaceSync.error.requesterAccessUnavailable');
+        expect(presentWorkspaceSyncFailure(new RpcError('Private requester diagnostic', code))).toBe(
+            `${t('workspaceSync.error.requesterAccessUnavailable')} (${code})`,
+        );
+    });
+
     it('shows the original RPC failure code even when it has no translated explanation', () => {
         const error = new RpcError('Untranslated diagnostic', 'project_requester_authority_unavailable');
         expect(readWorkspaceSyncErrorCode(error)).toBe('project_requester_authority_unavailable');

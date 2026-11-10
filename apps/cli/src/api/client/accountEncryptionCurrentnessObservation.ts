@@ -120,11 +120,18 @@ export function sameRequesterAccountEncryptionCurrentness(a: AccountEncryptionId
     return sameAccountEncryptionIdentity(a, b);
 }
 
-/** Encryption identity only; exact Account cursor/Settings witnesses still use fresh HTTP. */
-export async function readRequesterAccountEncryptionCurrentness(scope: Readonly<{
+type RequesterCurrentnessReadScope = Readonly<{
     accountId?: string; token: string; serverBaseUrl?: string; signal?: AbortSignal;
     authorizationHeaders?: Readonly<Record<string, string>>;
-}>): Promise<AccountEncryptionIdentity> {
+}>;
+
+/** Encryption identity only; exact Account cursor/Settings witnesses still use fresh HTTP. */
+export function readRequesterAccountEncryptionCurrentness(scope: RequesterCurrentnessReadScope): Promise<AccountEncryptionIdentity>;
+/** Keep a borrowed identity current through its consumer; fresh HTTP is independent of other holders. */
+export function readRequesterAccountEncryptionCurrentness<T>(scope: RequesterCurrentnessReadScope,
+    consume: (currentness: AccountEncryptionIdentity) => Promise<T>): Promise<T>;
+export async function readRequesterAccountEncryptionCurrentness<T>(scope: RequesterCurrentnessReadScope,
+    consume?: (currentness: AccountEncryptionIdentity) => Promise<T>): Promise<AccountEncryptionIdentity | T> {
     const serverBaseUrl = scope.serverBaseUrl ?? resolveServerHttpBaseUrl();
     const suppliedAuthorization = scope.authorizationHeaders
         ? Object.entries(scope.authorizationHeaders).find(([key]) => key.toLowerCase() === 'authorization')?.[1]
@@ -132,8 +139,15 @@ export async function readRequesterAccountEncryptionCurrentness(scope: Readonly<
     // A signed Action request must retain its own fresh authenticated transport.
     const observed = !scope.authorizationHeaders || suppliedAuthorization === `Bearer ${scope.token}`
         ? admittedObservation({ ...scope, serverBaseUrl }) : undefined;
-    return observed ? await readAdmittedObservation(observed, { ...scope, serverBaseUrl }, () => observed.read(scope.signal))
-        : projectAccountEncryptionIdentity(await fetchAccountEncryptionCurrentnessFromServer({ ...scope, serverBaseUrl }));
+    const read = async () => {
+        const currentness = observed ? await observed.read(scope.signal)
+            : projectAccountEncryptionIdentity(await fetchAccountEncryptionCurrentnessFromServer({ ...scope, serverBaseUrl }));
+        if (!consume) return currentness;
+        const result = await consume(currentness);
+        if (observed && !observed.isCurrent(currentness)) throw new AccountEncryptionCurrentnessUnavailableError();
+        return result;
+    };
+    return observed ? await readAdmittedObservation(observed, { ...scope, serverBaseUrl }, read) : await read();
 }
 
 /** A synchronous fence after distinct Machine/Home awaits, without another HTTP read. */

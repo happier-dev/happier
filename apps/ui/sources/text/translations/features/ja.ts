@@ -17469,6 +17469,7 @@ const ja = completeWorkspaceSyncTranslation({
         authorizationExpired: 'ワークスペースの承認期限が切れました。操作をもう一度開始してください。',
         rootNoLongerAuthorized: 'ワークスペースフォルダーが変更され、承認対象ではなくなりました。再試行する前にリンクを確認してください。',
         conflictNeedsAttention: 'この競合は変更されています。バージョンを選ぶ前に更新してください。',
+        requesterAccessUnavailable: "Happier はこの同期リンクへのアクセスを復元できませんでした。元のアカウントを使用していることを確認するか、マシンの管理者にアクセス権の確認を依頼してください。",
         needsAttention: 'ワークスペース同期に対応が必要です。状態を更新して、もう一度お試しください。',
     },
     start: { blocked: { targetMachine: '続行するには宛先マシンを選択してください。', targetMachineOffline: 'そのマシンは現在利用できません。再接続して、もう一度お試しください。', relationshipUnavailable: 'この同期関係は、この 2 つのフォルダーを対象としていません。別のワークスペースオプションを選択してください。', sourceFolder: 'このセッションのフォルダーは安全に同期できません。セッションだけを引き継ぐには「ファイルを移動しない」を選択してください。', destinationFolder: '有効な宛先フォルダーを選択してください。', workspaceOptions: '開始する前にワークスペースのオプションを確認してください。' } },

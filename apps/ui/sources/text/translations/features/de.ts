@@ -16979,6 +16979,7 @@ const de = completeWorkspaceSyncTranslation({
         authorizationExpired: 'Die Berechtigung für den Arbeitsbereich ist abgelaufen. Starte den Vorgang erneut.',
         rootNoLongerAuthorized: 'Der Arbeitsbereichsordner wurde geändert und ist nicht mehr autorisiert. Prüfe die Verbindung, bevor du es erneut versuchst.',
         conflictNeedsAttention: 'Dieser Konflikt hat sich geändert. Aktualisiere ihn, bevor du eine Version auswählst.',
+        requesterAccessUnavailable: "Happier konnte den Zugriff auf diese Synchronisierungsverknüpfung nicht wiederherstellen. Prüfe, ob du das ursprüngliche Konto verwendest, oder bitte einen Maschinenverwalter, den Zugriff zu prüfen.",
         needsAttention: 'Die Arbeitsbereichssynchronisierung benötigt Aufmerksamkeit. Aktualisiere den Status und versuche es erneut.',
     },
     start: { blocked: {

@@ -872,11 +872,12 @@ async function readRequesterSessionCredentialBinding(
   readMachineAdmissionCurrent?: (signal?: AbortSignal) => ReturnType<typeof readRequesterSessionMachineAdmissionCurrent>,
   caller: 'direct_binding' | 'custody_after_machine_binding' | 'custody_recovery' = 'direct_binding',
 ): Promise<true | null | undefined> {
-  // Opaque false can be a withdrawn local Home or an unbound Session. Only the
-  // canonical Machine reader can identify its existing null refusal result.
+  // Workspace's Machine verifier throws unavailable reads and returns false
+  // only for a definite refusal. Other callers' opaque false stays unknown.
   const readMachineCurrent = async (signal?: AbortSignal) => readMachineAdmissionCurrent
     ? await readMachineAdmissionCurrent(signal)
-    : await input.verifyMachineAdmissionCurrent(signal) ? true : undefined;
+    : await input.verifyMachineAdmissionCurrent(signal) ? true
+      : input.scope === 'workspace_sync_relationship' ? null : undefined;
   // Correlate the existing record, without retaining authority, request data or a stack.
   const bindingDiagnostic = { bindingId: ++nextBindingDiagnosticId,
     // This owner holds no operation identity; do not infer one from a detached
@@ -906,29 +907,38 @@ async function readRequesterSessionCredentialBinding(
         if (input.signal?.aborted) return undefined;
         const before = await observe('machine_before', () => readMachineCurrent(input.signal));
         if (before == null) return before;
-        const [profile, currentness, session] = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => Promise.all([
-          observe('profile', () => discovery.context ? Promise.resolve({ id: discovery.context.actorAccountId })
-            : fetchAccountProfile({ token: input.credentials.token, projection: 'self', ...(input.signal ? { signal: input.signal } : {}) })),
-          observe('encryption', () => readRequesterAccountEncryptionCurrentness({ accountId: input.attribution.accountId,
-            token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl,
-            ...(input.signal ? { signal: input.signal } : {}) })),
-          input.scope ? Promise.resolve(null)
-            : observe('session', () => fetchSessionById({ reason: 'requester-binding', token: input.credentials.token, serverUrl: input.serverHttpBaseUrl, sessionId: input.sessionId,
-              ...(input.signal ? { signal: input.signal } : {}) })),
-        ]));
-        const owner = input.expectedSessionCreationTag !== undefined && session ? tryDecryptSessionOwnerMetadataView({ credentials: input.credentials,
-          accountEncryptionMode: currentness.mode, rawSession: session }) : null;
-        const correspondence = input.expectedSessionCreationTag === undefined ? null
-          : SessionCreationCorrespondenceV1Schema.safeParse(owner?.sessionCreationCorrespondenceV1);
-        const bound = profile.id === input.attribution.accountId
-          && (input.scope !== undefined || session?.id === input.sessionId && readSessionAccessProjectionRoleV1(session) === 'owner')
-          && (currentness.mode === 'plain' ? input.credentials.encryption === null : input.credentials.encryption !== null)
-          && (input.expectedSessionCreationTag === undefined
-            || correspondence?.success === true && correspondence.data.sessionCreationTag === input.expectedSessionCreationTag
-              && correspondence.data.recipe.execution.machineId === input.attribution.machineId);
-        if (input.signal?.aborted || !isRequesterAccountEncryptionCurrentnessObserved({ accountId: input.attribution.accountId,
-          token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl }, currentness)) return undefined;
-        return bound ? true : null;
+        return await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, async () => {
+          const correspondenceRead = Promise.all([
+            observe('profile', () => discovery.context ? Promise.resolve({ id: discovery.context.actorAccountId })
+              : fetchAccountProfile({ token: input.credentials.token, projection: 'self', ...(input.signal ? { signal: input.signal } : {}) })),
+            input.scope ? Promise.resolve(null)
+              : observe('session', () => fetchSessionById({ reason: 'requester-binding', token: input.credentials.token, serverUrl: input.serverHttpBaseUrl, sessionId: input.sessionId,
+                ...(input.signal ? { signal: input.signal } : {}) })),
+          ]);
+          // The observation owner retains only a borrowed fact's lifetime.
+          // Fresh HTTP for this credential does not borrow another holder's fact.
+          const [, current] = await Promise.all([
+            correspondenceRead,
+            observe('encryption', () => readRequesterAccountEncryptionCurrentness({ accountId: input.attribution.accountId,
+              token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl,
+              ...(input.signal ? { signal: input.signal } : {}) }, async (currentness): Promise<true | null | undefined> => {
+              const [profile, session] = await correspondenceRead;
+              const owner = input.expectedSessionCreationTag !== undefined && session ? tryDecryptSessionOwnerMetadataView({ credentials: input.credentials,
+                accountEncryptionMode: currentness.mode, rawSession: session }) : null;
+              const correspondence = input.expectedSessionCreationTag === undefined ? null
+                : SessionCreationCorrespondenceV1Schema.safeParse(owner?.sessionCreationCorrespondenceV1);
+              const bound = profile.id === input.attribution.accountId
+                && (input.scope !== undefined || session?.id === input.sessionId && readSessionAccessProjectionRoleV1(session) === 'owner')
+                && (currentness.mode === 'plain' ? input.credentials.encryption === null : input.credentials.encryption !== null)
+                && (input.expectedSessionCreationTag === undefined
+                  || correspondence?.success === true && correspondence.data.sessionCreationTag === input.expectedSessionCreationTag
+                    && correspondence.data.recipe.execution.machineId === input.attribution.machineId);
+              if (input.signal?.aborted) return undefined;
+              return bound ? true : null;
+            })),
+          ]);
+          return current;
+        });
       } catch (error) {
         rethrowRequesterHomeReadFailure(error);
         // Preserve the existing Workspace recovery error contract.
@@ -1042,10 +1052,9 @@ async function resolveRequesterSessionCustody(input: Omit<Parameters<typeof reso
         message: 'Requester Home is temporarily unavailable. Retry when it is available.' });
     }
     // readBoundCustody above has already matched the exact persisted scope,
-    // Account, Session/trigger id and installation attribution. A definite
-    // refusal retires every scope; Workspace keeps its existing recovery behavior.
-    if (!input.signal?.aborted && (input.scope === 'workspace_sync_relationship'
-      || current === null)) await retireRequesterSessionCredentialCustody(input);
+    // Account, Session/trigger id and installation attribution. Only a definite
+    // refusal retires custody; unavailable currentness preserves every scope.
+    if (!input.signal?.aborted && current === null) await retireRequesterSessionCredentialCustody(input);
     return null;
   } catch (error) { rethrowRequesterHomeReadFailure(error); return null; }
 }

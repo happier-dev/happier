@@ -17538,6 +17538,7 @@ const fr = completeWorkspaceSyncTranslation({
         authorizationExpired: 'L’autorisation de l’espace de travail a expiré. Relance l’opération.',
         rootNoLongerAuthorized: 'Le dossier de l’espace de travail a changé et n’est plus autorisé. Vérifie le lien avant de réessayer.',
         conflictNeedsAttention: 'Ce conflit a changé. Actualise-le avant de choisir une version.',
+        requesterAccessUnavailable: "Happier n’a pas pu rétablir l’accès à ce lien de synchronisation. Vérifiez que vous utilisez le compte d’origine ou demandez à un gestionnaire de la machine de vérifier l’accès.",
         needsAttention: 'La synchronisation de l’espace de travail nécessite ton attention. Actualise son état, puis réessaie.',
     },
     start: { blocked: {

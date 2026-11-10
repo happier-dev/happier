@@ -17540,6 +17540,7 @@ const es = completeWorkspaceSyncTranslation({
         authorizationExpired: 'La autorización del espacio de trabajo ha caducado. Inicia de nuevo la operación.',
         rootNoLongerAuthorized: 'La carpeta del espacio de trabajo cambió y ya no está autorizada. Revisa el vínculo antes de volver a intentarlo.',
         conflictNeedsAttention: 'Este conflicto cambió. Actualízalo antes de elegir una versión.',
+        requesterAccessUnavailable: "Happier no ha podido restaurar el acceso a este enlace de sincronización. Comprueba que usas la cuenta original o pide a un administrador de la máquina que revise el acceso.",
         needsAttention: 'La sincronización del espacio de trabajo necesita atención. Actualiza su estado y vuelve a intentarlo.',
     },
     start: { blocked: {

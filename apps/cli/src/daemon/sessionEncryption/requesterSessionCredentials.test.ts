@@ -3,6 +3,7 @@ import { createProviderAccountUsageStore } from '@/daemon/connectedServices/acco
 import { access, mkdtemp, rm, readFile, chmod, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import axios from 'axios';
+import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { dirname, join } from 'node:path';
 import { resolveAgentCliManagedCommandPathForRuntime } from '@happier-dev/cli-common/agents';
 import { AcpCatalogRecordV1Schema, type AcpCatalogRecordV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
@@ -562,6 +563,7 @@ describe('requester Session lifecycle custody', () => {
     }
     expect(await requesterCredentialOwner.resolveWorkspaceSyncRelationshipCredentialCustody({ ...binding, serverHttpBaseUrl: origin,
       machineAdmissionBoundary: host.boundary })).toBeNull();
+    if (mismatch !== 'identity') await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it.each(['owner', 'manager'] as const)('recovers Sync relationship SOURCE Account custody independently of the target native identity (%s)', async authority => {
@@ -641,6 +643,32 @@ describe('requester Session lifecycle custody', () => {
     expect(host.requests.slice(beforeSync).some(request => request.path.endsWith('/admission/verify')
       || request.path.startsWith('/v2/sessions/'))).toBe(false);
     expect(await verifyRequesterSessionMachineAdmissionCurrent({ ...fresh, sessionId: 'session' })).toBe(true);
+  });
+
+  it.each(['source', 'target'] as const)('recovers Sync %s custody with fresh authenticated HTTP while another valid credential observes the same Account', async endpoint => {
+    const host = await home({ machineGrantCount: 1 });
+    const binding = { happyHomeDir: directory!, relationshipId: 'other-token-sync', attribution };
+    const custody = endpoint === 'source'
+      ? await requesterCredentialOwner.createWorkspaceSyncSourceCredentialCustody({ ...binding, credentials })
+      : await requesterCredentialOwner.createWorkspaceSyncRelationshipCredentialCustody({ ...binding, credentials,
+        executionIdentity: { kind: 'isolated', requester: attribution, separationRequired: true } });
+    const original = await readFile(custody.path, 'utf8');
+    // Both credentials authenticate as this Account in the real HTTP fixture.
+    // A different live Session holds the Account observation under its own token.
+    const observation = acquireRequesterAccountEncryptionCurrentness({ accountId: attribution.accountId,
+      token: 'other-valid-requester-token', serverBaseUrl: origin });
+    const recover = () => endpoint === 'source'
+      ? requesterCredentialOwner.resolveWorkspaceSyncSourceCredentialCustody({ ...binding, serverHttpBaseUrl: origin,
+        machineAdmissionBoundary: host.boundary })
+      : requesterCredentialOwner.resolveWorkspaceSyncRelationshipCredentialCustody({ ...binding, serverHttpBaseUrl: origin,
+        machineAdmissionBoundary: host.boundary });
+    try {
+      await observation.read();
+      expect(await recover()).not.toBeNull();
+      await expect(readFile(custody.path, 'utf8')).resolves.toBe(original);
+    } finally { await observation.dispose(); }
+    expect(await recover()).not.toBeNull();
+    expect(await readFile(custody.path, 'utf8')).toBe(original);
   });
 
   it.each(['source', 'target'] as const)('preserves Sync %s custody when Machine admission is unavailable, then retires a definite refusal', async endpoint => {

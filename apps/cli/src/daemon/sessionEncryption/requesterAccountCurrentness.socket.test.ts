@@ -1022,6 +1022,56 @@ describe('requester Account currentness over the installed socket wiring', () =>
         } finally { await observation.dispose(); await channel.close(); }
     });
 
+    it.each(['valid', 'revoked'] as const)('consumes a fresh HTTP credential independently of another Account holder (%s)', async credential => {
+        const channel = await createRequesterCurrentnessSocketHarness();
+        const fact = { mode: 'plain' as const, version: 1, updatedAt: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: null };
+        const reads = vi.spyOn(axios, 'get').mockImplementation(async (_url, config) => {
+            if (credential === 'revoked' && config?.headers?.Authorization === 'Bearer fresh-http') {
+                throw Object.assign(new Error('revoked credential'), { response: { status: 403 } });
+            }
+            return { status: 200, data: fact };
+        });
+        const scope = { accountId: 'bob', serverBaseUrl: 'https://home.example' };
+        const observation = acquireRequesterAccountEncryptionCurrentness({ ...scope, token: 'socket-holder' });
+        try {
+            await observation.read();
+            const result = readRequesterAccountEncryptionCurrentness({ ...scope, token: 'fresh-http' }, async currentness => currentness.mode);
+            if (credential === 'revoked') await expect(result).rejects.toThrow();
+            else await expect(result).resolves.toBe('plain');
+            expect(reads).toHaveBeenCalledTimes(2);
+        } finally { await observation.dispose(); await channel.close(); }
+    });
+
+    it.each(['retired', 'changed'] as const)('refuses a borrowed identity that is %s while its consumer awaits', async invalidation => {
+        const channel = await createRequesterCurrentnessSocketHarness();
+        const fact = { mode: 'plain' as const, version: 1, updatedAt: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: null };
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: fact });
+        const scope = { accountId: 'bob', serverBaseUrl: 'https://home.example' };
+        const peer = acquireRequesterAccountEncryptionCurrentness({ ...scope, token: 'peer' });
+        const borrower = acquireRequesterAccountEncryptionCurrentness({ ...scope, token: 'borrower' });
+        let release!: () => void;
+        const held = new Promise<void>(resolve => { release = resolve; });
+        let consuming = false;
+        try {
+            await peer.read();
+            const result = readRequesterAccountEncryptionCurrentness({ ...scope, token: 'borrower' }, async currentness => {
+                consuming = true;
+                await held;
+                return currentness.mode;
+            }).then(() => 'accepted', () => 'refused');
+            try {
+                await expect.poll(() => consuming).toBe(true);
+                if (invalidation === 'retired') await borrower.dispose();
+                else await channel.push('bob', { ...fact, mode: 'e2ee', version: 2, updatedAt: 2,
+                    contentKeyFingerprint: 'changed-content-key' });
+            } finally { release(); }
+            await expect(result).resolves.toBe('refused');
+            await expect(peer.read()).resolves.toMatchObject({ mode: invalidation === 'changed' ? 'e2ee' : 'plain' });
+        } finally { release(); await borrower.dispose(); await peer.dispose(); await channel.close(); }
+    });
+
     it('does not lend an admitted socket fact to an unregistered credential for the same Account', async () => {
         const channel = await createRequesterCurrentnessSocketHarness();
         const fact = { mode: 'plain' as const, version: 1, updatedAt: 1,
