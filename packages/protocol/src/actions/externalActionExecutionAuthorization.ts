@@ -40,9 +40,18 @@ import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestIdV1Schema, E
   type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionExecutionAuthorizationV1,
   type ExternalActionTargetV1, type ExternalActionRequestEnvelope } from './externalActionApi.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import type { ActionRequiredAuthority } from './metadata.js';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
   EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
   EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER } from './externalActionApi.js';
+
+/** Project the signed root's floor without raising its Account authority. */
+export function readExternalActionBindingAuthority(binding: ExternalActionExecutionAuthorizationBindingV1,
+  accountAuthority: ActionRequiredAuthority = 'present_user'): ActionRequiredAuthority {
+  return !('authentication' in binding) || binding.sessionActionOrigin || binding.workflowActionOrigin
+    || binding.nativeCredentialSpawnChild || binding.authentication.kind === 'terminal'
+    ? 'account_automation' : accountAuthority;
+}
 
 /** HTTP framing only: signatures and admission still bind the original request body. */
 export const EXTERNAL_ACTION_HTTP_BODY_HEADER_V1 = 'x-happier-action-body';
