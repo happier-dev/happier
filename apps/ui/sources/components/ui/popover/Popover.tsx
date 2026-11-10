@@ -2018,7 +2018,10 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
     const contentPointerEvents = resolveOverlayPointerEvents(
         props.passive || overlayPresence.exiting || ((shouldPortalWeb || shouldPortalNative) && portalOpacity === 0)
             ? 'none'
-            : 'auto',
+            // On native the container also holds the transparent shadow outset around the surface: it passes touches
+            // through, so a panel opened just under a header never swallows that header's taps (native QA: Session ⋯
+            // on the Companion tab). The surface inside still takes them.
+            : Platform.OS === 'web' ? 'auto' : 'box-none',
     );
 
     const escapeLayer = useEscapeLayer({
