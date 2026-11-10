@@ -2,15 +2,16 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ExecutionRunTurnStreamStartRequestSchema, ExecutionRunTurnStreamStartV2RequestSchema,
-  ExecutionRunTurnStreamReadResponseSchema } from '@happier-dev/protocol/execution/runs/streaming';
-import { createDeferred, createSessionFixture, renderScreen } from '@/dev/testkit';
+  ExecutionRunTurnStreamReadRequestSchema, ExecutionRunTurnStreamReadResponseSchema } from '@happier-dev/protocol/execution/runs/streaming';
+import { createDeferred, createSessionFixture, renderScreen, waitForTestEvent } from '@/dev/testkit';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import { t } from '@/text';
 import {
   expoSpeechSpeak, getStorage, loadLocalVoiceEngineWithCompatState, localVoiceAgentRpc,
-  localVoiceHomeId, localVoiceRouteState, registerLocalVoiceEngineHarnessHooks, sessionRpcWithServerScope, warmLocalVoiceEngineHarnessGraph,
-  waitForLocalVoiceBoundaryEvent, waitForLocalVoiceState,
+  localVoiceHomeId, localVoiceRouteState, localVoiceSpeechOutputBoundary, registerLocalVoiceEngineHarnessHooks, sessionRpcWithServerScope, warmLocalVoiceEngineHarnessGraph,
+  readLocalVoiceHttpRequests, waitForLocalVoiceBoundaryEvent, waitForLocalVoiceState,
 } from '@/voice/local/localVoiceEngine.testHarness';
 
 const restoreHarnessModuleLoader = await warmLocalVoiceEngineHarnessGraph();
@@ -223,6 +224,7 @@ describe('local conversation voice adapter', () => {
     try {
       expect(voiceHooks.onBriefRequested(VOICE_AGENT_GLOBAL_SESSION_ID, {
         source: { isDataReady: true, personalSessionListCoverageComplete: true },
+        items: [], openApprovals: [], openUsageNotices: [], actionOperationEntries: [], friendRequests: [],
         sessionPresentation: { sessionsNeedingAttention: [], readySessions: [], markAllReadTargets: [], pendingRequestHydrationTargets: [] },
         workGroups: [], automationAttentionItems: [], workflowAttention: attention, automationAttention: attention,
         isLoading: false, showCaughtUp: true,
@@ -262,13 +264,104 @@ describe('local conversation voice adapter', () => {
     const screen = await renderScreen(React.createElement(InjectedAuthProvider, { credentials, children:
       React.createElement(MainAppTabStateProvider, { children: React.createElement(AppPaneProvider, { children:
         React.createElement(Home) }) }) }));
+    const briefAdmitted = createDeferred<void>();
+    const responder = sessionRpcWithServerScope.getMockImplementation();
+    if (!responder) throw new Error('Missing local Voice Socket RPC boundary');
+    sessionRpcWithServerScope.mockImplementation(async request => {
+      const reply = await responder(request);
+      if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START
+        || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2) briefAdmitted.resolve();
+      return reply;
+    });
     try {
       await React.act(async () => { expect(executeVoiceBriefOperation('request').ok).toBe(true); });
-      await waitForLocalVoiceBoundaryEvent('speech');
-      await waitForLocalVoiceState(state => state.status === 'idle' || state.error !== null);
+      await briefAdmitted.promise;
       expect(admittedProviderText()).toContain('INBOX BRIEF');
+      const request = [...localVoiceAgentRpc.requests].reverse().find(request =>
+        request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2);
+      expect(ExecutionRunTurnStreamStartV2RequestSchema.parse(request?.input)).toMatchObject({
+        displayMessage: t('voiceMoments.briefMe'), userTranscript: { mode: 'suppress' },
+      });
+      const pending = readLocalVoiceHttpRequests().filter(request => request.method === 'POST'
+        && /^\/v2\/sessions\/[^/]+\/pending$/.test(request.path));
+      expect(pending).toHaveLength(1);
+      expect(JSON.stringify(pending.map(request => request.body))).toContain(t('voiceMoments.briefMe'));
+      expect(JSON.stringify(pending.map(request => request.body))).not.toContain('INBOX BRIEF');
+      await waitForLocalVoiceBoundaryEvent('speech');
       expect(expoSpeechSpeak.mock.calls.some(([text]) => typeof text === 'string' && text.includes('Daemon reply'))).toBe(true);
-      expect(adapter.getSnapshot()).toMatchObject({ status: 'connected', mode: 'idle' });
+      expect(adapter.getSnapshot()).toMatchObject({ status: 'connected', canStop: true, micMuted: true });
+      expect(adapter.getSnapshot().errorMessage).toBeUndefined();
+    } finally {
+      await screen.unmount();
+      await adapter.stop({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID });
+      setVoiceSessionSnapshot(adapter.getSnapshot());
+    }
+  });
+
+  it('hands a spoken native Brief Action to its mounted owner and speaks the one resulting Brief', async () => {
+    const providerInputs: string[] = [];
+    const { InboxModelBoundary } = await import('@/hooks/inbox/useInboxModel');
+    const { useVoiceBriefHomeRequest, useVoiceBriefRequest } = await import('@/components/voice/brief/useVoiceBriefRequest');
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    const credentials = await TokenStorage.getCredentialsForServerUrl(getActiveServerSnapshot().serverUrl);
+    if (!credentials) throw new Error('Home Brief requires restored Account credentials');
+    const storage = await getStorage();
+    const state = storage.getState();
+    const config = readLocalConversationVoiceSettings(state.settings.voice);
+    storage.__setState({ settings: { ...state.settings, voice: { ...state.settings.voice,
+      providers: { ...state.settings.voice.providers, local_conversation: { schemaVersion: 1,
+        config: { ...config, tts: { ...config.tts, provider: 'device', autoSpeakReplies: true } } } } } } });
+    await adapter.toggle({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID });
+    await adapter.setMuted({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, muted: true });
+    setVoiceSessionSnapshot(adapter.getSnapshot());
+    function HomeBrief() { useVoiceBriefRequest(); return null; }
+    function Home() {
+      const [open, setOpen] = React.useState(false);
+      useVoiceBriefHomeRequest({ available: true, onOpen: () => setOpen(true) });
+      return open ? React.createElement(InboxModelBoundary, { children: React.createElement(HomeBrief) }) : null;
+    }
+    const screen = await renderScreen(React.createElement(InjectedAuthProvider, { credentials, children:
+      React.createElement(MainAppTabStateProvider, { children: React.createElement(AppPaneProvider, { children:
+        React.createElement(Home) }) }) }));
+    const responder = sessionRpcWithServerScope.getMockImplementation();
+    if (!responder) throw new Error('Missing local Voice Socket RPC boundary');
+    const nativeActionRead = createDeferred<void>();
+    const briefAdmitted = createDeferred<void>();
+    sessionRpcWithServerScope.mockImplementation(async request => {
+      if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2) {
+        providerInputs.push(ExecutionRunTurnStreamStartV2RequestSchema.parse(request.payload).message);
+        if (providerInputs.length === 2) briefAdmitted.resolve();
+        return { streamId: `native-brief-${providerInputs.length}` };
+      }
+      if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) {
+        const { streamId } = ExecutionRunTurnStreamReadRequestSchema.parse(request.payload);
+        if (streamId === 'native-brief-1') nativeActionRead.resolve();
+        return ExecutionRunTurnStreamReadResponseSchema.parse({ streamId, events: streamId === 'native-brief-1' ? [
+          { t: 'voice_output', output: { v: 1, kind: 'side_effect', turnId: streamId, seq: 0,
+            effectId: 'spoken-brief-request', action: { t: 'requestVoiceBrief', args: {} } } },
+          { t: 'voice_output', output: { v: 1, kind: 'turn_final', turnId: streamId, seq: 1, text: '' } },
+        ] : [{ t: 'voice_output', output: { v: 1, kind: 'turn_final', turnId: streamId, seq: 0,
+          text: 'Your Inbox is caught up.' } }], nextCursor: streamId === 'native-brief-1' ? 2 : 1, done: true });
+      }
+      return responder(request);
+    });
+    try {
+      let turn: ReturnType<typeof send> | undefined;
+      await React.act(async () => {
+        turn = send('Brief me', 'spoken-brief-request');
+        await nativeActionRead.promise;
+      });
+      await briefAdmitted.promise;
+      expect(providerInputs.length).toBe(2);
+      expect(providerInputs[0]).not.toContain('INBOX BRIEF');
+      expect(providerInputs[1]).toContain('INBOX BRIEF');
+      await turn;
+      await waitForTestEvent(localVoiceSpeechOutputBoundary.subscribeSpeech,
+        () => expoSpeechSpeak.mock.calls.length, count => count >= 2);
+      const spoken = expoSpeechSpeak.mock.calls.map(([text]) => text);
+      expect(spoken).toHaveLength(2); // Existing dangerous-Action read-back, then the one Brief answer.
+      expect(spoken.at(-1)).toBe('Your Inbox is caught up.');
+      expect(adapter.getSnapshot()).toMatchObject({ status: 'connected', canStop: true, micMuted: true });
       expect(adapter.getSnapshot().errorMessage).toBeUndefined();
     } finally {
       await screen.unmount();

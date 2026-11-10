@@ -1343,7 +1343,7 @@ export async function sendLocalVoiceAgentTextTurn(
   );
 }
 
-export async function sendLocalVoiceAgentTextUpdate(sessionId: string, update: string): Promise<void> {
+export async function sendLocalVoiceAgentTextUpdate(sessionId: string, update: string, context?: string): Promise<void> {
   const text = update.trim();
   if (!text) return;
 
@@ -1355,6 +1355,7 @@ export async function sendLocalVoiceAgentTextUpdate(sessionId: string, update: s
       sessionId: resolvedSessionId,
       settings,
       userText: text,
+      ...(context ? { context } : {}),
       playbackController,
       voiceAgentSessions: {
         sendTurn: (nextSessionId, userText, opts) =>

@@ -6770,6 +6770,20 @@ dismissal and reads are direct by default. The current attempt read
 reports captured destinations and actual availability, rather than promising
 that an unsupported host can start Voice. Brief delivery remains demand-mounted
 on the ready Home/Inbox surface; missing owners return typed unavailability.
+The native Voice tool `requestVoiceBrief` exposes the existing
+`ui.voice_global.brief.request` Action with its catalog-owned input schema. It
+uses that same approval, mounted Home/Inbox and delivery path; `invokeAction`
+remains for contributed plugin Actions. A malformed native or legacy text Action
+is refused before execution with a plain spoken explanation, without validator
+field names or diagnostics.
+Brief needs-you totals come from the Inbox's canonical needs-you projection;
+missing individual details are reported as incomplete coverage rather than
+reducing that total. An admitted Brief request leaves its spoken answer with the
+mounted Brief delivery owner, including while Home demand-mounts Inbox, so the
+calling Action turn does not race it with another model answer.
+The privacy-projected Brief snapshot and its answering instructions travel as
+per-request provider context. The visible user turn and Pending input contain
+only the person's Brief request, rather than the serialized Inbox snapshot.
 In 0.3 development, `ui.voice_global.companion.reveal` reveals the mounted Voice
 section or opens the focused Session's Companion through its ordinary route.
 Without a focused Session it uses the captured Voice target or conversation.
@@ -10346,3 +10360,26 @@ never travel to another host.
 The shared native power owner inspects vendor power before Start or Resume.
 Confirmed-running resources skip native power and retain the existing guest
 daemon startup path. A stored running observation cannot hide a vendor-side stop.
+
+## Project starter creation (0.3 development)
+
+`projects.starters.create` composes the bundled Project starter catalog with the
+existing Project open, SCM publication and Source creation Actions. The review
+covers the selected starter's exact commit, Machine and destination, repository
+owner/name and visibility (private by default). Agent invocation requires Ask;
+a person's designed review directly confirms the operation. Children execute
+through the existing host-child executor under that admission.
+
+Project open clones the whole starter with `main` at its pin. SCM publishes that
+branch to the person's hosted repository and rebinds `origin`. The Source owner
+projects hosted discovery into its credential-free selector, saves the normal
+Source, and Project open associates it with the accepted checkout. Success
+returns the Project key, Source id, repository URL, workspace and a Session
+handoff. The handoff preserves the description as the first message; the caller
+uses existing Session creation as a separately represented effect.
+
+Disconnected SCM returns `scm_account_required` with the existing SCM connect
+remediation before checkout or publication. A later failure retains completed
+repository/Source/workspace facts in a typed partial result. Recover through
+those existing owners; never automatically create another repository. This is
+development source behavior, not a statement of released UI availability.

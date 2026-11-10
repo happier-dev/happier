@@ -1,6 +1,5 @@
 import { z } from 'zod/mini';
 import { listVoiceActionBlockSpecs, resolveVoiceClientToolNameAlias } from '../actions/actionSpecs.js';
-import { projectActionInputIssues } from '../actions/executor/actionInputValidation.js';
 import { resolveActionCatalogSurfaceProjection } from '../actions/actionCatalog.js';
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js';
@@ -175,7 +174,7 @@ function coerceVoiceActionValueForSchema(value: unknown, schema: z.core.$ZodType
   return coerceVoiceActionScalarStrings(value);
 }
 
-function parseVoiceAssistantAction(rawAction: unknown): { action: VoiceAssistantAction } | { invalidInput: string } | null {
+function parseVoiceAssistantAction(rawAction: unknown): VoiceAssistantAction | null {
   if (!rawAction || typeof rawAction !== 'object') return null;
 
   const rawToolName = typeof (rawAction as { t?: unknown }).t === 'string' ? (rawAction as { t: string }).t.trim() : '';
@@ -189,33 +188,32 @@ function parseVoiceAssistantAction(rawAction: unknown): { action: VoiceAssistant
   const rawArgs = (rawAction as { args?: unknown }).args;
   const direct = inputSchema.safeParse(rawArgs);
   if (direct.success) {
-    return { action: { t: toolName, args: direct.data } };
+    return { t: toolName, args: direct.data };
   }
 
   const coercedArgs = coerceVoiceActionValueForSchema(rawArgs, inputSchema);
   const coerced = inputSchema.safeParse(coercedArgs);
-  if (!coerced.success) {
-    const fields = [...new Set(projectActionInputIssues(coerced.error)
-      .map((issue) => `${issue.path.join('.') || 'args'} (${issue.message ?? issue.code})`))];
-    return { invalidInput: `${toolName}: ${fields.join(', ')}.` };
-  }
-  return { action: { t: toolName, args: coerced.data } };
+  if (!coerced.success) return null;
+  return { t: toolName, args: coerced.data };
 }
+
+// This pre-execution refusal belongs here: no executable Action exists for the
+// client tool-result presenter. Validator diagnostics never become speech.
+const INVALID_VOICE_ACTION_MESSAGE = "I couldn't run that action because its request was invalid. Please try again.";
 
 /** Decode structured requests at the existing Voice Action boundary, independent of transport. */
 export function decodeVoiceAssistantActions(
   rawActions: readonly unknown[],
   assistantText = '',
 ): Readonly<{ assistantText: string; actions: VoiceAssistantAction[]; invalidActionBlock?: true }> {
-  const parsedActions = rawActions.map(parseVoiceAssistantAction);
-  const actions = parsedActions.flatMap(parsed => parsed && 'action' in parsed ? [parsed.action] : []);
-  // Preserve the existing all-or-nothing request decoding and field diagnostics.
+  const actions = rawActions.flatMap(raw => {
+    const action = parseVoiceAssistantAction(raw);
+    return action ? [action] : [];
+  });
+  // Preserve the existing all-or-nothing request decoding.
   if (actions.length !== rawActions.length) {
-    const invalidInputs = parsedActions.flatMap(parsed => parsed && 'invalidInput' in parsed ? [parsed.invalidInput] : []);
     return {
-      assistantText: invalidInputs.length > 0
-        ? `I couldn't run that action because its input was invalid. ${invalidInputs.join(' ')}`
-        : "I couldn't run that action because its request was invalid. Please try again.",
+      assistantText: INVALID_VOICE_ACTION_MESSAGE,
       actions: [],
       invalidActionBlock: true,
     };
@@ -234,7 +232,7 @@ export function extractVoiceActionsFromAssistantText(
   // An attempted action that cannot execute must not settle as ordinary prose:
   // otherwise "Creating ... now" survives while its mutation silently vanishes.
   const invalidActionBlock = {
-    assistantText: "I couldn't run that action because its request was invalid. Please try again.",
+    assistantText: INVALID_VOICE_ACTION_MESSAGE,
     actions: [],
     invalidActionBlock: true as const,
   };
@@ -252,9 +250,7 @@ export function extractVoiceActionsFromAssistantText(
   try {
     parsedJson = JSON.parse(jsonRaw);
   } catch {
-    // Native SyntaxError prose can quote rejected content. Name the syntax
-    // failure without copying its message, payload or a guessed invalid field.
-    return { ...invalidActionBlock, assistantText: "I couldn't run that action because its action block contained invalid JSON. No action ran." };
+    return invalidActionBlock;
   }
   if (!parsedJson || typeof parsedJson !== 'object' || Array.isArray(parsedJson)) {
     return invalidActionBlock;

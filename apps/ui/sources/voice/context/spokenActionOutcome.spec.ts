@@ -3,6 +3,23 @@ import { t } from '@/text';
 import { resolveSpokenActionOutcome } from './spokenActionOutcome';
 
 describe('spoken Action owner outcomes', () => {
+  it.each([
+    { t: 'requestVoiceBrief', args: {}, result: { ok: true, status: 'waiting', attemptId: 'attempt' } },
+    { t: 'action_execute', args: { actionId: 'ui.voice_global.brief.request', input: {} },
+      result: { ok: true, result: { status: 'sent', attemptId: 'attempt' } } },
+  ])('leaves an admitted Brief reply with its mounted delivery owner: $t', entry => {
+    expect(resolveSpokenActionOutcome(entry)).toEqual({ kind: 'delegated_reply' });
+  });
+
+  it('keeps a refused Brief with failure presentation instead of delegating a missing reply', () => {
+    expect(resolveSpokenActionOutcome({ t: 'requestVoiceBrief', args: {},
+      result: { ok: true, status: 'refused', attemptId: 'attempt' },
+    })).toBe(t('voiceMoments.briefNotSpoken'));
+    expect(resolveSpokenActionOutcome({ t: 'requestVoiceBrief', args: {},
+      result: { ok: false, errorCode: 'voice_brief_unavailable' },
+    })).toBeTypeOf('string');
+  });
+
   it.each([false, true])('reports only admission for an asynchronous send (envelope=%s)', envelope => {
     const input = { message: 'Write a file', reply: 'none' };
     const result = { status: 'accepted', localId: 'message-1' };

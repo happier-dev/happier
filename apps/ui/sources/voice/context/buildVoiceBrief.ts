@@ -21,13 +21,16 @@ import { buildInboxWorkflowReasonFacts } from '@/components/inbox/workGroups/inb
 import { formatAutomationRunCauseLabel, formatAutomationRunStateLabel } from '@/components/automations/list/automationListFormatting';
 import { automationRunTone } from '@/components/automations/home/latestAutomationRuns';
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
-import { isWorkStatusNeedsYou, resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { presentExecutionRunFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { resolveVoiceSessionAuthoredLabel } from './resolveVoiceSessionLabel';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { countInboxNeedsYou, isInboxNeedsYouItem } from '@/components/inbox/inboxCounts';
+import type { InboxItem } from '@/components/inbox/inboxItems';
 
 export type VoiceBriefSource = Pick<InboxModel, 'sessionPresentation' | 'workGroups' | 'automationAttentionItems'
-    | 'workflowAttention' | 'automationAttention' | 'isLoading' | 'showCaughtUp'> & Readonly<{
+    | 'workflowAttention' | 'automationAttention' | 'isLoading' | 'showCaughtUp' | 'items'
+    | 'openApprovals' | 'openUsageNotices' | 'actionOperationEntries' | 'friendRequests'> & Readonly<{
     source: Pick<InboxModel['source'], 'isDataReady' | 'personalSessionListCoverageComplete' | 'sessionListHomeObservationByServerId'>;
 }>;
 export type VoiceBriefItem = Readonly<{
@@ -52,6 +55,10 @@ function freshnessFacts(source: WorkflowAttentionSource) {
 export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; settings: unknown; currentTarget?: SessionAddress | null }>) {
     const { inbox } = input;
     const items: VoiceBriefItem[] = [];
+    const needsYouKeys = new Set(inbox.items.filter(isInboxNeedsYouItem)
+        .map(item => JSON.stringify([item.source.kind, item.source.serverId, item.source.id])));
+    const needsYou = (kind: InboxItem['source']['kind'], serverId: string | null | undefined, id: string) =>
+        needsYouKeys.has(JSON.stringify([kind, serverId, id]));
     const speechByKey = new Map<string, Readonly<{ title?: string; requests?: readonly string[] }>>();
     const privacy = readVoicePrivacySettings(input.settings);
     const safeTitle = (title: string) => privacy.shareFilePaths ? title : redactVoicePathLikeString(title);
@@ -104,8 +111,9 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
         const address = normalizeSessionAddress(candidate.address?.serverId ?? candidate.serverId, candidate.sessionId);
         const title = sessionTitle(candidate);
         if (!address || !title) continue;
-        const requiresPerson = candidate.personalAttention.reasons.some((reason) => reason === 'permission_required' || reason === 'user_action_required');
-        items.push({ key: sessionAddressKey(address), category: !requiresPerson && candidate.personalAttention.reasons.includes('failed') ? 'failed' : 'needs_you',
+        const requiresPerson = needsYou('session', address.serverId, address.sessionId);
+        if (!requiresPerson && !candidate.personalAttention.reasons.includes('failed')) continue;
+        items.push({ key: sessionAddressKey(address), category: requiresPerson ? 'needs_you' : 'failed',
             title, ...sessionSubtitle(candidate, requestReason(entry)),
             hasRequestControls: entry.pendingPermissions.length + entry.pendingUserActions.length > 0,
             destination: { kind: 'session', address }, ...(candidate.route ? { route: candidate.route } : {}) });
@@ -128,7 +136,9 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
             if (name.kind !== 'name' || !name.value.trim()) continue;
             const title = name.value;
             const status = item.row.summary ? resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(item.row.summary) }) : null;
-            const category = status?.tone === 'danger' && !isWorkStatusNeedsYou(status) ? 'failed' : 'needs_you';
+            const category = needsYou('workflow_run', inbox.workflowAttention.serverId, item.runId) ? 'needs_you'
+                : status?.tone === 'danger' ? 'failed' : null;
+            if (!category) continue;
             const failure = category === 'failed' && item.row.summary?.errorCode
                 ? presentExecutionRunFailure({ code: item.row.summary.errorCode })?.message : null;
             const subtitle = joinHappierFacts(...buildInboxWorkflowReasonFacts(item)) || failure || t('common.unavailable');
@@ -139,31 +149,38 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
     for (const item of inbox.automationAttentionItems) {
         if (!item.title?.trim()) continue;
         const subtitle = joinHappierFacts(formatAutomationRunStateLabel(item.run), formatAutomationRunCauseLabel(item.run.cause));
-        const category = automationRunTone(item.run.workflowRunState ?? item.run.state) === 'failed' ? 'failed' : 'needs_you';
+        const category = needsYou('automation_run', inbox.automationAttention.serverId, item.run.id) ? 'needs_you'
+            : automationRunTone(item.run.workflowRunState ?? item.run.state) === 'failed' ? 'failed' : null;
+        if (!category) continue;
         items.push({ key: item.key, category, title: item.title, subtitle, destination: { kind: 'automation', route: item.route }, route: item.route });
         if (privacy.shareSessionSummary) speechByKey.set(item.key, { title: safeTitle(item.title) });
     }
     const rank = { needs_you: 0, failed: 1, ready: 2 } as const;
     items.sort((a, b) => rank[a.category] - rank[b.category]);
     const sources = [inbox.workflowAttention, inbox.automationAttention];
-    const incomplete = inbox.isLoading || !inbox.source.isDataReady || inbox.source.personalSessionListCoverageComplete !== true
+    const sourceIncomplete = inbox.isLoading || !inbox.source.isDataReady || inbox.source.personalSessionListCoverageComplete !== true
         || Object.values(inbox.source.sessionListHomeObservationByServerId ?? {}).some((home) => home?.phase !== 'ready')
         || sources.some((source) => source.available && (source.phase !== 'loaded' || source.refreshFailed || source.hasMore || source.loadMoreFailed));
     const freshness = { sessionHomes: inbox.source.sessionListHomeObservationByServerId ?? {}, workflow: freshnessFacts(inbox.workflowAttention), automation: freshnessFacts(inbox.automationAttention) };
-    const caughtUp = inbox.showCaughtUp && !incomplete && items.length === 0;
     // Provider context is not the navigation model: never serialize route/identity,
     // callbacks or private records from Inbox. Decisions stay with canonical request tools/UI.
     const approval = formatVoiceApprovalGuidance(getVoiceContextFormatterPrefs({ settings: input.settings }).voiceCanApproveRequests);
-    const counts = { needs_you: 0, failed: 0, ready: 0 };
+    const counts = { needs_you: countInboxNeedsYou(inbox), failed: 0, ready: 0 };
+    let projectedNeedsYou = 0;
     const speechGroups = new Map<string, Readonly<{ category: VoiceBriefItem['category']; title?: string; requests?: readonly string[] }> & { count: number }>();
     for (const item of items) {
-        counts[item.category] += 1;
+        if (item.category === 'needs_you') projectedNeedsYou += 1;
+        else counts[item.category] += 1;
         const speech = { category: item.category, ...speechByKey.get(item.key) };
         const key = JSON.stringify(speech);
         const existing = speechGroups.get(key);
         if (existing) existing.count += 1;
         else speechGroups.set(key, { ...speech, count: 1 });
     }
+    // The count owner also knows admitted kinds/windows whose navigable details
+    // are not in this Brief. Keep its total and state that the details are partial.
+    const incomplete = sourceIncomplete || counts.needs_you > projectedNeedsYou;
+    const caughtUp = inbox.showCaughtUp && !incomplete && items.length === 0;
     const context = JSON.stringify({ incomplete, caughtUp, counts, items: [...speechGroups.values()], approval });
     return { items, freshness, incomplete, caughtUp, context };
 }

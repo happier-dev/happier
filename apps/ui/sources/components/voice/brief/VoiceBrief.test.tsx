@@ -50,6 +50,8 @@ import { t } from '@/text';
 import { formatVoiceApprovalGuidance } from '@/voice/context/contextFormatters';
 import { buildActivityOverviewSnapshot } from '@/activity/attention/buildActivityOverviewSnapshot';
 import { buildInboxSessionPresentation } from '@/activity/presentation/buildInboxSessionPresentation';
+import { buildInboxWorkGroups } from '@/activity/presentation/buildInboxWorkGroups';
+import { buildInboxItems } from '@/components/inbox/inboxItems';
 import { EMPTY_WORKFLOW_ATTENTION_SOURCE } from '@/hooks/inbox/useWorkflowAttentionSource';
 import { readInboxSessionTitle } from '@/components/inbox/sessionAttention/inboxSessionPrivacy';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
@@ -65,6 +67,8 @@ import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { captureActiveServerAccountScopeCurrentness, getActiveServerAccountScope, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { disconnectActiveServerConnectionIfCurrent } from '@/sync/runtime/orchestration/connectionManager';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { decodeVoiceAssistantActions } from '@happier-dev/protocol/voice/actions';
+import { createVoiceToolHandlers } from '@/voice/tools/handlers';
 
 vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -119,6 +123,7 @@ function transport() {
         ? peers.length : Math.max(0, peers.length - 1));
     return { starts,
         get spoken() { return messages('user'); },
+        get context() { return messages('system'); },
         get interrupted() { return peers.flatMap((peer, index) => peer.channel.sent.flatMap(value => JSON.parse(value).type === 'response.cancel' ? [starts[index]!.controlSessionId] : [])); },
         async waitForSpoken() {
             const peer = await usablePeer();
@@ -486,9 +491,15 @@ describe('mounted Voice Brief request', () => {
                 attention: { needsAttention: true, reasons: [reason], primary: reason, presentation: 'status_only' },
             },
         }));
+        const sessionPresentation = buildInboxSessionPresentation({ overview: buildActivityOverviewSnapshot({ sessions, nowMs: 1000 }) });
+        const workGroups = buildInboxWorkGroups({ sessionEntries: sessionPresentation.sessionsNeedingAttention,
+            workflowRuns: [], automationRuns: [], automationServerId: null, openApprovals: [], stalledSessions: [], landings: [], snoozed: [],
+            resolveSession: () => null, resolveOriginRunId: () => null });
         const brief = buildVoiceBrief({ inbox: {
-            sessionPresentation: buildInboxSessionPresentation({ overview: buildActivityOverviewSnapshot({ sessions, nowMs: 1000 }) }),
-            workGroups: [], automationAttentionItems: [], isLoading: false, showCaughtUp: false,
+            sessionPresentation, workGroups,
+            items: buildInboxItems({ sessionPresentation, workGroups, workflowServerId: account!.home.id, accountServerId: account!.home.id, notices: [] }),
+            openApprovals: [], openUsageNotices: [], actionOperationEntries: [], friendRequests: [],
+            automationAttentionItems: [], isLoading: false, showCaughtUp: false,
             workflowAttention: EMPTY_WORKFLOW_ATTENTION_SOURCE, automationAttention: EMPTY_WORKFLOW_ATTENTION_SOURCE,
             source: { isDataReady: true, personalSessionListCoverageComplete: true, sessionListHomeObservationByServerId: {} },
         }, settings: {} });
@@ -584,7 +595,7 @@ describe('mounted Voice Brief request', () => {
         expect(speech.starts).toHaveLength(1);
         await act(async () => speech.connect());
         expect(speech.spoken).toHaveLength(1);
-        expectApprovalGuidance(speech.spoken[0]);
+        expectApprovalGuidance(speech.context.at(-1));
         await act(async () => { outcome = executeVoiceBriefOperation('close'); });
         expect(outcome).toEqual({ ok: true, result: { status: 'closed', attemptId: getVoiceSessionPresentedAttemptId() } });
         expect(screen.findByTestId('voice-brief')).toBeNull();
@@ -600,19 +611,26 @@ describe('mounted Voice Brief request', () => {
         expect(lifecycle?.getSnapshot().status).toBe('connected');
         expect(executeVoiceBriefOperation('retry')).toEqual({ ok: false, errorCode: 'voice_brief_unavailable' });
     });
-    it('lets Actions request the same connected Brief and stop its turn without ending the conversation', async () => {
+    it('lets the structured native Brief Action request the same connected Brief and stop its turn without ending the conversation', async () => {
         const speech = await installTransport();
         await selectService();
+        setActionPolicy({ v: 1, approvalWaivedSurfaces: { 'ui.voice_global.brief.request': ['voice'] } });
         void lifecycle?.toggle(null);
         await speech.connect();
         screen = await renderScreen(render());
         const attemptId = getVoiceSessionAttemptId();
         await speech.waitForSpoken();
         let outcome;
-        await act(async () => { outcome = executeVoiceBriefOperation('request', { expectedAttemptId: attemptId! }); });
-        expect(outcome).toEqual({ ok: true, result: { status: 'sent', attemptId } });
+        const decoded = decodeVoiceAssistantActions([{ t: 'requestVoiceBrief', args: { expectedAttemptId: attemptId! } }]);
+        expect(decoded.invalidActionBlock).toBeUndefined();
+        const action = decoded.actions[0];
+        if (!action) throw new Error('The native Brief Action must be accepted');
+        const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: account!.home.id });
+        await act(async () => { outcome = JSON.parse(await handlers[action.t]!(action.args, { turnOrigin: 'person' })); });
+        expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, status: 'sent', attemptId });
         expect(speech.spoken).toHaveLength(2);
-        expectApprovalGuidance(speech.spoken[1]);
+        expect(speech.spoken[1]).toBe(t('voiceMoments.briefMe'));
+        expectApprovalGuidance(speech.context.at(-1));
         await act(async () => speech.startOutput());
         await act(async () => { outcome = executeVoiceBriefOperation('stop', { expectedAttemptId: attemptId! }); });
         expect(outcome).toEqual({ ok: true, result: { status: 'waiting', attemptId } });
@@ -620,7 +638,8 @@ describe('mounted Voice Brief request', () => {
         expect(lifecycle?.getSnapshot().status).toBe('connected');
         expect(executeVoiceBriefOperation('retry')).toEqual({ ok: false, errorCode: 'voice_brief_not_retryable' });
         await screen.unmount(); screen = null;
-        expect(executeVoiceBriefOperation('request')).toEqual({ ok: false, errorCode: 'voice_brief_unavailable' });
+        expect(JSON.parse(await handlers[action.t]!(action.args, { turnOrigin: 'person' })))
+            .toMatchObject({ ok: false, errorCode: 'voice_brief_unavailable' });
         expect(speech.spoken).toHaveLength(2);
     });
 
@@ -723,7 +742,7 @@ describe('mounted Voice Brief request', () => {
         await speech.waitForStarts(2);
         await act(async () => speech.connect());
         expect(speech.spoken).toHaveLength(1);
-        expectApprovalGuidance(speech.spoken[0], canApproveRequests);
+        expectApprovalGuidance(speech.context.at(-1), canApproveRequests);
     });
 
     it('keeps the list with setup recovery, then explicitly retries one global start and delivers once on connect', async () => {
@@ -751,7 +770,7 @@ describe('mounted Voice Brief request', () => {
         await act(async () => screen?.update(render()));
         await act(async () => speech.connect());
         expect(speech.spoken).toHaveLength(1);
-        expectApprovalGuidance(speech.spoken[0]);
+        expectApprovalGuidance(speech.context.at(-1));
     });
 
     it('offers terminal failure recovery on the same global target and delivers once on reconnect', async () => {

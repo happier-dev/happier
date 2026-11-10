@@ -84,6 +84,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
                     ? latestAutomaticUiContext
                     : null;
             const pendingContext = [
+                ...(options?.context ? [options.context] : []),
                 ...(deferredTargetSessionContext ? [deferredTargetSessionContext] : []),
                 ...preparedAttemptContext,
                 ...(automaticUiContext ? [automaticUiContext] : []),

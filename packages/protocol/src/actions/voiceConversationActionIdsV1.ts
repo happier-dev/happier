@@ -1,5 +1,7 @@
 
 /** Action identity leaf: schema modules and the registry share these constants. */
+export const VOICE_BRIEF_REQUEST_ACTION_ID_V1 = 'ui.voice_global.brief.request' as const;
+
 export const VOICE_CONVERSATION_ACTION_IDS = [
   'ui.voice_global.say.start', 'ui.voice_global.say.stop',
   'ui.voice_global.get', 'ui.voice_global.start', 'ui.voice_global.end', 'ui.voice_global.set_muted',
@@ -7,7 +9,7 @@ export const VOICE_CONVERSATION_ACTION_IDS = [
   'ui.voice_global.conversations.list', 'ui.voice_global.conversations.open',
   'ui.voice_global.recover', 'ui.voice_global.dismiss', 'ui.voice_global.turn_control',
   'ui.voice_global.hold_begin', 'ui.voice_global.hold_release', 'ui.voice_global.hold_cancel',
-  'ui.voice_global.brief.request', 'ui.voice_global.brief.retry', 'ui.voice_global.brief.stop',
+  VOICE_BRIEF_REQUEST_ACTION_ID_V1, 'ui.voice_global.brief.retry', 'ui.voice_global.brief.stop',
   'ui.voice_global.brief.close', 'ui.voice_global.glance.open', 'ui.voice_global.glance.close',
   'ui.voice_global.transcript.set_visible', 'ui.voice_global.companion.reveal', 'ui.voice_global.position.set',
   'ui.voice_global.setup.open', 'ui.voice_global.setup.close', 'ui.voice_global.open_conversation',

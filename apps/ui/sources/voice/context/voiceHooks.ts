@@ -32,6 +32,7 @@ import { buildVoiceBrief, type VoiceBriefSource } from './buildVoiceBrief';
 import { getVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
 import { getVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 import { resolveVoiceSessionLabel } from '@/voice/context/resolveVoiceSessionLabel';
+import { t } from '@/text';
 
 /**
  * Centralized voice assistant hooks for multi-session context updates.
@@ -356,10 +357,9 @@ export const voiceHooks = {
     // cannot disclose a stale, previously authorized Brief context.
     const brief = buildVoiceBrief({ inbox, settings: storage.getState().settings,
       currentTarget: useVoiceTargetStore.getState().primaryActionSessionAddress });
-    // This is one explicit user request, not an ambient Session/Follow update.
-    // Local Agent channels deliberately discard ambient session_context, so
-    // keep the privacy-projected facts with the request that consumes them.
-    sink.sendTextMessage(controlSessionId, `INBOX BRIEF\n\n${brief.context}\n\nBrief me on this known Account Inbox work, regardless of the bound Session. Answer directly from this snapshot without discovery or more reads: needs-you, failures, then ready work. The counts are exact totals for this snapshot; each item groups count occurrences with the same disclosed details. Use the totals even when individual details are unavailable. Lead with the known outcome and briefly mention incomplete coverage. Do not claim caught up unless caughtUp is true. Follow the approval guidance in this Brief.`);
+    // The explicit request owns the visible user turn; its privacy-projected
+    // snapshot is provider context, never the person's words or a Follow update.
+    sink.sendTextMessage(controlSessionId, t('voiceMoments.briefMe'), `INBOX BRIEF\n\n${brief.context}\n\nBrief me on this known Account Inbox work, regardless of the bound Session. Answer directly from this snapshot without discovery or more reads: needs-you, failures, then ready work. counts.needs_you is the canonical Inbox total; grouped entries contain the navigable details currently available and may cover fewer items when incomplete. Failure and ready counts cover the known projected entries. Use the supplied totals even when individual details are unavailable. Lead with the known outcome and briefly mention incomplete coverage. Do not claim caught up unless caughtUp is true. Follow the approval guidance in this Brief.`);
     return true;
   },
 

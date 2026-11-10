@@ -137,6 +137,7 @@ function redactCompletedLocalEffectOutcome(
 export async function runVoiceAgentTurnWithTools(params: Readonly<{
   sessionId: string;
   userText: string;
+  context?: string;
   turnOrigin?: SpokenActionTurnOrigin;
   durableLocalId: string;
   currentToolSessionId?: string | null;
@@ -330,6 +331,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
       params.sessionId,
       nextPrompt,
       {
+        ...(turnIndex === 0 && params.context ? { context: params.context } : {}),
         onOutputEvent: async output => {
           if (output.effects.some(effect => effect.kind === 'execute_side_effect'
             && readSpokenActionOutcomeOwner(effect.action.t, effect.action.args))) ownerPresentsOutcome = true;
@@ -393,14 +395,16 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     })).filter(outcome => outcome !== null);
     if (outcomes.length > 0) {
       ownerPresentsOutcome = true;
-      spokenActionOutcome = [spokenActionOutcome, ...outcomes].filter(Boolean).join(' ');
+      spokenActionOutcome = [spokenActionOutcome, ...outcomes.filter(outcome => typeof outcome === 'string')]
+        .filter(Boolean).join(' ');
     }
     await params.onToolResults?.({
       toolResults,
       turnIndex,
     });
 
-    if (actionRun.interruptedAfterRetainedOutcome) {
+    if (actionRun.interruptedAfterRetainedOutcome || outcomes.some(outcome =>
+      typeof outcome !== 'string' && outcome.kind === 'delegated_reply')) {
       return {
         disposition: 'completed',
         assistantTurns,

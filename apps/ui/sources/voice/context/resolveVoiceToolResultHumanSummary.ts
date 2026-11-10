@@ -1,4 +1,4 @@
-import { resolveSpokenActionOutcome } from './spokenActionOutcome';
+import { resolveSpokenActionOutcome, type SpokenActionOutcome } from './spokenActionOutcome';
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveVoiceActionExecution, VOICE_ACTION_EXECUTE_TOOL_NAME } from '@/voice/tools/voiceActionExecution';
@@ -156,7 +156,7 @@ function summarizeSessionReference(session: unknown, shareFilePaths: boolean): s
     return safeTitle;
 }
 
-export function resolveVoiceToolResultHumanSummary(params: Readonly<{
+type VoiceToolResultSummaryParams = Readonly<{
     toolName: string;
     toolInput: unknown;
     toolResult: unknown;
@@ -166,7 +166,11 @@ export function resolveVoiceToolResultHumanSummary(params: Readonly<{
     /** Local speech presents settled effects; discovery remains provider context. */
     outcomeOnly?: boolean;
     resolveSentToLabel?: (input: Readonly<Record<string, unknown>> | null) => string | null;
-}>): string | null {
+}>;
+
+export function resolveVoiceToolResultHumanSummary(params: VoiceToolResultSummaryParams & { outcomeOnly: true }): SpokenActionOutcome | null;
+export function resolveVoiceToolResultHumanSummary(params: VoiceToolResultSummaryParams & { outcomeOnly?: false }): string | null;
+export function resolveVoiceToolResultHumanSummary(params: VoiceToolResultSummaryParams): SpokenActionOutcome | null {
     const envelope = asObject(params.toolResult);
     if (!envelope) return null;
     const execution = params.outcomeOnly && params.toolName === VOICE_ACTION_EXECUTE_TOOL_NAME
@@ -179,7 +183,8 @@ export function resolveVoiceToolResultHumanSummary(params: Readonly<{
     const outcome = resolveSpokenActionOutcome({ t: params.toolName, args: params.toolInput, result: params.toolResult }, {
         resolveSentToLabel: params.resolveSentToLabel,
     });
-    if (outcome) return maybeRedact(outcome, shareFilePaths);
+    if (outcome) return typeof outcome === 'string' ? maybeRedact(outcome, shareFilePaths)
+        : params.outcomeOnly ? outcome : null;
 
     if (params.outcomeOnly && toolName !== 'spawnSession' && toolName !== 'openSession'
         && toolName !== 'setPrimaryActionSession' && toolName !== 'setTrackedSessions') return null;

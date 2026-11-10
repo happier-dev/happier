@@ -1,6 +1,7 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { DECISION_ACTION_IDS, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { SETTINGS_DECLARATION_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/settingsDeclarationActionIdsV1';
+import { VOICE_BRIEF_REQUEST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/voiceConversationActionIdsV1';
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { ActionApprovalRequestCreatedResultSchema, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApprovalRequestStatusSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -16,6 +17,8 @@ import type { LocalVoiceAgentToolResultEntry } from '@/voice/tools/localVoiceEff
 const [, , settingsSetActionId] = SETTINGS_DECLARATION_ACTION_IDS_V1;
 const [approvalRequestDecideActionId] = DECISION_ACTION_IDS;
 
+export type SpokenActionOutcome = string | Readonly<{ kind: 'delegated_reply' }>;
+
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown> : null;
@@ -24,7 +27,7 @@ function record(value: unknown): Record<string, unknown> | null {
 /** These Actions have an owner-produced disposition, rather than a model-authored answer. */
 export function readSpokenActionOutcomeOwner(toolName: string, input: unknown) {
   const requestedActionId = toolName === VOICE_ACTION_EXECUTE_TOOL_NAME ? record(input)?.actionId : null;
-  const owner = ([settingsSetActionId, approvalRequestDecideActionId, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1] as const).find(actionId =>
+  const owner = ([settingsSetActionId, approvalRequestDecideActionId, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, VOICE_BRIEF_REQUEST_ACTION_ID_V1] as const).find(actionId =>
     requestedActionId === actionId || toolName === getActionSpec(actionId).bindings?.voiceClientToolName,
   ) ?? null;
   if (owner === SESSION_MESSAGE_SEND_ACTION_ID_V1) {
@@ -38,7 +41,7 @@ export function readSpokenActionOutcomeOwner(toolName: string, input: unknown) {
 /** Present the saved value/decision disposition; an accepted or pending call is not completion. */
 export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry, options?: Readonly<{
   resolveSentToLabel?: (input: Readonly<Record<string, unknown>> | null) => string | null;
-}>): string | null {
+}>): SpokenActionOutcome | null {
   const owner = readSpokenActionOutcomeOwner(entry.t, entry.args);
   if (!owner) return null;
   const envelope = record(entry.result);
@@ -61,6 +64,12 @@ export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry
   const { ok: _ok, summary: _summary, ...body } = record(envelope.result) ?? envelope;
   if (ActionApprovalRequestCreatedResultSchema.safeParse(body).success) {
     return t('approvals.status.open');
+  }
+  if (owner === VOICE_BRIEF_REQUEST_ACTION_ID_V1) {
+    // Home may still be mounting Inbox. Its admitted delivery owns the answer;
+    // a model tool-result follow-up would race that answer and speak twice.
+    return body.status === 'waiting' || body.status === 'sent'
+      ? { kind: 'delegated_reply' } : t('voiceMoments.briefNotSpoken');
   }
   if (owner === SESSION_SPAWN_NEW_ACTION_ID_V1) {
     // Creation is a validated domain settlement, not an Action { ok: false }

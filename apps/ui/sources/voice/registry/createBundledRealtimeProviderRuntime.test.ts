@@ -1029,6 +1029,27 @@ describe('createBundledRealtimeProviderRuntime', () => {
       await waitForTestEvent(subscribeControlSends, () => sentControls.length, count => count > 0);
       expect(sentControls).toEqual([{ kind: 'context', text: 'later context' }]);
       sentControls.length = 0;
+      const contextChannel = adapter.resolveContextChannel?.(storage.getState().settings);
+      if (!contextChannel) throw new Error('Expected the connected public provider context channel');
+      expect(contextChannel.hostAuthoredContext).toBe('session_context');
+      const hiddenBriefContext = 'INBOX BRIEF\n{"items":[{"summary":"A session needs attention"}]}';
+      contextChannel.sendTextMessage('Brief me', hiddenBriefContext);
+      await waitForTestEvent(subscribeControlSends, () => sentControls,
+        events => events.some(event => isControlRecord(event) && event.kind === 'response'));
+      expect(sentControls).toEqual([
+        { kind: 'context', text: hiddenBriefContext },
+        { kind: 'input_text', text: 'Brief me' },
+        { kind: 'response' },
+      ]);
+      sentControls.length = 0;
+      contextChannel.sendTextMessage('An ordinary typed message');
+      await waitForTestEvent(subscribeControlSends, () => sentControls,
+        events => events.some(event => isControlRecord(event) && event.kind === 'response'));
+      expect(sentControls).toEqual([
+        { kind: 'input_text', text: 'An ordinary typed message' },
+        { kind: 'response' },
+      ]);
+      sentControls.length = 0;
       const acknowledgeTranscript = environment.transcriptRequest.getMockImplementation();
       if (!acknowledgeTranscript) throw new Error('Expected the canonical transcript HTTP boundary');
       environment.transcriptRequest.mockImplementation(async (input, init) => {

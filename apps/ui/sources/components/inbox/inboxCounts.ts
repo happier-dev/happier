@@ -30,7 +30,12 @@ export function countInboxItems(parts: InboxCountParts): number {
 
 /** Read is not disposition: a live request remains attention until its owning source removes it. */
 function countsInboxItem(item: Pick<InboxItem, 'view' | 'read'>): boolean {
-    return item.view === 'needs_you' || !item.read;
+    return isInboxNeedsYouItem(item) || !item.read;
+}
+
+/** Consume the row producer's placement; attention does not imply a current request. */
+export function isInboxNeedsYouItem(item: Pick<InboxItem, 'view'>): boolean {
+    return item.view === 'needs_you';
 }
 
 export function countInboxDiscussionItems(source: InboxDiscussionSource | null): number {
@@ -59,15 +64,15 @@ export type InboxCountSource = Readonly<{
 /** The "Needs you" view's share of the count. */
 export function countInboxNeedsYou(model: InboxCountSource): number {
     if (model.items) {
-        const workflowUpdates = new Set<unknown>(model.items.filter(item => item.source.kind === 'workflow_run' && item.view !== 'needs_you')
+        const workflowUpdates = new Set<unknown>(model.items.filter(item => item.source.kind === 'workflow_run' && !isInboxNeedsYouItem(item))
             .map(item => item.source.id));
         return countInboxItems({
         sessions: model.items.filter(item => item.producer === 'live' && item.source.kind !== 'approval'
             && item.source.kind !== 'workflow_run' && item.source.kind !== 'automation_run'
-            && item.view === 'needs_you' && countsInboxItem(item)).length,
+            && isInboxNeedsYouItem(item)).length,
         workflowRuns: Array.from(model.workflowAttention.runIds).filter(runId => !workflowUpdates.has(runId)).length,
-        automationRuns: model.automationAttention.runIds.length - model.items.filter(item => item.source.kind === 'automation_run' && item.view !== 'needs_you').length,
-        approvalsAndNotices: model.openApprovals.length + model.items.filter(item => item.producer === 'notice' && item.view === 'needs_you').length,
+        automationRuns: model.automationAttention.runIds.length - model.items.filter(item => item.source.kind === 'automation_run' && !isInboxNeedsYouItem(item)).length,
+        approvalsAndNotices: model.openApprovals.length + model.items.filter(item => item.producer === 'notice' && isInboxNeedsYouItem(item)).length,
         operations: model.actionOperationEntries.length, friendRequests: 0,
         });
     }
@@ -109,6 +114,6 @@ export function countInbox(model: InboxCountSource): number {
 
 /** Whether the "Needs you" view draws any row, counted or parked: its empty state waits for none. */
 export function hasInboxNeedsYouRows(model: Pick<InboxModel, 'workGroups'> & InboxCountSource): boolean {
-    if (model.items) return model.items.some(item => item.view === 'needs_you') || countInboxNeedsYou(model) > 0;
+    if (model.items) return model.items.some(isInboxNeedsYouItem) || countInboxNeedsYou(model) > 0;
     return model.workGroups.length > 0 || countInboxNeedsYou(model) > 0;
 }

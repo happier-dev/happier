@@ -14,6 +14,8 @@ import { WorkflowRunPrivateMetadataV1Schema } from '@happier-dev/protocol/workfl
 import { readInboxSessionTitle } from '@/components/inbox/sessionAttention/inboxSessionPrivacy';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { createSessionListPresentationSource } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
+import { buildInboxItems } from '@/components/inbox/inboxItems';
+import { countInboxNeedsYou } from '@/components/inbox/inboxCounts';
 
 const EMPTY_WORKFLOW_ATTENTION_SOURCE: WorkflowAttentionSource = { serverId: null, available: false, phase: 'idle', runIds: [], refreshFailed: false,
     knownAt: null, hasMore: false, loadingMore: false, loadMoreFailed: false, retry: async () => {}, loadMore: async () => {} };
@@ -32,6 +34,7 @@ function source(): VoiceBriefSource {
         }), nowMs: 1000,
     }));
     return {
+        items: [], openApprovals: [], openUsageNotices: [], actionOperationEntries: [], friendRequests: [],
         source: { isDataReady: true, personalSessionListCoverageComplete: true,
             sessionListHomeObservationByServerId: { 'home-a': { phase: 'ready', lastSuccessAt: 900 } } },
         sessionPresentation: buildInboxSessionPresentation({ overview: buildActivityOverviewFromCandidates(candidates) }),
@@ -40,9 +43,58 @@ function source(): VoiceBriefSource {
     };
 }
 
+/** Keep tests that vary the held Session/Run slices on the real Inbox row producer. */
+function buildBriefFromInboxFixture(input: Parameters<typeof buildVoiceBrief>[0]) {
+    const { inbox } = input;
+    const sessionGroups = buildInboxWorkGroups({ sessionEntries: inbox.sessionPresentation.sessionsNeedingAttention,
+        workflowRuns: [], automationRuns: [], automationServerId: null, openApprovals: [], stalledSessions: [], landings: [], snoozed: [],
+        resolveSession: () => null, resolveOriginRunId: () => null });
+    const workflowServerId = inbox.workflowAttention.serverId ?? 'home-a';
+    const runIds = [...new Set([...inbox.workflowAttention.runIds,
+        ...inbox.workGroups.flatMap(group => group.items.flatMap(item => item.kind === 'workflow_run' ? [item.runId] : []))])];
+    const items = buildInboxItems({ workGroups: [...inbox.workGroups, ...sessionGroups], sessionPresentation: inbox.sessionPresentation,
+        workflowServerId, accountServerId: 'home-a', notices: [] });
+    return buildVoiceBrief({ ...input, inbox: { ...inbox, items,
+        workflowAttention: { ...inbox.workflowAttention, serverId: workflowServerId, runIds } } });
+}
+
 describe('Voice brief from the mounted Inbox', () => {
+    it.each([false, true])('shares the Inbox Needs you count at the observed mixed Brief scale (unloaded run=%s)', (unloadedRun) => {
+        const base = source();
+        const session = base.sessionPresentation.readySessions[0]!.session;
+        const candidates = ([['pending_blocked', 11], ['manual', 8], ['failed', 31], ['ready_after_read', 45]] as const)
+            .flatMap(([reason, count]) => Array.from({ length: count }, (_, index) => buildSessionActivityAttention({
+                session: createSessionFixture({ ...session, id: `${reason}-${index}`, pendingBlockedCount: reason === 'pending_blocked' ? 1 : 0,
+                    viewer: { ...session.viewer!, attention: { needsAttention: true, reasons: [reason], primary: reason, presentation: 'full' } },
+                }), nowMs: 1_000,
+            })));
+        const sessionPresentation = buildInboxSessionPresentation({ overview: buildActivityOverviewFromCandidates(candidates) });
+        const workGroups = buildInboxWorkGroups({ sessionEntries: sessionPresentation.sessionsNeedingAttention,
+            workflowRuns: [], automationRuns: [], automationServerId: null, openApprovals: [], stalledSessions: [], landings: [], snoozed: [],
+            resolveSession: () => null, resolveOriginRunId: () => null });
+        const inbox = { ...base, sessionPresentation, workGroups,
+            workflowAttention: unloadedRun ? { ...base.workflowAttention, serverId: 'home-a', available: true, phase: 'loaded' as const,
+                runIds: ['unloaded-run'] } : base.workflowAttention,
+            items: buildInboxItems({ sessionPresentation, workGroups, workflowServerId: 'home-a', accountServerId: 'home-a', notices: [] }),
+            openApprovals: [], openUsageNotices: [], actionOperationEntries: [], friendRequests: [],
+        };
+        const sidebarCount = countInboxNeedsYou(inbox);
+        expect(sidebarCount).toBe(11 + Number(unloadedRun));
+        const brief = buildVoiceBrief({ inbox, settings: {} });
+        const context = JSON.parse(brief.context);
+        expect(context.counts).toEqual({ needs_you: sidebarCount, failed: 31, ready: 45 });
+        expect(brief.items).toHaveLength(11 + 31 + 45);
+        expect(brief.items.filter(item => item.category === 'needs_you')).toHaveLength(11);
+        expect(context.items.filter((item: { category: string }) => item.category === 'needs_you')
+            .reduce((count: number, item: { count: number }) => count + item.count, 0)).toBe(11);
+        expect(context.incomplete).toBe(unloadedRun);
+        expect(brief.items.filter(item => item.destination.kind === 'session'
+            && item.destination.address.sessionId.startsWith('pending_blocked-'))).toHaveLength(11);
+        expect(brief.context).not.toContain('pending_blocked-');
+        expect(brief.context).not.toContain('/home/alice');
+    });
     it.each([undefined, true, false])('carries current delegated-approval guidance with the native exception (enabled=%s)', (canApproveRequests) => {
-        const brief = buildVoiceBrief({ inbox: source(), settings: { voice: { canApproveRequests } } });
+        const brief = buildBriefFromInboxFixture({ inbox: source(), settings: { voice: { canApproveRequests } } });
         const guidance: unknown = JSON.parse(brief.context).approval;
         expect(guidance).toEqual(expect.stringContaining(canApproveRequests === false ? 'Voice approvals are off' : 'Voice approvals are enabled'));
         expect(guidance).toEqual(expect.stringContaining('Native Codex Realtime cannot decide requests'));
@@ -61,7 +113,7 @@ describe('Voice brief from the mounted Inbox', () => {
         const inbox = source();
         const candidates = [...inbox.sessionPresentation.sessionsNeedingAttention.map(entry => entry.candidate),
             ...inbox.sessionPresentation.readySessions].map(candidate => ({ ...candidate, session: { ...candidate.session, managedSessions: reports } }));
-        const brief = buildVoiceBrief({ inbox: { ...inbox, sessionPresentation: buildInboxSessionPresentation({
+        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation: buildInboxSessionPresentation({
             overview: buildActivityOverviewFromCandidates(candidates),
         }) }, settings: { voice: { privacy: { shareSessionSummary: true } } } });
         expect(brief.items).toHaveLength(3);
@@ -73,10 +125,10 @@ describe('Voice brief from the mounted Inbox', () => {
     });
     it.each([true, false])('keeps originless work routes while sharing permitted redacted names (summary=%s)', (shareSessionSummary) => {
         const inbox = source();
-        const row = { ...workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'run/a', state: 'interrupted' })),
+        const row = { ...workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'run/a', state: 'waiting_for_review', attentionRequired: true })),
             metadata: WorkflowRunPrivateMetadataV1Schema.parse({ kind: 'available', value: { title: 'Publish release notes' } }) };
         const route = '/workflows/runs/run%2Fb?target=occurrence&automationId=automation' as const;
-        const brief = buildVoiceBrief({ inbox: { ...inbox,
+        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox,
             workflowAttention: { ...inbox.workflowAttention, serverId: 'home-b' },
             workGroups: buildInboxWorkGroups({ sessionEntries: [], workflowRuns: [row], automationRuns: [], automationServerId: null,
                 openApprovals: [], stalledSessions: [], landings: [], snoozed: [], resolveSession: () => null, resolveOriginRunId: () => null }),
@@ -101,7 +153,7 @@ describe('Voice brief from the mounted Inbox', () => {
             }, presentationSource: candidate.presentationSource, nowMs: 1_000 }));
         const sessions = candidates.map(candidate => candidate.session);
         const sessionPresentation = buildInboxSessionPresentation({ overview: buildActivityOverviewFromCandidates(candidates) });
-        const brief = buildVoiceBrief({ inbox: { ...inbox, sessionPresentation }, settings: { voice: { privacy: { shareSessionSummary: true } } } });
+        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation }, settings: { voice: { privacy: { shareSessionSummary: true } } } });
         expect(brief.items).toHaveLength(3);
         for (const session of sessions) {
             const item = brief.items.find(item => item.destination.kind === 'session' && item.destination.address.sessionId === session.id);
@@ -123,7 +175,7 @@ describe('Voice brief from the mounted Inbox', () => {
             createSessionFixture({ ...original, id: 'unnamed', metadata: null })];
         const row = workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'unnamed-run', state: 'interrupted' }));
         const route = '/workflows/runs/unnamed-automation-run?target=occurrence&automationId=automation' as const;
-        const brief = buildVoiceBrief({ inbox: { ...inbox,
+        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox,
             sessionPresentation: buildInboxSessionPresentation({ overview: buildActivityOverviewSnapshot({ sessions, nowMs: 1000 }) }),
             workGroups: buildInboxWorkGroups({ sessionEntries: [], workflowRuns: [row], automationRuns: [], automationServerId: null,
                 openApprovals: [], stalledSessions: [], landings: [], snoozed: [], resolveSession: () => null, resolveOriginRunId: () => null }),
@@ -133,7 +185,7 @@ describe('Voice brief from the mounted Inbox', () => {
         expect(brief.caughtUp).toBe(false);
     });
     it('orders existing attention without losing exact Home destinations or reclassifying ready work', () => {
-        const brief = buildVoiceBrief({ inbox: source(), settings: { voice: { privacy: { shareSessionSummary: true } } } });
+        const brief = buildBriefFromInboxFixture({ inbox: source(), settings: { voice: { privacy: { shareSessionSummary: true } } } });
         expect(brief.items.map((item) => item.category)).toEqual(['needs_you', 'failed', 'ready']);
         expect(brief.items.map((item) => item.destination)).toEqual([
             { kind: 'session', address: { serverId: 'home-a', sessionId: 'needs' } },
@@ -145,7 +197,7 @@ describe('Voice brief from the mounted Inbox', () => {
 
     it('says why each session needs the person, never where it runs', () => {
         const inbox = source();
-        const brief = buildVoiceBrief({ inbox, settings: {} });
+        const brief = buildBriefFromInboxFixture({ inbox, settings: {} });
         const candidates = [
             ...inbox.sessionPresentation.sessionsNeedingAttention.map((entry) => entry.candidate),
             ...inbox.sessionPresentation.readySessions,
@@ -171,7 +223,7 @@ describe('Voice brief from the mounted Inbox', () => {
                 ? { pendingPermissions: [{ id: 'r1', ...request, createdAt: 1 }] }
                 : { pendingUserActions: [{ id: 'r1', ...request, createdAt: 1 }] }) }
             : entry);
-        const brief = buildVoiceBrief({ inbox: { ...inbox, sessionPresentation: { ...inbox.sessionPresentation, sessionsNeedingAttention } }, settings: {} });
+        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation: { ...inbox.sessionPresentation, sessionsNeedingAttention } }, settings: {} });
         const subtitle = brief.items.find((item) => item.destination.kind === 'session' && item.destination.address.sessionId === 'needs')?.subtitle;
         expect(subtitle?.startsWith(expected())).toBe(true);
     });
@@ -194,7 +246,7 @@ describe('Voice brief from the mounted Inbox', () => {
         const sessionPresentation = buildInboxSessionPresentation({ overview: buildActivityOverviewFromCandidates(candidates) });
         expect(sessionPresentation.sessionsNeedingAttention).toHaveLength(waitingCount);
         expect(sessionPresentation.sessionsNeedingAttention.every(entry => entry.pendingUserActions.length === 1)).toBe(true);
-        const brief = buildVoiceBrief({ inbox: { ...inbox, sessionPresentation }, settings: { voice: { privacy: {
+        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation }, settings: { voice: { privacy: {
             sharePermissionRequests, shareToolArgs: true, shareSessionSummary: true,
         } } } });
         expect(brief.items).toHaveLength(waitingCount);
@@ -224,7 +276,7 @@ describe('Voice brief from the mounted Inbox', () => {
             } });
             const row = buildSessionListRenderableFromSession(session, undefined, messages);
             const candidate = buildSessionActivityAttention({ session, presentationSource: createSessionListPresentationSource(row, { baseSession: session }), nowMs: 1_000 });
-            const brief = buildVoiceBrief({ inbox: { ...inbox, sessionPresentation: { ...inbox.sessionPresentation,
+            const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation: { ...inbox.sessionPresentation,
                 sessionsNeedingAttention: [{ ...entry, candidate, requestDetails: undefined,
                     pendingPermissions: [{ id: 'r1', tool: 'Bash', arguments: {}, createdAt: 1 }] }],
                 readySessions: [],
@@ -239,7 +291,7 @@ describe('Voice brief from the mounted Inbox', () => {
     });
 
     it('does not substitute a status word when the Inbox request reason is not yet known', () => {
-        const brief = buildVoiceBrief({ inbox: source(), settings: {} });
+        const brief = buildBriefFromInboxFixture({ inbox: source(), settings: {} });
         const unknown = brief.items.filter(item => item.destination.kind === 'session' && item.destination.address.sessionId !== 'ready');
         expect(unknown.map(item => item.subtitle)).toEqual([t('common.unavailable'), t('common.unavailable')]);
     });
@@ -255,7 +307,7 @@ describe('Voice brief from the mounted Inbox', () => {
             } },
         }), nowMs: 1_000 });
         const sessionPresentation = buildInboxSessionPresentation({ overview: buildActivityOverviewFromCandidates([candidate]) });
-        const brief = buildVoiceBrief({ inbox: { ...inbox, sessionPresentation }, settings: { voice: { privacy: { sharePermissionRequests: true, shareToolArgs: true } } } });
+        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation }, settings: { voice: { privacy: { sharePermissionRequests: true, shareToolArgs: true } } } });
         expect(brief.items[0]).toMatchObject({ subtitle: 'Resume from the summary?', hasRequestControls: false });
         expect(brief.context).toContain('Resume from the summary?');
         expect(brief.context).not.toContain('do not revive stale permission');
@@ -272,7 +324,7 @@ describe('Voice brief from the mounted Inbox', () => {
                 code: 'agent_startup_rpc_rejected', occurredAt: 950 },
         }), nowMs: 1_000 });
         const sessionPresentation = buildInboxSessionPresentation({ overview: buildActivityOverviewFromCandidates([candidate]) });
-        const brief = buildVoiceBrief({ inbox: { ...inbox, sessionPresentation }, settings: {} });
+        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation }, settings: {} });
         expect(brief.items[0]?.subtitle).toBe(authored ? 'Waiting for release sign-off' : t('session.startFailure.cause.agent_startup_rpc_rejected'));
     });
 
@@ -285,20 +337,20 @@ describe('Voice brief from the mounted Inbox', () => {
                 code: 'agent_startup_rpc_rejected', occurredAt: 950 },
         }), nowMs: 1_000 });
         const sessionPresentation = buildInboxSessionPresentation({ overview: buildActivityOverviewFromCandidates([candidate]) });
-        const brief = buildVoiceBrief({ inbox: { ...inbox, sessionPresentation }, settings: {} });
+        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation }, settings: {} });
         expect(brief.items[0]?.subtitle).toBe(t('session.pendingMessages.deliveryBlockedReasons.unknown'));
         expect(brief.items[0]?.hasRequestControls).toBe(false);
     });
 
     it('preserves workflow hold reasons and automation occurrence causes in navigable rows', () => {
         const inbox = source();
-        const row = { ...workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'held', state: 'waiting_for_review',
+        const row = { ...workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'held', state: 'waiting_for_review', attentionRequired: true,
             heldCount: 1, heldStep: { invocationId: 'invocation', label: 'Approve release', laneLabel: 'Release' } })),
             metadata: WorkflowRunPrivateMetadataV1Schema.parse({ kind: 'available', value: { title: 'Do an action' } }) };
         const run = createAutomationRunFixture({ id: 'failed-occurrence', state: 'dispatch_failed' });
         const failedRow = { ...workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'failed-workflow', state: 'failed', failureUnseen: true,
             errorCode: 'agent_startup_rpc_rejected' })), metadata: row.metadata };
-        const brief = buildVoiceBrief({ inbox: { ...inbox,
+        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox,
             workGroups: buildInboxWorkGroups({ sessionEntries: [], workflowRuns: [row, failedRow], automationRuns: [], automationServerId: null,
                 openApprovals: [], stalledSessions: [], landings: [], snoozed: [], resolveSession: () => null, resolveOriginRunId: () => null }),
             automationAttentionItems: [{ key: 'occurrence', title: 'Memory upkeep', run, route: '/workflows/runs/failed-occurrence?target=occurrence&automationId=automation' }],
@@ -316,7 +368,7 @@ describe('Voice brief from the mounted Inbox', () => {
         const inbox = source();
         const row = { ...workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'failure', state: 'failed', failureUnseen: true })),
             metadata: WorkflowRunPrivateMetadataV1Schema.parse({ kind: 'available', value: { title: 'Do an action' } }) };
-        const brief = buildVoiceBrief({ inbox: { ...inbox,
+        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox,
             workGroups: buildInboxWorkGroups({ sessionEntries: [], workflowRuns: [row], automationRuns: [], automationServerId: null,
                 openApprovals: [], stalledSessions: [], landings: [], snoozed: [], resolveSession: () => null, resolveOriginRunId: () => null }),
             automationAttentionItems: [{ key: 'automation-failure', title: 'Memory upkeep', run: createAutomationRunFixture({ state: 'dispatch_failed' }),
@@ -328,12 +380,12 @@ describe('Voice brief from the mounted Inbox', () => {
 
     it('withholds titles, destinations and request details from speech unless the canonical privacy policy admits them', () => {
         const inbox = source();
-        const brief = buildVoiceBrief({ inbox, settings: { voice: { privacy: { shareSessionSummary: false, sharePermissionRequests: false } } } });
+        const brief = buildBriefFromInboxFixture({ inbox, settings: { voice: { privacy: { shareSessionSummary: false, sharePermissionRequests: false } } } });
         expect(brief.items).toHaveLength(3);
         expect(brief.context).not.toContain('private');
         expect(brief.context).not.toContain('home-a');
         expect(brief.context).not.toContain('permission_required');
-        const allowed = buildVoiceBrief({ inbox, settings: { voice: { privacy: { shareSessionSummary: true } } } });
+        const allowed = buildBriefFromInboxFixture({ inbox, settings: { voice: { privacy: { shareSessionSummary: true } } } });
         expect(JSON.parse(allowed.context).items.map((item: { title?: string }) => item.title)).toEqual([
             'needs <path_redacted>', 'failed <path_redacted>', 'ready <path_redacted>',
         ]);
@@ -342,7 +394,7 @@ describe('Voice brief from the mounted Inbox', () => {
 
     it('retains paging/failure facts and never announces caught up from unknown or partial sources', () => {
         const inbox = source();
-        const brief = buildVoiceBrief({ inbox: { ...inbox, sessionPresentation: { sessionsNeedingAttention: [], readySessions: [], markAllReadTargets: [], pendingRequestHydrationTargets: [] },
+        const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation: { sessionsNeedingAttention: [], readySessions: [], markAllReadTargets: [], pendingRequestHydrationTargets: [] },
             isLoading: true, showCaughtUp: true, source: { isDataReady: false, personalSessionListCoverageComplete: false },
             workflowAttention: { ...EMPTY_WORKFLOW_ATTENTION_SOURCE, available: true, phase: 'loaded', refreshFailed: true, knownAt: 700, hasMore: true } }, settings: {} });
         expect(brief.caughtUp).toBe(false);

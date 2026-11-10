@@ -5,10 +5,12 @@ import { registerVoiceAdapters, resetVoiceAdapterRegistryForTests } from '@/voic
 import { setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 import type { VoiceAdapterController, VoiceHostAuthoredContextScope } from '@/voice/session/types';
 import { storage } from '@/sync/domains/state/storage';
+import { t } from '@/text';
 
 const attention: VoiceBriefSource['workflowAttention'] = { serverId: null, available: false, phase: 'idle', runIds: [], refreshFailed: false,
     knownAt: null, hasMore: false, loadingMore: false, loadMoreFailed: false, retry: async () => {}, loadMore: async () => {} };
 const inbox: VoiceBriefSource = { source: { isDataReady: true, personalSessionListCoverageComplete: true },
+    items: [], openApprovals: [], openUsageNotices: [], actionOperationEntries: [], friendRequests: [],
     sessionPresentation: { sessionsNeedingAttention: [], readySessions: [], markAllReadTargets: [], pendingRequestHydrationTargets: [] }, workGroups: [], automationAttentionItems: [],
     workflowAttention: attention, automationAttention: attention, isLoading: false, showCaughtUp: true };
 const originalSettings = storage.getState().settings;
@@ -20,7 +22,7 @@ describe('explicit Voice Brief delivery', () => {
         storage.setState(state => ({ settings: { ...state.settings, voice: { ...state.settings.voice, canApproveRequests } } }));
         const brief = buildVoiceBrief({ inbox, settings: storage.getState().settings });
         const delivered: string[] = [];
-        const text: string[] = [];
+        const text: Array<{ message: string; context?: string }> = [];
         let scope: VoiceHostAuthoredContextScope = 'current_ui_only';
         const snapshot = { adapterId: 'test.transport', sessionId: 'control', status: 'connected' as const, mode: 'listening' as const, canStop: true };
         // Only the provider's transport is synthetic; channel selection, privacy projection
@@ -28,7 +30,7 @@ describe('explicit Voice Brief delivery', () => {
         const adapter: VoiceAdapterController = { id: snapshot.adapterId, engineKind: 'realtime', start: async () => {}, stop: async () => {},
             toggle: async () => {}, interrupt: async () => {}, setMuted: async () => {}, sendContextUpdate: () => {},
             getSnapshot: () => snapshot, subscribe: () => () => {}, resolveContextChannel: () => ({ hostAuthoredContext: scope,
-                sendContextualUpdate: (value) => { delivered.push(value); }, sendTextMessage: (value) => { text.push(value); } }) };
+                sendContextualUpdate: (value) => { delivered.push(value); }, sendTextMessage: (message, context) => { text.push({ message, context }); } }) };
         registerVoiceAdapters([adapter]);
         setVoiceSessionSnapshot(snapshot);
         expect(voiceHooks.onBriefRequested('control', inbox)).toBe(false);
@@ -37,8 +39,9 @@ describe('explicit Voice Brief delivery', () => {
         expect(voiceHooks.onBriefRequested('control', inbox)).toBe(true);
         expect(delivered).toHaveLength(0);
         expect(text).toHaveLength(1);
-        expect(text[0]).toContain(brief.context);
-        expect(text[0]).toContain(canApproveRequests ? 'Voice approvals are enabled' : 'Voice approvals are off');
-        expect(text[0]).not.toContain('Approvals are tap-only in the canonical UI; do not approve or deny a request.');
+        expect(text[0]?.message).toBe(t('voiceMoments.briefMe'));
+        expect(text[0]?.context).toContain(brief.context);
+        expect(text[0]?.context).toContain(canApproveRequests ? 'Voice approvals are enabled' : 'Voice approvals are off');
+        expect(text[0]?.context).not.toContain('Approvals are tap-only in the canonical UI; do not approve or deny a request.');
     });
 });

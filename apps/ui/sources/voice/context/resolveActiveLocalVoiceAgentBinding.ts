@@ -11,7 +11,7 @@ export type ActiveLocalVoiceAgentBinding = Readonly<{
   operationalSessionId: string;
   announcementSessionId: string;
   sendAutomaticUiContextUpdate: (update: string) => void;
-  sendTextUpdate: (update: string) => Promise<void>;
+  sendTextUpdate: (update: string, context?: string) => Promise<void>;
   announceAssistantText: (text: string) => void;
 }>;
 
@@ -41,7 +41,7 @@ export function resolveActiveLocalVoiceAgentBinding(): ActiveLocalVoiceAgentBind
     operationalSessionId: controlSessionId,
     announcementSessionId,
     sendAutomaticUiContextUpdate: (update) => localVoiceRuntimeController.appendAgentAutomaticUiContextUpdate(controlSessionId, update),
-    sendTextUpdate: (update) => localVoiceRuntimeController.sendAgentTextUpdate(controlSessionId, update),
+    sendTextUpdate: (update, context) => localVoiceRuntimeController.sendAgentTextUpdate(controlSessionId, update, context),
     announceAssistantText: (text) => localVoiceRuntimeController.announceAgentAssistantText(announcementSessionId, text),
   };
 }

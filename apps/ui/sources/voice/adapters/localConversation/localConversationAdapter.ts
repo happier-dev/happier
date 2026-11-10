@@ -44,7 +44,7 @@ export function createLocalConversationVoiceAdapter(input: Readonly<{
           // accepted Voice turn. The foreground UI owns only current-UI
           // projection and immediate announcement, never Follow custody.
         },
-        sendTextMessage: (text) => fireAndForget(active.sendTextUpdate(text), {
+        sendTextMessage: (text, context) => fireAndForget(active.sendTextUpdate(text, context), {
           tag: 'local_voice_agent_text_update',
         }),
         announceAssistantText: active.announceAssistantText,

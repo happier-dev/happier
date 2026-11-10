@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
-import { VOICE_CONVERSATION_ACTION_IDS } from './voiceConversationActionIdsV1.js';
+import { VOICE_BRIEF_REQUEST_ACTION_ID_V1, VOICE_CONVERSATION_ACTION_IDS } from './voiceConversationActionIdsV1.js';
 export { VOICE_CONVERSATION_ACTION_IDS } from './voiceConversationActionIdsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
@@ -276,8 +276,10 @@ function createVoiceConversationActionSpecs() {
     || id === 'ui.voice_global.brief.request' || id === 'ui.voice_global.brief.retry' ? 'danger' : 'safe',
   sideEffectClass: id === 'ui.voice_global.get' || id === 'ui.voice_global.conversations.list' || (isVoiceHistoryActionId(id) && id !== 'ui.voice_global.history.clear') ? 'read' : 'write',
   requiredAuthority: 'account_automation', executionPlacement: 'client', placements: ['command_palette'],
-  bindings: { mcpToolName: id.replaceAll('.', '_') },
-  surfaces: { ui: true, voice: id === 'ui.voice_global.new_conversation' || id === 'ui.voice_global.continue_conversation'
+  bindings: { mcpToolName: id.replaceAll('.', '_'),
+    ...(id === VOICE_BRIEF_REQUEST_ACTION_ID_V1 ? { voiceClientToolName: 'requestVoiceBrief' } : {}),
+  },
+  surfaces: { ui: true, voice: id === VOICE_BRIEF_REQUEST_ACTION_ID_V1 || id === 'ui.voice_global.new_conversation' || id === 'ui.voice_global.continue_conversation'
     || id.startsWith('ui.voice_global.conversations.'), agent: true, mcp: true, cli: false, rpc: false },
   inputSchema: VoiceConversationActionInputSchemas[id], outputSchema: VoiceConversationActionOutputSchemas[id],
   inputHints: { description: VOICE_CONVERSATION_ACTION_SUMMARIES[id], fields: isVoiceHistoryActionId(id)

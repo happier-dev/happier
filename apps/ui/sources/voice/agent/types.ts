@@ -32,6 +32,8 @@ export type VoiceAgentAcceptedOutputV1 = Readonly<{
 }>;
 
 export type VoiceAgentSendTurnOptions = Readonly<{
+  /** Host-authored facts for this turn, excluded from the person's transcript. */
+  context?: string;
   onOutputEvent?: (output: VoiceAgentAcceptedOutputV1) => void | Promise<void>;
   /** Called after the daemon has accepted the user transcript, before response streaming. */
   onUserTranscriptAccepted?: () => void | Promise<void>;

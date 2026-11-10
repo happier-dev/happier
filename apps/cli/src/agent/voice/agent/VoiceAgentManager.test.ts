@@ -3928,9 +3928,45 @@ describe('VoiceAgentManager', () => {
 
     try {
       const result = await manager.welcome({ voiceAgentId: started.voiceAgentId });
-      expect(result.assistantText).toContain('sendSessionMessage');
-      expect(result.assistantText).toContain('message');
+      expect(result.assistantText).not.toContain('sendSessionMessage');
+      expect(result.assistantText).not.toContain('Invalid input');
       expect(result.assistantText).not.toContain('I will send that now.');
+    } finally { await manager.dispose(); }
+  });
+
+  it('speaks a plain refusal for malformed native Brief input without validator diagnostics or side effects', async () => {
+    // The restart131 Codex rollout emitted this exact carrier twice for "Brief me".
+    // A built-in Inbox read is not a contributed plugin Action.
+    const manager = new VoiceAgentManager({ createBackend: ({ functionTools }) => createPromptCaptureBackend([{
+      responseText: 'Here is your Brief.',
+      functionCalls: [{ t: 'invokeAction', args: { action: { pluginId: 'happier', localId: 'inbox.get' }, input: {} } }],
+    }], { functionTools }) });
+    try {
+      const { voiceAgentId } = await manager.start({
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        chatModelId: 'chat-model', commitModelId: 'commit-model', permissionIntent: 'read-only',
+        idleTtlSeconds: 60, initialContext: 'CTX',
+      });
+      const { streamId } = await manager.startTurnStream({ voiceAgentId, userText: 'Brief me' });
+      const events: VoiceAgentTurnStreamEvent[] = [];
+      let cursor = 0;
+      for (;;) {
+        const read = await manager.readTurnStream({ voiceAgentId, streamId, cursor, waitForEvents: true });
+        events.push(...read.events);
+        if (read.done) break;
+        cursor = read.nextCursor;
+      }
+      let output = createVoiceAgentOutputTurnV1(streamId);
+      const spoken: string[] = [];
+      for (const event of events) {
+        if (event.t !== 'voice_output') continue;
+        expect(event.output.kind).not.toBe('side_effect');
+        const next = ingestVoiceAgentOutputEventV1(output, event.output);
+        output = next.state;
+        for (const effect of next.effects) if (effect.kind === 'speak') spoken.push(effect.text);
+      }
+      expect(spoken.join(' ')).toContain("couldn't run");
+      expect(spoken.join(' ')).not.toMatch(/invokeAction|args|Invalid input|Here is your Brief/);
     } finally { await manager.dispose(); }
   });
 
@@ -3950,7 +3986,8 @@ describe('VoiceAgentManager', () => {
       });
       if (!streaming) {
         const result = await manager.sendTurn({ voiceAgentId, userText: 'Create a Session.' });
-        expect(result).toEqual({ assistantText: expect.stringContaining('directory.path') });
+        expect(result.assistantText).toContain("couldn't run");
+        expect(result.assistantText).not.toContain('directory.path');
         expect(result.assistantText).not.toContain('Creating the Session now.');
         return;
       }
@@ -3967,7 +4004,7 @@ describe('VoiceAgentManager', () => {
         expect.objectContaining({ t: 'voice_output', output: expect.objectContaining({ kind: 'side_effect' }) }),
       ]));
       expect(events.at(-1)).toMatchObject({ t: 'voice_output', output: {
-        kind: 'turn_final', text: expect.stringContaining('directory.path'),
+        kind: 'turn_final', text: expect.stringContaining("couldn't run"),
       } });
       let output = createVoiceAgentOutputTurnV1(streamId);
       const spoken: string[] = [];
@@ -3977,7 +4014,7 @@ describe('VoiceAgentManager', () => {
         output = next.state;
         for (const effect of next.effects) if (effect.kind === 'speak') spoken.push(effect.text);
       }
-      expect(spoken.join(' ')).toContain('directory.path');
+      expect(spoken.join(' ')).not.toContain('directory.path');
       expect(spoken.join(' ')).not.toContain('Creating the Session now.');
     } finally { await manager.dispose(); }
   });
