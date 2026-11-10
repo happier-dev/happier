@@ -100,8 +100,9 @@ export async function exerciseManagedRequesterRetention() {
     const input = { actorAccountId: custodian.id, machineId: guest.id, rpcMethod: MANAGED_ACTIVITY_READ_RPC_METHOD, target };
     expect(await inTx(tx => resolveManagedGuestActivityAdmissionInTx(tx, input)))
         .toMatchObject({ actorAccountId: custodian.id, custodianAccountId: creator.id, machineId: guest.id });
-    expect(await inTx(tx => resolveEffectiveMachineRoleInTx(tx, { actorAccountId: custodian.id, machineId: guest.id }))).toBeNull();
-    expect(await inTx(tx => resolveManagedGuestActivityAdmissionInTx(tx, { ...input, actorAccountId: creator.id }))).toBeNull();
+    expect(await inTx(tx => resolveEffectiveMachineRoleInTx(tx, { actorAccountId: custodian.id, machineId: guest.id }))).toBe('manage');
+    expect(await inTx(tx => resolveManagedGuestActivityAdmissionInTx(tx, { ...input, actorAccountId: creator.id })))
+        .toMatchObject({ actorAccountId: creator.id, custodianAccountId: creator.id, machineId: guest.id });
     expect(await inTx(tx => resolveManagedGuestActivityAdmissionInTx(tx, { ...input, target: { ...target, expectedRevision: 1 } }))).toBeNull();
     expect(await inTx(tx => resolveManagedGuestActivityAdmissionInTx(tx, { ...input,
         rpcMethod: MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, target: { ...target, expectedRevision: 1, action: 'resume' } })))
@@ -214,7 +215,7 @@ export async function exerciseManagedCreatorSetupRecovery() {
     const { homeId, creator, stranger, launch, row } = await createCreatorFixture();
     const guest = await db.machine.create({ data: { id: randomUUID(), accountId: creator.id, metadata: '{}', installationId: randomUUID() } });
     await db.machineAccountGrant.create({ data: { machineId: guest.id, accountId: stranger.id,
-        accessLevel: 'admin', createdByAccountId: creator.id } });
+        accessLevel: 'view', createdByAccountId: creator.id } });
     const setup = { scripts: [{ body: 'echo admitted' }] };
     await db.managedMachine.update({ where: { id: row.id }, data: { allocation: 'bound', enrolledMachineId: guest.id,
         resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: randomUUID() } },

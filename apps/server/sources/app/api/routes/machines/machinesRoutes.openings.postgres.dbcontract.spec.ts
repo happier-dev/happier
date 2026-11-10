@@ -91,6 +91,63 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         return { owner, recipient, ids, content, ownerEnvelope, recipientEnvelope };
     }
 
+    it('bounds present-user read-batch SQL across 100 Machines and a growing Team audience', async () => {
+        const data = await fixture('e2ee', 100, 1);
+        const team = await db.team.create({ data: { name: 'Read-batch cost Team' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: data.recipient.id, role: 'member' } });
+        await db.machineTeamGrant.createMany({ data: data.ids.map(machineId => ({
+            machineId, teamId: team.id, accessLevel: 'view', createdByAccountId: data.owner.id,
+        })) });
+        const originalTransaction = db.$transaction;
+        const traced = tracedTransport();
+        db.$transaction = new Proxy(originalTransaction, { apply(_target, _receiver, args) {
+            return Reflect.apply(traced.$transaction, traced, args);
+        } });
+        try {
+            await withAuthenticatedTestApp(machinesRoutes, async app => {
+                const measure = async (ids: string[], teamMembers: number, pending: boolean) => {
+                    statements.length = 0;
+                    const started = performance.now();
+                    const response = await app.inject({ method: 'POST', url: '/v1/machines/read-batch',
+                        headers: headers(data.owner.id), payload: { machineIds: ids } });
+                    const elapsedMs = performance.now() - started;
+                    expect(response.statusCode, response.body).toBe(200);
+                    const results = MachineReadBatchResponseV1Schema.parse(response.json()).results;
+                    expect(results.map(result => result.machineId)).toEqual(ids);
+                    for (const result of results) {
+                        expect(result.status).toBe('found');
+                        if (result.status !== 'found') throw new Error('Expected owned Machine');
+                        expect(result.machine).toMatchObject({ recipientWorkPending: pending,
+                            access: { role: 'manage', accessState: 'ready' } });
+                    }
+                    // Query events observe the real persistent DB boundary, including
+                    // CTEs and transaction statements; timings are report-only.
+                    const recipient = statements.filter(event => /WITH(?: RECURSIVE)? selected AS/u.test(event.query)
+                        && event.query.includes('MachineKeyEnvelope'));
+                    const recipientSqlMs = recipient.reduce((sum, event) => sum + event.duration, 0);
+                    const cost = { machines: ids.length, teamMembers, statements: statements.length,
+                        recipientStatements: recipient.length, recipientSqlMs,
+                        otherSqlMs: statements.reduce((sum, event) => sum + event.duration, 0) - recipientSqlMs,
+                        elapsedMs };
+                    console.info('MACHINE_READ_BATCH_TEAM_SQL', JSON.stringify(cost));
+                    expect(cost.recipientStatements).toBe(1);
+                    return cost;
+                };
+                const one = await measure(data.ids.slice(0, 1), 1, false);
+                const fleet = await measure(data.ids, 1, false);
+                const members = Array.from({ length: 99 }, () => ({ id: randomUUID(),
+                    ...createSignedAccountContentBinding(tweetnacl.box.keyPair().publicKey), encryptionMode: 'e2ee' }));
+                await db.account.createMany({ data: members });
+                await db.teamMembership.createMany({ data: members.map(member => ({
+                    teamId: team.id, accountId: member.id, role: 'member',
+                })) });
+                const audience = await measure(data.ids, 100, true);
+                expect(fleet.statements).toBe(one.statements);
+                expect(audience.statements).toBe(one.statements);
+            });
+        } finally { db.$transaction = originalTransaction; }
+    });
+
     it.each([
         { mode: 'plain', owned: true }, { mode: 'plain', owned: false },
         { mode: 'e2ee', owned: true }, { mode: 'e2ee', owned: false },

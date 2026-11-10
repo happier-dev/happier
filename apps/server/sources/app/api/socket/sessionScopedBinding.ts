@@ -56,7 +56,7 @@ export async function readCurrentSessionScopedMachineAdmissionInTx(params: Reado
     }
     const facts = await readCurrentSessionScopedMachineAccessFactsInTx(params);
     if (!facts || facts.session.accountId !== params.accountId) return null;
-    return projectActiveMachineAdmissionFromFacts(facts.machine, params.accountId);
+    return projectActiveMachineAdmissionFromFacts(params.tx, facts.machine, params.accountId);
 }
 
 

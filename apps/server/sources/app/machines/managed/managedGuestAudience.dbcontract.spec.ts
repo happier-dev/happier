@@ -53,4 +53,40 @@ describe('Machine audience SQL across database providers', () => {
         expect(work.get(machines[0].id)?.recipients.map(recipient => recipient.recipientAccountId)).toEqual([viewer.id]);
         expect(work.get(machines[1].id)?.recipients.map(recipient => recipient.recipientAccountId)).toEqual([manager.id]);
     });
+
+    it('includes nested controller Manage, keeps guest grants, and terminates an unseeded controller cycle', async () => {
+        const [hostOwner, guestOwner, viewer, manager, guestViewer] = await Promise.all(
+            Array.from({ length: 5 }, () => db.account.create({ data: { encryptionMode: 'plain' } })));
+        const createMachine = (accountId: string) => db.machine.create({ data: { id: randomUUID(), accountId,
+            metadata: '{}', installationId: randomUUID() } });
+        const host = await createMachine(hostOwner.id);
+        const first = await createMachine(guestOwner.id);
+        const second = await createMachine(guestOwner.id);
+        const createManaged = (controller: typeof host, guest: typeof host) => db.managedMachine.create({ data: {
+            homeId: `srv_${'a'.repeat(32)}`, custodianAccountId: controller.accountId,
+            controllerMachineId: controller.id, controllerInstallationId: controller.installationId!, enrolledMachineId: guest.id,
+            admittedActionRequestId: randomUUID(), admittedInput: {}, presetId: randomUUID(), presetRevision: 1,
+            launch: { provider: { pluginId: 'fixture.audience', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        } });
+        const firstManaged = await createManaged(host, first);
+        await createManaged(first, second);
+        await db.machineAccountGrant.createMany({ data: [
+            { machineId: host.id, accountId: viewer.id, createdByAccountId: hostOwner.id, accessLevel: 'view' },
+            { machineId: host.id, accountId: manager.id, createdByAccountId: hostOwner.id, accessLevel: 'admin' },
+            { machineId: second.id, accountId: guestViewer.id, createdByAccountId: guestOwner.id, accessLevel: 'view' },
+        ] });
+        const audience = (knownCustodian?: string) => inTx(tx => readMachineAudienceAccountIdsInTx(tx, second.id, knownCustodian));
+        expect(await audience()).toEqual([hostOwner.id, guestOwner.id, manager.id, guestViewer.id].sort());
+        expect(await audience(guestOwner.id)).toEqual(await audience());
+        const work = await inTx(tx => readMachineRecipientWorkInTx(tx, { actorAccountId: guestOwner.id,
+            ownerFingerprints: new Map([[second.id, null]]) }));
+        expect(work.get(second.id)?.recipients.map(recipient => recipient.recipientAccountId))
+            .toEqual([hostOwner.id, manager.id, guestViewer.id].sort());
+
+        await db.managedMachine.update({ where: { id: firstManaged.id }, data: {
+            controllerMachineId: second.id, controllerInstallationId: second.installationId,
+        } });
+        expect(await audience()).toEqual([guestOwner.id, guestViewer.id].sort());
+    });
 });

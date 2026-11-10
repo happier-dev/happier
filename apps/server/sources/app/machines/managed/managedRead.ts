@@ -18,6 +18,7 @@ import {
     inManagedMachinePublicationTx,
     projectManagedMachinesInTx, projectManagedControllerAccess,
     readManagedAdmissionState,
+    hasPossibleManagedNativeResource,
     resolveManagedMachineRoleInTx, resolveManagedMachineRole,
 } from "./managedRows";
 
@@ -134,8 +135,9 @@ export async function getManagedMachine(params: Readonly<{ actorAccountId: strin
 /** Private native custody and public creator results share one actor-aware projection. */
 export async function projectManagedMachineForActorInTx(tx: Tx, row: StoredManagedMachine, actorAccountId: string): Promise<ManagedMachineV1> {
     const machine = await projectManagedMachineInTx(tx, row);
-    if (!isManagedMachineCreator(row, actorAccountId) || row.custodianAccountId === actorAccountId
-        || await resolveManagedMachineRoleInTx(tx, row, actorAccountId) === 'manage') return machine;
+    if (row.custodianAccountId === actorAccountId
+        || !isManagedMachineCreator(row, actorAccountId)
+            && await resolveManagedMachineRoleInTx(tx, row, actorAccountId) === 'manage') return machine;
     if (!row.controllerMachineId || !row.controllerInstallationId) return redactManagedMachineCredentialReferences(machine);
     const controller = await tx.machine.findUnique({ where: { id: row.controllerMachineId }, select: {
         kind: true, accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true,
@@ -152,7 +154,7 @@ export async function listManagedMachines(params: Readonly<{ actorAccountId: str
         const candidates = input.enrolledMachineId ? undefined
             : await listMachineCandidatesInTx(tx, params.actorAccountId, { includeRevokedOwned: true });
         // Home, creator JSON path/value and Prisma pagination accompany each ID set.
-        const selections = candidates ? portableQueryChunks({ values: candidates, bindingsPerValue: 1,
+        const selections = candidates ? portableQueryChunks({ values: candidates, bindingsPerValue: 2,
             fixedBindings: 6 + (input.presetId ? 1 : 0) }) : [];
         const rowsById = new Map<string, StoredManagedMachine>();
         for (const [index, ids] of (selections.length ? selections : [undefined]).entries()) {
@@ -160,7 +162,7 @@ export async function listManagedMachines(params: Readonly<{ actorAccountId: str
             ...(input.presetId ? { presetId: input.presetId } : {}),
             ...(input.enrolledMachineId ? { enrolledMachineId: input.enrolledMachineId } : {}),
             ...(candidates ? { OR: [
-                ...(ids ? [{ controllerMachineId: { in: [...ids] } }] : []),
+                ...(ids ? [{ controllerMachineId: { in: [...ids] } }, { enrolledMachineId: { in: [...ids] } }] : []),
                 ...(index === 0 ? [{ admittedInput: jsonPathEquals(['enrollmentAccountId'], params.actorAccountId) },
                     { custodianAccountId: params.actorAccountId, controllerMachineId: null }] : []),
             ] } : {}),
@@ -170,15 +172,19 @@ export async function listManagedMachines(params: Readonly<{ actorAccountId: str
         const rows = [...rowsById.values()].sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime()
             || left.id.localeCompare(right.id));
         const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, {
-            machineIds: rows.flatMap(row => row.controllerMachineId ? [row.controllerMachineId] : []), accountIds: [params.actorAccountId],
+            machineIds: rows.flatMap(row => [row.controllerMachineId, row.enrolledMachineId].filter((id): id is string => id !== null)),
+            accountIds: [params.actorAccountId],
         });
+        const role = (row: StoredManagedMachine) => resolveManagedMachineRole(row, params.actorAccountId,
+            row.controllerMachineId ? access.get(row.controllerMachineId)?.get(params.actorAccountId) ?? null : null,
+            row.enrolledMachineId ? access.get(row.enrolledMachineId)?.get(params.actorAccountId) ?? null : null);
         const accessible = rows.filter(row => isManagedMachineCreator(row, params.actorAccountId)
-            || resolveManagedMachineRole(row, params.actorAccountId, row.controllerMachineId ? access.get(row.controllerMachineId)?.get(params.actorAccountId) ?? null : null));
+            || role(row));
         const machines = await projectManagedMachinesInTx(tx, accessible);
         return { machines: machines.map((machine, index) => {
             const row = accessible[index];
-            return row.custodianAccountId !== params.actorAccountId && isManagedMachineCreator(row, params.actorAccountId)
-                && resolveManagedMachineRole(row, params.actorAccountId, row.controllerMachineId ? access.get(row.controllerMachineId)?.get(params.actorAccountId) ?? null : null) !== 'manage'
+            return row.custodianAccountId !== params.actorAccountId
+                && (isManagedMachineCreator(row, params.actorAccountId) || role(row) !== 'manage')
                 ? redactManagedMachineCredentialReferences(machine) : machine;
         }) };
     });
@@ -193,7 +199,7 @@ export async function cancelManagedCreation(params: Readonly<{ actorAccountId: s
         if (row.intentRevision !== input.expectedIntentRevision) throw new ManagedMachineError("intent_changed");
         if (row.creationState !== "active") return { machine: await projectManagedMachineForActorInTx(tx, row, params.actorAccountId) };
         if (row.enrolledMachineId) throw new ManagedMachineError("intent_changed");
-        const possibleResource = row.allocation !== "unsubmitted" && row.allocation !== "confirmed-absent";
+        const possibleResource = hasPossibleManagedNativeResource(row);
         const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: input.expectedIntentRevision, creationState: "active", enrolledMachineId: null }, data: {
             creationState: "canceled", intentRevision: { increment: 1 }, desired: "delete", desiredWhen: "now", desiredAfterMs: null,
             ...(!possibleResource ? { allocation: "confirmed-absent" } : { cleanup: { disposition: "pending", reason: "creation_canceled" } }),

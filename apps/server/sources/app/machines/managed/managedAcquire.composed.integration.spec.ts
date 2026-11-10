@@ -151,7 +151,7 @@ describe("managed acquisition durable authority", () => {
         expect(await db.managedMachine.count({ where: { admittedActionRequestId: 'setup-create' } })).toBe(1);
     });
 
-    it('applies admitted setup to the requester guest without granting the custodian guest access', async () => {
+    it('applies admitted setup to the requester guest while the controller custodian inherits Manage', async () => {
         const homeId = `srv_${'a'.repeat(32)}`;
         const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -182,7 +182,8 @@ describe("managed acquisition durable authority", () => {
             homeId, machineId: guest.id, managedId: row.id, presetId: preset.id, presetRevision: preset.revision,
             state: 'running', operation: { operationId: 'requester-setup' },
         } })).toMatchObject({ machine: { enrollmentAccountId: requester.id, machineSetup: { state: 'running' } } });
-        expect(await resolveMachineAccessInTx(db, { actorAccountId: custodian.id, machineId: guest.id })).toBeNull();
+        expect(await resolveMachineAccessInTx(db, { actorAccountId: custodian.id, machineId: guest.id }))
+            .toMatchObject({ role: 'manage', encryptionMode: 'plain', accessState: 'refused', reason: 'encryption_material_unavailable' });
     });
 
     it('includes immutable setup secret references in the retained resource dependency census', async () => {
@@ -762,7 +763,8 @@ describe("managed acquisition durable authority", () => {
             admittedActionRequestId: crypto.randomUUID(), admittedInput: { enrollmentAccountId: requester.id },
             launch: input.selection.launch, allocation: 'bound', resource, enrolledMachineId: guest.id,
             retention: { kind: 'unused', afterMs: 17, effect: 'stop' }, wakeOnAcceptedMessage: false } });
-        expect(await inTx(tx => resolveMachineAccessInTx(tx, { actorAccountId: custodian.id, machineId: guest.id }))).toBeNull();
+        expect(await inTx(tx => resolveMachineAccessInTx(tx, { actorAccountId: custodian.id, machineId: guest.id })))
+            .toMatchObject({ role: 'manage', accessState: 'key_pending', reason: 'encryption_material_unavailable' });
         const context = { actorAccountId: custodian.id, custodianAccountId: requester.id, machineId: guest.id,
             installationId: guest.installationId!, role: 'manage' as const, encryptionMode: 'e2ee' as const };
         const managedTarget = { homeId, managedId: row.id, expectedRevision: 0, controller };
@@ -1029,6 +1031,47 @@ describe("managed acquisition durable authority", () => {
             .toMatchObject({ id: row.id, enrolledMachineId: enrolled.id });
         expect((await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).admittedInput)
             .toEqual(row.admittedInput);
+    });
+
+    it.each(['unsubmitted', 'canceled', 'rejected'] as const)('settles Delete without a native target after %s creation', async state => {
+        const { homeId, account, controller, request } = await createManagedComputeFixture(`delete-no-native-${state}`);
+        const created = await admitManagedAcquire(request);
+        const correlation = { homeId, managedId: created.machine.id, expectedIntentRevision: 0,
+            requestId: request.input.requestId, controller };
+        if (state === 'rejected') {
+            await submitManagedAcquire(correlation);
+            await reportManagedAcquire({ ...correlation, result: { kind: 'rejected', code: 'native_refused' } });
+        }
+        const before = state === 'canceled'
+            ? (await cancelManagedCreation({ actorAccountId: account.id, input: { homeId, managedId: created.machine.id, expectedIntentRevision: 0 } })).machine
+            : created.machine;
+        const app = fastify().withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+        // Authentication is the HTTP boundary; admission, persisted lifecycle and projection stay real.
+        app.decorate('authenticate', async (incoming: FastifyRequest) => {
+            const body = incoming.body as { action: string; requestId: string };
+            Object.assign(incoming, createAuthenticatedRouteRequest({ userId: account.id,
+                externalActionExecutionAuthorized: true, externalActionExecutionMachineId: controller.machineId,
+                externalActionEffectActionId: body.action, externalActionExecutionRequestId: body.requestId,
+                externalActionExecutionCustodianAccountId: account.id,
+            }), { headers: incoming.headers, body: incoming.body });
+        });
+        registerManagedMachineRoutes(app);
+        onTestFinished(() => app.close());
+        const payload = { action: 'machines.managed.delete', requestId: `delete-no-native-${state}`,
+            input: { homeId, managedId: created.machine.id, when: 'now', intent: 'delete',
+                expectedRevision: before.intentRevision, reviewedDependencies: true } };
+        const response = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit-control', payload });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(ManagedAdmissionOutputV1Schema.parse(response.json())).toMatchObject({ replayed: false,
+            machine: { id: created.machine.id, allocation: 'confirmed-absent', creationState: 'canceled',
+                desired: 'delete', desiredWhen: 'now', intentRevision: before.intentRevision + 1 } });
+        const stored = await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } });
+        expect(stored).toMatchObject({ allocation: 'confirmed-absent', resource: null, nativeOperationRef: null, cleanup: null });
+        const replay = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit-control', payload });
+        expect(ManagedAdmissionOutputV1Schema.parse(replay.json())).toMatchObject({ replayed: true,
+            machine: { allocation: 'confirmed-absent', intentRevision: before.intentRevision + 1 } });
+        await expect(submitManagedAcquire(correlation)).rejects.toMatchObject({ code: 'enrollment_retired' });
     });
 
     it('retries approved cleanup of a canceled bound resource through the current controller without reviving creation', async () => {
@@ -2279,7 +2322,7 @@ describe("managed acquisition durable authority", () => {
         const controller = await db.machine.create({ data: { id: "managed-reader-controller", accountId: owner.id, metadata: "ciphertext", installationId: "reader-installation" } });
         await db.machineAccountGrant.createMany({ data: [{ machineId: controller.id, accountId: viewer.id, accessLevel: "view", createdByAccountId: owner.id }, { machineId: controller.id, accountId: manager.id, accessLevel: "admin", createdByAccountId: owner.id }] });
         const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: owner.id, controllerMachineId: controller.id, controllerInstallationId: "reader-installation", admittedActionRequestId: "reader-request", admittedInput: { futureStoredMember: true }, launch: { provider: { pluginId: "fixture.compute", localId: "compute" }, schemaVersion: 1, name: "reviewed", choices: {}, futureStoredMember: true }, retention: { kind: "until-delete", futureStoredMember: true }, wakeOnAcceptedMessage: false } });
-        expect(await getManagedMachine({ actorAccountId: viewer.id, input: { homeId, managedId: row.id } })).toMatchObject({ id: row.id });
+        await expect(getManagedMachine({ actorAccountId: viewer.id, input: { homeId, managedId: row.id } })).rejects.toMatchObject({ code: 'permission_denied' });
         const cancel = { homeId, managedId: row.id, expectedIntentRevision: 0 };
         await expect(cancelManagedCreation({ actorAccountId: viewer.id, input: cancel })).rejects.toMatchObject({ code: "permission_denied" });
         const app = fastify().withTypeProvider<ZodTypeProvider>();
@@ -2314,7 +2357,8 @@ describe("managed acquisition durable authority", () => {
         } finally { restoreHttp(); await app.close(); }
         expect((await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).admittedActionRequestId).toBe("reader-request");
         await expect(cancelManagedCreation({ actorAccountId: manager.id, input: cancel })).rejects.toMatchObject({ code: "intent_changed" });
-        expect((await db.account.findUniqueOrThrow({ where: { id: viewer.id } })).seq).toBeGreaterThan(0);
+        expect((await db.account.findUniqueOrThrow({ where: { id: viewer.id } })).seq).toBe(0);
+        expect((await db.account.findUniqueOrThrow({ where: { id: manager.id } })).seq).toBeGreaterThan(0);
         await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: controller.id, accountId: viewer.id } } });
         await expect(getManagedMachine({ actorAccountId: viewer.id, input: { homeId, managedId: row.id } })).rejects.toMatchObject({ code: "permission_denied" });
     });

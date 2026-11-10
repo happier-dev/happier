@@ -10939,6 +10939,72 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
+    it('admits exact native control from guest Manage without opening the controller and retains submitted work after withdrawal', async () => {
+        const { fixture, homeId, controller, input } = await createManagedNativeAuthFixture();
+        const creationRequestId = crypto.randomUUID();
+        const created = await admitManagedAcquire({ requesterAccountId: fixture.account.id, custodianAccountId: fixture.account.id,
+            requestEnvelopeDigest: 'guest-grant-control', input: { input, requestId: creationRequestId, continuationPresent: false } });
+        const creation = { homeId, managedId: created.machine.id, expectedIntentRevision: 0,
+            requestId: creationRequestId, controller };
+        await submitManagedAcquire(creation);
+        await reportManagedAcquire({ ...creation, result: { kind: 'bound', resource: {
+            contributionRef: input.selection.launch.provider, schemaVersion: 1, value: { id: 'guest-controlled-resource' },
+        } } });
+        const guest = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: fixture.account.id,
+            installationId: crypto.randomUUID(), metadata: encodePlainMachineStoredContent({ host: 'guest', platform: 'linux',
+                happyCliVersion: 'test', homeDir: '/home/guest', happyHomeDir: '/home/guest/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+        await db.managedMachine.update({ where: { id: created.machine.id }, data: { enrolledMachineId: guest.id } });
+        const actor = await createFixture({ qualifiedPat: false });
+        const token = await auth.createToken(actor.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const actionId = 'machines.managed.power.set';
+        const requestId = crypto.randomUUID();
+        const control = { homeId, managedId: created.machine.id, expectedRevision: 0, when: 'now', intent: 'stop' };
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId,
+            target: { kind: 'machine', machineId: controller.machineId }, input: control });
+        const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, undefined, true);
+        const issue = () => app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+            headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: controller.machineId, envelope } });
+        const inspect = () => app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.inspect'),
+            headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: controller.machineId,
+                envelope: { v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: controller.machineId },
+                    input: { homeId, managedId: created.machine.id } } } });
+        const grant = (level: 'view' | 'admin') => inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
+            actorAccountId: fixture.account.id, machineId: guest.id,
+            principal: { kind: 'account', accountId: actor.account.id }, level }));
+        try {
+            await grant('view');
+            expect((await issue()).statusCode).toBe(409);
+            expect((await inspect()).statusCode).toBe(409);
+            await grant('admin');
+            expect(await resolveMachineAccess({ actorAccountId: actor.account.id, machineId: controller.machineId })).toBeNull();
+            const inspected = await inspect();
+            expect(inspected.statusCode, inspected.body).toBe(200);
+            const issued = await issue();
+            expect(issued.statusCode, issued.body).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            authorizationRequests.set(authorization.token, { target: authorization.binding.target,
+                installationId: controller.installationId, requestId });
+            const post = (path: string, body: InjectOptions['payload']) => app.inject({ method: 'POST', url: path, payload: body,
+                headers: machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
+                    method: 'POST', path, body, privateKey: fixture.keyPair.secretKey }) });
+            const path = '/v1/machines/managed/controller/admit-control';
+            expect((await post(path, { action: actionId, requestId, input: { ...control, managedId: crypto.randomUUID() } })).statusCode).toBe(401);
+            const admitted = await post(path, { action: actionId, requestId, input: control });
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            const correlation = { homeId, managedId: created.machine.id, expectedIntentRevision: 1, requestId, controller };
+            const submitted = await post('/v1/machines/managed/controller/submit-intent', correlation);
+            expect(submitted.statusCode, submitted.body).toBe(200);
+            await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: fixture.account.id, machineId: guest.id,
+                principal: { kind: 'account', accountId: actor.account.id } }));
+            const settled = await post('/v1/machines/managed/controller/report-intent', { ...correlation,
+                result: { kind: 'confirmed' }, observation: { observedAt: 30, availability: 'present', power: 'stopped' } });
+            expect(settled.statusCode, settled.body).toBe(200);
+            expect((await issue()).statusCode).toBe(409);
+            expect(await resolveMachineAccess({ actorAccountId: actor.account.id, machineId: controller.machineId })).toBeNull();
+        } finally { await app.close(); }
+    });
+
     it.each((['account', 'api_token', 'machine_grant'] as const).flatMap(credential =>
         (['stop', 'delete'] as const).map(intent => ({ credential, intent }))))(
         'records the exact submitted $intent result after $credential revocation and refuses a new admission', async ({ credential, intent }) => {

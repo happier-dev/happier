@@ -6,8 +6,10 @@ import { eventRouter } from "@/app/events/connectionEventRouter";
 import { afterTx, type Tx } from "@/storage/inTx";
 import { log } from "@/utils/logging/log";
 import { dispatchMachineAccessLossCustody } from "./machineAccessCustody";
+import { expandMachineIdsWithManagedGuestsInTx } from './machineRole';
+import { readMachineAudienceAccountIdsForMachinesInTx } from './machineRecipientWork';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import {
-    resolveCurrentMachineRecipientAccountIdsInTx,
     resolveEffectiveMachineAccessForMachinesInTx,
 } from "./machineAccess";
 
@@ -22,23 +24,25 @@ export interface MachineAccessImpact {
     }>;
 }
 
-async function readMachineManageRecipientAccountIdsInTx(tx: Tx, machineId: string): Promise<readonly string[]> {
-    const recipientIds = await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId);
-    const current = await resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds: [machineId], accountIds: recipientIds });
-    return recipientIds.filter(accountId => current.get(machineId)?.get(accountId) === "manage");
+async function readMachineManageRecipientsInTx(tx: Tx, machineIds: readonly string[]): Promise<ReadonlyMap<string, readonly string[]>> {
+    const audiences = await readMachineAudienceAccountIdsForMachinesInTx(tx, machineIds);
+    const accountIds = [...new Set([...audiences.values()].flat())];
+    const current = await resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds, accountIds });
+    return new Map([...audiences].map(([id, recipients]) => [id, recipients.filter(accountId => current.get(id)?.get(accountId) === 'manage')]));
 }
 
 /** Pure complete publication/lifecycle census before an enclosing membership mutation. */
 export async function readMachineAccessImpactPublicationAudienceInTx(
     tx: Tx, input: Readonly<{ machineIds: readonly string[]; accountIds: readonly string[] }>,
 ): Promise<readonly string[]> {
-    const machineIds = [...new Set(input.machineIds)];
-    const machines = machineIds.length === 0 ? [] : await tx.machine.findMany({
-        where: { id: { in: machineIds } }, select: { accountId: true },
-    });
-    const accountIds = new Set([...input.accountIds, ...machines.map(machine => machine.accountId)]);
-    for (const machineId of machineIds) {
-        for (const accountId of await readMachineManageRecipientAccountIdsInTx(tx, machineId)) accountIds.add(accountId);
+    const machineIds = await expandMachineIdsWithManagedGuestsInTx(tx, input.machineIds);
+    const accountIds = new Set(input.accountIds);
+    for (const ids of portableQueryChunks({ values: machineIds, bindingsPerValue: 1 })) {
+        const machines = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: { accountId: true } });
+        for (const machine of machines) accountIds.add(machine.accountId);
+    }
+    for (const recipients of (await readMachineManageRecipientsInTx(tx, machineIds)).values()) {
+        for (const accountId of recipients) accountIds.add(accountId);
     }
     return [...accountIds].sort();
 }
@@ -49,7 +53,7 @@ export async function captureMachineAccessImpactsInTx(
 ): Promise<ReadonlyMap<string, MachineAccessImpact>> {
     const accountIds = [...new Set(input.accountIds)];
     await acquireAccountChangePublicationLocksInTx(tx, accountIds, { includeSingleAccount: true });
-    const machineIds = [...new Set(input.machineIds)];
+    const machineIds = await expandMachineIdsWithManagedGuestsInTx(tx, input.machineIds);
     const access = accountIds.length === 0 || machineIds.length === 0
         ? new Map<string, Map<string, MachineAccessRoleV1 | null>>()
         : await resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds, accountIds });
@@ -86,6 +90,7 @@ export async function applyMachineAccessImpactsInTx(
 
     const accountIds = [...new Set([...beforeByMachine.values()].flatMap(before => [...before.keys()]))];
     const after = await resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds: [...beforeByMachine.keys()], accountIds });
+    const managers = await readMachineManageRecipientsInTx(tx, [...beforeByMachine.keys()]);
     const changedAccountIds = new Set<string>();
     const revokedAccountIds = new Set<string>();
     const publications: Array<{ machineId: string; changed: Set<string>; revoked: Set<string>; manageLost: Set<string> }> = [];
@@ -95,7 +100,7 @@ export async function applyMachineAccessImpactsInTx(
         const manageLost = new Set<string>();
         for (const [accountId, beforeRole] of before) {
             const afterRole = after.get(machineId)?.get(accountId) ?? null;
-            if (beforeRole === afterRole && accountId !== input.directGrantChangedAccountId) continue;
+            if (beforeRole === afterRole && (beforeRole === null || accountId !== input.directGrantChangedAccountId)) continue;
             changed.add(accountId);
             changedAccountIds.add(accountId);
             if (beforeRole !== null && afterRole === null) {
@@ -108,7 +113,7 @@ export async function applyMachineAccessImpactsInTx(
 
         // Current Manage holders consume the same changed-Machine projection to
         // refresh sharing and current recipient work; this creates no key queue.
-        for (const accountId of await readMachineManageRecipientAccountIdsInTx(tx, machineId)) changed.add(accountId);
+        for (const accountId of managers.get(machineId) ?? []) changed.add(accountId);
         publications.push({ machineId, changed, revoked, manageLost });
     }
 

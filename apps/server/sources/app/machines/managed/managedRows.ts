@@ -34,19 +34,26 @@ import { encodeBase64 } from 'privacy-kit';
 import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import { ManagedConfigurationFactsV1ReadSchema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
+import { resolveEffectiveMachineAccessForMachinesInTx } from '@/app/machines/machineAccess';
+import { resolveManagedMachineRole } from './managedRole';
+export { resolveManagedMachineRole } from './managedRole';
+import { readMachineAudienceAccountIdsForMachinesInTx } from '@/app/machines/machineRecipientWork';
 import { serializeManagedMachineRef, serializeManagedInputRuntime } from '@/app/machines/machineSerialization';
 
 export type StoredManagedMachine = Prisma.ManagedMachineGetPayload<Record<string, never>>;
 
-/** Vendor control belongs to custody when no actual controller was selected. */
-export function resolveManagedMachineRole(row: Pick<StoredManagedMachine, 'custodianAccountId' | 'controllerMachineId'>,
-    actorAccountId: string, controllerRole: 'manage' | 'use' | null = null): 'manage' | 'use' | null {
-    return row.controllerMachineId === null ? row.custodianAccountId === actorAccountId ? 'manage' : null : controllerRole;
+/** Only submitted or bound allocations can require native cleanup. */
+export function hasPossibleManagedNativeResource(row: Pick<StoredManagedMachine, 'allocation'>): boolean {
+    return row.allocation !== 'unsubmitted' && row.allocation !== 'confirmed-absent';
 }
-export async function resolveManagedMachineRoleInTx(tx: Tx, row: Pick<StoredManagedMachine, 'custodianAccountId' | 'controllerMachineId'>, actorAccountId: string) {
-    const role = row.controllerMachineId ? await resolveEffectiveMachineRoleInTx(tx, { actorAccountId, machineId: row.controllerMachineId }) : null;
-    return resolveManagedMachineRole(row, actorAccountId, role);
+
+export async function resolveManagedMachineRoleInTx(tx: Tx, row: Pick<StoredManagedMachine, 'custodianAccountId' | 'controllerMachineId' | 'enrolledMachineId'>, actorAccountId: string) {
+    const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, {
+        machineIds: [row.controllerMachineId, row.enrolledMachineId].filter((id): id is string => id !== null), accountIds: [actorAccountId],
+    });
+    return resolveManagedMachineRole(row, actorAccountId,
+        row.controllerMachineId ? access.get(row.controllerMachineId)?.get(actorAccountId) ?? null : null,
+        row.enrolledMachineId ? access.get(row.enrolledMachineId)?.get(actorAccountId) ?? null : null);
 }
 
 /** The invoking host admitted this person's descriptor; it is not a server plugin declaration. */
@@ -500,10 +507,17 @@ export function sameManagedInput(left: unknown, right: unknown): boolean {
 /** The same audience is prepared by enclosing lifecycle mutations before locks. */
 export async function readManagedMachinePolicyPublicationAudienceInTx(tx: Tx, row: StoredManagedMachine,
     admittedInput = row.admittedInput) {
-    const controllerAccountIds = row.controllerMachineId ? await resolveCurrentMachineRecipientAccountIdsInTx(tx, row.controllerMachineId) : [row.custodianAccountId];
+    const machineIds = [row.controllerMachineId, row.enrolledMachineId].filter((id): id is string => id !== null);
+    const audiences = await readMachineAudienceAccountIdsForMachinesInTx(tx, machineIds);
+    const controllerAccountIds = row.controllerMachineId ? audiences.get(row.controllerMachineId) ?? [] : [row.custodianAccountId];
+    const candidates = [...new Set([...controllerAccountIds, ...(row.enrolledMachineId ? audiences.get(row.enrolledMachineId) ?? [] : [])])];
+    const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds, accountIds: candidates });
+    const recipients = candidates.filter(accountId => resolveManagedMachineRole(row, accountId,
+        row.controllerMachineId ? access.get(row.controllerMachineId)?.get(accountId) ?? null : null,
+        row.enrolledMachineId ? access.get(row.enrolledMachineId)?.get(accountId) ?? null : null));
     const creatorAccountId = readManagedAdmissionState(admittedInput).enrollmentAccountId;
     return { controllerAccountIds,
-        resourceAccountIds: [...new Set([...controllerAccountIds, ...(creatorAccountId ? [creatorAccountId] : [])])] };
+        resourceAccountIds: [...new Set([...recipients, ...(creatorAccountId ? [creatorAccountId] : [])])] };
 }
 
 export async function invalidateManagedMachineInTx(tx: Tx, row: StoredManagedMachine): Promise<void> {

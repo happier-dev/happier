@@ -9,7 +9,6 @@ import { isMachinePublishedContentSafeV1 } from '@happier-dev/protocol/machines/
 import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { MachineRecipientKeyEnvelopePageQueryV1Schema, type AccessibleMachineAccessV1, type MachineAdmission, type MachineAccessRoleV1, type MachineAccessRefusalV1, type MachineAccessRefusalCode, type MachineAccessGrantRowV1, type MachineAccessGrantsListResultV1, type MachineAccessMutationResultV1, type MachineAccessRecipientCensusResponseV1, type MachineRecipientKeyEnvelopeCommitInputV1, type MachineRecipientKeyEnvelopeCommitResponseV1, type MachineRecipientKeyEnvelopePageQueryV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { type PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
-import { isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRequesterProjectExecutionActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
@@ -26,8 +25,6 @@ import { resolveProviderActionRpcRouteV1 } from '@happier-dev/protocol/providers
 import { inTx, type Tx } from '@/storage/inTx';
 import { getDbProviderFromEnv } from '@/storage/db';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
-import { isEffectiveTeamMembership } from '@/app/teams/memberships/effectiveMembership';
-import { isEffectiveTeamGroupMembership } from '@/app/teams/groups/effectiveGroupMembership';
 import { validateResourceGrantPrincipalInTx } from '@/app/teams/resourceGrantAccess';
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from '@/app/encryption/accountRecipientEnvelopeReadiness';
 import { RECIPIENT_READINESS_SELECT } from '@/app/session/encryption/sessionDataKeyRecipientProjection';
@@ -36,8 +33,9 @@ import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicatio
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { captureMachineAccessImpactsInTx, applyMachineAccessImpactsInTx } from './machineAccessEffects';
 import { isMachineOperationSupportedForRequester, type MachineOperationRequesterContext } from './machineOperationSupport';
-import { isMachineRecipientWorkPending, projectMachineRecipientWork, readMachineAudienceAccountIdsInTx, readMachineRecipientWorkInTx } from './machineRecipientWork';
+import { isMachineRecipientWorkPending, projectMachineRecipientWork, readMachineAudienceAccountIdsInTx, readMachineAudienceAccountIdsForMachinesInTx, readMachineRecipientWorkInTx } from './machineRecipientWork';
 import { classifyMachineAvailabilityState } from './machineStateGuards';
+import { MACHINE_PERMISSION_FACTS_SELECT, buildMachineActorPermissionFactsSelect, contributions, readMachineRoleGraphInTx, projectMachineRoles, projectMachineTeamRoles, expandMachineIdsWithManagedGuestsInTx } from './machineRole';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 
 type MachineActor = Readonly<{ actorAccountId: string; machineId: string }>;
@@ -55,6 +53,7 @@ const refusal = (code: MachineAccessRefusalCode): MachineAccessRefusalV1 => ({ k
 
 const MACHINE_RESOURCE_FACTS_SELECT = {
         id: true, kind: true, accountId: true, metadata: true, metadataVersion: true,
+        managedResource: { select: { custodianAccountId: true, controllerMachineId: true } },
         daemonState: true, daemonStateVersion: true, dataEncryptionKey: true,
         installationId: true, active: true, revokedAt: true, replacedByMachineId: true,
         operationProtocolCapabilities: true, operationProtocolCapabilitiesRevision: true,
@@ -100,84 +99,30 @@ const MACHINE_OPENING_INCLUDE = {
 } as const;
 type MachineOpeningRow = Prisma.MachineGetPayload<{ include: typeof MACHINE_OPENING_INCLUDE }>;
 
-// Bulk role maps need current permission facts, not Machine content or key material.
-const MACHINE_PERMISSION_FACTS_SELECT = {
-    id: true, kind: true, accountId: true,
-    account: { select: { status: true } },
-    accountGrants: { select: { accountId: true, accessLevel: true, account: { select: { status: true } } } },
-    teamGrants: { select: { teamId: true, accessLevel: true, team: { select: { archivedAt: true,
-        memberships: { select: { accountId: true, status: true, role: true, account: { select: { status: true } } } },
-    } } } },
-    groupGrants: { select: { teamGroupId: true, accessLevel: true, teamGroup: { select: {
-        teamId: true, archivedAt: true, team: { select: { archivedAt: true } },
-        memberships: { select: { teamMembership: { select: { accountId: true, status: true, account: { select: { status: true } } } } } },
-    } } } },
-} as const;
-type MachinePermissionFacts = Prisma.MachineGetPayload<{ select: typeof MACHINE_PERMISSION_FACTS_SELECT }>;
-
-function buildMachineActorPermissionFactsSelect(actorAccountId: string) {
-    const { accountGrants, teamGrants, groupGrants } = MACHINE_PERMISSION_FACTS_SELECT;
-    return {
-        ...MACHINE_PERMISSION_FACTS_SELECT,
-        accountGrants: { ...accountGrants, where: { accountId: actorAccountId } },
-        teamGrants: { select: { ...teamGrants.select, team: { select: {
-            ...teamGrants.select.team.select,
-            memberships: { ...teamGrants.select.team.select.memberships, where: { accountId: actorAccountId } },
-        } } } },
-        groupGrants: { select: { ...groupGrants.select, teamGroup: { select: {
-            ...groupGrants.select.teamGroup.select,
-            memberships: { ...groupGrants.select.teamGroup.select.memberships, where: { teamMembership: { accountId: actorAccountId } } },
-        } } } },
-    } as const;
-}
-
 async function readFactsInTx(tx: Tx, machineId: string, actorAccountId?: string) {
     return tx.machine.findUnique({ where: { id: machineId },
         select: actorAccountId === undefined ? MACHINE_ACCESS_FACTS_SELECT : buildMachineAdmissionFactsSelect(actorAccountId) });
 }
 type MachineFacts = NonNullable<Awaited<ReturnType<typeof readFactsInTx>>>;
+type MachineResourceFacts = Prisma.MachineGetPayload<{ select: typeof MACHINE_RESOURCE_FACTS_SELECT }>;
 export type MachineAdmissionFacts = MachineFacts;
-type Contribution = Readonly<{ principal: PrincipalRefV1; level: 'view' | 'admin'; displayName: string | null; accountIds: readonly string[] }>;
-
-function contributions(row: MachineFacts | MachinePermissionFacts): Contribution[] {
-    return [
-        ...row.accountGrants.map(grant => ({ principal: { kind: 'account' as const, accountId: grant.accountId }, level: grant.accessLevel,
-            displayName: resolveAccountDisplayLabelV1('name' in grant.account ? grant.account : {}), accountIds: grant.account.status === 'active' ? [grant.accountId] : [] })),
-        ...row.teamGrants.map(grant => ({ principal: { kind: 'team' as const, teamId: grant.teamId }, level: grant.accessLevel,
-            displayName: 'name' in grant.team ? grant.team.name : null, accountIds: grant.team.memberships.filter(member => isTeamPrincipalRoleV1(member.role) && isEffectiveTeamMembership({
-                accountStatus: member.account.status, membershipStatus: member.status, teamArchivedAt: grant.team.archivedAt,
-            })).map(member => member.accountId) })),
-        ...row.groupGrants.map(grant => ({ principal: { kind: 'group' as const, teamId: grant.teamGroup.teamId, groupId: grant.teamGroupId }, level: grant.accessLevel,
-            displayName: 'name' in grant.teamGroup ? grant.teamGroup.name : null, accountIds: grant.teamGroup.memberships.filter(({ teamMembership: member }) => isEffectiveTeamGroupMembership({
-                accountStatus: member.account.status, membershipStatus: member.status,
-                teamArchivedAt: grant.teamGroup.team.archivedAt, groupArchivedAt: grant.teamGroup.archivedAt,
-            })).map(({ teamMembership: member }) => member.accountId) })),
-    ];
-}
-function effectiveRole(row: MachineFacts | MachinePermissionFacts, actorAccountId: string, sources?: readonly Contribution[]): MachineAccessRoleV1 | null {
-    if (row.accountId === actorAccountId) return row.account.status === 'active' ? 'manage' : null;
-    if (row.kind !== 'persistent') return null;
-    let role: MachineAccessRoleV1 | null = null;
-    for (const source of sources ?? contributions(row)) if (source.accountIds.includes(actorAccountId)) {
-        if (source.level === 'admin') return 'manage';
-        role = 'use';
-    }
-    return role;
-}
-
 /** Permission only: current grants/current membership, never key presence or Session history. */
 export async function resolveEffectiveMachineRoleInTx(tx: Tx, input: MachineActor): Promise<MachineAccessRoleV1 | null> {
     const row = await readFactsInTx(tx, input.machineId, input.actorAccountId);
-    return row ? effectiveRole(row, input.actorAccountId) : null;
+    return row ? (await machineRolesInTx(tx, [row], [input.actorAccountId])).get(row.id)?.get(input.actorAccountId) ?? null : null;
+}
+
+async function machineRolesInTx(tx: Tx, rows: readonly Parameters<typeof readMachineRoleGraphInTx>[1][number][], accountIds: readonly string[]) {
+    return projectMachineRoles(await readMachineRoleGraphInTx(tx, rows, accountIds), accountIds);
 }
 
 /** Current grant lookup for work whose Session binding was already admitted.
  * This does not admit a new Machine operation or reopen recipient key material.
  */
-export function projectActiveMachineAdmissionFromFacts(
-    row: MachineAdmissionFacts, actorAccountId: string,
-): SocketRpcMachineAdmissionContextV1 | null {
-    const role = effectiveRole(row, actorAccountId);
+export async function projectActiveMachineAdmissionFromFacts(
+    tx: Tx, row: MachineAdmissionFacts, actorAccountId: string,
+): Promise<SocketRpcMachineAdmissionContextV1 | null> {
+    const role = (await machineRolesInTx(tx, [row], [actorAccountId])).get(row.id)?.get(actorAccountId) ?? null;
     const encryptionMode = resourceMode(row);
     if (!role || !encryptionMode || !row.installationId
         || classifyMachineAvailabilityState(row) !== 'available') return null;
@@ -199,19 +144,20 @@ export async function resolveEffectiveMachineAccessForMachinesInTx(tx: Tx, input
     const result = new Map<string, Map<string, MachineAccessRoleV1 | null>>();
     const machineIds = [...new Set(input.machineIds)];
     if (machineIds.length === 0) return result;
-    const byId = new Map<string, MachinePermissionFacts>();
+    const byId = new Map<string, Prisma.MachineGetPayload<{ select: typeof MACHINE_PERMISSION_FACTS_SELECT }>>();
     const actorAccountId = input.accountIds.length === 1 ? input.accountIds[0] : undefined;
     const select = actorAccountId === undefined ? MACHINE_PERMISSION_FACTS_SELECT : buildMachineActorPermissionFactsSelect(actorAccountId);
-    // Eight relation-projection bindings; singleton reads add three actor predicates.
-    for (const ids of portableQueryChunks({ values: machineIds, bindingsPerValue: 1, fixedBindings: actorAccountId === undefined ? 8 : 11 })) {
+    // Nine relation-projection bindings, including managedResource;
+    // singleton reads add three actor predicates.
+    for (const ids of portableQueryChunks({ values: machineIds, bindingsPerValue: 1, fixedBindings: actorAccountId === undefined ? 9 : 12 })) {
         const rows = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select });
         for (const row of rows) byId.set(row.id, row);
     }
+    const roles = await machineRolesInTx(tx, [...byId.values()], input.accountIds);
     for (const machineId of machineIds) {
         const row = byId.get(machineId);
-        const sources = row ? contributions(row) : [];
         result.set(machineId, new Map(input.accountIds.map(accountId => {
-            const role = row ? effectiveRole(row, accountId, sources) : null;
+            const role = roles.get(machineId)?.get(accountId) ?? null;
             const required = input.rpcMethod && row ? resolveMachineRpcRequiredRole({ method: input.rpcMethod,
                 owned: row.accountId === accountId, requiredRole: 'use' }) : 'use';
             return [accountId, required !== null && (required !== 'manage' || role === 'manage') ? role : null] as const;
@@ -229,17 +175,12 @@ export async function resolveMachinePrincipalAccessForMachinesInTx(tx: Tx, input
         const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds: input.machineIds, accountIds: [principal.accountId] });
         return new Map([...access].map(([id, roles]) => [id, roles.get(principal.accountId) ?? null]));
     }
-    const result = new Map<string, MachineAccessRoleV1 | null>();
-    for (const ids of portableQueryChunks({ values: [...new Set(input.machineIds)], bindingsPerValue: 1, fixedBindings: 2 })) {
-        const rows = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: {
-            id: true, kind: true, teamGrants: { where: { teamId: principal.teamId, team: { archivedAt: null } }, select: { accessLevel: true } },
-        } });
-        for (const row of rows) {
-            const grant = row.kind === 'persistent' ? row.teamGrants[0] : undefined;
-            result.set(row.id, grant ? grant.accessLevel === 'admin' ? 'manage' : 'use' : null);
-        }
+    const rows: Parameters<typeof readMachineRoleGraphInTx>[1][number][] = [];
+    for (const ids of portableQueryChunks({ values: [...new Set(input.machineIds)], bindingsPerValue: 1, fixedBindings: 9 })) {
+        rows.push(...await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: MACHINE_PERMISSION_FACTS_SELECT }));
     }
-    return result;
+    const roles = projectMachineTeamRoles(await readMachineRoleGraphInTx(tx, rows, []), principal.teamId);
+    return new Map(input.machineIds.map(id => [id, roles.get(id) ?? null]));
 }
 /** The current structural audience includes the original custodian, irrespective of key delivery. */
 export async function resolveCurrentMachineRecipientAccountIdsInTx(tx: Tx, machineId: string, custodianAccountId?: string): Promise<string[]> {
@@ -264,7 +205,8 @@ export async function listMachineCandidatesInTx(
     for (const ids of portableQueryChunks({ values: groupMemberships.map(member => member.teamGroupId), bindingsPerValue: 1, fixedBindings: 1 })) {
         groups.push(...await tx.machineGroupGrant.findMany({ where: { teamGroupId: { in: [...ids] } }, select: { machineId: true } }));
     }
-    return [...new Set([...owned.map(row => row.id), ...direct.map(row => row.machineId), ...teams.map(row => row.machineId), ...groups.map(row => row.machineId)])].sort();
+    return expandMachineIdsWithManagedGuestsInTx(tx,
+        [...owned.map(row => row.id), ...direct.map(row => row.machineId), ...teams.map(row => row.machineId), ...groups.map(row => row.machineId)]);
 }
 
 function resourceMode(row: MachineFacts): 'plain' | 'e2ee' | null {
@@ -300,8 +242,8 @@ async function readRecipientAccessMaterialInTx(tx: Tx, actorAccountId: string, m
 
 async function accessFromFactsInTx(tx: Tx, row: MachineFacts, actorAccountId: string,
     material?: Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>,
-    sources?: readonly Contribution[], admittedRole?: MachineAccessRoleV1): Promise<MachineAccessFacts | null> {
-    const role = admittedRole ?? effectiveRole(row, actorAccountId, sources);
+    resolvedRole?: MachineAccessRoleV1 | null): Promise<MachineAccessFacts | null> {
+    const role = resolvedRole === undefined ? (await machineRolesInTx(tx, [row], [actorAccountId])).get(row.id)?.get(actorAccountId) ?? null : resolvedRole;
     if (!role) return null;
     const owned = row.accountId === actorAccountId;
     if (!owned && classifyMachineAvailabilityState(row) !== 'available') return null;
@@ -345,9 +287,9 @@ export async function resolveMachineAccessForActorsInTx(tx: Tx, input: Readonly<
     const actorAccountIds = [...new Set(input.actorAccountIds)];
     if (actorAccountIds.length === 0) return result;
     const row = await readFactsInTx(tx, input.machineId, actorAccountIds.length === 1 ? actorAccountIds[0] : undefined);
-    const sources = row ? contributions(row) : [];
+    const roles = row ? await machineRolesInTx(tx, [row], actorAccountIds) : new Map();
     for (const actorAccountId of actorAccountIds) {
-        result.set(actorAccountId, row ? await accessFromFactsInTx(tx, row, actorAccountId, undefined, sources) : null);
+        result.set(actorAccountId, row ? await accessFromFactsInTx(tx, row, actorAccountId, undefined, roles.get(row.id)?.get(actorAccountId) ?? null) : null);
     }
     return result;
 }
@@ -397,7 +339,10 @@ export async function readMachineAdmissionFactsInTx(tx: Tx, input: MachineActor)
 
 /** Ownership decides the role without reading unrelated foreign grant graphs. */
 async function readMachineFactsInTx(tx: Tx, actorAccountId: string, machineIds: readonly string[]): Promise<ReadonlyMap<string, MachineFacts>> {
-    const rows = await tx.machine.findMany({ where: { id: { in: [...machineIds] } }, select: MACHINE_RESOURCE_FACTS_SELECT });
+    const rows: MachineResourceFacts[] = [];
+    for (const ids of portableQueryChunks({ values: [...new Set(machineIds)], bindingsPerValue: 1, fixedBindings: 3 })) {
+        rows.push(...await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: MACHINE_RESOURCE_FACTS_SELECT }));
+    }
     const result = new Map<string, MachineFacts>();
     for (const row of rows) if (row.accountId === actorAccountId) {
         // Account status, mode, content, installation and lifecycle still reach
@@ -406,8 +351,10 @@ async function readMachineFactsInTx(tx: Tx, actorAccountId: string, machineIds: 
     }
     const foreignIds = rows.filter(row => row.accountId !== actorAccountId).map(row => row.id);
     if (foreignIds.length > 0) {
-        const foreignRows = await tx.machine.findMany({ where: { id: { in: foreignIds } }, select: buildMachineAdmissionFactsSelect(actorAccountId) });
-        for (const row of foreignRows) result.set(row.id, row);
+        for (const ids of portableQueryChunks({ values: foreignIds, bindingsPerValue: 1, fixedBindings: 15 })) {
+            const foreignRows = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: buildMachineAdmissionFactsSelect(actorAccountId) });
+            for (const row of foreignRows) result.set(row.id, row);
+        }
     }
     return result;
 }
@@ -433,8 +380,8 @@ export async function readAccessibleMachineOpeningsInTx(tx: Tx, input: Readonly<
     const rows: MachineOpeningRow[] = [];
     // An owner's grants cannot change their role. Do not load their foreign grant graph.
     const actorFacts = buildMachineAdmissionFactsSelect(input.actorAccountId);
-    // Eight relation-projection bindings plus three custody and three actor predicates.
-    for (const ids of portableQueryChunks({ values: [...new Set(input.machineIds)], bindingsPerValue: 1, fixedBindings: 14 })) {
+    // Nine relation-projection bindings plus three custody and three actor predicates.
+    for (const ids of portableQueryChunks({ values: [...new Set(input.machineIds)], bindingsPerValue: 1, fixedBindings: 15 })) {
         rows.push(...await tx.machine.findMany({ where: { id: { in: [...ids] } }, include: {
             ...MACHINE_OPENING_INCLUDE,
             accountGrants: actorFacts.accountGrants,
@@ -445,12 +392,14 @@ export async function readAccessibleMachineOpeningsInTx(tx: Tx, input: Readonly<
     const foreignEncryptedIds = rows.filter(row => row.accountId !== input.actorAccountId && resourceMode(row) === 'e2ee').map(row => row.id);
     const material = foreignEncryptedIds.length > 0
         ? await readRecipientAccessMaterialInTx(tx, input.actorAccountId, foreignEncryptedIds) : undefined;
+    const roles = input.admission ? undefined : await machineRolesInTx(tx, rows, [input.actorAccountId]);
     for (const row of rows) {
         const admission = input.admission;
         if (admission && (admission.actorAccountId !== input.actorAccountId || admission.machineId !== row.id
             || admission.custodianAccountId !== row.accountId || admission.installationId !== row.installationId
             || admission.encryptionMode !== resourceMode(row))) continue;
-        const facts = await accessFromFactsInTx(tx, row, input.actorAccountId, material, undefined, admission?.role);
+        const facts = await accessFromFactsInTx(tx, row, input.actorAccountId, material,
+            admission?.role ?? roles?.get(row.id)?.get(input.actorAccountId) ?? null);
         if (!facts) continue;
         const key = facts.owned ? row.dataEncryptionKey
             : facts.accessState === 'ready' && facts.encryptionMode === 'e2ee' ? material?.envelopes.get(row.id)?.encryptedDataKey : null;
@@ -487,16 +436,22 @@ export async function resolveMachineAdmissionsInTx(tx: Tx, input: MachineAdmissi
     const machineIds = [...new Set(input.machineIds)];
     if (machineIds.length === 0) return new Map();
     const byId = await readMachineFactsInTx(tx, input.actorAccountId, machineIds);
+    const roles = await machineRolesInTx(tx, [...byId.values()], [input.actorAccountId]);
     const result = new Map<string, MachineAdmission | WorkflowMachineAdmission>();
-    for (const machineId of machineIds) result.set(machineId, await resolveMachineAdmissionFromFactsInTx(tx, byId.get(machineId) ?? null,
-        { actorAccountId: input.actorAccountId, machineId, ...(input.purpose === 'workflow' ? { purpose: 'workflow' as const } : {}) }));
+    for (const machineId of machineIds) result.set(machineId, await machineAdmissionFromFactsWithRoleInTx(tx, byId.get(machineId) ?? null,
+        { actorAccountId: input.actorAccountId, machineId, ...(input.purpose === 'workflow' ? { purpose: 'workflow' as const } : {}) },
+        roles.get(machineId)?.get(input.actorAccountId) ?? null));
     return result;
 }
 
 export function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | null, input: WorkflowMachineAdmissionInput): Promise<WorkflowMachineAdmission>;
 export function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | null, input: MachineAdmissionInput): Promise<MachineAdmission>;
 export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | null, input: MachineAdmissionInput & Readonly<{ purpose?: 'workflow' }>): Promise<MachineAdmission | WorkflowMachineAdmission> {
-    const access = row && await accessFromFactsInTx(tx, row, input.actorAccountId);
+    return machineAdmissionFromFactsWithRoleInTx(tx, row, input);
+}
+async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts | null,
+    input: MachineAdmissionInput & Readonly<{ purpose?: 'workflow' }>, role?: MachineAccessRoleV1 | null): Promise<MachineAdmission | WorkflowMachineAdmission> {
+    const access = row && await accessFromFactsInTx(tx, row, input.actorAccountId, undefined, role);
     if (!row || !access) return { kind: 'denied', code: 'access_denied' };
     if (input.purpose === 'workflow' && access.owned) {
         const availability = classifyMachineAvailabilityState(row);
@@ -577,7 +532,12 @@ export async function resolveMachineAdmission(input: MachineAdmissionInput): Pro
 
 export async function listMachineAccessGrantsInTx(tx: Tx, input: MachineActor): Promise<MachineAccessGrantsListResultV1> {
     const row = await readFactsInTx(tx, input.machineId);
-    const access = row && await accessFromFactsInTx(tx, row, input.actorAccountId);
+    if (!row) return refusal('access_denied');
+    const graph = await readMachineRoleGraphInTx(tx, [row], []);
+    const candidates = [...new Set([input.actorAccountId, ...[...graph.values()].flatMap(machine =>
+        [machine.accountId, ...contributions(machine).flatMap(source => source.accountIds)])])];
+    const roles = projectMachineRoles(graph, candidates);
+    const access = await accessFromFactsInTx(tx, row, input.actorAccountId, undefined, roles.get(row.id)?.get(input.actorAccountId) ?? null);
     if (!row || !access) return refusal('access_denied');
     const sources = contributions(row);
     const canManage = access.role === 'manage';
@@ -586,24 +546,26 @@ export async function listMachineAccessGrantsInTx(tx: Tx, input: MachineActor): 
     // safe display projection for the custodian/Manage roster, never Session
     // content or another grant/summary audience decision.
     const currentRequesterAccountIds = canManage
-        ? [...new Set([row.accountId, ...sources.flatMap(source => source.accountIds)])]
-            .filter(accountId => effectiveRole(row, accountId, sources) !== null)
+        ? candidates.filter(accountId => roles.get(row.id)?.get(accountId) !== null)
         : [];
-    const currentRequesterDisplayIdentities = canManage
-        ? (await tx.account.findMany({ where: { id: { in: currentRequesterAccountIds } }, select: ACCOUNT_DISPLAY_PROFILE_SELECT }))
-            .map(account => ({ accountId: account.id, displayName: resolveAccountDisplayLabelV1(account) ?? '' }))
-        : undefined;
+    const currentRequesterDisplayIdentities: Array<{ accountId: string; displayName: string }> | undefined = canManage ? [] : undefined;
+    if (currentRequesterDisplayIdentities) for (const ids of portableQueryChunks({ values: currentRequesterAccountIds, bindingsPerValue: 1 })) {
+        const accounts = await tx.account.findMany({ where: { id: { in: [...ids] } }, select: ACCOUNT_DISPLAY_PROFILE_SELECT });
+        currentRequesterDisplayIdentities.push(...accounts.map(account => ({ accountId: account.id, displayName: resolveAccountDisplayLabelV1(account) ?? '' })));
+    }
     const displayNames = new Map(currentRequesterDisplayIdentities?.map(account => [account.accountId, account.displayName]));
     const grants: MachineAccessGrantRowV1[] = [];
     if (canManage) for (const source of sources) {
         const accountIds = source.accountIds.filter(accountId => accountId !== row.accountId);
-        const states = await Promise.all(accountIds.map(accountId => accessFromFactsInTx(tx, row, accountId)));
+        const states = await Promise.all(accountIds.map(accountId => accessFromFactsInTx(tx, row, accountId, undefined,
+            roles.get(row.id)?.get(accountId) ?? null)));
+        const afterRemoval = projectMachineRoles(graph, source.accountIds, new Map([[row.id, sources.filter(candidate => candidate !== source)]]));
         grants.push({ machineId: row.id, principal: source.principal, level: source.level, display: { name: source.displayName },
             readiness: grantReadiness(states).readiness,
             audience: accountIds.map((accountId, index) => ({ accountId, displayName: displayNames.get(accountId) ?? '',
                 readiness: states[index]?.accessState ?? 'refused', reason: states[index]?.reason ?? (states[index] ? null : 'machine_unavailable'),
                 canPrepareKeys: states[index]?.canPrepareKeys === true })),
-            removal: { losesAccessAccountIds: source.accountIds.filter(accountId => effectiveRole(row, accountId, sources.filter(candidate => candidate !== source)) === null) } });
+            removal: { losesAccessAccountIds: source.accountIds.filter(accountId => afterRemoval.get(row.id)?.get(accountId) === null) } });
     }
     return { machineId: row.id, custodian, access: { custodian, role: access.role, resourceMode: access.encryptionMode, accessState: access.accessState,
         ...(access.accessState !== 'ready' && access.reason ? { reason: access.reason } : {}) },
@@ -639,7 +601,8 @@ export async function acquireMachineAccessPublicationLocksInTx(tx: Tx, machineId
     const provider = getDbProviderFromEnv(process.env, 'postgres');
     if (provider === 'sqlite') return;
     const readAudience = async () => {
-        const accountIds = await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId);
+        const machineIds = await expandMachineIdsWithManagedGuestsInTx(tx, [machineId]);
+        const accountIds = [...new Set([...(await readMachineAudienceAccountIdsForMachinesInTx(tx, machineIds)).values()].flat())];
         if (principal?.kind === 'account') accountIds.push(principal.accountId);
         else if (principal?.kind === 'team') {
             const team = await tx.team.findUnique({ where: { id: principal.teamId },
@@ -707,7 +670,10 @@ export async function setMachineAccessGrantInTx(tx: Tx, input: MachineActor & Re
     if (changed) await publishMutationInTx(tx, impacts, principal.kind === 'account' ? principal.accountId : undefined);
     const current = await readFactsInTx(tx, row.id);
     const source = current && contributions(current).find(candidate => isDeepStrictEqual(candidate.principal, principal));
-    const states = current && source ? await Promise.all(source.accountIds.filter(id => id !== row.accountId).map(id => accessFromFactsInTx(tx, current, id))) : [];
+    const recipients = source?.accountIds.filter(id => id !== row.accountId) ?? [];
+    const roles = current ? await machineRolesInTx(tx, [current], recipients) : new Map();
+    const states = current ? await Promise.all(recipients.map(id => accessFromFactsInTx(tx, current, id, undefined,
+        roles.get(current.id)?.get(id) ?? null))) : [];
     return { kind: 'saved', grant: { machineId: row.id, principal, level: input.level }, ...grantReadiness(states) };
 }
 
@@ -788,12 +754,12 @@ export async function commitMachineRecipientKeyEnvelopesInTx(tx: Tx, input: Mach
         where: { id: { in: recipientIds } }, select: RECIPIENT_READINESS_SELECT,
     });
     const accountsById = new Map(accounts.map(account => [account.id, account]));
-    const sources = contributions(row);
+    const roles = await machineRolesInTx(tx, [row], recipientIds);
     const prepared: Array<{ recipientAccountId: string; encryptedDataKey: Uint8Array<ArrayBuffer>; recipientContentPublicKeyFingerprint: string }> = [];
     for (const envelope of input.recipientKeyEnvelopes) {
         const encryptedDataKey = new Uint8Array(decodeBase64(envelope.encryptedDataKey));
         if (!parseEncryptedDataKeyEnvelopeV1(encryptedDataKey)) return refusal('invalid_recipient_envelope');
-        if (envelope.recipientAccountId === row.accountId || !effectiveRole(row, envelope.recipientAccountId, sources)) return refusal('access_denied');
+        if (envelope.recipientAccountId === row.accountId || !roles.get(row.id)?.get(envelope.recipientAccountId)) return refusal('access_denied');
         const account = accountsById.get(envelope.recipientAccountId);
         const readiness = account ? deriveAccountRecipientEnvelopeReadinessFromRow(account) : null;
         if (readiness?.status !== 'available' || readiness.binding.contentPublicKeyFingerprint !== envelope.recipientContentPublicKeyFingerprint) return refusal('recipient_binding_changed');

@@ -12,6 +12,7 @@ import { isEffectiveTeamGroupMembership } from '@/app/teams/groups/effectiveGrou
 import { createAccountRecipientEnvelopeReadinessReadScope, deriveAccountRecipientEnvelopeReadinessFromRow,
     type AccountRecipientEnvelopeReadiness } from '@/app/encryption/accountRecipientEnvelopeReadiness';
 import { projectRecipientContentKey, type RecipientReadinessRow } from '@/app/session/encryption/sessionDataKeyRecipientProjection';
+import { inheritManagedControllerRole } from './managed/managedRole';
 
 type Recipient = MachineAccessRecipientCensusResponseV1['recipients'][number] & Readonly<{ current: boolean }>;
 type RecipientWork = { cursor: number; recipients: Recipient[] };
@@ -22,6 +23,7 @@ type AudienceRow = Readonly<{
     membershipRole: TeamRoleV1 | null;
     teamArchivedAt: Date | number | bigint | null; groupArchivedAt: Date | number | bigint | null;
     id: string | null; status: AccountStatus | null;
+    inherited: number | bigint | boolean | null; accessLevel: 'view' | 'admin' | null;
 }>;
 type RecipientRow = AudienceRow & Readonly<{
     cursor: number | bigint | null;
@@ -34,33 +36,49 @@ type RecipientRow = AudienceRow & Readonly<{
 /** One membership acquisition for structural and recipient-envelope projections. */
 function machineAudienceQuery(ids: readonly string[], provider: ReturnType<typeof getDbProviderFromEnv>, custodianAccountId?: string) {
     const bind = (index: number) => provider === 'postgres' ? `$${index}` : '?';
-    // PostgreSQL resolves the first two UNION arms before the third.
+    // Keep the typed Team arm second: PostgreSQL resolves each UNION pair
+    // before later arms, so two leading NULL membership columns become text.
     const absentArchive = provider === 'postgres' ? 'CAST(NULL AS TIMESTAMP)' : 'NULL';
     const selection = custodianAccountId === undefined
         ? `SELECT "id", "accountId" FROM "Machine" WHERE "id" IN (${ids.map((_, index) => bind(index + 1)).join(',')})`
         : `SELECT ${bind(1)} AS "id", ${bind(2)} AS "accountId"`;
-    const sql = `WITH selected AS (
+    const sql = `WITH RECURSIVE selected AS (
         ${selection}
+    ), authority_sources AS (
+        SELECT "id" AS "machineId", "id" AS "sourceMachineId" FROM selected
+        UNION
+        SELECT a."machineId", m."controllerMachineId"
+        FROM authority_sources a JOIN "ManagedMachine" m ON m."enrolledMachineId" = a."sourceMachineId"
+        JOIN "Machine" child ON child."id" = a."sourceMachineId" AND child."kind" = 'persistent'
+        WHERE m."controllerMachineId" IS NOT NULL
     ), audience AS (
-        SELECT g."machineId", g."accountId", 'account' AS "source", NULL AS "membershipStatus", NULL AS "membershipRole",
-            ${absentArchive} AS "teamArchivedAt", ${absentArchive} AS "groupArchivedAt"
-        FROM "MachineAccountGrant" g JOIN selected s ON s."id" = g."machineId"
+        SELECT s."machineId", g."accountId", 'account' AS "source", NULL AS "membershipStatus", NULL AS "membershipRole",
+            ${absentArchive} AS "teamArchivedAt", ${absentArchive} AS "groupArchivedAt", g."accessLevel",
+            CASE WHEN s."machineId" = s."sourceMachineId" THEN 0 ELSE 1 END AS "inherited"
+        FROM "MachineAccountGrant" g JOIN authority_sources s ON s."sourceMachineId" = g."machineId"
         UNION ALL
-        SELECT g."machineId", tm."accountId", 'team', tm."status", tm."role", t."archivedAt", ${absentArchive}
-        FROM "MachineTeamGrant" g JOIN selected s ON s."id" = g."machineId"
+        SELECT s."machineId", tm."accountId", 'team', tm."status", tm."role", t."archivedAt", ${absentArchive}, g."accessLevel",
+            CASE WHEN s."machineId" = s."sourceMachineId" THEN 0 ELSE 1 END
+        FROM "MachineTeamGrant" g JOIN authority_sources s ON s."sourceMachineId" = g."machineId"
         JOIN "Team" t ON t."id" = g."teamId" JOIN "TeamMembership" tm ON tm."teamId" = t."id"
         UNION ALL
-        SELECT g."machineId", tm."accountId", 'group', tm."status", tm."role", t."archivedAt", tg."archivedAt"
-        FROM "MachineGroupGrant" g JOIN selected s ON s."id" = g."machineId"
+        SELECT s."machineId", tm."accountId", 'group', tm."status", tm."role", t."archivedAt", tg."archivedAt", g."accessLevel",
+            CASE WHEN s."machineId" = s."sourceMachineId" THEN 0 ELSE 1 END
+        FROM "MachineGroupGrant" g JOIN authority_sources s ON s."sourceMachineId" = g."machineId"
         JOIN "TeamGroup" tg ON tg."id" = g."teamGroupId" JOIN "Team" t ON t."id" = tg."teamId"
         JOIN "TeamGroupMembership" gm ON gm."teamGroupId" = tg."id"
         JOIN "TeamMembership" tm ON tm."id" = gm."teamMembershipId"
+        UNION ALL
+        SELECT s."machineId", m."accountId", 'account', NULL, NULL, ${absentArchive}, ${absentArchive}, 'admin',
+            CASE WHEN s."machineId" = s."sourceMachineId" THEN 0 ELSE 1 END
+        FROM authority_sources s JOIN "Machine" m ON m."id" = s."sourceMachineId"
     )`;
     return { sql, bind };
 }
 
 function isEffectiveAudienceRecipient<T extends AudienceRow>(row: T): row is T & { id: string; status: 'active' } {
     if (!row.id || row.id === row.custodianAccountId || row.status !== 'active') return false;
+    if (row.inherited && inheritManagedControllerRole(row.accessLevel === 'admin' ? 'manage' : 'use', null) === null) return false;
     const lifetime = { accountStatus: row.status, membershipStatus: row.membershipStatus ?? 'active',
         teamArchivedAt: row.teamArchivedAt === null ? null : new Date(Number(row.teamArchivedAt)) };
     if (row.source === 'team') return row.membershipRole !== null && isTeamPrincipalRoleV1(row.membershipRole) && isEffectiveTeamMembership(lifetime);
@@ -84,11 +102,11 @@ export async function readMachineAudienceAccountIdsForMachinesInTx(tx: Tx, machi
 
 async function readMachineAudiencesInTx(tx: Tx, machineIds: readonly string[], custodianAccountId?: string): Promise<Map<string, string[]>> {
     const provider = getDbProviderFromEnv(process.env, 'postgres');
-    // A successful presence renewal already proved this Machine's custodian.
-    // Acquire only current membership; do not read that Machine a second time.
+    // Presence renewal can supply the root custodian; controller ancestry and
+    // current grant/membership recipients still come from the stored graph.
     const { sql: membership } = machineAudienceQuery(machineIds, provider, custodianAccountId);
     const sql = `${membership} SELECT s."id" AS "machineId", s."accountId" AS "custodianAccountId",
-        r."source", r."membershipStatus", r."membershipRole", r."teamArchivedAt", r."groupArchivedAt", a."id", a."status"
+        r."source", r."membershipStatus", r."membershipRole", r."teamArchivedAt", r."groupArchivedAt", r."inherited", r."accessLevel", a."id", a."status"
         FROM selected s LEFT JOIN audience r ON r."machineId" = s."id"
         LEFT JOIN "Account" a ON a."id" = r."accountId"`;
     const rows = await tx.$queryRawUnsafe<AudienceRow[]>(provider === 'mysql' ? sql.replaceAll('"', '`') : sql,
@@ -144,7 +162,7 @@ export async function readMachineRecipientWorkInTx(tx: Tx, input: Readonly<{
     for (const ids of portableQueryChunks({ values: [...input.ownerFingerprints.keys()], bindingsPerValue: 1, fixedBindings: 2 })) {
         const { sql: membership, bind } = machineAudienceQuery(ids, provider);
         const sql = `${membership} SELECT s."id" AS "machineId", s."accountId" AS "custodianAccountId", c."cursor",
-            r."source", r."membershipStatus", r."membershipRole", r."teamArchivedAt", r."groupArchivedAt",
+            r."source", r."membershipStatus", r."membershipRole", r."teamArchivedAt", r."groupArchivedAt", r."inherited", r."accessLevel",
             a."id", a."status", a."publicKey", a."encryptionMode", a."contentPublicKey", a."contentPublicKeySig",
             e."encryptedDataKey", e."machineOwnerEnvelopeFingerprint", e."recipientContentPublicKeyFingerprint"
         FROM selected s LEFT JOIN audience r ON r."machineId" = s."id"
