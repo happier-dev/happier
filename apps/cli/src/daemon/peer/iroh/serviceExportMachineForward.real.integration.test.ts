@@ -206,7 +206,7 @@ describe('real native Machine service export forwarding', () => {
         const tunnelId = randomUUID();
         const foreignGrant = SignedDirectRouteGrantV2Schema.parse(await mintGrant({ ...lastGrantRequest,
           ephemeralPublicKeyBase64Url: foreignProof.publicKeyBase64Url,
-          scope: { kind: 'tcp_tunnel', tunnelId, allowedPorts: [binding.destination.port], serviceExport: binding } }));
+          scope: { ...lastGrantRequest.scope, tunnelId } }));
         const foreignKey = tweetnacl.sign.keyPair();
         foreignGrant.signature = { keyId: 'foreign-home-key', alg: 'Ed25519',
           valueBase64Url: Buffer.from(tweetnacl.sign.detached(Buffer.from(createDirectRouteGrantSigningInputV2(foreignGrant.payload)), foreignKey.secretKey)).toString('base64url') };

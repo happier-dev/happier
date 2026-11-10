@@ -13,7 +13,7 @@ import {
     type DirectRouteGrantV2VerifyReasonCode,
 } from '../verifyDirectRouteGrant';
 import type { AtomicRouteGrantConsumption } from './grantConsumption';
-import { createCanonicalJsonSigningInput, type TcpTunnelServiceExportBindingV1 } from '@happier-dev/protocol';
+import { createCanonicalJsonSigningInput, createTcpTunnelServiceExportCommitmentV1, type TcpTunnelServiceExportBindingV1 } from '@happier-dev/protocol';
 import type { PeerTcpTunnelStreamConnection } from './frames';
 
 export type PeerTcpTunnelTcpConnection = PeerTcpTunnelStreamConnection;
@@ -186,9 +186,10 @@ function validateDestination(
     if (scope.kind === 'tcp_tunnel' && !scope.allowedPorts.includes(destination.port)) {
         return 'destination_port_not_allowed';
     }
-    if (scope.kind === 'tcp_tunnel' && scope.serviceExport && (
-        scope.serviceExport.destination.host !== normalizeHostnameForLoopbackCheck(destination.host)
-        || scope.serviceExport.destination.port !== destination.port
+    if (scope.kind === 'tcp_tunnel' && scope.serviceExport && open.serviceExport && (
+        open.serviceExport.binding.service.machineId !== open.grant.payload.machineId
+        || open.serviceExport.binding.destination.host !== normalizeHostnameForLoopbackCheck(destination.host)
+        || open.serviceExport.binding.destination.port !== destination.port
     )) return 'grant_scope_mismatch';
     if (scope.kind === 'tcp_tunnel' && scope.preview && (
         scope.preview.target.host !== destination.host || scope.preview.target.port !== destination.port
@@ -289,16 +290,22 @@ export async function openPeerTcpTunnel(input: OpenPeerTcpTunnelInput): Promise<
     if (!reservation) return fallback('grant_already_consumed');
 
     if (scope.kind === 'tcp_tunnel' && scope.serviceExport) {
+        const opening = open.serviceExport;
+        if (!opening) {
+            reservation.activationFailed();
+            return fallback('service_export_unavailable');
+        }
         let current: TcpTunnelServiceExportBindingV1 | null | undefined;
         try {
-            current = await input.resolveServiceExport?.({ binding: scope.serviceExport,
+            current = await input.resolveServiceExport?.({ binding: opening.binding,
                 requesterAccountId: grantVerification.payload.accountId, signal: input.signal });
             input.signal?.throwIfAborted();
         } catch (error) {
             reservation.activationFailed();
             throw error;
         }
-        if (!current || createCanonicalJsonSigningInput(current) !== createCanonicalJsonSigningInput(scope.serviceExport)) {
+        if (!current || createCanonicalJsonSigningInput(current) !== createCanonicalJsonSigningInput(opening.binding)
+            || createTcpTunnelServiceExportCommitmentV1(current, opening.nonce) !== scope.serviceExport.commitment) {
             reservation.activationFailed();
             return fallback('service_export_unavailable');
         }

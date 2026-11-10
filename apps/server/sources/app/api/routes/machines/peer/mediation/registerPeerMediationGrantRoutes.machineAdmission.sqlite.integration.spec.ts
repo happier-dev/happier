@@ -51,10 +51,7 @@ describe('Peer grant current Machine admission (real SQLite)', () => {
             iroh: { operationKind: 'tcp_tunnel', initiator: { kind: 'machine', machineId: source.id, endpointId: 'a'.repeat(64) },
                 target: { machineId: target.id, endpointId: 'b'.repeat(64) } },
             scope: { kind: 'tcp_tunnel', tunnelId: randomUUID(), allowedPorts: [5432], serviceExport: {
-                exportKey: 'postgres', service: { kind: 'deployment', machineId: target.id, environmentId: 'environment',
-                    environmentInstanceId: 'instance', composeService: 'db', serviceId: 'instance/db' },
-                installationId: target.installationId, deploymentId: 'deployment', generation: 'generation',
-                destination: { host: '127.0.0.1', port: 5432 },
+                commitment: `sha256:${'a'.repeat(64)}`,
             } } };
         const issue = async (userId: string) => (await route.invoke({ userId, body })).response;
         expect(await issue(actor.id)).toMatchObject({ ok: true, grant: { payload: { accountId: actor.id, machineId: target.id } } });

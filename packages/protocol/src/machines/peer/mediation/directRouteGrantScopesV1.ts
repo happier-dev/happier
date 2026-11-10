@@ -5,6 +5,8 @@ import { VoiceMediaApplicationKindV1Schema } from './voiceMediaV1.js';
 import { LocalServicePreviewDirectBindingV1Schema } from '../../../local/services/preview/v1.js';
 import { MachineDeploymentServiceIdentityV1Schema } from '../../../local/services/serviceIdentityV1.js';
 import { LocalServiceLoopbackHostV1Schema } from '../../../local/services/hosts.js';
+import { computeSha256HexDigest } from '../../../crypto/canonicalDigest.js';
+import { createCanonicalJsonSigningInput } from '../../../crypto/canonicalJson.js';
 
 const PositiveIntSchema = lazyZodSchema(() => z.number().check(z.int(), z.positive()));
 
@@ -40,15 +42,27 @@ export const TcpTunnelServiceExportBindingV1Schema = lazyZodSchema(() => z.stric
 }));
 export type TcpTunnelServiceExportBindingV1 = z.infer<typeof TcpTunnelServiceExportBindingV1Schema>;
 
+/** A's 256-bit random nonce travels only inside the encrypted Iroh open. */
+export const TcpTunnelServiceExportOpeningV1Schema = lazyZodSchema(() => z.strictObject({
+  binding: TcpTunnelServiceExportBindingV1Schema,
+  nonce: z.string().check(z.regex(/^[0-9a-f]{64}$/u)),
+}));
+
+/** Commit to the exact occurrence without revealing guessable service names to Home. */
+export function createTcpTunnelServiceExportCommitmentV1(binding: TcpTunnelServiceExportBindingV1, nonce: string): string {
+  return `sha256:${computeSha256HexDigest(nonce + createCanonicalJsonSigningInput(binding))}`;
+}
+
 export const TcpTunnelGrantScopeV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('tcp_tunnel'),
   tunnelId: z.string().check(z.minLength(1)),
   allowedPorts: z.array(z.number().check(z.int(), z.minimum(1), z.maximum(65_535))).check(z.minLength(1)),
   preview: z.optional(LocalServicePreviewDirectBindingV1Schema),
-  serviceExport: z.optional(TcpTunnelServiceExportBindingV1Schema),
+  serviceExport: z.optional(z.strictObject({
+    commitment: z.string().check(z.regex(/^sha256:[0-9a-f]{64}$/u)),
+  })),
 }).check(z.superRefine((scope, ctx) => {
-  if (scope.serviceExport && (scope.preview || scope.allowedPorts.length !== 1
-    || scope.allowedPorts[0] !== scope.serviceExport.destination.port)) {
+  if (scope.serviceExport && (scope.preview || scope.allowedPorts.length !== 1)) {
     ctx.addIssue({ code: 'custom', path: ['serviceExport'], message: 'A service export grants only its exact destination and cannot carry preview authority.' });
   }
 })));

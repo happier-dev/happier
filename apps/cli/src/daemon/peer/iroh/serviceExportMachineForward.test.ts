@@ -21,7 +21,7 @@ async function readAll(socket: Socket): Promise<Buffer> {
 }
 
 describe('Machine service export forward', () => {
-  it('carries binary clients and half-close, restores its port, and reports destination and carrier failures', async () => {
+  it.each(['privacy', 'commitment mismatch', 'binary and recovery'] as const)('protects service export %s through the real inner HTTP owner', async mode => {
     const sockets = new Set<Socket>();
     const destination = createServer({ allowHalfOpen: true }, socket => {
       sockets.add(socket);
@@ -50,6 +50,7 @@ describe('Machine service export forward', () => {
     let carrierEndpoint = targetEndpoint;
     let grantAccountId = accountId;
     let grants = 0;
+    let homeRequest = "";
     const acquire = createServiceExportMachineForward({ accountId, localMachineId: sourceId, nowMs: () => 2000, resolveTrustRoots: () => trustRoots,
       runtime: { endpoint: { endpointId: sourceEndpoint },
         // Native Iroh is the external boundary. The real inner HTTP/WebSocket server and frame owners remain live.
@@ -59,7 +60,12 @@ describe('Machine service export forward', () => {
         operationProtocolCapabilities: { irohMachineEndpoint: { protocolVersions: [1], endpointId: targetEndpoint } } }),
       mintGrant: async (request: DirectRouteGrantRequestV2) => {
         grants++;
+        homeRequest = JSON.stringify(request);
         const { kind, ttlMs: _ttl, ...rest } = request;
+        if (mode === 'commitment mismatch' && rest.scope.kind === 'tcp_tunnel'
+          && rest.scope.serviceExport && 'commitment' in rest.scope.serviceExport) {
+          rest.scope = { ...rest.scope, serviceExport: { ...rest.scope.serviceExport, commitment: `sha256:${'0'.repeat(64)}` } };
+        }
         const payload = { ...rest, grantId: `grant-${grants}`, accountId: grantAccountId, iat: 1000, exp: 300000,
           aud: 'happier-daemon-route-grant' as const, proofKind: kind };
         return { payload, signature: { keyId: 'home-key', alg: 'Ed25519',
@@ -67,7 +73,18 @@ describe('Machine service export forward', () => {
       } });
     let forward: Awaited<ReturnType<typeof acquire>> | undefined;
     try {
+      if (mode === 'commitment mismatch') {
+        await expect(acquire({ targetMachineId: targetId, serviceExport: binding }).then(created => { forward = created; return created; }))
+          .rejects.toMatchObject({ code: 'service_export_unavailable' });
+        return;
+      }
       forward = await acquire({ targetMachineId: targetId, serviceExport: binding });
+      if (mode === 'privacy') {
+        expect(homeRequest).not.toMatch(/exportKey|composeService|environmentInstanceId|deploymentId|installationId|generation/);
+        expect(JSON.parse(homeRequest).scope).toEqual({ kind: 'tcp_tunnel', tunnelId: expect.any(String),
+          allowedPorts: [binding.destination.port], serviceExport: { commitment: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u) } });
+        return;
+      }
       expect(forward.host).toBe('127.0.0.1');
       expect(forward.observedPath).toBe('relay');
       const values = [Buffer.from([0, 255, 128, 1]), Buffer.alloc(256 * 1024, 17)];

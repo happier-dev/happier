@@ -7,6 +7,7 @@ import { connect, createServer } from 'node:net';
 import {
   DIRECT_ROUTE_GRANT_AUDIENCE_V1,
   createDirectRouteGrantSigningInputV2,
+  createTcpTunnelServiceExportCommitmentV1,
   createEphemeralPeerRouteProofHandleV2,
   IrohMachineHandshakeV1Schema,
   PEER_MEDIATION_RECEIPTS,
@@ -601,36 +602,40 @@ describe('peer mediation loopback server', () => {
     }
   });
 
-  it('refuses an export tunnel without B admission even for the custodian', async () => {
+  it.each(['owner', 'no resolver', 'commitment mismatch', 'changed occurrence', 'wrong machine', 'wrong destination', 'missing opening'] as const)(
+    'checks the private export opening against B applied state: %s', async mode => {
+    const binding = {
+      exportKey: 'web', service: { kind: 'deployment' as const, machineId: mode === 'wrong machine' ? 'another-machine' : 'machine_1', environmentId: 'environment',
+        environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' },
+      installationId: 'installation', deploymentId: 'deployment', generation: 'generation',
+      destination: { host: '127.0.0.1' as const, port: 3000 },
+    };
+    const nonce = 'ab'.repeat(32);
     const handshake = createIrohMachineHandshake({ flow: 'tcp_tunnel', grantOverrides: {
       scope: { kind: 'tcp_tunnel', tunnelId: 'native-tunnel-1', allowedPorts: [3000], serviceExport: {
-        exportKey: 'web', service: { kind: 'deployment', machineId: 'machine_1', environmentId: 'environment',
-          environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' },
-        installationId: 'installation', deploymentId: 'deployment', generation: 'generation',
-        destination: { host: '127.0.0.1', port: 3000 },
+        commitment: mode === 'commitment mismatch' ? `sha256:${'0'.repeat(64)}` : createTcpTunnelServiceExportCommitmentV1(binding, nonce),
       } },
     } });
     const app = createPeerMediationLoopbackApp({ nowMs: () => 2000,
       expected: { accountId: 'account_1', machineId: 'machine_1', flowKind: 'tcp_tunnel', routeKind: 'loopback_direct', endpointFingerprint: 'local' },
-      trustRoots: IROH_TRUST_ROOTS, tunnel: {},
+      trustRoots: IROH_TRUST_ROOTS, tunnel: mode === 'no resolver' ? {} : { resolveServiceExport: async () =>
+        mode === 'changed occurrence' ? { ...binding, generation: 'replacement' } : binding },
       irohMachineAdmission: { localEndpointId: IROH_TARGET_ENDPOINT_ID, role: 'acceptor', allowedFlows: ['tcp_tunnel'], resolveApplicationTarget: () => null },
     });
     try {
       const response = await app.inject({ method: 'POST', url: '/peer-mediation/v2/tunnel/open', payload: {
         v: 2, kind: 'open', tunnelId: 'native-tunnel-1', targetMachineId: 'machine_1', routeKind: 'iroh_peer',
-        destination: { host: '127.0.0.1', port: 3000 }, grant: handshake.grant, proof: handshake.proof,
+        destination: { host: mode === 'wrong destination' ? '::1' : '127.0.0.1', port: 3000 }, grant: handshake.grant, proof: handshake.proof,
+        ...(mode === 'missing opening' ? {} : { serviceExport: { binding, nonce } }),
       } });
-      expect(response.json()).toMatchObject({ ok: false, reasonCode: 'service_export_unavailable' });
+      if (mode === 'owner') expect(response.statusCode).toBe(200);
+      else expect(response.json()).toMatchObject({ ok: false,
+        reasonCode: mode === 'wrong machine' || mode === 'wrong destination' ? 'grant_scope_mismatch' : 'service_export_unavailable' });
     } finally { await app.close(); }
   });
 
   it.each(['acceptor', 'initiator'] as const)('carries the signed export requester through the %s endpoint without granting generic shared TCP', async (role) => {
-    const serviceExport = {
-      exportKey: 'web', service: { kind: 'deployment' as const, machineId: 'machine_1', environmentId: 'environment',
-        environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' },
-      installationId: 'installation', deploymentId: 'deployment', generation: 'generation',
-      destination: { host: '127.0.0.1', port: 3000 },
-    };
+    const serviceExport = { commitment: `sha256:${'a'.repeat(64)}` };
     const handshake = createIrohMachineHandshake({ flow: 'tcp_tunnel', accountId: 'requester',
       grantOverrides: { scope: { kind: 'tcp_tunnel', tunnelId: 'native-tunnel-1', allowedPorts: [3000], serviceExport } } });
     const app = createPeerMediationLoopbackApp({

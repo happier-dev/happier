@@ -8,6 +8,8 @@ import {
   type IrohPeerRouteBindingV2,
 } from './directRouteGrantV2';
 
+import { createTcpTunnelServiceExportCommitmentV1, TcpTunnelServiceExportBindingV1Schema } from './directRouteGrantScopesV1';
+
 const publicKeyBase64Url = 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE';
 const sourceEndpointId = 'a'.repeat(64);
 const targetEndpointId = 'b'.repeat(64);
@@ -51,38 +53,41 @@ function payload() {
 }
 
 describe('DirectRouteGrantV2', () => {
-  it('retains the exact managed export occurrence and loopback destination in signed TCP authority', () => {
-    const serviceExport = {
+  it('signs only a hiding export commitment and its exact allowed port', () => {
+    const binding = TcpTunnelServiceExportBindingV1Schema.parse({
       exportKey: 'postgres',
       service: { kind: 'deployment', machineId: 'machine-target', environmentId: 'environment',
         environmentInstanceId: 'instance', composeService: 'db', serviceId: 'instance/db' },
       installationId: 'installation', deploymentId: 'deployment', generation: 'generation',
       destination: { host: '127.0.0.1', port: 5432 },
-    };
+    });
+    const nonce = 'ab'.repeat(32);
+    const commitment = createTcpTunnelServiceExportCommitmentV1(binding, nonce);
     const input = {
       ...payload(), machineId: 'machine-target', flowKind: 'tcp_tunnel', routeKind: 'iroh_peer',
       endpointFingerprint: targetEndpointId,
       iroh: { ...irohBinding, operationKind: 'tcp_tunnel' },
-      scope: { kind: 'tcp_tunnel', tunnelId: 'service-tunnel', allowedPorts: [5432], serviceExport },
+      scope: { kind: 'tcp_tunnel', tunnelId: 'service-tunnel', allowedPorts: [5432], serviceExport: { commitment } },
     };
     const parsed = DirectRouteGrantPayloadV2Schema.parse(input);
     expect(parsed.scope).toEqual(input.scope);
     const signingInput = createDirectRouteGrantSigningInputV2(parsed);
+    expect(signingInput).not.toMatch(/composeService|exportKey|environmentInstanceId|generation/);
     const changed = DirectRouteGrantPayloadV2Schema.parse({ ...input, scope: {
-      ...input.scope, serviceExport: { ...serviceExport, generation: 'replacement' },
+      ...input.scope, serviceExport: { commitment: createTcpTunnelServiceExportCommitmentV1({ ...binding, generation: 'replacement' }, nonce) },
     } });
     expect(createDirectRouteGrantSigningInputV2(changed)).not.toEqual(signingInput);
-    for (const destination of [{ host: '192.168.1.1', port: 5432 }, { host: '127.0.0.1', port: 6379 }]) {
-      expect(DirectRouteGrantPayloadV2Schema.safeParse({ ...input, scope: {
-        ...input.scope, serviceExport: { ...serviceExport, destination },
-      } }).success).toBe(false);
-    }
+    expect(createTcpTunnelServiceExportCommitmentV1(binding, 'cd'.repeat(32))).not.toBe(commitment);
     expect(DirectRouteGrantPayloadV2Schema.safeParse({ ...input, scope: {
       ...input.scope, allowedPorts: [5432, 6379],
     } }).success).toBe(false);
+    // The unpublished cleartext shape is removed rather than accepted alongside the commitment.
     expect(DirectRouteGrantPayloadV2Schema.safeParse({ ...input, scope: {
-      ...input.scope, serviceExport: { ...serviceExport, service: { ...serviceExport.service, machineId: 'other-machine' } },
+      ...input.scope, serviceExport: binding,
     } }).success).toBe(false);
+    expect(DirectRouteGrantPayloadV2Schema.safeParse({ ...input, routeKind: 'loopback_direct' }).success).toBe(false);
+    expect(TcpTunnelServiceExportBindingV1Schema.safeParse({ ...binding,
+      destination: { host: '192.168.1.1', port: 5432 } }).success).toBe(false);
   });
 
   it('requires and signs the canonical machine/1 binding on iroh_peer requests and payloads', () => {

@@ -5,7 +5,7 @@ import WebSocket from 'ws';
 import { MACHINE_ALPN, MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { DirectRouteGrantRequestV2Schema, SignedDirectRouteGrantV2Schema, type DirectRouteGrantRequestV2 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
-import { TcpTunnelServiceExportBindingV1Schema, type TcpTunnelServiceExportBindingV1 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';
+import { createTcpTunnelServiceExportCommitmentV1, TcpTunnelServiceExportBindingV1Schema, type TcpTunnelServiceExportBindingV1 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';
 import { createEphemeralPeerRouteProofHandleV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
 import { IrohMachineHandshakeV1Schema } from '@happier-dev/protocol/connectivity/iroh/machineHandshakeV1';
 import { readMachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
@@ -38,6 +38,7 @@ export function createServiceExportMachineForward(input: Readonly<{
   return async request => {
     request.signal?.throwIfAborted();
     const binding = TcpTunnelServiceExportBindingV1Schema.parse(request.serviceExport);
+    const nonce = randomBytes(32).toString('hex');
     const target = await awaitMachineCarrierControlPlane(input.readTargetMachine(request.targetMachineId, request.signal), request.signal);
     const endpoint = readMachineIrohEndpointAuthorityV1({ capabilities: target?.operationProtocolCapabilities,
       revision: target?.operationProtocolCapabilitiesRevision });
@@ -77,7 +78,8 @@ export function createServiceExportMachineForward(input: Readonly<{
         v: 2, kind: 'ephemeral_ed25519', ephemeralPublicKeyBase64Url: proofHandle.publicKeyBase64Url,
         machineId: request.targetMachineId, flowKind: 'tcp_tunnel', routeKind: 'iroh_peer', endpointFingerprint: endpoint.endpointId,
         ttlMs: DIRECT_ROUTE_GRANT_TTL_MS.directTcpTunnel,
-        scope: { kind: 'tcp_tunnel', tunnelId, allowedPorts: [binding.destination.port], serviceExport: binding },
+        scope: { kind: 'tcp_tunnel', tunnelId, allowedPorts: [binding.destination.port],
+          serviceExport: { commitment: createTcpTunnelServiceExportCommitmentV1(binding, nonce) } },
         iroh: { initiator: { kind: 'machine', machineId: input.localMachineId, endpointId: input.runtime.endpoint.endpointId },
           target: { machineId: request.targetMachineId, endpointId: endpoint.endpointId }, operationKind: 'tcp_tunnel' },
       });
@@ -94,7 +96,8 @@ export function createServiceExportMachineForward(input: Readonly<{
       const origin = `http://127.0.0.1:${carrier.localPort}`;
       const response = await fetch(new URL(PEER_TCP_TUNNEL_OPEN_PATH_V2, origin), { method: 'POST', redirect: 'error', signal: request.signal,
         headers: { 'content-type': 'application/json', [MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]: carrier.localCapability },
-        body: JSON.stringify({ v: 2, kind: 'open', tunnelId, targetMachineId: request.targetMachineId, routeKind: 'iroh_peer', destination: binding.destination, grant, proof }) });
+        body: JSON.stringify({ v: 2, kind: 'open', tunnelId, targetMachineId: request.targetMachineId, routeKind: 'iroh_peer', destination: binding.destination,
+          serviceExport: { binding, nonce }, grant, proof }) });
       const body: unknown = await response.json();
       if (!response.ok) {
         if (body && typeof body === 'object' && 'reasonCode' in body && typeof body.reasonCode === 'string') {

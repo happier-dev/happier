@@ -898,16 +898,22 @@ request. Neither path invents an idle or duration budget when the application ow
 Generic TCP opens still require their signed destination and the operator's port allowlist.
 
 Machine-to-Machine service exports use the same V2 Iroh TCP grant. Its optional
-`scope.serviceExport` is a `TcpTunnelServiceExportBindingV1`: Environment/service identity,
-export key, installation, deployment, generation, and one exact loopback destination.
+`scope.serviceExport` contains only a SHA-256 commitment; `allowedPorts` contains
+one exact port. A chooses a random 256-bit nonce and commits to its hexadecimal
+encoding concatenated with the canonical JSON of `TcpTunnelServiceExportBindingV1`.
+A sends the binding (Environment/service identity, export key, installation,
+deployment, generation and loopback destination) and nonce only in the encrypted
+Iroh inner open, as `serviceExport: { binding, nonce }`. Home cannot read these fields.
 Home admits the authenticated requester's access to both Machines through
 `resolveMachineAdmission` at grant issue and preserves that requester in the signed grant.
 Team membership alone does not authorize guests; they need a direct Account or explicit
 Group grant as described in [Teams](teams.md). Generic shared-Machine TCP grants remain refused.
+Machine Use on B admits every Iroh export on B; Environments do not establish confidentiality between Accounts sharing that Machine.
 
 Machine B's inner tunnel-open owner consumes `resolvePrivateServiceExportAdmissionForHost`
-through `resolveServiceExport` and compares its applied/served binding with the signed
-binding before TCP IO. B uses its applied deployment content and current local service row;
+through `resolveServiceExport`, compares its applied/served binding with the inner
+opening, and recomputes its commitment against the signed digest before TCP IO.
+B uses its applied deployment content and current local service row;
 it does not fetch Environment content using the requester or custodian's credentials.
 Home does not verify exports. A missing resolver, changed occurrence,
 undeclared export or different destination cannot open a service tunnel. Existing authenticated

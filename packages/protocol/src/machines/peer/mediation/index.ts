@@ -51,6 +51,8 @@ export {
   BoundedTransferScopedGrantScopeV1Schema,
   TcpTunnelGrantScopeV1Schema,
   TcpTunnelServiceExportBindingV1Schema,
+  TcpTunnelServiceExportOpeningV1Schema,
+  createTcpTunnelServiceExportCommitmentV1,
   VoiceMediaGrantScopeV1Schema,
   LiveStreamGrantScopeV1Schema,
   MachineRpcGrantScopeV1Schema,

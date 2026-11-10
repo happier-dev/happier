@@ -122,7 +122,7 @@ function createRouteWithIrohEndpointAuthority(
 }
 
 describe("registerPeerMediationGrantRoutes", () => {
-    it('signs the requester and exact Machine export binding for destination-owned admission', async () => {
+    it('signs the requester and opaque Machine export commitment for destination-owned admission', async () => {
         const route = createRoute();
         const request = route.createAuthenticatedRequest({ userId: 'account_1' });
         request.body = { v: 2, kind: 'ephemeral_ed25519', ephemeralPublicKeyBase64Url: toBase64Url(new Uint8Array(32).fill(11)),
@@ -130,13 +130,10 @@ describe("registerPeerMediationGrantRoutes", () => {
             iroh: { operationKind: 'tcp_tunnel', initiator: { kind: 'machine', machineId: 'machine_source', endpointId: 'a'.repeat(64) },
                 target: { machineId: 'machine_1', endpointId: 'b'.repeat(64) } },
             scope: { kind: 'tcp_tunnel', tunnelId: 'service', allowedPorts: [5432], serviceExport: {
-                exportKey: 'postgres', service: { kind: 'deployment', machineId: 'machine_1', environmentId: 'environment',
-                    environmentInstanceId: 'instance', composeService: 'db', serviceId: 'instance/db' },
-                installationId: 'installation', deploymentId: 'deployment', generation: 'generation',
-                destination: { host: '127.0.0.1', port: 5432 },
+                commitment: `sha256:${'a'.repeat(64)}`,
             } } };
         expect(await route.handler(request, route.createReply())).toMatchObject({ ok: true,
-            grant: { payload: { accountId: 'account_1', scope: { serviceExport: { exportKey: 'postgres' } } } } });
+            grant: { payload: { accountId: 'account_1', scope: { serviceExport: { commitment: `sha256:${'a'.repeat(64)}` } } } } });
     });
     it.each(["present_user", "account_automation"] as const)("signs verified %s authority only for the private continuation", async (authority) => {
         const route = createRoute();
