@@ -6,9 +6,11 @@ import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testk
 import { storage } from '@/sync/domains/state/storageStore';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { useActivityOverviewSummary } from './useActivityOverview';
+import { useActivityOverviewSummary, useHomeCompletedBots } from './useActivityOverview';
 import { usePendingNavigationOverview } from './usePendingNavigationOverview';
 import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
+import { createActivityAttentionSourceSelector } from './useActivityAttentionSource';
 
 // React Native is the platform boundary; the store, the Activity source, address and attention owners stay real.
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -116,4 +118,104 @@ describe('shared Activity summary and pending navigation at a thousand Sessions'
             Error.stackTraceLimit = previousStackLimit;
         }
     });
+
+    it('publishes no unchanged Home observations across twenty Session publications', () => {
+        const sessions = Object.fromEntries(Array.from({ length: SESSIONS }, (_, index) => {
+            const id = `scale-${index}`;
+            return [id, idleSession(id)];
+        }));
+        let state = { ...storage.getState(), sessions,
+            concurrentSessionListCacheByServerId: { 'server-a': { serverName: 'A',
+                listObservation: { phase: 'ready' as const, lastSuccessAt: NOW_MS } } } };
+        const select = createActivityAttentionSourceSelector({ activeServer: getActiveServerSnapshot(),
+            personalMembership: { membershipByServerId: {}, statesByServerId: {}, coverageComplete: false },
+            includeSessionMessages: false, changeDetection: 'identity' });
+        const initial = select(state);
+        let current = initial;
+        let sessionPublications = 0;
+        let homePublications = 0;
+        for (let index = 0; index < 20; index += 1) {
+            const session = state.sessions[`scale-${index}`]!;
+            state = { ...state, sessions: { ...state.sessions, [session.id]: { ...session, seq: session.seq + 1 } } };
+            const next = select(state);
+            if (next.sessionsById !== current.sessionsById) sessionPublications += 1;
+            if (next.sessionListHomeObservationByServerId !== current.sessionListHomeObservationByServerId) homePublications += 1;
+            current = next;
+        }
+        expect({ sessionPublications, homePublications }).toEqual({ sessionPublications: 20, homePublications: 0 });
+        const offline = select({ ...state, concurrentSessionListCacheByServerId: { 'server-a': { serverName: 'A',
+            listObservation: { phase: 'offline', lastSuccessAt: NOW_MS } } } });
+        expect(offline.sessionListHomeObservationByServerId).not.toBe(initial.sessionListHomeObservationByServerId);
+        expect(offline.sessionListHomeObservationByServerId?.['server-a']?.phase).toBe('offline');
+    });
+
+    it('classifies only the changed row for Completed Bots without republishing unchanged Bot facts', async () => {
+        const previousStackLimit = Error.stackTraceLimit;
+        Error.stackTraceLimit = 80;
+        const classified = new Set<string>();
+        const countRows = <T extends object>(values: T): T => new Proxy(values, { get(target, key, receiver) {
+            if (typeof key === 'string' && key.startsWith('scale-')
+                && /buildActivityOverviewFromSource\.tsx?:/.test(new Error().stack ?? '')) classified.add(key);
+            return Reflect.get(target, key, receiver);
+        } });
+        const ready = (id: string, bot: boolean): Session => createSessionFixture({
+            ...idleSession(id),
+            metadata: { path: '/same', host: 'host', ...(bot ? { bot: { kind: 'bot' as const } } : {}) },
+            latestTurnId: 'done', latestTurnStatus: 'completed', latestReadyEventSeq: 5, latestReadyEventAt: NOW_MS - 1_000,
+            viewer: { latestFailureSeq: null, readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: 5 },
+                relevance: { relevant: true, reasons: ['owned_by_me'] }, follow: { follows: false, notificationLevel: null },
+                notification: { level: 'important', source: 'owner' },
+                attention: { needsAttention: true, reasons: ['ready_after_read'], primary: 'ready_after_read', presentation: 'full' } },
+        });
+        const sessions = Object.fromEntries(Array.from({ length: SESSIONS }, (_, index) => {
+            const id = `scale-${index}`;
+            return [id, ready(id, index === 7)];
+        }));
+        const rows = Object.fromEntries(Object.entries(sessions).map(([id, session]) => [id, buildSessionListRenderableFromSession(session)]));
+        storage.setState({ ...storage.getState(), isDataReady: true, sessions,
+            sessionListRowsByServerId: { 'server-a': countRows(rows) },
+            ordinarySessionListMembershipByServerId: { 'server-a': Object.keys(sessions) },
+            sessionListIndexByServerId: {}, concurrentSessionListCacheByServerId: {},
+            sessionListRenderableDelta: { revision: 200, changedSessionIds: Object.keys(sessions), removedSessionIds: [], rebuiltSessionListIndex: false },
+        }, true);
+        let current: ReturnType<typeof useHomeCompletedBots> | undefined;
+        const commits = createRenderCommitCounter();
+        function CompletedBots() {
+            useRenderCommitCounter(commits);
+            current = useHomeCompletedBots();
+            return null;
+        }
+        try {
+            await renderScreen(<CompletedBots />);
+            expect(current?.readySessions.map(candidate => candidate.sessionId)).toEqual(['scale-7']);
+            expect(classified.size).toBe(SESSIONS);
+            const initial = current;
+            classified.clear();
+            commits.reset();
+            const touched = { ...sessions['scale-43']!, seq: sessions['scale-43']!.seq + 1 };
+            await act(async () => storage.setState({
+                sessions: { ...storage.getState().sessions, [touched.id]: touched },
+                sessionListRowsByServerId: { 'server-a': countRows({ ...rows, [touched.id]: buildSessionListRenderableFromSession(touched) }) },
+                sessionListRenderableDelta: { revision: 201, changedSessionIds: [touched.id], removedSessionIds: [], rebuiltSessionListIndex: false },
+            }));
+            expect(classified.size).toBe(1);
+            expect([...classified]).toEqual(['scale-43']);
+            expect({ ...commits.read(), retained: current === initial }).toEqual({ renders: 0, commits: 0, retained: true });
+            classified.clear();
+            commits.reset();
+            const promoted = { ...sessions['scale-42']!, metadataVersion: sessions['scale-42']!.metadataVersion + 1,
+                metadata: { ...sessions['scale-42']!.metadata, bot: { kind: 'bot' as const } } };
+            await act(async () => storage.setState({
+                sessions: { ...storage.getState().sessions, [promoted.id]: promoted },
+                sessionListRowsByServerId: { 'server-a': countRows({ ...storage.getState().sessionListRowsByServerId['server-a'],
+                    [promoted.id]: buildSessionListRenderableFromSession(promoted) }) },
+                sessionListRenderableDelta: { revision: 202, changedSessionIds: [promoted.id], removedSessionIds: [], rebuiltSessionListIndex: false },
+            }));
+            expect([...classified]).toEqual(['scale-42']);
+            expect(current?.readySessions.map(candidate => candidate.sessionId).sort()).toEqual(['scale-42', 'scale-7']);
+            expect(current?.markAllReadTargets).toHaveLength(2);
+            expect(commits.read()).toEqual({ renders: 1, commits: 1 });
+        } finally { Error.stackTraceLimit = previousStackLimit; }
+    });
+
 });

@@ -61,6 +61,13 @@ export function createActivityAttentionSourceSelector(params: Readonly<{
     return (state: StorageState) => {
         const storeSource = storeSourceSelector(state);
         if (previousSource === storeSource && selected) return selected;
+        // Membership is fixed for this selector's lifetime. Session arrivals cannot change Home currentness.
+        const homeObservations = selected && previousSource?.concurrentSessionListCacheByServerId === storeSource.concurrentSessionListCacheByServerId
+            ? selected.sessionListHomeObservationByServerId
+            : buildSessionListHomeObservations({
+                concurrentSessionListCacheByServerId: storeSource.concurrentSessionListCacheByServerId,
+                queryStatesByServerId: personalMembership.statesByServerId,
+            });
         previousSource = storeSource;
         selected = {
             ...storeSource,
@@ -73,10 +80,7 @@ export function createActivityAttentionSourceSelector(params: Readonly<{
             personalFollowRulesByServerId: personalMembership.followRulesByServerId,
             receiverRuleEvaluationByServerId: personalMembership.receiverRuleEvaluationByServerId,
             accountDeliveryMutesByServerId: personalMembership.accountDeliveryMutesByServerId,
-            sessionListHomeObservationByServerId: buildSessionListHomeObservations({
-                concurrentSessionListCacheByServerId: storeSource.concurrentSessionListCacheByServerId,
-                queryStatesByServerId: personalMembership.statesByServerId,
-            }),
+            sessionListHomeObservationByServerId: homeObservations,
         };
         return selected;
     };

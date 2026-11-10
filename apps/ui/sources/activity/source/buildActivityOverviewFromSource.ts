@@ -406,11 +406,13 @@ export function buildActivityOverviewFromSource(params: Readonly<{
     directActionsEnabled?: boolean;
     surfaceTiming?: ActivitySurfaceTimingInput;
     includeWarmSourceWhenNotReady?: boolean;
+    /** Exact addresses supplied by the source owner's changed-row publication. */
+    addresses?: readonly SessionAddress[];
 }>): ActivityOverviewSnapshot {
     const lookupState = buildLookupState(params.source);
     const surfaceTiming = resolveActivitySurfaceTiming(params.surfaceTiming);
     const resolveSessionOptions = params.resolveSessionOptionsForServerId;
-    const candidates = collectSourceSessions(params.source, params.includeWarmSourceWhenNotReady === true)
+    const candidates = collectSourceSessions(params.source, params.includeWarmSourceWhenNotReady === true, false, params.addresses)
         .flatMap((entry) => {
             const followRuleMatches = readActivitySessionRuleMatches(params.source, entry.address, entry.session, params.nowMs, entry.presentationSource);
             const followRulePolicies = followRuleMatches.map(match => match.policy);

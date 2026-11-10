@@ -1,8 +1,9 @@
 import * as React from 'react';
 
-import { retainDeep, retainIfEqual } from '@/sync/domains/state/structuralSharing';
+import { retainIfEqual } from '@/sync/domains/state/structuralSharing';
+import { buildActivityOverviewFromCandidates } from '@/activity/attention/buildActivityOverviewSnapshot';
 import { buildInboxSessionPresentation } from '@/activity/presentation/buildInboxSessionPresentation';
-import { isHomeCompletedBotCandidate, selectHomeCompletedBots, type HomeCompletedBots } from '@/activity/presentation/selectHomeCompletedBots';
+import { isHomeCompletedBotCandidate, type HomeCompletedBots } from '@/activity/presentation/selectHomeCompletedBots';
 import { ALL_SESSIONS_RECORDING_VISIBLE, type SessionRecordingVisibility } from '@/sync/domains/session/listing/recordingPrivacy';
 
 import type { ActivityOverviewSnapshot } from '@/activity/attention/activityAttentionTypes';
@@ -193,21 +194,46 @@ export type MountedHomeCompletedBots = HomeCompletedBots & Readonly<{
     nextAttentionBoundaryMs: number | null;
 }>;
 
-/** Completed Bots subscribe to their selected rows and read availability before publication. */
+function createHomeCompletedBotsProjector(isSessionVisible: SessionRecordingVisibility): ActivitySourceProjector<MountedHomeCompletedBots> {
+    let nowMs = Date.now();
+    const table = createActivitySourceAddressTable<ActivityOverviewSnapshot['candidates'][number]>({
+        includeWarmSourceWhenNotReady: true,
+        classify: (source, addresses) => {
+            const overview = buildActivityOverviewFromSource({ source, nowMs, includeWarmSourceWhenNotReady: true, addresses });
+            return new Map(overview.candidates.filter(candidate => isHomeCompletedBotCandidate(candidate, isSessionVisible))
+                // The source builder attaches the exact address it admitted to every candidate.
+                .map(candidate => [sessionAddressKey(candidate.address!), candidate]));
+        },
+    });
+    let published: MountedHomeCompletedBots | undefined;
+    return {
+        project: ({ source, nowMs: projectedAtMs, state }) => {
+            nowMs = projectedAtMs;
+            const changed = table.update(source, state);
+            if (published && !changed
+                && published.source.sessionListHomeObservationByServerId === source.sessionListHomeObservationByServerId
+                && published.source.personalSessionListQueryStatesByServerId === source.personalSessionListQueryStatesByServerId) return published;
+            const overview = buildActivityOverviewFromCandidates([...table.entries().values()]);
+            const { readySessions, markAllReadTargets } = buildInboxSessionPresentation({ overview });
+            published = {
+                readySessions,
+                markAllReadTargets,
+                source: {
+                    sessionListHomeObservationByServerId: source.sessionListHomeObservationByServerId,
+                    personalSessionListQueryStatesByServerId: source.personalSessionListQueryStatesByServerId,
+                },
+                nextAttentionBoundaryMs: readNextAttentionBoundaryMs(source, overview.candidates, nowMs),
+            };
+            return published;
+        },
+        observeUnchangedSource: state => table.observeUnchangedSource(state),
+    };
+}
+
+/** Completed Bots classify changed addresses and publish only their selected rows or availability. */
 export function useHomeCompletedBots(
     isSessionVisible: SessionRecordingVisibility = ALL_SESSIONS_RECORDING_VISIBLE,
 ): MountedHomeCompletedBots {
-    const project = React.useCallback(({ source, nowMs }: ActivitySourceProjectionInput): MountedHomeCompletedBots => {
-        const overview = buildActivityOverviewFromSource({ source, nowMs, includeWarmSourceWhenNotReady: true });
-        return {
-            ...selectHomeCompletedBots(buildInboxSessionPresentation({ overview }), isSessionVisible),
-            source: {
-                sessionListHomeObservationByServerId: source.sessionListHomeObservationByServerId,
-                personalSessionListQueryStatesByServerId: source.personalSessionListQueryStatesByServerId,
-            },
-            nextAttentionBoundaryMs: readNextAttentionBoundaryMs(source,
-                overview.candidates.filter(candidate => isHomeCompletedBotCandidate(candidate, isSessionVisible)), nowMs),
-        };
-    }, [isSessionVisible]);
-    return useActivitySourceProjection(project, retainDeep);
+    const createProjector = React.useMemo(() => () => createHomeCompletedBotsProjector(isSessionVisible), [isSessionVisible]);
+    return useSharedActivitySourceProjection(createProjector, retainIfEqual, { changeDetection: 'identity' });
 }

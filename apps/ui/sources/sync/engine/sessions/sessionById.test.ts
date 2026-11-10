@@ -2745,3 +2745,51 @@ describe('fetchAndApplySessionById', () => {
     expect(headers).not.toHaveProperty('X-Happier-Request-Purpose');
   });
 });
+
+
+it('keeps identical by-ID hydration silent in a thousand-Session store', async () => {
+  const initialState = storage.getState();
+  const sessions = Array.from({ length: 1_000 }, (_, index) => createSessionFixture({
+    id: `publication-scale-${index}`, serverId: 'server-a', active: false,
+    metadata: { name: `Session ${index}`, machineId: 'machine-1', path: '/fixture', homeDir: '/fixture' },
+  }));
+  let incoming = sessions[7]!;
+  let attempts = 0;
+  let sessionPublications = 0;
+  let rowPublications = 0;
+  let stop: (() => void) | undefined;
+  const hydrate = () => fetchAndApplySessionById({
+    sessionId: incoming.id, serverId: 'server-a', credentials: { token: 'fixture-token' },
+    accountCurrentness: PLAIN_ACCOUNT_CURRENTNESS,
+    encryption: PLAINTEXT_ACCOUNT_SESSION_ENCRYPTION, sessionDataKeys: new Map(),
+    includeTurnsProjection: false,
+    // HTTP is the boundary; hydration, admission and the destination store stay real.
+    request: async () => Response.json(createPlainSessionByIdResponseFixture(incoming)),
+    applySessions: values => { attempts += 1; storage.getState().applySessions(values); },
+    getExistingSession: id => storage.getState().sessions[id], log: { log() {} },
+  });
+  try {
+    storage.setState(storage.getInitialState(), true);
+    storage.getState().applySessions(sessions);
+    expect((await hydrate()).ok).toBe(true);
+    const baseline = storage.getState().sessions[incoming.id];
+    expect(Object.keys(storage.getState().sessions)).toHaveLength(1_000);
+    attempts = 0;
+    stop = storage.subscribe((next, previous) => {
+      if (next.sessions !== previous.sessions) sessionPublications += 1;
+      if (next.sessionListRowsByServerId !== previous.sessionListRowsByServerId) rowPublications += 1;
+    });
+    for (let replay = 0; replay < 20; replay += 1) expect((await hydrate()).ok).toBe(true);
+    const unchanged = { attempts, sessionPublications, rowPublications,
+      retained: storage.getState().sessions[incoming.id] === baseline };
+    expect(unchanged).toEqual({ attempts: 20, sessionPublications: 0, rowPublications: 0, retained: true });
+    incoming = { ...incoming, updatedAt: incoming.updatedAt + 1, metadataVersion: incoming.metadataVersion + 1,
+      metadata: { ...incoming.metadata, name: 'Changed title' } };
+    expect((await hydrate()).ok).toBe(true);
+    expect(storage.getState().sessions[incoming.id]?.metadataVersion).toBe(incoming.metadataVersion);
+    expect({ sessionPublications, rowPublications }).toEqual({ sessionPublications: 1, rowPublications: 1 });
+  } finally {
+    stop?.();
+    storage.setState(initialState, true);
+  }
+});
