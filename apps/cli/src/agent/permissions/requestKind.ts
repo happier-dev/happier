@@ -1,5 +1,5 @@
 import type { AcpPermissionCallContext } from '@/agent/acp/permissions/acpPermissionHandler';
-import { NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE } from '@happier-dev/protocol/sessions/permissions/v1';
+import { NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE, type SessionQuestionContextV1, type SessionQuestionHandlerV1 } from '@happier-dev/protocol/sessions/permissions/v1';
 import { resolveAgentRequestKind as resolveProtocolAgentRequestKind, type AgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 
 export type { AgentRequestKind };
@@ -22,6 +22,19 @@ export function isAgentStructuredQuestionRequest(request: Readonly<{
     && request.kind !== 'permission'
     && request.source !== NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE
     && request.source !== HAPPIER_ACTION_REQUEST_SOURCE;
+}
+
+/** Shared question presentation defaults; current manager/answer authority stays with its owner. */
+export function resolveStructuredQuestionRequestMetadata(
+  request: Parameters<typeof isAgentStructuredQuestionRequest>[0] & Readonly<{ nativeChoices?: unknown }>,
+  existing?: Readonly<{ questionV1?: SessionQuestionContextV1; currentHandler?: SessionQuestionHandlerV1 }> | null,
+) {
+  if (request.nativeChoices || !isAgentStructuredQuestionRequest(request)) return null;
+  return {
+    kind: 'user_action' as const,
+    questionV1: existing?.questionV1 ?? { mode: 'wait' as const, lasting: false, type: 'decision' as const },
+    currentHandler: existing?.currentHandler ?? { kind: 'person' as const },
+  };
 }
 
 /** Durable questions outlive a detached waiter; occurrence questions end with their native owner. */

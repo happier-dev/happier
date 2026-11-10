@@ -66,7 +66,7 @@ function current(check: () => boolean): boolean {
   }
 }
 
-function combineSignals(
+export function combineSignals(
   first: AbortSignal | undefined,
   second: AbortSignal | undefined,
   third?: AbortSignal,
@@ -97,6 +97,10 @@ const observedDecisionSchema = z.strictObject({
   answerDetails: z.optional(StructuredQuestionAnswerDetailsV1Schema),
 });
 
+export function readNativeObservedPermissionDecision(request: unknown) {
+  return observedDecisionSchema.parse(request);
+}
+
 function permissionUnavailable(code: string): never {
   throw new PluginError({ code, message: 'Session permission scope is unavailable' });
 }
@@ -114,6 +118,38 @@ export function createNativePermissionDecisionApplication(params: Readonly<{
       await params.applyPermissionModeIntent(decision.mode);
     }
   };
+}
+
+/** Shared request/result projection; the calling Session or Run owns admission and lifetime. */
+export async function requestNativePermissionDecision(params: Readonly<{
+  permissionHandler: Pick<ProviderEnforcedPermissionHandler, 'handleToolCall'>;
+  owner: NonNullable<NonNullable<Parameters<ProviderEnforcedPermissionHandler['handleToolCall']>[3]>['owner']>;
+  request: Parameters<SessionHandle['permissions']['requestDecision']>[0];
+  signal?: AbortSignal;
+  permissionContext?: ReturnType<typeof readActiveTurnPermissionContext>;
+  acknowledgeDecisionApplication?: (decision: PermissionResult) => Promise<void>;
+  applyPermissionModeIntent?: PluginSessionLiveCapabilities['applyPermissionModeIntent'];
+}>): ReturnType<SessionHandle['permissions']['requestDecision']> {
+  const { request } = params;
+  const toolName = request.toolName?.trim();
+  if (!toolName) return permissionUnavailable('plugin_session_permission_tool_unavailable');
+  const requestId = request.toolCallId?.trim() || request.requestId?.trim()
+    || `plugin-session-permission:${randomUUID()}`;
+  const acknowledgeDecisionApplication = request.nativeChoices
+    ? createNativePermissionDecisionApplication(params) : params.acknowledgeDecisionApplication;
+  const result = await params.permissionHandler.handleToolCall(requestId, toolName,
+    request.input ?? Object.freeze({}), {
+      owner: params.owner,
+      ...params.permissionContext,
+      ...(isAgentStructuredQuestionToolName(toolName)
+        ? { origin: 'host_occurrence_question' as const, lifetime: 'occurrence' as const } : {}),
+      ...(request.source?.trim() ? { source: request.source.trim() } : {}),
+      ...(request.traceSummary ? { traceSummary: request.traceSummary } : {}),
+      ...(request.nativeChoices ? { nativeChoices: request.nativeChoices } : {}),
+      signal: params.signal,
+      ...(acknowledgeDecisionApplication ? { acknowledgeDecisionApplication } : {}),
+    });
+  return Object.freeze({ ...result });
 }
 
 export function createPluginSessionHandleCapabilitiesFactory(
@@ -234,7 +270,7 @@ export function createPluginSessionHandleCapabilitiesFactory(
         if (!live.permissionHandler.settleObservedDecision) {
           return permissionUnavailable('plugin_session_permission_settlement_unavailable');
         }
-        const observed = observedDecisionSchema.parse(request);
+        const observed = readNativeObservedPermissionDecision(request);
         const settled = await live.permissionHandler.settleObservedDecision({ ...observed, owner });
         if (!isSameLive(live) || !isLiveCurrent(live)) {
           return permissionUnavailable('plugin_session_permission_scope_retired');
@@ -246,49 +282,17 @@ export function createPluginSessionHandleCapabilitiesFactory(
         if (!live?.permissionHandler || !isLiveCurrent(live)) {
           return permissionUnavailable('plugin_session_permission_scope_unavailable');
         }
-        const toolName = request.toolName?.trim();
-        if (!toolName) return permissionUnavailable('plugin_session_permission_tool_unavailable');
-        const requestId = request.toolCallId?.trim()
-          || request.requestId?.trim()
-          || `plugin-session-permission:${randomUUID()}`;
-        const permissionContext = readActiveTurnPermissionContext(live);
-        const occurrenceQuestion = isAgentStructuredQuestionToolName(toolName);
-        const acknowledgeDecisionApplication = request.nativeChoices
-          ? createNativePermissionDecisionApplication({
-            acknowledgeDecisionApplication: options?.acknowledgeDecisionApplication,
-            applyPermissionModeIntent: live.applyPermissionModeIntent,
-          })
-          : options?.acknowledgeDecisionApplication;
-        const result = await live.permissionHandler.handleToolCall(
-          requestId,
-          toolName,
-          request.input ?? Object.freeze({}),
-          {
-            owner,
-            ...permissionContext,
-            ...(occurrenceQuestion ? { origin: 'host_occurrence_question' as const, lifetime: 'occurrence' as const } : {}),
-            ...(request.source?.trim() ? { source: request.source.trim() } : {}),
-            ...(request.traceSummary ? { traceSummary: request.traceSummary } : {}),
-            ...(request.nativeChoices ? { nativeChoices: request.nativeChoices } : {}),
-            signal: operationSignal(live, options?.signal),
-            ...(acknowledgeDecisionApplication
-              ? { acknowledgeDecisionApplication }
-              : {}),
-          },
-        );
+        const result = await requestNativePermissionDecision({
+          permissionHandler: live.permissionHandler, owner, request,
+          permissionContext: readActiveTurnPermissionContext(live),
+          signal: operationSignal(live, options?.signal),
+          acknowledgeDecisionApplication: options?.acknowledgeDecisionApplication,
+          applyPermissionModeIntent: live.applyPermissionModeIntent,
+        });
         if (!isSameLive(live) || !isLiveCurrent(live)) {
           return permissionUnavailable('plugin_session_permission_scope_retired');
         }
-        return Object.freeze({
-          decision: result.decision,
-          ...(result.answers ? { answers: result.answers } : {}),
-          ...(result.answerDetails === undefined ? {} : { answerDetails: result.answerDetails }),
-          ...(result.nativeChoice ? { nativeChoice: result.nativeChoice } : {}),
-          ...(result.mode !== undefined ? { mode: result.mode } : {}),
-          ...(result.allowedTools !== undefined ? { allowedTools: result.allowedTools } : {}),
-          ...(result.updatedPermissions !== undefined ? { updatedPermissions: result.updatedPermissions } : {}),
-          ...(result.execPolicyAmendment !== undefined ? { execPolicyAmendment: result.execPolicyAmendment } : {}),
-        });
+        return result;
       },
       getMode() {
         const live = readLive();

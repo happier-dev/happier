@@ -1,5 +1,5 @@
 import type { PluginServiceId, PluginServices } from '@happier-dev/plugin-sdk';
-import type { SessionMediaService } from '@happier-dev/plugin-sdk/sessions';
+import type { SessionMediaService, SessionPermissionsService } from '@happier-dev/plugin-sdk/sessions';
 import type {
     HostCurrentSessionInteractionsService as PluginCurrentSessionInteractionsService,
     HostCurrentSessionUiServices,
@@ -25,7 +25,8 @@ import { normalizeQuestionAnswers, type QuestionAnswerWireValue } from '@/agent/
 import { NATIVE_TOOL_APPROVAL_REQUEST_SOURCE, NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE } from '@happier-dev/protocol/sessions/permissions/v1';
 import { isWorkflowInteractionCapacityError } from '@/agent/permissions/interactionPersistenceError';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
-import { createPluginInteractionsService } from '@/plugins/runtime/invocation/services/interactions';
+import { createPluginInteractionsService, readActiveTurnPermissionContext } from '@/plugins/runtime/invocation/services/interactions';
+import type { ExecutionRunPermissionHandler } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 import type { AgentInvocationTurnAdmissionWitness } from '@/plugins/runtime/invocation/services/types';
 import type { StoredCredentials } from '@/persistence';
 import {
@@ -33,7 +34,7 @@ import {
     createPluginSessionsInventory,
     readPluginSessionsSubagentObservation,
 } from '@/session/services/pluginSessionsInventory';
-import { createNativePermissionDecisionApplication, createPluginSessionHandleCapabilitiesFactory } from '@/session/services/pluginSessionHandleCapabilities';
+import { combineSignals, createNativePermissionDecisionApplication, createPluginSessionHandleCapabilitiesFactory, readNativeObservedPermissionDecision, requestNativePermissionDecision } from '@/session/services/pluginSessionHandleCapabilities';
 import type { PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import { executePluginSessionMessageAction } from '@/session/services/executePluginSessionMessageAction';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -454,6 +455,54 @@ export function createNativeAgentCurrentExecutionRunUiServices(
         interactions: Object.freeze(new NativeAgentCurrentExecutionRunInteractionAdapter(params)),
         ...(params.presentation ? { presentation: params.presentation } : {}),
     });
+}
+
+/** The admitted Run binds its existing pending owner without manufacturing a Session handle. */
+export function createNativeAgentExecutionRunPermissions(
+    params: Pick<NativeAgentExecutionRunInteractionParams, 'pluginId' | 'runtimeId' | 'signal' | 'isCurrent' | 'readActiveTurnAdmissionWitness' | 'onUnavailable'> & Readonly<{
+        permissionHandler: Pick<ExecutionRunPermissionHandler, 'handleToolCall' | 'settleObservedDecision'>;
+        readPermissionMode: () => string;
+    }>,
+): SessionPermissionsService {
+    const owner = Object.freeze({ kind: 'plugin' as const, pluginId: params.pluginId, runtimeId: params.runtimeId });
+    const assertCurrent = (): void => {
+        params.signal?.throwIfAborted();
+        if (readPluginGenerationState(params.isCurrent) !== 'current') {
+            throw Object.assign(new Error('Execution-run permission interaction target is unavailable'),
+                { code: 'execution_run_interaction_unavailable' });
+        }
+    };
+    return Object.freeze({
+        async requestDecision(request, options) {
+            try {
+                assertCurrent();
+                const result = await requestNativePermissionDecision({
+                    permissionHandler: params.permissionHandler, owner, request,
+                    signal: combineSignals(params.signal, options?.signal),
+                    permissionContext: readActiveTurnPermissionContext(params),
+                    acknowledgeDecisionApplication: options?.acknowledgeDecisionApplication,
+                });
+                assertCurrent();
+                return result;
+            } catch (error) {
+                if (error !== null && typeof error === 'object' && 'code' in error
+                    && error.code === 'execution_run_interaction_unavailable') params.onUnavailable?.();
+                throw error;
+            }
+        },
+        async settleObservedDecision(request) {
+            assertCurrent();
+            const result = await params.permissionHandler.settleObservedDecision({
+                ...readNativeObservedPermissionDecision(request), owner,
+            });
+            assertCurrent();
+            return result;
+        },
+        getMode() {
+            assertCurrent();
+            return params.readPermissionMode();
+        },
+    } satisfies SessionPermissionsService);
 }
 
 /** Native Session custody owns live capabilities; invocation services retain external operations. */

@@ -14,6 +14,8 @@ import type {
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { Metadata } from '@/api/types';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import { configuration } from '@/configuration';
+import { verifySessionStructuredImageInput } from '@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import type { ResolvedSessionMcpServer } from '@/mcp/runtimeTypes';
 import { readDaemonPluginCatalog } from '@/daemon/controlClient';
@@ -91,6 +93,36 @@ export type NativeAgentSessionHostServiceOwners = Readonly<{
 }>;
 
 type Disposable = Readonly<{ dispose(): void | Promise<void> }>;
+
+/** One verified-image boundary for Session and detached Run lifetimes. */
+export function createNativeAgentInputFilesService(params: Readonly<{
+    signal: AbortSignal;
+    directory: string;
+    sessionId?: string;
+    assertAvailable(): void;
+}>): NonNullable<AgentSessionHostServices['inputFiles']> {
+    return Object.freeze({
+        async readVerifiedImage(input, options) {
+            params.assertAvailable();
+            const signal = options?.signal ? AbortSignal.any([params.signal, options.signal]) : params.signal;
+            signal.throwIfAborted();
+            const verification = await verifySessionStructuredImageInput({
+                cwd: params.directory,
+                ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+                image: input,
+                maxBytes: configuration.filesUploadMaxFileBytes,
+            });
+            params.assertAvailable();
+            signal.throwIfAborted();
+            if (verification.status !== 'verified') return null;
+            return Object.freeze({
+                url: `data:${verification.mimeType};base64,${verification.bytes.toString('base64')}`,
+                mimeType: verification.mimeType,
+                filename: verification.filename,
+            });
+        },
+    });
+}
 
 export function createNativeAgentFeatureService(
     runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null,
@@ -182,6 +214,7 @@ function createNativeAgentToolExecutionOwner(params: Readonly<{
  * Happier Session id and must never be used to manufacture Session custody.
  */
 export function createNativeAgentExecutionRunHostServices(params: Readonly<{
+    permissions?: AgentExecutionRunHostServicesV1['permissions'];
     signal: AbortSignal;
     executionRunId: string;
     directory: string;
@@ -279,6 +312,7 @@ export function createNativeAgentExecutionRunHostServices(params: Readonly<{
         ? createDaemonRuntimeAuthRefreshService({ refreshViaDaemon: params.refreshRuntimeAuthViaDaemon })
         : null;
     return Object.freeze({
+        ...(params.permissions ? { permissions: params.permissions } : {}),
         ...(params.nativeHome ? { nativeHome: Object.freeze({
             async readFiles(fileIds: readonly string[]) {
                 assertActive();
@@ -287,6 +321,11 @@ export function createNativeAgentExecutionRunHostServices(params: Readonly<{
                 return files;
             },
         }) } : {}),
+        inputFiles: createNativeAgentInputFilesService({
+            signal: params.signal,
+            directory: params.directory,
+            assertAvailable: assertActive,
+        }),
         ...(authServices ? { auth: Object.freeze({ services: Object.freeze({
             async refreshRuntimeAuth(...args: Parameters<typeof authServices.refreshRuntimeAuth>) {
                 assertActive();

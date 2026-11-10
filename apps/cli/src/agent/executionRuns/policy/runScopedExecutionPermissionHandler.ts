@@ -1,6 +1,6 @@
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { ExecutionRunPermissionInteractionMode } from './executionRunPermissionInteractionPolicy';
-import { createExecutionRunPermissionHandler } from './executionRunPermissionDecision';
+import { createExecutionRunPermissionHandler, type ExecutionRunPermissionCallContext, type ExecutionRunPermissionHandler, type ExecutionRunPermissionResponder } from './executionRunPermissionDecision';
 import { parseMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import type { AcpPermissionCallContext } from '@/agent/acp/permissions/acpPermissionHandler';
 import { isAgentStructuredQuestionRequest, isHostOccurrenceQuestion } from '@/agent/permissions/requestKind';
@@ -23,7 +23,9 @@ export function readRunScopedExecutionProviderRequestId(params: Readonly<{
 export function createRunScopedExecutionPermissionHandler(params: Readonly<{
   runId: string;
   controllerOccurrenceId: string;
-  handler: AcpPermissionHandler;
+  handler: AcpPermissionHandler & Partial<Pick<ExecutionRunPermissionHandler, 'respondToPermissionRequest' | 'settleObservedDecision'>>;
+  /** Explicit detached scope has no Session startup question owner. */
+  parentSessionId?: string | null;
   toolPolicy?: Omit<Parameters<typeof createExecutionRunPermissionHandler>[0], 'publishPendingRequest'>;
   mcpToolPolicy?: NonNullable<AcpPermissionCallContext['mcpToolPolicy']>;
   onPendingRequestAborted?: (request: Readonly<{
@@ -32,8 +34,9 @@ export function createRunScopedExecutionPermissionHandler(params: Readonly<{
   }>) => void | Promise<void>;
   readInteractionMode?: () => ExecutionRunPermissionInteractionMode;
 }>): Readonly<{
-  handler: AcpPermissionHandler;
-  respondToPermissionRequest: (providerRequestId: string, approved: boolean) => boolean;
+  handler: Omit<AcpPermissionHandler, 'handleToolCall'> & Pick<ExecutionRunPermissionHandler, 'handleToolCall'>;
+  respondToPermissionRequest: ExecutionRunPermissionResponder;
+  settleObservedDecision: ExecutionRunPermissionHandler['settleObservedDecision'];
   dispose: (reason: string) => Promise<void>;
 }> {
   const runId = String(params.runId ?? '').trim();
@@ -53,14 +56,14 @@ export function createRunScopedExecutionPermissionHandler(params: Readonly<{
     controllerOccurrenceId,
     providerRequestId: requestId,
   });
-  const mcpContext = (toolName: string, context: AcpPermissionCallContext | undefined): AcpPermissionCallContext | undefined => {
+  const mcpContext = (toolName: string, context: ExecutionRunPermissionCallContext): ExecutionRunPermissionCallContext => {
     const policy = params.mcpToolPolicy ?? (params.toolPolicy?.getMcpToolContext
       ? { permissionMode: params.toolPolicy.permissionMode, readContext: params.toolPolicy.getMcpToolContext } : undefined);
     const current = policy?.readContext();
     return policy && current && parseMcpToolWireNameV1(toolName, new Set(Object.keys(current.mcpServerIdentities)))
       ? { ...context, mcpToolPolicy: policy } : context;
   };
-  const readImmediate: NonNullable<AcpPermissionHandler['getImmediateDecision']> = (toolCallId, toolName, input, context) => {
+  const readImmediate = (toolCallId: string, toolName: string, input: unknown, context?: ExecutionRunPermissionCallContext): ReturnType<NonNullable<AcpPermissionHandler['getImmediateDecision']>> => {
     if (isAgentStructuredQuestionRequest({ toolName, source: context?.source })) return null;
     const inherited = params.handler.getImmediateDecision?.(toolCallId, toolName, input, mcpContext(toolName, context)) ?? null;
     if (inherited?.decision === 'denied' || inherited?.decision === 'abort') return inherited;
@@ -103,7 +106,8 @@ export function createRunScopedExecutionPermissionHandler(params: Readonly<{
         if (immediate) return immediate;
         // Startup questions have no admitted executable turn. Keep their exact
         // Run scope, but let the Session question owner collect the person's answer.
-        const interactionMode = isHostOccurrenceQuestion(toolName, context) ? undefined : params.readInteractionMode?.();
+        const interactionMode = isHostOccurrenceQuestion(toolName, context) && params.parentSessionId !== null
+          ? undefined : params.readInteractionMode?.();
         if (interactionMode === 'interaction_unavailable'
           || (question && (interactionMode === 'deterministic' || interactionMode === 'fail_closed'))) {
           throw Object.assign(
@@ -130,14 +134,17 @@ export function createRunScopedExecutionPermissionHandler(params: Readonly<{
         }));
       },
     },
-    respondToPermissionRequest(providerRequestId, approved) {
+    respondToPermissionRequest(providerRequestId, response) {
       const requestId = scopedRequestId(providerRequestId);
       if (!pendingRequestIds.has(requestId)) return false;
-      const responder = (params.handler as AcpPermissionHandler & Readonly<{
-        respondToPermissionRequest?: (requestId: string, approved: boolean) => boolean;
-      }>).respondToPermissionRequest;
+      const responder = params.handler.respondToPermissionRequest;
       if (!responder) return false;
-      return responder(requestId, approved);
+      return responder(requestId, response);
+    },
+    async settleObservedDecision(observed) {
+      const requestId = scopedRequestId(observed.requestId);
+      if (!pendingRequestIds.has(requestId) || !params.handler.settleObservedDecision) return false;
+      return await params.handler.settleObservedDecision({ ...observed, requestId });
     },
     async dispose(reason) {
       await Promise.all([...new Set([...pendingRequestIds, ...cleanupRequestIds])].map(async (requestId) => {

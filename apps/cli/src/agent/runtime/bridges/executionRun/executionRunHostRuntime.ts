@@ -45,11 +45,18 @@ export type ExecutionRunTurnLivenessProbeResult = Readonly<{
 
 export type ExecutionRunPermissionCapability = 'responds' | 'inline' | 'static';
 
-export type RuntimePermissionResponseOutcome = Readonly<{ delivered: true }>
+export type RuntimePermissionResponseOutcome = Readonly<{ delivered: true; result?: import('@/agent/permissions/BasePermissionHandler').PermissionResult }>
     | Readonly<{
         delivered: false;
         reason: 'no_active_session' | 'unknown_request';
     }>;
+
+export function toRuntimePermissionResponseOutcome(
+    result: Awaited<ReturnType<import('@/agent/executionRuns/policy/executionRunPermissionDecision').ExecutionRunPermissionResponder>>,
+): RuntimePermissionResponseOutcome {
+    return result ? { delivered: true, ...(typeof result === 'object' ? { result } : {}) }
+        : { delivered: false, reason: 'unknown_request' };
+}
 
 export type ExecutionRunHostRuntime = Readonly<{
     /** Actual opened Agent transport, reported by the admitted host composition. */
@@ -91,7 +98,7 @@ export type ExecutionRunHostRuntime = Readonly<{
     readActiveTurnAdmissionWitness?: () => AgentInvocationTurnAdmissionWitness | null;
     cancel: (runtimeId: string) => Promise<void>;
     subscribeMessages: (handler: ExecutionRunHostRuntimeMessageHandler) => () => void;
-    respondToPermission?: (requestId: string, approved: boolean) => Promise<RuntimePermissionResponseOutcome>;
+    respondToPermission?: (requestId: string, approved: boolean, response?: import('@/agent/permissions/BasePermissionHandler').PermissionResult) => Promise<RuntimePermissionResponseOutcome>;
     /** Rejects and durably settles only permission waits owned by this Run occurrence. */
     abortPendingPermissionRequests?: (reason: string) => Promise<void>;
     waitForTurnCompletion?: (timeoutMs?: number | null) => Promise<void>;

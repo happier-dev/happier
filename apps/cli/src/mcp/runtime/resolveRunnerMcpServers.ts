@@ -252,14 +252,13 @@ type RunnerMcpServersResult<Bridge extends { stop: () => void | Promise<void> }>
   reach?: RunnerMcpRuleObservation & Readonly<{ selectedServerIds: readonly string[] }>;
 }>;
 type HappierMcpServerHandle = {
-  supportedSessionReadActions?: readonly SessionRunPromptReadActionIdV1[];
+  supportedSessionReadActions: readonly SessionRunPromptReadActionIdV1[];
   stop: () => Promise<void>;
 };
 type HappierMcpBridgeHandle = HappierMcpServerHandle & {
   url: string;
   localContext?: SessionMcpLocalContext;
   contextFilePath?: string;
-  supportedSessionReadActions: readonly SessionRunPromptReadActionIdV1[];
   readToolNames: (signal?: AbortSignal) => Promise<readonly string[]>;
 };
 
@@ -553,7 +552,7 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     }),
   };
   const builtIn = params.includeHappierMcpServer === false && !params.localTransport
-    ? { happierMcpServer: { stop: async () => undefined, localContext: undefined, contextFilePath: undefined }, mcpServers: emptyMcpServers }
+    ? { happierMcpServer: { supportedSessionReadActions: [], stop: async () => undefined, localContext: undefined, contextFilePath: undefined }, mcpServers: emptyMcpServers }
     : await createHappierMcpBridge(scopedSession, {
     sessionToolsBridge,
     sessionMetadata: params.sessionMetadata ?? params.session.getMetadataSnapshot?.(),

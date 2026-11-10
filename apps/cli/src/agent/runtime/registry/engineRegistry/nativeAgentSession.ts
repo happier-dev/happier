@@ -1,9 +1,11 @@
 import { SessionGoalControlFailureV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import type { AgentUsageObservedPayloadV1 } from '@happier-dev/protocol/runtime/agentUsageObservedPayloadV1';
 import { readSessionGoalControlDiagnosticDetails } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isSessionModeSelectionUnavailable } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { isForegroundTurnRuntimeTranscriptEvent } from '@/agent/runtime/session/events/runtimeTranscriptScope';
 import { readRegistryCatalogHook } from '@/agent/catalog/runtimeEntry';
 import { projectNativeVendorPluginCatalog } from '@/session/catalogControls/nativeVendorPluginCatalog';
+import { projectNativeSkillCatalog } from '@/session/catalogControls/nativeSkillCatalog';
 import { randomUUID } from 'node:crypto';
 import { nativeIdleCompactionOpenPreference, resolveSessionIdleCompactionSeed } from '@/settings/agents/idleCompactionSeed';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
@@ -106,7 +108,6 @@ import {
     createProviderBindingLaunchMaterializationCleanup,
 } from '@/providers/spawn/compose';
 import { createAgentNativeHomeReadService } from '@/agent/runtime/nativeHomeFileService';
-import { verifySessionStructuredImageInput } from '@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';
 import { resolveConnectedServiceNativeHomeRoot } from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
 import {
     createHostSessionPresentationOwner,
@@ -239,6 +240,7 @@ import type {
 } from '@/plugins/runtime/providerBindings/handoff';
 import { beginProviderBindingRuntimeDiagnosticRedaction } from '@/plugins/runtime/providerBindings/runtimeDiagnosticRedaction';
 import {
+    createNativeAgentInputFilesService,
     type NativeAgentSessionHostServiceOwners,
 } from './nativeAgentSessionHostServiceOwners';
 import { createPluginExecSystemToolGrantStore } from '@/plugins/runtime/exec/system/tools/grants';
@@ -898,26 +900,11 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
             });
         },
     });
-    const inputFiles: NonNullable<AgentSessionHostServices['inputFiles']> = Object.freeze({
-        async readVerifiedImage(input, options) {
-            assertSessionScopeAvailable('input-files');
-            const signal = combineSessionOperationSignal(params.signal, options?.signal);
-            signal.throwIfAborted();
-            const verification = await verifySessionStructuredImageInput({
-                cwd: params.directory,
-                sessionId: params.sessionId,
-                image: input,
-                maxBytes: happierConfiguration.filesUploadMaxFileBytes,
-            });
-            assertSessionScopeAvailable('input-files');
-            signal.throwIfAborted();
-            if (verification.status !== 'verified') return null;
-            return Object.freeze({
-                url: `data:${verification.mimeType};base64,${verification.bytes.toString('base64')}`,
-                mimeType: verification.mimeType,
-                filename: verification.filename,
-            });
-        },
+    const inputFiles = createNativeAgentInputFilesService({
+        signal: params.signal,
+        directory: params.directory,
+        sessionId: params.sessionId,
+        assertAvailable: () => assertSessionScopeAvailable('input-files'),
     });
     const happierTools: NonNullable<AgentSessionHostServices['happierTools']> = Object.freeze({
         async resolveNativeBridge(request, options) {
@@ -1782,7 +1769,7 @@ function hasConnectedServiceProfileSourceInstances(agent: EngineResolutionAgent)
 }
 
 export function toNativeAgentUsageObservation(
-    event: Extract<AgentSessionRuntimeEvent, { kind: 'usage-observed' }>,
+    event: AgentUsageObservedPayloadV1,
     provider: string,
 ): UsageObservation {
     const reportedCostUsd = event.cost !== undefined
@@ -2665,9 +2652,9 @@ export function createNativeAgentSessionOperations(
                 sessionConfigOptionsState: {
                     v: 1, agentId: directFacets.context.agent.id, updatedAt: event.emittedAtMs,
                     ...(event.modelConfigOptionId === undefined ? {} : { modelConfigOptionId: event.modelConfigOptionId }),
-                    configOptions: event.configOptions.map(option => ({ ...option,
-                        ...(option.options === undefined ? {} : { options: [...option.options] }),
-                        ...(option.groups === undefined ? {} : { groups: option.groups.map(group => ({ ...group, options: [...group.options] })) }),
+                    configOptions: event.configOptions.map(({ options, groups, ...option }) => ({ ...option,
+                        ...(options === undefined ? {} : { options: [...options] }),
+                        ...(groups === undefined ? {} : { groups: groups.map(group => ({ ...group, options: [...group.options] })) }),
                     })),
                 },
             }).catch(error => { logger.debug('[NativeAgentSession] Config catalog publication failed', error); });
@@ -3305,30 +3292,7 @@ export function createNativeAgentSessionOperations(
                                     context,
                                     { signal: context.signal },
                                 );
-                                if (result.status !== 'ok' || result.kind !== 'skills') {
-                                    const diagnostic = result.status === 'ok'
-                                        ? 'native_skill_catalog_kind_mismatch'
-                                        : result.diagnostic.code;
-                                    return {
-                                        unsupported: true,
-                                        skills: [],
-                                        diagnostic,
-                                    };
-                                }
-                                return {
-                                    skills: result.items.map((item) => ({
-                                        v: 1 as const,
-                                        id: item.id,
-                                        origin: 'vendor' as const,
-                                        backendId: directFacets.context.agent.id,
-                                        agentId: directFacets.context.agent.id,
-                                        name: item.name,
-                                        displayName: item.displayName,
-                                        ...(item.description ? { description: item.description } : {}),
-                                        ...(item.path ? { path: item.path } : {}),
-                                        enabled: item.enabled,
-                                    })),
-                                };
+                                return projectNativeSkillCatalog(context.agent.id, result);
                             },
                         }
                         : {}),

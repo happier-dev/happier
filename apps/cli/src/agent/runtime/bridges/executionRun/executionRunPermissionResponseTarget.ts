@@ -1,64 +1,25 @@
 import type {
-  AgentStateRequestResponseTarget,
-  AgentStateRequestStoreUnsubscribe,
+  AgentStateRequestStore,
   AgentStateResponseTargetDispatch,
-  AgentStateResponseTargetHandler,
 } from '@/agent/permissions/agentStateRequestStore';
 import {
   readExecutionRunParentSessionPermissionResponseTarget,
   type ExecutionRunParentSessionPermissionResponseTarget,
 } from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
-import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
-import type { StructuredQuestionAnswerDetailsV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 import { logger } from '@/ui/logger';
+import type { PermissionResult } from '@/agent/permissions/BasePermissionHandler';
+import { resolveNativePermissionChoice } from '@/agent/permissions/nativePermissionChoice';
+import { StructuredQuestionAnswersV1Schema, StructuredQuestionAnswerDetailsV1Schema } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 
 export type { ExecutionRunParentSessionPermissionResponseTarget };
 
-export type ExecutionRunPermissionRequestStore = Readonly<{
-  /** Host-private, same-scope persistence adoption; response registrations stay with this store. */
-  rebindPersistenceTargetFrom?(next: unknown): boolean;
-  listOutstandingRequests?(): readonly Readonly<{ requestId: string; createdAt?: number; responseTarget?: AgentStateRequestResponseTarget }>[];
-  readOutstandingRequest?(requestId: string): Readonly<{
-    responseTarget?: AgentStateRequestResponseTarget;
-  }> | null;
-  publishRequest(params: Readonly<{
-    requestId: string;
-    toolName: string;
-    toolInput: unknown;
-    createdAt: number;
-    kind?: string;
-    source?: string;
-    responseTarget?: AgentStateRequestResponseTarget | null;
-    subagentRef?: unknown;
-    sidechainId?: string | null;
-    permissionSuggestions?: readonly unknown[] | null;
-  }>): void;
-  publishRequestAndWait?(params: Readonly<{
-    requestId: string;
-    toolName: string;
-    toolInput: unknown;
-    createdAt: number;
-    kind?: string;
-    source?: string;
-    responseTarget?: AgentStateRequestResponseTarget | null;
-    subagentRef?: unknown;
-    sidechainId?: string | null;
-    permissionSuggestions?: readonly unknown[] | null;
-  }>): Promise<void>;
-  completeRequest?(params: Readonly<{
-    requestId: string;
-    status: string;
-    decision?: string;
-    reason?: string;
-    answers?: StructuredQuestionAnswersV1;
-    answerDetails?: StructuredQuestionAnswerDetailsV1;
-  }>): Promise<boolean> | boolean;
-  retireCompletedRequestsForTurn?(turnId: string): Promise<void>;
-  registerResponseTargetHandler(
-    kind: 'execution_run_host_bridge',
-    handler: AgentStateResponseTargetHandler,
-  ): AgentStateRequestStoreUnsubscribe;
-}>;
+export type ExecutionRunPermissionRequestStore = Readonly<
+  Pick<AgentStateRequestStore, 'publishRequest' | 'registerResponseTargetHandler'>
+  & Partial<Pick<AgentStateRequestStore,
+    'rebindPersistenceTargetFrom' | 'listOutstandingRequests' | 'readOutstandingRequest'
+    | 'publishRequestAndWait' | 'completeRequest' | 'retireCompletedRequestsForTurn'
+    | 'captureRequestApplication' | 'readAppliedCompletion' | 'recoverAppliedCompletions'>>
+>;
 
 /** Transport projection over the request owner: never retains or decides permissions. */
 export function observeExecutionRunPermissionStore(
@@ -66,6 +27,9 @@ export function observeExecutionRunPermissionStore(
   changed: () => void,
 ): ExecutionRunPermissionRequestStore {
   return {
+    ...(store.captureRequestApplication ? { captureRequestApplication: (id) => store.captureRequestApplication!(id) } : {}),
+    ...(store.readAppliedCompletion ? { readAppliedCompletion: (params) => store.readAppliedCompletion!(params) } : {}),
+    ...(store.recoverAppliedCompletions ? { recoverAppliedCompletions: () => store.recoverAppliedCompletions!() } : {}),
     ...(store.listOutstandingRequests ? { listOutstandingRequests: () => store.listOutstandingRequests!() } : {}),
     ...(store.readOutstandingRequest ? { readOutstandingRequest: (id) => store.readOutstandingRequest!(id) } : {}),
     publishRequest: (params) => {
@@ -114,4 +78,23 @@ export function readExecutionRunPermissionResponseApprovedFromDispatch(
   }
   if (decision === 'denied' || decision === 'abort') return false;
   return null;
+}
+
+/** Read the incumbent completion's native offer or structured answer without reducing it to a boolean. */
+export function readExecutionRunPermissionResponseFromDispatch(
+  dispatch: AgentStateResponseTargetDispatch,
+): PermissionResult | boolean | null {
+  const completed = dispatch.completedRequest;
+  if (completed.nativeChoices != null) {
+    return resolveNativePermissionChoice(completed.nativeChoices, completed.nativeChoice)?.result ?? null;
+  }
+  if (completed.structuredAnswersV1 !== undefined) {
+    const answers = StructuredQuestionAnswersV1Schema.safeParse(completed.structuredAnswersV1);
+    const details = completed.answerDetails === undefined ? undefined
+      : StructuredQuestionAnswerDetailsV1Schema.safeParse(completed.answerDetails);
+    if (!answers.success || (details && !details.success)) return null;
+    return { decision: 'approved', answers: answers.data,
+      ...(details?.success ? { answerDetails: details.data } : {}) };
+  }
+  return readExecutionRunPermissionResponseApprovedFromDispatch(dispatch);
 }

@@ -7,7 +7,7 @@ import type { createWorkflowMaterializationHostV1 } from './workflowMaterializat
 /** CLI crypto/transport adapts the shared atomic definition and admission owners. */
 export function createWorkflowDefinitionActions(params: Readonly<{
   artifactStore: ReturnType<typeof createAccountArtifactStore>;
-  removeWorkflowTriggers?: (definitionId: string) => Promise<void>;
+  removeWorkflowTriggers?: Parameters<typeof createSharedWorkflowDefinitionActions>[0]['removeWorkflowTriggers'];
   resolveMaterializer?: ReturnType<typeof createWorkflowMaterializationHostV1>;
   readPluginWorkflows?: WorkflowPluginSourceReaderV1;
   readWorkflowTriggerSummaries?: Parameters<typeof createSharedWorkflowDefinitionActions>[0]['readWorkflowTriggerSummaries'];

@@ -42,8 +42,10 @@ import {
 } from '@/plugins/runtime/invocation/services/interactions';
 import {
     createNativeAgentCurrentExecutionRunUiServices,
+    createNativeAgentExecutionRunPermissions,
 } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionInteractions';
-import { createExecutionRunPermissionHandler, resolveExecutionRunInputAuthority } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
+import { createExecutionRunPermissionHandler, resolveExecutionRunInputAuthority, type ExecutionRunPermissionResponder } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
+import type { PermissionResult } from '@/agent/permissions/BasePermissionHandler';
 import { permissionMode as normalizeExecutionRunPermissionMode } from '@/agent/executionRuns/policy/permissionMode';
 import {
     buildExecutionRunPermissionRequestEnvelope,
@@ -75,6 +77,7 @@ import {
 } from '@/agent/runtime/session/input/providerInputOutcome';
 
 import type { ExecutionRunHostRuntime, ExecutionRunHostRuntimeEvent } from './executionRunHostRuntime';
+import { toRuntimePermissionResponseOutcome } from './executionRunHostRuntime';
 import type { ExecutionRunBackendStartContext } from '@/agent/executionRuns/registry/executionRunBackendTypes';
 import type { AgentInvocationTurnAdmissionWitness } from '@/plugins/runtime/invocation/services/types';
 import type { HostCurrentSessionUiServices } from '@/agent/runtime/state/currentSessionUiTypes';
@@ -164,7 +167,7 @@ export type NativeAgentSessionContextLeaseFactory = ((params: Readonly<{
         readActiveTurnAdmissionWitness?: () => AgentInvocationTurnAdmissionWitness | null;
         actionRequestAttributionV1?: ActionRequestAttributionV1;
     }>) => Promise<PluginServices>;
-    respondToPermissionRequest?: (requestId: string, approved: boolean) => boolean;
+    respondToPermissionRequest?: (requestId: string, approved: boolean, response?: PermissionResult) => ReturnType<ExecutionRunPermissionResponder>;
     abortPendingPermissionRequests?: (reason: string) => Promise<void>;
     onTurnTerminal?: (turnId: string) => Promise<void>;
     resolveStructuredInputForDispatch?: (params: Readonly<{
@@ -273,10 +276,12 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
         workspaceWrites: params.workspaceWrites,
         backendId: params.lease.agentId,
         getMcpToolContext: () => readMcpToolContext(),
+        getPermissionRequestStore: params.getPermissionRequestStore,
         ...(Object.hasOwn(params, 'causalPermissionAuthority')
             ? { causalPermissionAuthority: params.causalPermissionAuthority }
             : {}),
-        publishPendingRequest: async ({ requestId, toolName, toolInput, turnId, mcpTool }) => {
+        publishPendingRequest: async (request) => {
+            const { requestId, toolName, toolInput } = request;
             const requestStore = params.getPermissionRequestStore?.() ?? null;
             if (!requestStore) {
                 throw Object.assign(
@@ -307,13 +312,9 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
                 reason: toolName,
             });
             const publication = {
-                requestId,
-                toolName,
-                toolInput,
+                ...request,
                 createdAt: envelope.createdAtMs,
-                source: 'execution_run',
-                ...(turnId ? { turnId } : {}),
-                ...(mcpTool ? { mcpTool } : {}),
+                source: request.source ?? 'execution_run',
                 responseTarget: envelope.responseTarget,
                 sidechainId,
             };
@@ -325,6 +326,7 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
         },
     });
     const runPermissionScope = createRunScopedExecutionPermissionHandler({
+        parentSessionId: null,
         runId,
         controllerOccurrenceId: params.controllerOccurrenceId,
         handler: permissionHandler,
@@ -414,6 +416,19 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
         const pluginAttachments: Readonly<{ dispose(): void | Promise<void> }>[] = [];
         const disposeAttachments = async () => { await Promise.all(pluginAttachments.splice(0).map(attachment => attachment.dispose())); };
         const executionRunServices = createNativeAgentExecutionRunHostServices({
+            permissions: createNativeAgentExecutionRunPermissions({
+                permissionHandler: {
+                    handleToolCall: runPermissionScope.handler.handleToolCall,
+                    settleObservedDecision: runPermissionScope.settleObservedDecision,
+                },
+                pluginId: params.lease.pluginId,
+                runtimeId: `native-agent-run:${runId}`,
+                isCurrent: params.lease.isCurrent,
+                signal,
+                readPermissionMode: () => params.permissionMode,
+                ...(onInteractionUnavailable ? { onUnavailable: onInteractionUnavailable } : {}),
+                ...(readActiveTurnAdmissionWitness ? { readActiveTurnAdmissionWitness } : {}),
+            }),
             readResolvedMcpServers: () => resolvedRunMcpServers,
             signal,
             executionRunId: runId,
@@ -628,8 +643,8 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
         }>) {
             return (await bindInvocationServices(input)).services;
         },
-        respondToPermissionRequest(requestId: string, approved: boolean) {
-            return runPermissionScope.respondToPermissionRequest(requestId, approved);
+        respondToPermissionRequest(requestId: string, approved: boolean, response?: PermissionResult) {
+            return runPermissionScope.respondToPermissionRequest(requestId, response ?? approved);
         },
         async abortPendingPermissionRequests(reason: string) {
             await runPermissionScope.dispose(reason);
@@ -655,7 +670,7 @@ function createDisposedError(): Error {
 }
 
 function toHostMessage(
-    event: AgentExecutionRunEvent,
+    event: Exclude<AgentExecutionRunEvent, { kind: 'usage-observed' }>,
     sanitize: (value: string) => string,
 ): AgentMessage | null {
     switch (event.kind) {
@@ -1065,7 +1080,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
         rejectTurnCompletion(error);
     }
 
-    function settleEvent(normalizedEvent: AgentExecutionRunEvent): void {
+    function settleEvent(normalizedEvent: Exclude<AgentExecutionRunEvent, { kind: 'usage-observed' }>): void {
         const message = toHostMessage(normalizedEvent, sanitizeProviderDiagnosticText);
         if (message) emit(message);
         if (normalizedEvent.kind === 'run-complete' || normalizedEvent.kind === 'run-cancelled') {
@@ -1168,6 +1183,17 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
         }
         if (terminal) return;
         lastSequence = normalizedEvent.sequence;
+        if (normalizedEvent.kind === 'usage-observed') {
+            try {
+                params.options.start?.observeWorkflowUsage?.({
+                    turnId: normalizedEvent.turnId ?? null,
+                    observation: toNativeAgentUsageObservation(normalizedEvent, params.lease.agentId),
+                });
+            } catch {
+                // Usage publication cannot change the Run's lifecycle.
+            }
+            return;
+        }
         if (normalizedEvent.kind === 'checkpoint') checkpointId = normalizedEvent.checkpointId;
         if (recovery && normalizedEvent.kind === 'run-cancelled') return;
         if (normalizedEvent.kind === 'run-progress' || normalizedEvent.kind === 'output-delta'
@@ -1208,6 +1234,10 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
         const emitRunEvent = (value: RunEventInput, allowRecovery = true): void => {
             handleEvent({ ...value, runId, sequence: lastSequence + 1, emittedAtMs: event.emittedAtMs ?? Date.now() }, allowRecovery);
         };
+        if (event.kind === 'usage-observed') {
+            emitRunEvent(event);
+            return;
+        }
         if (event.kind === 'provider-session-id') {
             emitRunEvent({ kind: 'checkpoint', checkpointId: event.providerSessionId });
             return;
@@ -1477,10 +1507,8 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
         permissionCapability: params.respondToPermissionRequest ? 'responds' as const : 'static' as const,
         ...(params.respondToPermissionRequest
             ? {
-                async respondToPermission(requestId: string, approved: boolean) {
-                    return params.respondToPermissionRequest!(requestId, approved)
-                        ? { delivered: true as const }
-                        : { delivered: false as const, reason: 'unknown_request' as const };
+                async respondToPermission(requestId: string, approved: boolean, response?: PermissionResult) {
+                    return toRuntimePermissionResponseOutcome(await params.respondToPermissionRequest!(requestId, approved, response));
                 },
             }
             : {}),
@@ -1720,18 +1748,21 @@ export function createNativeAgentSessionExecutionRunHostRuntime(params: Readonly
     if (!sessions) {
         throw new Error(`Agent runtime '${params.lease.agentId}' does not support sessions`);
     }
-    let preparedSessionContext: NativeAgentSessionContextLease | null = null;
+    let preparedSessionContext: Readonly<{
+        lease: NativeAgentSessionContextLease;
+        executionRunContext: AgentExecutionRunRuntimeContextV1;
+    }> | null = null;
     let sourceSession: AgentSessionRuntime | null = null;
     const executionRuns: AgentExecutionRunRuntimeFactory = Object.freeze({
         async open(
             request: AgentExecutionRunOpenRequest,
-            executionContext: AgentRuntimeContext,
+            executionContext: AgentExecutionRunRuntimeContextV1,
         ) {
                 if (request.kind === 'fork') {
                     throw new Error('Host-derived Session execution runs do not support fork');
                 }
-                const sessionContext = preparedSessionContext;
-                if (!sessionContext || sessionContext.context !== executionContext) {
+                const sessionContext = preparedSessionContext?.lease;
+                if (!sessionContext || preparedSessionContext?.executionRunContext !== executionContext) {
                     throw new Error('Session Run context was not prepared by its host');
                 }
                 const readBoundaryError = (): Error | null => {
@@ -1927,8 +1958,16 @@ export function createNativeAgentSessionExecutionRunHostRuntime(params: Readonly
                     return disposal;
                 },
             });
-            preparedSessionContext = sessionContext;
-            return sessionContext;
+            const executionRunContext = createNativeAgentInvocationContext({
+                lease: params.lease,
+                onToolNormalizationSource: params.options.onToolNormalizationSource,
+                runId: readRequiredString(params.options.runId, 'a run id'),
+                signal: lease.context.signal,
+                services: lease.context.services,
+                invokedAtMs: lease.context.invokedAtMs,
+            });
+            preparedSessionContext = { lease: sessionContext, executionRunContext };
+            return { ...sessionContext, context: executionRunContext };
         },
         ...(params.generationSignal ? { generationSignal: params.generationSignal } : {}),
         ...(params.services ? { services: params.services } : {}),
@@ -2048,6 +2087,7 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
             disposeSessionContext = async () => { unsubscribeMcpToolPolicy?.(); await sessionContext.dispose(); };
             const common = {
                 sessionId: context.session.id,
+                ...(params.options.functionTools ? { functionTools: params.options.functionTools } : {}),
                 cwd: params.options.cwd,
                 ...(sessionContext.mcpServers ? { mcpServers: sessionContext.mcpServers } : {}),
                 ...(sessionContext.mcpToolPolicy ? { mcpToolPolicy: sessionContext.mcpToolPolicy } : {}),
@@ -2062,13 +2102,17 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
                 ...(params.options.configuration ? { configuration: params.options.configuration } : {}),
                 ...(params.options.providerBinding ? { providerBinding: params.options.providerBinding } : {}),
             };
-            const request = withSessionRunAgentEnvironment<AgentSessionOpenRequest>(resumeSessionId
+            const request = withSessionRunAgentEnvironment<Extract<AgentSessionOpenRequest, { kind: 'create' | 'resume' }>>(resumeSessionId
                 ? { ...common, kind: 'resume', providerSessionId: resumeSessionId }
                 : { ...common, kind: 'create' }, sessionContext.agentEnvironment);
             let opened: AgentSessionRuntime | null = null;
             try {
                 opened = await sessions.open(request, context);
                 sourceSession = opened;
+                if (request.functionTools?.length && opened.functionToolsDelivered !== true) {
+                    throw createExecutionRunCodedError('VOICE_AGENT_UNSUPPORTED',
+                        'This Agent conversation cannot receive native Voice Action functions. Start a fresh Voice conversation with a supported Agent.');
+                }
                 assertUsable();
                 assertNativeAgentSessionModeAvailable(request.configuration, sessionContext.publications);
                 if (opened.skillsDelivered === false && sessionContext.skills && sessionContext.capabilityNoticeSession) {
@@ -2084,6 +2128,10 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
                             const resumed = await sessions.open(request, context);
                             sourceSession = resumed;
                             try {
+                                if (request.functionTools?.length && resumed.functionToolsDelivered !== true) {
+                                    throw createExecutionRunCodedError('VOICE_AGENT_UNSUPPORTED',
+                                        'This retained Agent conversation cannot receive native Voice Action functions. Start a fresh Voice conversation.');
+                                }
                                 assertUsable();
                                 assertNativeAgentSessionModeAvailable(request.configuration, sessionContext.publications);
                                 if (resumed.skillsDelivered === false && sessionContext.skills && sessionContext.capabilityNoticeSession) {
@@ -2245,10 +2293,8 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
             : {}),
         ...(params.createSessionContext.respondToPermissionRequest
             ? {
-                async respondToPermission(requestId: string, approved: boolean) {
-                    return params.createSessionContext.respondToPermissionRequest!(requestId, approved)
-                        ? { delivered: true as const }
-                        : { delivered: false as const, reason: 'unknown_request' as const };
+                async respondToPermission(requestId: string, approved: boolean, response?: PermissionResult) {
+                    return toRuntimePermissionResponseOutcome(await params.createSessionContext.respondToPermissionRequest!(requestId, approved, response));
                 },
             }
             : {}),

@@ -27,7 +27,6 @@ export function createExecutionRunHostApprovalReplay(params: Readonly<{
       || context.actionCaller && context.actionCaller.kind !== 'host') return failure('present_user_required');
     const assertCurrent = async () => {
       signal?.throwIfAborted();
-      context.assertDecisionAuthorityCurrent?.();
       return await params.isCurrent();
     };
     if (!await assertCurrent()) return failure('credential_scope_retired');

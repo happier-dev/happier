@@ -119,7 +119,7 @@ import { enqueueExecutionRunMarkerWrite, writeExecutionRunActivityMarker } from 
 import type { ExecutionRunHostBridgeContract } from './executionRunBridgeContract';
 import { areExecutionRunBackendTargetsEqual, matchesExecutionRunLegacyBackendId, resolveExecutionRunRuntimeBackendId } from './backendTargets';
 import {
-  readExecutionRunPermissionResponseApprovedFromDispatch,
+  readExecutionRunPermissionResponseFromDispatch,
   observeExecutionRunPermissionStore,
   readExecutionRunPermissionResponseTargetFromDispatch,
   type ExecutionRunParentSessionPermissionResponseTarget,
@@ -216,6 +216,7 @@ export function buildExecutionRunSessionPromptContext(params: Readonly<{
 }
 
 type ExecutionRunRuntimeCreateOptions = Readonly<{
+  functionTools?: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionOpenRequest['functionTools'];
   projectLaunchContext?: import('@/agent/runtime/registry/engineRegistryTypes').ExecutionRunProjectLaunchContext;
   projectSetupOperation?: import('@/workspaces/projectSetup/projectSetupExecution').ProjectSetupOperationContext;
   cwd?: string;
@@ -1247,9 +1248,10 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       }>) => await resolveCliVoicePromptPreparation({ settings, profileId, sessionId, directory: workingDirectory ?? undefined, signal }));
 
     this.voiceAgentManager = new VoiceAgentManager({
-      createRuntime: ({ backendTarget, backendId, modelId, permissionIntent, start, connectedServices }) => {
+      createRuntime: ({ backendTarget, backendId, modelId, permissionIntent, start, connectedServices, functionTools }) => {
         try {
           return this.createExecutionRunRuntime({
+            ...(functionTools ? { functionTools } : {}),
             backendId,
             backendTarget,
             modelId,
@@ -1330,12 +1332,15 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     if (!responseTarget) return false;
     if (!this.isExactExecutionRunPermissionRequestIdentity(dispatch.requestId, responseTarget)) return false;
 
-    const approved = readExecutionRunPermissionResponseApprovedFromDispatch(dispatch);
-    if (approved === null) return false;
+    const response = readExecutionRunPermissionResponseFromDispatch(dispatch);
+    if (response === null) return false;
+    const approved = typeof response === 'boolean' ? response
+      : response.decision !== 'denied' && response.decision !== 'abort';
 
     const result = await this.respondToPermissionRequest(responseTarget.runId, {
       requestId: responseTarget.providerRequestId,
       approved,
+      ...(typeof response === 'object' ? { response } : {}),
       responseTarget,
     });
     return result.delivery?.delivered === true;
@@ -1397,6 +1402,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       ? opts.resolveAccountSettingsSnapshot
       : this.bindInvocationAccountSettingsSnapshot(opts.projectLaunchContext?.ingress);
     const runtime = createExecutionRunBridgeRuntime({
+      ...(opts.functionTools ? { functionTools: opts.functionTools } : {}),
       onToolNormalizationSource: (source) => { toolNormalizationSource = source; },
       ...(scope === 'detached' && opts.runId ? { workflowActionContext: {
         readRunId: () => {
@@ -2453,7 +2459,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
                   );
                 }
                 try {
-                  const operationContext = accountSnapshotResolver?.readOperationContext?.();
+                  const operationContext = accountSnapshotResolver?.readOperationContext?.() ?? undefined;
                   return resolveSecretReferenceOverlayEnvironment({
                     savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, { operationContext }),
                     accountSettings: snapshot.settings,
@@ -3453,6 +3459,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     params: Readonly<{
       requestId: string;
       approved: boolean;
+      response?: import('@/agent/permissions/BasePermissionHandler').PermissionResult;
       responseTarget?: ExecutionRunParentSessionPermissionResponseTarget | null;
     }>,
   ): Promise<ExecutionRunPermissionResponseBridgeResult> {
@@ -3501,7 +3508,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       return { ok: false, errorCode: 'execution_run_action_not_supported', error: 'Unsupported action' };
     }
 
-    const delivery = await respondToPermission(params.requestId, params.approved);
+    const delivery = await respondToPermission(params.requestId, params.approved, params.response);
     if (delivery.delivered !== true) {
       return {
         ok: false,
@@ -3515,7 +3522,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         type: 'permission-response',
         permissionId: params.requestId,
         approved: params.approved,
-        decision: params.approved ? 'approved' : 'denied',
+        decision: delivery.result?.decision ?? (params.approved ? 'approved' : 'denied'),
         sidechainId: run.sidechainId,
       });
     } catch {

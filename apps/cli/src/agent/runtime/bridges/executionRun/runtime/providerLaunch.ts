@@ -67,7 +67,7 @@ export async function admitExecutionRunInheritedProviderSelection(input: Executi
     validateExecutionRunProviderSelectionInput(input);
     const lease = input.runtimeRegistryLease ?? await acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir: input.happyHomeDir });
     try {
-        const prepared = await prepareProviderLaunch(createExecutionRunProviderPreparation(input, lease));
+        const prepared = await prepareProviderLaunch<never>(createExecutionRunProviderPreparation(input, lease));
         if (!prepared.ok) throw inheritedProviderRefusal(prepared.error);
         if (prepared.kind !== 'provider') {
             throw inheritedProviderRefusal(createProviderErrorV1('provider_incompatible_with_agent', {

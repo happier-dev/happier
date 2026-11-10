@@ -115,7 +115,10 @@ describe('resolveRunnerMcpServers catalog admission', () => {
     if (forced) await expect(pending).rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
     else {
       const profile = await pending;
-      try { expect(Object.keys(profile.mcpServers)).toEqual([]); }
+      try {
+        expect(Object.keys(profile.mcpServers)).toEqual([]);
+        expect(profile.happierMcpServer.supportedSessionReadActions).toEqual([]);
+      }
       finally { await profile.happierMcpServer.stop(); }
     }
     expect(catalogReads).toBe(0);

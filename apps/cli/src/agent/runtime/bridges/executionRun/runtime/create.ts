@@ -149,6 +149,7 @@ type LazyExecutionRunRuntimeShellConfig = Parameters<typeof createLazyExecutionR
 
 function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     onToolNormalizationSource?: CreateCliExecutionRunBackendParams['onToolNormalizationSource'];
+    functionTools?: CreateCliExecutionRunBackendParams['functionTools'];
     workflowActionContext?: CreateCliExecutionRunBackendParams['workflowActionContext'];
     readApprovalProfileId?: CreateCliExecutionRunBackendParams['readApprovalProfileId'];
     cwd: string;
@@ -398,7 +399,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     if (!snapshot) {
                         throw new LaunchSecretReferenceOverlayError('reference_unavailable', 'launch');
                     }
-                    const operationContext = opts.resolveAccountSettingsSnapshot?.readOperationContext?.();
+                    const operationContext = opts.resolveAccountSettingsSnapshot?.readOperationContext?.() ?? undefined;
                     secretReferenceEnvironment = resolveSecretReferenceOverlayEnvironment({
                         savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, { operationContext }),
                         accountSettings: snapshot.settings,
@@ -519,6 +520,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 ...(opts.workflowActionContext ? { workflowActionContext: opts.workflowActionContext } : {}),
                 ...(opts.readApprovalProfileId ? { readApprovalProfileId: opts.readApprovalProfileId } : {}),
                 start: opts.start ?? null,
+                ...(opts.functionTools ? { functionTools: opts.functionTools } : {}),
                 ...(opts.onToolNormalizationSource ? { onToolNormalizationSource: opts.onToolNormalizationSource } : {}),
                 ...(opts.parentSessionStateTarget ? { parentSessionStateTarget: opts.parentSessionStateTarget } : {}),
                 ...(opts.happierSessionId ? { happierSessionId: opts.happierSessionId } : {}),
@@ -629,6 +631,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
 
 export function createExecutionRunRuntime(opts: Readonly<{
     onToolNormalizationSource?: CreateCliExecutionRunBackendParams['onToolNormalizationSource'];
+    functionTools?: CreateCliExecutionRunBackendParams['functionTools'];
     workflowActionContext?: CreateCliExecutionRunBackendParams['workflowActionContext'];
     readApprovalProfileId?: CreateCliExecutionRunBackendParams['readApprovalProfileId'];
     projectLaunchContext?: CreateCliExecutionRunBackendParams['projectLaunchContext'];
@@ -705,7 +708,8 @@ export function createExecutionRunRuntime(opts: Readonly<{
         }
         : resolvedBackendTarget?.canonical;
     const runtimeShellConfig = createEngineExecutionRunRuntimeShellConfig({
-            ...(opts.onToolNormalizationSource ? { onToolNormalizationSource: opts.onToolNormalizationSource } : {}),
+            ...(opts.functionTools ? { functionTools: opts.functionTools } : {}),
+                ...(opts.onToolNormalizationSource ? { onToolNormalizationSource: opts.onToolNormalizationSource } : {}),
             ...(opts.workflowActionContext ? { workflowActionContext: opts.workflowActionContext } : {}),
             ...(opts.readApprovalProfileId ? { readApprovalProfileId: opts.readApprovalProfileId } : {}),
             ...(opts.projectLaunchContext ? { projectLaunchContext: opts.projectLaunchContext } : {}),
