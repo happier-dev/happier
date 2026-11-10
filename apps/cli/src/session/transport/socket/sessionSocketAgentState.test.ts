@@ -35,6 +35,51 @@ function createSocketStub() {
 }
 
 describe('waitForIdleViaSocket', () => {
+  it('rechecks the admitted input when its completed projection precedes native assistant delivery', async () => {
+    vi.useFakeTimers();
+    const socket = createSocketStub();
+    vi.doMock('@/api/session/sockets', () => ({
+      createSessionScopedSocketConnection: () => ({ socket, transport: createSocketTransportAdapter({ ...socket, connected: false }) }),
+    }));
+    const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
+    const { detectSessionTurnActivityFromProjection } = await import('@/session/query/detectSessionTurnInFlight');
+    let current = { latestTurnStatus: 'in_progress', pendingCount: 0,
+      pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0 };
+    const result = waitForIdleViaSocket({ token: 'token', sessionId: 'sess-1', ctx: null,
+      sessionEncryptionMode: 'plain', timeoutMs: 120_000,
+      initialTurnActivity: { pendingUserTurns: 1, activeTaskInFlight: false, turnInFlight: true },
+      initialAgentStateCiphertextBase64: null, preferProjectionUpdates: false,
+      readyCompletesPendingUserTurns: false,
+      recheckTurnActivity: async () => {
+        const activity = detectSessionTurnActivityFromProjection(current);
+        if (!activity) throw new Error('Expected the current input projection');
+        return activity;
+      },
+    });
+    let settled = false;
+    void result.then(() => { settled = true; }, () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    // QA seq34 was committed before completion, which preceded seq37 by 66ms.
+    // No task-start or assistant delivery was observed by this subscriber.
+    const complete = (controlledByUser = false) => socket.emit('update', { id: 'completed', seq: 36, createdAt: 1794322921749, body: {
+      t: 'update-session', id: 'sess-1', latestTurnStatus: 'completed', pendingCount: 0,
+      pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
+      agentState: { value: JSON.stringify({ controlledByUser, requests: {} }), version: 1 },
+    } });
+    // A previous turn's terminal projection cannot finish this admitted input.
+    complete();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    current = { ...current, latestTurnStatus: 'completed' };
+    complete(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    complete();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(true);
+    await expect(result).resolves.toMatchObject({ idle: true });
+  });
+
   it.each(['projection', 'transcript'] as const)('settles a queued input from the published failed turn when materialization delivery was missed (%s)', async (source) => {
     vi.useFakeTimers();
     const socket = createSocketStub();

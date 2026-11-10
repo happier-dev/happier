@@ -466,6 +466,52 @@ describe('target Session input authoring through HTTP', () => {
     else expect(result).toMatchObject({ ok: false, errorCode: 'timeout' });
   });
 
+  it.each(['plain', 'e2ee'] as const)('settles Send when native completion precedes assistant delivery without a busy edge (%s)', async mode => {
+    const ctx = { encryptionKey: credentials.encryption.secret, encryptionVariant: 'legacy' as const };
+    const content = (value: unknown) => SessionMessageContentSchema.parse(mode === 'plain'
+      ? { t: 'plain', v: value }
+      : { t: 'encrypted', c: encryptSessionPayload({ ctx, payload: value }) });
+    const input = { id: 'input-message', seq: 34, localId: 'input-a', createdAt: 1794322917688, updatedAt: 1794322917688,
+      content: content({ role: 'user', content: { type: 'text', text: 'No tools. Reply SWITCH_OK.' } }) };
+    const assistant = { id: 'assistant-message', seq: 37, localId: null, createdAt: 1794322921815, updatedAt: 1794322921815,
+      content: content({ role: 'agent', content: { type: 'acp', agentId: 'claude', data: { type: 'text', text: 'SWITCH_OK.' } } }) };
+    let completed = false;
+    let connections = 0;
+    sockets.createSessionScopedSocketConnection.mockImplementation(() => {
+      const socket = Object.assign(new EventEmitter(), { connected: false, connect: () => {}, disconnect: () => {}, close: () => {} });
+      if (++connections === 2) setImmediate(() => {
+        completed = true;
+        socket.emit('update', { id: 'completed-update', seq: 36, createdAt: 1794322921749, body: {
+          t: 'update-session', id: sessionId, latestTurnStatus: 'completed', latestTurnStatusObservedAt: 1794322921749,
+          pendingCount: 0, pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
+        } });
+      });
+      return { socket, transport: createSocketTransportAdapter(socket) };
+    });
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/currentness')) return { status: 200, data: { mode, version: 1, updatedAt: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null } };
+      if (url.includes('/messages/by-local-id/')) return { status: 200, data: { message: input } };
+      if (url.includes('/messages?')) return { status: 200, data: { messages: completed ? [input, assistant] : [input], hasMore: false } };
+      if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
+        id: sessionId, active: true, encryptionMode: mode, share: null, dataEncryptionKey: null,
+        latestTurnStatus: 'completed', latestTurnStatusObservedAt: completed ? 1794322921749 : 1794322864589,
+        pendingCount: 0, pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
+        metadata: mode === 'plain' ? '{}' : encryptSessionPayload({ ctx, payload: {} }),
+      }) } };
+      throw new Error(`Unexpected completion read: ${url}`);
+    });
+    const senderCredentials = mode === 'plain' ? { token: credentials.token, encryption: null } : credentials;
+    const deps = createCliActionDeps({ token: credentials.token, credentials: senderCredentials, sessionId,
+      mode, ctx: mode === 'plain' ? null : ctx });
+    const result = await createActionExecutor({ ...deps, isActionApprovalRequired: () => false }).execute('session.message.send', {
+      sessionId, localId: input.localId, message: 'No tools. Reply SWITCH_OK.', wait: true, timeoutSeconds: 1,
+    }, { surface: 'mcp', authority: 'present_user', defaultSessionId: null });
+    expect(result).toMatchObject({ ok: true, result: { status: 'accepted', localId: input.localId } });
+    expect(completed).toBe(true);
+    expect(http.post).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps signed wait target reads and cancellation under the original requester', async () => {
     const observer = new AbortController();
     const read = http.get.getMockImplementation()!;

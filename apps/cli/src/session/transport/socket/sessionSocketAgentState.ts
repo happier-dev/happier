@@ -472,6 +472,18 @@ export async function waitForIdleViaSocket(params: Readonly<{
           || observedTurnProgress
           || activeTaskInFlight
           || projectedTurnStatus === 'in_progress';
+        if (!canUseTerminalProjection && projectedTurnStatus && params.recheckTurnActivity) {
+          // Completion can precede this subscriber's first native output.
+          // The caller's current-input reader distinguishes it from an older
+          // turn; missing busy delivery is not evidence that work remains.
+          if (projectedSummary) {
+            latestSummary = projectedSummary;
+            hasFreshAgentStateObservation = true;
+          }
+          requiresTranscriptIdleEvidence = true;
+          resolveIdle();
+          return;
+        }
         if (projectedActivity && projectedSummary) {
           if (readyCompletesPendingUserTurns) preferProjectionUpdates = true;
           if (projectedActivity.activeTaskInFlight) pendingInputTurnsAwaitingMaterialization = projectedActivity.pendingUserTurns;
