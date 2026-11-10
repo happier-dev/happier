@@ -48,7 +48,9 @@ it('preserves explicit Run recovery while bootstrapping its inactive parent', ()
   expect(resolveSessionUserMessageRequestedAction({ deliveryIntent: 'runtime_bootstrap', requestedAction: { v: 1, kind: 'enqueue' } }))
     .toEqual({ v: 1, kind: 'send_now' });
 });
-const credentials = { token: 'target-send-test', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
+// Plain-account cases retain this key only to read historical encrypted rows.
+const credentials = { token: 'target-send-test', accountE2eeCustody: 'historical' as const,
+  encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
 const correspondence = {
   v: 1,
   sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'target-send-test' }),
@@ -433,6 +435,36 @@ describe('target Session input authoring through HTTP', () => {
     }), { status: 200 })));
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  it.each(['failed', 'timeout'] as const)('returns the recorded failed turn or observer timeout through the public waiting Send Action (%s)', async (outcome) => {
+    const retainedCredentials = { ...credentials, accountE2eeCustody: 'historical' as const };
+    const read = http.get.getMockImplementation()!;
+    const user = { id: 'input-message', seq: 1, localId: 'input-a', createdAt: 1, updatedAt: 1,
+      content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Reply OK' } } } };
+    http.get.mockImplementation(async (url: string) => {
+      if (url.includes('/messages/by-local-id/')) return { status: 200, data: { message: outcome === 'failed' ? user : null } };
+      if (url.includes('/pending')) return { status: 200, data: { pending: [] } };
+      if (url.includes('/messages')) return { status: 200, data: { messages: [user,
+        { id: 'failed', seq: 2, localId: null, createdAt: 2, updatedAt: 2,
+          content: { t: 'plain', v: { role: 'agent', content: { type: 'acp', agentId: 'opencode',
+            data: { type: 'turn_failed', id: 'native-turn-1' } } } } },
+        { id: 'ready', seq: 3, localId: null, createdAt: 3, updatedAt: 3,
+          content: { t: 'plain', v: { role: 'agent', content: { type: 'event', data: { type: 'ready' } } } } },
+      ] } };
+      if (url.includes('/turns')) return { status: 200, data: { turns: [] } };
+      const result = await read(url);
+      if (url.endsWith(`/v2/sessions/${sessionId}`)) Object.assign(result.data.session, {
+        active: true, latestTurnStatus: 'failed', latestTurnStatusObservedAt: 2,
+        pendingCount: 0, pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
+      });
+      return result;
+    });
+    const deps = createCliActionDeps({ token: credentials.token, credentials: retainedCredentials, sessionId, mode: 'plain', ctx: null });
+    const result = await deps.sessionSendMessage!({ context: cliActionContext, sessionId,
+      localId: 'input-a', message: 'Reply OK', wait: true, timeoutSeconds: 1 });
+    if (outcome === 'failed') expect(result).toEqual({ status: 'failed', code: 'session_input_turn_failed', localId: 'input-a' });
+    else expect(result).toMatchObject({ ok: false, errorCode: 'timeout' });
+  });
 
   it('keeps signed wait target reads and cancellation under the original requester', async () => {
     const observer = new AbortController();

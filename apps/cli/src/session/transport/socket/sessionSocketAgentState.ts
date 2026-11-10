@@ -491,12 +491,12 @@ export async function waitForIdleViaSocket(params: Readonly<{
             }
             return;
           }
-          if (pendingInputTurnsAwaitingMaterialization > 0) {
-            return;
-          }
           if (!canUseTerminalProjection) {
             return;
           }
+          // The complete projection already proves no queued input or active
+          // turn remains. Missing transcript delivery cannot overrule its owner.
+          pendingInputTurnsAwaitingMaterialization = 0;
           pendingUserTurns = nextPendingUserTurns;
           activeTaskInFlight = nextActiveTaskInFlight;
           latestSummary = projectedSummary;
@@ -634,9 +634,17 @@ export async function waitForIdleViaSocket(params: Readonly<{
         observedTurnProgress = true;
       }
       if (lifecycleEvent === 'task_started') {
-        pendingInputTurnsAwaitingMaterialization = Math.max(0, pendingInputTurnsAwaitingMaterialization - 1);
         observedTurnProgress = true;
       }
+
+      // A terminal native event can be the first observed fact for this input
+      // (for example an OpenCode quota refusal without task_started). Reduce
+      // the unobserved inputs through the same lifecycle owner as visible ones.
+      pendingInputTurnsAwaitingMaterialization = applySessionTurnLifecycleEvent({
+        pendingUserTurns: pendingInputTurnsAwaitingMaterialization,
+        activeTaskInFlight,
+        event: lifecycleEvent,
+      }).pendingUserTurns;
 
       ({
         pendingUserTurns,

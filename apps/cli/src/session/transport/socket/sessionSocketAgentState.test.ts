@@ -35,6 +35,38 @@ function createSocketStub() {
 }
 
 describe('waitForIdleViaSocket', () => {
+  it.each(['projection', 'transcript'] as const)('settles a queued input from the published failed turn when materialization delivery was missed (%s)', async (source) => {
+    vi.useFakeTimers();
+    const socket = createSocketStub();
+    vi.doMock('@/api/session/sockets', () => ({
+      createSessionScopedSocketConnection: () => ({ socket, transport: createSocketTransportAdapter({ ...socket, connected: false }) }),
+    }));
+    const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
+    const result = waitForIdleViaSocket({ token: 'token', sessionId: 'sess-1', ctx: null,
+      sessionEncryptionMode: 'plain', timeoutMs: 1000, preferProjectionUpdates: true,
+      initialTurnActivity: { pendingUserTurns: 1, activeTaskInFlight: false, turnInFlight: true },
+      initialAgentStateCiphertextBase64: null });
+    let settled = false;
+    void result.then(() => { settled = true; }, () => {});
+    await vi.advanceTimersByTimeAsync(0);
+    if (source === 'projection') socket.emit('update', { id: 'failed', seq: 2, createdAt: 2, body: {
+      t: 'update-session', id: 'sess-1', latestTurnStatus: 'failed', pendingCount: 0,
+      pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
+    } });
+    // Recorded OpenCode refusal: a native turn_failed followed by host ready.
+    for (const [index, content] of [
+      { type: 'acp', agentId: 'opencode', data: { type: 'turn_failed', id: 'native-turn-1' } },
+      { type: 'event', data: { type: 'ready' } },
+    ].entries()) if (source === 'transcript') socket.emit('update', { id: `terminal-${index}`, seq: index + 2, createdAt: 2, body: {
+      t: 'new-message', delivery: 'full', sid: 'sess-1', message: {
+        id: `terminal-${index}`, seq: index + 2, localId: null, createdAt: 2, updatedAt: 2,
+        content: { t: 'plain', v: { role: 'agent', content } },
+      },
+    } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(true);
+    await expect(result).resolves.toMatchObject({ idle: true });
+  });
   afterEach(() => {
     vi.resetModules();
     vi.clearAllMocks();

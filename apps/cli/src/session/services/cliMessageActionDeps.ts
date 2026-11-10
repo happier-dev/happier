@@ -57,6 +57,10 @@ function projectSessionMessageSendActionResult(
   result: SendSessionMessageResult,
 ): SessionMessageSendResultV1 | null {
   if (!result.ok && result.settlementResult) return result.settlementResult;
+  // An admitted input remains in custody when observation times out, but its
+  // receipt must not hide the waiting caller's timeout or cancellation.
+  if (!result.ok && (result.code === 'timeout' || result.code === 'cancelled')
+    && (result.admissionResult?.status === 'accepted' || result.admissionResult?.status === 'alreadyAccepted')) return null;
   if (result.admissionResult) return result.admissionResult;
   if (result.ok) return { status: 'accepted', localId: result.localId };
   return null;

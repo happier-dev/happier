@@ -552,16 +552,15 @@ function readAssistantTurnFailure(value: unknown): AssistantTurnFailure | null {
 function readProjectedCurrentTurnFailure(params: Readonly<{
   session: unknown;
   currentUserCreatedAt: number | null;
-}>): string | null {
+}>): AssistantTurnFailure | null {
   const latestTurnStatus = readProjectedCurrentTurnStatus(params);
   if (latestTurnStatus !== 'failed' && latestTurnStatus !== 'cancelled') {
     return null;
   }
   const record = asRecord(params.session);
-  return formatStructuredTurnFailureMessage(
-    latestTurnStatus,
-    readStructuredIssuePreview(record?.lastRuntimeIssue),
-  );
+  return { kind: latestTurnStatus, message: formatStructuredTurnFailureMessage(
+    latestTurnStatus, readStructuredIssuePreview(record?.lastRuntimeIssue),
+  ) };
 }
 
 function readProjectedCurrentTurnStatus(params: Readonly<{
@@ -2296,6 +2295,9 @@ export async function sendSessionMessage(
           ok: false,
           code: 'wait_failed',
           message: assistantTurnOutcome.message,
+          settlementResult: assistantTurnOutcome.kind === 'failed'
+            ? { status: 'failed', localId, code: 'session_input_turn_failed' }
+            : { status: 'cancelled', localId, code: 'session_input_turn_cancelled' },
           ...(admissionResult ? { admissionResult } : {}),
         };
       }
@@ -2409,7 +2411,10 @@ export async function sendSessionMessage(
       return {
         ok: false,
         code: 'wait_failed',
-        message: projectedFailure,
+        message: projectedFailure.message,
+        settlementResult: projectedFailure.kind === 'cancelled'
+          ? { status: 'cancelled', localId, code: 'session_input_turn_cancelled' }
+          : { status: 'failed', localId, code: 'session_input_turn_failed' },
         ...(admissionResult ? { admissionResult } : {}),
       };
     }
@@ -2425,6 +2430,9 @@ export async function sendSessionMessage(
         ok: false,
         code: 'wait_failed',
         message: transcriptFailure.message,
+        settlementResult: transcriptFailure.kind === 'cancelled'
+          ? { status: 'cancelled', localId, code: 'session_input_turn_cancelled' }
+          : { status: 'failed', localId, code: 'session_input_turn_failed' },
         ...(admissionResult ? { admissionResult } : {}),
       };
     }
@@ -2458,6 +2466,9 @@ export async function sendSessionMessage(
         ok: false,
         code: 'wait_failed',
         message: assistantTurnOutcome.message,
+        settlementResult: assistantTurnOutcome.kind === 'failed'
+          ? { status: 'failed', localId, code: 'session_input_turn_failed' }
+          : { status: 'cancelled', localId, code: 'session_input_turn_cancelled' },
         ...(admissionResult ? { admissionResult } : {}),
       };
     }
