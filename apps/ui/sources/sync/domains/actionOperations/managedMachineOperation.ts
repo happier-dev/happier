@@ -2,9 +2,9 @@ import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/op
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
-/** Enrollment can precede the installer's final confirmation; joining alone does not complete bootstrap. */
+/** Enrollment can precede bootstrap completion; its producer retains bootstrap.<failure code> after failure. */
 export function isManagedMachineBootstrapIncomplete(machine: ManagedMachineV1): boolean {
-    return machine.observation?.reason === 'bootstrap.incomplete';
+    return machine.observation?.reason?.startsWith('bootstrap.') === true;
 }
 
 /** Waiting for idle has not submitted the retention effect. Activity keeps this operation's receipt. */

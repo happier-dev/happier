@@ -1007,6 +1007,14 @@ describe('managed creation presentation', () => {
     expect(canRetryManagedInstallation({ ...incomplete, desired: 'delete' })).toBe(false);
     expect(canRetryManagedInstallation(incomplete, null, { providerAvailable: false })).toBe(false);
   });
+  it.each(['action_interactive_review_required', 'database_transaction_timeout', 'failed'])(
+    'keeps an enrolled bootstrap %s failure recoverable without its failed operation receipt', code => {
+    const retained: ManagedMachineV1 = { ...machine, enrolledMachineId: 'guest', bootstrapInstalled: true,
+      observation: { availability: 'unavailable', reason: `bootstrap.${code}`, observedAt: 4 } };
+    const connected = { enrolledMachine: { machineId: 'guest', installationId: 'guest-installation', online: true, serviceManaged: true } };
+    expect(canRetryManagedInstallation(retained, null, connected)).toBe(true);
+    expect(canRetryManagedInstallation({ ...retained, observation: { availability: 'unavailable', observedAt: 4 } }, null, connected)).toBe(false);
+  });
   it('keeps an unenrolled resource retryable after a later power operation replaces the visible operation', () => {
     const powerOperation: ActionOperationProjection = {
       serverId: machine.homeId,

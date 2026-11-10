@@ -20,10 +20,10 @@ export async function applyManagedMachineEnrollmentIsolation(params: Readonly<{
         kind: 'managedAgentIsolation', phase: 'machines.agentIsolation.preview',
         status: projectMachineAgentIsolationUnavailableStatusV1(preview.data),
     });
-    // A settled matching guest needs no mutation or new approval on Retry.
-    if (agentIsolationMetadataFieldV1.equal(preview.data.policy, policy)
-        && preview.data.status.kind === (policy.enabled ? 'effective' : 'disabled')
-        && !preview.data.plan.requiresAdmin && preview.data.plan.sessionsToReplace === 0) return;
+    // Enrollment owns policy, not native readiness. In particular, a retained
+    // per-person policy does not depend on the global shared-user probe after
+    // a CLI update. Member admission owns native preparation and repair.
+    if (agentIsolationMetadataFieldV1.equal(preview.data.policy, policy)) return;
     const result = MachineAgentIsolationSetResultV1Schema.safeParse(await dispatch({ actionId: 'machines.agentIsolation.set', input: {
         ...target, ...policy, expectedMetadataVersion: preview.data.metadataVersion,
         expectedPolicy: preview.data.policy, expectedPlanDigest: preview.data.plan.planDigest,
