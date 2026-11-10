@@ -195,6 +195,7 @@ describe('Bitbucket pull-request merge', () => {
     // chose — neither is defaulted here, and no fourth field is invented.
     expect(write?.body).toEqual({ close_source_branch: true, merge_strategy: 'fast_forward' });
     expect(writesTo(requests, MERGE_URL)).toBe(1);
+    expect(requests.filter(request => request.url.includes('/statuses'))).toEqual([]);
   });
 
   it('preserves a merge message beyond the retired local comment-body cap', async () => {

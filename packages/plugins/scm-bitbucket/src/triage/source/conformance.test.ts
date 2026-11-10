@@ -55,6 +55,8 @@ describe('Bitbucket Triage source contribution conformance', () => {
 
     expect(descriptor.kinds.map((kind) => kind.id)).toEqual(['pull-request']);
     expect(descriptor.kinds[0]?.workflowSubject).toBe('pullRequest');
+    expect(descriptor.kinds[0]?.detailTabs?.find(tab => tab.id === 'checks'))
+      .toMatchObject({ summaryFact: 'bitbucket/builds' });
     expect(descriptor.purpose).toBe('bitbucket-connected-account');
     expect(JSON.stringify(PLUGIN_MANIFEST.contributes.targetedPluginContributions))
       .not.toContain('issue');

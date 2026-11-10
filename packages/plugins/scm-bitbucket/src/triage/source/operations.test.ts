@@ -959,6 +959,51 @@ describe('Bitbucket scan', () => {
 });
 
 describe('Bitbucket get', () => {
+  it.each([
+    { name: 'empty', states: [], expected: null },
+    { name: 'passing', states: ['SUCCESSFUL'], expected: { value: 'All passing', tone: 'success' } },
+    { name: 'failing', states: ['FAILED', 'ERROR', 'SUCCESSFUL'], expected: { value: '2 failing', tone: 'danger' } },
+    { name: 'running', states: ['SUCCESSFUL', 'INPROGRESS'], expected: { value: 'Running', tone: 'info' } },
+    { name: 'stopped', states: ['STOPPED'], expected: { value: 'Builds unavailable', tone: 'warning' } },
+    { name: 'passing and stopped', states: ['SUCCESSFUL', 'STOPPED'], expected: { value: 'Builds unavailable', tone: 'warning' } },
+    { name: 'unknown state', states: ['NEW_NATIVE_STATE'], expected: { value: 'Builds unavailable', tone: 'warning' } },
+    { name: 'partial', states: ['SUCCESSFUL'], next: true, expected: { value: 'Builds unavailable', tone: 'warning' } },
+    { name: 'forbidden', states: [], status: 403, expected: { value: 'Builds unavailable', tone: 'warning' } },
+    { name: 'unprojectable', states: ['SUCCESSFUL'], malformed: true, expected: { value: 'Builds unavailable', tone: 'warning' } },
+  ])('publishes opening builds from one native status page: $name', async scenario => {
+    const { connectedAccounts } = createConnectedAccountsStub({ accounts: [{ accountId: 'account-1' }] });
+    const next = 'https://api.bitbucket.org/2.0/repositories/example/deploy-tools/pullrequests/42/statuses?page=2';
+    const { http, requests } = createHttpStub(routeBitbucket({
+      '/pullrequests/42/statuses': {
+        status: scenario.status,
+        body: {
+          values: [
+            ...scenario.states.map((state, index) => ({ key: `build-${index}`, state })),
+            ...(scenario.malformed ? [{ state: 'FAILED' }] : []),
+          ],
+          ...(scenario.next ? { next } : {}),
+        },
+      },
+    }));
+    const result = TriageGetResultV1Schema.parse(await getBitbucketSourceEntry(
+      createRuntime(connectedAccounts, http),
+      { v: 1, instance: configuredInstance(), localRef: {
+        kindId: 'pull-request', collisionScope: `bitbucket:${REPOSITORY_UUID}`, entryId: '42',
+      }, lastKnownLocator: { v: 1, routingToken: 'example-workspace/deploy-tools' } },
+    ));
+    expect(result.kind).toBe('present');
+    if (result.kind !== 'present') throw new Error('the authoritative PR remains available');
+    const builds = result.snapshot.facts.find(fact => fact.id === 'bitbucket/builds');
+    if (scenario.expected === null) expect(builds).toBeUndefined();
+    else expect(builds).toMatchObject({ importance: 'primary', value: { kind: 'status', ...scenario.expected } });
+    // Keep the existing PR status route rather than guessing a commit route in
+    // the destination repository, and leave later pages to the explicit Builds reader.
+    expect(requests.filter(request => request.url.includes('/statuses'))).toMatchObject([
+      { method: 'GET', url: expect.stringContaining(`/repositories/${encodeURIComponent(WORKSPACE_UUID)}/deploy-tools/pullrequests/42/statuses`) },
+    ]);
+    expect(requests.some(request => request.url === next || request.url.includes('/commit/'))).toBe(false);
+  });
+
   it('reads one pull request authoritatively through its exact configured instance', async () => {
     const { connectedAccounts } = createConnectedAccountsStub({
       accounts: [{ accountId: 'account-1' }],

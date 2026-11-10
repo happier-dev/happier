@@ -271,6 +271,8 @@ export type BitbucketBuildRollupV1 = Readonly<{
   failingCount: number;
   runningCount: number;
   passingCount: number;
+  /** Native statuses outside those three classes, including cancelled builds. */
+  unclassifiedCount: number;
 }>;
 
 const FAILING_STATES = new Set(['FAILED', 'ERROR']);
@@ -305,7 +307,12 @@ export function projectBitbucketBuildRollup(input: Readonly<{
     else if (RUNNING_STATES.has(state)) runningCount += 1;
     else if (PASSING_STATES.has(state)) passingCount += 1;
   }
-  return Object.freeze({ failingCount, runningCount, passingCount });
+  return Object.freeze({
+    failingCount,
+    runningCount,
+    passingCount,
+    unclassifiedCount: input.rows.length - failingCount - runningCount - passingCount,
+  });
 }
 
 /* ------------------------------------------------------------------ comments */

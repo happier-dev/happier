@@ -210,6 +210,19 @@ describe('Bitbucket builds plane', () => {
     expect(settled.runningCount).toBe(0);
     expect(settled.passingCount).toBe(0);
   });
+
+  it('omits totals when a native status could not be projected', async () => {
+    const seam = harness(url => url.includes('/pullrequests/42/statuses')
+      ? envelope([{ ...STATUS, state: 'SUCCESSFUL' }, { state: 'FAILED' }])
+      : undefined);
+    const settled = BitbucketBuildsResultV1Schema.parse(await listBitbucketBuilds(planeInput(), seam.context));
+    if (settled.kind !== 'builds') throw new Error('the valid status row remains available');
+    expect(settled.rows).toHaveLength(1);
+    expect(settled.omittedRowCount).toBe(1);
+    expect(settled).not.toHaveProperty('failingCount');
+    expect(settled).not.toHaveProperty('runningCount');
+    expect(settled).not.toHaveProperty('passingCount');
+  });
 });
 
 /* ------------------------------------------------------------------ comments */

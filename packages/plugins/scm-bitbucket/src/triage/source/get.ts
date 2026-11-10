@@ -4,8 +4,10 @@ import type {
 } from '@happier-dev/triage-protocol/v1';
 
 import type { BitbucketSourceRuntime } from './authorization.js';
+import { readBitbucketBuildsPage } from '../detail/reads.js';
 import { admitBitbucketEntryInvocation } from './invocationAdmission.js';
 import { observeBitbucketEntry } from './observeEntry.js';
+import { buildBitbucketBuildFact } from './observations.js';
 
 /**
  * Bitbucket Cloud V1 never concludes absence.
@@ -37,10 +39,23 @@ export async function getBitbucketSourceEntry(
   // The viewer read, the pull-request read, the projection and the returned-ref check all belong to
   // the one entry-observation owner, which the mutations reach for their currentness and confirming
   // reads. Two copies of it would be two answers to the same question about the same entry.
-  return await observeBitbucketEntry({
+  const observation = await observeBitbucketEntry({
     client: admitted.client,
     route: admitted.route,
     localRef: input.localRef,
     ...(runtime.signal === undefined ? {} : { signal: runtime.signal }),
   });
+  if (observation.kind !== 'present') return observation;
+
+  // Only an exact detail get asks for builds. Shared mutation observations keep
+  // their existing currentness/confirmation reads without a status-page fetch.
+  const builds = await readBitbucketBuildsPage({ route: admitted.route, position: { kind: 'first' } }, {
+    client: admitted.client,
+    ...(runtime.signal === undefined ? {} : { signal: runtime.signal }),
+  });
+  const fact = buildBitbucketBuildFact(builds.ok ? builds.value.rollup : null);
+  return fact === null ? observation : {
+    ...observation,
+    snapshot: { ...observation.snapshot, facts: [...observation.snapshot.facts, fact] },
+  };
 }

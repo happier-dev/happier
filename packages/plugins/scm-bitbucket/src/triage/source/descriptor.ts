@@ -80,7 +80,7 @@ export const BITBUCKET_TRIAGE_DESCRIPTOR: TriageSourceDescriptorV1 = Object.free
         Object.freeze({ kind: 'shared', id: 'overview', scrollOwner: bitbucketDetailTabDeclaration('overview').scrollOwner }),
         Object.freeze({ kind: 'shared', id: 'activity', scrollOwner: bitbucketDetailTabDeclaration('activity').scrollOwner }),
         Object.freeze({ kind: 'shared', id: 'files', scrollOwner: bitbucketDetailTabDeclaration('diff').scrollOwner }),
-        Object.freeze({ kind: 'shared', id: 'checks', scrollOwner: bitbucketDetailTabDeclaration('builds').scrollOwner }),
+        Object.freeze({ kind: 'shared', id: 'checks', scrollOwner: bitbucketDetailTabDeclaration('builds').scrollOwner, summaryFact: 'bitbucket/builds' }),
       ]),
       detailActions: true,
     }),

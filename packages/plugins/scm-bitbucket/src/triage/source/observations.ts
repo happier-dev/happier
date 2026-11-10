@@ -23,6 +23,7 @@ import {
   BITBUCKET_TRIAGE_DEPLOYMENT_BASE_URL_V1,
 } from '../identity.js';
 import type { BitbucketInvolvement } from '../pullRequests.js';
+import type { BitbucketBuildRollupV1 } from '../detail/projection.js';
 import { toBoundedDisplayLine } from '../text.js';
 
 import { BITBUCKET_PULL_REQUEST_KIND_ID } from './descriptor.js';
@@ -75,6 +76,19 @@ function readScopeLabelSource(entry: BitbucketPullRequestEntry): string {
 
 /** @internal One candidate row fact together with whether projecting it cost content. */
 type FactDraft = Readonly<{ fact: TriageRowFactV1; truncated: boolean }>;
+
+/** Opening detail consumes the same complete native rollup as the Builds plane. */
+export function buildBitbucketBuildFact(rollup: BitbucketBuildRollupV1 | null): TriageRowFactV1 | null {
+  if (rollup !== null && rollup.unclassifiedCount === 0 && rollup.failingCount === 0 && rollup.runningCount === 0 && rollup.passingCount === 0) return null;
+  const value: TriageRowFactV1['value'] = rollup === null || rollup.unclassifiedCount > 0
+    ? { kind: 'status', value: 'Builds unavailable', tone: 'warning' }
+    : rollup.failingCount > 0
+      ? { kind: 'status', value: `${rollup.failingCount} failing`, tone: 'danger' }
+      : rollup.runningCount > 0
+        ? { kind: 'status', value: 'Running', tone: 'info' }
+        : { kind: 'status', value: 'All passing', tone: 'success' };
+  return { id: 'bitbucket/builds', label: 'Builds', importance: 'primary', value };
+}
 
 function textFact(
   id: string,

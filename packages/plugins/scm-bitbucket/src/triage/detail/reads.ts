@@ -151,7 +151,7 @@ export async function readBitbucketActivityPage(
 
 export type BitbucketBuildsReadV1 =
   BitbucketDetailPageV1<BitbucketProjectedStatusRowV1> & Readonly<{
-    /** `null` whenever this page is not the whole collection — never zeroes. */
+    /** `null` unless every status in the complete collection was projected — never zeroes. */
     rollup: BitbucketBuildRollupV1 | null;
   }>;
 
@@ -175,7 +175,7 @@ export async function readBitbucketBuildsPage(
       ...page.value,
       rollup: projectBitbucketBuildRollup({
         rows: page.value.rows,
-        complete: page.value.complete,
+        complete: page.value.complete && page.value.omittedRowCount === 0,
       }),
     }),
   };
