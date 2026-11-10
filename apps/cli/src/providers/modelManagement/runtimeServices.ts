@@ -400,7 +400,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
             catalogObserved: projection.groups.length > 0 && projection.groups.every(group => group.catalogObserved === true),
             models: [...models.values()] });
         }
-        return { status: 'success', ...identity, connectionRevision: connection.connection.revision,
+        return { status: 'success', connectionId: identity.connectionId, connectionRevision: connection.connection.revision,
           manualModelPolicy: connection.source.definition.catalog.manualModelPolicy, modelLoadAction,
           sourceCatalogs, models: [...selectableModels.values()] };
       } catch (error) {

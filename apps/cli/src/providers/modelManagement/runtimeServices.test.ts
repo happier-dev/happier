@@ -27,7 +27,7 @@ import {
   type ProviderSettingsV1,
 } from '@happier-dev/protocol';
 import { TeamCredentialProviderModelCatalogEntryV1Schema, TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
-import { admitTeamCredentialSourceModelRowsV1 } from '@happier-dev/protocol/rpc/providers';
+import { admitTeamCredentialSourceModelRowsV1, DaemonProviderModelsResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -450,7 +450,7 @@ it('reads gateway helper models from the addressed current source without probin
           refreshError: stale, supportsFreeform: false, availableModels: models } } : { ok: false };
       }, signal: new AbortController().signal, isCurrent: () => current });
     const request = { machineId: fixture.machineId, connectionId };
-    expect(await services.models(request, undefined, scope)).toMatchObject({ status: 'success', models: [],
+    expect(DaemonProviderModelsResponseV1Schema.parse(await services.models(request, undefined, scope))).toMatchObject({ status: 'success', models: [],
       sourceCatalogs: [{ purpose: 'openai-upstream', catalogObserved: false, models: [] }] });
     observed = true;
     expect(await services.models(request, undefined, scope)).toMatchObject({ status: 'success', models: [],

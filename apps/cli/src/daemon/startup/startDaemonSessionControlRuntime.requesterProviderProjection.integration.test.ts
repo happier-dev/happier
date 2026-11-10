@@ -68,8 +68,12 @@ it.each(['providers.models.projection', 'providers.models.refresh', 'providers.c
     if (path === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: requesterSettings } } };
     if (path === '/v1/account/entity-rows/provider-connections') return { status: 200, data: { status: 'present', revision: 1,
       content: { t: 'plain', v: fixture.snapshot.providerConnectionsCatalog?.status === 'ready' ? fixture.snapshot.providerConnectionsCatalog.catalog : {} } } };
-    if (path === '/v1/account/entity-rows/connected-accounts/purposes') return { status: 200, data: { status: 'present', revision: 1,
-      content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } } } };
+    if (path === '/v1/account/entity-rows/connected-accounts/purposes') {
+      expect(options?.headers?.Authorization).toBe(`Bearer ${requesterToken}`);
+      requesterSourceReads++;
+      return { status: 200, data: { status: 'present', revision: 1,
+        content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } } } };
+    }
     if (path === '/v4/connect/qualified/accounts') {
       expect(options?.headers?.Authorization).toBe(`Bearer ${requesterToken}`);
       requesterSourceReads++;
@@ -180,7 +184,8 @@ it.each(['providers.models.projection', 'providers.models.refresh', 'providers.c
           externalActionExecutionAuthorization: admitted.authorization, externalActionTarget: target, signal: operation.signal });
         const result = await execute();
         const expected = actionId === 'providers.connections.describe' ? { connections: [{ connectionId: 'run-gateway', authorized: true }] }
-          : actionId === 'providers.models.list' ? { connectionId: 'run-gateway', models: [{ id: 'example' }] }
+          : actionId === 'providers.models.list' ? { connectionId: 'run-gateway', models: [],
+            sourceCatalogs: [{ purpose: 'upstream', catalogObserved: false, models: [] }] }
           : { groups: [{ connectionName: 'Gateway', rows: [{ descriptor: { id: 'example' } }] }] };
         expect(result, JSON.stringify({ actionId, result })).toMatchObject({ ok: true, result: { status: 'success', ...expected } });
         if (!result.ok) throw new Error('Expected successful Provider Action');
