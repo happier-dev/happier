@@ -320,10 +320,10 @@ export const DeploymentEnvironmentDetail = React.memo(
     const previewBindings = useEnvironmentSecretBindingsDraft({ environmentId: props.environmentId,
       lifetime: props.lifetime ?? null, snapshot: environment.snapshot, bindingTarget: 'previewTemplate',
       readOnly: !props.environmentActions,
-      setBindings: props.environmentActions && previewActions ? async (input, operation) => {
-        const template = detail?.content.previewTemplate;
-        if (!detail || !template) throw new Error('deployment_unavailable');
-        const result = await previewActions.setPreviewBindings(detail.environment, template, input, operation);
+      setBindings: props.environmentActions && previewActions ? async (input, operation, base) => {
+        const template = base.content.previewTemplate;
+        if (!template) throw new Error('deployment_unavailable');
+        const result = await previewActions.setPreviewBindings(base.environment, template, input, operation);
         if (result.ok) void environment.refresh();
         return result;
       } : null });
@@ -1991,4 +1991,3 @@ function EnvironmentServiceRow(
     </>
   );
 }
-

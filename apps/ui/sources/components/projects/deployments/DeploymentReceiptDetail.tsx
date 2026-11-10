@@ -48,6 +48,8 @@ import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { t } from '@/text';
+import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import { DeploymentVersionComparison } from './DeploymentVersionComparison';
 
 import {
   canPromoteDeploymentReceipt,
@@ -88,6 +90,7 @@ export const DeploymentReceiptDetail = React.memo(
       controller: DeploymentReadControllerV1;
       environmentId: string;
       deploymentId: string;
+      workspaceRef?: WorkspaceRefV1 | null;
       environmentName: string | null;
       demand: DeploymentReadDemandV1;
       accountId: string;
@@ -518,6 +521,16 @@ export const DeploymentReceiptDetail = React.memo(
             ) : null}
             <DeploymentUploadProvenance testID="project-deployments.receipt.upload"
               provenance={content.platform?.observation.uploadProvenance} />
+            {content.sourceIntent ? <DeploymentVersionComparison source={content.sourceIntent}
+              current={environmentValue?.content.definition ?? null} workspaceRef={props.workspaceRef}
+              serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
+            {content.buildMachineId !== undefined && deployment.operation !== 'teardown' ? <ItemGroup testID="project-deployments.receipt.storage"
+              title={t('projects.deployments.editors.sharedData')} description={t('projects.deployments.editors.retention')}>
+              <Item title={t('projects.deployments.review.engineNative')} subtitle={t('projects.deployments.editors.survival')} showChevron={false} />
+              {content.ownServer?.sources?.flatMap(source => source.sharedBinds?.map(bind => <Item
+                key={`${source.machineId}:${source.installationId}:${source.deploymentId}:${bind.relativePath}`}
+                title={bind.relativePath} detail={bind.services.join(', ')} showChevron={false} />) ?? [])}
+            </ItemGroup> : null}
             {images.length > 0 ? (
               // The exact images this release ran (lab `rollback/image`): what a rollback to it starts again.
               <ItemGroup

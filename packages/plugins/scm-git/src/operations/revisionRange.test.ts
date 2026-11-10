@@ -13,7 +13,7 @@ describe('registered Git exact revision range history', () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-revision-range-'));
         const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
         try {
-            git('init', '--quiet');
+            git('init', '--quiet', '--initial-branch=main');
             git('config', 'user.name', 'Range Fixture');
             git('config', 'user.email', 'range@example.test');
             const commit = async (name: string) => {
@@ -25,6 +25,7 @@ describe('registered Git exact revision range history', () => {
             const baseOid = await commit('A');
             await commit('B');
             const headOid = await commit('C');
+            git('branch', 'selected-source', headOid);
             await writeFile(join(root, 'file.txt'), 'D');
             git('add', 'file.txt');
             const unrelatedHead = git('commit-tree', git('write-tree'), '-p', baseOid, '-m', 'D');
@@ -44,6 +45,21 @@ describe('registered Git exact revision range history', () => {
             expect(forward).toMatchObject({ success: true, entries: [{ sha: headOid, subject: 'C' }],
                 revisionRange: { kind: 'revisionRange', baseOid, headOid, graphRelation: 'forward', totalCount: 2, nextSkip: 1 } });
             expect(forward.entries).toHaveLength(1);
+            for (const headRef of ['selected-source', 'refs/heads/selected-source']) {
+                const selected = await runWithRealGitScmRuntime(() => logList({
+                    context: { cwd: root, projectKey: root, detection: { isRepo: true, rootPath: root, mode: '.git' } },
+                    request: { cwd: root, limit: 1, ...{ revisionRangeFromRef: { baseOid, headRef } } },
+                }));
+                expect(ScmLogListResponseSchema.parse(selected)).toMatchObject({ success: true,
+                    entries: [{ sha: headOid, subject: 'C' }], revisionRange: { kind: 'revisionRange',
+                        baseOid, headOid, headRef, historyComplete: true, graphRelation: 'forward', totalCount: 2 } });
+            }
+            const missing = await runWithRealGitScmRuntime(() => logList({
+                context: { cwd: root, projectKey: root, detection: { isRepo: true, rootPath: root, mode: '.git' } },
+                request: { cwd: root, ...{ revisionRangeFromRef: { baseOid, headRef: 'refs/heads/missing-source' } } },
+            }));
+            expect(missing.success).toBe(false);
+            expect(missing.revisionRange).toBeUndefined();
             expect(await read(headOid, unrelatedHead)).toMatchObject({ success: true,
                 entries: [{ sha: unrelatedHead, subject: 'D' }], revisionRange: { kind: 'revisionRange',
                     baseOid: headOid, headOid: unrelatedHead, graphRelation: 'diverged', totalCount: 1 } });

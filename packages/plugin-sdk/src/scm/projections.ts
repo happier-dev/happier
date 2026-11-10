@@ -707,7 +707,10 @@ export type ScmLogEntry = {
     body: string;
 };
 
-export type ScmLogListRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & { limit?: number; skip?: number; query?: string; range?: 'incoming'; revisionRange?: ScmRevisionRangeV1 };
+export type ScmLogListRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & {
+    limit?: number; skip?: number; query?: string; range?: 'incoming'; revisionRange?: ScmRevisionRangeV1;
+    revisionRangeFromRef?: { baseOid: string; headRef: string };
+};
 export type ScmLogListResponse = {
     success: boolean;
     entries?: ScmLogEntry[];
@@ -717,7 +720,7 @@ export type ScmLogListResponse = {
      */
     queryApplied?: boolean;
     rangeApplied?: boolean;
-    revisionRange?: ScmRevisionRangeV1 & { historyComplete: boolean; graphRelation?: 'equal' | 'forward' | 'diverged'; totalCount?: number; nextSkip?: number };
+    revisionRange?: ScmRevisionRangeV1 & { headRef?: string; historyComplete: boolean; graphRelation?: 'equal' | 'forward' | 'diverged'; totalCount?: number; nextSkip?: number };
     error?: string;
     errorCode?: ScmOperationErrorCode;
 };

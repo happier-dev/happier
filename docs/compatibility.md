@@ -1,5 +1,20 @@
 # Compatibility and version skew
 
+## Usage filter inventory (unreleased 0.3)
+
+Private accounting responses add optional closed `scopeKeys` entries containing
+the complete identities for requested scope-filter breakdown dimensions. Ranked
+charts retain `topLimit`; filter membership uses the full admitted population,
+without event detail. The existing client Project display-key owner groups these
+identities for both the filter and ledger, including absent Project usage.
+
+Matching Protocol, server and UI readers load together. Older strict development
+readers reject the extra response field; new readers accept its absence. Requests,
+persisted formats and the V1 wire epoch remain unchanged. The inspected `../0.2`
+frontier at `7b37d65ca75e58560f8f3ca850958ac5407d2e75`, including scoped local
+changes, has no current Usage analytics contract or query-service path. No
+predecessor adapter or capability gate is introduced.
+
 ## Machine Setup connector grant scope (unreleased 0.3)
 
 The existing Setup preparation admission optionally carries `connectorGrants`
@@ -7840,6 +7855,22 @@ predecessor adapter is introduced.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 `scm.log.list` accepts the closed optional
+`revisionRangeFromRef: {baseOid, headRef}` selector, exclusive with other log
+selectors. The existing SCM Git ref resolver selects one immutable head; the
+existing exact-range reader returns `revisionRange` with both OIDs and the
+resolved `headRef`. Deployment comparison requires that selector and base echo
+before showing history or opening the immutable-range viewer. No response echo
+means unavailable, including older readers that ignored the optional selector;
+there is no fallback to checkout HEAD or automatic fetch. The immutable
+`ScmRevisionRangeV1` viewer contract is unchanged. Request, selector, response,
+and range evidence objects remain closed; no unknown field gains meaning or is
+preserved. Matching Protocol, SDK, SCM plugin and UI reload together, with no
+new wire epoch, Action, persistence format or adapter. The inspected `../0.2`
+frontier `7b37d65ca75e58560f8f3ca850958ac5407d2e75` (including unchanged scoped
+working files) strips unknown log inputs and returns only recent entries with
+no range echo; current consumers therefore report comparison unavailable.
+
 Unreleased 0.3 `automation.event.sources.list` accepts optional closed
 `catalogRefresh` intent (`refresh`, or `retry` with the provider's
 absolute `retryAt`). The existing daemon adopted-catalog owner consumes it to
@@ -8449,7 +8480,11 @@ Account/attempt configuration remains inline. This changes no persisted catalog
 shape and adds no wire epoch, migration or compatibility adapter.
 
 Unreleased 0.3 Action operation readers retain exact native service-control
-subjects and optional reboot Domain subjects in the existing `domainRef`.
+subjects, optional reboot Domain subjects and optional deployment `expectedDown`
+subjects in the existing `domainRef`. Recreate and stop-copy producers publish
+exact service IDs and retained Domain subjects before interruption, then
+withdraw them after phase acknowledgement or confirmed resume. The closed
+Inbox expected-operation projection also accepts `backup`.
 These facts explain a matching health notice only while its already-readable
 operation is running; they do not change health or Machine presence authority.
 Matching development Protocol, CLI and UI readers must refresh together because

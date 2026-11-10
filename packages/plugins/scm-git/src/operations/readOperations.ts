@@ -14,7 +14,7 @@ import type {
   ScmHistoryEntriesRequest,
   ScmHistoryEntriesResponse,
 } from '@happier-dev/plugin-sdk/scm';
-import { SCM_OPERATION_ERROR_CODES, ScmHistoryEntriesInputV1Schema, ScmHistoryEntriesResponseSchema, ScmRevisionRangeV1Schema } from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES, ScmHistoryEntriesInputV1Schema, ScmHistoryEntriesResponseSchema } from '@happier-dev/plugin-sdk/scm';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { relative, resolve, sep } from 'node:path';
@@ -24,6 +24,7 @@ import { parseGitComparisonOutput } from '@happier-dev/plugin-sdk/scm';
 import type { ScmBackendContext } from '../types.js';
 import { normalizeCommitRef, normalizeRepoRootRelativePath, runScmCommand } from '../runtime.js';
 import { toRepoRootLiteralPathspec } from '../literalPathspec.js';
+import { resolveGitCommitRef } from './exportCommit.js';
 import { ScmBlameFileRequestSchema, ScmBlameFileResponseSchema } from '@happier-dev/plugin-sdk/scm';
 
 /** Git's incremental grammar (git-blame 2.43+): filename closes each range;
@@ -610,12 +611,20 @@ export async function gitLogList(input: {
     const skip = request.skip ?? 0;
     const query = typeof request.query === 'string' ? request.query.trim() : '';
 
-    if (request.revisionRange !== undefined) {
-        const parsed = ScmRevisionRangeV1Schema.safeParse(request.revisionRange);
-        if (!parsed.success || request.range !== undefined || request.query !== undefined) {
-            return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, error: 'Exact revision ranges require immutable endpoints and no other log selector' };
+    if (request.revisionRange !== undefined || request.revisionRangeFromRef !== undefined) {
+        // RPC/Action admission owns canonical request parsing; plugins receive its typed selector.
+        const selector = request.revisionRangeFromRef;
+        let range = request.revisionRange!;
+        if (selector) {
+            try {
+                const headOid = await resolveGitCommitRef({ context, ref: selector.headRef, signal: input.signal });
+                range = { kind: 'revisionRange', baseOid: selector.baseOid, headOid };
+            } catch {
+                return { success: false, errorCode: input.signal?.aborted
+                    ? SCM_OPERATION_ERROR_CODES.COMMAND_CANCELLED : SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+                    error: 'Selected Source ref is unavailable' };
+            }
         }
-        const range = parsed.data;
         const command = (args: string[]) => runScmCommand({ bin: 'git', cwd: context.detection.rootPath ?? context.cwd,
             args, signal: input.signal, env: { GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1' } });
         const failure = (result: Awaited<ReturnType<typeof command>>): ScmLogListResponse => ({ success: false,
@@ -660,6 +669,7 @@ export async function gitLogList(input: {
             return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, error: 'Invalid exact revision range history' };
         }
         return { success: true, entries: entries.slice(0, limit), revisionRange: { ...range,
+            ...(selector ? { headRef: selector.headRef } : {}),
             historyComplete, ...(graphRelation !== undefined && totalCount !== undefined ? { graphRelation, totalCount } : {}),
             ...(entries.length > limit ? { nextSkip: skip + limit } : {}) } };
     }

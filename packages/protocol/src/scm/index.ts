@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { z } from 'zod/mini';
+import { z } from '../zodRuntimePolicy.js';
 
 export { resolveScmBackendCapabilities } from './resolveScmBackendCapabilities.js';
 export { scmPathMatchesScopePath } from './pathScope.js';
@@ -705,8 +705,11 @@ export const ScmLogListRequestSchema = lazyZodSchema(() => (<T extends z.ZodMini
   range: z.optional(z.literal('incoming')),
   /** Exact pinned range, never HEAD; absent producer evidence means unsupported. */
   revisionRange: z.optional(ScmRevisionRangeV1Schema),
-})).check(z.refine(request => !request.revisionRange || (request.range === undefined && request.query === undefined),
-  'Exact revision ranges cannot be combined with another log selector')));
+  /** Resolve this selected Source ref once; the response attests the selected immutable range. */
+  revisionRangeFromRef: z.optional(z.strictObject({ baseOid: ScmCommitOidSchema, headRef: ScmBranchSourceRefSchema })),
+})).check(z.refine(request => !(request.revisionRange && request.revisionRangeFromRef)
+  && (!(request.revisionRange || request.revisionRangeFromRef) || (request.range === undefined && request.query === undefined)),
+  'Revision range selection cannot be combined with another log selector')));
 export type ScmLogListRequest = z.infer<typeof ScmLogListRequestSchema>;
 
 export const ScmLogListResponseSchema = lazyZodSchema(() => z.strictObject({
@@ -722,6 +725,7 @@ export const ScmLogListResponseSchema = lazyZodSchema(() => z.strictObject({
   /** Endpoint attestation and full-history proof are distinct from page exhaustion. */
   revisionRange: z.optional(z.strictObject({
     kind: z.literal('revisionRange'), baseOid: ScmCommitOidSchema, headOid: ScmCommitOidSchema, historyComplete: z.boolean(),
+    headRef: z.optional(ScmBranchSourceRefSchema),
     graphRelation: z.optional(z.enum(['equal', 'forward', 'diverged'])),
     totalCount: z.optional(z.number().check(z.int(), z.nonnegative())),
     nextSkip: z.optional(z.number().check(z.int(), z.minimum(0))),

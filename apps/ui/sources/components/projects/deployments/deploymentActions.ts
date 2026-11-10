@@ -1,3 +1,5 @@
+import type { z } from 'zod/mini';
+import type { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentActionOutputSchemasV1, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateActionResultV1Schema, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1, type DeploymentTargetLinkInputV1, type DeploymentTargetLinkIntentInputV1, type DeploymentTargetLinkProviderIntentInputV1, type DeploymentEnvironmentHeaderV1, type DeploymentEnvironmentUpdateInputV1, type DeploymentDeployInputV1, type DeploymentRollbackInputV1, type DeploymentTargetUnlinkInputV1, type DeploymentEnvironmentDeleteInputV1, type DeploymentCancelInputV1, type DeploymentRestartInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentBindingsPatchInputV1, DeploymentTeardownActionInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { type DeploymentDeployIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
@@ -9,7 +11,8 @@ import { type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deplo
 import { WorkflowTriggerListResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { DeploymentTemplateInstantiateResultV1Schema, type DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { buildDeploymentBackupActionInputV1, DeploymentBackupActionResultSchemasV1,
+import { buildDeploymentBackupActionInputV1, deploymentBackupPolicyV1, DeploymentBackupActionResultSchemasV1,
+    type DeploymentBackupConfigurationV1,
     type DeploymentBackupInventoryInputV1, type DeploymentBackupPruneInputV1, type DeploymentBackupVerifyInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { type DeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
@@ -27,6 +30,7 @@ import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/dep
 import { prepareDatabaseMoveCutoverPatch, type DatabaseMoveCutoverSelection } from './databaseMoveCutover';
 import { DeploymentMoveToRepositoryResultV1Schema, type DeploymentMoveToRepositoryInputV1 } from '@happier-dev/protocol/deployments/deploymentMoveToRepositoryV1';
 import { DeploymentPrepareResultV1Schema, type DeploymentPrepareInputV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
+import type { DeploymentCreationDefaultsV1 } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
 
 type PreparedCreate = Omit<DeploymentEnvironmentCreateInputV1, 'serverId' | 'projectSourceId'>;
 export type DeploymentUiCreateInput = Omit<DeploymentEnvironmentCreateIntentInputV1,
@@ -87,6 +91,13 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             contentBodyVersion: environment.contentBodyVersion, patch,
         }, operation));
     }
+    async function readBackupScheduleSets(environmentId: string) {
+        assertCurrent();
+        const result = WorkflowTriggerListResultV1Schema.parse(await execute('workflow.trigger.list', {
+            deploymentBackupEnvironment: { environmentId, serverId: lifetime.scope.serverId },
+        }));
+        return result.sets;
+    }
     return {
         /** This sheet's person gesture confirms only the normal Session handoff, on its chosen checkout Machine. */
         async prepare(input: DeploymentPrepareInputV1, workspaceMachineId: string) {
@@ -114,6 +125,25 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             if (!result.creationDefaults) throw new HappyError('invalid_action_output', false);
             return { ...result.creationDefaults,
                 ...(result.backupSourceChoices !== undefined ? { backupSourceChoices: result.backupSourceChoices } : {}) };
+        },
+        /** Ask the existing update admission to evaluate the proposed fork policy without saving it. */
+        async preparePreviewForkPolicy(environment: DeploymentEnvironmentHeaderV1,
+            placement: Pick<NonNullable<DeploymentEnvironmentContentV1['previewTemplate']>, 'repository' | 'runtimeTargetLinkId'>,
+            operation?: UiActionOperation) {
+            assertCurrent();
+            // This read proposes placement only; unfinished address, data and variable edits are saved separately.
+            const result = DeploymentActionOutputSchemasV1['deployments.environments.update'].parse(await invoke(
+                'deployments.environments.update', { serverId: lifetime.scope.serverId, environmentId: environment.id,
+                    expectedRevision: environment.revision, contentArtifactId: environment.contentArtifactId,
+                    contentHeaderVersion: environment.contentHeaderVersion, contentBodyVersion: environment.contentBodyVersion,
+                    mode: 'preview', patch: { previewTemplate: { v: 1, enabled: true, forkPreviews: 'approveEachCommit',
+                        repository: placement.repository, runtimeTargetLinkId: placement.runtimeTargetLinkId,
+                        domain: null, bindingBlueprints: [], data: [] },
+                        ...(environment.buildMachineId ? { buildMachineId: environment.buildMachineId } : {}) } }, operation));
+            assertCurrent();
+            if (!result.ok) throw new HappyError(result.error, false, result);
+            if (!result.forkEligibility) throw new HappyError('invalid_action_output', false);
+            return result.forkEligibility;
         },
         /** Verified copy precedes one review and one ordinary Environment update. */
         prepareDatabaseMoveCutover(environment: DeploymentEnvironmentHeaderV1, content: DeploymentEnvironmentContentV1,
@@ -167,15 +197,11 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                 })));
         },
         /**
-         * Scheduled backups of this exact capture target that were due and didn't start. The trigger owner derives
+         * Scheduled backups of this Environment that were due and didn't start. The trigger owner derives
          * them at read time; this addressed read is not an Account trigger list and publishes nothing into it.
          */
-        async missedBackupSchedules(input: Omit<DeploymentBackupInventoryInputV1, 'serverId' | 'expectedRevision'>) {
-            assertCurrent();
-            const result = WorkflowTriggerListResultV1Schema.parse(await execute('workflow.trigger.list', {
-                deploymentBackup: { ...input, serverId: lifetime.scope.serverId },
-            }));
-            return result.sets.flatMap((set) => set.missedSchedules ?? []);
+        async missedBackupSchedules(input: Readonly<{ environmentId: string }>) {
+            return (await readBackupScheduleSets(input.environmentId)).flatMap((set) => set.missedSchedules ?? []);
         },
         async verifyBackup(input: Omit<DeploymentBackupVerifyInputV1, 'serverId'>) {
             assertCurrent();
@@ -192,20 +218,16 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                     ...input, serverId: lifetime.scope.serverId,
                 })));
         },
-        /** Saved Workflows whose real `deployments.backups.run` step targets this exact capture (the trigger owner's match). */
-        async backupScheduleSets(input: Omit<DeploymentBackupInventoryInputV1, 'serverId' | 'expectedRevision'>) {
-            assertCurrent();
-            const result = WorkflowTriggerListResultV1Schema.parse(await execute('workflow.trigger.list', {
-                deploymentBackup: { ...input, serverId: lifetime.scope.serverId },
-            }));
-            return result.sets.length;
+        /** Enabled backup Workflows for this stable Environment, selected by the trigger owner. */
+        async backupScheduleSets(input: Readonly<{ environmentId: string }>) {
+            return (await readBackupScheduleSets(input.environmentId)).length;
         },
         /**
-         * Schedules the built-in Nightly backups Workflow for this capture target from the controller Machine: back up,
+         * Schedules the built-in Nightly backups Workflow for this Environment from the controller Machine: back up,
          * verify each new snapshot, then keep the saved counts. The same `workflow.trigger.add` an agent would send.
          */
-        async addBackupSchedule(input: Readonly<{ target: Omit<DeploymentBackupInventoryInputV1, 'serverId'>;
-            retention: DeploymentBackupPruneInputV1['retention']; controllerMachineId: string }>) {
+        async addBackupSchedule(input: Readonly<{ environmentId: string; configuration: DeploymentBackupConfigurationV1;
+            schedule: NonNullable<DeploymentCreationDefaultsV1['backupSchedule']>; controllerMachineId: string }>) {
             assertCurrent();
             // The starter owns its Workflow and default schedule; turning it on is the person's choice here.
             const starter = getWorkflowStarterExamplesV1().find((example) => example.key === 'nightly-backups');
@@ -214,9 +236,9 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                 target: { kind: 'inline', definition: starter.definition },
                 project: { machineId: input.controllerMachineId, directory: '~' },
                 executionTarget: { kind: 'detached_run' },
-                inputs: { backupTarget: { ...input.target, serverId: lifetime.scope.serverId },
-                    verificationLevel: 'manifestReadBack', retention: input.retention },
-                trigger: { ...starter.triggerSeed, enabled: true },
+                inputs: { backupEnvironment: { environmentId: input.environmentId, serverId: lifetime.scope.serverId },
+                    backupPolicy: deploymentBackupPolicyV1(input.configuration), verificationLevel: 'manifestReadBack' },
+                trigger: { kind: 'schedule', schedule: input.schedule, enabled: true },
                 actionApproval: 'automatic',
             });
         },
@@ -282,6 +304,14 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             assertCurrent();
             return DeploymentActionOutputSchemasV1['deployments.environments.delete'].parse(await invoke(
                 'deployments.environments.delete', { ...input, serverId: lifetime.scope.serverId }, operation));
+        },
+        /** Explicit provider metadata demand; ordinary Environment reads never issue this request. */
+        async readObservation(input: Omit<z.infer<typeof DeploymentActionInputSchemasV1['deployments.observation.get']>, 'serverId'>, operation?: UiActionOperation) {
+            assertCurrent();
+            const result = DeploymentActionOutputSchemasV1['deployments.observation.get'].parse(await invoke(
+                'deployments.observation.get', { ...input, serverId: lifetime.scope.serverId }, operation));
+            assertCurrent();
+            return result;
         },
         async setBindings(input: DeploymentUiBindingsInput, operation?: UiActionOperation) {
             assertCurrent();
@@ -398,6 +428,7 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                     serverId: lifetime.scope.serverId }, operation));
         },
         async deploy(input: Omit<DeploymentDeployInputV1, 'serverId'>
+            | Omit<DeploymentDeployIntentInputV1, 'serverId'>
             | Pick<DeploymentDeployInputV1, 'environmentId' | 'targetLinkId'>
             | Pick<DeploymentDeployIntentInputV1, 'environmentId' | 'targetLinkId' | 'sha' | 'whenBusy' | 'sourceMethod'>, operation?: UiActionOperation) {
             assertCurrent();

@@ -18,6 +18,18 @@ import {
  * - every shape shipped before this expansion must keep parsing unchanged.
  */
 describe('ScmLogList wire contract with bounded commit query', () => {
+    it('keeps ref selection closed and distinct from pinned ranges, with explicit resolved evidence', () => {
+        const revisionRangeFromRef = { baseOid: 'a'.repeat(40), headRef: 'refs/heads/feature' };
+        expect(ScmLogListRequestSchema.parse({ cwd: '/repo', revisionRangeFromRef })).toMatchObject({ revisionRangeFromRef });
+        for (const other of [{ query: 'feature' }, { range: 'incoming' },
+            { revisionRange: { kind: 'revisionRange', baseOid: 'a'.repeat(40), headOid: 'b'.repeat(40) } }]) {
+            expect(ScmLogListRequestSchema.safeParse({ cwd: '/repo', revisionRangeFromRef, ...other }).success).toBe(false);
+        }
+        expect(ScmLogListRequestSchema.safeParse({ cwd: '/repo', revisionRangeFromRef: { ...revisionRangeFromRef, repository: '/other' } }).success).toBe(false);
+        expect(ScmLogListResponseSchema.parse({ success: true, entries: [], revisionRange: {
+            kind: 'revisionRange', ...revisionRangeFromRef, headOid: 'b'.repeat(40), historyComplete: true,
+        } })).toMatchObject({ revisionRange: { headRef: revisionRangeFromRef.headRef } });
+    });
     it('admits only exact immutable range endpoints and preserves explicit completeness evidence', () => {
         const revisionRange = { kind: 'revisionRange', baseOid: 'a'.repeat(40), headOid: 'b'.repeat(64) };
         expect(ScmLogListRequestSchema.parse({ cwd: '/repo', revisionRange }).revisionRange).toEqual(revisionRange);

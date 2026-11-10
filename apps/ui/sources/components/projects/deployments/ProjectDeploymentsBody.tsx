@@ -110,6 +110,7 @@ export const ProjectDeploymentsBody = React.memo(
         serverId={binding.scope.serverId}
         lifetime={binding}
         sourceId={sourceId}
+        workspaceRef={'workspaceRef' in props ? props.workspaceRef : null}
       />
     );
   },
@@ -155,6 +156,7 @@ export const ProjectDeploymentsView = React.memo(
       serverId: string;
       lifetime: ServerAccountScopeLifetime | null;
       sourceId: string;
+      workspaceRef?: WorkspaceRefV1 | null;
     }>,
   ) {
     return (
@@ -332,9 +334,6 @@ const ProjectDeploymentsPage = React.memo(
       () => inspectPlatformTarget && link ? { inspectPlatformTarget, link } : null,
       [inspectPlatformTarget, link],
     );
-    // A platform draft's new Environment opens Add platform target once, then forgets.
-    const [platformLinkFor, setPlatformLinkFor] = React.useState<Readonly<{ environmentId: string; targetKey: string }> | null>(null);
-    const platformLinkOpened = React.useCallback(() => setPlatformLinkFor(null), []);
     // A deleted Environment hands the page to its nearest sibling in this Project, or to the empty state; a phone
     // returns to the list.
     const leaveDeleted = React.useCallback(() => {
@@ -375,12 +374,10 @@ const ProjectDeploymentsPage = React.memo(
         lifetime={props.lifetime}
         sourceId={props.sourceId}
         phone={phone}
-        actions={props.actions?.prepareCreate
-          ? { prepareCreate: props.actions.prepareCreate } : null}
+        actions={props.actions ?? null}
         onApprovalRequested={approval.requestApproval}
         platformAvailable={platformLink !== null}
         onSaved={(id, next) => {
-          if (next?.platformTargetKey) setPlatformLinkFor({ environmentId: id, targetKey: next.platformTargetKey });
           setSelection({ environmentId: id, deploymentId: null });
           if (next?.tab) navigateEnvironment({ tab: next.tab, section: null });
           void refresh();
@@ -428,6 +425,7 @@ const ProjectDeploymentsPage = React.memo(
           controller={props.controller}
           environmentId={environmentId}
           deploymentId={selection.deploymentId}
+          workspaceRef={props.workspaceRef}
           environmentName={selectedTitle}
           demand={props.demand}
           accountId={props.accountId}
@@ -469,6 +467,7 @@ const ProjectDeploymentsPage = React.memo(
       ) : (
         <DeploymentEnvironmentDetail
           key={environmentId}
+          workspaceRef={props.workspaceRef}
           controller={props.controller}
           environmentId={environmentId}
           demand={props.demand}
@@ -493,8 +492,6 @@ const ProjectDeploymentsPage = React.memo(
             setSelection(DRAFTING);
           } : undefined}
           platformLink={platformLink}
-          openPlatformLink={platformLinkFor?.environmentId === environmentId ? platformLinkFor.targetKey : null}
-          onPlatformLinkOpened={platformLinkOpened}
           onDeleted={leaveDeleted}
           destination={destination}
           onNavigate={navigateEnvironment}
