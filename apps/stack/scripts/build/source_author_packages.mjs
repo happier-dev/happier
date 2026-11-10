@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
@@ -7,6 +7,7 @@ import { packageNameOfSpecifier, SOURCE_CONDITION, workspaceSourceCompilerPaths 
 import { appendBoundedTail, redactFailureDiagnostic } from '../utils/proc/proc.mjs';
 import { WorkspacePackageBuildError } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspacePackageInputFingerprint } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
+import { removeOwnedDirectorySync } from '../utils/fs/fs.mjs';
 
 export function isFirstPartyBuiltInput(key, workspacePackages) {
   key = key.replaceAll('\\', '/');
@@ -138,7 +139,7 @@ export async function emitSourceAuthorPackages({ repoDir, sourceRepoDir, project
         owner.bundleWorkspacePackageWithRuntimeDependencies({...bundle,destDir,
           resolveFromPackageJsonPath: join(sourceRepoDir, relative(repoDir, bundle.srcDir), 'package.json'),
           dereferenceRootDir: sourceRepoDir,distDir:outputDir});
-        await rm(join(destDir,'src'),{recursive:true,force:true});
+        removeOwnedDirectorySync(join(destDir, 'src'));
         // The author materializer owns declaration work. Retain its production
         // inputs within the existing physical package, so authoring later uses
         // this capture instead of reopening the moving repository.
@@ -199,6 +200,6 @@ export async function emitSourceAuthorPackages({ repoDir, sourceRepoDir, project
     console.error(`[source-author] phase=closure status=${javascriptEmissions ? 'emitted' : 'reused'} elapsedMs=${Math.round(performance.now()-started)} compilers=0 javascriptEmissions=${javascriptEmissions} files=${codeFiles.length}`);
     return { codeFiles, inputIdentities: settled ? inputIdentities : undefined };
   } finally {
-    await rm(workDir, {recursive:true,force:true});
+    removeOwnedDirectorySync(workDir);
   }
 }

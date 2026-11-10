@@ -1,11 +1,12 @@
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { removeOwnedDirectorySync } from '../utils/fs/fs.mjs';
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
 
 import { captureSourceWebBuildInputs, readWorkspacePackages, resolveWorkspaceSource,
-  sourceBundleBuildLockPath, setBundleReadOnly, withSourceBundlePublication,
+  sourceBundleBuildLockPath, withSourceBundlePublication,
   adoptReusableSourceBundle, publishSourceBundleCandidate, resolveSourceRuntimeProducerContext,
   sourceRuntimeProducerBuildLockPath, normalizeSourceCapturedAfter, sourceRuntimeProducerUnavailable } from './build_source_runtime.mjs';
 import { resolveExpoBin, prepareExpoCommandEnv } from '../utils/expo/command.mjs';
@@ -48,13 +49,13 @@ export async function exportSourceWebUi({ repoDir, baseDir, outputDir, stackBase
       // This call's private partial export is never selected or served. A retry
       // must rerun preparation in an empty directory, preserving EEXIST for a
       // directory that predated this call.
-      if (createdOutput) await rm(outputDir, { recursive: true, force: true });
+      if (createdOutput) removeOwnedDirectorySync(outputDir);
       await mkdir(dirname(outputDir), { recursive: true });
       await mkdir(outputDir);
       createdOutput = true;
       await pending?.setPhase({ phase: 'queued', component: 'ui' });
       const built = await exportSourceWebUiOnce({ repoDir, baseDir, outputDir, env, signal, runImpl }).catch(async error => {
-          if (error.code === 'BUILD_INPUTS_CHANGED') await rm(outputDir, { recursive: true, force: true });
+          if (error.code === 'BUILD_INPUTS_CHANGED') removeOwnedDirectorySync(outputDir);
           throw error;
         });
       if (!replaceUiDir) return built;
@@ -84,7 +85,7 @@ export async function publishSourceWebUi({ built, uiDir, pending }) {
   return await pending.publishPreparation(async () => {
     await mkdir(dirname(uiDir), { recursive: true });
     await buildIntoTempThenReplace(uiDir, async stagedDir => {
-      await rm(stagedDir, { recursive: true });
+      removeOwnedDirectorySync(stagedDir, { force: false });
       await symlink(exportDir, stagedDir, process.platform === 'win32' ? 'junction' : 'dir');
     });
     return { ...built, uiDir, exportDir };
@@ -291,8 +292,7 @@ async function prepareSharedSourceWebUi({ repoDir, baseDir, stackBaseDir, consum
     } catch (error) {
       const remaining = await lstat(outputDir).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
       if (remaining) {
-        await setBundleReadOnly(outputDir, false);
-        await rm(outputDir, { recursive: true, force: true });
+        removeOwnedDirectorySync(outputDir);
       }
       throw error;
     }
@@ -336,14 +336,14 @@ export async function withSourceWebUiInputs({ repoDir, baseDir, env = process.en
   const contextDir = resolve(baseDir, 'source-web');
   return await withJsonOwnerFileLock(async () => {
     const workspace = join(contextDir, 'workspace');
-    await rm(workspace, { recursive: true, force: true });
+    removeOwnedDirectorySync(workspace);
     try {
       const captured = await captureSourceWebBuildInputs({ repoDir, outputDir: workspace, signal });
       await prepareSourcePluginUiInventory({ repoDir, inputRepoDir: captured.repoDir,
         outputDir: contextDir, artifactStoreDir: join(contextDir, 'inputs/artifacts'), env, signal, stdoutStream });
       return await consume({ captured, inventoryPath: join(contextDir, 'inputs/inventory.js'), uiProjectDir: captured.uiProjectDir });
     } finally {
-      await rm(workspace, { recursive: true, force: true });
+      removeOwnedDirectorySync(workspace);
     }
   }, { lockPath: `${contextDir}.lock`, timeoutMs: Infinity, staleAfterMs: Infinity,
     signal, errorLabel: 'source-web capture lock' });

@@ -1,3 +1,4 @@
+import { removeOwnedDirectorySync } from '../utils/fs/fs.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, renameSync, statSync } from 'node:fs';
 import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
@@ -375,8 +376,7 @@ async function retireSourceCandidates({ stacksRoot, bundleRoot, candidates, dryR
   });
   for (const candidate of retired) {
     try {
-      await setBundleReadOnly(candidate.directory, false);
-      await rm(candidate.directory, { recursive: true, force: true });
+      removeOwnedDirectorySync(candidate.directory);
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
     if (candidate.result) {
       candidate.result.reclaimedRoots++;
@@ -594,8 +594,7 @@ export async function withSourceBundlePublication({ stackBaseDir, outputDir, rec
     if (failedRetirement) {
       const retainStarted = performance.now();
       try {
-        await setBundleReadOnly(failedRetirement, false);
-        await rm(failedRetirement, { recursive: true, force: true });
+        removeOwnedDirectorySync(failedRetirement);
       } catch (retirementError) {
         throw new AggregateError([error, retirementError], '[source-bundle] publication and failed-product retirement both failed');
       } finally { retainMs = performance.now() - retainStarted; }
@@ -867,7 +866,7 @@ async function prepareSourceRuntimeProducerInProcess({ repoDir, stackBaseDir, co
           stackBaseDir: consumerStackBaseDir, component, built, signal, reuseSelected, pendingRequestId });
       });
       return prepared;
-    } finally { if (captureDir) await rm(captureDir, { recursive: true, force: true }); }
+    } finally { if (captureDir) removeOwnedDirectorySync(captureDir); }
   };
   return await prepare(0);
 }
@@ -986,7 +985,7 @@ async function buildSourceRuntimeBundleOnce({ repoDir, outputDir, component, ser
     logSourceRuntimePhase(component, 'publication', publicationStarted, undefined, logger);
     return built;
   } catch (error) {
-    if (error.code === 'BUILD_INPUTS_CHANGED') await rm(outputDir, { recursive: true, force: true });
+    if (error.code === 'BUILD_INPUTS_CHANGED') removeOwnedDirectorySync(outputDir);
     throw error;
   }
 }
@@ -1025,7 +1024,7 @@ async function prepareSharedSourceRuntimeBundle({ repoDir, stackBaseDir, compone
     logSourceRuntimePhase(component, 'publication', publicationStarted);
     return published;
   } catch (error) {
-    if (existsSync(outputDir)) { await setBundleReadOnly(outputDir, false); await rm(outputDir, {recursive:true, force:true}); }
+    if (existsSync(outputDir)) { removeOwnedDirectorySync(outputDir); }
     throw error;
   }
 }
@@ -1105,7 +1104,7 @@ async function buildSourceRuntimeBundleInProcess({ repoDir, outputDir, component
       },
     }));
   } catch (error) {
-    if (ownsOutput && error.code === 'BUILD_INPUTS_CHANGED') await rm(resolve(outputDir), { recursive: true, force: true });
+    if (ownsOutput && error.code === 'BUILD_INPUTS_CHANGED') removeOwnedDirectorySync(resolve(outputDir));
     throw error;
   }
 }
@@ -1151,7 +1150,7 @@ async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, 
       sourceCapture, ...(component === 'server'
       ? { serverComponent, dbProvider: dbProvider ?? (serverComponent === 'happier-server-light' ? 'sqlite' : 'postgres') } : {}) };
   } finally {
-    await rm(repoDir, { recursive: true, force: true });
+    removeOwnedDirectorySync(repoDir);
     esbuild.stop();
     process.removeListener('SIGINT', interrupt);
     process.removeListener('SIGTERM', interrupt);
@@ -1407,7 +1406,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
       };
       for (const item of pluginMetadata) await collect(join(item.dir, 'dist/happier-plugin-ui'));
     } finally {
-      await rm(preparationDir, { recursive: true, force: true });
+      removeOwnedDirectorySync(preparationDir);
     }
   }
   phase('plugin-ui', component === 'daemon' ? 'runtime-dependencies' : 'runtime-resources');
@@ -1544,7 +1543,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
             target, pnpm: resolvePnpmCommand(), runCommand });
           retainedCodeFiles.push(staged.executablePath, staged.licensePath, staged.thirdPartyNoticesPath);
         }
-      } finally { await rm(preparationDir, { recursive: true, force: true }); }
+      } finally { removeOwnedDirectorySync(preparationDir); }
     } else await linkInstalledDirectory(join(installedProjectDir, 'tools'), join(runtimeDir, 'tools'));
     const assets = join(projectDir, 'src/plugins/projection/registry/static-assets');
     if (existsSync(assets)) await cp(assets, join(runtimeDir, 'package-dist/plugins/projection/registry/static-assets'), { recursive: true });

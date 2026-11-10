@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { cp, mkdir, rm, symlink } from 'node:fs/promises';
+import { cp, mkdir, symlink } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CLI_BINARY_TARGETS, resolveCliToolsPlatformDir, resolveCurrentBinaryTarget, resolveExecutableName } from '../../../../packages/cli-common/src/componentArtifacts/targets.ts';
 import { run } from '../utils/proc/proc.mjs';
+import { removeOwnedDirectorySync } from '../utils/fs/fs.mjs';
 
 // Preserve the installer's existing flat or target-directory layout. The tools
 // producer's platform metadata identifies a native flat payload without parsing
@@ -63,7 +64,7 @@ export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, outputDi
       const irohPackage = join(repoDir, 'packages/iroh-native');
       if (existsSync(join(irohPackage, 'scripts/build-node-addon.mjs'))) {
         const nativeDir = join(irohPackage, 'native');
-        await rm(nativeDir, { recursive: true, force: true });
+        removeOwnedDirectorySync(nativeDir);
         const hostOs = process.platform === 'win32' ? 'windows' : process.platform;
         if (target.os === hostOs && target.arch === process.arch && existsSync(join(runtimeDir, 'iroh-native/native'))) {
           await cp(join(runtimeDir, 'iroh-native/native'), nativeDir, { recursive: true });
