@@ -29,9 +29,12 @@ export function prepareDeploymentBackupConfigurationV1(input: Readonly<{ environ
     }
     const roles = destination.descriptor.credentialRoles.map(entry => entry.role);
     if (configuration.credentialBindings.some(binding => !roles.includes(binding.role))) return { ok: false, code: 'unsupported_credential_role' };
-    const missingRoles = configuration.credentialBindings.map(binding => binding.role).filter(role => !input.bindings.some(binding => binding.purpose === 'backupDestination'
+    const credentialBindings = destination.descriptor.credentialRoles
+        .filter(entry => entry.optional !== true || configuration.credentialBindings.some(binding => binding.role === entry.role))
+        .map(({ role }) => ({ purpose: 'backupDestination' as const, configKey: 'destination' as const, role }));
+    const missingRoles = credentialBindings.map(binding => binding.role).filter(role => !input.bindings.some(binding => binding.purpose === 'backupDestination'
         && binding.configKey === 'destination' && binding.role === role));
-    return { ok: true, configuration: { ...configuration, occurrenceId: destination.occurrenceId },
+    return { ok: true, configuration: { ...configuration, credentialBindings, occurrenceId: destination.occurrenceId },
         bindingState: missingRoles.length ? 'needsBinding' : 'bound', missingRoles };
 }
 

@@ -45,7 +45,7 @@ describe('backup configuration preparation', () => {
         expect(prepare({ ...input, bindings: [] })).toEqual({ ok: true, configuration,
             bindingState: 'needsBinding', missingRoles: ['repositoryPassword'] });
         expect(prepare({ ...input, destination: { ...destination,
-            descriptor: { ...descriptor, credentialRoles: [{ role: 'repositoryPassword' }, { role: 'awsSessionToken' }] } } }))
+            descriptor: { ...descriptor, credentialRoles: [{ role: 'repositoryPassword' }, { role: 'sessionToken', optional: true }] } } }))
             .toEqual({ ok: true, configuration, bindingState: 'bound', missingRoles: [] });
         expect(prepare({ ...input, bindings: [createDeploymentSecretVariableBindingV1({ name: 'PASSWORD', phase: 'runtime',
             resourceId: 'secret-a', resourceRevision: 1 })] }))
@@ -55,6 +55,14 @@ describe('backup configuration preparation', () => {
     it('captures current provenance without turning plugin reload into a permission fence', () => {
         expect(prepare({ ...input, configuration: { ...configuration, occurrenceId: 'retired' } }))
             .toEqual({ ok: true, configuration, bindingState: 'bound', missingRoles: [] });
+    });
+
+    it('keeps descriptor-required credential selectors when a caller omits them', () => {
+        const omitted = { ...configuration, credentialBindings: [] };
+        expect(prepare({ ...input, configuration: omitted, bindings: [] })).toEqual({ ok: true,
+            configuration, bindingState: 'needsBinding', missingRoles: ['repositoryPassword'] });
+        expect(prepare({ ...input, configuration: omitted })).toEqual({ ok: true,
+            configuration, bindingState: 'bound', missingRoles: [] });
     });
 
     it('refuses foreign ownership, undeclared roles and fields outside the selected descriptor', () => {
