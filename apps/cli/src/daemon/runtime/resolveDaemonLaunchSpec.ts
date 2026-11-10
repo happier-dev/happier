@@ -211,13 +211,15 @@ async function resolveSelectedStackSourceLaunch(
   const commandEnv: Record<string, string> = {};
   if ('env' in launch && launch.env !== null && typeof launch.env === 'object') {
     for (const [name, value] of Object.entries(launch.env)) {
-      if (/^(PATH|PATHEXT)$/i.test(name) && typeof value === 'string') commandEnv[name] = value;
+      if ((/^(PATH|PATHEXT)$/i.test(name) || name === 'HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT')
+        && typeof value === 'string') commandEnv[name] = value;
     }
   }
   return {
     filePath: runtimeExecutable,
     args: ['--no-warnings', '--no-deprecation', launch.entrypoint, ...cliArgs],
-    // Stack publishes shell-command exposure. Root/entry fields still derive
+    // Stack publishes shell-command exposure and the current guest CLI payload.
+    // Root/entry fields still derive
     // from the validated selection so no incumbent support root survives.
     env: {
       ...commandEnv,

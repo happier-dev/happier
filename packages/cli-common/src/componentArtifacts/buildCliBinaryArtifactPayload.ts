@@ -28,7 +28,6 @@ import cliDistBuildManifest from '../../cliDistBuildManifest.cjs';
 import { getCliBinaryArtifactSupportTargetUnavailableReason } from '../../componentArtifactTarget.mjs';
 import {
   BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH as BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH,
-  parseBundledPluginPublicationFailures,
 } from '../../bundledPluginPublicationPolicy.mjs';
 import {
   assertResolvedRuntimeDependencyMatchesDeclaration,
@@ -600,6 +599,9 @@ export async function buildCliBinaryArtifactCodePayload({
     : undefined;
   try {
     if (daemonProjectionRoot) {
+      // The publisher's required-package policy refuses missing host code here,
+      // before bundling or native compilation. Optional failures stay with the
+      // payload's projections and diagnostics for runtime exclusion.
       await runCommand(process.execPath, [
         '--conditions=happier-source', '--experimental-strip-types',
         '--import', join(repoRoot, 'packages/cli-common/registerSourceRuntime.mjs'), generatorPath,
@@ -1138,20 +1140,6 @@ export async function buildCliBinaryArtifactPayload({
     commandProbe,
     compileBinary,
   });
-  // The code payload publishes its projections and diagnostics together from
-  // current source. Checkout-local diagnostics may belong to an older build
-  // (and are not mirrored); only this payload's publication can admit release.
-  const publicationFailuresPath = join(payloadDir, BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH);
-  if (
-    existsSync(publicationFailuresPath) &&
-    parseBundledPluginPublicationFailures(
-      readFileSync(publicationFailuresPath, 'utf8'),
-    ).length > 0
-  ) {
-    throw new Error(
-      '[component-artifacts] release payload requires a complete bundled-plugin publication',
-    );
-  }
   const support = await buildCliBinaryArtifactSupportPayload({
     repoRoot,
     payloadDir,

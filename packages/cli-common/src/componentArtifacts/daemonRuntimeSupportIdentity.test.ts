@@ -1297,11 +1297,12 @@ await prepareSourcePluginUiArtifacts(JSON.parse(input));`);
       payloadDir: join(root, 'release-payload'),
       target: targetForHost(),
       commandProbe: (command) => command === 'bun' || command === 'pnpm',
+      runCommand: (command, args, options) => execOrThrow(command, args, { ...options, stdio: 'pipe' }),
       compileBinary: async ({ outfile }) => {
         nativeCompilations += 1;
         await writeFixtureFile(outfile, 'compiled release daemon binary\n');
       },
-    })).rejects.toThrow();
+    })).rejects.toThrow(/@happier-dev\/plugins-codex/);
     expect(nativeCompilations).toBe(0);
   }, 240_000);
 });
