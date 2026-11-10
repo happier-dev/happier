@@ -1,3 +1,4 @@
+import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import type { VendorResumeEligibilityReasonCode } from '@happier-dev/agents';
 import type { AccountSettings } from '@happier-dev/protocol';
 
@@ -265,7 +266,7 @@ export async function listSessions(params: ListSessionsParams): Promise<ListSess
     method: 'GET', path: '/v1/account/encryption/currentness',
   });
   if (params.resolveAuthorizationHeaders && !accountEncryptionAuthorizationHeaders) {
-    throw new Error('External Action authorization unavailable');
+    throw createExternalActionHeaderRefusalError();
   }
   const [initialPage, accountSettingsContext, accountEncryptionCurrentness] = await Promise.all([
     // A Session-bound principal is not an Account-wide list client: its admitted

@@ -1,3 +1,4 @@
+import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import type { StoredCredentials } from '@/persistence';
 import type { SessionSnapshotRefreshReason } from '@/api/session/sessionSnapshotRefreshReason';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
@@ -94,7 +95,7 @@ export async function resolveSessionTransportContext(params: Readonly<{
         method: 'GET', path: '/v1/account/encryption/currentness',
     });
     if (params.resolveAuthorizationHeaders && !currentnessAuthorizationHeaders) {
-        throw new Error('External Action authorization unavailable');
+        throw createExternalActionHeaderRefusalError();
     }
     const accountEncryptionCurrentnessRead = fetchAccountEncryptionCurrentness({
         credentials: params.credentials, token: params.credentials.token,

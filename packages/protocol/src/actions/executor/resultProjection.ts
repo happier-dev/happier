@@ -13,7 +13,7 @@ import { readSshCommandFailure, readRemoteEnrollmentCommandFailure, readHomeAuth
 import { ActionOperationFailureV1Schema, ManagedAgentStartFailureDetailsV1Schema, ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema, ManagedGuestHomeFailureDetailsV1Schema } from '../operations/v1.js';
 import { SessionListUnavailableQueryV1Schema } from '../../sessions/listing/query.js';
 import { ConnectedServicesDefaultUnavailableDetailsV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
-import { isActionOutcomeUnknownErrorCodeV1, projectActionExecuteFailure, ActionFailureCauseV1Schema,
+import { isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, projectActionExecuteFailure, ActionFailureCauseV1Schema,
   projectActionFailureCauseV1, readActionErrorCodeV1, type ActionFailureCauseV1 } from '../actionExecutionResult.js';
 import { redactBugReportSensitiveText } from '../../bugs/reports/redaction.js';
 import { getActionSpec } from '../actionSpecs.js';
@@ -89,8 +89,8 @@ function readCarriedActionFailureCause(error: unknown): ActionFailureCauseV1 | u
   return undefined;
 }
 
-export function normalizeActionExecutorThrownError(error: unknown, phase?: string): Readonly<{ errorCode: string; error: string; details?: unknown; failureCause: ActionFailureCauseV1; effectAttempted?: boolean }> {
-  const failure = classifyActionExecutorThrownError(error);
+export function normalizeActionExecutorThrownError(error: unknown, phase?: string): Readonly<{ errorCode: string; error: string; requestId?: string; details?: unknown; failureCause: ActionFailureCauseV1; effectAttempted?: boolean }> {
+  const failure = parseActionExecuteFailure(error) ?? classifyActionExecutorThrownError(error);
   return { ...failure, error: redactBugReportSensitiveText(failure.error),
     failureCause: readCarriedActionFailureCause(error) ?? projectActionFailureCauseV1(error, phase) };
 }

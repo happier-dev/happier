@@ -1,3 +1,4 @@
+import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import type { ApiMachineClientLifecycleDependencies } from '@/api/apiMachine';
 import type { ApiClient } from '@/api/api';
 import type { StoredCredentials } from '@/persistence';
@@ -158,7 +159,7 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
               daemonToken: preferenceCredentials.token, serverIdentityId: origin.serverIdentityId,
               ...(installation ? { privateKey: installation.privateKey, installationId: installation.installationId } : {}),
             });
-            return result.ok ? result.headers : null;
+            return requireExternalActionHeaders(result);
           },
         });
       },

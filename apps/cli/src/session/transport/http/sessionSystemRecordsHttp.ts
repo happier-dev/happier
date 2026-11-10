@@ -1,3 +1,4 @@
+import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from '@/api/client/credentialAxios';
 
@@ -182,7 +183,7 @@ export async function listSessionSystemRecordsV1(params: Readonly<{
   const route = v1SystemRecordRoute(params.sessionId);
   const requestPath = appendQuery(route, params.query);
   const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path: requestPath });
-  if (params.resolveAuthorizationHeaders && !authorizationHeaders) throw new Error('External Action authorization unavailable');
+  if (params.resolveAuthorizationHeaders && !authorizationHeaders) throw createExternalActionHeaderRefusalError();
   const response = await axios.get(`${params.serverUrl ?? resolveServerHttpBaseUrl()}${requestPath}`, {
     headers: buildV1RecordHeaders(params.token, params.query.owner, params.pluginId, authorizationHeaders ?? undefined),
     timeout: configuration.sessionControlHttpTimeoutMs,
@@ -212,7 +213,7 @@ export async function countSessionBoardItemsV1(params: Readonly<{
   const route = v1SystemRecordRoute(params.sessionId);
   const requestPath = appendQuery(route, { owner: 'host', namespace: 'surface', kind: 'item.v1', projection: 'count' });
   const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path: requestPath });
-  if (params.resolveAuthorizationHeaders && !authorizationHeaders) throw new Error('External Action authorization unavailable');
+  if (params.resolveAuthorizationHeaders && !authorizationHeaders) throw createExternalActionHeaderRefusalError();
   const response = await axios.get(`${params.serverUrl ?? resolveServerHttpBaseUrl()}${requestPath}`, {
     headers: buildV1RecordHeaders(params.token, 'host', undefined, authorizationHeaders ?? undefined),
     timeout: configuration.sessionControlHttpTimeoutMs,
@@ -235,7 +236,7 @@ export async function readSessionSystemRecordV1(params: Readonly<{
   const route = v1SystemRecordRoute(params.sessionId, '/record');
   const requestPath = appendQuery(route, params.address);
   const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path: requestPath });
-  if (params.resolveAuthorizationHeaders && !authorizationHeaders) throw new Error('External Action authorization unavailable');
+  if (params.resolveAuthorizationHeaders && !authorizationHeaders) throw createExternalActionHeaderRefusalError();
   const response = await axios.get(`${params.serverUrl ?? resolveServerHttpBaseUrl()}${requestPath}`, {
     headers: buildV1RecordHeaders(params.token, params.address.owner, params.pluginId, authorizationHeaders ?? undefined),
     timeout: configuration.sessionControlHttpTimeoutMs,

@@ -1,3 +1,4 @@
+import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import type { SessionFollowSourceKeyPreparationResultV1, SessionFollowSourceKeyPreparationWaitingCauseV1 } from '@happier-dev/protocol';
 
@@ -84,7 +85,7 @@ export function createSessionFollowSourceKeyPreparationAfterSet(input: Readonly<
             ? { installationId: input.externalActionMachineInstallationId }
             : {}),
         });
-        return resolved.ok ? resolved.headers : null;
+        return requireExternalActionHeaders(resolved);
       };
       const transportFailed = (cause: 'source_transport_exception' | 'destination_transport_exception', error: unknown) => {
         signal?.throwIfAborted();

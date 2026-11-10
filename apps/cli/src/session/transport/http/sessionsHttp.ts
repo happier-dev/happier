@@ -1,3 +1,4 @@
+import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import type { UsageSessionTimingV1, UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import axios from '@/api/client/credentialAxios';
@@ -66,7 +67,7 @@ export async function setSessionOrganizationPin(params: Readonly<{
   const body = SetSessionPinRequestSchema.parse(params.request);
   const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'PUT', path, body })
     ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
-  if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+  if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
   const response = await axios.put(`${resolveServerHttpBaseUrl()}${path}`, body, {
     headers: { ...authorizationHeaders, 'Content-Type': 'application/json' },
     ...(params.signal ? { signal: params.signal } : {}),
@@ -103,7 +104,7 @@ export async function setSessionManager(params: SessionManagerSetActionInputV1 &
   const body = { managerSessionId: request.managerSessionId, expectedManagerSessionId: request.expectedManagerSessionId };
   const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'POST', path, body })
     ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
-  if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+  if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
   const response = await axios.post(`${resolveServerHttpBaseUrl()}${path}`, body, {
     headers: { ...authorizationHeaders, 'Content-Type': 'application/json' },
     ...(params.signal ? { signal: params.signal } : {}),
@@ -141,7 +142,7 @@ export async function setSessionAttentionStanding(params: Readonly<{
   const body = params.request;
   const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'PUT', path, body })
     ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
-  if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+  if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
   const response = await axios.put(`${resolveServerHttpBaseUrl()}${path}`, body, {
     headers: { ...authorizationHeaders, 'Content-Type': 'application/json' },
     ...(params.signal ? { signal: params.signal } : {}),
@@ -179,7 +180,7 @@ export async function fetchSessionTurnsProjection(params: Readonly<{
   const path = `/v1/sessions/${encodeSessionIdPathSegment(params.sessionId)}/turns`;
   const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path })
     ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
-  if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+  if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
   const response = await axios.get(`${resolveServerHttpBaseUrl()}${path}`, {
     headers: {
       ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
@@ -341,7 +342,7 @@ async function getSessionByIdResponse(params: Readonly<{
   const resolvedAuthorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path: requestPath })
     ?? (params.resolveAuthorizationHeaders ? null : params.authorizationHeaders);
   if (params.resolveAuthorizationHeaders && !resolvedAuthorizationHeaders) {
-    throw new Error('External Action authorization unavailable');
+    throw createExternalActionHeaderRefusalError();
   }
   const requestPurpose = resolveSessionSnapshotRequestPurpose(params.reason);
   const deadlineRemainingMs = params.deadlineAtMs === undefined
@@ -490,7 +491,7 @@ export async function lookupSessionsByTags(params: Readonly<{
   const authorizationHeaders = params.resolveAuthorizationHeaders?.({
     method: 'POST', path, body: request,
   }) ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
-  if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+  if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
   const response = await axios.post(
     `${resolveServerHttpBaseUrl()}${path}`,
     request,
@@ -581,7 +582,7 @@ export async function* fetchSessionOrganizationPlacementBatches(
       const request = buildSessionOrganizationAssignmentSnapshotHttpRequestV1(ids);
       const authorizationHeaders = params.resolveAuthorizationHeaders
         ? params.resolveAuthorizationHeaders(request) : { Authorization: `Bearer ${params.token}` };
-      if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+      if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
       const response = await axios.get(`${params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl()}${request.path}`, {
         headers: {
           ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
@@ -689,7 +690,7 @@ export async function patchSessionMetadata(params: Readonly<{
   const authorizationHeaders = params.resolveAuthorizationHeaders?.({
     method: 'PATCH', path, body: requestBody,
   }) ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
-  if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+  if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
   const response = await axios.patch(
     `${serverUrl}${path}`,
     requestBody,
@@ -849,7 +850,7 @@ export async function patchSessionMetadataEnvelopeTuple(params: Readonly<{
   const authorizationHeaders = params.resolveAuthorizationHeaders?.({
     method: 'PATCH', path, body: params.patch,
   }) ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
-  if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+  if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
   const response = await axios.patch(
     `${serverUrl}${path}`,
     params.patch,
@@ -1208,7 +1209,7 @@ export async function fetchSessionListPage(params: Readonly<{
   const requestPath = queryString ? `${path}?${queryString}` : path;
   const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path: requestPath })
     ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
-  if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+  if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
   const response = await axios.get(`${serverUrl}${requestPath}`, {
     headers: {
       ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
@@ -1304,7 +1305,7 @@ export async function fetchSessionSnapshotsBatch(params: SessionSnapshotBatchPar
     const body = SessionReadBatchRequestV1Schema.parse({ ...emptyBody, sessionIds });
     const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'POST', path, body })
       ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
-    if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+    if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
     const response = await axios.post<unknown>(`${serverUrl}${path}`, body, {
       headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...authorizationHeaders,
         'Content-Type': 'application/json' },
@@ -1402,7 +1403,7 @@ async function fetchSessionsQueryPagePayload(params: SessionListQueryHttpParams)
   const authorizationHeaders = params.resolveAuthorizationHeaders?.({
     method: 'POST', path, body: query,
   }) ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
-  if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+  if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
   const response = await axios.post(
     `${resolveServerHttpBaseUrl()}${path}`,
     query,
@@ -1669,7 +1670,7 @@ async function postArchiveMutation(params: Readonly<{
   params.signal?.throwIfAborted();
   const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'POST', path, body })
     ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
-  if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+  if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
   const response = await axios.post(
     `${serverUrl}${path}`,
     body,

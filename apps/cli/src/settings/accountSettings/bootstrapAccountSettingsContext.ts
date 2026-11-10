@@ -1,3 +1,4 @@
+import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from '@/api/client/credentialAxios';
 import { HttpStatusError } from '@/api/client/httpStatusError';
@@ -170,7 +171,7 @@ async function requestAccountSettingsV2(
   const path = '/v2/account/settings';
   const authorizationHeaders = resolveAuthorizationHeaders?.({ method: 'GET', path })
     ?? (resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${credentials.token}` });
-  if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+  if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
   const response = await axios.get(`${resolveAccountSettingsHttpBaseUrl()}/v2/account/settings`, {
     headers: {
       ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
@@ -600,7 +601,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
         }) ?? (params.resolveAuthorizationHeaders
           ? null
           : { Authorization: `Bearer ${credentials.token}` });
-        if (!fallbackAuthorizationHeaders) throw new Error('External Action authorization unavailable');
+        if (!fallbackAuthorizationHeaders) throw createExternalActionHeaderRefusalError();
         const response = await axios.get(`${resolveAccountSettingsHttpBaseUrl()}${path}`, {
           headers: {
             ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),

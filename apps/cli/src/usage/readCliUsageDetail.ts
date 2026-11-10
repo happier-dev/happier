@@ -1,3 +1,4 @@
+import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import type { Readable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { MetadataSchema, AgentStateSchema } from '@happier-dev/session-core/state';
@@ -85,7 +86,7 @@ export async function readCliUsageDetail(input: Readonly<{
             const body = UsageSessionEvidenceRequestSchema.parse({ nowMs: input.nowMs,
                 requests: plans.map(({ evidence: _evidence, ...request }) => request) });
             const headers = input.resolveHeaders({ method: 'POST', path: USAGE_SESSION_EVIDENCE_PATH, body });
-            if (!headers) throw new Error('External Action authorization unavailable');
+            if (!headers) throw createExternalActionHeaderRefusalError();
             const response = await axios.post<Readable>(`${input.serverHttpBaseUrl}${USAGE_SESSION_EVIDENCE_PATH}`, body, {
                 headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...headers,
                     'Content-Type': 'application/json', Accept: 'application/x-ndjson' },

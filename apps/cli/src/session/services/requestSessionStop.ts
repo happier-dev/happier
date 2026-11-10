@@ -1,3 +1,4 @@
+import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import type { StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { stopDaemonSession } from '@/daemon/controlClient';
@@ -403,7 +404,7 @@ export async function requestSessionStop(params: Readonly<{
       ? params.resolveAuthorizationHeaders?.({ method: 'GET', path: '/v1/account/encryption/currentness' })
       : undefined;
     if (rawSession.metadataLayoutVersion === 1 && params.resolveAuthorizationHeaders && !currentnessHeaders) {
-      throw new Error('External Action authorization unavailable');
+      throw createExternalActionHeaderRefusalError();
     }
     const accountCurrentness = rawSession.metadataLayoutVersion === 1
       ? await fetchAccountEncryptionCurrentness({

@@ -1,3 +1,4 @@
+import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import { createCliWorkspaceSyncActionDeps } from './cliActionDeps/workspaceSync';
 import { createDeploymentArtifactHeaderReader } from '@/deployments/readArtifactHeadersForHost';
 import { prepareCliManagedProvisionerAdmission } from '@/machines/managed/provisionerAdmission';
@@ -337,7 +338,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
         ? { installationId: params.externalActionMachineInstallationId }
         : {}),
     });
-    return resolved.ok ? resolved.headers : null;
+    return requireExternalActionHeaders(resolved);
   };
   const admitAccountStorage = async (serverId: string, context: ActionExecutorContext) => {
     const denied = await projectHomeAdmission(serverId, context);

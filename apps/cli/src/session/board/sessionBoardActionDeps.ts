@@ -1,3 +1,4 @@
+import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import axios from '@/api/client/credentialAxios';
 import { applySessionBoardItemPlacementV1, applySessionBoardLayoutOperationV1, resolveSessionBoardItemPlacementDestinationV1, removeSessionBoardItemPlacementsV1 } from '@happier-dev/protocol/sessions/board/layoutOperations';
 import { isSessionSurfaceItemSourceCompatible, SessionSurfaceItemV1Schema, SessionSurfaceItemV1StoredSchema, type SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board/item';
@@ -168,7 +169,7 @@ export function createSessionBoardActionDeps(options: Readonly<{
         ...(options.externalActionMachineRequestPrivateKey ? { privateKey: options.externalActionMachineRequestPrivateKey } : {}),
         ...(options.externalActionMachineInstallationId ? { installationId: options.externalActionMachineInstallationId } : {}),
       });
-      return authorization.ok ? authorization.headers : null;
+      return requireExternalActionHeaders(authorization);
     };
     // Exact-Home decision first: only a positive sessions.board decision from the caller's
     // already-owned Home snapshot may widen detail to accessProjectionVersion=1 via the

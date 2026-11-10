@@ -1,3 +1,4 @@
+import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import axios from '@/api/client/credentialAxios';
 import { type AxiosResponse } from 'axios';
 import { createHash, randomUUID } from 'node:crypto';
@@ -422,7 +423,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         resolveRequestHeaders: (readContext, readActionId, request) => {
           const authorization = resolveRequestHeaders({ context: readContext,
             effectActionId: readContext.externalActionExecutionAuthorization?.binding.actionId ?? readActionId, ...request });
-          return authorization.ok ? authorization.headers : null;
+          return requireExternalActionHeaders(authorization);
         },
         dispatchReceipt: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' }),
       });
@@ -483,7 +484,7 @@ export function createAccountServerActionDeps(input: Readonly<{
             ...(input.isCredentialCurrent ? { isCredentialCurrent: input.isCredentialCurrent } : {}),
             resolveHeaders: (caller, actionId, read) => {
               const authorization = resolveRequestHeaders({ context: caller, effectActionId: actionId, ...read });
-              return authorization.ok ? authorization.headers : null;
+              return requireExternalActionHeaders(authorization);
             },
             // This adapter invokes only quota.get, which has no Machine-control effect.
             callMachineAction: async () => { throw new Error('usage_quota_read_has_no_machine_effect'); },
@@ -508,7 +509,7 @@ export function createAccountServerActionDeps(input: Readonly<{
     transport: createCliAccountKvJsonTransport({ credentials, key: USAGE_COACH_SUPPRESSIONS_KV_KEY, serverBaseUrl: serverHttpBaseUrl,
       signal: context.signal, resolveAuthorizationHeaders: request => {
         const authorization = resolveRequestHeaders({ context, effectActionId, ...request });
-        return authorization.ok ? authorization.headers : null;
+        return requireExternalActionHeaders(authorization);
       } }),
   });
   const deps: AccountServerActionDeps = {
@@ -658,7 +659,7 @@ export function createAccountServerActionDeps(input: Readonly<{
                     ...(input.isCredentialCurrent ? { isCredentialCurrent: input.isCredentialCurrent } : {}),
                     resolveHeaders: (caller, actionId, read) => {
                       const authorization = resolveRequestHeaders({ context: caller, effectActionId: actionId, ...read });
-                      return authorization.ok ? authorization.headers : null;
+                      return requireExternalActionHeaders(authorization);
                     },
                     callMachineAction: async request => {
                       await check();
@@ -724,7 +725,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           nowMs: accountingNowMs, signal: context.signal, assertCurrent: check,
           resolveHeaders: request => {
             const authorization = resolveRequestHeaders({ context, effectActionId: 'usage.query', ...request });
-            return authorization.ok ? authorization.headers : null;
+            return requireExternalActionHeaders(authorization);
           },
         });
         await check();
@@ -785,7 +786,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         isCredentialCurrent: input.isCredentialCurrent, onRequestIssued: input.onRequestIssued,
         resolveRequestHeaders: (request) => {
           const authorization = resolveRequestHeaders(request);
-          return authorization.ok ? authorization.headers : null;
+          return requireExternalActionHeaders(authorization);
         },
       });
       if (!client) return { status: 'unavailable' };

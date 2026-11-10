@@ -1,3 +1,4 @@
+import { type ExternalActionHeaderRefusal, refuseExternalActionHeaders } from './externalActionHeaderRefusal';
 import type { ExternalActionIssuerRefusal } from './externalActionIssuerRefusal';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { deriveEd25519KeyPair, ED25519_PUBLIC_KEY_BYTES } from '@happier-dev/protocol/crypto/ed25519';
@@ -1831,24 +1832,22 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
   privateKey?: ExternalActionMachineRequestSigningKey;
   installationId?: string;
 }>): Readonly<{ ok: true; headers: Readonly<Record<string, string>>;
-  machineRpcAuthorization?: 'account' }> | Readonly<{ ok: false }> {
+  machineRpcAuthorization?: 'account' }> | ExternalActionHeaderRefusal {
   const authorization = input.context?.externalActionExecutionAuthorization;
+  const refuse = (reason: ExternalActionHeaderRefusal['reason']): ExternalActionHeaderRefusal =>
+    refuseExternalActionHeaders(reason, authorization?.binding.requestId);
   if (!authorization) {
     // Public Action execution never falls through to the daemon credential.
     // A direct PAT request may still complete daemon-local work while its Home
     // is unreachable, but any Home-bound effect remains closed.
-    if (input.context?.externalActionCredential) return { ok: false };
+    if (input.context?.externalActionCredential) return refuse('external_credential_without_authorization');
     return { ok: true, headers: { Authorization: `Bearer ${input.daemonToken}`,
       ...(input.context?.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) } };
   }
-  if (
-    !input.privateKey
-    || !input.installationId
-    || !input.context?.externalActionTarget
-    || authorization.binding.serverIdentityId !== input.serverIdentityId
-  ) {
-    return { ok: false };
-  }
+  if (!input.privateKey) return refuse('signing_key_missing');
+  if (!input.installationId) return refuse('installation_id_missing');
+  if (!input.context?.externalActionTarget) return refuse('target_missing');
+  if (authorization.binding.serverIdentityId !== input.serverIdentityId) return refuse('dependency_home_identity_mismatch');
   const binding = authorization.binding;
   if (binding.actionId === ACTION_INVOKE_ACTION_ID_V1 && input.effectActionId !== binding.actionId
     && 'authentication' in binding) {
@@ -1857,7 +1856,7 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
     // child HTTP purposes, and the installed daemon's Account is not the caller.
     const requester = readRequesterAccountActionContext(authorization);
     if (!requester || binding.accountId !== readAccountIdFromToken(requester.credentials.token)
-      || (binding.authentication.kind !== 'account' && binding.authentication.kind !== 'terminal')) return { ok: false };
+      || (binding.authentication.kind !== 'account' && binding.authentication.kind !== 'terminal')) return refuse('requester_account_custody_mismatch');
     return { ok: true, headers: { Authorization: `Bearer ${requester.credentials.token}`,
       ...(input.context.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) } };
   }
@@ -1873,7 +1872,7 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
       || approval.artifactId !== replay.artifactId || approval.requestId !== binding.requestId
       || approval.decidingAccountId !== binding.accountId
       || binding.sessionActionOrigin || binding.workflowActionOrigin
-      || (binding.authentication.kind !== 'account' && binding.authentication.kind !== 'terminal')) return { ok: false };
+      || (binding.authentication.kind !== 'account' && binding.authentication.kind !== 'terminal')) return refuse('approval_replay_mismatch');
     return { ok: true, headers: { Authorization: `Bearer ${requester.credentials.token}`,
       ...(input.context.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) } };
   }
@@ -1886,7 +1885,7 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
     : readAdmittedBotTemplateParentActionIdV1(input.context);
   const templateChild = templateParentActionId !== null;
   if (templateChild && !('credentialId' in binding)) {
-    if (binding.accountId !== readAccountIdFromToken(input.daemonToken)) return { ok: false };
+    if (binding.accountId !== readAccountIdFromToken(input.daemonToken)) return refuse('template_account_mismatch');
     return { ok: true, machineRpcAuthorization: 'account', headers: { Authorization: `Bearer ${input.daemonToken}`,
       ...(input.context.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) } };
   }

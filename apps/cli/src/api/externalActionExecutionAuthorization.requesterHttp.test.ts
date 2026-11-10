@@ -15,6 +15,7 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE
 import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1, verifyExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import * as executionAuthorizationOwner from './externalActionExecutionAuthorization';
+import { createSessionListActionDeps } from '@/session/actions/sessionListActionDependency';
 import { openExternalActionRequestV2, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { projectDeploymentReadAdmissionV1, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { deriveAccountMachineKeyFromRecoverySecret, openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -54,6 +55,47 @@ const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({
 });
 
 describe('requester HTTP authority on the existing external Action carrier', () => {
+  it.each([
+    ['external_credential_without_authorization', { context: { externalActionCredential: principal } }],
+    ['signing_key_missing', { privateKey: undefined }],
+    ['installation_id_missing', { installationId: undefined }],
+    ['target_missing', { context: { externalActionExecutionAuthorization: authorization } }],
+    ['dependency_home_identity_mismatch', { serverIdentityId: 'another-home' }],
+  ] as const)('retains the missing header fact: %s', (reason, change) => {
+    const result = executionAuthorizationOwner.resolveExternalActionServerRequestHeaders({
+      context: { externalActionExecutionAuthorization: authorization, externalActionTarget: target },
+      effectActionId: authorization.binding.actionId, method: 'GET', path: '/v1/account/encryption/currentness',
+      daemonToken: 'private-daemon-token', privateKey: keys.secretKey,
+      installationId: 'alice-installation', serverIdentityId: 'srv_bob_home', ...change,
+    });
+    expect(result).toMatchObject({ ok: false, reason, requestId: expect.any(String) });
+    expect(JSON.stringify(result)).not.toContain('private-daemon-token');
+    expect(JSON.stringify(result)).not.toContain(authorization.token);
+  });
+
+  it('carries the header refusal and correlation through a real Session Action failure', async () => {
+    const log = vi.spyOn(logger, 'infoFile');
+    const sessionTarget = { kind: 'session' as const, sessionId: 'c000000000000000000000011' };
+    const sessionAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization,
+      binding: { ...authorization.binding, actionId: 'session.list', target: sessionTarget },
+    });
+    const executor = createActionExecutor(createSessionListActionDeps({
+      credentials: { token: accountToken, encryption: null },
+      serverIdentityId: 'srv_bob_home', serverId: 'bob-profile', serverHttpBaseUrl: 'https://bob-home.test',
+    }));
+    const result = await executor.execute('session.list', {}, {
+      surface: 'cli',
+      externalActionExecutionAuthorization: sessionAuthorization, externalActionTarget: sessionTarget,
+    });
+    expect(result).toMatchObject({ error: 'External Action authorization unavailable: signing_key_missing' });
+    expect(result).toMatchObject({ ok: false, requestId: authorization.binding.requestId,
+      effectAttempted: false, details: { authorizationRefusalReason: 'signing_key_missing' } });
+    expect(log.mock.calls.filter(([message]) => message === '[ExternalAction] Header authorization refused'))
+      .toEqual([['[ExternalAction] Header authorization refused', {
+        reason: 'signing_key_missing', requestId: authorization.binding.requestId,
+      }]]);
+  });
+
   it('returns no Template parent without private child admission', () => {
     expect(executionAuthorizationOwner.readAdmittedBotTemplateParentActionIdV1(undefined)).toBeNull();
     expect(executionAuthorizationOwner.readAdmittedBotTemplateParentActionIdV1({ surface: 'api', authority: 'account_automation' })).toBeNull();
@@ -351,7 +393,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
       effectActionId: request.effectActionId, method: request.method, path: request.path,
       signature: signed.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER], publicKey: keys.publicKey })).toBe(true);
     expect(executionAuthorizationOwner.resolveExternalActionServerRequestHeaders({ ...request,
-      context: { ...context, externalActionExecutionAuthorization: undefined } })).toEqual({ ok: false });
+      context: { ...context, externalActionExecutionAuthorization: undefined } })).toMatchObject({ ok: false });
     expect(executionAuthorizationOwner.resolveExternalActionServerRequestHeaders({ ...request,
       context: { surface: 'rpc', authority: 'account_automation' } })).toMatchObject({ ok: true,
         headers: { Authorization: 'Bearer installed-account-token' } });
@@ -377,7 +419,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     expect(await run(accountToken)).toMatchObject({ ok: true, machineRpcAuthorization: 'account',
       headers: { Authorization: `Bearer ${accountToken}` } });
     const aliceToken = `${encodeTokenPart({ alg: 'none' })}.${encodeTokenPart({ sub: 'alice' })}.signature`;
-    expect(await run(aliceToken)).toEqual({ ok: false });
+    expect(await run(aliceToken)).toMatchObject({ ok: false });
     const bareRoot = headersFor(context, accountToken);
     expect(bareRoot).not.toHaveProperty('machineRpcAuthorization');
     expect(bareRoot.ok && bareRoot.headers).not.toHaveProperty('Authorization');

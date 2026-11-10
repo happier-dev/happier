@@ -1,3 +1,4 @@
+import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import type { StoredCredentials } from '@/persistence';
 
 import { measureHappierReplayDialogLineChars } from '@happier-dev/agents';
@@ -293,7 +294,7 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
     method: 'GET', path: '/v1/account/encryption/currentness',
   });
   if (params.resolveAuthorizationHeaders && !currentnessAuthorizationHeaders) {
-    throw new Error('External Action authorization unavailable');
+    throw createExternalActionHeaderRefusalError();
   }
   const accountEncryptionCurrentness = await fetchAccountEncryptionCurrentness({
     credentials: params.credentials, token: params.credentials.token,

@@ -18,6 +18,10 @@ describe('Action failure error adapter', () => {
     expect(error.message).toBe(failure.error);
     expect(error).toMatchObject({ ...actionResults.projectActionExecuteFailure(failure), code: failure.errorCode });
     expect(error).not.toHaveProperty('bridgePrivate');
+    expect(normalizeActionExecutorThrownError(error)).toMatchObject({
+      requestId: failure.requestId, details: failure.details,
+      ...(effectAttempted === undefined ? {} : { effectAttempted }),
+    });
     if (effectAttempted === undefined) expect(error).not.toHaveProperty('effectAttempted');
   });
 });

@@ -1,3 +1,4 @@
+import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from '@/api/client/credentialAxios';
 
@@ -131,7 +132,7 @@ export async function fetchEncryptedTranscriptMessagesPage(params: FetchEncrypte
     });
     const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path })
       ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
-    if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+    if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
     const response = await axios.get(`${serverUrl}${path}`, {
       headers: {
         ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),

@@ -1,3 +1,4 @@
+import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import type { UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import axios from '@/api/client/credentialAxios';
@@ -883,7 +884,7 @@ export async function readPendingQueueV2MessageContentByLocalIdFromServer(params
     const path = `/v2/sessions/${encodeURIComponent(params.sessionId)}/pending`;
     const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path })
         ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
-    if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+    if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
     const response = await axios.get(
         `${serverUrl}${path}`,
         {
@@ -952,7 +953,7 @@ export async function listPendingQueueV2DeliveryStatusesFromServer(params: {
     const path = params.includeDiscarded === true ? `${basePath}?includeDiscarded=true` : basePath;
     const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path })
         ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
-    if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+    if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
     const response = await axios.get(`${serverUrl}${path}`, {
         headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...authorizationHeaders },
         timeout: 10_000,
@@ -1115,7 +1116,7 @@ async function postPendingQueueMessageViaHttp(params: {
     const authorizationHeaders = params.resolveAuthorizationHeaders?.({
         method: 'POST', path: params.path, body: params.body,
     }) ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
-    if (!authorizationHeaders) throw new Error('External Action authorization unavailable');
+    if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
     const response = await (async () => {
         try {
             return await axios.post(

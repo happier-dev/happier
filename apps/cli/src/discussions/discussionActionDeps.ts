@@ -1,3 +1,4 @@
+import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import axios from '@/api/client/credentialAxios';
 import { type Method } from 'axios';
 import { randomUUID } from 'node:crypto';
@@ -355,7 +356,7 @@ export function createDiscussionActionDeps(options: Readonly<{
           featureId: 'sessions.conversations', env: process.env, serverUrl,
           ...(context.externalActionCredential ? { resolveAuthorizationHeaders: (request: Readonly<{ method: 'GET'; path: string }>) => {
             const authorization = authorizationFor(request.method, request.path);
-            return authorization.ok ? authorization.headers : null;
+            return requireExternalActionHeaders(authorization);
           } } : {}),
         });
         decision = resolved.decision;

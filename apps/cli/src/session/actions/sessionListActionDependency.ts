@@ -1,3 +1,4 @@
+import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import { buildSessionAwarenessListResultV1, markSessionListQueryResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
 import type { AccountSettings, ActionExecutorDeps } from '@happier-dev/protocol';
 
@@ -238,7 +239,7 @@ export function createSessionListActionDeps(params: Readonly<{
           ? { installationId: params.externalActionMachineInstallationId }
           : {}),
       });
-      return resolved.ok ? resolved.headers : null;
+      return requireExternalActionHeaders(resolved);
     };
     if (!resolveAuthorizationHeaders({
       method: 'GET',
