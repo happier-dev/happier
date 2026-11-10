@@ -1,13 +1,15 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { HappierSkeletonBlock, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
@@ -29,8 +31,8 @@ export type ManagedProvisionerScope = Readonly<{ chip: React.ReactNode; placemen
  * Add a machine → Create one (lab `m-add`, `af-add`): the provisioners, grouped by the first question people
  * have — on a computer they control, a cloud sandbox, or a cloud server. Each card's status and step come from
  * the provisioner's own `check`; nothing is faked ready. Desktop draws cards; a phone draws push rows.
- * Only a provisioner one of your computers creates (its declared acquire role) names that computer: the
- * chip sits on the section holding one, and Account-created ones never show it.
+ * Only a provisioner one of your computers runs (its placement) names that computer: the chip sits on the
+ * section holding one (or on the folded row of computer-run machines), and Account-run ones never show it.
  */
 export const MachineProvisionerSections = React.memo(
   function MachineProvisionerSections(
@@ -53,9 +55,13 @@ export const MachineProvisionerSections = React.memo(
     const local = props.cards.filter((card) => card.location === 'local');
     const sandboxes = props.cards.filter((card) => card.location === 'cloud' && card.enrollmentRole === 'sandbox');
     const cloud = props.cards.filter((card) => card.location === 'cloud' && card.enrollmentRole !== 'sandbox');
-    // The chip belongs with this computer's machines; a cloud provider a computer runs (Modal) carries it only without them.
-    const scoped = [local, sandboxes, cloud].find((cards) => cards.some((card) => card.acquire === 'daemon'));
-    const scopeFor = (cards: readonly ManagedProvisionerCard[]) =>
+    // The chip belongs with this computer's machines (or their folded row); a cloud provider a computer runs
+    // (Modal, or one this browser cannot reach) carries it only without them.
+    const collapsedNames = props.localCollapsed?.names ?? [];
+    const scoped = local.length > 0 || collapsedNames.length === 0
+      ? [local, sandboxes, cloud].find((cards) => cards.some((card) => card.acquire === 'daemon'))
+      : 'collapsed';
+    const scopeFor = (cards: readonly ManagedProvisionerCard[] | 'collapsed') =>
       props.scope && cards === scoped ? props.scope : undefined;
     const group = (cards: readonly ManagedProvisionerCard[], key: 'local' | 'cloud-sandboxes' | 'cloud') => {
       if (cards.length === 0) return null;
@@ -78,9 +84,14 @@ export const MachineProvisionerSections = React.memo(
         </React.Fragment>
       );
     };
-    const collapsed = props.localCollapsed && props.localCollapsed.names.length > 0 ? (
-      <LocalCollapsedGroup key="collapsed" names={props.localCollapsed.names} onAddComputer={props.localCollapsed.onAddComputer}
-        compact={props.compact} testID={`${props.testID}.local.collapsed`} />
+    const collapsedScope = scopeFor('collapsed');
+    const collapsed = props.localCollapsed && collapsedNames.length > 0 ? (
+      <React.Fragment key="collapsed">
+        {collapsedScope?.placement === 'row' ? <ManagedScopeRow testID="managed-picker.scope" chip={collapsedScope.chip} /> : null}
+        <LocalCollapsedGroup names={collapsedNames} onAddComputer={props.localCollapsed.onAddComputer}
+          action={collapsedScope?.placement === 'header' ? collapsedScope.chip : undefined}
+          compact={props.compact} testID={`${props.testID}.local.collapsed`} />
+      </React.Fragment>
     ) : null;
     return (
       <>
@@ -101,14 +112,72 @@ export const MachineProvisionerSections = React.memo(
   },
 );
 
+/** Placeholder offers before the first catalog read answers: a wide page's tile grid, a phone's rows. */
+const SKELETON_OFFERS = Array.from({ length: 6 }, (_, index) => `offer-${index}`);
+
+/**
+ * The catalog's first read, drawn in the catalog's own layout: offer cards' skeletons through the same
+ * tile owner the offers use (a phone: the rows its offers become), so the answer replaces them in place.
+ */
+export const MachineProvisionerSectionsSkeleton = React.memo(function MachineProvisionerSectionsSkeleton(
+  props: Readonly<{ compact: boolean; testID: string }>,
+) {
+  const { theme } = useUnistyles();
+  const reducedMotion = useReducedMotionPreference();
+  const label = t('managedMachines.providers.loading');
+  if (props.compact) {
+    return (
+      <View testID={props.testID} accessibilityLabel={label}>
+        <ItemGroup>
+          <ItemLoadStateRows state={{ kind: 'loading' }} rows={4} lines={2} accessibilityLabel={label} />
+        </ItemGroup>
+      </View>
+    );
+  }
+  const bar = (width: `${number}%` | number, role: 'meta' | 'rowTitle' = 'meta') => (
+    <HappierSkeletonBlock width={width} height={happierPageTextMetrics(role).lineHeight - 4}
+      color={theme.colors.surface.skeleton} reducedMotion={reducedMotion} />
+  );
+  return (
+    <View testID={props.testID} accessibilityLabel={label} aria-busy>
+      <ItemGroup surface="none">
+        <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+          <SelectionTiles<string>
+            variant="action"
+            options={SKELETON_OFFERS.map((id) => ({
+              id,
+              title: '',
+              mark: (
+                <View style={styles.skeletonHead}>
+                  <HappierSkeletonBlock width={MANAGED_PROVISIONER_MARK_SIZE.tile} height={MANAGED_PROVISIONER_MARK_SIZE.tile}
+                    color={theme.colors.surface.skeleton} reducedMotion={reducedMotion} />
+                  {bar(96, 'rowTitle')}
+                </View>
+              ),
+            }))}
+            onPress={() => {}}
+            renderOptionFooter={() => (
+              <View style={styles.skeletonFooter}>
+                {bar('92%')}
+                {bar('64%')}
+                <View style={styles.skeletonStatus}>{bar('40%')}</View>
+              </View>
+            )}
+          />
+        </View>
+      </ItemGroup>
+    </View>
+  );
+});
+
 /** Machines a computer you've added runs, folded until one can run them. */
 function LocalCollapsedGroup(
-  props: Readonly<{ names: readonly string[]; onAddComputer: () => void; compact: boolean; testID: string }>,
+  props: Readonly<{ names: readonly string[]; onAddComputer: () => void; action?: React.ReactNode; compact: boolean; testID: string }>,
 ) {
   const { theme } = useUnistyles();
   const label = t('managedMachines.add.action.addComputer');
   return (
-    <ItemGroup title={t('managedMachines.add.onThisComputer')}>
+    <ItemGroup title={t('managedMachines.add.onThisComputer')} action={props.action} actionLayout="adaptive">
       <Item
         testID={props.testID}
         title={t('managedMachines.add.localCollapsedTitle')}
@@ -277,6 +346,18 @@ function toneColor(
 }
 
 const styles = StyleSheet.create((theme) => ({
+  skeletonHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s8,
+  },
+  skeletonFooter: {
+    alignSelf: 'stretch',
+    gap: theme.space.s6,
+  },
+  skeletonStatus: {
+    paddingTop: theme.space.s10,
+  },
   footer: {
     alignItems: 'flex-start',
     gap: theme.space.s10,

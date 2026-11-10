@@ -13,6 +13,10 @@ import { refreshManagedProvisionerAvailability } from './managedProvisionerAvail
 import { retainDeep, retainShallow } from '@/sync/domains/state/structuralSharing';
 import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 const EMPTY_PROVISIONERS: MachineProvisionersListResultV1['provisioners'] = [];
+/** The Account's plugin projection is still loading: the Account read has no answer yet (cf. `artifactLease`). */
+function isAccountAvailabilityPending(result: ManagedProvisionerReadResult<unknown>): boolean {
+    return result.kind === 'failed' && result.code === 'account_availability_not_loaded';
+}
 type ProvisionerChecks = Readonly<Record<string, MachinePresetCollectionSettledResult<MachineProvisionerCheckResultV1>>>;
 const EMPTY_CHECKS: ProvisionerChecks = Object.freeze({});
 type ProvisionerPresentation = Readonly<{
@@ -97,6 +101,9 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
             if (abort.signal.aborted || !binding.isCurrent()) return;
             setState(current => {
                 if (current.binding !== binding || current.requestKey !== requestKey) return current;
+                // Account availability that has not loaded yet is readiness, not an answer: the read stays
+                // pending and runs again when the Account projection publishes (`accountReader` below).
+                if (isAccountAvailabilityPending(result)) return retainShallow(current, { ...current, error: null });
                 const settled = retainShallow(current.settled ?? undefined, { binding, requestKey });
                 if (result.kind === 'failed') return retainShallow(current, { ...current, settled, loading: false, error: result.code });
                 const provisioners = [...result.value.provisioners];
@@ -113,7 +120,7 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
                 }
                 return retainShallow(current, { ...current, settled, loading: false,
                     provisioners: retainDeep(current.provisioners, provisioners),
-                    error: accountResult?.kind === 'failed' ? accountResult.code : null });
+                    error: accountResult?.kind === 'failed' && !isAccountAvailabilityPending(accountResult) ? accountResult.code : null });
             });
         };
         const read = (namedController?: ManagedControllerV1) => client.read('machines.provisioners.list', {

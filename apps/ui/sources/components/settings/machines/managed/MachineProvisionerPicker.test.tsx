@@ -142,11 +142,9 @@ describe('provisioner picker demand', () => {
     runtimeHost.current = 'browser';
     onTestFinished(() => { runtimeHost.current = null; });
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
-    const { useManagedControllerScope } = await import('./useManagedControllerScope');
     const onSelectProvisioner = vi.fn();
     function SelectedControllerPicker() {
-      const scope = useManagedControllerScope({ serverId, preferred: controller, testIDPrefix: 'browser-controller' });
-      return <MachineProvisionerPicker serverId={serverId} scope={scope} onSelectProvisioner={onSelectProvisioner} />;
+      return <MachineProvisionerPicker serverId={serverId} onSelectProvisioner={onSelectProvisioner} />;
     }
     const screen = await renderPicker(<SelectedControllerPicker />);
     try {
@@ -488,7 +486,10 @@ describe('provisioner picker demand', () => {
     harness.answer(serverId, `POST ${listPath}`, { body: { machines: [absent] } });
     storage.setState({ machineListByServerId: { srv_build: [createControllerMachineFixture({ id: 'ghost',
       installationId: controller.installationId, active: false, activeAt: 0 })] }, machineListStatusByServerId: { srv_build: 'idle' } });
+    await publishNoAccountProvisioners(serverId);
     const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} />);
+    // The chip sits on the folded computer-run offers once the catalog answers.
+    await waitForHomeGovernance(() => expect(screen.findHostByTestId('managed-picker.controller.chip')).not.toBeNull());
     await screen.pressByTestIdAsync('managed-picker.controller.chip');
     await act(async () => reportPopoverContentLayout(screen.tree, { width: 400, height: 500 }));
     await waitForHomeGovernance(() => {
@@ -1089,7 +1090,10 @@ describe('provisioner picker demand', () => {
     const hook = await renderHook(({ contributionKey }: { contributionKey?: string }) =>
       useManagedProvisioners(serverId, undefined, controller, { contributionKey }), { initialProps: {} });
     try {
-      await waitForHomeGovernance(() => expect(hook.getCurrent().error).toBe('account_availability_not_loaded'));
+      // Account availability that has not loaded yet is readiness, not a failure: the catalog keeps loading.
+      await waitForHomeGovernance(() => expect(reads.list).toBeGreaterThan(0));
+      await flushHookEffects();
+      expect(hook.getCurrent().error).toBeNull();
       const publish = () => replacePluginAccountAvailabilityProjection({
         scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
         snapshot: { availabilityCursor: 1, inventoryComplete: false, intentReads: [], materializations: [], snapshots: [] },
@@ -1124,7 +1128,32 @@ describe('provisioner picker demand', () => {
     } finally { await hook.unmount(); }
   });
 
-  it('keeps the managing computer above the catalog, and folds local VMs into one row until a computer is online', async () => {
+  it('keeps a Machine-less Account catalog loading until Account availability arrives, never reporting it as a failure', async () => {
+    const { serverId } = await arrangeCatalog({ home: 'not-loaded' });
+    const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } =
+      await import('@/sync/domains/plugins/availability/projection');
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    clearPluginAccountAvailabilityProjection();
+    const { useManagedProvisioners } = await import('./useManagedProvisioners');
+    const hook = await renderHook(() => useManagedProvisioners(serverId));
+    try {
+      await flushHookEffects();
+      await flushHookEffects();
+      expect(hook.getCurrent().error).toBeNull();
+      expect(hook.getCurrent().loading).toBe(true);
+      await act(async () => replacePluginAccountAvailabilityProjection({
+        scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
+        snapshot: { availabilityCursor: 1, inventoryComplete: false, intentReads: [], materializations: [], snapshots: [] },
+      }));
+      await waitForHomeGovernance(() => {
+        expect(hook.getCurrent().loading).toBe(false);
+        expect(hook.getCurrent().error).toBeNull();
+        expect(hook.getCurrent().provisioners.some(row => row.contribution.pluginId === 'happier.machine.vercel')).toBe(true);
+      });
+    } finally { await hook.unmount(); }
+  });
+
+  it('puts "Managed from" on the section of offers a Machine runs, and shows none for Account-placed offers', async () => {
     const { serverId } = await arrangeCatalog({ declared: [['alpha', 'Alpha', 'VM', 'local', 'daemon'], ['gamma', 'Gamma', 'Server', 'cloud', 'account']] });
     const { t } = await import('@/text');
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
@@ -1135,10 +1164,10 @@ describe('provisioner picker demand', () => {
     const online = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={onSelect} />);
     try {
       await waitForHomeGovernance(() => expect(online.findByTestId('managed-picker.provisioners.local.custom.compute/alpha.action'), online.getTextContent()).not.toBeNull());
-      // The scope stays above both sections, including while their first answer is pending.
+      // The computer that runs Alpha is chosen on Alpha's section; the Account creates Gamma, whose section names none.
+      expect(sectionAction(online, t('managedMachines.add.onThisComputer'))).toBeTruthy();
       expect(sectionAction(online, t('managedMachines.add.cloudTitle'))).toBeUndefined();
-      expect(sectionAction(online, t('managedMachines.add.onThisComputer'))).toBeUndefined();
-      expect(sectionAction(online, t('managedMachines.config.managedFrom'))).toBeTruthy();
+      expect(online.tree.findAll(node => node.props.title === t('managedMachines.config.managedFrom'))).toHaveLength(0);
       expect(online.findByTestId('managed-picker.provisioners.local.collapsed')).toBeNull();
       // Alpha is checked on the computer; the Account creates Gamma, so the computer is never asked about it.
       const checks = (localId: string) => harness.requestsFor('/v1/actions/machines.provisioners.check')
@@ -1149,13 +1178,14 @@ describe('provisioner picker demand', () => {
       expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ provisioner: 'custom.compute/alpha', controller: expect.anything() }));
     } finally { await online.unmount(); }
 
-    // Account-acquired provisioners keep the same scope position; their group does not claim to run there.
+    // Only Account-created offers: no Machine runs anything here, so the page asks for none.
     const accountOnly = await arrangeCatalog({ home: 'cloud-only', declared: [['gamma', 'Gamma', 'Server', 'cloud', 'account']] });
     const cloud = await renderPicker(<MachineProvisionerPicker serverId={accountOnly.serverId} onSelectProvisioner={vi.fn()} />);
     try {
       await waitForHomeGovernance(() => expect(cloud.tree.findAll(node => node.props.title === t('managedMachines.add.cloudTitle')).length).toBeGreaterThan(0));
       expect(sectionAction(cloud, t('managedMachines.add.cloudTitle'))).toBeUndefined();
-      expect(cloud.findByTestId('managed-picker.controller.chip')).not.toBeNull();
+      expect(cloud.findByTestId('managed-picker.controller.chip')).toBeNull();
+      expect(cloud.getTextContent()).not.toContain(t('managedMachines.config.managedFrom'));
     } finally { await cloud.unmount(); }
   });
   it('folds computer-run VMs into one row that leads to adding a computer while no computer can run them, and does not check them', async () => {
@@ -1275,12 +1305,10 @@ describe('provisioner picker demand', () => {
     } });
     const { readTransientAvailabilityFailure } = await import('@/utils/errors/transientAvailability');
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
-    const { useManagedControllerScope } = await import('./useManagedControllerScope');
     const onSelect = vi.fn();
     const preferred = { machineId: 'controller', installationId: 'controller-installation' };
     function FixedPicker() {
-      const scope = useManagedControllerScope({ serverId, preferred, testIDPrefix: 'transient-controller' });
-      return <MachineProvisionerPicker serverId={serverId} scope={scope} onSelectProvisioner={onSelect} />;
+      return <MachineProvisionerPicker serverId={serverId} onSelectProvisioner={onSelect} />;
     }
     const screen = await renderPicker(<FixedPicker />);
     const failureCard = () => screen.tree.findAll(node => node.props.testID === 'managed-picker.unavailable' && 'diagnosticCode' in node.props)[0];
@@ -1348,11 +1376,8 @@ describe('provisioner picker demand', () => {
     const { serverId, provisioners } = await arrangeCatalog({});
     const onSelect = vi.fn();
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
-    const { useManagedControllerScope } = await import('./useManagedControllerScope');
-    const preferred = { machineId: 'controller', installationId: 'controller-installation' };
     function FixedPicker() {
-      const scope = useManagedControllerScope({ serverId, preferred, testIDPrefix: 'fixed-controller' });
-      return <MachineProvisionerPicker serverId={serverId} scope={scope} onSelectProvisioner={onSelect} />;
+      return <MachineProvisionerPicker serverId={serverId} onSelectProvisioner={onSelect} />;
     }
     harness.answer(serverId, '/v1/actions/machines.provisioners.check', { select: value => {
       const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
@@ -1393,13 +1418,10 @@ describe('provisioner picker demand', () => {
   it('says the chosen controller is offline, with its next step, while its last cards stay on screen (J8)', async () => {
     const { serverId } = await arrangeCatalog({ home: 'offline-cards' });
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
-    const { useManagedControllerScope } = await import('./useManagedControllerScope');
     const { storage } = await import('@/sync/domains/state/storage');
     const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
-    const preferred = { machineId: 'controller', installationId: 'controller-installation' };
     function FixedPicker() {
-      const scope = useManagedControllerScope({ serverId, preferred, testIDPrefix: 'fixed-controller' });
-      return <MachineProvisionerPicker serverId={serverId} scope={scope} />;
+      return <MachineProvisionerPicker serverId={serverId} />;
     }
     const screen = await renderPicker(<FixedPicker />);
     const cards = () => screen.tree.findAll(node => Array.isArray(node.props.cards))
@@ -1463,19 +1485,20 @@ describe('provisioner picker demand', () => {
       release();
     }
   });
-  it('keeps the controller control mounted in one position while the first catalog settles', async () => {
+  it('reserves the catalog layout while the first catalog reads, without a lone loading line or a controller prompt', async () => {
     const { serverId, release } = await arrangeCatalog({ list: read => read === 1 });
+    const { t } = await import('@/text');
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
     const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} />);
     try {
-      const anchor = screen.findHostByTestId('managed-picker.scope-anchor');
-      expect(anchor).not.toBeNull();
-      const chip = screen.findHostByTestId('managed-picker.controller.chip');
-      expect(chip).not.toBeNull();
+      expect(screen.findByTestId('managed-picker.loading')).not.toBeNull();
+      expect(screen.getTextContent()).not.toContain(t('managedMachines.providers.loading'));
+      expect(screen.getTextContent()).not.toContain(t('managedMachines.add.chooseController'));
+      expect(screen.getTextContent()).not.toContain(t('managedMachines.config.managedFrom'));
       release();
       await waitForHomeGovernance(() => expect(screen.findByTestId('managed-picker.provisioners')).not.toBeNull());
-      expect(screen.findHostByTestId('managed-picker.scope-anchor')).toBe(anchor);
-      expect(screen.findHostByTestId('managed-picker.controller.chip')).toBe(chip);
+      expect(screen.findByTestId('managed-picker.loading')).toBeNull();
+      expect(screen.findByTestId('managed-picker.controller.chip')).not.toBeNull();
     } finally { release(); await screen.unmount(); }
   });
 
@@ -1565,10 +1588,11 @@ describe('provisioner picker demand', () => {
         expect(keys()).toContain(accountKey);
         expect(keys()).not.toContain(buildQualifiedPluginContributionKey(provisioners[0]!.contribution));
       });
-      // A failed Account source is visible and keeps its last declared cards until Retry succeeds.
+      // An Account projection that is loading again is readiness, not a failure: the last declared cards stay.
       clearPluginAccountAvailabilityProjection();
       await act(async () => hook.getCurrent().refresh());
-      await waitForHomeGovernance(() => expect(hook.getCurrent().error).toBe('account_availability_not_loaded'));
+      await flushHookEffects();
+      expect(hook.getCurrent().error).toBeNull();
       expect(keys()).toContain(accountKey);
       publishAccount();
       await act(async () => hook.getCurrent().refresh());
@@ -1670,7 +1694,7 @@ describe('provisioner picker demand', () => {
     ).toBe(false);
     await screen.unmount();
   });
-  it.each(['profile', 'portable'] as const)('retains a draft\'s named offline controller under its chip for a %s Home identifier, and offers setup when nothing can manage', async (identifierKind) => {
+  it.each(['profile', 'portable'] as const)('keeps a named offline controller while the machine list loads for a %s Home identifier, and offers setup when nothing can manage', async (identifierKind) => {
     const serverId = await harness.addHome({
       name: 'Build',
       serverUrl: 'https://build.example',
@@ -1708,20 +1732,6 @@ describe('provisioner picker demand', () => {
     await act(async () => { storage.setState({ machineListStatusByServerId: { srv_build: 'idle' } }); });
     expect(controllerScope.getCurrent().status).toBe('idle');
     await controllerScope.unmount();
-    function NamedOfflinePicker() {
-      const scope = useManagedControllerScope({ serverId: scopeId, preferred: { machineId: 'asleep', installationId: 'installation' }, testIDPrefix: 'managed-picker.controller' });
-      return <>{scope.chip}<MachineProvisionerPicker serverId={scopeId} scope={scope} /></>;
-    }
-    const screen = await renderPicker(<NamedOfflinePicker />);
-    expect(
-      screen.findByTestId('managed-picker.controller.chip'),
-    ).not.toBeNull();
-    await waitForHomeGovernance(() =>
-      expect(screen.findByTestId('managed-picker.offline')).not.toBeNull(),
-    );
-    expect(screen.findByTestId('managed-picker.unavailable')).toBeNull();
-    await screen.unmount();
-
     storage.setState({
       machineListByServerId: {
         srv_build: [
@@ -1790,6 +1800,7 @@ describe('provisioner picker demand', () => {
     await act(async () => storage.setState({ machineListByServerId: { [homeId]: [
       createControllerMachineFixture({ id: 'teammate', installationId: 'teammate-installation', activeAt: Date.now(), isShared: true }),
     ] }, machineListStatusByServerId: { [homeId]: 'idle' } }));
+    await publishNoAccountProvisioners(homeId);
     const screen = await renderPicker(<MachineProvisionerPicker serverId={homeId} />);
     await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('managedMachines.add.chooseController')));
     expect(screen.getTextContent()).not.toContain(t('managedMachines.add.noOnlineController'));
@@ -1802,61 +1813,12 @@ describe('provisioner picker demand', () => {
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
     const screen = await renderPicker(<MachineProvisionerPicker serverId={homeId} />);
     expect(screen.findByTestId('managed-picker.no-controller')).toBeNull();
-    expect(screen.findByTestId('managed-picker.machines-loading')).not.toBeNull();
+    expect(screen.findByTestId('managed-picker.loading')).not.toBeNull();
     await act(async () => storage.setState({ machineListByServerId: { [homeId]: [] }, machineListStatusByServerId: { [homeId]: 'idle' } }));
     expect(screen.findByTestId('managed-picker.no-controller')).not.toBeNull();
     await act(async () => storage.setState({ machineListStatusByServerId: { [homeId]: 'error' }, machineListByServerId: { [homeId]: null } }));
     expect(screen.findByTestId('managed-picker.no-controller')).toBeNull();
     expect(screen.findByTestId('managed-picker.machines-unavailable')).not.toBeNull();
-    await screen.unmount();
-  });
-  it('uses the scope a page put in its own header, drawing no second chip and keeping the controller state', async () => {
-    const serverId = await harness.addHome({
-      name: 'Build',
-      serverUrl: 'https://build.example',
-      serverIdentityId: 'srv_build',
-      accountId: 'owner',
-      currentAccount: true,
-    });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
-          createControllerMachineFixture({
-            id: 'asleep',
-            installationId: 'installation',
-            active: false,
-            activeAt: 0,
-            kind: 'persistent',
-          }),
-        ],
-      },
-      machineListStatusByServerId: { [serverId]: 'idle' },
-    });
-    const { MachineProvisionerPicker } =
-      await import('./MachineProvisionerPicker');
-    const { useManagedControllerScope } =
-      await import('./useManagedControllerScope');
-    function PageWithHeaderScope() {
-      const scope = useManagedControllerScope({
-        serverId,
-        preferred: { machineId: 'asleep', installationId: 'installation' },
-        testIDPrefix: 'page.controller',
-      });
-      return (
-        <>
-          {scope.chip}
-          <MachineProvisionerPicker serverId={serverId} scope={scope} />
-        </>
-      );
-    }
-    const screen = await renderPicker(<PageWithHeaderScope />);
-    await waitForHomeGovernance(() =>
-      expect(screen.findByTestId('managed-picker.offline')).not.toBeNull(),
-    );
-    expect(screen.findByTestId('page.controller.chip')).not.toBeNull();
-    expect(screen.findByTestId('managed-picker.controller.chip')).toBeNull();
-    expect(screen.findByTestId('managed-picker.scope')).toBeNull();
     await screen.unmount();
   });
   it('settles a signed-out Home without an endless provisioning spinner or reading a different Home', async () => {

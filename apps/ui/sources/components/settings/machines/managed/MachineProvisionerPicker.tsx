@@ -26,10 +26,10 @@ import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { useManagedProvisioners } from './useManagedProvisioners';
 import { readManagedProvisionerAvailability } from './managedProvisionerAvailability';
 import { describeManagedProvisionerFailure, useManagedProvisionerPresentation, useManagedProvisionerRuntimeHost } from './useManagedProvisionerPresentation';
-import { MachineProvisionerSections } from './MachineProvisionerSections';
+import { MachineProvisionerSections, MachineProvisionerSectionsSkeleton } from './MachineProvisionerSections';
 import { ManagedScopeRow } from './ManagedScopeRow';
 import type { ManagedProvisionerCard } from './managedMachineDisplay';
-import { useManagedControllerScope, type ManagedControllerScope } from './useManagedControllerScope';
+import { useManagedControllerScope } from './useManagedControllerScope';
 import { buildManagedMachineConfigurationRoute } from './managedMachineConfigurationRoute';
 import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { showManagedGetTheAppModal } from './ManagedGetTheAppModal';
@@ -60,11 +60,6 @@ type MachineProvisionerPickerProps = Readonly<{
     onSetUpThisComputer?: () => void;
     /** Local presentation handoff to the same configurator, without navigation or acquisition. */
     onSelectProvisioner?: (selection: ManagedProvisionerSelection) => void;
-    /**
-     * The "Managed from" scope of a page that shows its chip itself (beside the Add page's ways in). The
-     * picker then reads that controller and draws no chip of its own; without it, the picker owns one.
-     */
-    scope?: ManagedControllerScope;
 }>;
 
 export function MachineProvisionerPicker(props: MachineProvisionerPickerProps) {
@@ -75,23 +70,16 @@ export function MachineProvisionerPicker(props: MachineProvisionerPickerProps) {
     </ItemGroup></View>;
     const shared = { serverId: selectedHome, presetOnly: props.presetOnly, onSelectProvisioner: props.onSelectProvisioner,
         onSetUpThisComputer: props.onSetUpThisComputer };
-    // A page's scope speaks only for the Home it was made for.
-    return props.scope && selectedHome === props.serverId
-        ? <MachineProvisionerCatalog key={selectedHome} {...shared} scope={props.scope} pageOwnsChip />
-        : <MachineProvisionerOwnScopeCatalog key={selectedHome} {...shared} />;
+    return <MachineProvisionerCatalog key={selectedHome} {...shared} />;
 }
 
-function MachineProvisionerOwnScopeCatalog(props: Omit<MachineProvisionerPickerProps, 'scope'>) {
-    const scope = useManagedControllerScope({ serverId: props.serverId, testIDPrefix: 'managed-picker.controller' });
-    return <MachineProvisionerCatalog {...props} scope={scope} pageOwnsChip={false} />;
-}
-
-function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 'scope'> & Readonly<{ scope: ManagedControllerScope; pageOwnsChip: boolean }>) {
+function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
     useMachineReachabilityRevision();
     const handler = React.useRef<(registration: ActionApprovalRegistration) => void>(() => {});
     const onApprovalPending = React.useCallback((registration: ActionApprovalRegistration) => handler.current(registration), []);
-    // The invoking host can place an Account role on the selected controller when the browser cannot run it.
-    const scope = props.scope;
+    // "Managed from": the Machine that runs the offers placed on a Machine. The invoking host can also place
+    // an Account role on it when the browser cannot run that role.
+    const scope = useManagedControllerScope({ serverId: props.serverId, testIDPrefix: 'managed-picker.controller' });
     const controller = scope.controller;
     const catalog = useManagedProvisioners(props.serverId, onApprovalPending, controller);
     const { checks, setChecks } = catalog;
@@ -199,7 +187,7 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
         return [{ id, title,
             description: provisioner.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : '',
             location: location === 'local' ? 'local' : 'cloud', enrollmentRole: provisioner.descriptor.enrollmentRole,
-            acquire: provisioner.acquireExecutionTarget, mark: (size: number) => markFor(provisioner, size),
+            acquire: placement.executionTarget, mark: (size: number) => markFor(provisioner, size),
             repairFailure: repairFailure?.id === id && repairFailure.binding === catalog.binding
                 && repairFailure.controller?.machineId === controller?.machineId
                 && repairFailure.controller?.installationId === controller?.installationId ? repairFailure.outcome : undefined,
@@ -243,22 +231,20 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
     const failure = catalog.error ?? error ?? (failedCheck?.kind === 'failed' ? failedCheck.code : null);
     // A list that loaded with some checks failed is a partial read: its cards stay, and the line says only that.
     const partialRead = !catalog.error && !error && checkFailed && cards.length > 0;
-    // The controller's own state, said once under the chip that changes it.
-    // A catalog that answered speaks for itself; presence only explains an empty or failed one.
+    // The controller's own state, said once, and only about a catalog that answered: while the first read
+    // runs, the skeleton holds the page and nothing asks for a Machine yet.
     // Account providers need no Machine (plan 58): "none online" is said only once the catalog has nothing else to offer.
-    const nothingWithoutController = !catalog.loading && cards.length === 0;
-    const scopeState = !controller ? (scope.hasCandidates && (scope.hasOnlineCandidate || nothingWithoutController)
+    const scopeState = catalog.loading ? null : !controller ? (scope.hasCandidates && (scope.hasOnlineCandidate || cards.length === 0)
             ? <SurfaceStateCard testID="managed-picker.no-online-controller" kind="unavailable" size="line"
             title={t(scope.hasOnlineCandidate ? 'managedMachines.add.chooseController' : 'managedMachines.add.noOnlineController')} />
-            : catalog.loading && cards.length === 0 ? <SurfaceStateCard kind="loading" size="line" title={t('managedMachines.providers.loading')} /> : null)
+            : null)
         : (failure || cards.length === 0) && controllerPresence === 'offline' ? <SurfaceStateCard testID="managed-picker.offline" kind="unavailable" size="line"
             title={t('managedMachines.add.controllerOffline', { controller: controllerName })} action={{ label: t('common.retry'), onPress: catalog.refresh }} />
         : failure || cards.length === 0 && controllerPresence === 'unknown' ? <SurfaceStateCard testID="managed-picker.unavailable" kind={controllerPresence === 'unknown' ? 'unavailable' : 'error'} size="line" diagnosticCode={failure ?? undefined}
             diagnosticDetail={failure ? describeManagedProvisionerFailure(failure) : undefined}
             title={t(partialRead ? 'managedMachines.add.checksUnreadable' : 'managedMachines.add.controllerUnreadable', { controller: controllerName })}
             action={{ label: t('common.retry'), onPress: catalog.refresh }} />
-        : catalog.loading && cards.length === 0 ? <SurfaceStateCard kind="loading" size="line" title={t('managedMachines.providers.loading')} />
-        : !catalog.loading && cards.length === 0 ? <SurfaceStateCard kind="empty" size="line" title={t('managedMachines.providers.empty')} />
+        : cards.length === 0 ? <SurfaceStateCard kind="empty" size="line" title={t('managedMachines.providers.empty')} />
         : null;
     const localResources = Object.values(checks).flatMap(result => result.kind === 'succeeded' && result.value.localResources
         ? [result.value.localResources] : [])[0];
@@ -267,25 +253,21 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
         ? t('managedMachines.add.localDescription', { computer: controllerName, cores: String(localResources.availableCpuCores),
             memory: formatHappierDataBytes(localResources.availableMemoryBytes, { kind: 'memory' }), disk: formatHappierDataBytes(localResources.availableDiskBytes, { kind: 'storage' }) })
         : t('managedMachines.add.localDescriptionShort', { computer: controllerName });
-    // Controller scope stays above the catalog throughout loading and settling. A provider's
-    // presence or execution target cannot move the control that changes all its checks.
     const pageSections = useListPresentation() === 'page' && !compact;
-    const chip = props.pageOwnsChip ? null : scope.chip;
-    const scopeRow = chip ? <View testID="managed-picker.scope-anchor">{pageSections
-        ? <ItemGroup title={t('managedMachines.config.managedFrom')} action={chip} surface="none" />
-        : <ManagedScopeRow testID="managed-picker.scope" chip={chip} />}</View> : null;
+    // "Managed from" sits where it applies: on the section of offers a Machine runs (MachineProvisionerSections).
+    const sectionScope = scope.chip ? { chip: scope.chip, placement: pageSections ? 'header' as const : 'row' as const } : undefined;
     const shown = cards.length > 0 || waiting.length > 0;
     const retryMachineList = () => { void getSyncSingleton().refreshMachines({ serverId: props.serverId }).catch(() => {}); };
     const setUpThisComputer = props.onSetUpThisComputer ?? (() => router.push('/settings/machines/add?path=thisComputer' as never));
+    // The first read reserves the catalog's own layout (its cards' skeletons), not a lone loading line.
+    const reading = !shown && (catalog.loading || !scope.hasCandidates && scope.machineList === 'loading');
     return <View testID="managed-picker">
-        {scopeRow}
         {approval.approvalId ? <AttentionBanner testID="managed-picker.approval" title={t('approvals.title')} description={t('approvals.status.open')}
             action={{ label: t('approvals.details'), onPress: () => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}` as never) }} /> : null}
         {!scope.hasCandidates && !shown && catalog.error ? <SurfaceStateCard testID="managed-picker.unavailable" kind="error"
             title={t('managedMachines.providers.unavailable')} diagnosticCode={catalog.error}
             diagnosticDetail={describeManagedProvisionerFailure(catalog.error)} action={{ label: t('common.retry'), onPress: catalog.refresh }} />
-            : !scope.hasCandidates && !shown && (scope.machineList === 'loading' || catalog.loading) ? <SurfaceStateCard testID="managed-picker.machines-loading" kind="loading" size="line"
-            title={t('managedMachines.providers.loading')} />
+            : reading ? <MachineProvisionerSectionsSkeleton compact={compact} testID="managed-picker.loading" />
             : !scope.hasCandidates && !shown && scope.machineList === 'unavailable' ? <SurfaceStateCard testID="managed-picker.machines-unavailable" kind="error"
             title={t('managedMachines.providers.unavailable')} action={{ label: t('common.retry'), onPress: retryMachineList }} />
             : !scope.hasCandidates && !shown ? <SurfaceStateCard testID="managed-picker.no-controller" kind="empty"
@@ -297,11 +279,13 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
                     {homeUnreachable ? <SurfaceStateCard testID="managed-picker.caveat" kind="warning" size="line" title={t('managedMachines.add.homeUnreachable')}
                         action={{ label: t('homeGovernance.reach.setAddress'), onPress: () => router.push(homeAdministrationReachPath(props.serverId) as never) }} /> : null}
                 </ItemGroup> : null}
-                <MachineProvisionerSections cards={cards} compact={compact} testID="managed-picker.provisioners"
+                <MachineProvisionerSections cards={cards} compact={compact} testID="managed-picker.provisioners" scope={sectionScope}
                     localCollapsed={waiting.length > 0 ? { names: waiting, onAddComputer: setUpThisComputer } : undefined}
                     localTitle={t('managedMachines.add.onThisComputer')} localDescription={localDescription}
                     onHandoff={showCloudHandoff} />
-            </> : pageSections ? <ItemGroup surface="none">{scopeState}</ItemGroup>
-            : scopeState}
+            </>
+            // Nothing to offer yet: the Machine choice is the only step, so its chip stays with the line that asks for it.
+            : pageSections ? <ItemGroup title={scope.chip ? t('managedMachines.config.managedFrom') : undefined} action={scope.chip ?? undefined} surface="none">{scopeState}</ItemGroup>
+            : <>{scope.chip ? <ManagedScopeRow testID="managed-picker.scope" chip={scope.chip} /> : null}{scopeState}</>}
     </View>;
 }

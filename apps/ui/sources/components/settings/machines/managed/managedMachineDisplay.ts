@@ -29,7 +29,7 @@ export type ManagedProvisionerCard = Readonly<{
   location: 'local' | 'cloud';
   /** The provisioner's declared machine kind distinguishes cloud sandboxes from servers. */
   enrollmentRole?: MachineProvisionersListResultV1['provisioners'][number]['descriptor']['enrollmentRole'];
-  /** Who creates it, from the provisioner's declared acquire role: the Account, or one of your computers. */
+  /** Where it runs, from the placement owner (`readMachineProvisionerHostAvailability`): the Account, or one of your computers. */
   acquire: 'account' | 'daemon';
   status: Readonly<{ tone: ManagedStatusTone; label: string }>;
   repairFailure?: ManagedProvisionerRepairFailure;
