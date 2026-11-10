@@ -23,7 +23,8 @@ import {
   type OpenCodeRequestAuthPurposeMap,
 } from '../requestAuth/index.js';
 import { buildOpenCodeRequestAuthMarker } from '../requestAuth/source.js';
-import { OPEN_CODE_NATIVE_PROVIDERS } from '../purposes.js';
+import { OPEN_CODE_NATIVE_PROVIDERS, OPEN_CODE_REQUEST_AUTH_PROVIDERS, type OpenCodeNativeProvider } from '../purposes.js';
+import { buildOpenCodeNativeAccountConfigPart } from '../requestAuth/assets.js';
 
 export type OpenCodeAuthMaterializationInput = Readonly<{
   openaiCodex?: OauthCredentialRecord | TokenCredentialRecord | null;
@@ -50,7 +51,7 @@ function readDirectApiKeys(materialized: MaterializedAuth): Readonly<
   Partial<Record<OpenCodeRequestAuthProvider, string>>
 > {
   const keys: Partial<Record<OpenCodeRequestAuthProvider, string>> = {};
-  for (const provider of OPEN_CODE_NATIVE_PROVIDERS) {
+  for (const provider of OPEN_CODE_REQUEST_AUTH_PROVIDERS) {
     if (materialized.requestAuthProviders.includes(provider)) continue;
     const entry = materialized.auth[provider];
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
@@ -191,15 +192,17 @@ function hasExactRequestAuthMarker(
     && candidate.key === buildOpenCodeRequestAuthMarker(provider);
 }
 
+export type OpenCodeNativeAccountCredential = Readonly<{ key?: string; service: PluginContributionRef; baseURL?: string }>;
+
 export function buildOpenCodeQualifiedAuthContent(input: Readonly<{
   baseAuthContent?: unknown;
-  directAccountCredentials?: Readonly<Partial<Record<OpenCodeRequestAuthProvider, Readonly<{ key: string; service: PluginContributionRef }>>>>;
+  directAccountCredentials?: Readonly<Partial<Record<OpenCodeNativeProvider, OpenCodeNativeAccountCredential>>>;
   requiredRequestAuthProviders?: readonly OpenCodeRequestAuthProvider[];
 }>) {
   const base = readAuthContentRecord(input.baseAuthContent);
   const auth: Record<string, unknown> = {};
-  const nativeAccountServicesByProvider: Partial<Record<OpenCodeRequestAuthProvider, PluginContributionRef>> = {};
-  for (const provider of OPEN_CODE_NATIVE_PROVIDERS) {
+  const nativeAccountServicesByProvider: Partial<Record<OpenCodeNativeProvider, PluginContributionRef>> = {};
+  for (const provider of OPEN_CODE_REQUEST_AUTH_PROVIDERS) {
     if (hasExactRequestAuthMarker(base, provider)) {
       auth[provider] = {
         type: 'api',
@@ -214,12 +217,18 @@ export function buildOpenCodeQualifiedAuthContent(input: Readonly<{
   }
   for (const provider of OPEN_CODE_NATIVE_PROVIDERS) {
     const credential = input.directAccountCredentials?.[provider];
-    if (credential?.key.trim()) {
-      auth[provider] = { type: 'api', key: credential.key };
-      nativeAccountServicesByProvider[provider] = Object.freeze({ ...credential.service });
-    }
+    if (!credential) continue;
+    nativeAccountServicesByProvider[provider] = Object.freeze({ ...credential.service });
+    if (!credential.key?.trim()) continue;
+    // Native Copilot owns its inference-token exchange. Its refresh slot holds
+    // the GitHub token, not a vendor OAuth refresh secret (V1 and V2 loaders).
+    auth[provider] = provider === 'github-copilot'
+      ? { type: 'oauth', refresh: credential.key, access: '', expires: 0 }
+      : { type: 'api', key: credential.key };
   }
-  return Object.freeze({ authContent: JSON.stringify(auth), nativeAccountServicesByProvider: Object.freeze(nativeAccountServicesByProvider) });
+  return Object.freeze({ authContent: JSON.stringify(auth),
+    configPart: buildOpenCodeNativeAccountConfigPart(input.directAccountCredentials ?? {}),
+    nativeAccountServicesByProvider: Object.freeze(nativeAccountServicesByProvider) });
 }
 
 export function buildOpenCodeAuthContent(input: OpenCodeAuthMaterializationInput): string {

@@ -8,7 +8,7 @@ import {
 } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import type { OpenCodeRequestAuthPurposeMap } from './env.js';
-import { OPEN_CODE_NATIVE_PROVIDERS } from '../purposes.js';
+import { OPEN_CODE_NATIVE_PROVIDERS, OPEN_CODE_REQUEST_AUTH_PROVIDERS, type OpenCodeNativeProvider } from '../purposes.js';
 import type { OpenCodeConfigPart } from '../../../runtime/server/opencodeConfigContent.js';
 import {
   buildOpenCodeRequestAuthPluginSource,
@@ -49,6 +49,22 @@ export function resolveOpenCodeRequestAuthV2PluginSourcePath(
   return join(resolveOpenCodeRequestAuthV2PluginDir(configHome, provider), 'index.js');
 }
 
+/** Credentials use native auth; selected regional endpoints override both config dialects. */
+export function buildOpenCodeNativeAccountConfigPart(credentials: Readonly<Partial<Record<OpenCodeNativeProvider, Readonly<{
+  baseURL?: string;
+}>>>>): OpenCodeConfigPart | undefined {
+  const provider: Record<string, unknown> = {};
+  const providers: Record<string, unknown> = {};
+  for (const id of OPEN_CODE_NATIVE_PROVIDERS) {
+    const credential = credentials[id];
+    if (!credential?.baseURL) continue;
+    const options = { baseURL: credential.baseURL };
+    provider[id] = { options };
+    providers[id] = { settings: options };
+  }
+  return Object.keys(provider).length > 0 ? { provider, providers } : undefined;
+}
+
 export function buildOpenCodeV2ConnectedAuthConfigPart(input: Readonly<{
   configHome: string;
   requestAuthProviders: readonly OpenCodeRequestAuthProvider[];
@@ -56,7 +72,7 @@ export function buildOpenCodeV2ConnectedAuthConfigPart(input: Readonly<{
 }>): OpenCodeConfigPart {
   const connectedProviders: Record<string, unknown> = {};
   const legacyProviders: Record<string, unknown> = {};
-  for (const provider of OPEN_CODE_NATIVE_PROVIDERS) {
+  for (const provider of OPEN_CODE_REQUEST_AUTH_PROVIDERS) {
     const directKey = input.directApiKeys[provider];
     if (typeof directKey === 'string' && directKey.trim().length > 0) {
       connectedProviders[provider] = { settings: { apiKey: directKey } };
@@ -122,7 +138,7 @@ export async function ensureOpenCodeRequestAuthPluginAssets(
   const pluginDir = resolveOpenCodeRequestAuthPluginDir(configHome);
   await mkdir(pluginDir, { recursive: true });
   const written: string[] = [];
-  for (const provider of OPEN_CODE_NATIVE_PROVIDERS) {
+  for (const provider of OPEN_CODE_REQUEST_AUTH_PROVIDERS) {
     const purpose = purposes[provider];
     if (!purpose) continue;
     const path = resolveOpenCodeRequestAuthPluginPath(configHome, provider);

@@ -31,20 +31,10 @@
       "types": "./dist/agent/auth/services/resumeReachability.d.ts",
       "default": "./dist/agent/auth/services/resumeReachability.js"
     },
-    "./agent/auth/services/selection": {
-      "happier-source": "./src/agent/auth/services/selection.ts",
-      "types": "./dist/agent/auth/services/selection.d.ts",
-      "default": "./dist/agent/auth/services/selection.js"
-    },
     "./agent/auth/services/stateSharing": {
       "happier-source": "./src/agent/auth/services/stateSharing.ts",
       "types": "./dist/agent/auth/services/stateSharing.d.ts",
       "default": "./dist/agent/auth/services/stateSharing.js"
-    },
-    "./agent/auth/services/switchContinuity": {
-      "happier-source": "./src/agent/auth/services/switchContinuity.ts",
-      "types": "./dist/agent/auth/services/switchContinuity.d.ts",
-      "default": "./dist/agent/auth/services/switchContinuity.js"
     },
     "./agent/auth/services/usageLimit": {
       "happier-source": "./src/agent/auth/services/usageLimit.ts",
@@ -118,6 +108,13 @@
     "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@happier-dev/plugins-claude": "0.0.0",
+    "@happier-dev/plugins-codex": "0.0.0",
+    "@happier-dev/plugins-openai": "0.0.0",
+    "@happier-dev/plugins-kimi": "0.0.0",
+    "@happier-dev/plugins-grok": "0.0.0",
+    "@happier-dev/plugins-gemini": "0.0.0",
+    "@happier-dev/plugins-scm-github": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
     "json5": "^2.2.3",

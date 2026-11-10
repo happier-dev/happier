@@ -10,7 +10,8 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { PLUGIN_MANIFEST } from '../../manifest.js';
-import { OPENCODE_PROVIDER_BINDING_ADAPTER_V1 } from './adapter.js';
+import { OPENCODE_PROVIDER_BINDING_ADAPTER_V1, OPENCODE_PROVIDER_OWNED_ENV_KEYS } from './adapter.js';
+import { OPEN_CODE_CONNECTED_ACCOUNT_SERVICE_IDS } from '../auth/services/purposes.js';
 
 const connectionId = ProviderConnectionIdSchema.parse('pc_openrouter_work');
 
@@ -136,15 +137,8 @@ describe('OpenCode provider-binding adapter V1', () => {
         ],
       },
       authIsolation: {
-        suppressConnectedServiceIds: ['openai-codex', 'openai', 'claude-subscription', 'anthropic'].sort(),
-        ownedEnvKeys: [
-          'HAPPIER_OPENCODE_PROVIDER_API_KEY',
-          'OPENCODE_AUTH_CONTENT',
-          'OPENCODE_CONFIG_CONTENT',
-          'OPENAI_API_KEY',
-          'ANTHROPIC_API_KEY',
-          'CLAUDE_CODE_OAUTH_TOKEN',
-        ].sort(),
+        suppressConnectedServiceIds: [...OPEN_CODE_CONNECTED_ACCOUNT_SERVICE_IDS].sort(),
+        ownedEnvKeys: [...OPENCODE_PROVIDER_OWNED_ENV_KEYS].sort(),
       },
       materialization: 'configFile',
       applyPolicy: 'restart_session',
@@ -276,14 +270,8 @@ describe('OpenCode provider-binding adapter V1', () => {
     expect({ ...output, env: [...output.env].sort((a, b) => a.name.localeCompare(b.name)) }).toMatchObject({
       v: 1,
       kind: 'configFile',
-      env: [
-        { name: 'HAPPIER_OPENCODE_PROVIDER_API_KEY', value: null, source: 'provider' },
-        { name: 'OPENCODE_AUTH_CONTENT', value: null, source: 'provider' },
-        { name: 'OPENCODE_CONFIG_CONTENT', value: null, source: 'provider' },
-        { name: 'OPENAI_API_KEY', value: null, source: 'provider' },
-        { name: 'ANTHROPIC_API_KEY', value: null, source: 'provider' },
-        { name: 'CLAUDE_CODE_OAUTH_TOKEN', value: null, source: 'provider' },
-      ].sort((a, b) => a.name.localeCompare(b.name)),
+      env: OPENCODE_PROVIDER_OWNED_ENV_KEYS.map(name => ({ name, value: null, source: 'provider' }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
       files: [{ relativePath: 'opencode/opencode.json' }],
     });
     expect(fileConfig(output)).toEqual({
@@ -319,14 +307,11 @@ describe('OpenCode provider-binding adapter V1', () => {
     const config = fileConfig(output);
     const bindingKey = materializeInput().prepared.adapterBindingKey!;
 
-    expect([...output.env].sort((a, b) => a.name.localeCompare(b.name))).toEqual([
-      { name: 'HAPPIER_OPENCODE_PROVIDER_API_KEY', value: 'selected-secret', source: 'provider' },
-      { name: 'OPENCODE_AUTH_CONTENT', value: null, source: 'provider' },
-      { name: 'OPENCODE_CONFIG_CONTENT', value: null, source: 'provider' },
-      { name: 'OPENAI_API_KEY', value: null, source: 'provider' },
-      { name: 'ANTHROPIC_API_KEY', value: null, source: 'provider' },
-      { name: 'CLAUDE_CODE_OAUTH_TOKEN', value: null, source: 'provider' },
-    ].sort((a, b) => a.name.localeCompare(b.name)));
+    expect([...output.env].sort((a, b) => a.name.localeCompare(b.name))).toEqual(
+      OPENCODE_PROVIDER_OWNED_ENV_KEYS.map(name => ({ name,
+        value: name === 'HAPPIER_OPENCODE_PROVIDER_API_KEY' ? 'selected-secret' : null, source: 'provider',
+      })).sort((a, b) => a.name.localeCompare(b.name)),
+    );
     expect(configText).not.toContain('selected-secret');
     expect(config).toMatchObject({
       provider: {

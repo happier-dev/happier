@@ -15,6 +15,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { buildOpenCodeRequestAuthMarker } from '../auth/services/requestAuth/source.js';
+import { OPEN_CODE_CONNECTED_ACCOUNT_PURPOSE_IDS } from '../auth/services/purposes.js';
 
 const { openOpenCodeServerSession } = vi.hoisted(() => ({
   openOpenCodeServerSession: vi.fn(),
@@ -60,12 +61,7 @@ function explicitNativeConfiguration(modelId = 'openai/gpt-5'): AgentSessionConf
     permissionIntent: { value: null, updatedAtMs: 0 }, options: {} };
 }
 
-const OPEN_CODE_CONNECTED_ACCOUNT_PURPOSES = [
-  'anthropic-model-request',
-  'openai-codex-model-request',
-  'openai-api-key',
-  'anthropic-api-key',
-] as const;
+const OPEN_CODE_CONNECTED_ACCOUNT_PURPOSES = OPEN_CODE_CONNECTED_ACCOUNT_PURPOSE_IDS;
 
 type OpenCodePurpose = typeof OPEN_CODE_CONNECTED_ACCOUNT_PURPOSES[number];
 
@@ -851,7 +847,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       services: { connectedAccounts: harness.connectedAccounts },
     } as unknown as AgentSessionRuntimeContext);
 
-    expect(harness.connectedAccounts.watch).toHaveBeenCalledTimes(4);
+    expect(harness.connectedAccounts.watch).toHaveBeenCalledTimes(OPEN_CODE_CONNECTED_ACCOUNT_PURPOSES.length);
     expect(harness.connectedAccounts.getBinding).not.toHaveBeenCalled();
     expect(openAcp).not.toHaveBeenCalled();
 
@@ -860,7 +856,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
     }
     const opened = await opening;
 
-    expect(harness.connectedAccounts.getBinding).toHaveBeenCalledTimes(4);
+    expect(harness.connectedAccounts.getBinding).toHaveBeenCalledTimes(OPEN_CODE_CONNECTED_ACCOUNT_PURPOSES.length);
     expect(openAcp).toHaveBeenCalledTimes(1);
     await opened.dispose();
   });

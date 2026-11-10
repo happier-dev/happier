@@ -184,6 +184,10 @@ export const PI_PLUGIN = definePlugin({
       factory: createPiAgentRuntime,
       providerBinding: PI_PROVIDER_BINDING_ADAPTER,
       connectedAccountLaunch: {
+        environmentUses: PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.flatMap(row =>
+          'environmentKeys' in row.native ? row.native.environmentKeys.map(environmentKey => ({
+            purpose: row.purpose, environmentKey,
+          })) : []),
         switchContinuity: {
           continuityMode: 'restart_same_home',
           supportedTransitions: ['connected_to_connected'],

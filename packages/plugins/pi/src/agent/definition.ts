@@ -4,7 +4,11 @@ import { piConnectedServiceStateSharingDescriptor } from './connectedServices/st
 const { providerId: _providerId, ...stateSharing } = piConnectedServiceStateSharingDescriptor;
 export const AGENT_STATE_SHARING_DESCRIPTOR = {
   ...stateSharing,
-  nativeHome: { environmentKey: 'PI_CODING_AGENT_DIR', defaultRelativePath: '.pi/agent' },
+  nativeHome: {
+    environmentKey: 'PI_CODING_AGENT_DIR',
+    defaultRelativePath: '.pi/agent',
+    purposes: PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.map(row => row.purpose),
+  },
 } as const;
 
 const PI_AGENT_ID = 'pi';

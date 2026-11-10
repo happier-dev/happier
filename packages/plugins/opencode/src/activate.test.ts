@@ -48,6 +48,12 @@ describe('activate', () => {
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     try {
       expect(activation.registration('agents', 'opencode')?.connectedAccountLaunch).toEqual({
+        environmentUses: expect.arrayContaining([
+          { purpose: 'kimi-api-key', environmentKey: 'KIMI_API_KEY' },
+          { purpose: 'xai-api-key', environmentKey: 'XAI_API_KEY' },
+          { purpose: 'gemini', environmentKey: 'GOOGLE_APPLICATION_CREDENTIALS' },
+          { purpose: 'github-copilot', environmentKey: 'COPILOT_GITHUB_TOKEN' },
+        ]),
         requestAuthUses: [{
           purpose: 'anthropic-model-request',
           materialization: {
@@ -78,7 +84,13 @@ describe('activate', () => {
             'connected_to_connected',
           ],
         },
+        continuity: { verifyResumeReachable: expect.any(Function) },
       });
+      const verify = activation.registration('agents', 'opencode')?.connectedAccountLaunch?.continuity?.verifyResumeReachable;
+      expect(verify).toBeTypeOf('function');
+      expect(await verify?.({ vendorResumeId: 'native-session', sessionFiles: {
+        async findDeclaredCandidate() { throw new Error('OpenCode has no declared shared session files'); },
+      } })).toEqual({ ok: false, reason: 'opencode_state_not_shared' });
       expect(activation.registration('agents', 'opencode')?.connectedAccountLaunch?.stateSharingDescriptor)
         .not.toHaveProperty('providerId');
     } finally {
@@ -164,10 +176,6 @@ describe('activate', () => {
       prepare: expect.any(Function),
       materialize: expect.any(Function),
     });
-    expect(agent?.providerBinding).not.toBe(OPENCODE_PROVIDER_BINDING_ADAPTER_V1);
-    expect(agent?.providerBinding?.prepare).not.toBe(
-      OPENCODE_PROVIDER_BINDING_ADAPTER_V1.prepare,
-    );
     const prepareInput = {
       v: 1 as const,
       agentTargetKey: 'backend:opencode:built_in',

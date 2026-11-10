@@ -1,4 +1,6 @@
-import { isPluginError, isRecord, PluginError, type PluginContributionRef } from '@happier-dev/plugin-sdk';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { isPluginError, isRecord, PluginError } from '@happier-dev/plugin-sdk';
 import { createSecureTempDirectorySync, type SecureTempDirectory } from '@happier-dev/plugin-sdk/fs';
 import {
   CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
@@ -15,7 +17,8 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { buildOpenCodeQualifiedAuthContent, materializeOpenCodeAuthEnvironment } from './materialize/index.js';
+import { buildOpenCodeQualifiedAuthContent, materializeOpenCodeAuthEnvironment, type OpenCodeNativeAccountCredential } from './materialize/index.js';
+import type { OpenCodeConfigPart } from '../../runtime/server/opencodeConfigContent.js';
 import { OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV } from './requestAuth/env.js';
 import { OPEN_CODE_REQUEST_AUTH_DECLARED_PURPOSES } from './requestAuth/purposes.js';
 import { buildOpenCodeConfigLaunchEnvironment } from '../../runtime/server/spawnSpec.js';
@@ -26,11 +29,14 @@ import {
   OPEN_CODE_CONNECTED_ACCOUNT_PURPOSE_IDS,
   OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS,
   OPEN_CODE_NATIVE_AUTH_ENV_KEYS,
+  OPEN_CODE_NATIVE_ACCOUNT_DESCRIPTORS,
+  openCodeAccountProviders,
   isOpenCodeNativeProvider,
   OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID,
   OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
   type OpenCodeConnectedAccountPurposeId,
   type OpenCodeRequestAuthProvider,
+  type OpenCodeNativeProvider,
 } from './purposes.js';
 
 type Binding = Awaited<ReturnType<
@@ -97,25 +103,32 @@ function mergeQualifiedLaunchEnvironment<Request extends OpenCodeAccountLaunchRe
   request: Request;
   authContent: string;
   requestAuthEnvironment?: Awaited<ReturnType<typeof materializeOpenCodeAuthEnvironment>>;
+  nativeEnvironment: Readonly<Record<string, string>>;
+  nativeConfig?: OpenCodeConfigPart;
 }>): Request {
   const launchValues = {
     ...(input.request.launchEnvironment?.values ?? {}),
     ...input.requestAuthEnvironment?.env,
   };
-  const values = { ...(input.requestAuthEnvironment?.configPart
-    ? buildOpenCodeConfigLaunchEnvironment(launchValues, [input.requestAuthEnvironment.configPart])
+  const configParts = [
+    ...(input.requestAuthEnvironment?.configPart ? [input.requestAuthEnvironment.configPart] : []),
+    ...(input.nativeConfig ? [input.nativeConfig] : []),
+  ];
+  const values = { ...(configParts.length > 0
+    ? buildOpenCodeConfigLaunchEnvironment(launchValues, configParts)
     : launchValues) };
   for (const key of OPEN_CODE_NATIVE_AUTH_ENV_KEYS) delete values[key];
   Object.assign(values, {
     OPENCODE_AUTH_CONTENT: input.authContent,
     OPENAI_API_KEY: '',
     ANTHROPIC_API_KEY: '',
+    ...input.nativeEnvironment,
   });
   const valueKeys = new Set(Object.keys(values));
   const unset = new Set(
     (input.request.launchEnvironment?.unset ?? []).filter((key) => !valueKeys.has(key)),
   );
-  unset.add(CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.environmentKey);
+  for (const key of OPEN_CODE_NATIVE_AUTH_ENV_KEYS) if (!valueKeys.has(key)) unset.add(key);
   return Object.freeze({
     ...input.request,
     launchEnvironment: Object.freeze({
@@ -123,6 +136,13 @@ function mergeQualifiedLaunchEnvironment<Request extends OpenCodeAccountLaunchRe
       unset: Object.freeze([...unset]),
     }),
   });
+}
+
+function modelSelectionRequired(): PluginError {
+  return new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
+    message: 'Choose a model for the selected OpenCode Connected Account provider.',
+    details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
+      phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
 }
 
 async function waitForInitialPurposeObservations(
@@ -233,15 +253,13 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
     // Account needs a concrete model of its declared provider before secrets.
     // A resolved helper/Session model remains concrete when its source is inherited.
     if (hasSelectedAccount && (!selectedModel || !OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS.some(
-      ({ declaration, provider }) => bindings[declaration.purpose] && provider === selectedModel.providerID,
+      (row) => bindings[row.declaration.purpose] && openCodeAccountProviders(row).some(provider => provider === selectedModel.providerID),
     ))) {
-      throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
-        message: 'Choose a model for the selected OpenCode Connected Account provider.',
-        details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
-          phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
+      throw modelSelectionRequired();
     }
 
-    const directAccountCredentials: Partial<Record<OpenCodeRequestAuthProvider, Readonly<{ key: string; service: PluginContributionRef }>>> = {};
+    const directAccountCredentials: Partial<Record<OpenCodeNativeProvider, OpenCodeNativeAccountCredential>> = {};
+    const nativeEnvironment: Record<string, string> = {};
     const requiredRequestAuthProviders: OpenCodeRequestAuthProvider[] = [];
 
     if (openAiCodexBinding) {
@@ -299,6 +317,39 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
       ), service: anthropicBinding.service };
     }
 
+    for (const row of OPEN_CODE_NATIVE_ACCOUNT_DESCRIPTORS) {
+      const purpose = row.declaration.purpose;
+      const binding = bindings[purpose];
+      if (!binding) continue;
+      const result = await context.services.connectedAccounts.materialize(purpose,
+        { kind: 'environment', keys: [...row.environmentKeys] },
+        { signal: context.signal, expectedAccount: binding.account });
+      if (result.kind !== 'environment') throw new Error(`OpenCode ${purpose} returned an invalid environment materialization`);
+      const key = result.env[row.nativeEnvironmentAuth.key];
+      if (row.provider === 'google' && !key?.trim()) {
+        if (selectedModel?.providerID === 'google') throw modelSelectionRequired();
+        const files = await context.services.connectedAccounts.materialize(purpose,
+          { kind: 'files', fileIds: ['google-service-account.json'] },
+          { signal: context.signal, expectedAccount: binding.account });
+        if (files.kind !== 'files' || !files.files['google-service-account.json']) {
+          throw new Error('OpenCode Gemini did not materialize service-account ADC');
+        }
+        context.signal?.throwIfAborted();
+        requestAuthAssets ??= createSecureTempDirectorySync({ prefix: 'opencode-account-auth' });
+        const path = join(requestAuthAssets.path, 'google-service-account.json');
+        await writeFile(path, files.files['google-service-account.json'], { mode: 0o600 });
+        Object.assign(nativeEnvironment, result.env, { GOOGLE_APPLICATION_CREDENTIALS: path });
+        directAccountCredentials['google-vertex'] = { service: binding.service };
+        continue;
+      }
+      if (!key?.trim()) throw new Error(`OpenCode ${purpose} did not materialize ${row.nativeEnvironmentAuth.key}`);
+      if (row.provider === 'google' && selectedModel?.providerID === 'google-vertex') throw modelSelectionRequired();
+      const provider = openCodeAccountProviders(row).find(provider => provider === selectedModel?.providerID) ?? row.provider;
+      const baseURL = 'baseURLKey' in row.nativeEnvironmentAuth ? result.env[row.nativeEnvironmentAuth.baseURLKey] : undefined;
+      if ('baseURLKey' in row.nativeEnvironmentAuth && !baseURL?.trim()) throw new Error(`OpenCode ${purpose} did not materialize its native endpoint`);
+      directAccountCredentials[provider] = { key, service: binding.service, ...(baseURL ? { baseURL } : {}) };
+    }
+
     let requestAuthEnvironment: Awaited<ReturnType<typeof materializeOpenCodeAuthEnvironment>> | undefined;
     if (requiredRequestAuthProviders.length > 0) {
       const capabilityPath = request.launchEnvironment?.values[OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV];
@@ -306,7 +357,7 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
         throw new Error('OpenCode request-auth materialization requires the host child capability');
       }
       context.signal?.throwIfAborted();
-      requestAuthAssets = createSecureTempDirectorySync({ prefix: 'opencode-request-auth' });
+      requestAuthAssets ??= createSecureTempDirectorySync({ prefix: 'opencode-request-auth' });
       // The host has already selected and authorized these purposes. Materialize
       // only native transport assets here; OAuth bytes stay with request auth.
       requestAuthEnvironment = await materializeOpenCodeAuthEnvironment({
@@ -337,6 +388,8 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
           request,
           authContent: qualifiedAuth.authContent,
           requestAuthEnvironment,
+          nativeEnvironment,
+          nativeConfig: qualifiedAuth.configPart,
         })
       : request;
 

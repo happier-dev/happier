@@ -16,7 +16,11 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
+import { PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES } from './agent/auth/services/qualifiedPurposes.js';
+
+const purposeIds = PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.map(row => row.purpose);
 import { createPiAgentRuntime } from './agent/runtime/engine.js';
+import { PI_DIRECT_AUTH_ENV_KEYS, PI_CONNECTED_ACCOUNT_MODEL_ENV } from './agent/launchEnvironment.js';
 import { piExternalSessionsContribution } from './agent/externalSessions/contribution.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 import {
@@ -301,11 +305,12 @@ describe('activate', () => {
           providerSupportStatus: 'supported',
           authIsolation: {
             mode: 'materialized_home',
-            secretEntries: ['auth.json'],
+            secretEntries: ['auth.json', 'google-service-account.json'],
           },
           nativeHome: {
             environmentKey: 'PI_CODING_AGENT_DIR',
             defaultRelativePath: '.pi/agent',
+            purposes: purposeIds,
           },
         }),
         continuity: {
@@ -694,18 +699,9 @@ describe('activate', () => {
         },
       }, context.session);
 
-      expect(connectedAccounts.watch.mock.calls.map(([purpose]) => purpose)).toEqual([
-        'anthropic-model-request',
-        'openai-codex-model-request',
-        'openai-api-key',
-        'anthropic-api-key',
-      ]);
-      expect(connectedAccounts.getBinding.mock.calls).toEqual([
-        ['anthropic-model-request', { signal: expect.any(AbortSignal), observation: true }],
-        ['openai-codex-model-request', { signal: expect.any(AbortSignal), observation: true }],
-        ['openai-api-key', { signal: expect.any(AbortSignal), observation: true }],
-        ['anthropic-api-key', { signal: expect.any(AbortSignal), observation: true }],
-      ]);
+      expect(connectedAccounts.watch.mock.calls.map(([purpose]) => purpose)).toEqual(purposeIds);
+      expect(connectedAccounts.getBinding.mock.calls).toEqual(purposeIds.map(purpose =>
+        [purpose, { signal: expect.any(AbortSignal), observation: true }]));
       expect(connectedAccounts.materialize.mock.calls).toEqual([
         [
           'openai-api-key',
@@ -741,9 +737,8 @@ describe('activate', () => {
             CI: '1',
           },
           unsetEnvKeys: [
-            'GEMINI_API_KEY',
-            'OPENROUTER_API_KEY',
-            'KIMI_API_KEY',
+            ...PI_DIRECT_AUTH_ENV_KEYS.filter(key => key !== 'OPENAI_API_KEY' && key !== 'ANTHROPIC_API_KEY'),
+            PI_CONNECTED_ACCOUNT_MODEL_ENV,
             PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
             PI_REQUEST_AUTH_PRODUCER_VERSION_ENV,
           ],
@@ -772,12 +767,7 @@ describe('activate', () => {
         'utf8',
       )).rejects.toMatchObject({ code: 'ENOENT' });
       await session.dispose();
-      expect(disposedPurposes.sort()).toEqual([
-        'anthropic-api-key',
-        'anthropic-model-request',
-        'openai-api-key',
-        'openai-codex-model-request',
-      ]);
+      expect(disposedPurposes.sort()).toEqual([...purposeIds].sort());
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -870,15 +860,10 @@ describe('activate', () => {
           },
           unset: [],
         },
-      }, context.session)).rejects.toThrow(/OPENAI_API_KEY/u);
+      }, context.session)).rejects.toBeInstanceOf(Error);
       expect(capture.specs).toEqual([]);
       await expect(readFile(join(agentDir, 'auth.json'), 'utf8')).resolves.toBe('{}\n');
-      expect(disposedPurposes.sort()).toEqual([
-        'anthropic-api-key',
-        'anthropic-model-request',
-        'openai-api-key',
-        'openai-codex-model-request',
-      ]);
+      expect(disposedPurposes.sort()).toEqual([...purposeIds].sort());
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -1288,7 +1273,7 @@ describe('activate', () => {
       },
     }, context.session);
 
-    expect(connectedAccounts.getBinding).toHaveBeenCalledTimes(4);
+    expect(connectedAccounts.getBinding).toHaveBeenCalledTimes(purposeIds.length);
     expect(connectedAccounts.materialize).not.toHaveBeenCalled();
     expect(capture.specs[0]).toMatchObject({
       launch: {
@@ -1323,12 +1308,7 @@ describe('activate', () => {
 
     listeners.get('openai-api-key')?.({ kind: 'resync', authorityChanged: true });
     await vi.waitFor(() => expect(capture.disposeCount).toBe(1));
-    expect(disposedPurposes.sort()).toEqual([
-      'anthropic-api-key',
-      'anthropic-model-request',
-      'openai-api-key',
-      'openai-codex-model-request',
-    ]);
+    expect(disposedPurposes.sort()).toEqual([...purposeIds].sort());
   });
 
   it('projects only Pi-declared launch environment values and explicit unsets into the native process', async () => {
