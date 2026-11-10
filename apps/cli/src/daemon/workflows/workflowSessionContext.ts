@@ -42,7 +42,7 @@ async function readUsage(params: ContextReaderParams, sessionId: string, startMs
   });
   if (response.status !== 200) throw new WorkflowInputResolutionError('workflow_session_context_unavailable');
   const query = UsageAnalyticsQueryResponseSchema.parse(response.data);
-  return query.totals.eventCount === 0 ? { kind: 'unavailable' }
+  return query.totals.eventCount === 0 || query.totals.tokens.total === null ? { kind: 'unavailable' }
     : { kind: 'accounted', tokensUsed: query.totals.tokens.total };
 }
 

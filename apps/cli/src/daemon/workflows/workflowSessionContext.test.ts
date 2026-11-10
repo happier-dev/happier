@@ -214,6 +214,8 @@ describe('production workflow session context', () => {
     const reader = createProductionWorkflowSessionContextReader({ credentials, machineId: 'machine', originSessionId: sessionId });
     vi.mocked(axios.post).mockResolvedValueOnce({ status: 200, data: { v: 1, totals: { eventCount: 0, tokens: { ...tokens, total: 0 }, cost } } });
     await expect(reader.resolveSessionContext(0)).resolves.toMatchObject({ usage: { kind: 'unavailable' }, turns: [] });
+    vi.mocked(axios.post).mockResolvedValueOnce({ status: 200, data: { v: 1, totals: { eventCount: 1, tokens: { ...tokens, total: null }, cost } } });
+    await expect(reader.resolveSessionContext(0)).resolves.toMatchObject({ usage: { kind: 'unavailable' }, turns: [] });
     delete goal.startedAt;
     delete goal.createdAt;
     await expect(reader.resolveSessionContextField('usage.tokensUsed')).rejects.toMatchObject({ code: 'missing_reference' });
