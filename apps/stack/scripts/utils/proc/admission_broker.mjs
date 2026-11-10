@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { closeSync, lstatSync, mkdirSync, openSync, readdirSync, unlinkSync, watch } from 'node:fs';
+import { appendFileSync, closeSync, lstatSync, mkdirSync, openSync, readdirSync, unlinkSync, watch } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { availableParallelism } from 'node:os';
-import { resolveAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
+import { HEAVYWEIGHT_COMMAND_RESOURCES, resolveAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { admitWorkerDiskBudget } from '../dev_targets/worker_disk_budget.mjs';
@@ -59,6 +59,7 @@ export async function readAdmissionMemorySample({ slots = [], waiters = [], read
   const waitingPids = new Set(waiters.map(item => item.pid));
   let waitingResidentMemoryKiB = 0;
   const residentByRoot = new Map();
+  const slotRssKiB = new Map();
   for (const process of processes.values()) {
     let pid = process.pid;
     while (pid > 1 && !roots.has(pid)) {
@@ -67,6 +68,9 @@ export async function readAdmissionMemorySample({ slots = [], waiters = [], read
       pid = parent;
     }
     if (roots.has(pid)) {
+      if (Number.isSafeInteger(process.rssKiB) && process.rssKiB >= 0) {
+        slotRssKiB.set(pid, (slotRssKiB.get(pid) ?? 0) + process.rssKiB);
+      }
       const proportional = process.pssKiB;
       const exact = Number.isSafeInteger(proportional) && proportional >= 0;
       const resident = exact ? proportional : 0;
@@ -89,7 +93,7 @@ export async function readAdmissionMemorySample({ slots = [], waiters = [], read
   const creditedResidentMemoryKiB = slots.reduce((sum, slot) => sum + Math.min(slot.floorKiB, residentByRoot.get(slot.pid) ?? 0), 0);
   const reservedMemoryKiB = slots.reduce((sum, slot) => sum + slot.floorKiB, 0);
   const achievableMemoryKiB = Math.min(memory.totalMemoryKiB, memory.availableMemoryKiB + residentMemoryKiB);
-  return { ...memory, reservedMemoryKiB, residentMemoryKiB, creditedResidentMemoryKiB, waitingResidentMemoryKiB,
+  return { ...memory, slotRssKiB, reservedMemoryKiB, residentMemoryKiB, creditedResidentMemoryKiB, waitingResidentMemoryKiB,
     achievableMemoryKiB,
     unreservedMemoryKiB: Math.max(0, memory.availableMemoryKiB + creditedResidentMemoryKiB - reservedMemoryKiB) };
 }
@@ -228,9 +232,20 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     }
   }
   async function observe() {
+    const { slotRssKiB, ...resources } = await sampleResources({
+      slots: [...slots.values()].map(({ pid, floorKiB }) => ({ pid, floorKiB })),
+      waiters: waiting.filter(item => !item.slot).map(({ pid }) => ({ pid })) });
     sample = { ...(sample.lastFailure ? { lastFailure: sample.lastFailure } : {}),
-      ...await sampleResources({ slots: [...slots.values()].map(({ pid, floorKiB }) => ({ pid, floorKiB })),
-        waiters: waiting.filter(item => !item.slot).map(({ pid }) => ({ pid })) }) };
+      ...resources };
+    const now = Date.now();
+    for (const slot of slots.values()) {
+      const rss = slotRssKiB?.get(slot.pid);
+      if (!slot.admitted || rss === undefined) continue;
+      slot.peakRssKiB = Math.max(slot.peakRssKiB ?? 0, rss);
+      slot.samples = (slot.samples ?? 0) + 1;
+      slot.maxGapMs = Math.max(slot.maxGapMs ?? 0, now - slot.lastSampleAt);
+      slot.lastSampleAt = now;
+    }
     sampleCount += 1;
   }
   function removeWaiting(item) {
@@ -349,6 +364,19 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   async function release(slot) {
     if (!slots.delete(slot.address)) return;
     slot.peer?.destroy();
+    // Reuse event/catch-up observations only. These are sampled lower bounds,
+    // not kernel lifetime peaks or proof that the payload succeeded. Recovered
+    // slots lack a class and full lifetime, so they cannot calibrate a floor.
+    if (slot.admitted && slot.samples && Object.hasOwn(HEAVYWEIGHT_COMMAND_RESOURCES, slot.className)) {
+      const now = Date.now();
+      try {
+        appendFileSync(join(root, 'completed-slot-memory.jsonl'), JSON.stringify({
+          className: slot.className, floorKiB: slot.floorKiB, peakRssKiB: slot.peakRssKiB,
+          samples: slot.samples, maxGapMs: Math.max(slot.maxGapMs, now - slot.lastSampleAt),
+          completedAt: new Date(now).toISOString(), method: 'broker-event-sampled-tree-rss',
+        }) + '\n', { mode: 0o600 });
+      } catch (error) { recordFailure(error); }
+    }
     await releaseDecision();
   }
   async function releaseDecision() {
@@ -408,7 +436,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       const resources = readResources(item);
       if (!resources) continue;
       const address = slotAddress(root, item.pid, floorKiB, randomUUID(), cpuCores);
-      const slot = { address, pid: item.pid, floorKiB, cpuCores, clientCpuCores, workers: fitting?.workers, control: item.socket,
+      const slot = { address, pid: item.pid, className: item.className, floorKiB, cpuCores, clientCpuCores, workers: fitting?.workers, control: item.socket,
         arrivedAt: item.arrivedAt, arrivalOrder: item.arrivalOrder };
       slots.set(address, slot);
       availableMemoryKiB -= floorKiB;
@@ -457,6 +485,8 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       if (request.kind === 'ready' && item?.slot && !item.settled) {
         try {
           await connectSlot(item.slot);
+          item.slot.admitted = true;
+          item.slot.lastSampleAt = Date.now();
           item.settled = true;
           removeWaiting(item);
           send(socket, { kind: 'admitted', floorKiB: item.slot.floorKiB, cpuCores: item.slot.clientCpuCores ?? item.slot.cpuCores, workers: item.slot.workers });

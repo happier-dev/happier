@@ -231,12 +231,12 @@ async function acquire(root, floorKiB, t, extra = {}) {
   } };
 }
 
-async function fixture(t, { readMemory = () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }), admitDisk, cpuCores = 128 } = {}) {
+async function fixture(t, { readMemory = () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }), readProcesses = () => new Map(), admitDisk, cpuCores = 128 } = {}) {
   // Unix socket metadata needs a short pathname, independent of the command's
   // potentially deep workspace/custody TMPDIR. This remains a private root.
   const root = await mkdtemp('/tmp/happier-broker-test-');
   const sampleResources = ({ slots }) => readAdmissionMemorySample({ slots,
-    readMemory, readProcesses: () => new Map() });
+    readMemory, readProcesses });
   const broker = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'), sampleResources,
     readCpuCapacity: () => cpuCores,
     ...(admitDisk ? { admitDisk } : {}) });
@@ -244,6 +244,41 @@ async function fixture(t, { readMemory = () => ({ availableMemoryKiB: 100, total
   t.after(async () => { await broker.close(); await rm(root, { recursive: true, force: true }); });
   return { root, broker, sampleResources };
 }
+
+test('completed slots retain sampled RSS peaks by class without extra process walks or status disclosure', linux, async t => {
+  let rssKiB = 17;
+  let reads = 0;
+  const { root, broker } = await fixture(t, { readProcesses: () => {
+    reads += 1;
+    return new Map([[process.pid, { pid: process.pid, parentPid: 1, rssKiB, pssKiB: 3 }]]);
+  } });
+  const first = await acquire(root, 20, t, { className: 'source-bundle' });
+  const held = await first.admit();
+  const second = await acquire(root, 1, t, { pid: 999999 });
+  await second.admit();
+  rssKiB = 41;
+  const third = await acquire(root, 1, t, { pid: 999998 });
+  await third.admit();
+  const before = reads;
+  assert.equal(broker.status().slotRssKiB, undefined);
+  const recorded = new Promise(resolve => {
+    const watcher = fs.watch(root, (_, name) => {
+      if (name === 'completed-slot-memory.jsonl') { watcher.close(); resolve(); }
+    });
+    t.after(() => watcher.close());
+  });
+  await held.release();
+  await recorded;
+  const rows = (await readFile(join(root, 'completed-slot-memory.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].className, 'source-bundle');
+  assert.equal(rows[0].peakRssKiB, 41);
+  assert.equal(rows[0].samples, 2);
+  assert.equal(rows[0].method, 'broker-event-sampled-tree-rss');
+  assert.ok(rows[0].maxGapMs >= 0);
+  assert.ok(reads <= before + 1, 'completion reuses samples; only the existing release observation may walk processes');
+  assert.deepEqual(Object.keys(rows[0]).sort(), ['className', 'completedAt', 'floorKiB', 'maxGapMs', 'method', 'peakRssKiB', 'samples'].sort());
+});
 
 function captureRecoveryClock(t) {
   // Timer scheduling is the OS boundary; broker/socket/resource decisions stay real.
@@ -1264,6 +1299,7 @@ test('resident descendants offset floors once, including overlapping ancestor sl
     readProcesses: () => new Map([[10, { pid: 10, parentPid: 1, pssKiB: null, rssKiB: 80 }]]) });
   assert.equal(sharedRss.unreservedMemoryKiB, 0);
   assert.equal(sharedRss.creditedResidentMemoryKiB, 0);
+  assert.deepEqual([...sharedRss.slotRssKiB], [[10, 80]], 'calibration records tree RSS independently of admission PSS credit');
 });
 
 

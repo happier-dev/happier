@@ -3,6 +3,13 @@ export const LEGACY_VALIDATION_ADMISSION_CLASSES = Object.freeze(['targeted-vali
 export const SOURCE_WEB_EXPORT_MEMORY = Object.freeze({ serialKiB: 8236000, parallelKiB: 32907788,
   intermediateKiB: 12711296, intermediateThreads: 8, parallelThreads: 47,
   gibKiB: 1024 * 1024 });
+// 2026-11-04 validation-floor-sizing-1104/measurements.json: successful
+// cli-file, server-file and package-file runs (six each, two Linux workers).
+// Nearest-rank p95 of per-run sampled tree RSS peaks; no additional margin.
+// UI components have their own class and are excluded from this calibration.
+export const COMMAND_MEMORY_MEASUREMENTS = Object.freeze({
+  'focused-validation': Object.freeze({ samples: 18, p95KiB: 779072, maxKiB: 779072 }),
+});
 export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // Owner Q1 (2026-10-29): successful measured peak rounded up to whole GiB,
   // with no blanket margin. Three loaded deployment-protocol suite runs
@@ -11,7 +18,7 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // 2026-11-04 loaded Linux workers, focused UI/CLI/server/package files:
   // largest successful sampled tree RSS 779,072 KiB, rounded without margin.
   // validation-floor-sizing-1104/measurements.json retains all run peaks.
-  'focused-validation': { memoryKiB: 1 * 1024 * 1024, cpuCores: 1, diskClass: 'validation' },
+  'focused-validation': { memoryKiB: Math.ceil(COMMAND_MEMORY_MEASUREMENTS['focused-validation'].maxKiB / (1024 * 1024)) * 1024 * 1024, cpuCores: 1, diskClass: 'validation' },
   // 2026-11-05 windows1-linux UI component trees exceeded the
   // utility-only calibration above. Round the measured peak without margin:
   // focused-vitest-reservation-1105/measure-v2.log (2,995,796 KiB RSS).

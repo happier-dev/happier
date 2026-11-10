@@ -8,6 +8,19 @@ import { HEAVYWEIGHT_COMMAND_RESOURCES } from './command_resources.mjs';
 import { resolvePackageCommandPolicy, resolveHeavyweightMemoryFloorKiB } from './remote_commands.mjs';
 import { resolveTypeScriptCliInvocation } from '../../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 
+test('every calibrated class uses its recorded measured maximum without a margin', async () => {
+  const { COMMAND_MEMORY_MEASUREMENTS } = await import('./command_resources.mjs');
+  assert.ok(COMMAND_MEMORY_MEASUREMENTS);
+  let checked = 0;
+  for (const [className, measurement] of Object.entries(COMMAND_MEMORY_MEASUREMENTS)) {
+    assert.ok(measurement.samples >= 10, `${className} needs ten real runs`);
+    assert.equal(resolveHeavyweightMemoryFloorKiB(className), Math.ceil(measurement.maxKiB / (1024 * 1024)) * 1024 * 1024);
+    checked += 1;
+  }
+  assert.equal(checked, Object.keys(COMMAND_MEMORY_MEASUREMENTS).length);
+  assert.ok(checked > 0);
+});
+
 for (const [compiler, expectedGiB] of [['tsrs', 10], ['microsoft', 20]]) {
   test(`UI admission consumes the canonical ${compiler} compiler selection at public and leaf entries`, async t => {
     const fixture = await createTempFixture(t, { prefix: 'happier-compiler-resources-' });
