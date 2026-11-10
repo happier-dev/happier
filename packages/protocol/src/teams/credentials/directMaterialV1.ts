@@ -228,6 +228,7 @@ export const TeamCredentialDirectMaterialReadQueryV1Schema = lazyZodSchema(() =>
 ]));
 
 export const TeamCredentialDirectMaterialConsumerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('platform_operation'), operationId: BoundedIdentitySchema }),
   z.strictObject({ kind: z.literal('session'), sessionId: BoundedIdentitySchema }),
   z.strictObject({
     kind: z.literal('execution_run'),

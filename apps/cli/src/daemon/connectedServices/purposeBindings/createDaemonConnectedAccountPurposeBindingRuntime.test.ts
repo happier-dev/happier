@@ -1165,7 +1165,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       }) },
     });
     await expect(runtime.owner.materialize({ purpose, serviceRefs: [githubService], nativeService: githubService,
-      request: { kind: 'httpHeaders', origins: ['https://api.github.com'], headerNames: ['authorization'] },
+      request: { kind: 'httpHeaders', origin: 'https://api.github.com', headerNames: ['authorization'] },
       signal: new AbortController().signal })).rejects.toMatchObject({ code: 'plugin_connected_account_native_unavailable',
         remediation: { kind: 'selectAccount', service: githubService } });
     expect(acquireNativeCredentials).not.toHaveBeenCalled();
@@ -1200,7 +1200,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     });
     await expect(runtime.owner.materialize({
       purpose, serviceRefs: [service], nativeService: service,
-      request: { kind: 'httpHeaders', origins: [origin], headerNames: ['authorization'] },
+      request: { kind: 'httpHeaders', origin: origin, headerNames: ['authorization'] },
       signal: new AbortController().signal,
     })).resolves.toEqual({ kind: 'httpHeaders', headers: { Authorization: 'Bearer ephemeral-gh-token' } });
     expect(store.current()).toEqual({ v: 1, bindings: [] });
@@ -1232,7 +1232,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       expect(acquireNativeCredentials).not.toHaveBeenCalled();
       await expect(connectedAccounts.getBinding(purpose.purpose)).resolves.toBeNull();
       await expect(runtime.owner.materialize({ purpose, serviceRefs: [service], nativeService: service,
-        request: { kind: 'httpHeaders', origins: [origin], headerNames: ['authorization'] }, signal: controller.signal,
+        request: { kind: 'httpHeaders', origin: origin, headerNames: ['authorization'] }, signal: controller.signal,
       })).resolves.toEqual({ kind: 'httpHeaders', headers: { Authorization: 'Bearer rotated-native-token' } });
       expect(store.current()).toEqual({ v: 1, bindings: [] });
     } finally {
@@ -1459,10 +1459,15 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     sessionLease.dispose();
   });
 
-  it('opens a direct Team purpose target at pre-spawn launch materialization through the Session it launches', async () => {
+  it.each(['session', 'platform_operation'] as const)('opens a direct Team purpose target for %s materialization', async consumerKind => {
     const opened: unknown[] = [];
     const disclosedMember = { service: openAiService, accountId: 'source-member' };
     const { runtime, invokeDirectMaterial } = createInventoryRuntime({
+      ...(consumerKind === 'platform_operation' ? { invokeDirectMaterial: async (input: Parameters<QualifiedConnectedAccountEstablishedRuntimeOwner['invokeDirectMaterial']>[0]) => {
+        await input.isCurrent();
+        await input.isCurrent();
+        return { kind: 'environment' as const, env: { OPENAI_API_KEY: 'sk-team-direct' } };
+      } } : {}),
       openTeamDirect: async (request) => {
         opened.push({ consumer: request.consumer, resourceId: request.resourceId });
         return {
@@ -1497,10 +1502,10 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     // launch operation, whose direct material belongs to the committed Session.
     const launchLease = runtime.activatePurposeBindings({
       subject: {
-        kind: 'operation',
+        kind: consumerKind === 'session' ? 'operation' : 'platform_operation',
         operationId: 'materialization-identity-1',
         consumer: purpose.consumer,
-        sessionId: 'session-committed-before-launch',
+        ...(consumerKind === 'session' ? { sessionId: 'session-committed-before-launch' } : {}),
         isCurrent: () => true,
       },
       purposes: [purpose],
@@ -1517,12 +1522,15 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       },
       exactPurposeBindingSubjectId: launchLease.subjectId,
       signal: new AbortController().signal,
-    })).resolves.toEqual({ env: { OPENAI_API_KEY: 'sk-team-direct' }, unsetEnvKeys: [] });
+    })).resolves.toMatchObject({ env: { OPENAI_API_KEY: 'sk-team-direct' }, unsetEnvKeys: [] });
     expect(opened[0]).toEqual({
-      consumer: { kind: 'session', sessionId: 'session-committed-before-launch' },
+      consumer: consumerKind === 'session'
+        ? { kind: 'session', sessionId: 'session-committed-before-launch' }
+        : { kind: 'platform_operation', operationId: 'materialization-identity-1' },
       resourceId: 'resource-1',
     });
     expect(invokeDirectMaterial).toHaveBeenCalledOnce();
+    expect(opened).toHaveLength(1); // Admission is not repeated by finite-operation currentness checks.
     launchLease.dispose();
 
     // An operation that launches no Session has no Home-admitted consumer.
@@ -2152,7 +2160,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     });
     const materializationRequest = {
       kind: 'httpHeaders' as const,
-      origins: ['https://github.com'],
+      origin: 'https://github.com',
       headerNames: ['authorization'],
     };
 
@@ -2287,7 +2295,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         serviceRefs: [openAiService],
         request: {
           kind: 'httpHeaders',
-          origins: ['https://api.openai.com'],
+          origin: 'https://api.openai.com',
           headerNames: ['authorization'],
         },
         signal,
@@ -2300,7 +2308,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         serviceRefs: [openAiService],
         request: {
           kind: 'httpHeaders',
-          origins: ['https://example.test'],
+          origin: 'https://example.test',
           headerNames: ['authorization'],
         },
         signal,
@@ -3029,7 +3037,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       purpose,
       serviceRefs: [openAiService],
       account: { service: openAiService, accountId: 'standard-openai' },
-      request: { kind: 'httpHeaders', origins: ['https://cloud.example.test'], headerNames: ['authorization'] },
+      request: { kind: 'httpHeaders', origin: 'https://cloud.example.test', headerNames: ['authorization'] },
       signal: new AbortController().signal,
     })).resolves.toEqual({ kind: 'httpHeaders', headers: { authorization: 'Bearer listed' } });
     expect(invokeWithReceipt).toHaveBeenCalledOnce();
@@ -3442,7 +3450,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       ...listedAccount,
       request: {
         kind: 'httpHeaders',
-        origins: ['https://us.example.test'],
+        origin: 'https://us.example.test',
         headerNames: ['authorization'],
       },
     })).rejects.toMatchObject({
@@ -3454,7 +3462,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       ...listedAccount,
       request: {
         kind: 'httpHeaders',
-        origins: ['https://eu.example.test'],
+        origin: 'https://eu.example.test',
         headerNames: ['authorization'],
       },
     })).resolves.toEqual({ kind: 'httpHeaders', headers: { authorization: 'Bearer listed' } });

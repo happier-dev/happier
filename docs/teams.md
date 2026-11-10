@@ -70,6 +70,16 @@ role or roster access. Without `viewRoster`, `counts.groups` and
 `counts.archivedGroups` are `null`; waiting invitations retain their separate
 Team-manager qualification. A denied or inactive viewer receives no counts.
 
+## Finite platform credential admission (0.3 development)
+
+A host-private `platform_operation` purpose subject can obtain direct Connected
+Account material through `ConnectedAccountPurposeBindingOwner`. The existing
+Home direct-material admission applies the same Account/Team resource grants
+and Session-use policy as detached execution Runs, with no Session context.
+A finite operation is admitted once; revocation applies at the next admission,
+and its executor stops on local cancellation. Credential material stays private
+to the executor and never enters Action results, transcripts or logs.
+
 ## Brokered Provider credentials
 
 In 0.3 development source, an authorized Team member can use a brokered Provider

@@ -572,6 +572,7 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
         consumer: Readonly<
             | { kind: "session"; sessionId: string }
             | { kind: "execution_run"; executionRunId: string; parentSessionId: string | null }
+            | { kind: "platform_operation"; operationId: string }
         >;
         sessionAuthentication: SessionAccessAuthentication;
         authentication: TeamOperationAuthenticationContext;
@@ -580,7 +581,8 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
     const resourceIdentity = await tx.teamCredentialResource.findUnique({
         where: { id: input.resourceId }, select: { custodianAccountId: true },
     });
-    const admissionSessionId = input.consumer.kind === "session" ? input.consumer.sessionId : input.consumer.parentSessionId;
+    const admissionSessionId = input.consumer.kind === "session" ? input.consumer.sessionId
+        : input.consumer.kind === "execution_run" ? input.consumer.parentSessionId : null;
     const admissionAudience = await readSessionAccountCursorAudienceInTx(tx, admissionSessionId ? [admissionSessionId] : [],
         [input.recipientAccountId, ...(resourceIdentity ? [resourceIdentity.custodianAccountId] : [])]);
     await acquireAccountChangePublicationLocksInTx(tx, admissionAudience.accountIds, { includeSingleAccount: true });
@@ -610,7 +612,9 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
     const admitted = await admitTeamCredentialOperationBindingInTx(tx, {
         consumer: input.consumer.kind === "session"
             ? input.consumer
-            : { kind: "execution_run", parentSessionId: input.consumer.parentSessionId, resourceId: input.resourceId },
+            : input.consumer.kind === "platform_operation"
+                ? { kind: "platform_operation", resourceId: input.resourceId }
+                : { kind: "execution_run", parentSessionId: input.consumer.parentSessionId, resourceId: input.resourceId },
         accountId: input.recipientAccountId,
         slot: input.slot,
         deliveryMode: "direct",

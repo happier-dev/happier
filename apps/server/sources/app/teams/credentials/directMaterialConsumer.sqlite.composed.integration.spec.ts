@@ -156,6 +156,7 @@ describe("Team credential direct material consumed boundary (SQLite integration)
             id: crypto.randomUUID(), accountId: custodian.id, metadata: "{}", active: true,
         } });
 
+        let actorAccountId = recipient.id;
         const app = createAuthenticatedTestApp();
         app.decorate("forwardRpcForUser", async (request: Readonly<{
             userId: string;
@@ -188,7 +189,7 @@ describe("Team credential direct material consumed boundary (SQLite integration)
             };
         });
         app.addHook("onRequest", async (request: FastifyRequest) => {
-            request.headers["x-test-user-id"] = recipient.id;
+            request.headers["x-test-user-id"] = actorAccountId;
         });
         registerTeamCredentialResourceRoutes(app);
         await app.listen({ host: "127.0.0.1", port: 0 });
@@ -264,6 +265,22 @@ describe("Team credential direct material consumed boundary (SQLite integration)
                 slot: { kind: "provider_model" },
                 sourceMemberKey,
             })).resolves.toEqual({ ok: false, reason: "access_removed" });
+            // Standalone finite work has no Session context; use the existing
+            // personal-allowed policy and the same resource grant as detached Runs.
+            await db.teamCredentialResource.update({ where: { id: resource.id }, data: { sessionUsePolicy: "personal_allowed" } });
+            const platformRequest = { teamId: team.id, resourceId: resource.id,
+                consumer: { kind: "platform_operation" as const, operationId: "deploy-1" },
+                slot: { kind: "provider_model" as const }, sourceMemberKey };
+            await expect(directClient.open(platformRequest)).resolves.toMatchObject({ ok: true });
+            // Account B owns the source but has no resource grant; Team role is insufficient.
+            actorAccountId = custodian.id;
+            await expect(directClient.open(platformRequest)).resolves.toEqual({ ok: false, reason: "access_removed" });
+            actorAccountId = recipient.id;
+            await db.teamCredentialMemberGrant.deleteMany({ where: { resourceId: resource.id, teamMembershipId: recipientMembership.id } });
+            await expect(directClient.open(platformRequest)).resolves.toEqual({ ok: false, reason: "access_removed" });
+            await db.teamCredentialMemberGrant.create({ data: { resourceId: resource.id, teamMembershipId: recipientMembership.id, deliveryMode: "direct" } });
+            await expect(directClient.open(platformRequest)).resolves.toMatchObject({ ok: true });
+            await db.teamCredentialResource.update({ where: { id: resource.id }, data: { sessionUsePolicy: "team_visibility_required" } });
             const resolved = await resolveProviderCredentialPlaintextAsync({
                 reference: {
                     kind: "team_direct",
