@@ -104,6 +104,40 @@ async function measureStrip(
   });
 }
 
+describe('the composer status line on a phone (owner 2026-11-10)', () => {
+  it('keeps a trailing instrument on the status line instead of wrapping it to a row of its own', async () => {
+    const { SessionInstrumentStrip } = await import('./SessionInstrumentStrip');
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <View testID="frame" style={{ width: 358 }}>
+          <SessionInstrumentStrip
+            connectionStatus={{
+              text: 'Machine offline · message queued',
+              color: '#b60',
+              dotColor: '#b60',
+              action: { label: 'Process when online', onPress: () => {} },
+            }}
+            statusTrailingActions={<View testID="gauge" style={{ width: 24, height: 24 }} />}
+          />
+        </View>,
+      );
+    });
+    const layout = await measureWebLayout(host, {
+      viewport: { width: 400, height: 300 },
+      texts: ['Machine offline · message queued'],
+      settle: (replay) => act(replay),
+    });
+    const frame = layout.rect('frame');
+    const gauge = layout.rect('gauge');
+    // One line: the strip is no taller than its line and the gauge sits on it, inside the edge.
+    expect(frame.bottom - frame.top).toBeLessThanOrEqual(40);
+    expect(gauge.right).toBeLessThanOrEqual(frame.right + 0.5);
+  });
+});
+
 describe('the composer status row, as a browser lays it out', () => {
   it('keeps the badge and the draft actions on one line where they fit', async () => {
     const layout = await measureStrip(900);

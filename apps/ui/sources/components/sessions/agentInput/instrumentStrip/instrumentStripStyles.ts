@@ -45,10 +45,14 @@ export const instrumentStripStyles = StyleSheet.create((theme) => ({
     rootCollapsed: {
         minHeight: 0,
     },
+    // The status line takes the room the instruments leave and gives way first (owner 2026-11-10): from a zero
+    // basis it can never push the trailing gauge onto a row of its own, so the strip stays one line on a phone.
     connectionGroup: {
         flexDirection: 'row',
         alignItems: 'center',
+        flexGrow: 1,
         flexShrink: 1,
+        flexBasis: 0,
         minWidth: 0,
         gap: theme.space.s6,
     },
