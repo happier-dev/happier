@@ -5,6 +5,7 @@ import { readHomeAccountDepartures } from '@/sync/runtime/orchestration/homeAcco
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
 import { getMachineContributionRegistryProjectionAuthorityRevision } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import type { LazyActionAccountContext } from './actionAccountContext';
 import { createUiAccountAction } from './accountActionDeps';
 
@@ -18,7 +19,7 @@ const schemasByAccount = new Map<string, { departures: number; sessions: Map<str
 /** Native host schemas belong to the selected Session occurrence, not to an individual send. */
 export async function readSessionMessageInputSchema(params: Readonly<{
     account: LazyActionAccountContext;
-    session: Pick<Session, 'id' | 'metadata'>;
+    session: Pick<Session, 'id' | 'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView'>;
     machineId: string;
     context: ActionExecutorContext;
     signal?: AbortSignal;
@@ -32,8 +33,9 @@ export async function readSessionMessageInputSchema(params: Readonly<{
         held = { departures, sessions: new Map() };
         schemasByAccount.set(accountKey, held);
     }
-    const occurrence = JSON.stringify([machineId, session.metadata?.hostPid ?? null,
-        session.metadata?.hostProcessStartTimeMs ?? null, session.metadata?.hostProcessInstanceFingerprint ?? null,
+    const metadata = readSessionOwnerMetadataView(session);
+    const occurrence = JSON.stringify([machineId, metadata?.hostPid ?? null,
+        metadata?.hostProcessStartTimeMs ?? null, metadata?.hostProcessInstanceFingerprint ?? null,
         getMachineContributionRegistryProjectionAuthorityRevision({ serverId: account.serverId, machineId })]);
     let entry = held.sessions.get(session.id);
     if (!entry || entry.occurrence !== occurrence) {

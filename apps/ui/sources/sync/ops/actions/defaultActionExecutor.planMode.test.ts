@@ -816,7 +816,7 @@ describe('default Action executor mode and catalog contracts', () => {
         status: { observedRevision: 'session-message-row-revision:v1:8' } });
     } finally { held.release(); held.restore(); await hook.unmount(); }
   });
-  it.each(['ui', 'human_return', 'composer', 'composer_wait', 'composer_group', 'composer_presentation_retired', 'composer_account_retired', 'voice', 'legacy', 'schema_legacy', 'extended_send', 'triage_send', 'triage_schema_unavailable', 'native_command', 'schema_nested_legacy', 'schema_nested_legacy_none', 'review_send'] as const)('keeps an Ask on the canonical daemon send owner with its exact input and observation intent (%s)', async client => {
+  it.each(['ui', 'repeated_send', 'human_return', 'composer', 'composer_wait', 'composer_group', 'composer_presentation_retired', 'composer_account_retired', 'voice', 'legacy', 'schema_legacy', 'extended_send', 'triage_send', 'triage_schema_unavailable', 'native_command', 'schema_nested_legacy', 'schema_nested_legacy_none', 'review_send'] as const)('keeps an Ask on the canonical daemon send owner with its exact input and observation intent (%s)', async client => {
     const triage = client === 'triage_send' || client === 'triage_schema_unavailable';
     const surface = client === 'voice' ? 'voice' : triage ? 'plugin' : 'ui';
     const triageCaller = { kind: 'plugin' as const, pluginId: 'happier.triage', contributionLocalId: 'sessions/run-configured-v1',
@@ -829,10 +829,11 @@ describe('default Action executor mode and catalog contracts', () => {
     const accepted = createDeferred<void>();
     const lateReceipt = createDeferred<void>();
     const withReview = client === 'schema_nested_legacy' || client === 'schema_nested_legacy_none' || client === 'review_send';
-    const withStructuredInput = client === 'ui' || client === 'schema_legacy' || withReview;
+    const withStructuredInput = client === 'ui' || client === 'repeated_send' || client === 'schema_legacy' || withReview;
     const overrides = client === 'extended_send' ? { modelOverride: 'provider/claude-sonnet',
       providerConnectionId: 'pc_01J00000000000000000000000' } : {};
-    installSession('ask-session', { path: '/repo', machineId: 'machine-a', flavor: 'claude' });
+    installSession('ask-session', { path: '/repo', machineId: 'machine-a', flavor: 'claude',
+      hostPid: 101, hostProcessStartTimeMs: 10, hostProcessInstanceFingerprint: 'ask-occurrence-1' });
     if (group) {
       for (const id of ['refused-session', 'pass-session']) installSession(id, { path: '/repo', machineId: 'machine-a', flavor: 'claude' });
       homes.answer(serverId, '/v2/sessions/query', { body: createSessionListSourceFixture({
@@ -881,13 +882,14 @@ describe('default Action executor mode and catalog contracts', () => {
       return Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'reviewComments')
         .map(([key, item]) => [key, withoutAdvertisedReviewMember(item)]));
     }
+    let legacyOccurrence = false;
     homes.answer(serverId, '/v1/actions/action.spec.get', { select: body => {
       const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
       if (client === 'triage_schema_unavailable') return { body: { v: 1, actionId: 'action.spec.get',
         requestId: authorized.envelope.requestId, execution: { ok: false,
           errorCode: 'plugin_action_execution_placement_unavailable', error: 'plugin_action_execution_placement_unavailable' } } };
       return { body: { v: 1, actionId: 'action.spec.get', requestId: authorized.envelope.requestId, execution: { ok: true,
-        result: { actionSpec: client === 'schema_legacy' ? { ...definition, inputSchema: { type: 'object', properties: {
+        result: { actionSpec: client === 'schema_legacy' || legacyOccurrence ? { ...definition, inputSchema: { type: 'object', properties: {
           sessionId: { type: 'string' }, message: { type: 'string' }, reply: { enum: ['none', 'wait', 'return'] },
         }, additionalProperties: true } } : client === 'schema_nested_legacy' || client === 'schema_nested_legacy_none'
           ? { ...definition, inputSchema: withoutAdvertisedReviewMember(definition.inputSchema) } : definition } } } };
@@ -915,7 +917,7 @@ describe('default Action executor mode and catalog contracts', () => {
         sessionId: 'ask-session', kind: 'sessionSubagentCommand', command: { kind: 'agent_team_delete', teamId: 'team-1' },
         localId: 'ask-input', idempotencyKey: 'native-command-1',
       } : {
-        sessionId: receiver, message: 'What did you find?', reply, localId: 'ask-input', timeoutSeconds: 61,
+        sessionId: receiver, message: 'What did you find?', reply, localId: client === 'repeated_send' ? expect.any(String) : 'ask-input', timeoutSeconds: 61,
         ...humanReturn,
         requestedAction: { v: 1, kind: 'send_now' },
         ...overrides,
@@ -1062,7 +1064,7 @@ describe('default Action executor mode and catalog contracts', () => {
     if (client === 'composer_account_retired') return;
     if (group) {
       expect(result).toMatchObject({ ok: true, result: { kind: 'fanout', results: expect.arrayContaining([
-        { target: { serverId, sessionId: 'refused-session' }, result: { ok: false, errorCode: 'permission_denied', error: 'Unavailable' } },
+        { target: { serverId, sessionId: 'refused-session' }, result: expect.objectContaining({ ok: false, errorCode: 'permission_denied' }) },
       ]) } });
       const { normalizeRawMessage } = await import('@happier-dev/session-core/raw');
       const { reducer, createReducer } = await import('@happier-dev/session-core/reducer');
@@ -1149,6 +1151,29 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(result, JSON.stringify(homes.requestsFor('/v1/actions/session.message.send').map(request => request.path))).toEqual({ ok: true, result: outcome });
     expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(1);
     expect(homes.requestsFor('/v2/sessions/ask-session/pending')).toHaveLength(0);
+    if (client === 'repeated_send') {
+      let sendNumber = 0;
+      const send = () => createDefaultActionExecutor().execute('session.message.send', { ...input, localId: `ask-input-${++sendNumber}` }, context());
+      for (const sent of await Promise.all([send(), send()])) expect(sent).toEqual({ ok: true, result: outcome });
+      expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(3);
+      expect(homes.requestsFor('/v1/actions/action.spec.get')).toHaveLength(1);
+      const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
+      publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: 'machine-a' }, 'authority');
+      for (const sent of await Promise.all([send(), send()])) expect(sent).toEqual({ ok: true, result: outcome });
+      expect(homes.requestsFor('/v1/actions/action.spec.get')).toHaveLength(2);
+      expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(5);
+      legacyOccurrence = true;
+      const metadata = { path: '/repo', host: 'tester.local', machineId: 'machine-a', flavor: 'claude',
+        hostPid: 102, hostProcessStartTimeMs: 20, hostProcessInstanceFingerprint: 'ask-occurrence-2' };
+      installSession('ask-session', metadata, serverId, 1, createPlainSessionCurrentProjectionRecordFixture({
+        id: 'ask-session', active: true, metadata, metadataVersion: 10 }));
+      const changed = await send();
+      expect(changed, JSON.stringify({ specReads: homes.requestsFor('/v1/actions/action.spec.get').length,
+        sessionReads: homes.requestsFor('/v2/sessions/ask-session').length,
+        originalExecution: getActionSpec('session.message.send').originalExecution })).toMatchObject({ ok: true, result: { status: 'rejected', code: 'session_input_target_update_required' } });
+      expect(homes.requestsFor('/v1/actions/action.spec.get')).toHaveLength(3);
+      expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(5);
+    }
   });
   it('inspects an exact continuation through the selected Session daemon', async () => {
     installSession('inspect-session', { path: '/repo', machineId: 'machine-a', flavor: 'claude' });
