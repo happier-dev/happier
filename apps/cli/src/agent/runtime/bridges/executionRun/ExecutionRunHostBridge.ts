@@ -3,7 +3,6 @@ import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/act
 import { resolveExecutionRunInputAuthority } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 import { FollowPolicyV1Schema, resolveWorkerUpdateFollowDeliveryV1, type FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import type { ExecutionRunOutputObservation } from '@happier-dev/protocol/reviews/reviewNarration';
-import type { StructuredQuestionAnswerDetailsV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 import { readExecutionRunOfferedModel } from './structuredOutputAdmission';
 
 import {
@@ -14,7 +13,9 @@ import type {
   ExecutionRunHistoryDeleteResult,
   ExecutionRunObservedInputTurn,
   ExecutionRunPermissionResponseBridgeResult,
+  ExecutionRunPermissionCompletionInput,
 } from './executionRunBridgeContract';
+import { resolveNativePermissionChoice } from '@/agent/permissions/nativePermissionChoice';
 import type { ACPMessageData, ACPProvider } from '../../../../api/session/sessionMessageTypes';
 import type { StreamedTranscriptWriterSession } from '../../../../api/session/streamedTranscriptWriter';
 import type { ExecutionBudgetRegistry } from '../../../../daemon/executionBudget/ExecutionBudgetRegistry';
@@ -22,7 +23,7 @@ import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/ba
 import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ExecutionRunApprovalProfileSetInputSchema, ExecutionRunScmDiffSummaryInputV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { executionRunChildSelectionNeedsAppliedParent, readExecutionRunAppliedParentModelId, resolveExecutionRunAgentDefaultSelection, resolveExecutionRunChildSelection, type ResolvedExecutionRunChildSelection } from './runtime/openInputs';
-import type { AcpConfigOptionOverridesV1, BackendTargetRefV1, ConnectedServiceBindingsV2, ExecutionRunConnectedServicesLaunchV1, ExecutionRunUserTranscriptDirective, ExecutionRunBridgeLifecycleHookEventIdV1, ExecutionRunListRequest, ExecutionRunPublicState, ExecutionRunStartRequest, ExecutionRunResultContractV1, ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1, SessionRunPromptReadActionIdV1, SessionRunPromptContextV1, SessionInputCausalPermissionAuthorityV1, SecretReferenceOverlayV1, StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV1, ConnectedServiceBindingsV2, ExecutionRunConnectedServicesLaunchV1, ExecutionRunUserTranscriptDirective, ExecutionRunBridgeLifecycleHookEventIdV1, ExecutionRunListRequest, ExecutionRunPublicState, ExecutionRunStartRequest, ExecutionRunResultContractV1, ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1, SessionRunPromptReadActionIdV1, SessionRunPromptContextV1, SessionInputCausalPermissionAuthorityV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
 import { SessionRunPromptContextV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { SessionInputAdmissionResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { buildTrustedHostSessionInputAdmissionV1, readSessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
@@ -1321,7 +1322,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       dispatch: AgentStateResponseTargetDispatch,
     ) => {
       return this.handleExecutionRunPermissionResponseTargetDispatch(dispatch);
-    });
+    }, { application: 'beforeCompletion' });
     this.permissionResponseTargetStore = store;
   }
 
@@ -1587,7 +1588,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         return (readPermissionStore()?.listOutstandingRequests?.() ?? []).filter((request) => {
           const target = readExecutionRunParentSessionPermissionResponseTarget(request.responseTarget);
           return target !== null && target.runId === opts.runId && target.controllerOccurrenceId === controller.controllerOccurrenceId;
-        }).map(request => ({ requestId: request.requestId, createdAt: request.createdAt }));
+        }).map(request => ({ requestId: request.requestId, createdAt: request.createdAt,
+          ...(request.nativeChoices === undefined ? {} : { nativeChoices: request.nativeChoices }) }));
       } },
     }) as ExecutionRunHostRuntime;
   }
@@ -1599,6 +1601,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
    * of falling back to a bare backend on ambient/native auth. Keeps resume symmetric with start.
    */
   private createResumeExecutionRunRuntime(opts: Readonly<{
+    functionTools?: ExecutionRunRuntimeCreateOptions['functionTools'];
+    start?: ExecutionRunBackendStartContext;
     providerLaunch?: ExecutionRunProviderLaunchServices;
     projectLaunchContext?: ExecutionRunRuntimeCreateOptions['projectLaunchContext'];
     resolveAccountSettingsSnapshot?: ExecutionRunRuntimeCreateOptions['resolveAccountSettingsSnapshot'];
@@ -1620,6 +1624,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     const run = opts.runId ? this.runs.get(opts.runId) ?? null : null;
     const resumeOptions = resolveExecutionRunResumeBackendOptions({ run });
     return this.createExecutionRunRuntime({
+      ...(opts.functionTools ? { functionTools: opts.functionTools } : {}),
       resolveAccountSettingsSnapshot: opts.resolveAccountSettingsSnapshot,
       ...(run ? { callId: run.callId, sidechainId: run.sidechainId } : {}),
       ...(opts.projectLaunchContext ? { projectLaunchContext: opts.projectLaunchContext } : {}),
@@ -1658,7 +1663,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       ...(resumeOptions.connectedServices !== undefined
         ? { connectedServices: resumeOptions.connectedServices }
         : {}),
-      ...(resumeOptions.start ? { start: resumeOptions.start } : {}),
+      start: { ...resumeOptions.start, ...opts.start },
     });
   }
 
@@ -1934,7 +1939,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     const pending = run.status === 'running' && controller?.kind === 'backend'
       ? [...controller.backend.readPendingPermissionRequests?.() ?? []].sort((left, right) => left.requestId < right.requestId ? -1 : left.requestId > right.requestId ? 1 : 0) : [];
     const requests = pending.flatMap(request => typeof request.createdAt === 'number' && Number.isSafeInteger(request.createdAt) && request.createdAt >= 0
-      ? [{ requestId: request.requestId, createdAt: request.createdAt }] : []);
+      ? [{ requestId: request.requestId, createdAt: request.createdAt,
+        ...(request.nativeChoices === undefined ? {} : { nativeChoices: request.nativeChoices }) }] : []);
     return pending.length ? { kind: 'permission_required', requestIds: pending.map(request => request.requestId),
       ...(requests.length === pending.length ? { requests } : {}) } : undefined;
   }
@@ -2521,7 +2527,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
             localInputId: preparedParams.localInputId,
             store: runInteractionStore,
             releaseResponseTarget: runInteractionStore.registerResponseTargetHandler('execution_run_host_bridge',
-              dispatch => this.handleExecutionRunPermissionResponseTargetDispatch(dispatch)),
+              dispatch => this.handleExecutionRunPermissionResponseTargetDispatch(dispatch), { application: 'beforeCompletion' }),
           };
         }
       }
@@ -3580,9 +3586,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
 
   async completePermissionRequest(
     runId: string,
-    params:
-      | Readonly<{ requestId: string; approved: boolean }>
-      | Readonly<{ requestId: string; answers: StructuredQuestionAnswersV1; answerDetails?: StructuredQuestionAnswerDetailsV1 }>,
+    params: ExecutionRunPermissionCompletionInput,
   ): Promise<Readonly<{ ok: true } | { ok: false; errorCode: string; error: string }>> {
     const run = this.runs.get(runId) ?? null;
     if (!run || run.status !== 'running') {
@@ -3613,11 +3617,19 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     ) {
       return { ok: false, errorCode: 'permission_request_not_found', error: 'Permission request not found' };
     }
+    const response = 'nativeChoice' in params
+      ? resolveNativePermissionChoice(outstanding?.nativeChoices, params.nativeChoice)?.result
+      : 'answers' in params
+        ? { decision: 'approved' as const, answers: params.answers,
+          ...(params.answerDetails === undefined ? {} : { answerDetails: params.answerDetails }) }
+        : { decision: params.approved ? 'approved' as const : 'denied' as const };
+    if (!response) return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Invalid native permission choice' };
     const completed = await store.completeRequest({
       requestId: params.requestId,
-      status: 'answers' in params || params.approved ? 'approved' : 'denied',
-      decision: 'answers' in params || params.approved ? 'approved' : 'denied',
-      ...('answers' in params ? { answers: params.answers,
+      status: response.decision === 'abort' ? 'canceled' : response.decision === 'denied' ? 'denied' : 'approved',
+      decision: response.decision,
+      extraCompletedFields: { ...response },
+      ...('answers' in params ? { structuredAnswersV1: params.answers,
         ...(params.answerDetails === undefined ? {} : { answerDetails: params.answerDetails }) } : {}),
     });
     this.emitPublicStateUpdated(runId);

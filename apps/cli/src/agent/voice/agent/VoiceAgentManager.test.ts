@@ -111,14 +111,17 @@ async function readVoiceAgentTurnStreamUntilDone(args: Readonly<{
 type VoiceProviderEvent<T = AgentSessionRuntimeEvent> = T extends AgentSessionRuntimeEvent
   ? Omit<T, 'sessionId' | 'sequence' | 'emittedAtMs'>
   : never;
+type VoiceFunctionTools = NonNullable<AgentSessionOpenRequest['functionTools']>;
+type VoiceFunctionInput = Parameters<VoiceFunctionTools[number]['call']>[0];
 
 function createDeterministicBackend(label: string, options: Readonly<{
   session?: ApiSessionClient;
   emitAdmissionEvents?: boolean;
   resumeSupported?: boolean;
   providerSessionId?: string;
+  functionTools?: VoiceFunctionTools;
   onOpen?: (request: AgentSessionOpenRequest, context: AgentSessionRuntimeContext) => void | Promise<void>;
-  onSend?: (request: AgentSessionSendRequest, publish: (event: VoiceProviderEvent) => void) => void | AgentSessionSendResult | Promise<void | AgentSessionSendResult>;
+  onSend?: (request: AgentSessionSendRequest, publish: (event: VoiceProviderEvent) => void, functionTools: VoiceFunctionTools) => void | AgentSessionSendResult | Promise<void | AgentSessionSendResult>;
   onCancel?: (turnId: string, publish: (event: VoiceProviderEvent) => void) => void | Promise<void>;
   onWatch?: (listener: (event: AgentSessionRuntimeEvent) => void) => void;
   onWatchDispose?: () => void | Promise<void>;
@@ -135,7 +138,9 @@ function createDeterministicBackend(label: string, options: Readonly<{
   // Agent SDK boundary only; native admission, output projection and lifecycle stay real.
   const runtime: AgentRuntime = { sessions: { async open(request, context) {
     if (options.onOpen) await options.onOpen(request, context);
+    const requestFunctionTools = request.functionTools ?? [];
     return {
+    functionToolsDelivered: Boolean(request.functionTools),
     watch(listener) {
       options.onWatch?.(listener);
       listeners.add(listener);
@@ -151,7 +156,7 @@ function createDeterministicBackend(label: string, options: Readonly<{
         publish({ kind: 'turn-start', turnId, startedBy: 'host' });
       }
       if (options.onSend) {
-        const result = await options.onSend(request, publish);
+        const result = await options.onSend(request, publish, requestFunctionTools);
         if (result) return result;
       }
       else {
@@ -168,7 +173,7 @@ function createDeterministicBackend(label: string, options: Readonly<{
     async dispose() { listeners.clear(); await options.onDispose?.(); },
   }; } } };
   const host = createVoiceSessionRuntimeThroughNativeFactory({
-    runtime, modelId: label, session: options.session, capabilities: {
+    runtime, modelId: label, session: options.session, functionTools: options.functionTools, capabilities: {
       open: options.resumeSupported === false ? ['create'] : ['create', 'resume'], delivery: ['newTurn'], cancel: true,
     },
   });
@@ -440,10 +445,14 @@ function createCancelableBlockingBackend(
 
 function createLateResolvingCancellationBackend(
   responseText: string,
-): VoiceTestRuntime<{ wasCancelled: () => boolean; getSeenPrompts(): string[] }> {
+  functionTools?: VoiceFunctionTools,
+): VoiceTestRuntime<{ wasCancelled: () => boolean; getSeenPrompts(): string[]; callLateAction(input: VoiceFunctionInput): Promise<unknown> }> {
   let cancelled = false;
+  let nativeAction: VoiceFunctionTools[number] | undefined;
 
   const runtime = createDeterministicBackend('late-cancel', {
+    functionTools,
+    onOpen(request) { nativeAction = request.functionTools?.[0]; },
     onSend() {},
     onCancel(turnId, publish) {
       cancelled = true;
@@ -457,6 +466,10 @@ function createLateResolvingCancellationBackend(
 
   return Object.defineProperties({ ...runtime,
     wasCancelled: () => cancelled,
+    async callLateAction(input: VoiceFunctionInput) {
+      if (!nativeAction) throw new Error('Voice native function was not delivered to the Agent SDK');
+      return nativeAction.call(input);
+    },
   }, Object.getOwnPropertyDescriptors(runtime));
 }
 
@@ -492,19 +505,25 @@ function createStaticResponseBackend(label: string, responseText: string): Execu
 }
 
 function createPromptCaptureBackend(
-  sequence: Array<{ responseText: string }>,
-  options?: Readonly<{ resumeSupported?: boolean }>,
+  sequence: Array<{ responseText: string; functionCalls?: VoiceFunctionInput[] }>,
+  options?: Readonly<{ resumeSupported?: boolean; functionTools?: VoiceFunctionTools }>,
 ): VoiceTestRuntime<{ prompts: string[] }> {
   const prompts: string[] = [];
   let idx = 0;
 
   const runtime = createDeterministicBackend('capture', {
     resumeSupported: options?.resumeSupported === true,
-    onSend(request, publish) {
+    functionTools: options?.functionTools,
+    async onSend(request, publish, functionTools) {
       prompts.push(request.input.text);
       const next = sequence[Math.min(idx, sequence.length - 1)];
       idx += 1;
       publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: next?.responseText ?? '' });
+      for (const input of next?.functionCalls ?? []) {
+        const tool = functionTools[0];
+        if (!tool) throw new Error('Voice native function was not delivered to the Agent SDK');
+        await tool.call(input);
+      }
       publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
     },
   });
@@ -1768,7 +1787,7 @@ describe('VoiceAgentManager', () => {
       backendId: string;
       modelId: string;
       permissionIntent: Parameters<BackendFactory>[0]['permissionIntent'];
-      start?: { intent: 'voice_agent' };
+      start?: Parameters<BackendFactory>[0]['start'];
     }> = [];
     const backend = createDeterministicBackend('chat');
     const createBackend: BackendFactory = (opts) => {
@@ -1797,7 +1816,7 @@ describe('VoiceAgentManager', () => {
       backendId: 'external-voice-agent',
       modelId: 'chat-model',
       permissionIntent: 'read-only',
-      start: { intent: 'voice_agent' },
+      start: { intent: 'voice_agent', allowedTools: [], unlistedTools: 'deny' },
     }]);
     expect(manager.getResumeHandle(started.voiceAgentId)?.backendTarget).toMatchObject({
       kind: 'backend',
@@ -1809,8 +1828,8 @@ describe('VoiceAgentManager', () => {
     await manager.commit({ voiceAgentId: started.voiceAgentId, maxChars: 10_000 });
 
     expect(seen).toEqual([
-      { backendTarget: { kind: 'configuredAcpBackend', backendId: 'external-voice-agent' }, backendId: 'external-voice-agent', modelId: 'chat-model', permissionIntent: 'read-only', start: { intent: 'voice_agent' } },
-      { backendTarget: { kind: 'configuredAcpBackend', backendId: 'external-voice-agent' }, backendId: 'external-voice-agent', modelId: 'commit-model', permissionIntent: 'read-only', start: { intent: 'voice_agent' } },
+      { backendTarget: { kind: 'configuredAcpBackend', backendId: 'external-voice-agent' }, backendId: 'external-voice-agent', modelId: 'chat-model', permissionIntent: 'read-only', start: { intent: 'voice_agent', allowedTools: [], unlistedTools: 'deny' } },
+      { backendTarget: { kind: 'configuredAcpBackend', backendId: 'external-voice-agent' }, backendId: 'external-voice-agent', modelId: 'commit-model', permissionIntent: 'read-only', start: { intent: 'voice_agent', allowedTools: [], unlistedTools: 'deny' } },
     ]);
     expect(manager.getResumeHandle(started.voiceAgentId)).toMatchObject({
       kind: 'voice_agent_sessions.v1',
@@ -2350,23 +2369,14 @@ describe('VoiceAgentManager', () => {
     }
   });
 
-  it('normalizes sendSessionMessage preambles when extracting voice tool actions from the assistant response text', async () => {
-
-    const chatBackend = createStaticResponseBackend(
-      'chat',
-      [
-        'Ok, sending that now.',
-        '',
-        '<voice_actions>',
-        JSON.stringify({ actions: [{ t: 'sendSessionMessage', args: { message: 'Please do X.' } }] }),
-        '</voice_actions>',
-      ].join('\n'),
-    );
+  it('keeps queued native sendSessionMessage narration silent until the UI executes its Action', async () => {
     const commitBackend = createDeterministicBackend('commit');
 
-    const createBackend: BackendFactory = ({ modelId }) => {
+    const createBackend: BackendFactory = ({ modelId, functionTools }) => {
       if (modelId === 'commit-model') return commitBackend;
-      return chatBackend;
+      return createPromptCaptureBackend([{ responseText: 'Ok, sending that now.',
+        functionCalls: [{ t: 'sendSessionMessage', args: { message: 'Please do X.' } }],
+      }], { functionTools });
     };
 
     const manager = new VoiceAgentManager({ createBackend });
@@ -2380,8 +2390,9 @@ describe('VoiceAgentManager', () => {
     });
 
     const result = await manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'hi' });
-    expect(result.assistantText).toBe('I sent that to the coding assistant and am waiting for its update.');
-    expect((result as any).actions?.[0]?.t).toBe('sendSessionMessage');
+    expect(result.assistantText).toBe('');
+    expect(result.actions).toEqual([{ t: 'sendSessionMessage', args: { message: 'Please do X.' } }]);
+    await manager.dispose();
   });
 
   it('clears delta-only output buffers between operations', async () => {
@@ -2555,17 +2566,29 @@ describe('VoiceAgentManager', () => {
     expect(createBackend).toHaveBeenCalledTimes(1);
   });
 
-  it('treats late backend completion after cancellation as terminal without done, deltas, actions, or history', async () => {
+  it('treats late backend completion and obsolete native callbacks after cancellation as terminal without actions or history', async () => {
 
     const cancelledUserText = 'do not commit this cancelled request';
-    const cancelledAssistantText =
-      'late text <voice_actions>{"actions":[{"t":"sendSessionMessage","args":{"message":"must not run"}}]}</voice_actions>';
-    const chatBackend = createLateResolvingCancellationBackend(cancelledAssistantText);
-    const replacementBackend = createStaticResponseBackend('replacement-after-cancel', 'clean');
+    const cancelledAssistantText = 'late text';
+    let chatBackend!: ReturnType<typeof createLateResolvingCancellationBackend>;
+    const createReplacementBackend = (functionTools: VoiceFunctionTools | undefined) => createDeterministicBackend('replacement-after-cancel', {
+      functionTools,
+      async onSend(request, publish) {
+        // The replacement is active: an idle-only rejection would not prove
+        // that the retained callback cannot queue into a later generation.
+        await expect(chatBackend.callLateAction({ t: 'sendSessionMessage', args: { message: 'must not run' } }))
+          .rejects.toThrow('no longer accepting Actions');
+        publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: 'clean' });
+        publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
+      },
+    });
     const commitBackend = createDeterministicBackend('commit');
     const createBackend = vi.fn<BackendFactory>()
-      .mockReturnValueOnce(chatBackend)
-      .mockReturnValueOnce(replacementBackend)
+      .mockImplementationOnce(({ functionTools }) => {
+        chatBackend = createLateResolvingCancellationBackend(cancelledAssistantText, functionTools);
+        return chatBackend;
+      })
+      .mockImplementationOnce(({ functionTools }) => createReplacementBackend(functionTools))
       .mockReturnValueOnce(commitBackend);
 
     const manager = new VoiceAgentManager({ createBackend });
@@ -2603,6 +2626,8 @@ describe('VoiceAgentManager', () => {
     expect(cancelledRead.events.some((event) => event.t === 'voice_output' && event.output.kind === 'turn_final')).toBe(false);
     expect(cancelledRead.events.some((event) => event.t === 'voice_output' && event.output.kind === 'speech_segment')).toBe(false);
 
+    await expect(manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'next turn' }))
+      .resolves.toEqual({ assistantText: 'clean' });
     await manager.commit({ voiceAgentId: started.voiceAgentId, maxChars: 10_000 });
     const commitPrompt = commitBackend.getSeenPrompts().at(-1) ?? '';
     expect(commitPrompt).not.toContain(cancelledUserText);
@@ -2645,11 +2670,16 @@ describe('VoiceAgentManager', () => {
 
   it('replays completed user history without procedural Action narration when cancellation requires a fresh chat session', async () => {
     let promptCount = 0;
-    const cancelledRuntime = createDeterministicBackend('cancelled-mid-conversation', {
-      onSend(request, publish) {
+    let cancelledRuntime!: ReturnType<typeof createDeterministicBackend>;
+    const createCancelledRuntime = (functionTools: VoiceFunctionTools | undefined) => createDeterministicBackend('cancelled-mid-conversation', {
+      functionTools,
+      async onSend(request, publish, tools) {
         promptCount += 1;
         if (promptCount === 1) {
-          publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: 'first response <voice_actions>{"actions":[{"t":"ui.voice_agent.teleport","args":{"sessionId":"prior-effect-session"}}]}</voice_actions>' });
+          publish({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: 'first response' });
+          const tool = tools[0];
+          if (!tool) throw new Error('Voice native function was not delivered to the Agent SDK');
+          await tool.call({ t: 'ui.voice_agent.teleport', args: { sessionId: 'prior-effect-session' } });
           publish({ kind: 'turn-complete', turnId: request.delivery.turnId });
           return;
         }
@@ -2659,10 +2689,16 @@ describe('VoiceAgentManager', () => {
         publish({ kind: 'runtime-ended', cause: 'connectionLost', retryable: true });
       },
     });
-    const replacementRuntime = createPromptCaptureBackend([{ responseText: 'replacement response' }]);
+    let replacementRuntime!: ReturnType<typeof createPromptCaptureBackend>;
     const createBackend = vi.fn<BackendFactory>()
-      .mockReturnValueOnce(cancelledRuntime)
-      .mockReturnValueOnce(replacementRuntime);
+      .mockImplementationOnce(({ functionTools }) => {
+        cancelledRuntime = createCancelledRuntime(functionTools);
+        return cancelledRuntime;
+      })
+      .mockImplementationOnce(({ functionTools }) => {
+        replacementRuntime = createPromptCaptureBackend([{ responseText: 'replacement response' }], { functionTools });
+        return replacementRuntime;
+      });
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
@@ -3408,10 +3444,11 @@ describe('VoiceAgentManager', () => {
     }
   });
 
-  it('withholds provisional native textual Action narration from semantic speech and the final Voice reply', async () => {
-    const runtime = createStaticResponseBackend('textual-actions', 'I will send that to the session now. '
-      + '<voice_actions>{"actions":[{"t":"sendSessionMessage","args":{"message":"Please investigate."}}]}</voice_actions>');
-    const manager = new VoiceAgentManager({ createBackend: () => runtime });
+  it('withholds queued native Action narration from semantic speech and the final Voice reply', async () => {
+    const manager = new VoiceAgentManager({ createBackend: ({ functionTools }) => createPromptCaptureBackend([{
+      responseText: 'I will send that to the session now.',
+      functionCalls: [{ t: 'sendSessionMessage', args: { message: 'Please investigate.' } }],
+    }], { functionTools }) });
     const started = await manager.start({
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model', commitModelId: 'chat-model', permissionIntent: 'default',
@@ -3448,28 +3485,31 @@ describe('VoiceAgentManager', () => {
     { label: 'valid near-boundary ASCII', text: 'word '.repeat(12_800), actionCount: 0, incomplete: false },
   ])('preserves $label within the receiving wire envelope', async ({ text, actionCount, incomplete }) => {
     const action = { t: 'teleportVoiceAgentToSessionRoot', args: { sessionId: 's1' } };
-    const block = `<voice_actions>${JSON.stringify({ actions: Array.from({ length: actionCount }, () => action) })}</voice_actions>`;
     const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
     let sequence = 0;
     const publish = (event: AgentSessionRuntimeEvent) => { for (const listener of listeners) listener(event); };
     // Only the external Agent SDK is a fixture; factory, host runtime, Voice and Protocol owners are real.
-    const runtime: AgentRuntime = { sessions: { async open() { return {
+    const runtime: AgentRuntime = { sessions: { async open(openRequest) { return {
+      functionToolsDelivered: Boolean(openRequest.functionTools),
       watch(listener) { listeners.add(listener); return { dispose() { listeners.delete(listener); } }; },
       async send(request) {
         const base = { sessionId: 'session-parent', emittedAtMs: 1 };
         const turnId = request.delivery.turnId;
         publish({ ...base, sequence: sequence++, kind: 'input-accepted', inputIds: request.inputIds, delivery: request.delivery });
         publish({ ...base, sequence: sequence++, kind: 'turn-start', turnId, startedBy: 'host' });
-        for (const delta of [text, block]) {
-          publish({ ...base, sequence: sequence++, kind: 'message-delta', turnId, channel: 'assistant', text: delta });
+        publish({ ...base, sequence: sequence++, kind: 'message-delta', turnId, channel: 'assistant', text });
+        for (let index = 0; index < actionCount; index += 1) {
+          const tool = openRequest.functionTools?.[0];
+          if (!tool) throw new Error('Voice native function was not delivered to the Agent SDK');
+          await tool.call(action);
         }
         publish({ ...base, sequence: sequence++, kind: 'turn-complete', turnId });
         return { status: 'admitted' as const };
       },
       async dispose() { listeners.clear(); },
     }; } } };
-    const manager = new VoiceAgentManager({ createRuntime: ({ modelId }) => createVoiceSessionRuntimeThroughNativeFactory({
-      runtime, modelId, capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+    const manager = new VoiceAgentManager({ createRuntime: ({ modelId, functionTools }) => createVoiceSessionRuntimeThroughNativeFactory({
+      runtime, modelId, functionTools, capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
     }) });
     const started = await manager.start({
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
@@ -3542,19 +3582,13 @@ describe('VoiceAgentManager', () => {
   });
 
   it('keeps sendSessionMessage Action turns silent while preserving the canonical effect', async () => {
-
-    const actionJson = JSON.stringify({ actions: [{ t: 'sendSessionMessage', args: { message: 'Do X.' } }] });
-    const chatBackend = createMultiDeltaBackend('chat', [
-      'Hello.',
-      '\n\n<voice_actions>\n',
-      actionJson,
-      '\n</voice_actions>',
-    ]);
     const commitBackend = createDeterministicBackend('commit');
 
-    const createBackend: BackendFactory = ({ modelId }) => {
+    const createBackend: BackendFactory = ({ modelId, functionTools }) => {
       if (modelId === 'commit-model') return commitBackend;
-      return chatBackend;
+      return createPromptCaptureBackend([{ responseText: 'Hello.',
+        functionCalls: [{ t: 'sendSessionMessage', args: { message: 'Do X.' } }],
+      }], { functionTools });
     };
 
     const manager = new VoiceAgentManager({ createBackend });
@@ -3575,29 +3609,26 @@ describe('VoiceAgentManager', () => {
       maxEvents: 64,
     });
 
-    const deltaText = events
-      .filter((e) => e.t === 'voice_output' && (e as any).output?.kind === 'speech_segment')
-      .map((e) => (e as any).output.text)
-      .join('');
+    const deltaText = events.flatMap(event => event.t === 'voice_output' && event.output.kind === 'speech_segment'
+      ? [event.output.text] : []).join('');
     expect(deltaText).toBe('');
 
-    const final = events.find((e) => e.t === 'voice_output' && (e as any).output?.kind === 'turn_final') as any;
-    const effect = events.find((e) => e.t === 'voice_output' && (e as any).output?.kind === 'side_effect') as any;
-    expect(final.output.text).toBe('');
-    expect(effect.output.action.t).toBe('sendSessionMessage');
+    expect(events.at(-1)).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final', text: '' } });
+    expect(events.filter(event => event.t === 'voice_output' && event.output.kind === 'side_effect'))
+      .toMatchObject([{ output: { action: { t: 'sendSessionMessage', args: { message: 'Do X.' } } } }]);
+    await manager.dispose();
   });
 
-  it('extracts inline canonical voice action blocks from streamed assistant text', async () => {
-
-    const chatBackend = createMultiDeltaBackend('chat', [
-      'Calling the teleport action for that session now. <voice_actions> {"actions":[{"t":"ui.voice_agent.teleport","args":{"sessionId":"s1"}}]} </voice_actions>',
-    ]);
+  it('delivers a second native Action on the same conversation without replaying the first', async () => {
     const commitBackend = createDeterministicBackend('commit');
 
-    const createBackend: BackendFactory = ({ modelId }) => {
+    const createBackend = vi.fn<BackendFactory>(({ modelId, functionTools }) => {
       if (modelId === 'commit-model') return commitBackend;
-      return chatBackend;
-    };
+      return createPromptCaptureBackend([
+        { responseText: 'Opening the first Session.', functionCalls: [{ t: 'ui.voice_agent.teleport', args: { sessionId: 's1' } }] },
+        { responseText: 'Opening the second Session.', functionCalls: [{ t: 'ui.voice_agent.teleport', args: { sessionId: 's2' } }] },
+      ], { functionTools });
+    });
 
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
@@ -3609,24 +3640,23 @@ describe('VoiceAgentManager', () => {
       initialContext: 'CTX',
     });
 
-    const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'teleport now' });
-    const events = await readVoiceAgentTurnStreamUntilDone({
-      manager,
-      voiceAgentId: started.voiceAgentId,
-      streamId: stream.streamId,
-      maxEvents: 64,
-    });
-
-    const deltaText = events
-      .filter((e) => e.t === 'voice_output' && (e as any).output?.kind === 'speech_segment')
-      .map((e) => (e as any).output.text)
-      .join('');
-    expect(deltaText).toBe('');
-
-    const final = events.find((e) => e.t === 'voice_output' && (e as any).output?.kind === 'turn_final') as any;
-    const effect = events.find((e) => e.t === 'voice_output' && (e as any).output?.kind === 'side_effect') as any;
-    expect(final.output.text).toBe('');
-    expect(effect.output.action).toEqual({ t: 'teleportVoiceAgentToSessionRoot', args: { sessionId: 's1' } });
+    try {
+      const effectIds: string[] = [];
+      for (const sessionId of ['s1', 's2']) {
+        const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: `open ${sessionId}` });
+        const events = await readVoiceAgentTurnStreamUntilDone({ manager,
+          voiceAgentId: started.voiceAgentId, streamId: stream.streamId, maxEvents: 64 });
+        expect(events.flatMap(event => event.t === 'voice_output' && event.output.kind === 'speech_segment'
+          ? [event.output.text] : [])).toEqual([]);
+        expect(events.at(-1)).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final', text: '' } });
+        const effects = events.flatMap(event => event.t === 'voice_output' && event.output.kind === 'side_effect'
+          ? [event.output] : []);
+        expect(effects).toMatchObject([{ action: { t: 'teleportVoiceAgentToSessionRoot', args: { sessionId } } }]);
+        effectIds.push(...effects.map(effect => effect.effectId));
+      }
+      expect(new Set(effectIds).size).toBe(2);
+      expect(createBackend).toHaveBeenCalledTimes(1);
+    } finally { await manager.dispose(); }
   });
 
   it('rejects a second stream start while a stream turn is still in-flight', async () => {
@@ -3882,11 +3912,11 @@ describe('VoiceAgentManager', () => {
     expect(backend.prompts[1]).not.toContain('Initial context:');
   });
 
-  it('reports a malformed welcome action without exposing protocol markup', async () => {
-    const backend = createPromptCaptureBackend([{
-      responseText: 'Hello!\n<voice_actions>\n{"actions": [',
-    }]);
-    const manager = new VoiceAgentManager({ createBackend: () => backend });
+  it('reports invalid structured welcome Action fields without exposing queued narration', async () => {
+    const manager = new VoiceAgentManager({ createBackend: ({ functionTools }) => createPromptCaptureBackend([{
+      responseText: 'Hello! I will send that now.',
+      functionCalls: [{ t: 'sendSessionMessage', args: { message: 123 } }],
+    }], { functionTools }) });
     const started = await manager.start({
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       chatModelId: 'chat-model',
@@ -3896,25 +3926,32 @@ describe('VoiceAgentManager', () => {
       initialContext: 'CTX',
     });
 
-    await expect(manager.welcome({ voiceAgentId: started.voiceAgentId }))
-      .resolves.toEqual({ assistantText: "I couldn't run that action because its request was invalid. Please try again." });
+    try {
+      const result = await manager.welcome({ voiceAgentId: started.voiceAgentId });
+      expect(result.assistantText).toContain('sendSessionMessage');
+      expect(result.assistantText).toContain('message');
+      expect(result.assistantText).not.toContain('I will send that now.');
+    } finally { await manager.dispose(); }
   });
 
-  it.each([false, true])('settles malformed creation output as failure without a side effect (streaming=%s)', async streaming => {
-    const backend = createPromptCaptureBackend([{
-      responseText: 'Creating the Session now. <voice_actions>{"actions":[{"t":"spawnSession","args":{}}]',
-    }]);
-    const manager = new VoiceAgentManager({ createBackend: () => backend });
+  it.each([false, true])('settles invalid structured creation fields as failure without a side effect (streaming=%s)', async streaming => {
+    const manager = new VoiceAgentManager({ createBackend: ({ functionTools }) => createPromptCaptureBackend([{
+      responseText: 'Creating the Session now.',
+      functionCalls: [{ t: 'spawnSession', args: {
+        executionTarget: { serverId: 'voice-home', machineId: 'machine-1' },
+        directory: { kind: 'path', path: 123 },
+      } }],
+    }], { functionTools }) });
     try {
       const { voiceAgentId } = await manager.start({
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         chatModelId: 'chat-model', commitModelId: 'commit-model', permissionIntent: 'read-only',
         idleTtlSeconds: 60, initialContext: 'CTX',
       });
-      const failure = "I couldn't run that action because its request was invalid. Please try again.";
       if (!streaming) {
-        await expect(manager.sendTurn({ voiceAgentId, userText: 'Create a Session.' }))
-          .resolves.toEqual({ assistantText: failure });
+        const result = await manager.sendTurn({ voiceAgentId, userText: 'Create a Session.' });
+        expect(result).toEqual({ assistantText: expect.stringContaining('directory.path') });
+        expect(result.assistantText).not.toContain('Creating the Session now.');
         return;
       }
       const { streamId } = await manager.startTurnStream({ voiceAgentId, userText: 'Create a Session.' });
@@ -3929,7 +3966,9 @@ describe('VoiceAgentManager', () => {
       expect(events).not.toEqual(expect.arrayContaining([
         expect.objectContaining({ t: 'voice_output', output: expect.objectContaining({ kind: 'side_effect' }) }),
       ]));
-      expect(events.at(-1)).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final', text: failure } });
+      expect(events.at(-1)).toMatchObject({ t: 'voice_output', output: {
+        kind: 'turn_final', text: expect.stringContaining('directory.path'),
+      } });
       let output = createVoiceAgentOutputTurnV1(streamId);
       const spoken: string[] = [];
       for (const event of events) {
@@ -3938,7 +3977,8 @@ describe('VoiceAgentManager', () => {
         output = next.state;
         for (const effect of next.effects) if (effect.kind === 'speak') spoken.push(effect.text);
       }
-      expect(spoken.join(' ')).toContain(failure);
+      expect(spoken.join(' ')).toContain('directory.path');
+      expect(spoken.join(' ')).not.toContain('Creating the Session now.');
     } finally { await manager.dispose(); }
   });
 

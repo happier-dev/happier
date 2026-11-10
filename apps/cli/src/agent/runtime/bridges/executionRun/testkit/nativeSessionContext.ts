@@ -59,6 +59,7 @@ export function createNativeSessionBoundary() {
                 currentInput = null;
             };
             return {
+                functionToolsDelivered: Boolean(request.functionTools),
                 watch(next) {
                     listener = next;
                     next({ ...base(), kind: 'provider-session-id', providerSessionId: 'registry-native-session' });
@@ -93,6 +94,7 @@ export function createVoiceSessionRuntimeThroughNativeFactory(params: Readonly<{
     runtime: AgentRuntime;
     capabilities: AgentSessionCapabilities;
     modelId: string;
+    functionTools?: AgentSessionOpenRequest['functionTools'];
     configuration?: CreateCliExecutionRunBackendParams['configuration'];
     start?: CreateCliExecutionRunBackendParams['start'];
     /** Real Session composition; tests supply its Socket/HTTP boundaries separately. */
@@ -128,9 +130,10 @@ export function createVoiceSessionRuntimeThroughNativeFactory(params: Readonly<{
         const permissionHandler = createExecutionRunPermissionHandler({ permissionMode: params.runtimeOptions?.permissionMode ?? 'read_only', backendId: agent.id });
         const runtime = adapter.runtimeCore.createExecutionRunBackend(params.runtimeOptions ?? {
             cwd: '/repo', runId: 'host-voice-run', controllerOccurrenceId: `voice-${params.modelId}`, scope: 'session_owned',
+            ...(params.functionTools ? { functionTools: params.functionTools } : {}),
             backendId: agent.id, modelId: params.modelId, permissionMode: 'read_only',
             ...(params.configuration ? { configuration: params.configuration } : {}),
-            start: params.start ?? { intent: 'voice_agent', runClass: 'long_lived', retentionPolicy: 'resumable', ioMode: 'streaming' },
+            start: { intent: 'voice_agent', runClass: 'long_lived', retentionPolicy: 'resumable', ioMode: 'streaming', ...params.start },
             sessionOwnedRunScope: params.sessionOwnedRunScope,
             sessionInteractionHost: {
                 machineId: 'voice-fixture-machine', permissionHandler,

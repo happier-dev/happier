@@ -18,6 +18,8 @@ export type CodexAppServerMcpServerConfig = Readonly<{
 
 type CodexToolRestrictionConfiguration = Pick<AgentSessionConfigurationSnapshot, 'allowedTools' | 'unlistedTools'>;
 
+export const CODEX_HOST_FUNCTION_NAMESPACE = 'happier_host';
+
 export function listCodexAppServerMcpServerNames(
     mcpServers: Readonly<Record<string, CodexAppServerMcpServerConfig>>,
     configuration?: CodexToolRestrictionConfiguration,
@@ -45,7 +47,7 @@ export function buildCodexUnlistedToolConfigOverrides(configuration?: CodexToolR
         'features.computer_use=false',
         'features.code_mode.enabled=false',
         'features.code_mode.excluded_tool_namespaces=["functions"]',
-        'features.code_mode.direct_only_tool_namespaces=[]',
+        `features.code_mode.direct_only_tool_namespaces=[${quoteTomlString(CODEX_HOST_FUNCTION_NAMESPACE)}]`,
         'features.image_generation=false',
         'features.hooks=false',
         'features.workspace_dependencies=false',

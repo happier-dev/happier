@@ -2682,9 +2682,14 @@ The local Voice spoken Action outcome owner presents creation settlement even
 when the model returns an empty follow-up. It speaks a brief created confirmation
 or the host's failure reason and available alternative; direct and discovered
 Action calls consume the same presentation.
-Local Voice action documentation publishes complete tagged JSON blocks from the
-canonical Action argument examples. The decoder distinguishes malformed JSON
-from named field-validation failures and executes neither rejected request.
+Local Codex Voice uses the native `happier_voice_action` function with `{t,args}`.
+Its input schema and examples come from the same published Voice Action schemas.
+The carrier queues structured calls on the existing Voice output channel; the UI
+decoder and Action executor retain validation, binding, review and admission.
+A queued call is not an executed Action. The existing tool-results follow-up
+carries its outcome. Assistant text is no longer an Action transport.
+Codex accepts these function definitions on a new thread, so a cold-resumed
+carrier without confirmed function delivery asks for a fresh Voice conversation.
 
 Voice leaves automatic Session naming to the coding Session's `change_title`
 owner unless the person supplies a name. Spoken Session labels use the canonical
@@ -4935,11 +4940,6 @@ The nested ordinary creation selection retains initial access, manager, primary
 Team and Team credential bindings. E2EE recipient envelopes are prepared through
 the existing Session envelope owner before copied content and the first Pending
 input are admitted.
-
-In 0.3 development, omitting `template.instantiate.face` inherits the released
-face; supplying `face:null` selects the ordinary default face. This additive
-closed-input extension requires matching development clients and Protocol runtime;
-it does not migrate stored template releases or Session metadata.
 
 Agent and MCP callers may omit `creation.executionTarget` and `creation.agentTarget`.
 The ordinary Session start owner resolves them from the authenticated calling
@@ -7884,10 +7884,18 @@ other effects. The original Account and request entitlements still apply. Turnin
 the setting off restores the tap requirement; Agent, MCP, API-token and other
 non-Voice callers keep the authority rules below.
 
-In development source, a new local Voice Agent uses the normal permission intent.
-Assistant Action blocks reach the same client Action executor as realtime tools;
-the CLI does not apply a second read-only ceiling to those blocks. The existing
-spoken confirmation owner binds any required read-back to the exact operation.
+In development source, a local Voice carrier retains the normal permission intent
+for UI Actions. Its native tool configuration disables coding tools, including
+shell, file and patch tools; the structured Voice function remains its Action
+transport. These requests reach the same client Action executor as realtime tools.
+The qualified Codex 0.162.1 runtime still exposes native subagent tools despite
+its multi-agent disable flags. Full carrier confinement is blocked on the Codex
+runtime owner qualifying a release with native subagent-tool removal; 0.167.0
+supports that control but is not the current qualified runtime.
+The Voice binding supplies its exact synthetic carrier address to the Session
+send owner, which refuses that address after target resolution, including selectors.
+An ordinary Session bound through native Session Voice remains a valid target.
+The existing spoken confirmation owner binds any required read-back to the exact operation.
 The shared Action catalog documents the approval-list tool alongside request
 reads and decisions. Settings discovery publishes page ids derived from the
 canonical setting declarations; omit `pageId` to find all displayed settings

@@ -2,6 +2,10 @@ import { z } from 'zod/mini';
 import { listVoiceActionBlockSpecs, resolveVoiceClientToolNameAlias } from '../actions/actionSpecs.js';
 import { projectActionInputIssues } from '../actions/executor/actionInputValidation.js';
 import { resolveActionCatalogSurfaceProjection } from '../actions/actionCatalog.js';
+import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
+import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js';
+
+export const VOICE_ACTION_FUNCTION_NAME = 'happier_voice_action' as const;
 
 export const VOICE_ACTIONS_TAG = 'voice_actions' as const;
 
@@ -79,6 +83,23 @@ function getVoiceAssistantActionSchema(): z.ZodMiniType<VoiceAssistantAction> {
 }
 
 export const VoiceAssistantActionSchema: z.ZodMiniType<VoiceAssistantAction> = z.lazy(() => getVoiceAssistantActionSchema());
+
+let voiceActionFunctionTool: ReturnType<typeof buildVoiceActionFunctionTool> | undefined;
+function buildVoiceActionFunctionTool() {
+  return {
+    name: VOICE_ACTION_FUNCTION_NAME,
+    description: 'Queue one Happier Voice Action for the connected UI. This does not execute it. Wait for the Voice tool-results follow-up before reporting its outcome.',
+    inputSchema: PluginJsonValueV2Schema.parse({
+      type: 'object',
+      ...zodSchemaToJsonSchemaObject(VoiceAssistantActionSchema, { reused: 'ref' }),
+    }),
+  };
+}
+
+/** Native transport of the same published Action inputs consumed by the Voice host. */
+export function getVoiceActionFunctionTool() {
+  return voiceActionFunctionTool ??= buildVoiceActionFunctionTool();
+}
 
 let memoizedVoiceActionSchemaByToolName: ReadonlyMap<string, z.ZodMiniType> | undefined;
 function getVoiceActionSchemaByToolName(): ReadonlyMap<string, z.ZodMiniType> {
@@ -181,6 +202,27 @@ function parseVoiceAssistantAction(rawAction: unknown): { action: VoiceAssistant
   return { action: { t: toolName, args: coerced.data } };
 }
 
+/** Decode structured requests at the existing Voice Action boundary, independent of transport. */
+export function decodeVoiceAssistantActions(
+  rawActions: readonly unknown[],
+  assistantText = '',
+): Readonly<{ assistantText: string; actions: VoiceAssistantAction[]; invalidActionBlock?: true }> {
+  const parsedActions = rawActions.map(parseVoiceAssistantAction);
+  const actions = parsedActions.flatMap(parsed => parsed && 'action' in parsed ? [parsed.action] : []);
+  // Preserve the existing all-or-nothing request decoding and field diagnostics.
+  if (actions.length !== rawActions.length) {
+    const invalidInputs = parsedActions.flatMap(parsed => parsed && 'invalidInput' in parsed ? [parsed.invalidInput] : []);
+    return {
+      assistantText: invalidInputs.length > 0
+        ? `I couldn't run that action because its input was invalid. ${invalidInputs.join(' ')}`
+        : "I couldn't run that action because its request was invalid. Please try again.",
+      actions: [],
+      invalidActionBlock: true,
+    };
+  }
+  return { assistantText: assistantText.trim(), actions };
+}
+
 export function extractVoiceActionsFromAssistantText(
   assistantTextRaw: string,
 ): Readonly<{ assistantText: string; actions: VoiceAssistantAction[]; invalidActionBlock?: true }> {
@@ -224,17 +266,5 @@ export function extractVoiceActionsFromAssistantText(
   }
 
   const rawActions = Array.isArray(rawActionsValue) ? rawActionsValue : [];
-  const parsedActions = rawActions.map(parseVoiceAssistantAction);
-  const actions = parsedActions.flatMap((parsed) => parsed && 'action' in parsed ? [parsed.action] : []);
-
-  // Reject the block together: executing a valid subset would silently omit
-  // requested work while preserving narration that says it all succeeded.
-  if (actions.length !== rawActions.length) {
-    const invalidInputs = parsedActions.flatMap((parsed) => parsed && 'invalidInput' in parsed ? [parsed.invalidInput] : []);
-    return invalidInputs.length > 0
-      ? { ...invalidActionBlock, assistantText: `I couldn't run that action because its input was invalid. ${invalidInputs.join(' ')}` }
-      : invalidActionBlock;
-  }
-
-  return { assistantText: stripped.trim(), actions };
+  return decodeVoiceAssistantActions(rawActions, stripped);
 }

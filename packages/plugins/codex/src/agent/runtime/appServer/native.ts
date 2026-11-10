@@ -1123,6 +1123,7 @@ export async function openCodexNativeAppServerSession(
     initialWorkspaceWrites: request.configuration?.workspaceWrites,
     initialPermissionMode: readPermissionMode(request),
     toolRestriction: request.configuration,
+    ...(request.functionTools?.length ? { functionTools: request.functionTools } : {}),
     ...(initialProviderBinding ? { initialProviderBinding } : {}),
     processEnv,
     ...(request.mcpServers ? { mcpServers: request.mcpServers } : {}),
@@ -1182,6 +1183,8 @@ export async function openCodexNativeAppServerSession(
     goals: runtime.goals,
     usageLimitRecovery: runtime.usageLimitRecovery,
     get skillsDelivered() { return runtime.skillsDelivered; },
+    // Codex accepts dynamicTools only at creation; cold resume exposes no catalog proof.
+    ...(request.functionTools?.length ? { functionToolsDelivered: request.kind === 'create' } : {}),
     ...(sharedAppServer
       ? {
           async prepareTerminalPresentation() {

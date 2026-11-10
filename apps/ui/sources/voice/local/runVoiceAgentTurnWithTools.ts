@@ -170,9 +170,11 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
   // Global Voice has no coding Session target, but its admitted conversation
   // still owns an exact Home. Capture it before any provider/tool await so
   // Account Actions never depend on whichever Home the UI focuses later.
+  const binding = resolveVoiceBindingBySessionId({ sessionId: params.sessionId });
   const serverId = params.currentToolSessionAddress?.serverId
-    ?? resolveVoiceBindingBySessionId({ sessionId: params.sessionId })?.conversationSessionAddress.serverId;
+    ?? binding?.conversationSessionAddress.serverId;
   const tools = createVoiceToolHandlers({
+    voiceSessionBinding: binding,
     currentSessionAddress: params.currentToolSessionAddress ?? null,
     currentServerId: serverId,
     resolveSessionId: async (explicitSessionId) =>

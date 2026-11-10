@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { WebSocketServer, type WebSocket } from 'ws';
+import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { AgentSessionNativeHomeService } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { AgentExecutionRunConversationRuntimeV1, AgentExecutionRunRuntimeContextV1, AgentSessionConfigurationSnapshot, AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeContext, AgentSessionRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -62,6 +62,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
   failRead(): void;
   failResume(message: string): void;
   emitNotification(method: string, params: Record<string, unknown>): void;
+  requestNativeTool(params: Record<string, unknown>): Promise<Record<string, unknown>>;
   failNextRevert(outcome: 'methodNotFound' | 'applied' | 'notApplied'): void;
   openConfiguredSession(providerSessionId?: string, mcpServers?: AgentSessionOpenRequest['mcpServers']): Promise<AgentSessionRuntime>;
   openConfiguredRun(providerSessionId?: string): Promise<AgentExecutionRunConversationRuntimeV1>;
@@ -71,6 +72,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
   toolRestriction?: Pick<AgentSessionConfigurationSnapshot, 'allowedTools' | 'unlistedTools'>;
   mcpServers?: AgentSessionOpenRequest['mcpServers'];
   mcpToolPolicy?: AgentSessionOpenRequest['mcpToolPolicy'];
+  functionTools?: AgentSessionOpenRequest['functionTools'];
   permissionMode?: AgentSessionConfigurationSnapshot['permissionIntent']['value'];
   interactions?: CodexAppServerRuntimeHost['ui'];
   models?: AgentSessionRuntimeContext['session']['services']['models'];
@@ -159,6 +161,23 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
   let turnStartOccurrence = 0;
   let revertFailure: 'methodNotFound' | 'applied' | 'notApplied' | null = null;
   const nativeServers = new Set([ws]);
+  let sessionSocket: WebSocket | undefined;
+  let nativeToolRequestId = 0;
+  const requestNativeTool = (params: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    const socket = sessionSocket;
+    if (!socket) throw new Error('No native Session socket has opened a thread');
+    const id = `fixture-dynamic-tool-${++nativeToolRequestId}`;
+    return new Promise(resolve => {
+      const onMessage = (payload: RawData) => {
+        const response = JSON.parse(payload.toString()) as Record<string, unknown>;
+        if (response.id !== id) return;
+        socket.off('message', onMessage);
+        resolve(response);
+      };
+      socket.on('message', onMessage);
+      socket.send(JSON.stringify({ id, method: 'item/tool/call', params }));
+    });
+  };
   const turns: Array<{ id: string; status: string }> = [];
   const emitNotification = (method: string, params: Record<string, unknown>) => {
     if (method === 'thread/goal/cleared') goal = null;
@@ -186,6 +205,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
       };
       if (message.id === undefined || typeof message.method !== 'string') return;
       const params = message.params ?? {};
+      if (message.method === 'thread/start' || message.method === 'thread/resume') sessionSocket = socket;
       requests.push({ method: message.method, params });
       options.observer?.recordAppServerRequest(message.method, params);
       if (message.method === 'skills/extraRoots/set') {
@@ -435,7 +455,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
     },
   } as unknown as ExecService;
   try {
-    await run({ runtime, requests, exec: nativeExec, launchEnvironment: configuredLaunchEnvironment, directory: root, endpoints, nativeLaunches, nativeProcessExits, emitNotification,
+    await run({ runtime, requests, exec: nativeExec, launchEnvironment: configuredLaunchEnvironment, directory: root, endpoints, nativeLaunches, nativeProcessExits, emitNotification, requestNativeTool,
       failNextRevert: (outcome) => { revertFailure = outcome; },
       failRead: () => { rejectRead = true; }, failResume: (message) => { resumeFailure = message; }, async openConfiguredSession(providerSessionId, mcpServers = options.mcpServers) {
       // Exec and host SDK services are genuine external boundaries; native/runtime/client logic stays real.
@@ -472,6 +492,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
         ...(options.providerBinding ? { providerBinding: options.providerBinding } : {}),
         ...(options.mcpToolPolicy ? { mcpToolPolicy: options.mcpToolPolicy } : {}),
         ...(options.skills ? { skills: options.skills } : {}),
+        ...(options.functionTools ? { functionTools: options.functionTools } : {}),
         ...(options.startupInstructions === null ? {} : {
           startupInstructions: options.startupInstructions ?? { v: 1, id: 'fixture.startup', revision: 1, instructions: 'Actual startup instructions.' },
         }),

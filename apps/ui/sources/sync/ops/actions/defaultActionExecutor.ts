@@ -755,6 +755,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   beforeLocalSettingCommit?: () => void;
   /** Optional delivery leaf used by a surface that needs specialized ingress semantics. */
   sessionSendMessage?: NonNullable<ActionExecutorDeps['sessionSendMessage']>;
+  /** Captured host constraint on the resolved recipient, evaluated once before delivery. */
+  admitSessionMessageTarget?: (target: Pick<Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0],
+    'sessionId' | 'serverId'>) => ActionExecuteFailure | null;
   /** Host-only Retry after a capture was staged and Send settled unsuccessfully. */
   screenCaptureSendDraftOnly?: boolean;
   /** Native-verified Capture window press; ordinary UI and automation never supply it. */
@@ -3891,7 +3894,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           externalActionTarget: { kind: 'machine', machineId } },
       });
     },
-    sessionSendMessage: opts?.sessionSendMessage ?? (async (args) => {
+    sessionSendMessage: async (args) => {
+      const targetFailure = opts?.admitSessionMessageTarget?.(args);
+      if (targetFailure) return targetFailure;
+      if (opts?.sessionSendMessage) return opts.sessionSendMessage(args);
       const { sessionId, message, serverId, recipient, requestedAction, displayText, messageMeta, permissionModeOverride, localId, signal } = args;
       const requiresReplyCustody = args.reply === 'wait' || args.reply === 'return' || args.wait === true;
       const authoredStructuredInput = args.authoredInput && 'message' in args.authoredInput ? args.authoredInput.structuredInput : undefined;
@@ -4036,7 +4042,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         signal: lifetimeSignal,
       }));
       return projectServerScopedSessionSendMessageResult(delivery);
-    }),
+    },
 
     sessionAttentionSet: async ({ sessionId, request, serverId }) => accountContext
       ? await setSessionAttentionStanding({ ...createSessionOrganizationMutationScopeForAccount(accountContext), sessionId, ...request })

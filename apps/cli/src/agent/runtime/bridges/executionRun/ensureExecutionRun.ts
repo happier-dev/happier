@@ -62,6 +62,7 @@ export async function ensureExecutionRun(args: Readonly<{
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     accountSettings?: Readonly<Record<string, unknown>> | null;
     connectedServices?: ConnectedServiceBindingsV2 | null;
+    functionTools?: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionOpenRequest['functionTools'];
     start?: ExecutionRunBackendStartContext;
   }) => ExecutionRunHostRuntime;
   sendAcp: ExecutionRunTranscriptPublisher;
@@ -246,9 +247,11 @@ export async function ensureExecutionRun(args: Readonly<{
           permissionIntent,
           start,
           connectedServices,
+          functionTools,
         }) =>
           args.createRuntime({
             ...resumeBackendOptions,
+            ...(functionTools ? { functionTools } : {}),
             runId: args.runId,
             controllerOccurrenceId,
             backendId,

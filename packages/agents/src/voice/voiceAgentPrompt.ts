@@ -2,7 +2,7 @@ import { listVoiceActionBlockSpecs, listVoiceSdkSafeToolActionSpecs, listVoiceTo
 import { isActionDirectToolExposedOn } from '@happier-dev/protocol/actions/actionToolExposure';
 import { buildMemoryRecallGuidanceBlockV1 } from '@happier-dev/protocol/prompts/memoryRecallGuidanceV1';
 import { buildPromptPlanV1, renderPromptPlanV1 } from '@happier-dev/protocol/prompts/promptPlanV1';
-import { VOICE_ACTIONS_TAG } from '@happier-dev/protocol/voice/actions';
+import { VOICE_ACTION_FUNCTION_NAME } from '@happier-dev/protocol/voice/actions';
 import { VOICE_TOOL_RESULTS_JSON_PREFIX } from '@happier-dev/protocol/voice/toolResultsChannel';
 import type { PromptBlockV1 } from '@happier-dev/protocol/voice/prompt';
 
@@ -341,7 +341,6 @@ export function buildVoiceRealtimeAttemptPolicy(params: Readonly<
 export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
   assistantName?: string;
   verbosity?: VoicePromptVerbosity;
-  actionsTag?: string;
   sessionId?: string;
   disabledActionIds?: readonly string[];
   memoryRecallGuidanceEnabled?: boolean;
@@ -349,18 +348,17 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
   assistantLanguage?: string | null;
   welcome?: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn'; text?: string }>;
 }>): string {
-  const tag = params?.actionsTag?.trim() || VOICE_ACTIONS_TAG;
   const sessionId = params?.sessionId?.trim() || '';
   const actionSpecs = listVoiceActionBlockSpecs();
   const discoveryLines = buildVoiceDiscoveryChecklistLines(actionSpecs, {
     disabledActionIds: params?.disabledActionIds,
   });
-  // The native Agent and its action-block instructions share direct-exposure
+  // The native function and its instructions share direct-exposure
   // policy. A hot-path-only prompt otherwise hides tools the Agent receives.
   const actionLines = buildVoiceToolDocumentationLines(actionSpecs, {
     disabledActionIds: params?.disabledActionIds,
-    invocationLabel: 'Action:',
-    actionsTag: tag,
+    invocationLabel: `Call ${VOICE_ACTION_FUNCTION_NAME}`,
+    functionToolName: VOICE_ACTION_FUNCTION_NAME,
     requiredDirectActionIds: actionSpecs.filter(spec => isActionDirectToolExposedOn(spec, 'agent')).map(spec => spec.id),
   });
 
@@ -378,22 +376,16 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
             ...(sessionId ? [`Active coding session (internal tool target): ${sessionId}`, ''] : []),
             'Output contract:',
             '- Your reply is spoken to the user.',
-            `- If you need to trigger an action, append a <${tag}>...</${tag}> block at the end of your reply.`,
-            `- The <${tag}> block MUST contain a single JSON object (no code fences, no extra text).`,
-            '- Do not read the JSON aloud; keep all spoken text above the block.',
-            '- If you have no actions to trigger, omit the block entirely.',
-            `- After actions run, you may receive a follow-up user message that starts with "${VOICE_TOOL_RESULTS_JSON_PREFIX}". Parse the JSON after that prefix (next line) as { toolResults: [...] } and use it to confirm success or explain errors.`,
+            `- Trigger Actions with the native ${VOICE_ACTION_FUNCTION_NAME} function using {t, args}. Do not emit Action JSON in assistant text.`,
+            '- End the turn after queuing Actions. A queued acknowledgement is not execution or success.',
+            `- After the UI runs Actions, a follow-up user message starts with "${VOICE_TOOL_RESULTS_JSON_PREFIX}". Parse the JSON after that prefix (next line) as { toolResults: [...] } and report the actual outcome or error.`,
             '- Always include sessionId internally when the action accepts it.',
-            '- These actions run through the Happier Voice host. Use this action channel for Session creation, Session messages, app settings, and request discovery or decisions; native coding tools retain their own authority and do not gain Voice delegation.',
-            `- Names in Available actions and the Discovery checklist are Voice action aliases for <${tag}>, not native tool names. Do not look them up with native ToolSearch; emit the action block directly.`,
-            `- The listed actions are available through <${tag}> even when no corresponding native tool is listed. Emit the action block for a supported request and use its typed result; do not claim an action is unavailable merely because it is absent from the native tool list.`,
+            '- These Actions run through the Happier Voice host. Use this function for Session creation, Session messages, app settings, and request discovery or decisions; native coding tools retain their own authority and do not gain Voice delegation.',
+            `- Names in Available actions and the Discovery checklist are t values for ${VOICE_ACTION_FUNCTION_NAME}, not separate native tool names. Do not look them up with native ToolSearch.`,
             '- The action list below is only the hot path. For anything else, use searchActionSpecs first instead of guessing.',
             '- For a discovered built-in Action, put its bindings.voiceClientToolName in t and its input in args. Read getActionSpec for the input schema when needed. invokeAction is only for contributed plugin Actions; do not invent a plugin identity for a built-in Action.',
             '',
             ...(discoveryLines.length > 0 ? ['Discovery checklist:', ...discoveryLines, ''] : []),
-            `Action JSON schema inside <${tag}> (no code fences):`,
-            '{"actions":[{"t":"...","args":{}}]}',
-            '',
             'Available actions:',
             ...actionLines,
             '',

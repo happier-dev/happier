@@ -818,6 +818,13 @@ export type AgentSessionOpenRequest =
     /** Host-resolved startup failure policy; optional servers may be skipped. */
     mcpServersStrictMode?: boolean;
     mcpToolPolicy?: Readonly<Record<string, AgentSessionMcpToolPolicy>>;
+    /** In-process host functions; transport delivery grants no Action admission or authority. */
+    functionTools?: readonly Readonly<{
+      name: string;
+      description: string;
+      inputSchema: JsonValue;
+      call(input: JsonValue): Promise<JsonValue>;
+    }>[];
     skills?: AgentSessionSkillDelivery;
     providerBinding?: AgentSessionProviderBinding;
     /**
@@ -952,6 +959,8 @@ export interface AgentSessionRuntime extends Disposable {
   readonly usageLimitRecovery?: AgentSessionUsageLimitRecoveryControl;
   /** False when this opened launch path cannot honor the requested skills. */
   readonly skillsDelivered?: boolean;
+  /** True only when this opened runtime delivered the requested host functions to its native tool catalog. */
+  readonly functionToolsDelivered?: boolean;
   /** Invoked by the host only for declared liveReload support. */
   refreshSkills?(
     request: Readonly<{ skills: AgentSessionSkillDelivery }>,

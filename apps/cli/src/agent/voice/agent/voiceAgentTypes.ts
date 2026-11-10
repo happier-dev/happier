@@ -110,6 +110,7 @@ export class VoiceAgentError extends Error {
 }
 
 export type BackendFactory = (opts: {
+  functionTools?: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionOpenRequest['functionTools'];
   backendTarget: BackendTargetRefV1;
   backendId: string;
   modelId: string;
@@ -118,7 +119,8 @@ export type BackendFactory = (opts: {
   modelSelection?: ProviderBoundModelRef;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   permissionIntent: PermissionIntent;
-  start?: Readonly<{ intent: 'voice_agent' }>;
+  start?: Readonly<{ intent: 'voice_agent' }> & Pick<import('@/agent/executionRuns/registry/executionRunBackendTypes').ExecutionRunBackendStartContext,
+    'allowedTools' | 'unlistedTools'>;
   connectedServices?: ConnectedServiceBindingsV2 | null;
 }) => ExecutionRunHostRuntime;
 
@@ -207,6 +209,7 @@ export type VoiceAgentInstance = {
   lifecycleInFlight: Promise<void> | null;
   chatGeneration: number;
   chatBuffer: string;
+  chatActions: unknown[];
   commitBuffer: string;
   clearChatBuffer: () => void;
   clearCommitBuffer: () => void;

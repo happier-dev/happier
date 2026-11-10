@@ -7,6 +7,7 @@ import type {
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { storage } from '@/sync/domains/state/storage';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
 import {
   redactVoiceToolResultForProvider,
   redactVoiceActionExecutionResultForProvider,
@@ -45,6 +46,7 @@ type VoiceHandlerBarrierDeps = Readonly<{
 }>;
 
 type DefaultRealtimeToolBarrierDeps = Readonly<{
+  voiceSessionBinding?: VoiceSessionBinding | null;
   playHostText?: VoiceHostTextPlayback;
   resolveSessionId: (explicitSessionId?: string | null) => string | null;
   exposure?: 'voice_assistant' | 'current_ui_only';
@@ -125,6 +127,7 @@ export function createRealtimeToolBarrierForVoiceHandlers(deps: VoiceHandlerBarr
 export function createDefaultRealtimeToolBarrier(deps: DefaultRealtimeToolBarrierDeps) {
   return createRealtimeToolBarrierForVoiceHandlers({
     handlers: createVoiceToolHandlers({
+      voiceSessionBinding: deps.voiceSessionBinding,
       resolveSessionId: deps.resolveSessionId,
       currentSessionAddress: deps.currentSessionAddress,
       // Realtime lacks Local's host tool-result speaker. Missing capability

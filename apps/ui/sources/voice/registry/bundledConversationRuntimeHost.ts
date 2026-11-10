@@ -802,6 +802,7 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
       const currentSessionAddress = binding?.conversationSessionAddress ?? null;
       return createDefaultRealtimeToolBarrier({
         ...deps,
+        voiceSessionBinding: binding,
         currentSessionAddress,
         ...(input.currentUiContext ? { currentUiContext: input.currentUiContext } : {}),
       });

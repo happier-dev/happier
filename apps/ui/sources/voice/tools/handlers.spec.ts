@@ -1467,7 +1467,7 @@ describe('voice tool handlers', () => {
       });
     }
     const { buildLocalVoiceAgentSystemPrompt } = await import('@happier-dev/agents');
-    const { extractVoiceActionsFromAssistantText } = await import('@happier-dev/protocol/voice/actions');
+    const { decodeVoiceAssistantActions } = await import('@happier-dev/protocol/voice/actions');
     const prompt = buildLocalVoiceAgentSystemPrompt({ sessionId: sourceSessionId });
     expect(prompt).toContain('A native Agent/Task subagent or execution run is not a Happier Session');
     expect(prompt).toContain('Only report a Session as created or started after the Session creation Action returns success with its sessionId');
@@ -1562,13 +1562,12 @@ describe('voice tool handlers', () => {
       expect(invalid).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
       expect(daemonRpc).not.toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.SESSION_SPAWN_NEW }));
     }
-    // RUN93 emitted this unclosed invokeAction envelope twice. No Action ran;
-    // its "Creating ... now" prose must not become a successful final response.
-    const malformed = extractVoiceActionsFromAssistantText(
-      'Creating the Session now. <voice_actions>{"actions":[{"t":"invokeAction","args":{"action":{"pluginId":"happier","localId":"session.spawn_new"},"input":{"directory":{"kind":"managed"}}}]}</voice_actions>',
-    );
+    // Structured transport still validates Action fields before any spawn.
+    const malformed = decodeVoiceAssistantActions([
+      { t: 'spawnSession', args: { ...spawnInput, directory: { kind: 'path', path: 42 } } },
+    ], 'Creating the Session now.');
     expect(malformed.actions).toEqual([]);
-    expect(malformed.assistantText).toContain('invalid JSON');
+    expect(malformed.assistantText).toContain('directory.path');
     expect(daemonRpc).not.toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.SESSION_SPAWN_NEW }));
     expect(storage.getState().sessions.s_new).toBeUndefined();
     expect(routerNavigate).not.toHaveBeenCalled();
@@ -1582,11 +1581,11 @@ describe('voice tool handlers', () => {
       expect(prompt, 'Voice must list creation before a default-Agent request').toContain(`- ${spawnTool}:`);
     }
     // Both Home and Session calls consume the offered channel, including when
-    // an Agent is named. A hand-built block bypasses the published projection.
+    // an Agent is named. Hand-built arguments bypass the published projection.
     const published = prompt.split('\n').find(line => line.startsWith(`- ${spawnTool}:`))
-      ?.match(/<voice_actions>.*<\/voice_actions>/)?.[0] ?? '';
-    const publishedTurn = extractVoiceActionsFromAssistantText(published);
-    expect(publishedTurn.actions, 'Creation needs an executable block in the offered catalog').toHaveLength(1);
+      ?.match(/happier_voice_action (\{.*\})\.$/)?.[1] ?? '';
+    const publishedTurn = decodeVoiceAssistantActions([JSON.parse(published)]);
+    expect(publishedTurn.actions, 'Creation needs executable function arguments in the offered catalog').toHaveLength(1);
     const example = publishedTurn.actions[0]!;
     if (!example.args || typeof example.args !== 'object' || Array.isArray(example.args)) throw new Error('Expected published Action arguments');
     expect(example.t).toBe(spawnTool);
@@ -1668,9 +1667,9 @@ describe('voice tool handlers', () => {
     const followupTools = createVoiceToolHandlers({ currentServerId: homeA,
       currentSessionAddress: sourceSessionId ? { serverId: homeA, sessionId: sourceSessionId } : null,
       resolveSessionId: () => sourceSessionId || null });
-    const followup = extractVoiceActionsFromAssistantText(`<voice_actions>${JSON.stringify({ actions: [{
+    const followup = decodeVoiceAssistantActions([{
       t: 'sendSessionMessage', args: { sessionId: child.id, message: 'Reply MAPLE READY.', reply: 'wait' },
-    }] })}</voice_actions>`).actions[0]!;
+    }]).actions[0]!;
     const reply = JSON.parse(await followupTools[followup.t]!(followup.args, { effectId: 'voice-maple-followup' }));
     expect(reply, JSON.stringify(reply)).toMatchObject({ ok: true, status: 'replied', outcome: { text: 'MAPLE READY' } });
     expect(delivered).toEqual([{ input: expect.objectContaining({ sessionId: child.id, message: 'Reply MAPLE READY.', reply: 'wait' }),
@@ -2470,11 +2469,11 @@ describe('voice tool handlers', () => {
 
   it('routes sendSessionMessage to an explicit sessionId through canonical Voice admission', async () => {
     const { buildLocalVoiceAgentSystemPrompt } = await import('@happier-dev/agents');
-    const { extractVoiceActionsFromAssistantText } = await import('@happier-dev/protocol/voice/actions');
+    const { decodeVoiceAssistantActions } = await import('@happier-dev/protocol/voice/actions');
     const prompt = buildLocalVoiceAgentSystemPrompt({ sessionId: 's1' });
     const documented = prompt.split('\n').find(line => line.startsWith('- sendSessionMessage:'))
-      ?.match(/<voice_actions>.*<\/voice_actions>/)?.[0] ?? '';
-    const parsed = extractVoiceActionsFromAssistantText(documented);
+      ?.match(/happier_voice_action (\{.*\})\.$/)?.[1] ?? '';
+    const parsed = decodeVoiceAssistantActions([JSON.parse(documented)]);
     expect(parsed.actions).toHaveLength(1);
     const example = parsed.actions[0]!;
     if (!example.args || typeof example.args !== 'object' || Array.isArray(example.args)) throw new Error('Expected published Action arguments');

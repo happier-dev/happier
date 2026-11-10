@@ -48,8 +48,10 @@ describe('buildCodexAppServerConfigOverrides', () => {
             'features.view_image=false',
             'features.apps=false',
             'features.multi_agent=false',
+            'features.multi_agent_v2=false',
             'features.code_mode.enabled=false',
             'features.code_mode.excluded_tool_namespaces=["functions"]',
+            'features.code_mode.direct_only_tool_namespaces=["happier_host"]',
             'web_search="disabled"',
         ]));
     });

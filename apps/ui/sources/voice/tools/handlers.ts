@@ -30,7 +30,10 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { resolveAskUserQuestionDecisionAnswers } from '@/voice/requests/resolveAskUserQuestionDecisionAnswers';
-import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { areSessionAddressesEqual, normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { VoiceSessionBinding } from '@/voice/binding/voiceConversationBindingTypes';
+import { isVoiceConversationSystemSessionMetadata } from '@happier-dev/protocol/voice/sessionBinding';
+import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoiceSessionOwnerMetadata';
 import { resolveVoiceActionSessionReference } from './actionImpl/resolveVoiceActionSessionReference';
 import { acquireAdmittedSessionReferenceCorpusOptions } from './actionImpl/admittedSessionReferenceCorpus';
 import type { VoiceCurrentUiToolPort } from './currentUiContextToolPort';
@@ -191,6 +194,8 @@ export function createVoiceToolHandlers(
      */
     resolveSessionId: (explicitSessionId?: string | null) => string | null | Promise<string | null>;
     currentSessionAddress?: SessionAddress | null;
+    /** Host-owned conversation identity; Session metadata owns its carrier role. */
+    voiceSessionBinding?: VoiceSessionBinding | null;
     /** Admitted conversation Home when global Voice has no coding Session. */
     currentServerId?: string | null;
     currentUiContext?: VoiceCurrentUiToolPort;
@@ -198,6 +203,10 @@ export function createVoiceToolHandlers(
     playHostText?: VoiceHostTextPlayback;
   }>,
 ): Readonly<Record<string, VoiceToolHandler>> {
+  const conversationAddress = deps.voiceSessionBinding?.conversationSessionAddress;
+  const carrierAddress = conversationAddress && isVoiceConversationSystemSessionMetadata(
+    readVoiceSessionOwnerMetadataFromState(storage.getState(), conversationAddress),
+  ) ? conversationAddress : null;
   const resolveSessionIdOrError = async (
     explicitSessionId?: string | null,
   ): Promise<{ ok: true; sessionId: string } | { ok: false; error: string }> => {
@@ -333,6 +342,13 @@ export function createVoiceToolHandlers(
   };
 
   const actionExecute = createFrontDoorActionExecute(undefined, {
+    admitSessionMessageTarget: ({ serverId, sessionId }) => {
+      return areSessionAddressesEqual(
+        carrierAddress,
+        normalizeSessionAddress(serverId, sessionId),
+      ) ? { ok: false, errorCode: 'voice_conversation_target_forbidden',
+        error: 'This Voice conversation cannot receive coding requests. Choose a coding Session.' } : null;
+    },
     resolveSessionReference: async ({ sessionId, sessionTitle, context, signal }) => {
       const currentState = storage.getState();
       const exactAddress = normalizeSessionAddress(context.serverId, sessionId);

@@ -94,7 +94,7 @@ import {
   readCodexAppServerResumeRecoveryTimeoutMs,
   readCodexAppServerRpcTimeoutMs,
 } from './client/timeout.js';
-import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides, listCodexAppServerMcpServerNames } from './config/overrides.js';
+import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides, CODEX_HOST_FUNCTION_NAMESPACE, listCodexAppServerMcpServerNames } from './config/overrides.js';
 import {
   CODEX_APP_SERVER_REASONING_EFFORT_CONFIG_OPTION_ID,
   CODEX_APP_SERVER_SERVICE_TIER_CONFIG_OPTION_ID,
@@ -347,6 +347,7 @@ type CodexAppServerRuntimeParams = CodexAppServerRuntimeTarget & Readonly<{
   processEnv?: Readonly<Record<string, string | undefined>>;
   mcpServers?: unknown;
   mcpToolPolicy?: AgentSessionOpenRequest['mcpToolPolicy'];
+  functionTools?: AgentSessionOpenRequest['functionTools'];
   skills?: AgentSessionSkillDelivery;
   toolRestriction?: Pick<AgentSessionConfigurationSnapshot, 'allowedTools' | 'unlistedTools'>;
   resolveCurrentPolicy?: () => CodexAppServerPolicy | null;
@@ -992,8 +993,8 @@ export function createCodexAppServerRuntime(
   const providerReasoningEffortOption = params.initialProviderModel
     ? readProviderReasoningEffortOption(params.initialProviderModel)
     : null;
-  const requiresConfinedMcp = params.toolRestriction?.unlistedTools === 'deny'
-    && mcpServerKeys.size > 0;
+  const requiresConfinedTools = params.toolRestriction?.unlistedTools === 'deny'
+    && (mcpServerKeys.size > 0 || Boolean(params.functionTools?.length));
   let currentReasoningEffort: string | null = null;
   let currentServiceTier: string | null = null;
   let modelsSnapshot: AgentSessionModelsSnapshot = { models: null };
@@ -1040,7 +1041,7 @@ export function createCodexAppServerRuntime(
   let activeChatGptAuthTokensRefreshSelection: CodexConnectedServiceRefreshSelection | null =
     resolveCodexConnectedServiceRefreshSelectionFromEnv(readRuntimeProcessEnv());
   const assertToolRestrictionProviderSupported = (): void => {
-    if (requiresConfinedMcp && params.initialProviderBinding) {
+    if (requiresConfinedTools && params.initialProviderBinding) {
       throw new PluginError({ code: 'codex_tool_restriction_unsupported_auth', message: 'Codex MCP confinement requires native tool-mode evidence unavailable from this Provider binding.' });
     }
   };
@@ -1557,7 +1558,7 @@ export function createCodexAppServerRuntime(
       throw new Error('connected_service_chatgpt_refresh_invalid_result');
     }
     pendingChatGptRefreshAttempt = null;
-    if (requiresConfinedMcp) assertCodexToolRestrictionAccountSupported(nativeClient, refreshed.chatgptAccountId);
+    if (requiresConfinedTools) assertCodexToolRestrictionAccountSupported(nativeClient, refreshed.chatgptAccountId);
     recordAppliedChatGptAccessTokens(refreshed.accessToken, refreshed.chatgptAccountId);
     if (
       latestConnectedServiceRuntimeIdentity
@@ -2181,6 +2182,22 @@ export function createCodexAppServerRuntime(
     if (params.host.refreshRuntimeAuth) {
       nextClient.registerRequestHandler('account/chatgptAuthTokens/refresh', request => refreshChatGptAuthTokens(request, nextClient));
     }
+    if (params.functionTools?.length) {
+      nextClient.registerRequestHandler('item/tool/call', async request => {
+        const call = readRecord(request);
+        const tool = params.functionTools?.find(candidate => candidate.name === call?.tool);
+        const input = AgentRuntimeJsonValueSchema.safeParse(call?.arguments);
+        if (disposed || !threadId || call?.threadId !== threadId || call.namespace !== CODEX_HOST_FUNCTION_NAMESPACE || !tool || !input.success) {
+          return { contentItems: [{ type: 'inputText', text: 'Host function is unavailable for this call.' }], success: false };
+        }
+        try {
+          const result = await tool.call(input.data);
+          return { contentItems: [{ type: 'inputText', text: JSON.stringify(result) }], success: true };
+        } catch {
+          return { contentItems: [{ type: 'inputText', text: 'Host function failed.' }], success: false };
+        }
+      });
+    }
     handleAsyncQuestionNotification = registerCodexAppServerInteractionHandlers({
       client: nextClient,
       ...(params.host.ui ? { ui: params.host.ui } : {}),
@@ -2459,7 +2476,7 @@ export function createCodexAppServerRuntime(
         disableUserMcpServers: true,
         toolRestrictionRequired: params.toolRestriction?.unlistedTools === 'deny',
         toolRestrictionAllowedMcpServerKeys: [...mcpServerKeys.values()],
-        nativeHome: requiresConfinedMcp ? params.host.nativeHome : undefined,
+        nativeHome: requiresConfinedTools ? params.host.nativeHome : undefined,
       }).then(async (createdClient) => {
         params.host.logger.debug('Codex startup phase', { phase: 'configured_client_ready', elapsedMs: Date.now() - clientStartedAt });
         if (disposed) {
@@ -2483,7 +2500,7 @@ export function createCodexAppServerRuntime(
           if (activeChatGptAuthTokensRefreshSelection && params.host.refreshRuntimeAuth) {
             const authTokens = await readHostOwnedAuthTokens();
             if (authTokens.accessToken && authTokens.accountId) {
-              if (requiresConfinedMcp) assertCodexToolRestrictionAccountSupported(createdClient, authTokens.accountId);
+              if (requiresConfinedTools) assertCodexToolRestrictionAccountSupported(createdClient, authTokens.accountId);
               const result = await applyCodexExternalAuthTokens({
                 client: createdClient,
                 accessToken: authTokens.accessToken,
@@ -2780,6 +2797,13 @@ export function createCodexAppServerRuntime(
         cwd: params.directory,
         ...commonFields,
         experimentalRawEvents: true,
+        ...(params.functionTools?.length ? { dynamicTools: [{
+          type: 'namespace', name: CODEX_HOST_FUNCTION_NAMESPACE,
+          description: 'Host functions supplied for this conversation.',
+          tools: params.functionTools.map(tool => ({
+            type: 'function', name: tool.name, description: tool.description, inputSchema: tool.inputSchema,
+          })),
+        }] } : {}),
         persistExtendedHistory: true,
         }, 'thread').catch((error: unknown) => {
           if (!isCodexAppServerApplicationRejectionForMethod(error, 'thread/start')) throw error;
@@ -2826,7 +2850,7 @@ export function createCodexAppServerRuntime(
     const nextNativeModelProvider = trimStringValue(readRecord(response)?.modelProvider);
     if (currentNativeModelProvider !== nextNativeModelProvider) invalidatePromptCacheEvidence();
     currentNativeModelProvider = nextNativeModelProvider;
-    if (requiresConfinedMcp) {
+    if (requiresConfinedTools) {
       assertCodexToolRestrictionModelSupported(await ensureClient(), currentModelId);
     }
     currentServiceTier = readServiceTier(response) ?? (hasServiceTierOverride ? currentServiceTier : null);
@@ -2880,7 +2904,7 @@ export function createCodexAppServerRuntime(
     const readyThreadId = threadId && (!requested || requested === threadId)
       ? threadId
       : await openSession(requested ? { existingSessionId: requested, importHistory: false } : undefined);
-    if (requiresConfinedMcp) {
+    if (requiresConfinedTools) {
       assertCodexToolRestrictionModelSupported(await ensureClient(), currentModelId);
     }
     return readyThreadId;
@@ -3459,7 +3483,7 @@ export function createCodexAppServerRuntime(
       return { ok: false, errorCode: 'codex_refresh_free_auth_unsupported', error: 'refresh_bridge_unavailable' };
     }
     const appServerClient = await ensureClient();
-    if (requiresConfinedMcp) {
+    if (requiresConfinedTools) {
       assertCodexToolRestrictionAccountSupported(appServerClient, request.credential.oauth.providerAccountId ?? null);
     }
     const applied = await applyCodexConnectedServiceAuthGeneration({
@@ -3765,7 +3789,7 @@ export function createCodexAppServerRuntime(
     async updateConfig(update) {
       const updateRecord = readRecord(update);
       const nextModelId = trimStringValue(update.modelId);
-      if (nextModelId && requiresConfinedMcp) {
+      if (nextModelId && requiresConfinedTools) {
         assertCodexToolRestrictionModelSupported(await ensureClient(), nextModelId);
       }
       const collaborationModeId = trimStringValue(updateRecord?.collaborationModeId);

@@ -12,7 +12,7 @@ import {
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { readExecutionRunErrorCode } from '@/agent/runtime/bridges/executionRun/errors';
 import type { AgentInvocationTurnAdmissionWitness } from '@/plugins/runtime/invocation/services/types';
-import { extractVoiceActionsFromAssistantText } from '@happier-dev/protocol/voice/actions';
+import { decodeVoiceAssistantActions, getVoiceActionFunctionTool } from '@happier-dev/protocol/voice/actions';
 import { VoiceLocalConversationSchema } from '@happier-dev/protocol/voice/settings/localConversation';
 import { ExecutionRunTurnStreamEventErrorSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import { canAppendVoiceAgentOutputEventsV1, createVoiceAgentOutputTurnV1, fitVoiceAgentOutputTextV1, ingestVoiceAgentOutputEventV1, VOICE_HISTORY_CONTEXT_FIT_STATUS_TEXT, VOICE_OUTPUT_INCOMPLETE_TEXT } from '@happier-dev/protocol/voice/outputEvents';
@@ -279,11 +279,26 @@ export class VoiceAgentManager {
     assistantText: string,
     actions: readonly VoiceAssistantAction[],
   ): string {
-    const trimmed = assistantText.trim();
-    if (actions.some((action) => action?.t === 'sendSessionMessage')) {
-      return 'I sent that to the coding assistant and am waiting for its update.';
-    }
-    return trimmed;
+    return actions.length > 0 ? '' : assistantText.trim();
+  }
+
+  private createActionFunctionTools(
+    readInstance: () => VoiceAgentInstance | null,
+    generation: number,
+  ): NonNullable<Parameters<BackendFactory>[0]['functionTools']> {
+    return [{
+      ...getVoiceActionFunctionTool(),
+      call: async input => {
+        const instance = readInstance();
+        if (!instance || this.voiceAgents.get(instance.id) !== instance
+          || instance.chatGeneration !== generation || !instance.inFlight
+          || instance.activeTurnStream?.cancelled) {
+          throw new Error('This Voice turn is no longer accepting Actions.');
+        }
+        instance.chatActions.push(input);
+        return { status: 'queued', message: 'The UI has not executed this Action. End this turn and wait for the Voice tool-results follow-up.' };
+      },
+    }];
   }
 
   private resolveResponseTimeoutMs(explicitTimeoutMs?: number | null): number | null {
@@ -500,7 +515,7 @@ export class VoiceAgentManager {
       if (msg.type === 'tool-call') {
         // Text before a native tool describes work still to be done. The SDK
         // publishes that message's snapshot before its tool-call boundary.
-        voiceAgent.clearChatBuffer();
+        voiceAgent.chatBuffer = '';
         return;
       }
       if (msg.type !== 'model-output') return;
@@ -524,8 +539,10 @@ export class VoiceAgentManager {
     const previousUnsubscribe = voiceAgent.unsubscribeChatMessages;
     let replacementBackend: ExecutionRunHostRuntime | null = null;
     let replacementUnsubscribe: (() => void) | null = null;
+    const replacementGeneration = voiceAgent.chatGeneration + 1;
     try {
       replacementBackend = voiceAgent.createRuntime({
+        functionTools: this.createActionFunctionTools(() => voiceAgent, replacementGeneration),
         backendTarget: voiceAgent.backendTarget,
         backendId: voiceAgent.backendId,
         modelId: voiceAgent.chatModelId,
@@ -535,7 +552,7 @@ export class VoiceAgentManager {
           ? { sessionConfigOptionOverrides: voiceAgent.sessionConfigOptionOverrides }
           : {}),
         permissionIntent: voiceAgent.permissionIntent,
-        start: { intent: 'voice_agent' },
+        start: { intent: 'voice_agent', allowedTools: [], unlistedTools: 'deny' },
         ...(voiceAgent.connectedServices !== undefined ? { connectedServices: voiceAgent.connectedServices } : {}),
       });
       if (replacementBackend === previousBackend) {
@@ -550,7 +567,6 @@ export class VoiceAgentManager {
         await this.disposeRuntimeOnce(replacementBackend);
         return;
       }
-      const replacementGeneration = voiceAgent.chatGeneration + 1;
       replacementUnsubscribe = this.subscribeToChatBackend(
         voiceAgent,
         replacementBackend,
@@ -702,7 +718,7 @@ export class VoiceAgentManager {
           ? { sessionConfigOptionOverrides: voiceAgent.sessionConfigOptionOverrides }
           : {}),
         permissionIntent: voiceAgent.permissionIntent,
-        start: { intent: 'voice_agent' },
+        start: { intent: 'voice_agent', allowedTools: [], unlistedTools: 'deny' },
         ...(connectedServices !== undefined ? { connectedServices } : {}),
       });
       // Publish the provisional runtime to the unpublished instance before the
@@ -841,6 +857,7 @@ export class VoiceAgentManager {
       })();
 
       const chatBackend = (chatBackendForCleanup = createRuntime({
+        functionTools: this.createActionFunctionTools(() => instanceForCleanup, 0),
         backendTarget: params.backendTarget,
         backendId,
         modelId: params.chatModelId,
@@ -850,7 +867,7 @@ export class VoiceAgentManager {
           ? { sessionConfigOptionOverrides: params.sessionConfigOptionOverrides }
           : {}),
         permissionIntent: params.permissionIntent,
-        start: { intent: 'voice_agent' },
+        start: { intent: 'voice_agent', allowedTools: [], unlistedTools: 'deny' },
         ...(params.connectedServices !== undefined ? { connectedServices: params.connectedServices } : {}),
       }));
       startOccurrence.runtime = chatBackend;
@@ -864,7 +881,10 @@ export class VoiceAgentManager {
       ensureCurrentStart();
 
       const clearChatBuffer = () => {
-        if (instanceForCleanup) instanceForCleanup.chatBuffer = '';
+        if (instanceForCleanup) {
+          instanceForCleanup.chatBuffer = '';
+          instanceForCleanup.chatActions = [];
+        }
       };
       const clearCommitBuffer = () => {
         if (instanceForCleanup) instanceForCleanup.commitBuffer = '';
@@ -920,6 +940,7 @@ export class VoiceAgentManager {
         lifecycleInFlight: null,
         chatGeneration: 0,
         chatBuffer: '',
+        chatActions: [],
         commitBuffer: '',
         clearChatBuffer,
         clearCommitBuffer,
@@ -1069,7 +1090,7 @@ export class VoiceAgentManager {
           voiceAgent.chatSessionSeeded = true;
           voiceAgent.chatInstructionsDirty = false;
           voiceAgent.welcomed = true;
-		      const extracted = extractVoiceActionsFromAssistantText(voiceAgent.chatBuffer);
+		      const extracted = decodeVoiceAssistantActions(voiceAgent.chatActions, voiceAgent.chatBuffer);
 		      const assistantText = this.normalizeAssistantTextForActions(extracted.assistantText, extracted.actions);
 		      appendVoiceAgentHistoryTurn(voiceAgent.history, {
 		        userText: params.userText,
@@ -1124,7 +1145,7 @@ export class VoiceAgentManager {
             : undefined,
         ), this.resolveResponseTimeoutMs());
       ensureCurrent();
-      const assistantText = extractVoiceActionsFromAssistantText(voiceAgent.chatBuffer).assistantText;
+      const assistantText = decodeVoiceAssistantActions(voiceAgent.chatActions, voiceAgent.chatBuffer).assistantText;
       voiceAgent.clearChatBuffer();
       voiceAgent.chatSessionSeeded = true;
       voiceAgent.chatInstructionsDirty = false;
@@ -1246,7 +1267,7 @@ export class VoiceAgentManager {
         voiceAgent.welcomed = true;
         if (settleCancelled()) return;
 
-        const extracted = extractVoiceActionsFromAssistantText(voiceAgent.chatBuffer.trim());
+        const extracted = decodeVoiceAssistantActions(voiceAgent.chatActions, voiceAgent.chatBuffer);
         const patchSpeech: Parameters<typeof ingestVoiceAgentStreamingDelta>[1] = (next) => {
           if (typeof next.deltaHold === 'string') stream.deltaHold = next.deltaHold;
           if (typeof next.outputSpeechBuffer === 'string') stream.outputSpeechBuffer = next.outputSpeechBuffer;

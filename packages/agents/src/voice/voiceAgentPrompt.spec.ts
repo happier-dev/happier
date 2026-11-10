@@ -8,7 +8,6 @@ import {
   listVoiceToolActionSpecs,
   VOICE_ACTIONS_BLOCK,
   VOICE_TOOL_RESULTS_JSON_PREFIX,
-  extractVoiceActionsFromAssistantText,
   renderPromptPlanV1,
 } from '@happier-dev/protocol';
 
@@ -22,26 +21,19 @@ import {
 } from './voiceAgentPrompt.js';
 
 describe('voiceAgentPrompt', () => {
-  it('publishes one complete local block per listed tool and executable default-Agent creation', () => {
+  it('publishes native function arguments from the Voice catalog, including unnamed creation', () => {
     const prompt = buildLocalVoiceAgentSystemPrompt();
     const listedTools = prompt.slice(prompt.indexOf('Available actions:')).split('\n')
       .filter(line => /^- \w+: /.test(line));
-    const published = listedTools.flatMap(line => {
-      const block = line.match(/<voice_actions>.*<\/voice_actions>/)?.[0];
-      return block ? [{ line, block }] : [];
+    const published = listedTools.map(line => {
+      const json = line.match(/happier_voice_action (\{.*\})\.$/)?.[1];
+      expect(json, line).toBeDefined();
+      return JSON.parse(json!);
     });
-    // The real catalog is the scale fixture: no second inventory or extra
-    // example per tool, including those added by other Agent contributions.
-    expect(published).toHaveLength(listedTools.length);
-    for (const { line, block } of published) {
-      const value = JSON.parse(block.slice(VOICE_ACTIONS_BLOCK.startTag.length, -VOICE_ACTIONS_BLOCK.endTag.length));
-      expect(value.actions).toHaveLength(1);
-      expect(line.startsWith(`- ${value.actions[0].t}:`)).toBe(true);
-    }
-    const creation = published.find(({ line }) => line.startsWith('- spawnSession:'));
-    const decoded = extractVoiceActionsFromAssistantText(creation?.block ?? '');
-    expect(decoded.actions).toMatchObject([{ t: 'spawnSession', args: { initialInput: { text: expect.any(String) } } }]);
-    expect(decoded.actions[0]?.args).not.toHaveProperty('agentTarget');
+    const creation = published.find(value => value.t === 'spawnSession');
+    expect(creation).toMatchObject({ t: 'spawnSession', args: { initialInput: { text: expect.any(String) } } });
+    expect(creation.args).not.toHaveProperty('agentTarget');
+    expect(prompt).not.toContain('<voice_actions>');
   });
 
   it('distinguishes native subagents from created Happier Sessions in every Voice mode', () => {
@@ -56,7 +48,7 @@ describe('voiceAgentPrompt', () => {
       expect(prompt).toContain('Let the coding Session choose its descriptive title through its existing change_title tool');
       expect(prompt).toContain('acknowledge the actual outcome in one short sentence');
     }
-    expect(buildLocalVoiceAgentSystemPrompt()).toContain('Do not look them up with native ToolSearch; emit the action block directly.');
+    expect(buildLocalVoiceAgentSystemPrompt()).toContain('Do not look them up with native ToolSearch.');
   });
 
   it('documents Account settings and request discovery through the real admitted Voice catalog', () => {
@@ -265,7 +257,8 @@ describe('voiceAgentPrompt', () => {
     });
 
     expect(prompt).toContain(VOICE_TOOL_RESULTS_JSON_PREFIX);
-    expect(prompt).toContain(`${VOICE_ACTIONS_BLOCK.startTag}...${VOICE_ACTIONS_BLOCK.endTag}`);
+    expect(prompt).toContain('happier_voice_action');
+    expect(prompt).not.toContain(VOICE_ACTIONS_BLOCK.startTag);
     expect(prompt).toContain('searchActionSpecs');
     expect(prompt).toContain('getActionSpec');
     expect(prompt).toContain('resolveActionOptions');
@@ -276,7 +269,6 @@ describe('voiceAgentPrompt', () => {
 
   it('omits disabled voice action-block specs in the local voice system prompt', () => {
     const prompt = buildLocalVoiceAgentSystemPrompt({
-      actionsTag: 'voice_actions',
       sessionId: 's1',
       disabledActionIds: ['review.start', 'settings.list'],
     });
@@ -293,7 +285,6 @@ describe('voiceAgentPrompt', () => {
 
   it('documents discovery workflows and field requirements for complex voice tools', () => {
     const prompt = buildLocalVoiceAgentSystemPrompt({
-      actionsTag: 'voice_actions',
       sessionId: 's1',
     });
 
@@ -328,7 +319,6 @@ describe('voiceAgentPrompt', () => {
 
   it('keeps memory workflows discoverable without inlining every long-tail tool schema', () => {
     const prompt = buildLocalVoiceAgentSystemPrompt({
-      actionsTag: 'voice_actions',
       sessionId: 's1',
     });
 
@@ -339,12 +329,10 @@ describe('voiceAgentPrompt', () => {
 
   it('adds explicit recall guidance only when memory recall is enabled', () => {
     const withMemory = buildLocalVoiceAgentSystemPrompt({
-      actionsTag: 'voice_actions',
       sessionId: 's1',
       memoryRecallGuidanceEnabled: true,
     });
     const withoutMemory = buildLocalVoiceAgentSystemPrompt({
-      actionsTag: 'voice_actions',
       sessionId: 's1',
       memoryRecallGuidanceEnabled: false,
     });
@@ -357,7 +345,6 @@ describe('voiceAgentPrompt', () => {
 
   it('appends extra user prompt blocks to local and client-tool voice prompts', () => {
     const localPrompt = buildLocalVoiceAgentSystemPrompt({
-      actionsTag: 'voice_actions',
       sessionId: 's1',
       extraSystemAppendBlocks: ['Voice stack block'],
     });
@@ -375,7 +362,6 @@ describe('voiceAgentPrompt', () => {
 
   it('tells voice agents to use discovery tools instead of asking the user for opaque ids', () => {
     const localPrompt = buildLocalVoiceAgentSystemPrompt({
-      actionsTag: 'voice_actions',
       sessionId: 's1',
     });
     const clientToolPrompt = buildVoiceClientToolAgentPrompt({
@@ -401,7 +387,6 @@ describe('voiceAgentPrompt', () => {
 
   it('tells voice agents to forward coding work via sendSessionMessage and stay terse while waiting', () => {
     const localPrompt = buildLocalVoiceAgentSystemPrompt({
-      actionsTag: 'voice_actions',
       sessionId: 's1',
     });
     const clientToolPrompt = buildVoiceClientToolAgentPrompt({
@@ -423,7 +408,6 @@ describe('voiceAgentPrompt', () => {
 
   it('tells voice agents to pause tool use while a permission or user-action request is pending', () => {
     const localPrompt = buildLocalVoiceAgentSystemPrompt({
-      actionsTag: 'voice_actions',
       sessionId: 's1',
     });
     const clientToolPrompt = buildVoiceClientToolAgentPrompt({
@@ -437,7 +421,6 @@ describe('voiceAgentPrompt', () => {
 
   it('tells voice agents to answer active coding-session questions or option prompts before sending more work', () => {
     const localPrompt = buildLocalVoiceAgentSystemPrompt({
-      actionsTag: 'voice_actions',
       sessionId: 's1',
     });
     const clientToolPrompt = buildVoiceClientToolAgentPrompt({
@@ -454,7 +437,6 @@ describe('voiceAgentPrompt', () => {
 
   it('tells voice agents to summarize tool results in plain language instead of reading raw JSON', () => {
     const localPrompt = buildLocalVoiceAgentSystemPrompt({
-      actionsTag: 'voice_actions',
       sessionId: 's1',
     });
     const clientToolPrompt = buildVoiceClientToolAgentPrompt({
@@ -470,7 +452,6 @@ describe('voiceAgentPrompt', () => {
 
   it('tells voice agents to speak as the assistant directly and inspect with tools before answering codebase questions', () => {
     const localPrompt = buildLocalVoiceAgentSystemPrompt({
-      actionsTag: 'voice_actions',
       sessionId: 's1',
     });
     const clientToolPrompt = buildVoiceClientToolAgentPrompt({
@@ -487,7 +468,6 @@ describe('voiceAgentPrompt', () => {
 
   it('adds a dynamic discovery checklist ahead of the tool catalog', () => {
     const localPrompt = buildLocalVoiceAgentSystemPrompt({
-      actionsTag: 'voice_actions',
       sessionId: 's1',
     });
     const clientToolPrompt = buildVoiceClientToolAgentPrompt({
@@ -511,7 +491,6 @@ describe('voiceAgentPrompt', () => {
 
   it('keeps internal ids out of the headline prompt wording', () => {
     const localPrompt = buildLocalVoiceAgentSystemPrompt({
-      actionsTag: 'voice_actions',
       sessionId: 's1',
     });
     const clientToolPrompt = buildVoiceClientToolAgentPrompt({
@@ -528,7 +507,6 @@ describe('voiceAgentPrompt', () => {
 
   it('omits discovery steps that depend on unavailable tools', () => {
     const prompt = buildLocalVoiceAgentSystemPrompt({
-      actionsTag: 'voice_actions',
       sessionId: 's1',
       disabledActionIds: ['session.spawn_new', 'workspaces.list_recent', 'paths.list_recent'],
     });

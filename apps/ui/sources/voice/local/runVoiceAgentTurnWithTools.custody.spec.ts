@@ -422,6 +422,62 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     expect(result.assistantTurns).toEqual(spoken);
   });
 
+  it.each([false, true])('refuses the Voice carrier as a message target with working target bound=%s', async (bound) => {
+    await prepareSession();
+    const binding = await voiceSessionBindingManager.syncTargetSession({
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      targetSessionAddress: bound ? { serverId: localVoiceHomeId, sessionId: 's1' } : null,
+    });
+    if (!binding) throw new Error('Expected Voice conversation binding');
+    const currentToolSessionAddress = binding.targetSessionAddress;
+    const options = { currentToolSessionAddress, currentToolSessionId: currentToolSessionAddress?.sessionId ?? null };
+    queueSend('self-carrier-send', 'Create another file', {
+      sessionId: binding.conversationSessionId, reply: 'none',
+    });
+    queueFinal();
+    const rejected = await run('ask it to create another file', options);
+    expect(rejected.toolResultBatches[0]?.[0]?.result).toMatchObject({
+      ok: false, errorCode: 'voice_conversation_target_forbidden',
+    });
+    expect(readLocalVoiceHttpRequests().filter(request => request.method === 'POST'
+      && request.path === `/v2/sessions/${binding.conversationSessionId}/pending`)).toHaveLength(0);
+
+    queueSend('valid-working-target-send', 'Create another file', bound ? {} : { sessionId: 's1' });
+    queueFinal();
+    const accepted = await run('ask the coding Session to create another file', options);
+    expect(accepted.toolResultBatches[0]?.[0]?.result).toMatchObject({ ok: true, status: 'accepted' });
+    expect(targetPendingRequests()).toHaveLength(1);
+  });
+
+  it.each([
+    { name: 'ordinary direct native Session', carrier: false },
+    { name: 'qualified carrier self selector', carrier: true },
+  ])('admits the exact resolved message recipient for $name', async ({ carrier }) => {
+    await prepareSession();
+    const binding = await voiceSessionBindingManager.syncTargetSession({
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      targetSessionAddress: { serverId: localVoiceHomeId, sessionId: 's1' },
+    });
+    if (!binding) throw new Error('Expected Voice conversation binding');
+    const { createVoiceToolHandlers } = await import('@/voice/tools/handlers');
+    const tools = createVoiceToolHandlers({
+      voiceSessionBinding: carrier ? binding : { ...binding, transcriptMode: 'native_session', conversationSessionId: 's1',
+        conversationSessionAddress: { serverId: localVoiceHomeId, sessionId: 's1' } },
+      currentSessionAddress: { serverId: localVoiceHomeId, sessionId: 's1' },
+      resolveSessionId: () => 's1',
+    });
+    const sessionId = carrier ? { selector: 'self', of: binding.conversationSessionId } : 's1';
+    const result = JSON.parse(await tools.sendSessionMessage!({ sessionId, message: 'Create another file' }, {
+      serverId: localVoiceHomeId, callId: 'direct-session-send',
+    }));
+    expect(result).toMatchObject(carrier
+      ? { ok: false, errorCode: 'voice_conversation_target_forbidden' }
+      : { ok: true, status: 'accepted' });
+    expect(readLocalVoiceHttpRequests().filter(request => request.method === 'POST'
+      && request.path === `/v2/sessions/${binding.conversationSessionId}/pending`)).toHaveLength(0);
+    expect(targetPendingRequests()).toHaveLength(carrier ? 0 : 1);
+  });
+
   it('keeps sending in one conversation after an invented target id is corrected', async () => {
     await prepareSession();
     queueSend('first-target-send', 'Reply MAPLE.', { sessionId: 's1', reply: 'none' }); queueFinal();

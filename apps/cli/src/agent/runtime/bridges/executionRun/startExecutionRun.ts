@@ -1095,10 +1095,12 @@ async function startAdmittedExecutionRun(
           permissionIntent,
           start,
           connectedServices,
+          functionTools,
         }) => {
           const roleSelection = modelRole === 'chat' ? childSelection : modelRole === 'commit' ? voiceCommit : null;
           try {
             return args.createRuntime({
+              ...(functionTools ? { functionTools } : {}),
               runId,
               controllerOccurrenceId,
               backendId: runtimeBackendId,
