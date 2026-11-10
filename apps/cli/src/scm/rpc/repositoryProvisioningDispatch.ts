@@ -78,10 +78,13 @@ function isGitBackend(backend: ScmBackend): boolean {
     return backend.kind === 'git' || (!backend.kind && backend.id === 'git');
 }
 
-function supportsLifecycleOperation(
+function supportsProvisioningOperation(
     backend: ScmBackend,
-    operation: 'init' | 'clone',
+    operation: 'init' | 'clone' | 'describePublishTargets',
 ): boolean {
+    if (operation === 'describePublishTargets') {
+        return typeof backend.hostingRepositoryDescribePublishTargets === 'function';
+    }
     const declared = backend.declaredCapabilities?.lifecycle?.[operation];
     return declared
         ? declared.support !== 'unsupported'
@@ -90,14 +93,14 @@ function supportsLifecycleOperation(
             : typeof backend.repositoryClone === 'function';
 }
 
-function findGitRepositoryLifecycleBackend(
+function findGitRepositoryProvisioningBackend(
     registry: ScmBackendRegistry,
-    operation: 'init' | 'clone',
+    operation: 'init' | 'clone' | 'describePublishTargets',
     preferredBackendId?: string | null,
 ): ScmBackend | null {
     const candidates = registry.listBackends().filter((backend) => (
         isGitBackend(backend)
-        && supportsLifecycleOperation(backend, operation)
+        && supportsProvisioningOperation(backend, operation)
     ));
     if (preferredBackendId) {
         const preferredBackend = resolveScmBackendById(
@@ -154,7 +157,7 @@ export async function runScmRepositoryInitRoute(input: {
                 const preferredBackendId = input.request.backendPreference?.kind === 'prefer'
                     ? input.request.backendPreference.backendId
                     : null;
-                const gitBackend = findGitRepositoryLifecycleBackend(
+                const gitBackend = findGitRepositoryProvisioningBackend(
                     registry,
                     'init',
                     preferredBackendId,
@@ -226,7 +229,7 @@ export async function runScmRepositoryCloneRoute(input: {
             };
         }
 
-        const gitBackend = findGitRepositoryLifecycleBackend(registry, 'clone');
+        const gitBackend = findGitRepositoryProvisioningBackend(registry, 'clone');
         if (!gitBackend?.repositoryClone) {
             return repositoryCloneUnsupportedResponse('Git repository clone is unavailable.');
         }
@@ -312,14 +315,23 @@ export function runScmHostingRepositoryDescribePublishTargetsRoute(input: {
     registry?: ScmBackendRegistry;
     signal?: AbortSignal;
 }): Promise<ScmHostingRepositoryDescribePublishTargetsResponse> {
-    return runScmRoute<ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse>({
+    return runWithScmBackendRegistryLease(input.registry, async (registry) => runScmRoute<ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse>({
         request: input.request,
         workingDirectory: input.workingDirectory,
         accessPolicy: input.accessPolicy,
-        registry: input.registry,
+        registry,
         signal: input.signal,
-        onNonRepository: async () =>
-            hostingRepositoryDescribePublishTargetsUnsupportedResponse('The selected path is not a Git repository.'),
+        onNonRepository: async ({ cwd, workingDirectory }) => {
+            const backend = findGitRepositoryProvisioningBackend(registry, 'describePublishTargets',
+                input.request.backendPreference?.kind === 'prefer' ? input.request.backendPreference.backendId : null);
+            if (!backend?.hostingRepositoryDescribePublishTargets) {
+                return hostingRepositoryDescribePublishTargetsUnsupportedResponse('Git hosting repository publish target discovery is unavailable.');
+            }
+            return backend.hostingRepositoryDescribePublishTargets({
+                context: createNonRepositoryGitContext({ workingDirectory, cwd, signal: input.signal }),
+                request: input.request,
+            });
+        },
         runWithBackend: async ({ context, selection }) => {
             if (!selection.backend.hostingRepositoryDescribePublishTargets) {
                 return hostingRepositoryDescribePublishTargetsUnsupportedResponse(
@@ -331,5 +343,5 @@ export function runScmHostingRepositoryDescribePublishTargetsRoute(input: {
                 request: input.request,
             });
         },
-    });
+    }));
 }

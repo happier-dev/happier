@@ -484,7 +484,9 @@ export function createGitHostingRepositoryPublishOperation(
             const registry = await readRegistry();
             const providers = admittedProviderRefs({
                 registry,
-                snapshot: await readSnapshot({ context }),
+                // Hosting accounts exist before a checkout. Repository evidence
+                // only enriches an existing checkout's provider coordinates.
+                snapshot: context.detection.isRepo ? await readSnapshot({ context }) : null,
                 ...(request.providerId ? { providerId: request.providerId } : {}),
                 ...(request.providerKind ? { providerKind: request.providerKind } : {}),
             });

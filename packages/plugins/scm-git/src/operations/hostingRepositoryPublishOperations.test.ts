@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -350,25 +350,37 @@ describe('git hosting repository publish operation', { timeout: 20_000 }, () => 
         expect(requests.every((url) => url.startsWith('https://api.github.com/'))).toBe(true);
     });
     it('retains forge throttle details through publishing and target discovery before Git effects', async () => {
-        const adapter = createGithubRepositoryRestAdapter({
-            resolveToken: async () => ({ kind: 'available', token: 'fixture-token' }),
-            fetcher: async () => ({
-                ok: false, status: 403, statusText: 'Forbidden',
-                headers: new Headers({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1900000000' }),
-                json: async () => ({ message: 'API rate limit exceeded.' }),
-                text: async () => JSON.stringify({ message: 'API rate limit exceeded.' }),
-            }),
-        });
-        const operation = createGitHostingRepositoryPublishOperation({
-            registry: createRegistry(adapter), runtimeServices: {},
-            readSnapshot: async () => snapshot(),
-        });
-        const expected = {
-            success: false, errorCode: 'REMOTE_RATE_LIMITED', retryNotBeforeMs: 1900000000000,
-            remediation: { kind: 'retry' },
-        };
-        expect(await operation.publish({ context, request: publishRequest() })).toMatchObject(expected);
-        expect(await operation.describePublishTargets({ context, request: { providerId: provider.id } })).toMatchObject(expected);
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-publish-throttle-'));
+        // The HTTP reset header has second precision; pin the genuine clock
+        // boundary so conversion to an absolute retry time is deterministic.
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(1800000000000);
+        try {
+            git(workspace, ['init', '-b', 'main']);
+            const actualContext = { ...context, cwd: workspace, detection: { ...context.detection, rootPath: workspace } };
+            const adapter = createGithubRepositoryRestAdapter({
+                resolveToken: async () => ({ kind: 'available', token: 'fixture-token' }),
+                fetcher: async () => ({
+                    ok: false, status: 403, statusText: 'Forbidden',
+                    headers: new Headers({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1900000000' }),
+                    json: async () => ({ message: 'API rate limit exceeded.' }),
+                    text: async () => JSON.stringify({ message: 'API rate limit exceeded.' }),
+                }),
+            });
+            const operation = createGitHostingRepositoryPublishOperation({
+                registry: createRegistry(adapter), runtimeServices: {},
+            });
+            const expected = {
+                success: false, errorCode: 'REMOTE_RATE_LIMITED', retryNotBeforeMs: 1900000000000,
+                remediation: { kind: 'retry' },
+            };
+            expect(await publishWithRealGitRuntime(operation, { context: actualContext, request: publishRequest({ cwd: workspace }) })).toMatchObject(expected);
+            expect(await runWithRealGitScmRuntime(() => operation.describePublishTargets({
+                context: actualContext, request: { providerId: provider.id },
+            }))).toMatchObject(expected);
+        } finally {
+            clock.mockRestore();
+            rmSync(workspace, { recursive: true, force: true });
+        }
     });
     it('resolves default hosting provider registries from host-injected runtime services only', () => {
         const source = readFileSync(new URL('./hostingRepositoryPublishOperations.ts', import.meta.url), 'utf8');
