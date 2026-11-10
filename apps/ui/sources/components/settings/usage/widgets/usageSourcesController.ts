@@ -131,6 +131,16 @@ export function createUsageSourcesController(options: Readonly<{
         return next.length === snapshot.sources.length && next.every((row, index) => row === snapshot.sources[index])
             ? snapshot.sources : next;
     };
+    // A machine read that reports a source last known failed only as re-checking ('reading', no error) has not
+    // answered for it yet: the Machine clears the error on rediscovery and re-checks. It keeps its failed status until
+    // its own answer arrives (ready, or failed again), so a revisit never flips that row away and back (R141).
+    const keepFailedThroughRecheck = (sources: readonly UsageSourceV1[]): UsageSourceV1[] => sources.map(source => {
+        const previous = snapshot.sources.find(row => row.sourceId === source.sourceId);
+        return previous && (previous.status === 'unavailable' || previous.status === 'error')
+            && source.status === 'reading' && source.errorCode === undefined
+            ? { ...source, status: previous.status, ...(previous.errorCode === undefined ? {} : { errorCode: previous.errorCode }) }
+            : source;
+    });
     const publishFailure = (actionId: UsageSourceActionId, sourceId: string | undefined, error: ActionExecuteFailure) => {
         if (!isRead(actionId)) { publish({ ...snapshot, error }); return; }
         const retain = canRetainUsageReadFailure(error.errorCode);
@@ -180,7 +190,7 @@ export function createUsageSourcesController(options: Readonly<{
                 return invalid;
             }
             if ('sources' in data) {
-                const sources = sourceId === undefined ? data.sources : snapshot.sources.filter(source => source.sourceId !== sourceId);
+                const sources = sourceId === undefined ? keepFailedThroughRecheck(data.sources) : snapshot.sources.filter(source => source.sourceId !== sourceId);
                 if (sourceId !== undefined) {
                     const index = snapshot.sources.findIndex(source => source.sourceId === sourceId);
                     sources.splice(index < 0 ? sources.length : index, 0, ...data.sources);

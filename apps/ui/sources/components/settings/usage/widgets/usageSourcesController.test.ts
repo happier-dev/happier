@@ -88,6 +88,21 @@ describe('Usage Sources consent controller', () => {
         expect(reread.getSnapshot().sources).toEqual([source]);
         expect(reread.getSnapshot().error).toMatchObject({ errorCode: 'usage_source_unavailable' });
         reread.dispose();
+        // A source last known failed keeps that status while a machine read reports it only as re-checking ('reading'),
+        // until its own answer arrives (R141: the Machine clears the error on rediscovery, then fails it again).
+        const failed: UsageSourceV1 = { ...source, consent: 'enabled', status: 'unavailable', errorCode: 'source_unavailable' };
+        let answer: UsageSourceV1 = failed;
+        const flaky = harness(async () => ({ sources: [answer] }));
+        await flaky.controller.discover();
+        answer = { ...failed, status: 'reading' };
+        delete (answer as { errorCode?: string }).errorCode;
+        await flaky.controller.discover();
+        expect(flaky.controller.getSnapshot().sources).toEqual([failed]);
+        answer = { ...failed, status: 'ready' };
+        delete (answer as { errorCode?: string }).errorCode;
+        await flaky.controller.discover();
+        expect(flaky.controller.getSnapshot().sources[0]).toMatchObject({ status: 'ready' });
+        flaky.controller.dispose();
         // Another Account scope never sees it.
         const other = lifetimeHarness();
         expect(createUsageSourcesController({ machineId: 'machine', lifetime: other.lifetime, executor: first.executor })

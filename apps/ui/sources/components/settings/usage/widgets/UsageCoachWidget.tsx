@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
@@ -592,7 +593,12 @@ const UsageCoachFindingRow = React.memo(function UsageCoachFindingRow(
   const { theme } = useUnistyles();
   const metrics = usePageRowMetrics('standard');
   const presentation = useWidgetPresentation();
-  const wide = props.layout === 'row' && (presentation?.geometry?.width ?? 0) >= 560;
+  // Until the frame measures the body, a full-width cell is already wide, so the row is drawn at its final shape
+  // (trend in place) on first paint and never settles when the measurement lands (R141).
+  const phone = useDeviceType() === 'phone';
+  const measuredWidth = presentation?.geometry?.width;
+  const wide = props.layout === 'row' && (measuredWidth !== undefined ? measuredWidth >= 560
+    : presentation?.footprint?.width === 'full' && !phone);
   const { finding, applied, controller, snapshot } = props;
   // A finding can rest on hundreds of observations: Why leads with a few and folds the rest behind Show all.
   const [evidenceExpanded, setEvidenceExpanded] = React.useState(false);

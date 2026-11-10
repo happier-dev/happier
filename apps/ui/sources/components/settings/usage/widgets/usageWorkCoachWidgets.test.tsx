@@ -622,6 +622,13 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.getTextContent()).toContain(t('usage.board.coach.latestSample', { value: '' }).trim());
     // ...and says when that sample was taken, so a latest 0 beside a larger headline reads as a later moment.
     expect(screen.getTextContent()).toContain(formatUsageObservedAt(50));
+    // Before the frame measures it, a full-width Coach already draws its wide row (trend in place): the row never
+    // settles 10 px when the measurement lands (R141).
+    const unmeasured = await renderScreen(<WidgetPresentationProvider value={{ size: 'large',
+      footprint: { columns: 2, columnSpan: 2, rowSpan: 4, width: 'full', height: 'tall' } }}>
+      <UsageCoachWidget {...props} slice={{ ...slice, coach: priced }} id="usage_coach" testID="coach" />
+    </WidgetPresentationProvider>);
+    expect(unmeasured.findHostByTestId('coach.finding.context_bloat.trend')).toBeTruthy();
   });
   it('does not open digest scheduling without a captured Account', async () => {
     const digestSlice = resolveUsagePageAggregation({ queries: [query],
