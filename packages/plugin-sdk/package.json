@@ -567,6 +567,7 @@
   "dependencies": {
     "@babel/core": "^7.25.2",
     "@babel/plugin-transform-block-scoping": "^7.28.6",
+    "@babel/plugin-transform-classes": "^7.28.6",
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/brand": "0.0.0",
     "@happier-dev/cli-common": "0.0.0",

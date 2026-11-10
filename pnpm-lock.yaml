@@ -2329,6 +2329,9 @@ importers:
       '@babel/plugin-transform-block-scoping':
         specifier: ^7.28.6
         version: 7.28.6(@babel/core@7.29.0(supports-color@8.1.1))
+      '@babel/plugin-transform-classes':
+        specifier: ^7.28.6
+        version: 7.28.6(@babel/core@7.29.0(supports-color@8.1.1))(supports-color@8.1.1)
       '@happier-dev/agents':
         specifier: 0.0.0
         version: link:../agents

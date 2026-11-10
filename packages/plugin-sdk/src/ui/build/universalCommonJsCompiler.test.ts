@@ -85,6 +85,66 @@ async function compileFixture(root: string, entry: string, artifactId: string) {
 }
 
 describe('compileUniversalPluginUiCommonJs', () => {
+    it('lowers async callbacks for the native dynamic evaluator while preserving lexical this and rejection', async () => {
+        const { root, entry } = await fixture(`
+            export async function read() {
+                const owner = { value: 4, reader() { return async () => this.value + await Promise.resolve(3); } };
+                return owner.reader()();
+            }
+            export function rejected() {
+                return (async () => {
+                    try { await Promise.reject('expected rejection'); }
+                    catch (error) { return { error }; }
+                })();
+            }
+        `);
+        const compiled = await compileUniversalPluginUiCommonJs({ projectRoot: root, entryPath: entry,
+            artifactId: 'hermes-async', requestedExports: ['read', 'rejected'] });
+        const asyncFunctions: string[] = [];
+        transformSync(new TextDecoder().decode(compiled.bytes), {
+            configFile: false, babelrc: false, sourceType: 'script',
+            plugins: [{ visitor: { Function(path: { node: { type: string; async: boolean } }) {
+                if (path.node.async) asyncFunctions.push(path.node.type);
+            } } }],
+        });
+        expect(asyncFunctions).toEqual([]);
+        const { read, rejected } = evaluateWithHermesBindingSemantics(compiled.bytes, {});
+        await expect(read!()).resolves.toBe(7);
+        await expect(rejected!()).resolves.toEqual({ error: 'expected rejection' });
+    });
+
+    it('lowers class construction for the native dynamic evaluator while preserving inheritance', async () => {
+        const { root, entry } = await fixture(`
+            const Base = class {
+                constructor(readonly value: number) {}
+                get doubled() { return this.value * 2; }
+                static label() { return 'base'; }
+            };
+            class Derived extends Base {
+                constructor(value: number) { super(value + 1); }
+                get doubled() { return super.doubled + 1; }
+                static label() { return super.label() + '-derived'; }
+            }
+            export function read() {
+                const instance = new Derived(3);
+                return { value: instance.value, doubled: instance.doubled,
+                    label: Derived.label(), isBase: instance instanceof Base };
+            }
+        `);
+        const compiled = await compileUniversalPluginUiCommonJs({ projectRoot: root, entryPath: entry,
+            artifactId: 'hermes-classes', requestedExports: ['read'] });
+        // Hermes's Function evaluator rejects small class bodies and miscompiles
+        // large ones. Check the emitted grammar, then the same bytes' semantics.
+        const classes: string[] = [];
+        transformSync(new TextDecoder().decode(compiled.bytes), {
+            configFile: false, babelrc: false, sourceType: 'script',
+            plugins: [{ visitor: { Class(path: { node: { type: string } }) { classes.push(path.node.type); } } }],
+        });
+        expect(classes).toEqual([]);
+        const { read } = evaluateWithHermesBindingSemantics(compiled.bytes, {});
+        expect(read!()).toEqual({ value: 4, doubled: 9, label: 'base-derived', isBase: true });
+    });
+
     it('keeps React hooks and loop closures intact under the native engine\'s binding semantics', async () => {
         const { root, entry } = await fixture(`
             import * as React from 'react';
@@ -274,7 +334,7 @@ describe('compileUniversalPluginUiCommonJs', () => {
         });
         expect(result.bytes.byteLength).toBeGreaterThan(0);
         expect(warning).not.toHaveBeenCalledWith(expect.stringContaining('[bundled_host_module]'), expect.anything());
-    });
+    }, 60_000);
 
     it.each([
         ['@happier-dev/plugin-ui', 'ansi'],

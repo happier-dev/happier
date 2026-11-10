@@ -1,10 +1,12 @@
 /// <reference path="./babelPluginTransformBlockScoping.d.ts" />
+/// <reference path="./babelPluginTransformClasses.d.ts" />
 import { readFile, readdir } from 'node:fs/promises';
 import { builtinModules } from 'node:module';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { transformAsync } from '@babel/core';
 import transformBlockScoping from '@babel/plugin-transform-block-scoping';
+import transformClasses from '@babel/plugin-transform-classes';
 import { build, version as esbuildVersion, type Metafile, type Plugin } from 'esbuild';
 
 import { PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS } from '@happier-dev/protocol/plugins/ui/hostRuntimeExternals';
@@ -171,13 +173,14 @@ function compilerPolicyPlugin(artifactId: string, resolveSourceImport?: (specifi
  * The native app evaluates artifacts with Hermes, whose `new Function` compiles `let`/`const` to one
  * function-scoped binding: every closure created in a loop shares it. esbuild keeps those loops at any target,
  * including its own namespace helper, so a plugin's `React.useMemo` would read React's last export. Lower them
- * here, once, for the one universal artifact.
+ * here, once, for the one universal artifact. Class syntax also needs lowering: this evaluator rejects
+ * small class bodies at parse time and can miscompile construction in large ones as undefined.prototype.
  */
-async function lowerBlockScopedClosures(artifactId: string, source: string): Promise<Uint8Array> {
+async function lowerHermesSyntax(artifactId: string, source: string): Promise<Uint8Array> {
     const lowered = await transformAsync(source, {
         configFile: false, babelrc: false, sourceType: 'script', minified: true,
         shouldPrintComment: comment => /@license|@preserve|^!/u.test(comment),
-        plugins: [transformBlockScoping],
+        plugins: [transformClasses, transformBlockScoping],
     }).catch((cause: unknown) => {
         throw new PluginUiUniversalCompilerError('compile_failed', artifactId,
             `Executable Plugin UI artifact "${artifactId}" failed to compile: ${cause instanceof Error ? cause.message : String(cause)}`);
@@ -277,6 +280,9 @@ export async function compileUniversalPluginUiCommonJs(input: Readonly<{
             legalComments: 'eof',
             charset: 'utf8',
             target: 'es2020',
+            // Hermes's dynamic evaluator leaves async arrows undefined in large
+            // artifacts. esbuild lowers them to supported generator functions.
+            supported: { 'async-await': false },
             mainFields: ['module', 'main'],
             conditions: [...(input.exportConditions ?? []), ...UNIVERSAL_PLUGIN_UI_EXPORT_CONDITIONS],
             metafile: true,
@@ -312,7 +318,7 @@ export async function compileUniversalPluginUiCommonJs(input: Readonly<{
     }
     await assertPortablePluginOwnedInputs(projectRoot, input.artifactId, result.metafile.inputs);
     const output = result.outputFiles[0]!;
-    const bytes = await lowerBlockScopedClosures(input.artifactId, output.text);
+    const bytes = await lowerHermesSyntax(input.artifactId, output.text);
     const externalSpecifiers = [...new Set(
         Object.values(result.metafile.outputs).flatMap((metafileOutput) => (
             metafileOutput.imports
