@@ -1,5 +1,7 @@
 import { readManagedCreationBirthInTx } from './managedCreationBirth';
-import { isManagedEnrollmentRecoveryChildV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { ManagedControllerResizeReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { reportManagedResize } from './managedMutations';
+import { isManagedEnrollmentRecoveryChildV1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { z } from 'zod/mini';
 import type { Fastify } from "@/app/api/types";
@@ -296,6 +298,12 @@ export function registerManagedMachineRoutes(app: Fastify): void {
         return admitManagedControl({ actorAccountId: request.userId, custodianAccountId: proof.custodianAccountId,
             authentication: readTeamOperationAuthenticationFromRequest(request), input: request.body });
     }));
+    app.post('/v1/machines/managed/controller/report-resize', { preHandler: app.authenticate,
+        schema: { body: ManagedControllerResizeReportV1Schema } }, async (request, reply) => respond(reply, async () => {
+            const proof = await requireManagedOperationRequest(request, request.body, [MANAGED_RESIZE_ACTION_ID_V1]);
+            if (proof.requestId !== request.body.requestId) throw new ManagedMachineError('request_conflict');
+            return reportManagedResize(request.body);
+        }));
     app.post("/v1/machines/managed/controller/submit-intent", { preHandler: app.authenticate, schema: { body: ManagedControllerCurrentnessV1Schema } }, async (request, reply) => respond(reply, async () => {
         if (request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined) await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/submit-intent', request.body, 'submit');
         else await requireManagedOperationRequest(request, request.body, effects);
@@ -309,8 +317,14 @@ export function registerManagedMachineRoutes(app: Fastify): void {
         await requireManagedOperationRequest(request, request.body, effects, { submittedReport: true });
         return reportManagedIntent(request.body);
     }));
-    app.post(managedMachineActionEndpointPathV1("machines.managed.list"), { preHandler: app.authenticate, schema: { body: ManagedMachineActionInputSchemasV1["machines.managed.list"], response: { 200: ManagedMachineActionOutputSchemasV1["machines.managed.list"] } } }, async (request, reply) => respond(reply, () => listManagedMachines({ actorAccountId: request.userId, input: request.body })));
-    app.post(managedMachineActionEndpointPathV1("machines.managed.get"), { preHandler: app.authenticate, schema: { body: ManagedMachineActionInputSchemasV1["machines.managed.get"], response: { 200: ManagedMachineActionOutputSchemasV1["machines.managed.get"] } } }, async (request, reply) => respond(reply, () => getManagedMachine({ actorAccountId: request.userId, input: request.body })));
+    app.post(managedMachineActionEndpointPathV1("machines.managed.list"), { preHandler: app.authenticate, schema: { body: ManagedMachineActionInputSchemasV1["machines.managed.list"], response: { 200: ManagedMachineActionOutputSchemasV1["machines.managed.list"] } } }, async (request, reply) => respond(reply, async () => {
+        const admitted = request.externalActionDeploymentTargetRetentionAdmission;
+        return admitted?.kind === 'restore-read' ? { machines: admitted.machines }
+            : listManagedMachines({ actorAccountId: request.userId, input: request.body });
+    }));
+    app.post(managedMachineActionEndpointPathV1("machines.managed.get"), { preHandler: app.authenticate, schema: { body: ManagedMachineActionInputSchemasV1["machines.managed.get"], response: { 200: ManagedMachineActionOutputSchemasV1["machines.managed.get"] } } }, async (request, reply) => respond(reply, async () =>
+        request.externalActionDeploymentChildAdmission?.snapshotManagedMachine
+            ?? getManagedMachine({ actorAccountId: request.userId, input: request.body })));
     app.post(managedMachineActionEndpointPathV1("machines.managed.cancel"), { preHandler: app.authenticate, schema: { body: ManagedMachineActionInputSchemasV1["machines.managed.cancel"], response: { 200: ManagedMachineActionOutputSchemasV1["machines.managed.cancel"] } } }, async (request, reply) => respond(reply, async () => {
         await requireManagedOperationRequest(request, request.body, ['machines.managed.cancel'], { creationMutation: true });
         return cancelManagedCreation({ actorAccountId: request.userId, input: request.body });

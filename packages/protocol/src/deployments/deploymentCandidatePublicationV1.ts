@@ -2,9 +2,11 @@ import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
+import { DeploymentConfigurationDefaultsForV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
 import { hasDeploymentEnvironmentContentPatchV1, omitDeploymentEnvironmentPrivateContentPatchV1 } from './deploymentEnvironmentContentPatchV1.js';
 import { computeCanonicalDomainSeparatedHexDigest } from '../crypto/canonicalDigest.js';
-import { isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1 } from './deploymentActionIdsV1.js';
+import { isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from './deploymentActionIdsV1.js';
+import { DeploymentBackupConfigureInputV1Schema, DeploymentBackupConfigureIntentV1Schema } from './deploymentBackupConfigureV1.js';
 import { DeploymentBackupHistoryInputV1Schema, DeploymentBackupTestInputV1Schema, DeploymentBackupInventoryInputV1Schema, DeploymentBackupRunInputV1Schema, DeploymentBackupVerifyInputV1Schema,
   DeploymentBackupPruneInputV1Schema, DeploymentBackupActionInputSchemasV1 } from './deploymentBackupActionsV1.js';
 import { DeploymentDomainAddInputV1Schema, DeploymentDomainRemoveInputV1Schema,
@@ -32,7 +34,7 @@ const restoreAdmission = () => ({ kind: z.literal('restore'), actionId: z.litera
   inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)) });
 export const DeploymentRestoreNativeAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('mode', [
   z.extend(z.omit(DeploymentBackupRestorePrepareInputV1Schema, { serverId: true }), restoreAdmission()),
-  z.extend(z.omit(DeploymentBackupRestoreConfirmInputV1Schema, { serverId: true }), restoreAdmission()),
+  z.extend(z.omit(DeploymentBackupRestoreConfirmInputV1Schema, { serverId: true, snapshotReview: true }), restoreAdmission()),
 ]));
 export type DeploymentRestoreNativeAdmissionV1 = z.infer<typeof DeploymentRestoreNativeAdmissionV1Schema>;
 const backupAdmission = () => ({ kind: z.literal('backup'), inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)) });
@@ -51,12 +53,23 @@ export const DeploymentBackupNativeAdmissionV1Schema = lazyZodSchema(() => z.dis
     { ...backupAdmission(), actionId: z.literal('deployments.backups.prune') }),
 ]));
 export type DeploymentBackupNativeAdmissionV1 = z.infer<typeof DeploymentBackupNativeAdmissionV1Schema>;
+/** Configure executes before target selection; authored configuration stays sealed. */
+export const DeploymentBackupConfigureNativeAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('backupConfigure'), actionId: z.literal(DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1),
+  environmentId: id, expectedRevision: revision, intent: DeploymentBackupConfigureIntentV1Schema,
+  inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+}));
+export type DeploymentBackupConfigureNativeAdmissionV1 = z.infer<typeof DeploymentBackupConfigureNativeAdmissionV1Schema>;
+export const DeploymentEnvironmentUpdateNativeAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
+  defaultsFor: z.optional(DeploymentConfigurationDefaultsForV1Schema),
+  environmentId: id, inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+  authoredMetadataDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+}));
 export const DeploymentNativeAdmissionV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ environmentId: id }),
-  z.strictObject({ environmentId: id, inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
-    authoredMetadataDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)) }),
+  DeploymentEnvironmentUpdateNativeAdmissionV1Schema,
   DeploymentDomainNativeAdmissionV1Schema, DeploymentRestartNativeAdmissionV1Schema, DeploymentRestoreNativeAdmissionV1Schema,
-  DeploymentBackupNativeAdmissionV1Schema,
+  DeploymentBackupNativeAdmissionV1Schema, DeploymentBackupConfigureNativeAdmissionV1Schema,
 ]));
 // Signed authority stays closed in stored approvals. A tolerant Environment-only
 // arm would consume typed native facts and change the original envelope digest.
@@ -72,11 +85,22 @@ export function isDeploymentDomainNativeAdmissionV1(value: DeploymentNativeAdmis
 export function isDeploymentBackupNativeAdmissionV1(value: DeploymentNativeAdmissionV1 | undefined): value is DeploymentBackupNativeAdmissionV1 {
   return value !== undefined && 'kind' in value && value.kind === 'backup';
 }
+export function isDeploymentBackupConfigureNativeAdmissionV1(value: DeploymentNativeAdmissionV1 | undefined): value is DeploymentBackupConfigureNativeAdmissionV1 {
+  return value !== undefined && 'kind' in value && value.kind === 'backupConfigure';
+}
 export function projectDeploymentNativeAdmissionV1(actionId: string, input: unknown) {
+  if (actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1) {
+    const value = DeploymentBackupConfigureInputV1Schema.parse(input);
+    return DeploymentBackupConfigureNativeAdmissionV1Schema.parse({ kind: 'backupConfigure', actionId,
+      environmentId: value.environmentId, expectedRevision: value.expectedRevision, intent: value.intent,
+      inputDigest: computeCanonicalDomainSeparatedDigest('happier-deployment-backup-configure-input-v1',
+        [createCanonicalJsonSigningInput(value)]) });
+  }
   if (actionId === 'deployments.environments.update') {
     const value = readRecord(input);
-    if (!hasDeploymentEnvironmentContentPatchV1(value.patch)) return undefined;
+    if (value.mode !== 'preview' && !hasDeploymentEnvironmentContentPatchV1(value.patch)) return undefined;
     return DeploymentNativeAdmissionV1Schema.parse({ environmentId: value.environmentId,
+      ...(value.mode === 'preview' ? { defaultsFor: DeploymentConfigurationDefaultsForV1Schema.parse(value.defaultsFor) } : {}),
       inputDigest: computeDeploymentEnvironmentUpdateInputDigestV1(value),
       authoredMetadataDigest: computeDeploymentEnvironmentUpdateMetadataDigestV1(value) });
   }
@@ -90,7 +114,8 @@ export function projectDeploymentNativeAdmissionV1(actionId: string, input: unkn
   if (actionId === 'deployments.backups.restore') {
     const value = DeploymentBackupRestoreInputV1Schema.parse(input);
     const { serverId: _serverId, ...admitted } = value;
-    return DeploymentRestoreNativeAdmissionV1Schema.parse({ ...admitted, kind: 'restore', actionId,
+    const routing = admitted.mode === 'confirm' ? (({ snapshotReview: _review, ...routing }) => routing)(admitted) : admitted;
+    return DeploymentRestoreNativeAdmissionV1Schema.parse({ ...routing, kind: 'restore', actionId,
       inputDigest: computeCanonicalDomainSeparatedDigest('happier-deployment-restore-input-v1',
         [createCanonicalJsonSigningInput(value)]) });
   }
@@ -185,7 +210,7 @@ export function matchesDeploymentDomainPreparedInputV1(input: Readonly<Record<st
   const { actionOperationId: _operation, requestId: _request, ...original } = input;
   if (computeDeploymentDomainAuthoredMetadataDigestV1(original) === native.authoredMetadataDigest) return true;
   if (!('placements' in original)) return false;
-  const { placements: _derivedPlacements, ...withoutPlacements } = original;
+  const { placements: _derivedPlacements, provider: _derivedProvider, ...withoutPlacements } = original;
   return computeDeploymentDomainAuthoredMetadataDigestV1(withoutPlacements) === native.authoredMetadataDigest;
 }
 

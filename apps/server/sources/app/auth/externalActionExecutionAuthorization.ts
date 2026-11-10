@@ -13,7 +13,8 @@ import { MachineReadBatchRequestV1Schema } from '@happier-dev/protocol/machines/
 import { isBotTemplateRetainedExecutionRootActionIdV1, isBotTemplateRestrictedPatHttpPurposeRootActionIdV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
 import { isDeploymentReadActionIdV1, isDeploymentPreparationActionIdV1,
     deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { readDeploymentReadAuthorizationInTx, readAdmittedRegistryAppUpdateScopeInTx } from '@/app/deployments/deploymentReadAuthorization';
+import { readDeploymentReadAuthorizationInTx, readAdmittedRegistryAppUpdateScopeInTx,
+    readAdmittedDeploymentDataQueryScopeInTx } from '@/app/deployments/deploymentReadAuthorization';
 import { loadDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
 import { readDeploymentLinkReviewedSetupHttpPurpose } from '@/app/deployments/deploymentLinkReviewedChildAuthorization';
 import { admitDeploymentMachineInTx, canDeployDeploymentEnvironment } from '@/app/deployments/deploymentAdmission';
@@ -24,6 +25,7 @@ import { isDeploymentPreparationHttpPurposeInTx, readDeploymentPreparationSource
     readDeploymentLinkPreparationHttpPurpose,
     readDeploymentDomainPreparationHttpPurpose,
     readDeploymentEnvironmentContentPreparationHttpPurpose,
+    isDeploymentMoveToRepositoryHttpEffect, readDeploymentMoveToRepositoryHttpPurpose,
     readDeploymentPreparationHttpReadPurpose,
     isDeploymentCandidatePublicationHttpPurposeInTx,
     isDeploymentCandidatePublicationEffect,
@@ -52,7 +54,7 @@ import { ProjectSourcesReadInputV1Schema } from '@happier-dev/protocol/projects/
 import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { ExternalActionActionIdV1Schema, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, bindExternalActionExecutionAuthorizationHttpPathV1, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationVerifyRequestV1Schema, isExternalActionResolvedTargetAllowedV1, isExternalActionWorkflowActionIdV1, isExternalActionMachineWorkflowActionIdV1, type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionExecutionAuthorizationV1, type ExternalActionMachineRpcExecutionV1, type ExternalActionTargetV1, type ExternalActionServerPrincipalV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { decodeExternalActionResolvedTargetV1, encodeExternalActionResolvedTargetV1, verifyExternalActionMachineRpcRequestV1, verifyExternalActionMachineRequestV1, isExternalActionAuthorizationBoundToEnvelope, type ExternalActionMachineRpcEventV1, type DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import type { ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { isDeploymentDomainNativeAdmissionV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { getActionSpec, isPluginProvenanceOnlyActionId, isSessionTargetPreparationAction, isScmDiffSummaryRunAction, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { ActionIdSchema, ACCOUNT_API_TOKENS_LIST_ACTION_ID_V1, SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1,
@@ -96,6 +98,9 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
     type ManagedActivityRpcRequestV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
+import { ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { requireActiveManagedResizeInTx } from '@/app/machines/managed/managedRows';
+import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1, resolveManagedMachineEnrollmentAdminAccessV1,
     resolveManagedMachineEnrollmentAgentIsolationV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveMachineAdmission, resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
@@ -479,10 +484,12 @@ export async function verifyWorkflowExternalActionRequesterAuthorization(input: 
 /** Only a Home-verified native member root may spend its captured finite admission. */
 export function readAdmittedDeploymentNativePrincipal(binding: ExternalActionExecutionAuthorizationBindingV1,
     authorityCeiling?: ExternalActionServerPrincipalV1['authority']): VerifiedExternalActionPrincipal | null {
-    const native = binding.deploymentNativeAdmission;
-    if (!native || !('kind' in native) || native.kind !== 'restart' && native.kind !== 'restore' && native.kind !== 'backup'
+    const query = binding.actionId === 'deployments.data.query'
+        && binding.deploymentReadAdmission?.actionId === binding.actionId ? binding.deploymentReadAdmission : undefined;
+    const native = query ?? binding.deploymentNativeAdmission;
+    if (!native || (!query && (!('kind' in native) || native.kind !== 'restart' && native.kind !== 'restore' && native.kind !== 'backup'))
         || binding.actionId !== native.actionId
-        || native.environmentId !== binding.environmentId || native.machineId !== binding.machineId
+        || (!query && native.environmentId !== binding.environmentId) || native.machineId !== binding.machineId
         || native.installationId !== binding.installationId || binding.target.kind !== 'machine'
         || binding.target.machineId !== binding.machineId) return null;
     const captured = projectAcceptedDeploymentPrincipal(binding);
@@ -524,7 +531,7 @@ export async function readCurrentExternalActionHandoffBindingInTx(reader: Tx, in
 }
 
 type IssuedAcquireNativeFactPurpose = Readonly<{ kind: 'issued-managed-acquire-native-fact'; report: ManagedControllerReportV1 }>;
-type IssuedIntentNativeFactPurpose = Readonly<{ kind: 'issued-managed-intent-native-fact'; report: ManagedControllerIntentReportV1 }>;
+type IssuedIntentNativeFactPurpose = Readonly<{ kind: 'issued-managed-intent-native-fact'; report: ManagedControllerIntentReportV1 | ManagedControllerResizeReportV1 }>;
 type IssuedNativeCredentialFactPurpose = Readonly<{ kind: 'issued-managed-native-credential-fact'; report: ReturnType<typeof ManagedControllerCredentialDeliveryReportV1Schema.parse> }>;
 type RetainedDiscussionPublicationPurpose = Readonly<{ kind: 'retained-discussion-publication'; source: SessionInputSourceSessionV1 }>;
 type ExternalActionVerificationPurpose = IssuedAcquireNativeFactPurpose | IssuedIntentNativeFactPurpose | IssuedNativeCredentialFactPurpose
@@ -532,7 +539,7 @@ type ExternalActionVerificationPurpose = IssuedAcquireNativeFactPurpose | Issued
 
 function readDeploymentChildReceiptContinuation(binding: ExternalActionExecutionAuthorizationBindingV1,
     routing: DeploymentChildRoutingV1): DeploymentReceiptContinuation | undefined {
-    return routing.kind === 'prepare' || routing.kind === 'review' || routing.kind === 'domain' || routing.kind === 'domainDiscover' ? undefined : {
+    return routing.kind === 'dataRole' || routing.kind === 'prepare' || routing.kind === 'review' || routing.kind === 'domain' || routing.kind === 'domainDiscover' ? undefined : {
         deploymentId: routing.deploymentId, actionOperationId: routing.actionOperationId,
         environmentId: routing.input.environmentId, installationId: binding.installationId,
     };
@@ -588,6 +595,21 @@ async function isRetainedDiscussionPublicationSourceCurrentInTx(reader: Tx,
     return retained.status === 'available' && retained.progress.mode === 'return' && !retained.progress.workflow
         && retained.progress.acceptedTurnId === source.sourceTurnId
         && sameStrictJsonValue(retained.progress.discussion, source.discussionAddressing);
+}
+
+/** The active resize request already admitted its actor; native facts do not re-check access or intent. */
+async function isIssuedResizeNativeFactReportInTx(reader: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+    report: ManagedControllerResizeReportV1): Promise<boolean> {
+    if (binding.actionId !== MANAGED_RESIZE_ACTION_ID_V1 || binding.serverIdentityId !== report.homeId
+        || binding.requestId !== report.requestId || binding.managedAdmission?.actionId !== binding.actionId
+        || binding.managedAdmission.input.managedId !== report.managedId) return false;
+    try {
+        const row = await requireActiveManagedResizeInTx(reader, report);
+        return row.custodianAccountId === binding.custodianAccountId;
+    } catch (error) {
+        if (!(error instanceof ManagedMachineError)) throw error;
+        return false;
+    }
 }
 
 /** Retirement closes effects, not reports of the one already-submitted native tuple. */
@@ -1162,12 +1184,18 @@ function isRegistryAppUpdateReadEffect(binding: ExternalActionExecutionAuthoriza
 /** The installed service/deployment owner derives its Environment from current custody. */
 function isDeploymentReadPreparation(binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string): boolean {
     const rootActionId = binding.actionId;
+    if (rootActionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
+        && isDeploymentEnvironmentUpdateNativeAdmissionV1(binding.deploymentNativeAdmission)
+        && binding.deploymentNativeAdmission.defaultsFor !== undefined)
+        return effectActionId === 'deployments.environments.get' || effectActionId === 'projects.sources.read';
     if (isDeploymentMembershipActionIdV1(rootActionId, binding.deploymentPreparationAdmission)
         && isDeploymentDomainMetadataReadActionIdV1(effectActionId)) return true;
     if (isDeploymentObservationReadActionIdV1(rootActionId)) return effectActionId === 'deployments.environments.get'
         || effectActionId === 'deployments.receipts.get';
     if (isDeploymentEnvironmentMetadataReadActionIdV1(rootActionId)) return effectActionId === 'deployments.environments.get';
-    if (rootActionId === 'deployments.targets.link' || rootActionId === 'deployments.bindings.set'
+    if (rootActionId === 'deployments.bindings.set') return effectActionId === 'deployments.environments.get'
+        || effectActionId === 'deployments.receipts.get';
+    if (rootActionId === 'deployments.targets.link'
         || rootActionId === 'deployments.targets.unlink' || rootActionId === 'deployments.environments.delete')
         return effectActionId === 'deployments.environments.get';
     if (rootActionId === 'deployments.receipts.observe') return effectActionId === 'deployments.environments.get'
@@ -1237,12 +1265,14 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         && (proof.reviewedChild === undefined || proof.reviewedChild.role === 'template.deploy');
     const reviewedDomainEffect = isDeploymentDomainAddActionIdV1(effectActionId)
         && proof.reviewedChild?.actionId === effectActionId
-        && proof.reviewedChild.deploymentNativeAdmission?.actionId === effectActionId
+        && isDeploymentDomainNativeAdmissionV1(proof.reviewedChild.deploymentNativeAdmission)
+        && proof.reviewedChild.deploymentNativeAdmission.actionId === effectActionId
         && proof.reviewedChild.deploymentNativeAdmission.authoredMetadataDigest !== undefined
         && deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, effectActionId)
             === effectActionId;
     const createPreparationEffect = isDeploymentCreateHttpEffect(binding, effectActionId);
-    const targetRetentionPurpose = readDeploymentTargetRetentionHttpPurpose(binding, effectActionId, proof);
+    const movePreparationEffect = isDeploymentMoveToRepositoryHttpEffect(binding, effectActionId, proof.reviewedChild);
+    const targetRetentionPurpose = await readDeploymentTargetRetentionHttpPurpose(db, binding, effectActionId, proof);
     const preparationRead = await readDeploymentPreparationHttpReadPurpose(db, binding, effectActionId, proof,
         actionId => isAccountActionHttpOperation(actionId, proof));
     const machineSetupEffect = isMachineSetupPlanOrApplyActionIdV1(effectActionId);
@@ -1274,7 +1304,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         sectionArchive: isSessionSectionArchiveEffectV1(binding.actionId, effectActionId),
         stopChild: isSessionStopChildEffectV1(binding.actionId, effectActionId),
     };
-    const crossesEffectFamily = setupPreparationRead || createPreparationEffect || Boolean(targetRetentionPurpose)
+    const crossesEffectFamily = setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
         || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || linkReviewedSetupRead || reviewedDomainEffect
         || teardownDomainContinuation || membershipDomainContinuation;
     const effectFamilyAdmitted = (hasMatchingExecutionEffectFamily(binding.actionId, effectActionId) || crossesEffectFamily)
@@ -1282,7 +1312,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
             && (isContributedActionRoot(binding.actionId)
                 || !('authentication' in binding) && binding.actionId === 'approval.request.create'
                 || Object.values(sibling).some(Boolean) || crossesEffectFamily || templateDeployEffect));
-    const usesRootCredential = sibling.docDecision || templateDeployEffect || sibling.deploymentRead
+    const usesRootCredential = sibling.docDecision || templateDeployEffect || sibling.deploymentRead || movePreparationEffect
         || linkReviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory
         || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile;
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
@@ -1309,15 +1339,29 @@ async function verifyCommon(
         if (proof.reviewedChild) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
         const packet = proof.deploymentChildExecution;
         if (packet.externalActionExecution.authorization.token !== proof.authorizationToken) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
+        const routing = packet.externalActionExecution.deploymentChildRouting;
+        const dataRoleReceiver = routing?.kind === 'dataRole' ? await db.machine.findUnique({ where: { id: routing.machineId }, select: {
+            accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true } }) : null;
+        // The installed receiver spends the source-signed admitted packet. Its
+        // root binding and source signature are verified by the recursive owner.
+        const admittedDataRoleContinuation = routing?.kind === 'dataRole'
+            && dataRoleReceiver?.installationPublicKey && dataRoleReceiver.installationId === routing.installationId
+            && classifyMachineAvailabilityState(dataRoleReceiver) === 'available'
+            && verifyExternalActionMachineRequestV1({ authorizationToken: proof.authorizationToken,
+                effectActionId: effectActionId.data, target, installationId: routing.installationId,
+                requestId: packet.externalActionExecution.authorization.binding.requestId,
+                method: proof.method, path: proof.path, body: proof.body, deploymentChildExecution: packet,
+                ...(proof.idempotencyKey === undefined ? {} : { idempotencyKey: proof.idempotencyKey }),
+                publicKey: dataRoleReceiver.installationPublicKey, signature: proof.machineSignature });
         const verified = await verifyExternalActionMachineRpcExecution(packet.externalActionExecution, {
             method: packet.method, requestId: packet.requestId, paramsPresent: packet.paramsPresent, paramsDigest: packet.paramsDigest,
+            ...(admittedDataRoleContinuation ? { admittedDataRoleContinuation: true } : {}),
             onRefusal: proof.onRefusal,
             resolveCurrentSessionMachine: proof.resolveCurrentSessionMachine });
-        const routing = packet.externalActionExecution.deploymentChildRouting;
         if (!verified || !routing || !(verified.binding.deploymentChildRoot === true)
             || effectActionId.data !== routing.actionId && !isDeploymentReadPreparation(verified.binding, effectActionId.data)
             || !sameStrictJsonValue(target, verified.target)) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
-        const receiver = await db.machine.findUnique({ where: { id: routing.machineId }, select: {
+        const receiver = dataRoleReceiver ?? await db.machine.findUnique({ where: { id: routing.machineId }, select: {
             accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true } });
         if (!receiver?.installationPublicKey || receiver.installationId !== routing.installationId
             || classifyMachineAvailabilityState(receiver) !== 'available') return refuseExternalActionExecutionRequest('deployment_child_http', proof);
@@ -1327,7 +1371,7 @@ async function verifyCommon(
                 deploymentChildExecution: packet, ...(proof.idempotencyKey === undefined ? {} : { idempotencyKey: proof.idempotencyKey }),
                 publicKey, signature: proof.machineSignature });
         let signer = { machineId: routing.machineId, installationId: routing.installationId, custodianAccountId: receiver.accountId };
-        if (!verifySignature(routing.installationId, receiver.installationPublicKey)) {
+        if (!admittedDataRoleContinuation && !verifySignature(routing.installationId, receiver.installationPublicKey)) {
             const domainAdmission = verified.deploymentChildAdmission?.domainAdmission;
             if (!packet.archiveOrigin && effectActionId.data === routing.actionId && domainAdmission
                 && proof.method.toUpperCase() === 'POST'
@@ -1396,6 +1440,8 @@ async function verifyCommon(
         ? ManagedControllerReportV1Schema.safeParse(proof.body) : null;
     const intentReport = proof.method.toUpperCase() === 'POST' && proof.path.split('?')[0] === '/v1/machines/managed/controller/report-intent'
         ? ManagedControllerIntentReportV1Schema.safeParse(proof.body) : null;
+    const resizeReport = proof.method.toUpperCase() === 'POST' && proof.path.split('?')[0] === '/v1/machines/managed/controller/report-resize'
+        ? ManagedControllerResizeReportV1Schema.safeParse(proof.body) : null;
     const nativeReport = proof.method.toUpperCase() === 'POST' && proof.path.split('?')[0] === '/v1/machines/managed/controller/report'
         ? ManagedControllerCredentialDeliveryReportV1Schema.safeParse(proof.body) : null;
     const purpose: ExternalActionVerificationPurpose | undefined = report?.success
@@ -1403,6 +1449,8 @@ async function verifyCommon(
         ? { kind: 'issued-managed-acquire-native-fact', report: report.data }
         : intentReport?.success && await isIssuedIntentNativeFactReportInTx(db, binding, intentReport.data)
             ? { kind: 'issued-managed-intent-native-fact', report: intentReport.data }
+            : resizeReport?.success && await isIssuedResizeNativeFactReportInTx(db, binding, resizeReport.data)
+                ? { kind: 'issued-managed-intent-native-fact', report: resizeReport.data }
             : nativeReport?.success && effectActionId.data === binding.actionId
                 && await isIssuedNativeCredentialFactReportInTx(db, binding, nativeReport.data)
                 ? { kind: 'issued-managed-native-credential-fact', report: nativeReport.data }
@@ -2301,6 +2349,12 @@ function isDeploymentApprovalMetadataHttpPurpose(verified: VerifiedExternalActio
 function isDeploymentBindingPreparationHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
     proof: ExternalActionExecutionRequestProof): boolean {
     const root = verified.binding.actionId;
+    if (root === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && verified.effectActionId === 'deployments.receipts.get'
+        && isAccountActionHttpOperation('deployments.receipts.get', proof)) {
+        const read = DeploymentActionInputSchemasV1['deployments.receipts.get'].safeParse(proof.routeInput);
+        return read.success && read.data.serverId === verified.binding.serverIdentityId
+            && read.data.environmentId === verified.binding.environmentId;
+    }
     if ((root !== DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && root !== DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1)
         || verified.effectActionId !== root && verified.effectActionId !== 'deployments.environments.get') return false;
     if (isAccountActionHttpOperation('deployments.environments.get', proof)) {
@@ -2369,6 +2423,45 @@ async function isDeploymentNativeReadHttpPurpose(verified: VerifiedExternalActio
     if (isAccountEncryptionCurrentnessHttpRead(proof)) return true;
     const artifact = /^\/v1\/artifacts\/([^/?#]+)$/u.exec(proof.path);
     return artifact !== null && current.artifactIds.some(id => encodeURIComponent(id) === artifact[1]);
+}
+
+/** Query retains one signed finite read admission, including its exact installed secret acquisition. */
+async function readDeploymentDataQueryHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
+    proof: ExternalActionExecutionRequestProof): Promise<Pick<VerifiedExternalActionExecutionRequest,
+        'acceptedDeploymentReceipt' | 'deploymentChildArtifactRead'> | false> {
+    const admission = verified.binding.deploymentReadAdmission;
+    if (admission?.actionId !== 'deployments.data.query') return false;
+    if (verified.effectActionId === admission.actionId && proof.method.toUpperCase() === 'POST'
+        && proof.path === `/v1/deployments/environments/${encodeURIComponent(admission.environmentId)}/secret-launch-admission`) {
+        const secret = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);
+        if (!secret.success || secret.data.materialization.kind !== 'dataRole') return false;
+        const body = secret.data, materialization = secret.data.materialization;
+        return body.serverId === verified.binding.serverIdentityId && body.environmentId === admission.environmentId
+            && body.targetLinkId === admission.targetLinkId && body.machineId === admission.machineId
+            && body.installationId === admission.installationId && materialization.deploymentId === admission.deploymentId
+            && materialization.expectedRevision === admission.expectedRevision
+            && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, body)) ? {} : false;
+    }
+    if (verified.effectActionId === 'deployments.environments.get'
+        && isAccountActionHttpOperation(verified.effectActionId, proof)
+        && sameManagedInput(proof.routeInput, { serverId: verified.binding.serverIdentityId, environmentId: admission.environmentId })) {
+        return { acceptedDeploymentReceipt: { read: { environmentId: admission.environmentId, contentCustody: true } } };
+    }
+    if (verified.effectActionId === 'deployments.receipts.get' && isAccountActionHttpOperation(verified.effectActionId, proof)) {
+        const address = { serverId: verified.binding.serverIdentityId, deploymentId: admission.deploymentId };
+        if (sameManagedInput(proof.routeInput, address)
+            || sameManagedInput(proof.routeInput, { ...address, environmentId: admission.environmentId })) {
+            return { acceptedDeploymentReceipt: { read: { environmentId: admission.environmentId,
+                deploymentId: admission.deploymentId, contentCustody: true } } };
+        }
+    }
+    if (verified.effectActionId !== admission.actionId || !isReadOnlyArtifactHttpPurpose(proof)) return false;
+    if (isAccountEncryptionCurrentnessHttpRead(proof)) return {};
+    const artifact = /^\/v1\/artifacts\/([^/?#]+)$/u.exec(proof.path);
+    if (!artifact) return false;
+    const scope = await readAdmittedDeploymentDataQueryScopeInTx(db, admission);
+    const content = scope?.artifactContents.find(reference => encodeURIComponent(reference.contentArtifactId) === artifact[1]);
+    return content ? { deploymentChildArtifactRead: { content, requesterAccountId: verified.binding.accountId } } : false;
 }
 
 /** Backup and restore spend finite native admission; resource readers retain their own content boundary. */
@@ -2527,6 +2620,8 @@ export function isDeploymentNativeHttpPurpose(verified: Pick<VerifiedExternalAct
 async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof): Promise<boolean> {
     const root = verified.binding.actionId;
+    const movePreparation = await readDeploymentMoveToRepositoryHttpPurpose(db, verified.binding, verified.effectActionId, proof);
+    if (movePreparation !== null) return movePreparation;
     if (isExternalActionConnectedAccountInventoryHttpPurpose(verified.binding, verified.effectActionId, proof)) return true;
     const preparationRead = verified.signedChildPurpose.preparationRead;
     if (preparationRead && isDeploymentDomainMetadataReadActionIdV1(preparationRead.actionId)) return true;
@@ -3185,9 +3280,12 @@ export async function verifyExternalActionDomainExecutionRequest(
                     || routing.kind === 'prepare' && proof.method.toUpperCase() === 'GET'
                         && await isDeploymentCandidatePublicationHttpPurposeInTx(db, verified.binding, verified.effectActionId, proof);
                 if (!purpose) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
-                if (typeof purpose === 'object') deploymentChildArtifactRead = {
-                    content: purpose.artifactContentReference, requesterAccountId: verified.binding.accountId,
-                };
+                if (typeof purpose === 'object') {
+                    if ('artifactContentReference' in purpose) deploymentChildArtifactRead = {
+                        content: purpose.artifactContentReference, requesterAccountId: verified.binding.accountId,
+                    };
+                    else backupHttpPurpose = { acceptedDeploymentReceipt: { read: purpose.metadataRead } };
+                }
             }
         }
     } else if (verified.binding.registryAppUpdateAdmission) {
@@ -3216,6 +3314,12 @@ export async function verifyExternalActionDomainExecutionRequest(
         // Restart consumes its native handle, not Environment, receipt or Artifact
         // content. Only transport of the exact admitted root/codec remains.
         if (!isAdmittedRootRelay && !readsExecutionMachine) return refuseExternalActionExecutionRequest('deployment_restart_purpose', proof);
+    } else if (verified.binding.actionId === 'deployments.data.query') {
+        if (!isAdmittedRootRelay && !readsExecutionMachine) {
+            const purpose = await readDeploymentDataQueryHttpPurpose(verified, proof);
+            if (!purpose) return refuseExternalActionExecutionRequest('deployment_native_read_purpose', proof);
+            backupHttpPurpose = purpose;
+        }
     } else if (isDeploymentReadActionIdV1(verified.binding.actionId)) {
         if (!await isDeploymentNativeReadHttpPurpose(verified, proof, isAdmittedRootRelay || readsExecutionMachine)) return refuseExternalActionExecutionRequest('deployment_native_read_purpose', proof);
     } else if (verified.signedChildPurpose.preparationRead
@@ -3930,6 +4034,8 @@ export async function verifyExternalActionMachineRpcExecution(
         paramsPresent?: boolean; paramsDigest?: string;
         /** Host-only issuer purpose: a spawn proof never directly dispatches a credential effect. */
         nativeCredentialSpawnChildIssuance?: true;
+        /** Host-only: verifyCommon has authenticated the installed data-role receiver's continuation signature. */
+        admittedDataRoleContinuation?: true;
         workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
         workspaceSyncSourceWriterTargetRouting?: WorkspaceSyncSourceWriterTargetRoutingV1;
         workspaceSyncTargetRouting?: WorkspaceSyncTargetRoutingV1;
@@ -4057,7 +4163,8 @@ export async function verifyExternalActionMachineRpcExecution(
                 ...(digestOnly ? { paramsPresent: request.paramsPresent, paramsDigest: request.paramsDigest } : { params: request.params }),
                 deploymentChildRouting: routing.data, publicKey: machine.installationPublicKey, signature: execution.machineSignature })) return refuseExternalActionExecutionRequest('deployment_child_signature', { rpc: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD });
         let deploymentChildAdmission = await readDeploymentChildAdmissionInTx(db, binding, routing.data, {
-            authenticationAuthority: principal.authority, authenticationEvidence: principal.authenticationEvidence });
+            authenticationAuthority: principal.authority, authenticationEvidence: principal.authenticationEvidence },
+        request.admittedDataRoleContinuation);
         if (!deploymentChildAdmission || 'ok' in deploymentChildAdmission) {
             return refuseExternalActionExecutionRequest('deployment_child_admission', {
                 rpc: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, onRefusal: request.onRefusal,

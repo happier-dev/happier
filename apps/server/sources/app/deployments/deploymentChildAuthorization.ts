@@ -1,4 +1,5 @@
-import { DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1, type DeploymentChildRoutingV1 } from '@happier-dev/protocol';
+import { DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1,
+    DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, type DeploymentChildRoutingV1 } from '@happier-dev/protocol';
 import { isDeploymentDomainRemoveActionIdV1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentStateV1Schema, getDeploymentTargetLinkLineageV1, isDeploymentRollbackSourceEligibleV1,
     type EnvironmentDomainSecretLaunchAdmissionV1 } from '@happier-dev/deployment-protocol';
@@ -22,6 +23,10 @@ import { readAcceptedDeploymentDomainInTx, hasCurrentDeploymentDomainCaptureInTx
 import { readTemplateDeploymentEnvironmentIdInTx, readAdmittedCreateDeploymentEnvironmentCustodyInTx,
     readDeploymentPreparationEnvironmentIdInTx } from './deploymentPreparationAuthorization';
 import { readDeploymentMembershipAdmissionInTx } from './deploymentMembershipService';
+import { readDeploymentTargetAuthorizationInTx, readAdmittedDeploymentDataQueryScopeInTx } from './deploymentReadAuthorization';
+import type { DeploymentContentReference } from './deploymentStoredContent';
+import { projectManagedMachine } from '@/app/machines/managed/managedMachineProjection';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 export type DeploymentChildAdmission = Readonly<{
     binding: ExternalActionExecutionAuthorizationBindingV1; routing: DeploymentChildRoutingV1;
@@ -30,6 +35,10 @@ export type DeploymentChildAdmission = Readonly<{
     destinationCodecAdmission?: SocketRpcMachineAdmissionContextV1;
     /** Populated only after authentication verifies the captured controller's signature. */
     domainAdmission?: EnvironmentDomainSecretLaunchAdmissionV1;
+    /** Exact read scope captured by the reviewed role bootstrap admission. */
+    dataRoleArtifactContents?: readonly DeploymentContentReference[];
+    /** Exact enrolled allocation admitted for this signed pre-restore snapshot child. */
+    snapshotManagedMachine?: ManagedMachineV1;
 }>;
 
 export { isDeploymentPreparationMachineReadHttpPurposeInTx } from './deploymentPreparationAuthorization';
@@ -37,11 +46,59 @@ export { isDeploymentPreparationMachineReadHttpPurposeInTx } from './deploymentP
 /** Consumers retain this request's admission instead of repeating the job lookup. */
 export async function readDeploymentChildAdmissionInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     routing: DeploymentChildRoutingV1, authentication: DeploymentAuthentication = {},
+    admittedDataRoleContinuation?: true,
 ): Promise<DeploymentChildAdmission | ActionExecuteFailure | null> {
     if (deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, routing.actionId) !== routing.actionId
         || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId
         || routing.input.serverId !== binding.serverIdentityId
         || binding.environmentId !== undefined && binding.environmentId !== routing.input.environmentId) return null;
+    if (routing.kind === 'snapshot') {
+        const native = binding.deploymentNativeAdmission;
+        if (native?.kind !== 'restore' || native.mode !== 'confirm' || native.snapshot === false
+            || native.environmentId !== routing.input.environmentId || native.targetLinkId !== routing.input.targetLinkId
+            || native.machineId !== routing.input.machineId || native.installationId !== routing.input.installationId
+            || native.prepareOperationId !== routing.input.prepareOperationId || native.expectedRevision !== routing.input.expectedRevision) return null;
+        const row = await tx.managedMachine.findFirst({ where: { id: routing.managedId,
+            homeId: binding.serverIdentityId, enrolledMachineId: native.machineId,
+            controllerMachineId: routing.machineId, controllerInstallationId: routing.installationId,
+            intentRevision: routing.intentRevision } });
+        return row ? { binding, routing, snapshotManagedMachine: projectManagedMachine(row) } : null;
+    }
+    if (routing.kind === 'dataRole') {
+        // The receiver signs the already admitted finite effect. Only content
+        // membership is read here; requester permission is not admitted again.
+        if (admittedDataRoleContinuation) {
+            const scope = await readAdmittedDeploymentDataQueryScopeInTx(tx, {
+                actionId: 'deployments.data.query', ...routing.input, targetLinkId: routing.targetLinkId,
+                deploymentId: routing.deploymentId, machineId: routing.machineId, installationId: routing.installationId,
+            });
+            return scope ? { binding, routing, dataRoleArtifactContents: [
+                ...scope.artifactContents, ...(routing.candidateContent ? [routing.candidateContent] : []),
+            ] } : null;
+        }
+        const loaded = await loadDeploymentEnvironmentInTx(tx, binding.accountId, routing.input.serverId,
+            routing.input.environmentId, authentication);
+        if (!loaded.ok || !loaded.admission.canManage || loaded.row.deletedAt
+            || loaded.row.revision !== routing.input.expectedRevision) return null;
+        if (loaded.row.controllerMachineId !== binding.machineId) {
+            return projectDeploymentControllerPlacementFailure(loaded.row.controllerMachineId);
+        }
+        const selected = await readDeploymentTargetAuthorizationInTx(tx, loaded.row, {
+            actionId: 'deployments.data.query', environmentId: routing.input.environmentId,
+            expectedRevision: routing.input.expectedRevision, deploymentId: routing.deploymentId,
+            targetLinkId: routing.targetLinkId, machineId: routing.machineId, installationId: routing.installationId });
+        if (!selected || await admitDeploymentMachinesInTx(tx, loaded.admission.owner, [
+            { machineId: binding.machineId, installationId: binding.installationId, role: 'controller' },
+            { machineId: routing.machineId, installationId: routing.installationId, role: 'target' },
+        ])) return null;
+        if (routing.candidateContent && await admitDeploymentStoredContentInTx(tx, binding.accountId,
+            loaded.admission.owner, routing.candidateContent, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, 'read')) return null;
+        const destination = await resolveMachineAdmissionInTx(tx, { actorAccountId: binding.accountId,
+            machineId: routing.machineId, requiredRole: 'use' });
+        if (destination.kind !== 'admitted' || destination.installationId !== routing.installationId) return null;
+        const { kind: _kind, ...destinationCodecAdmission } = destination;
+        return { binding, routing, destinationCodecAdmission };
+    }
     if (routing.kind === 'domain' && routing.actionId !== 'deployments.domains.verify') {
         if (routing.actionOperationId === undefined) return null;
         const domainJob = await readAcceptedDeploymentDomainInTx(tx, binding, {
@@ -93,7 +150,8 @@ export async function readDeploymentChildMachineReadInTx(tx: Tx, admitted: Deplo
         return { machineId, installationId: admitted.destinationCodecAdmission.installationId,
             actorAccountId: binding.accountId, routing, codecAdmission: admitted.destinationCodecAdmission };
     }
-    if (routing.kind === 'domain' || routing.kind === 'domainDiscover') {
+    if (routing.kind === 'dataRole') return null;
+    if (routing.kind === 'domain' || routing.kind === 'domainDiscover' || routing.kind === 'snapshot') {
         if (archiveOrigin || machineId !== routing.machineId) return null;
         const machine = await tx.machine.findUnique({ where: { id: machineId }, select: { accountId: true, installationId: true,
             metadata: true, daemonState: true, dataEncryptionKey: true,
@@ -176,7 +234,7 @@ export async function readDeploymentChildMachineReadInTx(tx: Tx, admitted: Deplo
 
 /** Accepted jobs retain their captured custody; preparation still needs current requester admission. */
 async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
-    binding: ExternalActionExecutionAuthorizationBindingV1, routing: DeploymentChildRoutingV1,
+    binding: ExternalActionExecutionAuthorizationBindingV1, routing: Exclude<DeploymentChildRoutingV1, { kind: 'dataRole' | 'snapshot' }>,
     authentication: DeploymentAuthentication = {},
 ): Promise<boolean | ActionExecuteFailure> {
     if (routing.kind === 'domain' || routing.kind === 'domainDiscover') {
@@ -278,7 +336,7 @@ async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
 
 /** One relational existence lookup; no requester, Team or Source permission evaluation after admission. */
 async function isAcceptedDeploymentChildInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
-    routing: Exclude<DeploymentChildRoutingV1, { kind: 'prepare' | 'review' | 'domain' | 'domainDiscover' }>,
+    routing: Exclude<DeploymentChildRoutingV1, { kind: 'prepare' | 'review' | 'domain' | 'domainDiscover' | 'dataRole' | 'snapshot' }>,
 ): Promise<boolean> {
     const member: Prisma.DeploymentTargetLinkWhereInput = { machines: { some: {
         machineId: routing.machineId, installationId: routing.installationId,

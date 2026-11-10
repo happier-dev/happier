@@ -11,6 +11,7 @@ import { DirectRouteGrantRequestV2Schema } from '@happier-dev/protocol/machines/
 import type { Tx } from '@/storage/inTx';
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { isDeploymentCandidatePublicationHttpPurposeInTx } from '@/app/deployments/deploymentPreparationAuthorization';
+import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 function readArtifactId(path: string): string | null {
     const match = /^\/v1\/artifacts\/([^/?#]+)$/u.exec(path);
@@ -40,8 +41,39 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
     proof: Readonly<{ method: string; path: string; body: unknown; routeInput?: unknown;
         nativeIncumbentSource?: DeploymentChildExecutionProofV1['nativeIncumbentSource'] }>,
     admittedChild?: DeploymentChildAdmission,
-): Promise<boolean | Readonly<{ artifactContentReference: DeploymentArtifactContentReferenceV1 }>> {
+): Promise<boolean | Readonly<{ artifactContentReference: DeploymentArtifactContentReferenceV1 }>
+    | Readonly<{ metadataRead: Readonly<{ environmentId: string; deploymentId?: string; contentCustody: true }> }>> {
     const method = proof.method.toUpperCase();
+    if (routing.kind === 'snapshot') {
+        const input = { homeId: routing.input.serverId, managedId: routing.managedId };
+        return method === 'POST' && !proof.nativeIncumbentSource
+            && proof.path === managedMachineActionEndpointPathV1('machines.managed.get')
+            && admittedChild?.snapshotManagedMachine?.id === routing.managedId
+            && sameStrictJsonValue(proof.body, input)
+            && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, input));
+    }
+    if (routing.kind === 'dataRole') {
+        if (method !== 'GET' || proof.body !== undefined || proof.nativeIncumbentSource) return false;
+        if (proof.path === '/v1/account/encryption/currentness' || proof.path === '/v1/features/authenticated') return true;
+        const artifactId = readArtifactId(proof.path);
+        if (artifactId) {
+            if (proof.routeInput !== undefined && !sameStrictJsonValue(proof.routeInput, { id: artifactId })) return false;
+            const content = admittedChild?.dataRoleArtifactContents?.find(reference => reference.contentArtifactId === artifactId);
+            return content ? { artifactContentReference: content } : false;
+        }
+        const metadata = [{ actionId: 'deployments.environments.get' as const, value: {
+            serverId: routing.input.serverId, environmentId: routing.input.environmentId } },
+        { actionId: 'deployments.receipts.get' as const, value: { serverId: routing.input.serverId,
+            environmentId: routing.input.environmentId, deploymentId: routing.deploymentId } }];
+        const selected = metadata.find(({ actionId, value }) => {
+            const spec = getActionSpec(actionId);
+            return spec.serverTransport !== undefined && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, value))
+                && bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema, input: value }).path === proof.path;
+        });
+        return selected ? { metadataRead: { environmentId: routing.input.environmentId,
+            ...(selected.actionId === 'deployments.receipts.get' ? { deploymentId: routing.deploymentId } : {}),
+            contentCustody: true } } : false;
+    }
     if (routing.kind === 'domain' || routing.kind === 'domainDiscover') {
         if (method === 'POST' && routing.kind === 'domain' && !proof.nativeIncumbentSource) {
             const domainAdmission = admittedChild?.domainAdmission;

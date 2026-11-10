@@ -3,19 +3,22 @@ import type { ExternalActionExecutionAuthorizationBindingV1, ReviewedActionChild
 import { computeActionInputApprovalDigestV1 } from '../actions/decisionAuthority.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { RPC_METHODS } from '../rpc/methods.js';
-import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import { sameStrictJsonValue, StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
-import { DEFAULT_DEPLOYMENT_ON_FAILURE_V1 } from './storedAppInputV1.js';
+import { DEFAULT_DEPLOYMENT_ON_FAILURE_V1, EnvironmentSecretBindingV1Schema } from './storedAppInputV1.js';
+import { DeploymentBindingsSetInputV1Schema } from './deploymentActionsV1.js';
 import { DeploymentDeployInputV1Schema, DeploymentDeployIntentInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentRollbackIntentInputV1Schema, DeploymentPromoteInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema } from './deploymentActionsV1.js';
 import { deploymentChildEffectActionIdForRootV1, isDeploymentDomainRemoveActionIdV1, isDeploymentDomainAddActionIdV1,
     isDeploymentMembershipActionIdV1,
-    DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from './deploymentActionIdsV1.js';
+    DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
+    DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 } from './deploymentActionIdsV1.js';
 import { DeploymentDomainAddInputV1Schema, DeploymentDomainAddPreparedInputV1Schema, DeploymentDomainRemoveInputV1Schema, DeploymentDomainVerifyInputV1Schema,
     DeploymentDomainPlacementV1Schema, DeploymentDomainTopologyV1Schema } from './deploymentDomainV1.js';
 import type { DeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
 import { DeploymentTemplateInstantiateInputV1Schema, readDeploymentTemplateDeployIntentV1 } from './deploymentTemplateInstantiationV1.js';
 import { DeploymentPromoteIntentInputV1Schema } from './deploymentPromoteIntentV1.js';
+import { DeploymentBackupRestoreConfirmInputV1Schema, DeploymentNativeSnapshotOfferV1Schema } from './deploymentBackupRestoreV1.js';
 import { DeploymentTeardownInputV1Schema, DeploymentTeardownActionInputV1Schema, DeploymentTeardownStepV1Schema } from './deploymentActionsV1.js';
 import { matchesDeploymentDomainPreparedInputV1,
     isDeploymentDomainNativeAdmissionV1, projectDeploymentNativeAdmissionV1 } from './deploymentCandidatePublicationV1.js';
@@ -24,6 +27,23 @@ export { isDeploymentChildRootActionIdV1, isDeploymentChildEffectActionIdV1, dep
     type DeploymentRootOperationV1, type DeploymentDomainChildActionIdV1 } from './deploymentActionIdsV1.js';
 
 const placement = { v: z.literal(1), machineId: id, installationId: id };
+/** The restore root retains the private reviewed offer; routing projects only admission references. */
+export const DeploymentSnapshotChildRpcV1Schema = lazyZodSchema(() => z.strictObject({
+    ...placement, kind: z.literal('snapshot'), actionId: z.literal('deployments.backups.restore'),
+    input: DeploymentBackupRestoreConfirmInputV1Schema, actionOperationId: id,
+    offer: DeploymentNativeSnapshotOfferV1Schema, label: id, reason: id,
+}).check(z.refine(value => value.machineId === value.offer.controller.machineId
+    && value.installationId === value.offer.controller.installationId
+    && value.input.snapshot !== false && sameStrictJsonValue(value.input.snapshotReview, value.offer))));
+/** The reviewed binding author supplies only the selected role's sealed recipient grant. */
+export const DeploymentDataRoleChildRpcV1Schema = lazyZodSchema(() => z.strictObject({
+    ...placement, kind: z.literal('dataRole'), actionId: z.literal('deployments.bindings.set'),
+    input: DeploymentBindingsSetInputV1Schema, targetLinkId: id, deploymentId: id, service: id,
+    use: EnvironmentSecretBindingV1Schema.check(z.refine(value => value.purpose === 'dataRole' && 'service' in value)),
+    grant: StrictJsonValueSchema,
+}).check(z.refine(value => value.use.purpose === 'dataRole' && 'service' in value.use
+    && value.use.service === value.service
+    && (!('set' in value.input) || value.input.set.some(binding => sameStrictJsonValue(binding, value.use))))));
 export const DeploymentTeardownReviewChildRpcV1Schema = lazyZodSchema(() => z.strictObject({
     ...placement, kind: z.literal('prepare'), actionId: z.literal('deployments.teardown'),
     input: z.strictObject({ serverId: id, environmentId: id, targetLinkId: id, reason: DeploymentTeardownInputV1Schema.shape.reason }),
@@ -72,6 +92,8 @@ const root = lazyZodSchema(() => z.discriminatedUnion('actionId', [
 
 /** Private finite child work. Content, authority and acceptance remain with their canonical owners. */
 export const DeploymentChildRpcV1Schema = lazyZodSchema(() => z.union([
+    DeploymentSnapshotChildRpcV1Schema,
+    DeploymentDataRoleChildRpcV1Schema,
     DeploymentTeardownReviewChildRpcV1Schema,
     DeploymentDomainChildRpcV1Schema, DeploymentDomainDiscoverChildRpcV1Schema,
     z.strictObject({ ...placement, kind: z.literal('teardown'), actionId: z.literal('deployments.teardown'),
@@ -91,6 +113,15 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
     rootPreparationAdmission?: DeploymentPreparationAdmissionV1; reviewedChild?: ReviewedActionChildHttpProofV1;
 }>): boolean {
     const child = input.child;
+    if (child.kind === 'snapshot') {
+        const original = DeploymentBackupRestoreConfirmInputV1Schema.safeParse(input.rootInput);
+        return input.rootActionId === child.actionId && original.success
+            && sameStrictJsonValue(original.data, child.input);
+    }
+    if (child.kind === 'dataRole') {
+        const original = DeploymentBindingsSetInputV1Schema.safeParse(input.rootInput);
+        return input.rootActionId === child.actionId && original.success && sameStrictJsonValue(original.data, child.input);
+    }
     if (input.rootActionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && input.rootInput !== undefined) {
         const rootTeardown = DeploymentTeardownActionInputV1Schema.safeParse(input.rootInput);
         if (rootTeardown.success && 'nothingDeployed' in rootTeardown.data) return false;
@@ -121,7 +152,7 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
             && (!('machines' in intent.data) || sameStrictJsonValue(intent.data.machines, child.input.machines));
     }
     if (isDeploymentMembershipActionIdV1(input.rootActionId ?? '', input.rootPreparationAdmission)
-        && (child.kind === 'domainDiscover' || child.kind === 'domain') && isDeploymentDomainAddActionIdV1(child.actionId)
+        && (child.kind === 'domainDiscover' || child.kind === 'domain') && child.actionId === DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1
         && (child.kind === 'domain' || child.input.membershipDeploymentId !== undefined)) {
         if (child.kind === 'domain') return true;
         const binding = input.rootBinding;
@@ -158,7 +189,7 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
         if (input.reviewedChild?.actionId !== 'deployments.domains.add' || child.actionId !== 'deployments.domains.add') return false;
         if (!input.reviewedChild.role.startsWith('template.domain:')) return false;
         const native = input.reviewedChild.deploymentNativeAdmission;
-        if (native && (native.actionId !== child.actionId || native.environmentId !== child.input.environmentId
+        if (native && (!isDeploymentDomainNativeAdmissionV1(native) || native.actionId !== child.actionId || native.environmentId !== child.input.environmentId
             || native.domainId !== child.input.domainId)) return false;
         if (child.kind === 'domainDiscover') return native && input.rootBinding
             ? matchesDeploymentDomainPreparedInputV1(child.input, { ...input.rootBinding,

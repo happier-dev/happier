@@ -24,9 +24,11 @@ import { BillingCapabilitiesV1Schema, RetentionCapabilitiesV1Schema, ProviderPri
   ManagedPrerequisiteV1Schema, ManagedLocalResourceFactsV1Schema, ProviderNativeOptionFactsV1Schema, MachineProvisionerNativeCauseV1Schema } from '../../machines/managed/providerFactsV1.js';
 export type { MachineProvisionerNativeCauseV1 } from '../../machines/managed/providerFactsV1.js';
 import { AcquireResultV1Schema, ManagedNativeOperationReferenceV1Schema, ManagedResourceV1Schema, ManagedRecoveryHintV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, SharedSavedSecretRefV1Schema, type AcquireResultV1 } from '../../machines/managed/providerFactsV1.js';
+import { MachineProvisionerSizeV1Schema as sizeSchema, MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1, type MachineProvisionerSizeDimensionV1, type MachineProvisionerSizeV1 } from '../../machines/managed/providerFactsV1.js';
+export { MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1, type MachineProvisionerSizeDimensionV1, type MachineProvisionerSizeV1 } from '../../machines/managed/providerFactsV1.js';
 import { createProtocolComposableSchema, ProtocolValidationError, defineProtocolObject, defineProtocolString, defineProtocolNumber, defineProtocolArray, defineProtocolLiteral, defineProtocolUnion, defineProtocolJsonValue, normalizePluginJsonSchema, pluginJsonValuesEqual, type ProtocolComposableSchema, type ProtocolJsonValue } from '../actions/protocolComposableSchema.js';
 
-export const MACHINE_PROVISIONER_EFFECT_ROLES_V1 = ['acquire', 'bootstrap', 'exec', 'putFile', 'power', 'destroy', 'rebuild', 'nativeCredentialApply', 'renew'] as const;
+export const MACHINE_PROVISIONER_EFFECT_ROLES_V1 = ['acquire', 'bootstrap', 'exec', 'putFile', 'power', 'destroy', 'rebuild', 'resize', 'snapshot', 'nativeCredentialApply', 'renew'] as const;
 export type MachineProvisionerEffectRoleV1 = typeof MACHINE_PROVISIONER_EFFECT_ROLES_V1[number];
 export type MachineProvisionerRoleV1 = 'check' | 'options' | 'inspect' | 'reconcile' | 'cleanup' | MachineProvisionerEffectRoleV1;
 
@@ -82,6 +84,18 @@ function machineProvisionerResultMatches(declared: PluginJsonSchemaV2, canonical
 // This is the public manifest/classic-schema consumer seam. Facts have their
 // existing Mini owners; there is no second provider-facts validation tree.
 const enrollmentRole = lazyDefinition(() => mini.enum(['server', 'personal', 'sandbox']));
+const resizeDimensionCapability = lazyDefinition(() => mini.discriminatedUnion('kind', [
+  mini.strictObject({ kind: mini.literal('supported'), requiresRestart: mini.boolean(), changes: mini.enum(['any', 'grow-only']) }),
+  mini.strictObject({ kind: mini.literal('unsupported'), code: mini.string().check(mini.minLength(1)) }),
+]));
+export const MachineProvisionerResizeCapabilitiesV1Schema = lazyDefinition(() => mini.strictObject({
+  cpuCores: resizeDimensionCapability, memoryBytes: resizeDimensionCapability, diskBytes: resizeDimensionCapability,
+}));
+export const MachineProvisionerSnapshotConsistencyV1Schema = lazyDefinition(() => mini.enum(['running', 'stopped', 'unknown']));
+export const MachineProvisionerSnapshotFactsV1Schema = lazyDefinition(() => mini.strictObject({
+  coverage: mini.strictObject({ rootDisk: mini.boolean(), attachedVolumes: mini.boolean() }),
+  cost: mini.strictObject({ kind: mini.literal('billed'), source: mini.string().check(mini.minLength(1)), price: mini.optional(ProviderPriceV1Schema) }),
+}));
 export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.strictObject({
   id: local(), title: PluginLocalizedStringV2Schema, icon: PluginActionIconV2Schema,
   resourceKind: z.string().check(z.trim(), z.minLength(1)),
@@ -94,7 +108,9 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   browserReachable: z.optional(z.boolean()),
   prerequisites: z.array(PluginDeclaredExecutableRefSchema),
   billing: BillingCapabilitiesV1Schema, retention: RetentionCapabilitiesV1Schema,
-  actions: z.strictObject({ check: local(), options: z.optional(local()), acquire: local(), bootstrap: local(), inspect: local(), power: z.optional(local()), destroy: local(), rebuild: z.optional(local()), renew: z.optional(local()) }),
+  actions: z.strictObject({ check: local(), options: z.optional(local()), acquire: local(), bootstrap: local(), inspect: local(), power: z.optional(local()), destroy: local(), rebuild: z.optional(local()), resize: z.optional(local()), snapshot: z.optional(local()), renew: z.optional(local()) }),
+  resize: z.optional(MachineProvisionerResizeCapabilitiesV1Schema),
+  snapshot: z.optional(MachineProvisionerSnapshotFactsV1Schema),
   // References the existing options Action editor, not a second duration
   // schema or an observed resource expiry. The unit belongs to that raw input.
   nativeDurationInput: z.optional(z.strictObject({ path: InputPathSchema, unit: z.enum(['milliseconds', 'seconds']) })),
@@ -113,6 +129,9 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   reconciliation: z.optional(z.strictObject({ nativeOperationSchema: strictPortableSchema, action: local(), cleanup: z.optional(local()),
     continueAcquire: z.optional(z.literal(true)) })),
 }).check(z.superRefine((descriptor, context) => {
+  if (Boolean(descriptor.actions.snapshot) !== Boolean(descriptor.snapshot)) {
+    context.addIssue({ code: 'custom', path: ['snapshot'], message: 'A snapshot Action requires its coverage and cost declaration.' });
+  }
   const purposes = new Set<string>();
   descriptor.credentialPurposeRequirements?.forEach((requirement, index) => {
     const paths = readInputPredicatePaths(requirement.optionalWhen);
@@ -134,8 +153,39 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   if (descriptor.retention.supportedIntents.includes('rebuild') && !descriptor.actions.rebuild) {
     context.addIssue({ code: 'custom', path: ['actions', 'rebuild'], message: 'Advertised rebuild requires a replacement-resource Action.' });
   }
+  if (descriptor.resize && MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1.some(dimension => descriptor.resize![dimension].kind === 'supported') && !descriptor.actions.resize) {
+    context.addIssue({ code: 'custom', path: ['actions', 'resize'], message: 'Supported resize dimensions require a resize Action.' });
+  }
 })));
 export type MachineProvisionerContributionV1 = z.infer<typeof MachineProvisionerContributionV1Schema>;
+
+/** Missing declarations explicitly mean unsupported, including older cloud adapters. */
+export function readMachineProvisionerResizeCapabilityV1(descriptor: Pick<MachineProvisionerContributionV1, 'resize'>, dimension: MachineProvisionerSizeDimensionV1) {
+  const capability = descriptor.resize?.[dimension];
+  return capability?.kind === 'supported' ? capability
+    : { kind: 'unsupported' as const, dimension, code: capability?.code ?? 'resize_unsupported' };
+}
+/** Admission captures this result once; native execution consumes the captured requirement. */
+export function readMachineProvisionerResizeRequirementsV1(descriptor: Pick<MachineProvisionerContributionV1, 'resize'>,
+  size: MachineProvisionerSizeV1, currentSize?: MachineProvisionerSizeV1) {
+  let requiresRestart = false;
+  for (const dimension of MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1) {
+    const requested = size[dimension];
+    if (requested === undefined || requested === currentSize?.[dimension]) continue;
+    const capability = readMachineProvisionerResizeCapabilityV1(descriptor, dimension);
+    if (capability.kind === 'unsupported') return capability;
+    if (capability.changes === 'grow-only' && currentSize?.[dimension] !== undefined && requested < currentSize[dimension]!) {
+      return { kind: 'unsupported' as const, dimension, code: 'resize_shrink_unsupported' };
+    }
+    requiresRestart ||= capability.requiresRestart;
+  }
+  return { kind: 'supported' as const, requiresRestart };
+}
+/** Execution metadata only: no policy, intent or reviewed-configuration revalidation. */
+export function managedMachineResizeRequiresRestartV1(descriptor: Pick<MachineProvisionerContributionV1, 'resize'>, size: MachineProvisionerSizeV1): boolean {
+  return MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1.some(dimension => size[dimension] !== undefined
+    && descriptor.resize?.[dimension].kind === 'supported' && descriptor.resize[dimension].requiresRestart);
+}
 
 /** Selectors a person can edit before supplying this conditionally required credential. */
 export function readMachineProvisionerCredentialPurposeSelectorPathsV1(
@@ -500,6 +550,21 @@ export const MachineProvisionerOptionsResultProtocolV1Schema = projectRoleSchema
 export const MachineProvisionerAcquireResultV1Schema = projectRoleSchema(AcquireResultV1Schema);
 export const MachineProvisionerBootstrapCarrierV1Schema = projectRoleSchema(ManagedBootstrapCarrierV1Schema);
 export const MachineProvisionerObservationV1Schema = projectRoleSchema(ProviderObservationV1Schema);
+export const MachineProvisionerSizeV1Schema = projectRoleSchema(sizeSchema);
+export const MachineProvisionerSnapshotResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({ kind: defineProtocolLiteral('unsupported'), code: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('confirmed'), snapshotId: defineProtocolString({ minLength: 1 }),
+    coverage: projectRoleSchema(MachineProvisionerSnapshotFactsV1Schema.shape.coverage),
+    cost: projectRoleSchema(MachineProvisionerSnapshotFactsV1Schema.shape.cost),
+    consistency: projectRoleSchema(MachineProvisionerSnapshotConsistencyV1Schema) }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('unknown'), code: defineProtocolString({ minLength: 1 }),
+    nativeCause: MachineProvisionerNativeCauseProtocolV1Schema.optional() }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('refused'), code: defineProtocolString({ minLength: 1 }),
+    nativeCause: MachineProvisionerNativeCauseProtocolV1Schema.optional() }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('failed'), code: defineProtocolString({ minLength: 1 }),
+    nativeCause: MachineProvisionerNativeCauseProtocolV1Schema.optional() }, { policy: 'closed' }),
+]);
+export type MachineProvisionerSnapshotResultV1 = ReturnType<typeof MachineProvisionerSnapshotResultV1Schema.parse>;
 /** Native wall-clock expiry only; the managed retention owner supplies any selected idle deadline. */
 export const MachineProvisionerRenewResultV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('unnecessary') }, { policy: 'closed' }),
@@ -512,6 +577,12 @@ export const MachineProvisionerPowerResultV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('unknown'), code: defineProtocolString({ minLength: 1 }).optional(), nativeCause: MachineProvisionerNativeCauseProtocolV1Schema.optional() }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('refused'), code: defineProtocolString({ minLength: 1 }), nativeCause: MachineProvisionerNativeCauseProtocolV1Schema.optional() }, { policy: 'closed' }),
 ]);
+export const MachineProvisionerResizeResultV1Schema = defineProtocolUnion([
+  MachineProvisionerPowerResultV1Schema,
+  defineProtocolObject({ kind: defineProtocolLiteral('unsupported'), dimension: projectRoleSchema(lazyDefinition(() => mini.enum(MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1))),
+    code: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' }),
+]);
+export type MachineProvisionerResizeResultV1 = ReturnType<typeof MachineProvisionerResizeResultV1Schema.parse>;
 export const MachineProvisionerDestroyResultV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('confirmed') }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('pending') }, { policy: 'closed' }),
@@ -598,6 +669,8 @@ function machineProvisionerRoleResultProjection(descriptor: MachineProvisionerCo
     case 'putFile': return MachineProvisionerPutFileResultV1Schema.jsonSchema;
     case 'nativeCredentialApply': return MachineProvisionerNativeCredentialApplyResultV1Schema.jsonSchema;
     case 'power': return MachineProvisionerPowerResultV1Schema.jsonSchema;
+    case 'resize': return MachineProvisionerResizeResultV1Schema.jsonSchema;
+    case 'snapshot': return MachineProvisionerSnapshotResultV1Schema.jsonSchema;
     case 'renew': return MachineProvisionerRenewResultV1Schema.jsonSchema;
     case 'destroy': return descriptor.reconciliation
       ? destroyResultProjection(descriptor.reconciliation.nativeOperationSchema)
@@ -647,7 +720,7 @@ function machineProvisionerRoleInputProjection(descriptor: MachineProvisionerCon
   }
   const roles = genericRoleSchemas(descriptor.reconciliation?.continueAcquire === true);
   const schema = role === 'check' ? roles.checkInput : role === 'acquire' ? roles.acquireInput
-    : role === 'bootstrap' ? roles.bootstrapInput : role === 'power' ? roles.powerInput : role === 'renew' ? roles.renewInput : role === 'rebuild' ? roles.rebuildInput
+    : role === 'bootstrap' ? roles.bootstrapInput : role === 'power' ? roles.powerInput : role === 'resize' ? roles.resizeInput : role === 'snapshot' ? roles.snapshotInput : role === 'renew' ? roles.renewInput : role === 'rebuild' ? roles.rebuildInput
       : role === 'exec' ? roles.execInput : role === 'putFile' ? roles.putFileInput : roles.resourceInput;
   if (role === 'check') return schema.jsonSchema;
   const key = role === 'acquire' ? 'launch' : 'resource';
@@ -805,6 +878,9 @@ export function defineMachineProvisionerSchemas<TLaunchInput, TLaunch, TResource
     acquireResult: defineAcquireResult(schemas.resource),
     rebuildInput: defineProtocolObject({ resource: schemas.resource, reviewedEffectDigest: defineProtocolString({ minLength: 1 }), guestHome }, closed),
     rebuildResult: defineRebuildResult(schemas.resource),
+    resizeInput: defineProtocolObject({ resource: schemas.resource, size: MachineProvisionerSizeV1Schema }, closed),
+    snapshotInput: defineProtocolObject({ resource: schemas.resource, expectedMachineRevision: defineProtocolNumber({ integer: true, minimum: 0 }),
+      label: defineProtocolString({ minLength: 1 }), reason: defineProtocolString({ minLength: 1 }) }, closed),
     bootstrapInput: defineProtocolObject({ resource: schemas.resource, credentialRef: projectRoleSchema(SharedSavedSecretRefV1Schema).optional(), bootstrapPublicKey: defineProtocolString({ minLength: 1 }).optional(), guestHostPublicKey }, closed),
     resourceInput: defineProtocolObject({ resource: schemas.resource }, closed),
     renewInput: defineProtocolObject({ resource: schemas.resource, deadlineAt: defineProtocolNumber({ minimum: 0 }).optional() }, closed),

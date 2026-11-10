@@ -180,6 +180,7 @@ declare module 'fastify' {
         externalActionDeploymentChildSigner?: VerifiedExternalActionExecutionRequest['deploymentChildSigner'];
         /** Request-local admitted job facts, consumed by the secret owner without another admission. */
         externalActionDeploymentChildAdmission?: VerifiedExternalActionExecutionRequest['deploymentChildAdmission'];
+        externalActionDeploymentTargetRetentionAdmission?: VerifiedExternalActionExecutionRequest['deploymentTargetRetentionAdmission'];
         externalActionDeploymentChildArtifactRead?: VerifiedExternalActionExecutionRequest['deploymentChildArtifactRead'];
         /** Exact HTTP read scope proven by this controller's accepted receipt. */
         externalActionAcceptedDeploymentRead?: NonNullable<VerifiedExternalActionExecutionRequest['acceptedDeploymentReceipt']>['read'];
