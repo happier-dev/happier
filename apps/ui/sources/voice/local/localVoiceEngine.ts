@@ -923,6 +923,7 @@ function startNativePermissionInput(admission: LocalVoiceCaptureAdmission, captu
   activeNativePermissionInput = createNativeVoicePermissionInput({
     controlSessionId: sessionId,
     signal: admission.captureAbortController.signal,
+    isConversationTurnPending: () => activeTurnAbortSessionId === sessionId,
     readOut: (text, listen, isCurrent, onReady) => readNativeTurnMessage(admission, captureAttempt, text, listen, isCurrent, onReady),
     commitTranscript: (text, localId) => voiceAgentSessions.commitUserTranscript(sessionId, text, localId),
     onResponding: () => voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId }),
@@ -1150,10 +1151,7 @@ async function stopAndSendRecordedTurn(
     }
 
     if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
-    if (permissionResponse) {
-      await permissionResponse(text ?? '');
-      return;
-    }
+    if (permissionResponse && await permissionResponse(text ?? '')) return;
     if (!text) {
       transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
       await resumeNativeVoiceListening(admission, captureAttempt);
@@ -1226,10 +1224,7 @@ async function stopSttAndSend(
     return;
   }
 
-  if (permissionResponse) {
-    await permissionResponse(endpointDecision.transcript);
-    return;
-  }
+  if (permissionResponse && await permissionResponse(endpointDecision.transcript)) return;
 
   await runVoiceTurnWithSendFailureHandling(sessionId, (signal) =>
     sendVoiceTextTurnImpl({

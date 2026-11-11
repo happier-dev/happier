@@ -23,7 +23,7 @@ export type NativeVoicePermissionInput = Readonly<{
   beginTurn(): void;
   waitForPendingReadout(): Promise<boolean>;
   resumeReadout(): Promise<boolean>;
-  captureResponse(): ((text: string) => Promise<void>) | null;
+  captureResponse(): ((text: string) => Promise<boolean>) | null;
   waitForResponseSettlement(): Promise<NativePermissionDecision | null>;
   dispose(): void;
 }>;
@@ -34,6 +34,7 @@ type NativePermissionPrompt = { address: SessionAddress; request: SessionPending
 export function createNativeVoicePermissionInput(params: Readonly<{
   controlSessionId: string;
   signal: AbortSignal;
+  isConversationTurnPending: () => boolean;
   readOut: (text: string, listen: boolean, isCurrent: () => boolean, onReady: () => void) => Promise<void>;
   commitTranscript: (text: string, localId: string) => Promise<void>;
   onResponding: () => void;
@@ -42,6 +43,7 @@ export function createNativeVoicePermissionInput(params: Readonly<{
   const execute = createFrontDoorActionExecute();
   let disposed = false;
   let prompt: NativePermissionPrompt | null = null;
+  let promptAtTurnStart: NativePermissionPrompt | null = null;
   let reading: Promise<void> | null = null;
   let responseSettlement: Promise<NativePermissionDecision | null> = Promise.resolve(null);
   const readAddresses = (): readonly SessionAddress[] => {
@@ -121,9 +123,15 @@ export function createNativeVoicePermissionInput(params: Readonly<{
   observe();
   return {
     canAccept: () => !disposed && !params.signal.aborted && prompt?.ready === true,
-    beginTurn: () => { responseSettlement = Promise.resolve(null); },
+    beginTurn: () => {
+      responseSettlement = Promise.resolve(null);
+      promptAtTurnStart = prompt;
+      if (prompt) prompt.ready = false;
+    },
     async waitForPendingReadout() {
       if (disposed || params.signal.aborted || !prompt) return false;
+      // A request from an earlier turn must not replace this turn's reply.
+      if (prompt === promptAtTurnStart && !reading && !prompt.needsReadout) return false;
       // The request itself is the spoken acknowledgement. Keep its original
       // synthesis/playback and listening rearm ahead of the model's final reply.
       await reading;
@@ -148,19 +156,23 @@ export function createNativeVoicePermissionInput(params: Readonly<{
       const selected = prompt;
       if (disposed || params.signal.aborted || !selected?.ready) return null;
       selected.ready = false;
-      return async (text: string): Promise<void> => {
+      return async (text: string): Promise<boolean> => {
         const decision = resolveSpokenPermissionDecision(text, { yes: t('common.yes'), no: t('common.no') });
         let appliedDecision: NativePermissionDecision | null = decision;
         try {
-          if (disposed || params.signal.aborted || prompt !== selected) return;
+          if (disposed || params.signal.aborted || prompt !== selected) return true;
+          if (text.trim() && !decision && !params.isConversationTurnPending()) {
+            // Conversation has moved on; a later bare Yes must not answer this request.
+            return false;
+          }
           if (text.trim()) await params.commitTranscript(text, randomUUID());
-          if (disposed || params.signal.aborted || prompt !== selected) return;
+          if (disposed || params.signal.aborted || prompt !== selected) return true;
           const prefs = getVoiceContextFormatterPrefs({ settings: storage.getState().settings,
             sessionAddress: selected.address, sessionId: selected.address.sessionId, isCurrentAttemptTarget: true });
           if (!prefs.voiceCanApproveRequests || !decision) {
             await readPrompt(selected,
               prefs.voiceCanApproveRequests ? question() : t('voice.readiness.permissionTapRequired'), true);
-            return;
+            return true;
           }
           const request = selected.request;
           const choice = request.nativeChoices === undefined ? undefined
@@ -171,11 +183,12 @@ export function createNativeVoicePermissionInput(params: Readonly<{
           const response = request.nativeChoices === undefined ? { decision } : choice?.response;
           if (!response) {
             await readPrompt(selected, t('voice.readiness.permissionTapRequired'), true);
-            return;
+            return true;
           }
           if (choice && getSessionPermissionChoiceKind(choice) === 'stop') appliedDecision = 'abort';
           params.onResponding();
-          const responding = execute('session.permission.respond', {
+          // This is the person's answer to the request just read aloud.
+          const responding = execute.confirmed('session.permission.respond', {
             sessionId: selected.address.sessionId, requestId: selected.request.id,
             ...(selected.request.turnId ? { turnId: selected.request.turnId } : {}), ...response,
           }, { surface: 'voice', serverId: selected.address.serverId, signal: params.signal });
@@ -185,9 +198,10 @@ export function createNativeVoicePermissionInput(params: Readonly<{
           requireActionSuccess(await responding);
         } catch (error) {
           if (!disposed && !params.signal.aborted) await params.onResponseSettled({ ok: false, error });
-          return;
+          return true;
         }
         if (!disposed && !params.signal.aborted && appliedDecision) await params.onResponseSettled({ ok: true, decision: appliedDecision });
+        return true;
       };
     },
     waitForResponseSettlement: () => responseSettlement,

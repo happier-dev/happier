@@ -190,13 +190,17 @@ export function summarizeAgentRequestForVoiceHuman(
                 : semantic.filePath ? t('voice.readiness.permissionAccessFile', { path: semantic.filePath })
                     : semantic.permissionAction === 'change_files' ? t('voice.readiness.permissionChangeFiles')
                         : t('voice.readiness.permissionContinueAction');
+        const detail = semantic.shellCommand ?? semantic.permissionTitle;
+        const describedSummary = resolved.voiceShareToolNames && resolved.voiceShareToolArgs
+            ? `${summary} (${semantic.normalizedToolLabel}${detail ? `: ${detail}` : ''})`
+            : summary;
         const sharedSessionLabel = resolved.voiceShareSessionSummary && sessionLabel?.trim();
         const session = sharedSessionLabel
             ? t('voice.readiness.permissionNamedSession', {
                 session: resolved.voiceShareFilePaths ? sharedSessionLabel : redactVoicePathLikeString(sharedSessionLabel),
             })
             : t('voice.readiness.requestingSession');
-        return t('voice.readiness.permissionAnnouncement', { session, summary });
+        return t('voice.readiness.permissionAnnouncement', { session, summary: describedSummary });
     }
 
     const summary = collectUserActionSummary(toolName, toolArgs, resolved);

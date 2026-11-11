@@ -51,6 +51,9 @@ describe('native Voice permission input', () => {
     { label: 'RUN107 No after carrier settlement', enabled: true, answer: "NO DON'T", approved: false, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, nativeStop: true },
     { label: 'RUN111 command refusal', enabled: true, answer: 'NO DO NOT ALLOW THE COMMAND', approved: false, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, nativeStop: true, run111: true },
     { label: 'RUN111 short refusal transcript', enabled: true, answer: 'NO BUT', approved: false, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, nativeStop: true, run111: true },
+    { label: 'RUN114 ordinary question while a request remains pending', enabled: true, answer: 'WHAT IS THE CAPITAL OF FRANCE', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, run111: true, ordinaryQuestion: true },
+    { label: 'RUN114 typed question retires the spoken permission prompt', enabled: true, answer: 'WHAT IS THE CAPITAL OF FRANCE', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, run111: true, ordinaryQuestion: true, typedQuestion: true },
+    { label: 'RUN114 End Continue question while a request remains pending', enabled: true, answer: 'WHAT IS THE CAPITAL OF FRANCE', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, run111: true, ordinaryQuestion: true, continuedQuestion: true },
     { label: 'RUN113 Yes naming the command', enabled: true, answer: 'YES ALLOW THE COMMAND', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, run111: true },
     { label: 'RUN113 No naming the command', enabled: true, answer: "NO, DON'T ALLOW THE COMMAND", approved: false, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, nativeStop: true, run111: true },
     { label: 'RUN111 Stop Ready excludes earlier progress', enabled: true, answer: 'NO DO NOT ALLOW THE COMMAND', approved: false, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, nativeStop: true, run111: true, stoppedReady: true },
@@ -95,7 +98,7 @@ describe('native Voice permission input', () => {
     { label: 'an unclear decision after the carrier settles', enabled: true, answer: 'Maybe.', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'End', enabled: true, answer: '', approved: null, end: true, replaceRequest: false },
     { label: 'a replacement request while ASR is pending', enabled: true, answer: 'Yes.', approved: null, end: false, replaceRequest: true },
-  ])('reads a native permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer, retarget, replacedReadout, emptyFollowUp, startedReadout, nonStreaming, readoutCompleteBeforeFinal, readoutFailure, syncedResult, nativeOffer, nativeStop, run111, readyOnly, resultPrivacyOff, stoppedReady }) => {
+  ])('reads a native permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer, retarget, replacedReadout, emptyFollowUp, startedReadout, nonStreaming, readoutCompleteBeforeFinal, readoutFailure, syncedResult, nativeOffer, nativeStop, run111, readyOnly, resultPrivacyOff, stoppedReady, ordinaryQuestion, continuedQuestion, typedQuestion }) => {
     const offeredChoices = run111 ? run111Choices : nativeStop ? run107Choices : codexChoices;
     const storage = await getStorage();
     const state = storage.getState();
@@ -113,7 +116,7 @@ describe('native Voice permission input', () => {
     const asrHeld = createDeferred<string>();
     localVoiceSpeechTranscription.mockResolvedValueOnce(label === 'RUN111 short refusal transcript'
       ? 'WRITE THE REQUESTED FILE.' : 'Write the requested file.');
-    if (label !== 'an ordinary turn' && !emptyFollowUp && !providerFailure && !uiAnswer) {
+    if (label !== 'an ordinary turn' && !emptyFollowUp && !providerFailure && !uiAnswer && !typedQuestion) {
       localVoiceSpeechTranscription.mockImplementationOnce(async () => {
         asrStarted.resolve();
         return replaceRequest ? asrHeld.promise : answer;
@@ -209,7 +212,8 @@ describe('native Voice permission input', () => {
             .toContain('Daemon reply');
           expect(storage.getState().sessions[requestSessionId]?.agentState?.requests?.['native-write']).toBeUndefined();
         }
-        expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'listening', canCommitInput: true });
+        await vi.waitFor(() => expect(lifecycle.getSnapshot(), JSON.stringify(lifecycle.getSnapshot()))
+          .toMatchObject({ status: 'connected', mode: 'listening', canCommitInput: true }));
       };
       submitted = executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} })
         .then(result => ({ result }), error => ({ error }));
@@ -443,15 +447,33 @@ describe('native Voice permission input', () => {
         expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND)).toBe(false);
         return;
       }
+      if (continuedQuestion) {
+        expect(await executeVoiceConversationAction('ui.voice_global.end', { expectedAttempt }, { navigate() {} }))
+          .toMatchObject({ status: 'completed' });
+        const speechBeforeContinue = expoSpeechSpeak.mock.calls.length;
+        // The mounted Action adopts this lifecycle through AppShell's runtime
+        // request. This bare engine harness already owns the real lifecycle.
+        await lifecycle.toggle(target, { kind: 'continue', conversationSessionAddress: binding.conversationSessionAddress });
+        expectedAttempt = getVoiceSessionPresentedAttemptId();
+        await vi.waitFor(() => expect(expoSpeechSpeak.mock.calls.length,
+          JSON.stringify({ snapshot: lifecycle.getSnapshot(), binding: voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId: lifecycle.getSnapshot().sessionId! }) }))
+          .toBeGreaterThan(speechBeforeContinue));
+        await vi.waitFor(() => expect(lifecycle.getSnapshot(), JSON.stringify(lifecycle.getSnapshot()))
+          .toMatchObject({ status: 'connected', mode: 'listening', canCommitInput: true }));
+      }
       if (carrierSettled || replacedReadout || readoutFailure) {
-        // The original turn consumed its recording; the OS returns a fresh
-        // artifact for the permission answer captured after that turn.
+        // The OS returns a fresh artifact after the preceding turn or End.
         const { File } = await import('expo-file-system');
         const responseUri = 'file:///tmp/native-voice-permission-answer.m4a';
         new File(responseUri).write(new Uint8Array([1, 2, 3]));
         setRecorderUri(responseUri);
       }
-      const response = executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} });
+      const startsBeforeAnswer = sessionRpcWithServerScope.mock.calls.filter(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2).length;
+      const speechBeforeAnswer = expoSpeechSpeak.mock.calls.length;
+      const response = typedQuestion
+        ? import('./localVoiceEngine').then(engine => engine.sendLocalVoiceAgentTextTurn(binding.controlSessionId, answer))
+          .then(() => ({ status: 'completed' as const }))
+        : executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} });
       if (replaceRequest) {
         await Promise.race([asrStarted.promise, response.then(result => {
           throw new Error(`Expected held response ASR, received ${JSON.stringify(result)}`);
@@ -495,6 +517,25 @@ describe('native Voice permission input', () => {
           .toMatchObject({ status: 'unavailable' });
         return;
       }
+      if (ordinaryQuestion) {
+        const starts = sessionRpcWithServerScope.mock.calls.filter(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2);
+        expect(starts.slice(startsBeforeAnswer).map(([request]) => request.payload)).toContainEqual(expect.objectContaining({ message: expect.stringContaining(answer) }));
+        expect(expoSpeechSpeak.mock.calls.slice(speechBeforeAnswer).map(([text]) => text)).toContain('Daemon reply');
+        expect(storage.getState().sessions[actualRequestSessionId]?.agentState?.requests?.['native-write']).toBeDefined();
+        expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND)).toBe(false);
+        const { File } = await import('expo-file-system');
+        const nextUri = 'file:///tmp/native-voice-after-unrelated-question.m4a';
+        new File(nextUri).write(new Uint8Array([1, 2, 3]));
+        setRecorderUri(nextUri);
+        localVoiceSpeechTranscription.mockResolvedValueOnce('YES');
+        const startsBeforeYes = starts.length;
+        expect(await executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} }))
+          .toMatchObject({ status: 'completed' });
+        expect(sessionRpcWithServerScope.mock.calls.filter(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2))
+          .toHaveLength(startsBeforeYes + 1);
+        expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND)).toBe(false);
+        return;
+      }
       if (approved === null) {
         expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND)).toBe(false);
         expect(lifecycle.getSnapshot()).toMatchObject({ mode: 'listening', canCommitInput: true });
@@ -519,6 +560,10 @@ describe('native Voice permission input', () => {
         expect(acknowledgement, JSON.stringify({ acknowledgement, snapshot: lifecycle.getSnapshot() }))
           .toContain(nativeStop ? t('voice.readiness.permissionCommandStopped')
             : approved ? t('approvals.status.approved') : t('approvals.status.rejected'));
+        if (label === 'RUN113 Yes naming the command') {
+          expect(acknowledgement, 'The person answered an already-read native request; no second read-back')
+            .toEqual([t('approvals.status.approved')]);
+        }
       }
       if (nativeStop) {
         expect(storage.getState().sessions[actualRequestSessionId]?.agentState?.completedRequests?.['native-write'])
@@ -602,7 +647,7 @@ describe('native Voice permission input', () => {
       waiting.resolve();
       finishReadout?.();
       await submitted;
-      await lifecycle.stop(target.sessionId);
+      await lifecycle.stop(lifecycle.getSnapshot().sessionId ?? target.sessionId);
       unsubscribe();
     }
   });

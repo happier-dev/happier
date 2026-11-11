@@ -97,7 +97,7 @@ describe('formatPermissionRequest privacy', () => {
     expect(result).toContain('Never claim it was settled until canonical session updates show the result.');
   });
 
-  it('describes a terminal permission in plain words without reading shell input aloud', () => {
+  it('names the requested command before asking for permission', () => {
     const result = summarizeAgentRequestForVoiceHuman(
       'permission',
       'req_4',
@@ -108,8 +108,7 @@ describe('formatPermissionRequest privacy', () => {
 
     expect(result).toContain('needs permission');
     expect(result).toContain('terminal command');
-    expect(result).not.toContain('printf');
-    expect(result).not.toContain('/bin/bash');
+    expect(result).toContain('printf secrets > /tmp/x');
     expect(result).not.toContain('req_4');
   });
 
@@ -118,6 +117,13 @@ describe('formatPermissionRequest privacy', () => {
       { command: 'pwd' }, { ...SHARE_ALL, voiceShareSessionSummary: share }, 'Morning Coffee');
     expect(summarize(true)).toContain('Morning Coffee');
     expect(summarize(false)).not.toContain('Morning Coffee');
+  });
+
+  it('names a custom tool and its authored permission title', () => {
+    const result = summarizeAgentRequestForVoiceHuman('permission', 'req_custom', 'deploy_preview',
+      { permission: { title: 'Deploy branch voice-fix to preview' } }, SHARE_ALL);
+    expect(result).toContain('deploy_preview');
+    expect(result).toContain('Deploy branch voice-fix to preview');
   });
 
   it.each([
