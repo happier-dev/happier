@@ -28,20 +28,23 @@ export const AgentDefaultMenuButton = React.memo(function AgentDefaultMenuButton
 }>) {
     const { theme } = useUnistyles();
     const [open, setOpen] = React.useState(false);
-    const [pending, setPending] = React.useState(false);
-    const pendingRef = React.useRef(false);
+    const [intent, setIntent] = React.useState<Readonly<Record<string, boolean>>>({});
+    const changes = React.useRef(new Map<string, { confirmed: boolean; desired: boolean }>());
+    const writing = React.useRef(false);
     const mountedRef = useMountedRef();
     const { choices, onChange } = props;
-    const defaults = choices.filter((choice) => choice.isDefault);
-    const items = React.useMemo<DropdownMenuItem[]>(() => choices.map((choice) => ({
+    const displayedChoices = React.useMemo(() => choices.map(choice => Object.hasOwn(intent, choice.agentId)
+        ? { ...choice, isDefault: intent[choice.agentId] } : choice), [choices, intent]);
+    const defaults = displayedChoices.filter((choice) => choice.isDefault);
+    const items = React.useMemo<DropdownMenuItem[]>(() => displayedChoices.map((choice) => ({
         id: choice.agentId,
         testID: props.testID ? `${props.testID}:agent:${choice.agentId}` : undefined,
         title: choice.title,
         rightElement: choice.isDefault ? <Icon name="check" size={16} color={theme.colors.accent.blue} /> : null,
-    })), [choices, props.testID, theme.colors.accent.blue]);
+    })), [displayedChoices, props.testID, theme.colors.accent.blue]);
     if (choices.length === 0 && !props.disabledReason) return null;
-    const disabledReason = props.disabledReason ?? (pending ? t('common.loading') : undefined);
-    const disabled = Boolean(disabledReason) || pending;
+    const disabledReason = props.disabledReason;
+    const disabled = Boolean(disabledReason);
     // The label always says what the control does; why it is waiting is its hint, so a reload never reshapes the header.
     const title = defaults.length === 0
         ? t('connectedServicesPool.makeDefault')
@@ -51,19 +54,38 @@ export const AgentDefaultMenuButton = React.memo(function AgentDefaultMenuButton
     return (
         <DropdownMenu
             open={open}
-            onOpenChange={(next) => { if (!next || !disabled && !pendingRef.current) setOpen(next); }}
+            onOpenChange={(next) => { if (!next || !disabled) setOpen(next); }}
             items={items}
             selectedId={null}
             onSelect={async (agentId) => {
-                if (props.disabledReason || pendingRef.current) return;
+                if (props.disabledReason) return;
                 const choice = choices.find((candidate) => candidate.agentId === agentId);
                 if (!choice) return;
-                pendingRef.current = true;
-                setPending(true);
+                const change = changes.current.get(agentId) ?? { confirmed: choice.isDefault, desired: choice.isDefault };
+                change.desired = !change.desired;
+                changes.current.set(agentId, change);
+                setIntent(previous => ({ ...previous, [agentId]: change.desired }));
                 setOpen(false);
-                try { await onChange(choice.agentId, !choice.isDefault); }
-                catch { if (mountedRef.current) Modal.alert(t('common.error'), t('common.unavailable')); }
-                finally { pendingRef.current = false; if (mountedRef.current) setPending(false); }
+                if (writing.current) return;
+                writing.current = true;
+                try {
+                    for (const [id, next] of changes.current) {
+                        while (next.desired !== next.confirmed) {
+                            const sent = next.desired;
+                            try { await onChange(id, sent); next.confirmed = sent; }
+                            catch {
+                                next.desired = next.confirmed;
+                                if (mountedRef.current) Modal.alert(t('common.error'), t('common.unavailable'));
+                            }
+                        }
+                        changes.current.delete(id);
+                        if (mountedRef.current) setIntent(previous => {
+                            const remaining = { ...previous };
+                            delete remaining[id];
+                            return remaining;
+                        });
+                    }
+                } finally { writing.current = false; }
             }}
             variant="selectable"
             rowKind="item"
@@ -98,7 +120,6 @@ export const AgentDefaultMenuButton = React.memo(function AgentDefaultMenuButton
                     accessibilityLabel={defaults.length === 0 ? t('connectedServicesPool.makeDefaultA11y') : title}
                     accessibilityHint={disabledReason}
                     disabled={disabled}
-                    loading={pending}
                     leading={props.presentation === 'text' ? undefined : (
                         <Icon
                             name="star"
