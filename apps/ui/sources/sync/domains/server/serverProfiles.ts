@@ -2052,13 +2052,13 @@ export type HomeConnectionDescriptorReconciliationResult =
         profile: ServerProfile | null;
     }>;
 
-export type HomeProfileAdoptionConflictCode = 'equal_revision_conflict';
+export type HomeProfileAdoptionConflictCode = 'equal_revision_conflict' | 'address_selection_mismatch';
 
 export class HomeProfileAdoptionConflictError extends Error {
     readonly code: HomeProfileAdoptionConflictCode;
 
     constructor(code: HomeProfileAdoptionConflictCode) {
-        super('Home connection descriptor conflicts with the persisted revision');
+        super('Home profile adoption conflicts with the persisted Home');
         this.name = 'HomeProfileAdoptionConflictError';
         this.code = code;
     }
@@ -2262,6 +2262,19 @@ function resolveHomeProfileAdoption(
     }
     if (descriptorAdjudication === 'equal_revision_conflict') {
         throw new HomeProfileAdoptionConflictError('equal_revision_conflict');
+    }
+    // A declined descriptor move must not leave an address answer for the new
+    // canonical audience on the retained Home. Preflight uses this same admission
+    // before credential mutation, and persistence consumes its admitted result.
+    const retainedCanonicalUrl = existing && (descriptorAdjudication === 'unchanged' || descriptorAdjudication === 'stale')
+        ? existing.canonicalServerUrl ?? existing.serverUrl
+        : url;
+    if (params.addressSelection && !readHomeAddressSelection({
+        serverUrl: retainedCanonicalUrl,
+        serverIdentityId: identity,
+        addressSelection: params.addressSelection,
+    })) {
+        throw new HomeProfileAdoptionConflictError('address_selection_mismatch');
     }
     return {
         descriptor,

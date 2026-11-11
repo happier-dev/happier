@@ -19,6 +19,26 @@ describe('serverProfiles adoption authority', () => {
         profiles.resetServerProfilesRuntimeForTests();
     });
 
+    it.each(['stale', 'advisory'] as const)('refuses Keep for a different canonical address when %s adoption retains the saved descriptor', async (authority) => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        const descriptor = { v: 1 as const, homeServerIdentityId: 'srv_keep_existing',
+            canonicalServerUrl: 'https://old-home.example.test', revision: 7,
+            endpoints: [{ kind: 'https' as const, url: 'https://old-home.example.test' }] };
+        const existing = await profiles.adoptHomeProfile({ descriptor, source: 'qr' });
+        const canonicalServerUrl = 'https://qa-home.example.test';
+        const adoption = {
+            descriptor: { ...descriptor, canonicalServerUrl, revision: authority === 'stale' ? 6 : 8,
+                endpoints: [{ kind: 'https' as const, url: canonicalServerUrl }] },
+            source: 'manual' as const,
+            ...(authority === 'advisory' ? { descriptorAuthority: 'advisory' as const } : {}),
+            addressSelection: { serverIdentityId: descriptor.homeServerIdentityId,
+                enteredUrl: 'http://127.0.0.1:13011', canonicalServerUrl, useCanonical: false },
+        };
+        await expect(profiles.adoptHomeProfile(adoption)).rejects.toMatchObject({ code: 'address_selection_mismatch' });
+        expect(profiles.getServerProfileById(existing.id)).toEqual(existing);
+        expect(() => profiles.preflightHomeProfileAdoption(adoption)).toThrow();
+    });
+
     it('reads additive stored descriptor fields tolerantly while keeping incoming descriptor admission strict', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;

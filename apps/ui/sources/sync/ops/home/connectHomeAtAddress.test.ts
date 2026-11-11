@@ -579,6 +579,32 @@ describe('connectHomeAtAddress', () => {
         expect(await TokenStorage.getCredentialsForServerUrl(newUrl, { serverId: homeIdentity })).toEqual(credentials);
     });
 
+    it('leaves a saved Home intact after Keep and Continue when the reached Home publishes a stale canonical move', async () => {
+        const { operation, profiles } = await owner();
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const oldUrl = 'https://old-home.example.test';
+        const existing = await profiles.adoptHomeProfile({ descriptor: {
+            v: 1, homeServerIdentityId: homeIdentity, canonicalServerUrl: oldUrl,
+            revision: 7, endpoints: [{ kind: 'https', url: oldUrl }],
+        }, source: 'qr' });
+        await TokenStorage.setCredentialsForServerUrl(oldUrl, { serverId: homeIdentity }, { token: 'saved-home-credential' });
+        const immediateFetch = boundary.fetch.getMockImplementation()!;
+        boundary.fetch.mockImplementation(async (url: RequestInfo | URL, init?: RequestInit) => {
+            if (String(url).endsWith('/v1/features/authenticated')) return response(200, {
+                ...featurePayload(), homeConnectionDescriptor: {
+                    v: 1, homeServerIdentityId: homeIdentity, canonicalServerUrl: canonicalUrl,
+                    revision: 6, endpoints: [{ kind: 'https', url: canonicalUrl }],
+                },
+            });
+            return immediateFetch(url, init);
+        });
+        const confirmCanonicalUrl = vi.fn(async (change?: { previousUrl: string; nextUrl: string }) => Boolean(change));
+        await expect(operation.connectHomeAtAddress(input({ confirmCanonicalUrl }))).rejects.toThrow();
+        expect(profiles.getServerProfileById(existing.id)).toEqual(existing);
+        expect(await TokenStorage.getCredentialsForServerUrl(oldUrl, { serverId: homeIdentity }))
+            .toEqual({ token: 'saved-home-credential' });
+    });
+
     it('retains URL-only predecessor Home admission without requiring an exact-descriptor endpoint', async () => {
         const { operation, profiles } = await owner();
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
