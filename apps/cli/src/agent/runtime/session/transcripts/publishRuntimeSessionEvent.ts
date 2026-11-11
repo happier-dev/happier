@@ -5,10 +5,7 @@ import type { TranscriptRawAgentEventV1 } from '@happier-dev/protocol';
 import type { AgentTranscriptSessionEventPublicationResult } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { CommittedTranscriptAdmission } from '@/api/session/transcriptPort';
 
-import {
-  commitRequiredRuntimeTranscriptMessage,
-  type RuntimeTranscriptProjectionSession,
-} from './projectRuntimeTranscriptEvent';
+import type { RuntimeTranscriptProjectionSession } from './projectRuntimeTranscriptEvent';
 
 export async function publishRuntimeSessionEvent(params: Readonly<{
   session: RuntimeTranscriptProjectionSession;
@@ -32,6 +29,7 @@ export async function commitRuntimeSessionEvent(params: Readonly<{
   meta?: Record<string, unknown>;
   admission?: CommittedTranscriptAdmission;
 }>): Promise<Readonly<{ localId: string }>> {
+  const { commitRequiredRuntimeTranscriptMessage } = await import('./projectRuntimeTranscriptEvent');
   const event = TranscriptRawAgentEventV1Schema.parse(params.event);
   const localId = params.localId;
   if (localId.trim().length === 0) throw new Error('Runtime Session event local id must not be empty');

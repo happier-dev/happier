@@ -1,7 +1,7 @@
 import { renderDiscussionContextBlockV1, renderSessionInputContextPromptV1, type DiscussionPromptAuthorV1, type DiscussionPromptContextEntryV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { WorkflowValueReference } from '@happier-dev/protocol/workflows';
 import { MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
-import { isWorkflowJsonObject, type WorkflowJsonValue } from './input';
+import { isWorkflowJsonObject, type WorkflowJsonValue } from './workflowValues';
 
 export type WorkflowPromptContext = {
   author: DiscussionPromptAuthorV1;

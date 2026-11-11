@@ -198,7 +198,6 @@ import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWor
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { executeAccountPluginAction } from '@/session/actions/executeAccountPluginAction';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { createPluginSessionsInventory } from '@/session/services/pluginSessionsInventory';
 import { executePluginSessionMessageAction } from '@/session/services/executePluginSessionMessageAction';
@@ -3224,7 +3223,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         const requester = request.requesterAccount;
         const accountAttempt = !params?.accountExecution && accountTarget && requester
             && !request.captureExecutionOrigin && !request.expectedExecutionOrigin && !request.expectedExecutionRouting
-            ? await executeAccountPluginAction({
+            ? await (await import('@/session/actions/executeAccountPluginAction')).executeAccountPluginAction({
                 host: {
                     credentials: requester.credentials,
                     serverHttpBaseUrl: requester.serverHttpBaseUrl,

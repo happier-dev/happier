@@ -308,7 +308,12 @@ export async function resolveServerProfileHomeIdentityId(profileId: string): Pro
   }
 }
 
-export { refreshServerProfileHomeConnectionDescriptor } from './profileObservation';
+export async function refreshServerProfileHomeConnectionDescriptor(
+  params: Parameters<typeof import('./profileObservation').refreshServerProfileHomeConnectionDescriptor>[0],
+): Promise<Awaited<ReturnType<typeof import('./profileObservation').refreshServerProfileHomeConnectionDescriptor>>> {
+  const { refreshServerProfileHomeConnectionDescriptor: refresh } = await import('./profileObservation');
+  return refresh(params);
+}
 
 function findProfileIdByComparableUrl(
   servers: Record<string, any>,

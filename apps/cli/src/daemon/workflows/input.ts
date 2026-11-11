@@ -10,8 +10,10 @@ import { readWorkflowStepInputIndexV1 } from '@happier-dev/protocol/workflows/wo
 import type { DiscussionPromptAuthorV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import type { WorkflowActionFieldBindingV1, WorkflowActionValueReferenceV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 import { compactWorkflowPromptContext, projectWorkflowPromptContext, renderWorkflowPromptContext } from './workflowPromptContext';
+import { isWorkflowJsonObject, type WorkflowJsonValue } from './workflowValues';
 
-export type WorkflowJsonValue = Extract<WorkflowValueReference, { kind: 'literal' }>['value'];
+export { isWorkflowJsonObject } from './workflowValues';
+export type { WorkflowJsonValue } from './workflowValues';
 
 export type WorkflowInputResolutionErrorCode =
   | 'missing_reference'
@@ -31,10 +33,6 @@ export class WorkflowInputResolutionError extends Error {
     this.name = 'WorkflowInputResolutionError';
     this.code = code;
   }
-}
-
-export function isWorkflowJsonObject(value: unknown): value is Readonly<Record<string, WorkflowJsonValue>> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 /**

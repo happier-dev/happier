@@ -1,4 +1,4 @@
-import { createMergedContributionRegistry, createResolvedContributionRegistry } from './createResolvedContributionRegistry';
+import type { createMergedContributionRegistry, createResolvedContributionRegistry } from './createResolvedContributionRegistry';
 import { resolveSelectedBuiltInContributions } from './selected';
 import type { ResolvedContributionRegistry } from './types';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
@@ -10,6 +10,7 @@ export async function resolveMergedContributionRegistry(
     accountStorageDependencies?: Pick<AccountPluginDataStorageHostDependencies, 'readCredentials' | 'resolveBaseUrl'>;
   }>,
 ): Promise<ResolvedContributionRegistry> {
+  const { createMergedContributionRegistry, createResolvedContributionRegistry } = await import('./createResolvedContributionRegistry');
   const selection = params?.agentIdentity ? { agentIdentity: params.agentIdentity, providerContributionKeys: params.providerContributionKeys }
     : params?.providerContributionKeys ? { providerContributionKeys: params.providerContributionKeys } : undefined;
   const { getResolvedContributionRegistry, readCurrentBundledPluginEnablement } = await import('./builtIn/snapshot');
