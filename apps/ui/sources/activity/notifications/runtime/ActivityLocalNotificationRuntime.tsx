@@ -18,6 +18,7 @@ import { sendExpoLocalNotification } from '../channels/sendExpoLocalNotification
 import { sendTauriLocalNotification } from '../channels/sendTauriLocalNotification';
 import { sendWebLocalNotification } from '../channels/sendWebLocalNotification';
 import { subscribeActivityLocalNotifications, type ActivityLocalNotificationEvent } from './activityLocalNotificationBus';
+import { useDesktopNotificationClickRouting } from './useDesktopNotificationClickRouting';
 import { usePresentedAgentRequestSettlement } from './usePresentedAgentRequestSettlement';
 
 type ActivityLocalNotificationSettings = Readonly<{
@@ -123,6 +124,7 @@ function resolveDocumentHostForegroundBehavior(): ForegroundNotificationBehavior
 export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
     const localSettings = useActivityLocalNotificationSettings();
     const reconcilePresentedRequests = usePresentedAgentRequestSettlement();
+    useDesktopNotificationClickRouting();
 
     React.useEffect(() => {
         return subscribeActivityLocalNotifications((event) => {
@@ -153,6 +155,7 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
                 fireAndForget(sendTauriLocalNotification({
                     title: notification.title,
                     body: notification.body,
+                    sessionId: event.sessionId,
                 }), { tag: 'ActivityLocalNotificationRuntime.sendTauriLocalNotification' });
                 return;
             }
