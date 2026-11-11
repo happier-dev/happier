@@ -259,6 +259,70 @@ describe('SessionItem pin hover affordance (web)', () => {
         await screen.unmount();
     });
 
+    /** The trailing slot's resting content (status, age): kept in its box, hidden while the actions show. */
+    function restingTrailingHidden(screen: Awaited<ReturnType<typeof renderSessionItem>>) {
+        const rest = screen.findByTestId('session-item-right-area:rest') as any;
+        const style = Object.assign({}, ...[rest.props.style].flat(Infinity).filter(Boolean));
+        return style.opacity === 0;
+    }
+
+    it('swaps the resting status for the actions on hover, and back on leave (owner 2026-11-11)', async () => {
+        const screen = await renderSessionItem({
+            session: createSession('sess_6'),
+            serverId: 'server_a',
+            pinned: false,
+            onTogglePinned: vi.fn(),
+            selected: false,
+            variant: 'default',
+            compact: false,
+        });
+        const row = findSessionRow(screen, 'sess_6');
+        const container = findSessionRowContainer(screen, 'sess_6');
+        expect(restingTrailingHidden(screen)).toBe(false);
+
+        await act(async () => { triggerHoverEnter(container); });
+        expect(findPinActions(row)).not.toHaveLength(0);
+        expect(restingTrailingHidden(screen)).toBe(true);
+
+        await act(async () => { triggerHoverLeave(container); });
+        expect(findPinActions(row)).toHaveLength(0);
+        expect(restingTrailingHidden(screen)).toBe(false);
+        await screen.unmount();
+    });
+
+    it('treats keyboard focus inside the row as hover, and lets go when focus leaves the row', async () => {
+        const screen = await renderSessionItem({
+            session: createSession('sess_7'),
+            serverId: 'server_a',
+            pinned: false,
+            onTogglePinned: vi.fn(),
+            selected: false,
+            variant: 'default',
+            compact: false,
+        });
+        const row = findSessionRow(screen, 'sess_7');
+        const container = findSessionRowContainer(screen, 'sess_7');
+        const inside = { matches: (selector: string) => selector === ':focus-visible' };
+        const rowRoot = { contains: (node: unknown) => node === inside };
+
+        // A pointer click focuses without :focus-visible: no actions left behind on the clicked row.
+        await act(async () => { container.props.onFocus?.({ nativeEvent: { target: { matches: () => false } }, currentTarget: rowRoot }); });
+        expect(findPinActions(row)).toHaveLength(0);
+
+        await act(async () => { container.props.onFocus?.({ nativeEvent: { target: inside }, currentTarget: rowRoot }); });
+        expect(findPinActions(row)).not.toHaveLength(0);
+        expect(restingTrailingHidden(screen)).toBe(true);
+
+        // Tabbing from the row onto its own actions keeps them.
+        await act(async () => { container.props.onBlur?.({ nativeEvent: { relatedTarget: inside }, currentTarget: rowRoot }); });
+        expect(findPinActions(row)).not.toHaveLength(0);
+
+        await act(async () => { container.props.onBlur?.({ nativeEvent: { relatedTarget: null }, currentTarget: rowRoot }); });
+        expect(findPinActions(row)).toHaveLength(0);
+        expect(restingTrailingHidden(screen)).toBe(false);
+        await screen.unmount();
+    });
+
     it('anchors the row action dropdowns below the trigger on web', async () => {
         const screen = await renderSessionItem({
             session: {

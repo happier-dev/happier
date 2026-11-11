@@ -117,7 +117,7 @@ describe('SessionItem tags (web hover layout)', () => {
         standardCleanup();
     });
 
-    it('hides compact tags while row hover actions are visible', async () => {
+    it('keeps compact tags in their place, hidden behind the hover actions, so the title never reflows', async () => {
         const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
@@ -142,9 +142,11 @@ describe('SessionItem tags (web hover layout)', () => {
             rightArea?.props.onPointerEnter?.({} as never);
         });
 
-        const hoveredRightArea = screen.findByTestId('session-item-right-area');
-        const hoveredRightText = hoveredRightArea?.findAllByType('Text').map((node) => node.props.children).join(' ');
-        expect(hoveredRightText).not.toContain('v2');
+        // The tags keep their box (no reflow) but hide under the actions, out of the accessibility tree.
+        const rest = screen.findByTestId('session-item-right-area:rest');
+        const restText = rest?.findAllByType('Text').map((node) => node.props.children).join(' ');
+        expect(restText).toContain('v2');
+        expect(Object.assign({}, ...[rest?.props.style].flat(Infinity).filter(Boolean)).opacity).toBe(0);
         expect(screen.findByTestId('session-item-tags-below-sess_1')).toBeNull();
         expect(screen.findAllByType('PinIcon')).toHaveLength(1);
     });

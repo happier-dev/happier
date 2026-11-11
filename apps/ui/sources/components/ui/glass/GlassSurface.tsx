@@ -61,7 +61,7 @@ function isContentOverWallpaper(plane: Readonly<{ group: GlassSurfaceGroup; clea
     return plane.group === 'content' && plane.cleared && environment.atmosphereBehind === 'wallpaper';
 }
 
-export type GlassSurfaceProps = Pick<ViewProps, 'accessibilityRole' | 'accessibilityLabel' | 'role' | 'aria-label' | 'onLayout' | 'collapsable' | 'onPointerEnter' | 'onPointerLeave'> & Readonly<{
+export type GlassSurfaceProps = Pick<ViewProps, 'accessibilityRole' | 'accessibilityLabel' | 'role' | 'aria-label' | 'onLayout' | 'collapsable' | 'onPointerEnter' | 'onPointerLeave' | 'onFocus' | 'onBlur'> & Readonly<{
     ref?: React.Ref<React.ComponentRef<typeof View>>;
     children: React.ReactNode;
     style?: StyleProp<ViewStyle>;
@@ -154,7 +154,8 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
     const solidColor = shellHeld && authoredSolid !== 'transparent' ? theme.colors.surface.base
         : authoredSolid ?? (group === 'floating' ? theme.colors.edge.floatingFill : theme.colors.surface.base);
     const viewProps = { ref: props.ref, testID: props.testID, accessibilityRole: props.accessibilityRole, accessibilityLabel: props.accessibilityLabel, role: props.role, 'aria-label': props['aria-label'], onLayout: props.onLayout,
-        collapsable: props.collapsable, onPointerEnter: props.onPointerEnter, onPointerLeave: props.onPointerLeave };
+        collapsable: props.collapsable, onPointerEnter: props.onPointerEnter, onPointerLeave: props.onPointerLeave,
+        onFocus: props.onFocus, onBlur: props.onBlur };
     const effectiveEnvironment = {
         ...environment,
         reduceTransparency: reduceTransparency || environment.reduceTransparency === true,

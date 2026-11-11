@@ -1,6 +1,6 @@
 import { useSessionArchivePending } from '@/hooks/session/useSessionArchivePending';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
-import { HAPPIER_META_COLUMN_STYLE, HappierMaterialRoleProvider, useContainingHappierMaterialRole, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_COLLECTION_ROW_METRICS, HAPPIER_META_COLUMN_STYLE, HappierMaterialRoleProvider, useContainingHappierMaterialRole, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import { readSessionLiveManagedSessionCountV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import React from 'react';
@@ -545,7 +545,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     rowActionsRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: theme.space.s2,
+        gap: HAPPIER_COLLECTION_ROW_METRICS.actionGap,
     },
     rowActionIcon: {
         color: theme.colors.text.secondary,
@@ -662,7 +662,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s4,
-        // The word stands clear of the title it follows.
+    },
+    // A status word stands clear of the title it follows; a lone mark sits at the trailing gap (owner 2026-11-11).
+    trailingStatusGroupWithWord: {
         marginLeft: theme.space.s6,
     },
     trailingStatusWord: {
@@ -849,6 +851,7 @@ const SessionItemContent = React.memo(
         const canArchiveSession = sessionActionTarget.canArchive;
         const [isRowHovered, setIsRowHovered] = React.useState(false);
         const [isActionsHovered, setIsActionsHovered] = React.useState(false);
+        const [keyboardFocusWithin, setKeyboardFocusWithin] = React.useState(false);
         const [tagMenuOpen, setTagMenuOpen] = React.useState(false);
         const [tagMenuEverOpened, setTagMenuEverOpened] = React.useState(false);
         const [moreMenuOpen, setMoreMenuOpen] = React.useState(false);
@@ -860,13 +863,16 @@ const SessionItemContent = React.memo(
         // A carried row is a quiet ghost of its place (lab E1 `.dd-src`): its actions can't be used mid-carry.
         // A touch screen has no hover to reveal a Bot roster row's Talk and More, so they stay beside it (lab b-rail Ap).
         const touchRosterActions = showTalkAction && touchPrimaryPointer;
-        const showRowActions = isBeingDragged !== true
-            && (touchRosterActions || (isWeb && (isRowHovered || isActionsHovered || tagMenuOpen || moreMenuOpen)));
+        // Engaged: the pointer on the row or its actions, keyboard focus inside it, or one of its menus open. The
+        // actions then take the row's end and its status hides (owner 2026-11-11); a touch roster keeps them beside it.
+        const hoverEngaged = isWeb && isBeingDragged !== true && !touchRosterActions
+            && (isRowHovered || isActionsHovered || keyboardFocusWithin || tagMenuOpen || moreMenuOpen);
+        const showRowActions = isBeingDragged !== true && (touchRosterActions || hoverEngaged);
         const rowActionIconColor = theme.colors.text.secondary;
         // Each action is the shared icon button at its drawn 24 px. Its hit area reaches half the real gap
         // to the neighbour beside it and stays inside the action band, never into the rows above and below.
         const rowActionButtonProps = {
-            size: 24,
+            size: HAPPIER_COLLECTION_ROW_METRICS.actionPx,
             variant: 'plain',
             interactiveTargetEdgesPx: { leading: theme.space.s2 / 2, trailing: theme.space.s2 / 2, top: 0, bottom: 0 },
         } as const;
@@ -962,6 +968,19 @@ const SessionItemContent = React.memo(
         const handleRowPointerLeave = React.useCallback(() => {
             setIsRowHovered(false);
             setIsActionsHovered(false);
+        }, []);
+
+        // Keyboard focus inside the row engages it as hover does; a pointer click's focus (not :focus-visible) does not,
+        // so a clicked row leaves no actions behind. Moving focus onto the row's own actions keeps it engaged.
+        const handleRowFocus = React.useCallback((event: { nativeEvent?: { target?: unknown } }) => {
+            const target = event.nativeEvent?.target as { matches?: (selector: string) => boolean } | undefined;
+            if (target?.matches?.(':focus-visible') === true) setKeyboardFocusWithin(true);
+        }, []);
+        const handleRowBlur = React.useCallback((event: { nativeEvent?: { relatedTarget?: unknown }; currentTarget?: unknown }) => {
+            const next = event.nativeEvent?.relatedTarget;
+            const root = event.currentTarget as { contains?: (node: unknown) => boolean } | undefined;
+            if (next && root?.contains?.(next) === true) return;
+            setKeyboardFocusWithin(false);
         }, []);
 
         const handleActionsHoverIn = React.useCallback(() => {
@@ -1465,7 +1484,7 @@ const SessionItemContent = React.memo(
             )}</WorkStatusRowWord>
         ) : null;
         const trailingStatusGlyph = showTrailingAttentionIndicator ? (
-            <View style={styles.trailingStatusGroup}>
+            <View style={[styles.trailingStatusGroup, trailingStatusWord ? styles.trailingStatusGroupWithWord : null]}>
                 {trailingStatusWord}
                 <WorkStatusRowMark
                     status={workStatus}
@@ -1510,10 +1529,10 @@ const SessionItemContent = React.memo(
                 tags: sourceTagChips,
                 rowWidth,
                 hasTrailingMeta,
-                hasRowActions: showRowActions,
+                hasRowActions: touchRosterActions,
                 hasLeadingIdentity: shouldRenderSessionListIdentity || shouldRenderSelectionCheckbox,
             })
-        ), [compact, hasTrailingMeta, isMinimal, rowWidth, shouldRenderSelectionCheckbox, shouldRenderSessionListIdentity, showRowActions, sourceTagChips]);
+        ), [compact, hasTrailingMeta, isMinimal, rowWidth, shouldRenderSelectionCheckbox, shouldRenderSessionListIdentity, touchRosterActions, sourceTagChips]);
         const tagChips = tagDisplayPlan.chips;
         const showTagChips = tagChips.length > 0;
         const showInlineTagChips = showTagChips && tagDisplayPlan.placement === 'inline';
@@ -1566,6 +1585,131 @@ const SessionItemContent = React.memo(
                 ))}
             </View>
         );
+        // The row's actions: beside its status on a touch roster row (no hover there), and over the row's end while
+        // the row is engaged on the web, where they replace the status (owner 2026-11-11).
+        const rowActionButtons = showRowActions ? (<>
+            {showTagAction ? (
+                tagMenuEverOpened || Platform.OS === 'web' ? (
+                    <DropdownMenu
+                        open={tagMenuOpen}
+                        onOpenChange={(next) => {
+                            setTagMenuOpen(next);
+                            if (next) setTagMenuEverOpened(true);
+                        }}
+                        items={tagMenuItems}
+                        onSelect={handleTagMenuSelect}
+                        onCreateItem={handleTagMenuCreate}
+                        createItemDisplay={(query) => ({
+                            title: `${t('dropdown.createItem.prefix')} ${query}`,
+                            leftGap: 8,
+                            rowContainerStyle: { paddingVertical: theme.space.s6 },
+                            titleStyle: { fontSize: 14, lineHeight: 20 },
+                            titleNode: (
+                                <>
+                                    {t('dropdown.createItem.prefix')}
+                                    <RNText style={styles.tagChipInlineText} numberOfLines={1}>
+                                        {query}
+                                    </RNText>
+                                </>
+                            ),
+                            icon: <Icon name="plus" size={16} color={rowActionIconColor} />,
+                        })}
+                        placement="bottom"
+                        popoverAnchorAlign="end"
+                        variant="slim"
+                        search={true}
+                        searchPlaceholder={t('sessionTags.searchOrAddPlaceholder')}
+                        emptyLabel={null}
+                        showCategoryTitles={false}
+                        matchTriggerWidth={false}
+                        maxWidthCap={220}
+                        popoverPortalWebTarget="body"
+                        trigger={({ toggle }) => (
+                            <IconButton
+                                testID="session-item-tag-action"
+                                {...rowActionButtonProps}
+                                onPress={(e) => {
+                                    stopRowPressPropagation(e);
+                                    setTagMenuEverOpened(true);
+                                    toggle();
+                                }}
+                                accessibilityLabel={t('sessionTags.editTagsLabel')}
+                                icon={<TagIcon size={14} color={rowActionIconColor} />}
+                            />
+                        )}
+                    />
+                ) : (
+                    <IconButton
+                        testID="session-item-tag-action"
+                        {...rowActionButtonProps}
+                        onPress={(e) => {
+                            stopRowPressPropagation(e);
+                            setTagMenuEverOpened(true);
+                            setTagMenuOpen(true);
+                        }}
+                        accessibilityLabel={t('sessionTags.editTagsLabel')}
+                        icon={<TagIcon size={14} color={rowActionIconColor} />}
+                    />
+                )
+            ) : null}
+            {talkActionVisible ? (
+                <IconButton
+                    testID="session-item-talk-action"
+                    {...rowActionButtonProps}
+                    onPress={(e) => {
+                        stopRowPressPropagation(e);
+                        handleTalkAction();
+                    }}
+                    accessibilityLabel={t('bots.talk', { name: sessionNameResolved })}
+                    icon={<Icon name="microphone" size={14} color={rowActionIconColor} />}
+                />
+            ) : null}
+            {supportsPin ? (
+                <IconButton
+                    testID="session-item-pin-action"
+                    {...rowActionButtonProps}
+                    onPress={(e) => {
+                        stopRowPressPropagation(e);
+                        handleTogglePinnedAction();
+                    }}
+                    accessibilityLabel={pinned ? t('sessionInfo.unpinSession') : t('sessionInfo.pinSession')}
+                    icon={pinned ? (
+                        <PinSlashIcon size={14} color={rowActionIconColor} />
+                    ) : (
+                        <PinIcon size={14} color={rowActionIconColor} />
+                    )}
+                />
+            ) : null}
+            {moreMenuItems.length > 0 ? (
+                <DropdownMenu
+                    open={moreMenuOpen}
+                    onOpenChange={setMoreMenuOpen}
+                    items={moreMenuItems}
+                    onSelect={handleMoreMenuSelect}
+                    placement="bottom"
+                    popoverAnchorAlign="end"
+                    variant="slim"
+                    matchTriggerWidth={false}
+                    maxWidthCap={260}
+                    showCategoryTitles={false}
+                    popoverPortalWebTarget="body"
+                    trigger={({ toggle }) => (
+                        <IconButton
+                            testID="session-item-more-menu"
+                            {...rowActionButtonProps}
+                            onPress={(e) => {
+                                stopRowPressPropagation(e);
+                                toggle();
+                            }}
+                            accessibilityLabel={t('common.moreActions')}
+                            icon={<Icon name="dots-three" size={14} color={rowActionIconColor} />}
+                        />
+                    )}
+                />
+            ) : null}
+        </>) : null;
+        const rowActionCount = (showTagAction ? 1 : 0) + (talkActionVisible ? 1 : 0) + (supportsPin ? 1 : 0)
+            + (moreMenuItems.length > 0 ? 1 : 0);
         const itemContent = (
             <CollectionRowContent
                 density={collectionRowDensity}
@@ -1828,6 +1972,7 @@ const SessionItemContent = React.memo(
 
                     {showBelowTagChips ? renderTagChipRow('below') : null}
                 </>}
+                engagedTrailing={hoverEngaged && rowActionCount > 0 ? { node: rowActionButtons, actionCount: rowActionCount } : null}
                 trailingProps={{
                     testID: 'session-item-right-area',
                     onPointerEnter: isWeb ? handleActionsHoverIn : undefined,
@@ -1839,127 +1984,9 @@ const SessionItemContent = React.memo(
                         visible={copyFeedback.isCopied(resolvedSession.id)}
                         testID={`session-item-copy-debug-feedback:${occurrenceTestId}`}
                     />
-                    {showRowActions ? (
+                    {touchRosterActions && showRowActions ? (
                         <View style={styles.rowActionsRow}>
-                            {showTagAction ? (
-                                tagMenuEverOpened || Platform.OS === 'web' ? (
-                                    <DropdownMenu
-                                        open={tagMenuOpen}
-                                        onOpenChange={(next) => {
-                                            setTagMenuOpen(next);
-                                            if (next) setTagMenuEverOpened(true);
-                                        }}
-                                        items={tagMenuItems}
-                                        onSelect={handleTagMenuSelect}
-                                        onCreateItem={handleTagMenuCreate}
-                                        createItemDisplay={(query) => ({
-                                            title: `${t('dropdown.createItem.prefix')} ${query}`,
-                                            leftGap: 8,
-                                            rowContainerStyle: { paddingVertical: theme.space.s6 },
-                                            titleStyle: { fontSize: 14, lineHeight: 20 },
-                                            titleNode: (
-                                                <>
-                                                    {t('dropdown.createItem.prefix')}
-                                                    <RNText style={styles.tagChipInlineText} numberOfLines={1}>
-                                                        {query}
-                                                    </RNText>
-                                                </>
-                                            ),
-                                            icon: <Icon name="plus" size={16} color={rowActionIconColor} />,
-                                        })}
-                                        placement="bottom"
-                                        popoverAnchorAlign="end"
-                                        variant="slim"
-                                        search={true}
-                                        searchPlaceholder={t('sessionTags.searchOrAddPlaceholder')}
-                                        emptyLabel={null}
-                                        showCategoryTitles={false}
-                                        matchTriggerWidth={false}
-                                        maxWidthCap={220}
-                                        popoverPortalWebTarget="body"
-                                        trigger={({ toggle }) => (
-                                            <IconButton
-                                                testID="session-item-tag-action"
-                                                {...rowActionButtonProps}
-                                                onPress={(e) => {
-                                                    stopRowPressPropagation(e);
-                                                    setTagMenuEverOpened(true);
-                                                    toggle();
-                                                }}
-                                                accessibilityLabel={t('sessionTags.editTagsLabel')}
-                                                icon={<TagIcon size={14} color={rowActionIconColor} />}
-                                            />
-                                        )}
-                                    />
-                                ) : (
-                                    <IconButton
-                                        testID="session-item-tag-action"
-                                        {...rowActionButtonProps}
-                                        onPress={(e) => {
-                                            stopRowPressPropagation(e);
-                                            setTagMenuEverOpened(true);
-                                            setTagMenuOpen(true);
-                                        }}
-                                        accessibilityLabel={t('sessionTags.editTagsLabel')}
-                                        icon={<TagIcon size={14} color={rowActionIconColor} />}
-                                    />
-                                )
-                            ) : null}
-                            {talkActionVisible ? (
-                                <IconButton
-                                    testID="session-item-talk-action"
-                                    {...rowActionButtonProps}
-                                    onPress={(e) => {
-                                        stopRowPressPropagation(e);
-                                        handleTalkAction();
-                                    }}
-                                    accessibilityLabel={t('bots.talk', { name: sessionNameResolved })}
-                                    icon={<Icon name="microphone" size={14} color={rowActionIconColor} />}
-                                />
-                            ) : null}
-                            {supportsPin ? (
-                                <IconButton
-                                    testID="session-item-pin-action"
-                                    {...rowActionButtonProps}
-                                    onPress={(e) => {
-                                        stopRowPressPropagation(e);
-                                        handleTogglePinnedAction();
-                                    }}
-                                    accessibilityLabel={pinned ? t('sessionInfo.unpinSession') : t('sessionInfo.pinSession')}
-                                    icon={pinned ? (
-                                        <PinSlashIcon size={14} color={rowActionIconColor} />
-                                    ) : (
-                                        <PinIcon size={14} color={rowActionIconColor} />
-                                    )}
-                                />
-                            ) : null}
-                            {moreMenuItems.length > 0 ? (
-                                <DropdownMenu
-                                    open={moreMenuOpen}
-                                    onOpenChange={setMoreMenuOpen}
-                                    items={moreMenuItems}
-                                    onSelect={handleMoreMenuSelect}
-                                    placement="bottom"
-                                    popoverAnchorAlign="end"
-                                    variant="slim"
-                                    matchTriggerWidth={false}
-                                    maxWidthCap={260}
-                                    showCategoryTitles={false}
-                                    popoverPortalWebTarget="body"
-                                    trigger={({ toggle }) => (
-                                        <IconButton
-                                            testID="session-item-more-menu"
-                                            {...rowActionButtonProps}
-                                            onPress={(e) => {
-                                                stopRowPressPropagation(e);
-                                                toggle();
-                                            }}
-                                            accessibilityLabel={t('common.moreActions')}
-                                            icon={<Icon name="dots-three" size={14} color={rowActionIconColor} />}
-                                        />
-                                    )}
-                                />
-                            ) : null}
+                            {rowActionButtons}
                             {showTrailingAttentionIndicator && workStatus.tone !== 'neutral' ? trailingStatusKeyedSlot : null}
                         </View>
                     ) : showTrailingAttentionIndicator || showTrailingActivityTime || showTrailingGuardWord ? (
@@ -2067,6 +2094,8 @@ const SessionItemContent = React.memo(
                     style={containerStyles}
                     onPointerEnter={isWeb ? handleRowPointerEnter : undefined}
                     onPointerLeave={isWeb ? handleRowPointerLeave : undefined}
+                    onFocus={isWeb ? handleRowFocus : undefined}
+                    onBlur={isWeb ? handleRowBlur : undefined}
                 >
                     {itemContent}
                     {menuNodes}
@@ -2091,6 +2120,8 @@ const SessionItemContent = React.memo(
                 style={containerStyles}
                 onPointerEnter={isWeb ? handleRowPointerEnter : undefined}
                 onPointerLeave={isWeb ? handleRowPointerLeave : undefined}
+                onFocus={isWeb ? handleRowFocus : undefined}
+                onBlur={isWeb ? handleRowBlur : undefined}
             >
                 <Swipeable
                     ref={swipeableRef}

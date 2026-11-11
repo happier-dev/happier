@@ -1,5 +1,6 @@
 import type { ReactElement, ReactNode } from 'react';
 import {
+  Platform,
   View,
   type ViewStyle,
 } from 'react-native';
@@ -82,6 +83,11 @@ export const HAPPIER_COLLECTION_ROW_METRICS = Object.freeze({
   trailingMinPx: 16,
   /** The status slot's glyph column (lab `clstatus`). */
   statusSlotPx: 14,
+  /** A row action's drawn square and the gap between actions (the hover actions at the row's end). */
+  actionPx: 24,
+  actionGap: 2,
+  /** Where the row's actions stand over the title's tail on the web, the title fades out over this far. */
+  actionFadePx: 12,
   radius: HAPPIER_COLLECTION_LIST_METRICS.rowRadius,
 });
 
@@ -196,6 +202,13 @@ export type HappierCollectionRowContentProps = Readonly<{
     onPointerLeave?(event: HappierGestureResponderEvent): void;
   }>;
   /**
+   * While the row is engaged (pointer on it, keyboard focus inside it, one of its menus open): its actions. They
+   * replace the resting trailing content at the row's far end, standing over the title's tail, which fades out
+   * under them on the web. The resting content keeps its box, hidden, so the title never reflows (owner
+   * 2026-11-11). `actionCount` sizes the band from the shared action metrics.
+   */
+  engagedTrailing?: Readonly<{ node: ReactNode; actionCount: number }> | null;
+  /**
    * The row's owner supplies its press target around the identity and text (a Pressable, a link); static
    * previews omit it. The trailing slot stays its sibling: on the web a button renders a `<button>`, and the
    * trailing controls are buttons of their own.
@@ -237,7 +250,43 @@ const trailingBase: ViewStyle = {
   flexShrink: 1,
   minWidth: 0,
   maxWidth: `${M.trailingMaxShare * 100}%`,
+  // The row's height, so the engaged actions centre on the row wherever the resting content sits.
+  alignSelf: 'stretch',
 };
+const restingTrailing: ViewStyle = {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'flex-end',
+  flexShrink: 1,
+  minWidth: 0,
+};
+const restingTrailingHidden: ViewStyle = { ...restingTrailing, opacity: 0 };
+const engagedTrailingBand: ViewStyle = {
+  position: 'absolute',
+  right: 0,
+  top: 0,
+  bottom: 0,
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: M.actionGap,
+};
+
+/** The width of `count` row actions side by side. */
+function resolveActionBandPx(count: number): number {
+  return count <= 0 ? 0 : count * M.actionPx + (count - 1) * M.actionGap;
+}
+
+/**
+ * On the web the press target's end fades out under the engaged actions (a fade, not a painted backdrop: a
+ * glass row's translucent fill would let the title show through a backdrop). The band begins past the trailing
+ * gap and the status slot it covers.
+ */
+function engagedPressTargetStyle(actionCount: number): typeof pressTarget {
+  const covered = Math.max(0, resolveActionBandPx(actionCount) - M.statusSlotPx - M.trailingGap);
+  const mask = `linear-gradient(to left, transparent ${covered}px, #000 ${covered + M.actionFadePx}px)`;
+  const style = { ...pressTarget, maskImage: mask, WebkitMaskImage: mask };
+  return style;
+}
 const pressTarget = {
   flex: 1,
   minWidth: 0,
@@ -351,14 +400,26 @@ export function HappierCollectionRowContent(
       {props.children}
     </HappierCollectionRowMain>
   );
+  const engaged = props.engagedTrailing ?? null;
+  const containerStyle = engaged && Platform.OS === 'web' ? engagedPressTargetStyle(engaged.actionCount) : pressTarget;
+  const restingTestID = props.trailingProps?.testID ? `${props.trailingProps.testID}:rest` : undefined;
   return (
     <View style={rowStyle} onLayout={props.onLayout}>
       {props.leading}
       {props.renderContainer
-        ? props.renderContainer(content, pressTarget)
+        ? props.renderContainer(content, containerStyle)
         : content}
       <View {...props.trailingProps} style={trailingBase}>
-        {props.trailing}
+        <View
+          testID={restingTestID}
+          style={engaged ? restingTrailingHidden : restingTrailing}
+          aria-hidden={engaged ? true : undefined}
+          accessibilityElementsHidden={engaged ? true : undefined}
+          importantForAccessibility={engaged ? 'no-hide-descendants' : undefined}
+        >
+          {props.trailing}
+        </View>
+        {engaged ? <View style={engagedTrailingBand}>{engaged.node}</View> : null}
       </View>
     </View>
   );
