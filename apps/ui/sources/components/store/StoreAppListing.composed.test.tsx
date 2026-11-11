@@ -1269,7 +1269,7 @@ it('creates the App in the chosen new Project and retains its acknowledged Envir
     homes.answer(fixture.lifetime.scope.serverId, environmentPath, { status: 503, body: { error: 'service_unavailable' } });
     await press('store.app.prepare.confirm');
     await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.prepare.created')).toBeTruthy());
-    expect(screen.getTextContent()).toContain(t('projects.deployments.review.environment'));
+    expect(screen.getTextContent()).toContain(t('projects.deployments.environmentCreated'));
     expect(screen.getTextContent()).toContain('status-page');
     expect(screen.findHostByTestId('store.app.prepare.confirm')).toBeNull();
     expect(screen.findHostByTestId('store.app.prepare.back')).toBeNull();
