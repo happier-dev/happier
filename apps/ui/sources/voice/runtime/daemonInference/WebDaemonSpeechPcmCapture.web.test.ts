@@ -169,10 +169,13 @@ describe('createWebDaemonSpeechPcmCapture', () => {
     vi.unstubAllGlobals();
   });
 
-  it('preserves the microphone acquisition stage in the Voice machine error', async () => {
+  it.each([
+    ['NotFoundError', 'mic_unavailable', 'retry'],
+    ['NotAllowedError', 'mic_permission_denied', 'open_settings'],
+  ])('preserves %s as a microphone failure rather than a provider failure', async (name, kind, recoveryAction) => {
     const { audioContext } = createAudioContext();
     const micSession = createMicSession({ audioContext });
-    vi.mocked(navigator.mediaDevices.getUserMedia).mockRejectedValueOnce(new Error('permission denied'));
+    vi.mocked(navigator.mediaDevices.getUserMedia).mockRejectedValueOnce(new DOMException('Microphone acquisition refused', name));
     const onError = vi.fn();
     const capture = createWebDaemonSpeechPcmCapture({
       micSession,
@@ -184,8 +187,8 @@ describe('createWebDaemonSpeechPcmCapture', () => {
     await capture.start();
 
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({
-      kind: 'provider_error',
-      reason: 'daemon_streaming_stt_web_mic_acquisition_failed',
+      kind,
+      recoveryAction,
     }));
   });
 

@@ -4,7 +4,7 @@ import {
   createWebPcmCapture,
   type WebPcmCaptureError,
 } from '@/voice/runtime/input/WebPcmCapture.web';
-import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
+import { classifyVoiceMachineError, createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import type { MicSession } from '@/voice/runtime/mic/MicSession';
 
 export type WebDaemonSpeechPcmCaptureOptions = Readonly<{
@@ -77,9 +77,8 @@ export function createWebDaemonSpeechPcmCapture(
       }
       await options.onChunk(bytes);
     },
-    onError(error) {
-      options.onError?.(createVoiceMachineError({
-        kind: 'provider_error',
+    onError(error, cause) {
+      options.onError?.(classifyVoiceMachineError(cause, {
         reason: mapCaptureError(error),
       }));
     },

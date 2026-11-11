@@ -100,7 +100,7 @@ export type WebPcmCaptureOptions = Readonly<{
   chunkMs: number;
   fallback: 'allow_script_processor' | 'disabled';
   onChunk(chunk: WebPcmCaptureChunk): Promise<void> | void;
-  onError?(error: WebPcmCaptureError): void;
+  onError?(error: WebPcmCaptureError, cause?: unknown): void;
   onFallbackActivated?(kind: 'script_processor'): void;
   signal?: AbortSignal | null;
   processorBufferSize?: number;
@@ -454,11 +454,12 @@ export function createWebPcmCapture(options: WebPcmCaptureOptions): WebPcmCaptur
     return finishing;
   };
 
-  const fail = (reason: WebPcmCaptureError): void => {
+  const fail = (reason: WebPcmCaptureError, cause?: unknown): void => {
     if (failure) return;
     failure = reason;
     try {
-      options.onError?.(reason);
+      if (cause === undefined) options.onError?.(reason);
+      else options.onError?.(reason, cause);
     } catch {
       // Error observers must not prevent deterministic capture teardown.
     } finally {
@@ -606,8 +607,8 @@ export function createWebPcmCapture(options: WebPcmCaptureOptions): WebPcmCaptur
 
     try {
       await options.mic.ensureActive?.();
-    } catch {
-      fail('pcm_capture_mic_acquisition_failed');
+    } catch (error) {
+      fail('pcm_capture_mic_acquisition_failed', error);
       return;
     }
     if (options.signal?.aborted || version !== lifecycleVersion) {

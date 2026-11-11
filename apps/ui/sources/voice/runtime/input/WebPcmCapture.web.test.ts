@@ -408,7 +408,7 @@ describe('WebPcmCapture', () => {
       onError,
     });
     await capture.start();
-    expect(onError).toHaveBeenCalledWith('pcm_capture_mic_acquisition_failed');
+    expect(onError).toHaveBeenCalledWith('pcm_capture_mic_acquisition_failed', expect.objectContaining({ message: 'mic_permission_denied' }));
   });
 
   it('reports missing stream or audio context separately from microphone acquisition', async () => {
