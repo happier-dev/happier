@@ -241,6 +241,19 @@ describe('the New for you widget', () => {
         await act(async () => { await widget.press(await widget.getByRole('button', { name: 'Connect a source' })); });
         expect(opened).toEqual([{ ...TRIAGE_ENTRY_DETAIL_DESTINATION_V1 }]);
     });
+    it('says the host\'s one line, not a second first step, when no Machine can run it and no source is set up (owner 1111)', async () => {
+        // A fresh Account: no Machine and no source. The host's line (add a machine) is the first step; the card does
+        // not draw "Connect a source" beneath it as a second cause.
+        const { collections } = createTestkitCorpusCollections();
+        const widget = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), input => listTriageEntries(
+            TriageListEntriesInputV1Schema.parse(input), { sourceInstances: collections.sourceInstances,
+                readAdmittedSources: async () => [], executeScan: async () => { throw new Error('No source should be scanned'); },
+                nowMs: () => 3_000,
+            }), undefined, { machine: { machineExecutionReady: false } });
+        await expect(widget.getByText('The latest entries could not be read')).resolves.toBeDefined();
+        await expect(widget.queryByText('No sources connected yet')).resolves.toBeUndefined();
+        await expect(widget.queryByRole('button', { name: 'Connect a source' })).resolves.toBeUndefined();
+    });
     it('names the source it could not read instead of claiming nothing is new', async () => {
         const harness = createListHarness(false, {}, false, { now: true });
         const widget = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), input => harness.executeAction(input));

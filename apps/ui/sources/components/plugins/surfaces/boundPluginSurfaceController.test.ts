@@ -697,6 +697,30 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         await hook.unmount();
     });
 
+    it('lends the no-Machine notice to its widget frame as soon as no Machine can run it, without waiting for a refused call (owner 1111)', async () => {
+        // A fresh Account's glance knows nothing will load and asks nothing; its frame still learns what to say.
+        const lend = vi.fn();
+        type Phase = 'connecting' | 'settled' | 'interactive';
+        const facts = (phase: Phase) => ({
+            ...FACTS, machineId: null, machineDisplayName: null, occurrenceId: null, executionOrigin: null,
+            daemonInteractionEnabled: phase === 'interactive', executionOriginSelectionKind: 'unavailable' as const,
+            isDaemonConnectionPending: () => phase === 'connecting',
+        });
+        const hook = await renderHook((phase: Phase) => useBoundPluginSurfaceController({ facts: facts(phase) }),
+            { initialProps: 'connecting' as Phase, wrapper: ({ children }) => React.createElement(WidgetFrameBodyNoticeContext.Provider, { value: lend }, children) });
+        // While it is still connecting there is nothing to say yet.
+        expect(lend.mock.calls.filter(([source]) => typeof source === 'function')).toHaveLength(0);
+        await hook.rerender('settled');
+        const lent = lend.mock.calls.map(([source]) => source).filter((source): source is WidgetFrameBodyNoticeSource => typeof source === 'function');
+        expect(lent).toHaveLength(1);
+        expect(lent[0]!()).toEqual({ sentence: t('settingsPlugins.targetSelection.noMachine'), addMachine: true });
+        // Once the mount can interact (its glance reads what it has), the notice it lent leaves the frame.
+        await hook.rerender('interactive');
+        expect(lend).toHaveBeenLastCalledWith(null);
+        await hook.unmount();
+        expect(lend).toHaveBeenLastCalledWith(null);
+    });
+
     it('says none of the Home’s machines runs the plugin, and leads to the plugin, when machines exist but none can', async () => {
         const lend = vi.fn();
         const hook = await renderHook(() => useBoundPluginSurfaceController({ facts: {

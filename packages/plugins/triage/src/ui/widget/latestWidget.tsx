@@ -212,6 +212,9 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
       title={text('plugins.triage.tasks.empty.title', 'No tasks here')}
       description={text('plugins.triage.tasks.widget.empty.description', 'Your open tasks show here, most pressing first.')}
       action={<Button title={text('plugins.triage.tasks.new', 'New task')} onPress={createTask} />} />{degradedLine}</>;
+    // First run under the host's outage (a fresh Account with no Machine): the host's line is the first step, so the
+    // card is that one line, not a second first step beneath it (owner 2026-11-11).
+    if (shellState.kind === 'configureSources' && hostOutage.speaks) return <>{header}{offlineNothingCached}</>;
     // First run: what this card will hold, and the one way to fill it, which opens the page's own source tiles.
     if (shellState.kind === 'configureSources') return (<>{header}
       <EmptyState

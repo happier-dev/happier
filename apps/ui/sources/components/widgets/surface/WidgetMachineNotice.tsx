@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { PluginUiSurfaceNoticeContext } from '@happier-dev/plugin-ui/advanced';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { useClaimableSurfaceNotice } from '@/components/ui/surfaces/claimableSurfaceNotice';
 import { WidgetFrameBodyNoticeContext, type WidgetFrameBodyNoticeSource } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { buildPluginDetailRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { MACHINES_ADD_ROUTE } from '@/components/settings/machines/collection/machineCollectionModel';
@@ -26,20 +27,10 @@ import { t } from '@/text';
 export function WidgetMachineNoticeBoundary(props: Readonly<{ testID: string; children: React.ReactNode }>): React.ReactElement {
     const [source, setSource] = React.useState<WidgetFrameBodyNoticeSource | null>(null);
     const [attempt, setAttempt] = React.useState(0);
-    const [claimants, setClaimants] = React.useState<ReadonlySet<string>>(EMPTY_CLAIMANTS);
     const lend = React.useCallback((next: WidgetFrameBodyNoticeSource | null) => setSource(() => next), []);
     const retry = React.useCallback(() => {
         setSource(null);
         setAttempt((current) => current + 1);
-    }, []);
-    const claim = React.useCallback((id: string) => {
-        setClaimants((current) => (current.has(id) ? current : new Set(current).add(id)));
-        return () => setClaimants((current) => {
-            if (!current.has(id)) return current;
-            const next = new Set(current);
-            next.delete(id);
-            return next;
-        });
     }, []);
     const router = useRouter();
     // Primitive selections keep each snapshot stable by value while the stores change.
@@ -51,13 +42,12 @@ export function WidgetMachineNoticeBoundary(props: Readonly<{ testID: string; ch
         : managePluginId
             ? { label: t('settingsPlugins.managePlugin'), onPress: () => { runGuardedNavigation(() => router.push(buildPluginDetailRoute('settings', managePluginId) as never)); } }
             : undefined, [addMachine, managePluginId, router]);
-    const surfaceNotice = React.useMemo(
-        () => (sentence === null ? null : { sentence, claim, ...(action ? { action } : {}) }),
-        [sentence, claim, action],
-    );
+    // A failure state that claims the sentence says it in its own place, and the body is then that one line.
+    const content = React.useMemo(() => (sentence === null ? null : { sentence, ...(action ? { action } : {}) }), [sentence, action]);
+    const { notice: surfaceNotice, claimed } = useClaimableSurfaceNotice(content);
     return (
         <WidgetFrameBodyNoticeContext.Provider value={lend}>
-            {sentence === null || claimants.size > 0 ? null : (
+            {sentence === null || claimed ? null : (
                 <SurfaceStateCard
                     testID={`${props.testID}-machine-notice`}
                     kind="warning"
@@ -76,7 +66,6 @@ export function WidgetMachineNoticeBoundary(props: Readonly<{ testID: string; ch
     );
 }
 
-const EMPTY_CLAIMANTS: ReadonlySet<string> = new Set();
 // The body lends a live controller query whose inputs can be held in refs.
 const MACHINE_NOTICE_INPUTS = {
     machines: true, machineListByServerId: true, machineListStatusByServerId: true,

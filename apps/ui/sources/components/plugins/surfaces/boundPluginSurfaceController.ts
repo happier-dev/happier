@@ -480,6 +480,8 @@ export type BoundPluginSurfaceController = Readonly<{
     interactive: boolean;
     /** The same current daemon admission used by contributed Action dispatch, without recording use. */
     canInteractWithDaemon: () => boolean;
+    /** The widget-frame sentence for a Machine that cannot answer; undefined while it can, or is still connecting. */
+    describeUnreachableMachine?: () => WidgetFrameBodyNotice | undefined;
     /** The exact caller binding consumed by dispatch, independent of daemon reachability. */
     isRequesterAdmitted: () => boolean;
     /**
@@ -1480,8 +1482,16 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                 machine: input.facts.machineDisplayName?.trim() || t('machine.thisMachineInSentence') });
             if (writer) return { sentence: writer.sentence, managePluginId: input.facts.pluginId };
         }
-        const daemonUnavailable = isMachineUnavailable(diagnostics, request);
-        if (!daemonUnavailable || input.facts.isDaemonConnectionPending?.() === true) return undefined;
+        if (!isMachineUnavailable(diagnostics, request)) return undefined;
+        return describeUnreachableMachine();
+    };
+    /**
+     * What to say when this mount's Machine cannot answer: the daemon is not interactive and not still connecting.
+     * A refused call words it through `describeMachineNotice`; a widget whose execution has settled with no Machine
+     * to run on lends it to its frame without waiting for a call (`useBoundPluginSurfaceController`).
+     */
+    const describeUnreachableMachine = (): WidgetFrameBodyNotice | undefined => {
+        if (isDaemonInteractionEnabled(false) || input.facts.isDaemonConnectionPending?.() === true) return undefined;
         if (input.facts.daemonConnectionFailure) {
             return { sentence: resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: input.facts.daemonConnectionFailure.reasonCode }).body };
         }
@@ -1751,6 +1761,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         },
         interactive: hostApi.installedMethods.length > 0,
         canInteractWithDaemon: () => isInteractionCurrent() && isDaemonInteractionEnabled(false),
+        describeUnreachableMachine,
         isRequesterAdmitted: () => callerBinding !== null && isInteractionCurrent(),
         subscribeResourceInvalidations: (listener) => {
             resourceInvalidationListeners.add(listener);
@@ -2004,6 +2015,18 @@ export function useBoundPluginSurfaceController(input: Readonly<{
     }, [controller]);
     const connectionPending = facts.isDaemonConnectionPending?.() === true;
     const clientExecutableAdmission = facts.readClientExecutableAdmission?.();
+    // No Machine can run this mount and it is not connecting: nothing it asks will answer, so a glance that asks
+    // nothing still has its frame say what to do (add a machine, or open the plugin), as a refused call would.
+    const machineSettledUnavailable = facts.executionOriginSelectionKind === 'unavailable' && !connectionPending
+        && !facts.daemonInteractionEnabled;
+    // It leaves when that stops holding (connecting again, or the mount can interact): the frame re-reads the wording
+    // only on store changes, never on this mount's own facts.
+    React.useEffect(() => {
+        const describe = controller.describeUnreachableMachine;
+        if (!machineSettledUnavailable || !describe) return;
+        lendMachineNoticeRef.current?.(describe);
+        return () => lendMachineNoticeRef.current?.(null);
+    }, [controller, machineSettledUnavailable]);
     React.useLayoutEffect(() => {
         controller.hostApi.notifyConnectionSettled?.();
     }, [controller, connectionPending, facts.daemonInteractionEnabled, facts.resolveContributedAction,

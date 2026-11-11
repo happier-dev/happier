@@ -8,7 +8,7 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { Text } from '@/components/ui/text/Text';
 import { storage } from '@/sync/domains/state/storageStore';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceStateCard, SurfaceStateContentContext, type SurfaceStateContentReport } from '@/components/ui/surfaces/SurfaceStateCard';
 import { WidgetFrameBodyNoticeContext, type WidgetFrameBodyNoticeSource } from '@/components/widgets/frame/widgetFrameBodyCaption';
 
 import { useClaimedPluginUiSurfaceNotice } from '@happier-dev/plugin-ui/advanced';
@@ -130,6 +130,30 @@ describe('WidgetMachineNoticeBoundary', () => {
         await flushHookEffects({ cycles: 2 });
         expect(mounts).toBe(2);
         expect(screen.findByTestId('widget-machine-notice')).toBeNull();
+    });
+
+    it('tells its frame the body is one line when a failure state claims the notice, so the card is that line (owner 1111)', async () => {
+        const reports = new Map<symbol, SurfaceStateContentReport>();
+        const report = (key: symbol, value: SurfaceStateContentReport | null) => { if (value) reports.set(key, value); else reports.delete(key); };
+        function Claimant() {
+            const sentence = useClaimedPluginUiSurfaceNotice(true);
+            return <Text testID="plugin-error">{sentence ?? 'The latest entries could not be read'}</Text>;
+        }
+        const notice: WidgetFrameBodyNoticeSource = () => ({ sentence: 'Add or connect a machine to use this here.', addMachine: true });
+        const render = (claims: boolean) => (
+            <SurfaceStateContentContext.Provider value={report}>
+                <WidgetMachineNoticeBoundary testID="widget"><Lending notice={notice} />{claims ? <Claimant /> : null}</WidgetMachineNoticeBoundary>
+            </SurfaceStateContentContext.Provider>
+        );
+        const screen = await renderScreen(render(true));
+        await flushHookEffects({ cycles: 3 });
+        expect(screen.findByTestId('plugin-error')?.props.children).toBe('Add or connect a machine to use this here.');
+        expect([...reports.values()]).toEqual([{ empty: false, line: true, loading: false }]);
+        // Unclaimed, the host says it above a body that keeps its rows: nothing claims the body is one line.
+        await screen.update(render(false));
+        await flushHookEffects({ cycles: 3 });
+        expect(screen.findByTestId('widget-machine-notice')).not.toBeNull();
+        expect([...reports.values()]).toEqual([]);
     });
 
     it('leads to adding a machine, in place of Retry, when no Machine exists to retry on', async () => {

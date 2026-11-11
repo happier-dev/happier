@@ -1,8 +1,9 @@
 import * as React from 'react';
 
-import { PluginUiSurfaceNoticeContext, type PluginUiSurfaceNotice } from '@happier-dev/plugin-ui/advanced';
+import { PluginUiSurfaceNoticeContext } from '@happier-dev/plugin-ui/advanced';
 
-import { SurfaceStateContentContext, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
+import type { SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
+import { useClaimableSurfaceNotice } from '@/components/ui/surfaces/claimableSurfaceNotice';
 import type { PluginMachineExecutionOriginStateV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { t } from '@/text';
 import { resolvePluginExecutionOriginReasonDetail } from '@/sync/domains/surfaces/copy';
@@ -185,34 +186,14 @@ export function useClaimableOfflineNotice(input: Readonly<{ offline: boolean; re
     provide: (children: React.ReactNode) => React.ReactNode;
 }> {
     const outer = React.useContext(PluginUiSurfaceNoticeContext);
-    const reportContent = React.useContext(SurfaceStateContentContext);
-    const [claimants, setClaimants] = React.useState<ReadonlySet<string>>(NO_CLAIMANTS);
-    const claim = React.useCallback((id: string) => {
-        setClaimants((current) => (current.has(id) ? current : new Set(current).add(id)));
-        return () => setClaimants((current) => {
-            if (!current.has(id)) return current;
-            const next = new Set(current);
-            next.delete(id);
-            return next;
-        });
-    }, []);
     const retry = input.retry;
-    const notice = React.useMemo<PluginUiSurfaceNotice | null>(() => input.offline ? {
+    const content = React.useMemo(() => input.offline ? {
         sentence: t('pluginSurfaces.state.offline.nothingCached'),
-        claim,
         ...(retry ? { action: { label: retry.label, onPress: () => { void retry.onPress(); } } } : {}),
-    } : null, [claim, input.offline, retry]);
-    const claimed = input.offline && claimants.size > 0;
-    const [reportKey] = React.useState(() => Symbol('claimed-offline-notice'));
-    React.useEffect(() => {
-        if (!claimed || !reportContent) return;
-        reportContent(reportKey, { empty: false, line: true, loading: false });
-        return () => reportContent(reportKey, null);
-    }, [claimed, reportContent, reportKey]);
+    } : null, [input.offline, retry]);
+    const { notice, claimed } = useClaimableSurfaceNotice(content);
     const provide = React.useCallback((children: React.ReactNode) => React.createElement(
         PluginUiSurfaceNoticeContext.Provider, { value: notice ?? outer }, children,
     ), [notice, outer]);
     return { claimed, provide };
 }
-
-const NO_CLAIMANTS: ReadonlySet<string> = new Set();
