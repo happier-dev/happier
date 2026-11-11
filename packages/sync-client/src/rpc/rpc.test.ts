@@ -11,7 +11,7 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ManagedMachineActionInputSchemasV1, readMachineSetupPlanChildInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/socketRpc';
+import { parseSocketRpcAuthorizationContext, WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/socketRpc';
 import { DeploymentChildRoutingV1Schema } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
 import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -599,6 +599,45 @@ it('issues prefixed RPC with session-write authority and decodes the ack', async
     ack({ ok: true, result: { stopped: true } });
   }));
   expect(await callSocketRpc({ socket, target: { kind: 'session', id: 's' }, method: 'abort', params: { reason: 'test' }, content: { mode: 'plain' } })).toEqual({ stopped: true });
+});
+it.each([
+  { method: RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, kind: 'session.read' },
+  { method: RPC_METHODS.DAEMON_BROWSER_VIEW_WATCH, kind: 'session.read' },
+  { method: RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT, kind: 'session.read' },
+  { method: RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START, kind: 'session.read' },
+  { method: RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH, kind: 'session.write' },
+].flatMap(scenario => (['plain', 'e2ee'] as const).map(mode => ({ ...scenario, mode }))))(
+  'selects Session Browser admission for $method on the real $mode wire', async ({ method, kind, mode }) => {
+    const socket = await setup();
+    const content = mode === 'plain' ? { mode: 'plain' } as const : cipher();
+    server.sockets.sockets.forEach(remote => remote.on('rpc-call', async (packet, acknowledge) => {
+      const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
+      acknowledge({ ok: true, result: await socketRpcCodec.encodeResponse(content, {
+        method: packet.method,
+        authorization: packet.authorization ?? null,
+        parsedAuthorization: parseSocketRpcAuthorizationContext(packet.authorization),
+        params: decoded.params,
+      }, decoded.callId) });
+    }));
+    const authorization = { kind, sessionId: 'shared-session' };
+    await expect(callSocketRpc({ socket, target: { kind: 'session', id: 'shared-session' },
+      method, params: { browserSessionId: 'browser' }, content })).resolves.toEqual({
+      method: `shared-session:${method}`, authorization, parsedAuthorization: authorization,
+      params: { browserSessionId: 'browser' },
+    });
+  });
+it('keeps Machine Browser and unclassified Session calls outside Session Browser admission', async () => {
+  const socket = await setup();
+  server.sockets.sockets.forEach(remote => remote.on('rpc-call', (packet, acknowledge) => {
+    acknowledge({ ok: true, result: { method: packet.method, authorization: packet.authorization ?? null } });
+  }));
+  for (const scenario of [
+    { target: { kind: 'machine', id: 'machine' } as const, method: RPC_METHODS.DAEMON_BROWSER_VIEW_LIST },
+    { target: { kind: 'session', id: 'session' } as const, method: 'custom.read' },
+  ]) {
+    await expect(callSocketRpc({ socket, ...scenario, params: {}, content: { mode: 'plain' } }))
+      .resolves.toEqual({ method: `${scenario.target.id}:${scenario.method}`, authorization: null });
+  }
 });
 it('records an acknowledgement before delayed result decoding completes', async () => {
   const socket = await setup();

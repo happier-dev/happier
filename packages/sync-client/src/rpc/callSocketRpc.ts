@@ -1,5 +1,5 @@
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
-import { resolveSocketRpcSessionAuthorization, SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS, SocketRpcTimeoutMsSchema } from '@happier-dev/protocol/socketRpc';
+import { resolveSessionBrowserRpcCapabilityV1, resolveSocketRpcSessionAuthorization, SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS, SocketRpcTimeoutMsSchema } from '@happier-dev/protocol/socketRpc';
 import { ANSWERING_CLIENT_RPC_PREFIX_V1, SocketRpcAnsweringClientV1Schema, type SocketRpcAnsweringClientV1 } from '@happier-dev/protocol/socketRpc';
 import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 import { SOCKET_RPC_EVENTS, SessionTransferRoutingV1Schema, SocketRpcSessionActionAuthorizationContextSchema, WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, isSessionActionRpcMethodV1 } from '@happier-dev/protocol/socketRpc';
@@ -196,9 +196,13 @@ export async function callSocketRpc<R>(params: Readonly<{
     const encoded = await socketRpcCodec.encodeParams(params.content, params.params, { method, callId });
     if (params.signal?.aborted) throw createSocketRpcAbortError();
     const requestId = params.requestId ?? (params.signal || params.createExternalActionExecution ? createSocketRpcRequestId() : undefined);
+    const sessionBrowserCapability = params.target.kind === 'session'
+      ? resolveSessionBrowserRpcCapabilityV1(params.method) : null;
     const authorization = sessionActionAuthorization ?? (params.target.kind === 'session'
-      ? resolveSocketRpcSessionAuthorization(params.method)
-        ? { kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE, sessionId: params.target.id } as const
+      ? sessionBrowserCapability || resolveSocketRpcSessionAuthorization(params.method)
+        ? { kind: sessionBrowserCapability === 'readTranscript'
+          ? SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_READ : SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
+          sessionId: params.target.id } as const
         : undefined
       : params.authorization);
     const externalActionExecution = params.createExternalActionExecution && requestId ? params.createExternalActionExecution({ method, requestId, params: encoded }) : undefined;
