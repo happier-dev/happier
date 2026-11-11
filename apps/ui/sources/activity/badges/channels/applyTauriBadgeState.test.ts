@@ -2,6 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const setBadgeCount = vi.hoisted(() => vi.fn(async () => {}));
 const setBadgeLabel = vi.hoisted(() => vi.fn(async () => {}));
+const userAgent = vi.hoisted(() => ({
+    value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15',
+}));
+
+vi.stubGlobal('navigator', {
+    get userAgent() {
+        return userAgent.value;
+    },
+});
 
 vi.mock('@tauri-apps/api/window', () => ({
     getCurrentWindow: () => ({
@@ -17,6 +26,7 @@ describe('applyTauriBadgeState', () => {
         setBadgeLabel.mockClear();
         setBadgeCount.mockImplementation(async () => {});
         setBadgeLabel.mockImplementation(async () => {});
+        userAgent.value = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15';
     });
 
     it('sets a numeric badge without immediately clearing the macOS dock label', async () => {
@@ -35,6 +45,17 @@ describe('applyTauriBadgeState', () => {
 
         expect(setBadgeCount).toHaveBeenCalledWith(undefined);
         expect(setBadgeLabel).toHaveBeenCalledWith('•');
+    });
+
+    it('does not call unsupported badge commands on Windows', async () => {
+        userAgent.value = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+        const { applyTauriBadgeState } = await import('./applyTauriBadgeState');
+
+        await applyTauriBadgeState({ count: 3, showNonNumericDot: true });
+        await applyTauriBadgeState({ count: 0, showNonNumericDot: true });
+
+        expect(setBadgeCount).not.toHaveBeenCalled();
+        expect(setBadgeLabel).not.toHaveBeenCalled();
     });
 
     it('serializes writes and coalesces queued intermediate badge states', async () => {
