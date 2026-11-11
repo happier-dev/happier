@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  SHARED_SAVED_SECRET_ACTION_IDS_V1,
   TEAM_CREDENTIAL_ACTION_IDS_V1,
 } from '@happier-dev/protocol';
+import {
+  SHARED_SAVED_SECRET_ACTION_IDS_V1,
+  isSharedSavedSecretHomeActionIdV1,
+} from '@happier-dev/protocol/account/settings/savedSecretResourceActionIdsV1';
 
 import {
   findCommandDispatchDescriptor,
@@ -140,9 +143,11 @@ describe('compiled Action commands in the one command registry', () => {
       lane10ActionIds.has(command.actionId)
     ));
 
+    // Reveal and Finish sharing run in the answering app, not a Home CLI.
+    // Keep the full family above so accidental CLI exposure also fails parity.
     expect(new Set(commands.map((command) => command.actionId))).toEqual(new Set([
       ...TEAM_CREDENTIAL_ACTION_IDS_V1,
-      ...SHARED_SAVED_SECRET_ACTION_IDS_V1,
+      ...SHARED_SAVED_SECRET_ACTION_IDS_V1.filter(isSharedSavedSecretHomeActionIdV1),
     ]));
     expect(commands.every((command) => command.acceptsServerId && command.requiresServerId)).toBe(true);
     // Home credential operations use the friendly credentials root. Host
