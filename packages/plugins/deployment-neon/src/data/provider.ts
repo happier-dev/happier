@@ -176,11 +176,16 @@ export async function branches(input: Input & { cursor?: string; search?: string
   if (input.branchId && found.length && found[0]?.branchId !== input.branchId) throw new PluginError({ code: 'deployment_conflict' });
   return { branches: found, operations: observedOperations, ...next(body, 'branches') };
 }
+/** Branch and project lifecycle keep their Environment coordinate; only provider inspection may omit it. */
+function lifecycleEnvironmentId(input: Input): string {
+  if (!input.environmentId) throw new PluginError({ code: 'invalid_parameters' });
+  return input.environmentId;
+}
 function annotation(input: Input, correlation: Correlation) {
   // P44 creates the child Environment first, with a same-Environment link to
   // the parent branch. Create returns the preview branch for association there;
   // recovery and teardown keep that child's exact Environment annotation.
-  return { 'happier.environment': input.environmentId, 'happier.scm.kind': correlation.repository.kind,
+  return { 'happier.environment': lifecycleEnvironmentId(input), 'happier.scm.kind': correlation.repository.kind,
     'happier.scm.deployment': correlation.repository.deployment, 'happier.scm.repository': correlation.repository.repository,
     'happier.pullRequest': correlation.pullRequestId };
 }
@@ -381,7 +386,7 @@ async function recoverProject(input: Input & { name: string; requestKey: string;
     const annotations = record(body.annotations ?? {});
     for (const item of list(body.branches).map(record)) {
       if (item.project_id === candidate.providerProjectId && matches(annotations[text(item.id)], text(item.id), {
-        'happier.environment': input.environmentId, 'happier.operation': input.requestKey,
+        'happier.environment': lifecycleEnvironmentId(input), 'happier.operation': input.requestKey,
       })) matchesFound.push({ projectId: candidate.providerProjectId, branch: item });
     }
   }
@@ -398,7 +403,7 @@ export async function provision(input: Input & CreatedSaveIntent & { name: strin
   try {
     const body = await request(context, '/projects', 'POST', { project: { name: input.name, org_id: account(input), region_id: input.regionId,
       branch: { database_name: input.database, role_name: input.role,
-        annotations: { 'happier.environment': input.environmentId, 'happier.operation': input.requestKey } } } });
+        annotations: { 'happier.environment': lifecycleEnvironmentId(input), 'happier.operation': input.requestKey } } } });
     const projectId = mutationResponse(() => projectIdentity(record(body.project), account(input)));
     known.providerProjectId = projectId;
     const branchId = mutationResponse(() => branchIdentity(record(body.branch), projectId));
