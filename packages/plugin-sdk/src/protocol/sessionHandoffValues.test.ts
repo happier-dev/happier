@@ -189,7 +189,7 @@ describe('canonical values composed by Session handoffs', () => {
         const validate = compilePluginJsonSchema(result.jsonSchema);
         expect(validate({ result: fanout })).toBe(true);
         expect(validate({ result: { ...sent, completed: true } })).toBe(false);
-        expectTypeOf(SessionMessageSendResultV1ProtocolSchema.parse(sent)).toMatchTypeOf<PluginActionResultById['session.message.send']>();
+        expectTypeOf(SessionMessageSendResultV1ProtocolSchema.parse(sent)).toEqualTypeOf<ReturnType<typeof canonicalSendProjection.parse>>();
         expectTypeOf(SessionMessageSendResultV1ProtocolSchema.parse(failedFanout)).toMatchTypeOf<ProtocolJsonValue>();
     });
 });
