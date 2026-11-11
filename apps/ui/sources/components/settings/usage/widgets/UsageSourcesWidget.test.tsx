@@ -73,7 +73,8 @@ vi.mock('react-native-unistyles', async () =>
 );
 vi.mock('@/text', async () =>
   (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
-    translate: (key: string, params?: Record<string, unknown>) => key === 'machines.widgets.body.fleet.offlineGroup' ? `${params?.count} offline`
+    translate: (key: string, params?: Record<string, unknown>) => key === 'usage.board.sources.countedToggle' || key === 'usage.board.sources.sourceOptions'
+      ? `${key}: ${params?.agent}` : key === 'machines.widgets.body.fleet.offlineGroup' ? `${params?.count} offline`
       : key === 'projects.identity.machineCount' ? `${params?.count} machines` : key,
   }),
 );
@@ -203,6 +204,32 @@ afterEach(async () => {
 });
 
 describe('Usage Sources body', () => {
+  it('names each source control with its Agent, folder and machine across found and counted rows', async () => {
+    const counted = { ...found, sourceId: 'counted', consent: 'enabled', status: 'ready',
+      root: { kind: 'configured', path: '/Users/ada/work/.claude' } } satisfies UsageSourceV1;
+    const other = { ...counted, machineId: 'other' };
+    const boundary = machineBoundary(found, undefined, new Map([
+      ['mac', [found, counted]], ['other', [other]],
+    ]));
+    const screen = await mount(boundary.executor, { agents: [], machines: [], sources: [] }, true);
+    const controls = [
+      ['mac', 'claude-default', '~/.claude', 'MacBook Pro', ['add', 'options']],
+      ['mac', 'counted', '~/work/.claude', 'MacBook Pro', ['counted', 'options']],
+      ['other', 'counted', '/Users/ada/work/.claude', 'Other machine', ['counted', 'options']],
+    ] as const;
+    for (const [machine, source, folder, machineName, suffixes] of controls) {
+      for (const suffix of suffixes) {
+        const id = `sources.machine.${machine}.source.${source}.${suffix}`;
+        await vi.waitFor(() => expect(screen.findByTestId(id)).toBeTruthy());
+        const label = screen.findByTestId(id)!.props.accessibilityLabel;
+        expect(label).toContain(t('agentInput.agent.claude'));
+        expect(label).toContain(folder);
+        expect(label).toContain(machineName);
+      }
+    }
+    await screen.unmount();
+  });
+
   it('opens the same Source folder prompt from an agent command', async () => {
     const boundary = machineBoundary();
     const screen = await mount(boundary.executor);

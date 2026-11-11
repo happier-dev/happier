@@ -446,6 +446,7 @@ function useSourceRow(props: SourceRowProps, visible = true) {
   const agent = usageAgentTitle(agentId);
   const busy = props.snapshot.pending.some(operation => operation.sourceId === source.sourceId && operation.actionId !== 'usage.sources.get');
   const folder = source.root.path ? formatPathRelativeToHome(source.root.path, props.homeDir) : t('usage.board.sources.defaultFolder');
+  const accessibilityContext = `${folder}, ${props.machineName}`;
   const Bridge = useCurrentUiContextCommandBridge();
   const changeFolder = React.useCallback(async (context: ActionExecutorContext) => {
     let confirmedContext: ActionExecutorContext | undefined;
@@ -461,7 +462,7 @@ function useSourceRow(props: SourceRowProps, visible = true) {
   const commands = useCurrentUiContextLocalCommands(visible && !busy ? [{ key: 'change-folder',
     title: t('usage.board.sources.changeFolder'), description: `${props.testID}.folder`,
     invoke: (_input, context) => changeFolder(context) }] : []);
-  return { agentId, agent, busy, folder, changeFolder: async () => { await commands.invoke('change-folder'); } };
+  return { agentId, agent, busy, folder, accessibilityContext, changeFolder: async () => { await commands.invoke('change-folder'); } };
 }
 
 function SourceIdentity(props: Readonly<{ agentId: string; agent: string; folder: string; serverId: string; children?: React.ReactNode }>) {
@@ -482,7 +483,7 @@ function SourceIdentity(props: Readonly<{ agentId: string; agent: string; folder
 function TrackedSourceRow(props: SourceRowProps & Readonly<{ status: UsageSourceRowStatus; wide: boolean; visible: boolean }>) {
   const { theme } = useUnistyles();
   const { source, controller, status } = props;
-  const { agentId, agent, busy, folder, changeFolder } = useSourceRow(props, props.visible);
+  const { agentId, agent, busy, folder, accessibilityContext, changeFolder } = useSourceRow(props, props.visible);
   const deletion = props.snapshot.historyDeletion?.sourceId === source.sourceId ? props.snapshot.historyDeletion : null;
   const enabled = source.consent === 'enabled';
   const retained = enabled || source.status === 'stopped' || source.pendingCount > 0 || source.asOfMs !== null;
@@ -513,9 +514,9 @@ function TrackedSourceRow(props: SourceRowProps & Readonly<{ status: UsageSource
       {inlineState ? stateLine : null}
       <View style={styles.controls}>
         <Switch testID={`${props.testID}.counted`} value={enabled} disabled={busy || !switchable}
-          accessibilityLabel={t('usage.board.sources.countedToggle', { agent })}
+          accessibilityLabel={`${t('usage.board.sources.countedToggle', { agent })}, ${accessibilityContext}`}
           onValueChange={next => { void (next ? controller.setConsent(source.sourceId, true) : controller.stop(source.sourceId)); }} />
-        <SourceOptions testID={props.testID} agent={agent} actions={actions} />
+        <SourceOptions testID={props.testID} agent={agent} accessibilityContext={accessibilityContext} actions={actions} />
       </View>
     </View>
   ) : null;
@@ -526,7 +527,7 @@ function TrackedSourceRow(props: SourceRowProps & Readonly<{ status: UsageSource
 /** A source found on the machine and not counted yet: what it is, where it is, Add; Not now waits in its menu. */
 function FoundSourceRow(props: SourceRowProps) {
   const { source, controller } = props;
-  const { agentId, agent, busy, folder, changeFolder } = useSourceRow(props);
+  const { agentId, agent, busy, folder, accessibilityContext, changeFolder } = useSourceRow(props);
   const actions: ItemAction[] = [
     ...folderActions(props.testID, source, controller, busy, changeFolder),
     { id: `${props.testID}.notNow`, title: t('usage.board.sources.notNow'), icon: 'eye-slash', disabled: busy,
@@ -537,8 +538,9 @@ function FoundSourceRow(props: SourceRowProps) {
       <SourceIdentity agentId={agentId} agent={agent} folder={folder} serverId={props.serverId} />
       <View style={styles.controls}>
         <RoundButton size="small" display="secondary" title={t('usage.board.sources.add')} loading={busy}
+          accessibilityLabel={`${t('usage.board.sources.add')}: ${agent}, ${accessibilityContext}`}
           onPress={() => { void controller.setConsent(source.sourceId, true); }} testID={`${props.testID}.add`} />
-        <SourceOptions testID={props.testID} agent={agent} actions={actions} />
+        <SourceOptions testID={props.testID} agent={agent} accessibilityContext={accessibilityContext} actions={actions} />
       </View>
     </View>
   );
@@ -554,8 +556,8 @@ function folderActions(testID: string, source: UsageSourceV1, controller: UsageS
   ];
 }
 
-function SourceOptions(props: Readonly<{ testID: string; agent: string; actions: ItemAction[] }>) {
-  const label = t('usage.board.sources.sourceOptions', { agent: props.agent });
+function SourceOptions(props: Readonly<{ testID: string; agent: string; accessibilityContext: string; actions: ItemAction[] }>) {
+  const label = `${t('usage.board.sources.sourceOptions', { agent: props.agent })}, ${props.accessibilityContext}`;
   const [open, setOpen] = React.useState(false);
   const toggle = useUsageDisclosureCommand(label, open, () => setOpen(value => !value));
   return <ItemRowActions title={label} actions={props.actions} overflowOnly

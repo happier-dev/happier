@@ -19,7 +19,7 @@ const scoreLabels = {
     values: { ...values, agentColumn: 'Agent', dayColumn: 'Day', hoursColumn: 'Hours',
         formatHours: (hours: readonly (number | null)[]) => hours.flatMap((n, hour) => n === null ? [] : [`${hour}:00 ${n} min`]).join(', ') },
 };
-const constellationLabels = {
+const constellationLabels = { values: { show: 'Values', hide: 'Hide values', agentColumn: 'Agent', shareColumn: 'Share', kindColumn: 'Kind', countColumn: 'Count' },
     kinds: { session: 'Session', run: 'Run', native: 'Native' }, arrowNote: '', unknownStarts: String,
     nodesOnly: 'Nodes only', unknownAgent: 'Unknown',
 };
@@ -30,7 +30,7 @@ export const usageAgentTooltipFixtures: readonly Readonly<{ name: string; value:
         body: <UsageScore {...base} width={width} labels={scoreLabels} model={{ weekStart: '2026-10-26', encoding: 'minutes',
             rows: [{ agentId: 'claude', hours: [[12.345, null]] }] }} /> })),
     { name: 'Orbit planet', value: '12.35%', body: <UsageOrbit {...base} model={[{ agentId: 'claude', share: 0.123456 }]}
-        labels={{ percent, unknown: String, unknownAgent: 'Unknown' }} /> },
+        labels={{ values: { show: 'Values', hide: 'Hide values', agentColumn: 'Agent', shareColumn: 'Share' }, percent, unknown: String, unknownAgent: 'Unknown' }} /> },
     { name: 'Crew share', value: '12.35%', body: <UsageCrew {...base} model={[{ agentId: 'claude', share: 0.123456 }]}
         labels={{ percent, days: String, unknownAgent: 'Unknown' }} /> },
     { name: 'Agent river band', value: '12.35%', body: <UsageAgentRiver {...base} model={{ width: 'share', weeks: [
@@ -39,7 +39,7 @@ export const usageAgentTooltipFixtures: readonly Readonly<{ name: string; value:
     ] }} labels={{ week: String, partialWeek: (a, b) => `${a}–${b}`, inline: String, caption: '', unknownAgent: 'Unknown',
         values: { ...values, weekColumn: 'Week', totalColumn: 'Total', formatTotal: () => '1.2k tokens', percent } }} /> },
     { name: 'Shipped weekly spine', value: '1 merged PR', body: <UsageShipped {...base} model={{ mode: 'weeks', total: 1, undated: 0,
-        weeks: [{ start: 'Monday', spines: ['claude'] }] }} labels={{ week: String, noDate: 'No date', countLine: (n) => `${n} merged PR`,
+        weeks: [{ start: 'Monday', spines: ['claude'] }] }} labels={{ values: { show: 'Values', hide: 'Hide values', countColumn: 'Count', weekColumn: 'Week' }, week: String, noDate: 'No date', countLine: (n) => `${n} merged PR`,
         mixed: 'Mixed', noMergeDate: 'No merge date', colourBy: 'agent' }} /> },
     { name: 'Constellation node', value: '12.35%', body: <UsageConstellation {...base} labels={constellationLabels}
         model={{ nodes: [{ agentId: 'claude', share: 0.123456 }], edges: null, unknownStarts: null }} /> },

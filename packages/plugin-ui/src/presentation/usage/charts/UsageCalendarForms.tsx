@@ -120,8 +120,8 @@ function dayTable(model: UsageCalendarArtModel, labels: UsageCalendarLabels) {
   };
 }
 
-function CalendarDayMark(props: Readonly<{ day: UsageCalendarArtModel['days'][number]; labels: UsageCalendarLabels; color: string; bounds: Readonly<{ x: number; y: number; width: number; height: number }> }>) {
-  return <ChartMark datum={{ label: props.labels.day(props.day.date), value: levelName(props.labels, props.day.level), color: props.color }} bounds={props.bounds} />;
+function CalendarDayMark(props: Readonly<{ label: string; day: UsageCalendarArtModel['days'][number]; labels: UsageCalendarLabels; color: string; bounds: Readonly<{ x: number; y: number; width: number; height: number }> }>) {
+  return <ChartMark datum={{ keyboard: false, label: `${props.label} · ${props.labels.day(props.day.date)}`, value: levelName(props.labels, props.day.level), color: props.color }} bounds={props.bounds} />;
 }
 
 /** Month labels at each month's first drawn position, never closer than `gap`. */
@@ -331,7 +331,7 @@ export function UsageNinetyPlanets(props: CalendarProps) {
                 </View>
               );
             })}
-            {days.map((day, index) => { const { column, row } = place(index); return <CalendarDayMark key={`datum-${day.date}`} day={day} labels={props.labels} color={props.paint.accent} bounds={{ x: axis + column * cell, y: row * cell, width: cell, height: cell }} />; })}
+            {days.map((day, index) => { const { column, row } = place(index); return <CalendarDayMark label={props.label} key={`datum-${day.date}`} day={day} labels={props.labels} color={props.paint.accent} bounds={{ x: axis + column * cell, y: row * cell, width: cell, height: cell }} />; })}
           </>
         ) : null}
       </ChartDrawing>
@@ -452,7 +452,7 @@ export function UsageStreakThread(props: CalendarProps) {
           {days.map((day, index) => {
             const left = index === 0 ? x(index) - 3 : (x(index - 1) + x(index)) / 2;
             const right = index === count - 1 ? x(index) + 3 : (x(index) + x(index + 1)) / 2;
-            return <CalendarDayMark key={day.date} day={day} labels={props.labels} color={props.paint.accent} bounds={{ x: left, y: y - 6, width: right - left, height: 12 }} />;
+            return <CalendarDayMark label={props.label} key={day.date} day={day} labels={props.labels} color={props.paint.accent} bounds={{ x: left, y: y - 6, width: right - left, height: 12 }} />;
           })}
           </>
         ) : null}
@@ -531,7 +531,7 @@ export function UsageWeeksSkyline(props: CalendarProps) {
                       );
                     for (const index of active) {
                       top -= brick + 2;
-                      targets.push(<CalendarDayMark key={index} day={days[index]!} labels={props.labels} color={props.paint.accent} bounds={{ x: left, y: top, width: bar, height: brick }} />);
+                      targets.push(<CalendarDayMark label={props.label} key={index} day={days[index]!} labels={props.labels} color={props.paint.accent} bounds={{ x: left, y: top, width: bar, height: brick }} />);
                       marks.push(
                         <Rect
                           key={index}
@@ -548,7 +548,7 @@ export function UsageWeeksSkyline(props: CalendarProps) {
                       (at) => days[at]!.level === null,
                     )) {
                       top -= brick + 2;
-                      targets.push(<CalendarDayMark key={index} day={days[index]!} labels={props.labels} color={props.paint.accent} bounds={{ x: left, y: top, width: bar, height: brick }} />);
+                      targets.push(<CalendarDayMark label={props.label} key={index} day={days[index]!} labels={props.labels} color={props.paint.accent} bounds={{ x: left, y: top, width: bar, height: brick }} />);
                       marks.push(
                         <Rect
                           key={index}
@@ -739,7 +739,7 @@ export function UsageAroundThePeriod(props: CalendarProps) {
                       })}
                     </View>
                   ) : null}
-                  {days.map((day, index) => { const [x, y] = at(index); const radius = day.level === null ? 1.8 : day.level ? 1.3 + day.level * 0.8 : 1; return <CalendarDayMark key={day.date} day={day} labels={props.labels} color={props.paint.accent} bounds={{ x: x - radius, y: y - Math.max(radius, 3), width: radius * 2, height: Math.max(radius * 2, 6) }} />; })}
+                  {days.map((day, index) => { const [x, y] = at(index); const radius = day.level === null ? 1.8 : day.level ? 1.3 + day.level * 0.8 : 1; return <CalendarDayMark label={props.label} key={day.date} day={day} labels={props.labels} color={props.paint.accent} bounds={{ x: x - radius, y: y - Math.max(radius, 3), width: radius * 2, height: Math.max(radius * 2, 6) }} />; })}
                 </>
               );
             })()
@@ -812,7 +812,7 @@ export function UsageDaysOnSurface(props: CalendarProps<UsageSurfaceLabels>) {
             {days.map((day, index) => {
               const band = radius * 2 / count;
               const x = height / 2 - radius + (index + 0.5) * band;
-              return <ChartPathMark key={day.date} datum={{ label: props.labels.day(day.date), value: levelName(props.labels, day.level), color: props.paint.accent }}
+              return <ChartPathMark key={day.date} datum={{ keyboard: false, label: `${props.label} · ${props.labels.day(day.date)}`, value: levelName(props.labels, day.level), color: props.paint.accent }}
                 d={`M${height / 2 - radius},${height / 2}a${radius},${radius} 0 1 0 ${radius * 2},0a${radius},${radius} 0 1 0 ${-radius * 2},0`} hitMode="fill" strokeWidth={0}
                 bounds={{ x: x - band / 2, y: height / 2 - radius, width: band, height: radius * 2 }} focusBounds={{ x: x - band / 2, y: height / 2 - 4, width: band, height: 8 }} />;
             })}
@@ -988,7 +988,7 @@ export function UsageRingedByStreaks(props: CalendarProps<UsageRingsLabels>) {
                         )
                       : null}
                   </Svg>
-                  {rings.map(ring => <ChartPathMark key={ring.run.start} datum={{ label: `${props.labels.day(props.model.days[ring.run.start]!.date)} – ${props.labels.day(props.model.days[ring.run.end]!.date)}`, value: formatHappierDataValue(ring.run.days), subtitle: props.labels.values.activeDaysColumn, color: ring.stroke }}
+                  {rings.map(ring => <ChartPathMark key={ring.run.start} datum={{ keyboard: false, label: `${props.label} · ${props.labels.day(props.model.days[ring.run.start]!.date)} – ${props.labels.day(props.model.days[ring.run.end]!.date)}`, value: formatHappierDataValue(ring.run.days), subtitle: props.labels.values.activeDaysColumn, color: ring.stroke }}
                     d={`M${r1(cx - ring.rx)},${r1(cy)}A${r1(ring.rx)},${r1(ring.ry)} 0 0 1 ${r1(cx + ring.rx)},${r1(cy)}A${r1(ring.rx)},${r1(ring.ry)} 0 0 1 ${r1(cx - ring.rx)},${r1(cy)}`}
                     strokeWidth={ring.weight} bounds={{ x: cx - ring.rx - ring.weight, y: cy - ring.ry - ring.weight, width: 2 * (ring.rx + ring.weight), height: 2 * (ring.ry + ring.weight) }} focusBounds={{ x: cx + ring.rx - 4, y: cy - 4, width: 8, height: 8 }} />)}
                 </>

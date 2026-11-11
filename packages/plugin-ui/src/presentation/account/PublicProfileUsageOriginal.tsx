@@ -107,6 +107,7 @@ export function publicProfileUsageOriginalBody(props: PublicProfileUsageBodyProp
         valuesLabel: labels.showValues, valuesCollapseLabel: labels.hideValues,
       } : undefined;
       return <UsageRhythmChart theme={theme} testID={testID} width={props.width}
+        label={labels.activityLevel} values={{ show: labels.showValues, hide: labels.hideValues, unknownLabel: host.labels.unavailable, valueColumn: labels.activityLevel }}
         spacing={{ body: theme.spacing.large, blocks: theme.spacing.large, block: theme.spacing.small }}
         headings={{ calendar: caption, weekdayHour: caption, byHour: caption }} calendar={calendar} punch={punch}
         hours={presentation.inputs.style === 'weekdayHour' ? hours : undefined} footer={coverage} />;

@@ -8,6 +8,19 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { installPopoverCommonModuleMocks } from '@/components/ui/popover/popoverTestHelpers';
 
+type LensGesture = { gestures: [{ __handlers: Record<string, (event: { x: number }) => void> },
+  { gestures: [{ __handlers: Record<string, (event: { x: number }) => void> },
+    { __handlers: Record<string, (event: { x: number }) => void> }] }] };
+const gestureBoundary = vi.hoisted(() => ({ current: null as LensGesture | null }));
+// Gesture delivery is the platform boundary; lens commands and Popover placement stay real.
+vi.mock('react-native-gesture-handler', async importOriginal => ({
+  ...await importOriginal<typeof import('react-native-gesture-handler')>(),
+  GestureDetector: (props: { gesture: LensGesture; children: React.ReactNode }) => {
+    gestureBoundary.current = props.gesture;
+    return props.children;
+  },
+}));
+
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -50,6 +63,59 @@ const ROWS = Array.from({ length: 8 }, (_, index) => ({
 }));
 
 describe('the scrub lens placement', () => {
+  it.each(['held', 'passive'] as const)('describes the %s scrub surface with its lens and clears it when scrolling outside the viewport', async mode => {
+    const { serveActionHomes } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+    const { installLocalStorageMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
+    const storage = installLocalStorageMock();
+    const home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-lens-scroll.test', accountId: 'account-a' }],
+      route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const server = home.homes.a!;
+    publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+    const { createMountedCurrentUiContextWrapper } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+    const Wrapper = await createMountedCurrentUiContextWrapper();
+    const container = document.createElement('div');
+    container.style.overflowY = 'scroll';
+    document.body.append(container);
+    const root = createRoot(container);
+    let anchorTop = 120;
+    const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute('data-testid') === 'scroll-plot-lens' || this.querySelector('[data-testid="scroll-plot-lens"]')
+        ? rect(0, 0, 184, 260) : rect(200, anchorTop, 2, 140);
+    });
+    try {
+      await act(async () => root.render(<Wrapper><ScrubLens testID="scroll-plot" layout={{ centers: [20] }}
+        accentColor="#000" resolveContent={() => ({ title: 'Nov 4', rows: ROWS })} /></Wrapper>));
+      await act(async () => {
+        if (mode === 'held') gestureBoundary.current!.gestures[1].gestures[1].__handlers.onEnd!({ x: 20 });
+        else gestureBoundary.current!.gestures[0].__handlers.onBegin!({ x: 20 });
+      });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="scroll-plot-lens"]')).not.toBeNull());
+      const trigger = document.querySelector('[data-testid="scroll-plot"]')!;
+      const describedBy = trigger.getAttribute('aria-describedby');
+      expect(describedBy).toBeTruthy();
+      const tooltip = document.getElementById(describedBy!);
+      expect(tooltip?.getAttribute('role')).toBe('tooltip');
+      expect(tooltip?.textContent).toContain('Source 7');
+      anchorTop = -200;
+      await act(async () => {
+        container.scrollTop = 320;
+        container.dispatchEvent(new Event('scroll'));
+      });
+      await vi.waitFor(() => expect(document.querySelector('[data-testid="scroll-plot-lens"]')).toBeNull());
+      expect(trigger.hasAttribute('aria-describedby')).toBe(false);
+      expect(document.getElementById(describedBy!)).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      measure.mockRestore();
+      container.remove();
+      retireActiveServerAccountScopeLifetime();
+      await home.dispose();
+      storage.restore();
+    }
+  });
+
   it('floats outside the clipping card, beside its crosshair and inside the window', async () => {
     const container = document.createElement('div');
     document.body.append(container);

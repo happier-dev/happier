@@ -1,4 +1,4 @@
-export { type UsageChartAgent, type UsageChartPaint, type UsageChartValuesLabels } from './chartKit.js';
+export { UsageChartValues, type UsageChartAgent, type UsageChartPaint, type UsageChartValuesLabels, type UsageChartValuesTable } from './chartKit.js';
 export type { UsageCalendarArtModel, UsageNinetyPlanetsModel, UsageStreakThreadModel, UsageDaysOnSurfaceModel,
   UsageRingedStreaksModel, UsageAroundPeriodModel, UsageWeeksSkylineModel, UsageMoonsModel, UsageMachinesModel,
   UsageProjectsModel, UsageAtmosphereModel, UsageGalaxyModel } from './publicUsageChartModels.js';

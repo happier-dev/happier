@@ -25,7 +25,7 @@ import { usageActivityGridPresentation, useUsageActivityGridTooltip } from './us
 type StyleRecord = Record<string, unknown>;
 
 function ReplayActivity() {
-    const renderCell = useUsageActivityGridTooltip('#2BACCC', 7);
+    const renderCell = useUsageActivityGridTooltip('#2BACCC', 7, 'Activity');
     return <Heatmap theme={projectPluginUiTheme(lightTheme)} {...usageActivityGridPresentation(activityPoints, '#2BACCC', lightTheme.colors.background.canvas)} renderCell={renderCell} testID="replay-matrix" />;
 }
 

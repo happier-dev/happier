@@ -9,9 +9,9 @@ const theme = projectPluginUiTheme(lightTheme);
 
 /** Real public renderers for the shared ChartTooltip + Popover input-modality contract. */
 export const usageInlineTooltipFixtures: readonly Readonly<{ name: string; value: string; body: ReactElement }>[] = [
-  { name: 'Inline metric precision', value: '4,186,010 tokens', body: <HappierDataMetric theme={theme}
+  { name: 'Inline metric precision', value: '4,186,010 (4.2M) tokens', body: <HappierDataMetric theme={theme}
     testID="inline-metric" label="Tokens" value={4186010} unit="tokens" valueFormatter={formatTokenCount} /> },
-  { name: 'Ranked row precision', value: '4,186,010', body: <HappierDataRows theme={theme}
+  { name: 'Ranked row precision', value: '4,186,010 (4.2M) Tokens', body: <HappierDataRows theme={theme}
     testID="inline-rows" label="Projects" columns={[{ label: 'Project' }, { label: 'Tokens', proportion: true }]}
     rows={[[ 'Glass', 4186010 ]]} valueFormatter={formatTokenCount} showProportionShares={false} /> },
   { name: 'Scatter point precision', value: 'Tokens: 4.2M (4,186,010) · Merged: 2', body: <OutcomeScatter theme={theme}

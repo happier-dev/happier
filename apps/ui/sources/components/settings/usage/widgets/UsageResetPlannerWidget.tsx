@@ -56,7 +56,7 @@ function resetEventDatum(event: UsagePlanEvent, title: string): HappierChartDatu
   const remaining = event.kind === 'reset' ? event.window?.remainingFraction : null;
   const percent = remaining == null ? null : formatHappierDataExactShare(remaining, getPreferredLanguage());
   if (event.atMs % 60_000 === 0 && (percent === null || formatPlanPercent(remaining!) === percent)) return null;
-  return { label: [title, eventText(event)].filter(Boolean).join(' · '), value: [new Date(event.atMs).toISOString(),
+  return { keyboard: false, label: [title, eventText(event)].filter(Boolean).join(' · '), value: [new Date(event.atMs).toISOString(),
     percent === null ? null : t('usage.board.plans.listLeftNow', { percent })].filter(Boolean).join(' · ') };
 }
 
@@ -267,6 +267,8 @@ function ResetTimeline(
     size={presentation?.size === 'small' ? 'tile' : 'full'}
     geometry={presentation?.geometry}
     startLabel={t('common.start')}
+    valuesLabel={`${t('usage.widgets.usage_resets')}: ${t('usage.board.charts.showValues')}`}
+    valuesCollapseLabel={t('usage.board.charts.hideValues')}
     formatValue={value => formatPlanMoment(value, props.nowMs)}
     intervals={props.events.map(event => {
       const account = byKey.get(event.accountKey);
@@ -274,7 +276,8 @@ function ResetTimeline(
       const datum = resetEventDatum(event, name?.title ?? '');
       return { id: event.key, kind: 'point' as const,
         label: [name?.primaryLabel ?? name?.title, name?.qualifier, eventText(event)].filter(Boolean).join(' · '),
-        ...(datum ? { datum } : {}),
+        datum: datum ?? { keyboard: false, label: name?.title ?? '', value: formatPlanMoment(event.atMs, props.nowMs) },
+        annotation: datum?.value,
         start: event.atMs, end: event.atMs };
     })}
     renderMarker={interval => <ResetMarker kind={eventsByKey.get(interval.id)!.kind} />} />;
@@ -293,7 +296,8 @@ function ResetList(
   const text = usePlanText();
   const byKey = new Map(props.accounts.map((account) => [account.key, account]));
   return (
-    <View testID={props.testID} accessibilityRole="list">
+    <View testID={props.testID} accessibilityRole="list"
+      accessibilityLabel={`${t('usage.widgets.usage_resets')}: ${t('usage.board.charts.showValues')}`}>
       {props.events.map((event, index) => {
         const account = byKey.get(event.accountKey);
         const name = account ? props.nameOf(account) : null;
@@ -309,7 +313,8 @@ function ResetList(
             key={event.key}
             testID={`${props.testID}.${index}`}
             style={[styles.listRow, index > 0 ? styles.listDivider : null]}
-            accessibilityLabel={[when, countdown, name?.title, what].filter(Boolean).join(', ')}
+            accessible
+            accessibilityLabel={[when, countdown, name?.title, what, datum?.value].filter(Boolean).join(', ')}
           >
             <View style={styles.listMarker}>
               <ResetMarker kind={event.kind} />

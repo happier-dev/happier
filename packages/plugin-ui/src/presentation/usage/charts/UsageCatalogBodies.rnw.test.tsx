@@ -69,7 +69,7 @@ describe('Agent mix bodies keep the unattributed member', () => {
         width={480}
         label="Orbit"
         testID="orbit"
-        labels={{
+        labels={{ values: { show: 'Values', hide: 'Hide values', agentColumn: 'Agent', shareColumn: 'Share' },
           percent: (share) => `${Math.round(share * 100)}%`,
           unknown: (names) => `${names} unknown`,
           unknownAgent: 'Unknown agent',
@@ -111,7 +111,7 @@ describe('Agent mix bodies keep the unattributed member', () => {
           edges: null,
           unknownStarts: null,
         }}
-        labels={{
+        labels={{ values: { show: 'Values', hide: 'Hide values', agentColumn: 'Agent', shareColumn: 'Share', kindColumn: 'Kind', countColumn: 'Count' },
           kinds: { session: 'Session', run: 'Run', native: 'Native' },
           arrowNote: '',
           unknownStarts: () => '',
@@ -429,7 +429,7 @@ describe('Planet family', () => {
 
 describe('Shipped with nothing merged', () => {
   it('says the count and draws no axis, instead of an empty shelf', () => {
-    const labels = { week: (start: string) => start, noDate: 'No date', countLine: (total: number) => `${total} merged pull requests`,
+    const labels = { values: { show: 'Values', hide: 'Hide values', countColumn: 'Count', weekColumn: 'Week' }, week: (start: string) => start, noDate: 'No date', countLine: (total: number) => `${total} merged pull requests`,
       mixed: 'Mixed', noMergeDate: 'No merge date', colourBy: 'agent' as const };
     const draw = (model: Parameters<typeof UsageShipped>[0]['model']) => mountThroughReactNativeWeb(
       <UsageShipped theme={theme} paint={paint} agents={[]} width={480} label="Shipped" testID="shipped" model={model} labels={labels} />);

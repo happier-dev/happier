@@ -96,6 +96,7 @@ describe('neutral capacity and ranked data through public presentation', () => {
     { name: 'a hidden zero share', amount: 0, showProportionShares: false, rowShares: undefined, expectedShare: null },
     { name: 'a visible positive proportion', amount: 25, showProportionShares: true, rowShares: undefined, expectedShare: '100%' },
     { name: 'a supplied positive share', amount: 25, showProportionShares: false, rowShares: [0.25], expectedShare: '25%' },
+    { name: 'a supplied tiny positive share', amount: 25, showProportionShares: false, rowShares: [0.001], expectedShare: '<1%' },
   ])('announces the same percentage shown for $name', ({ amount, showProportionShares, rowShares, expectedShare }) => {
     const mount = mountThroughReactNativeWeb(<HappierDataRows theme={createSurfaceContext().theme}
       label="Samples" testID="samples" columns={[{ label: 'Sample' }, { label: 'Amount', proportion: true }]}
@@ -159,6 +160,18 @@ describe('neutral capacity and ranked data through public presentation', () => {
       expect(mount.container.textContent).toContain('0.17µ');
       expect(mount.container.textContent).toContain('<1%');
       expect(mount.container.querySelector('[role="listitem"]')?.getAttribute('aria-label')).toContain('0.00000017');
+      expect(mount.container.querySelector('[role="listitem"]')?.getAttribute('aria-label')).toContain('<1%');
+    } finally { mount.unmount(); }
+  });
+
+  it('announces the same formatted share for share-only compact legends', () => {
+    const mount = mountThroughReactNativeWeb(<CompositionStrip theme={createSurfaceContext().theme}
+      label="Models" total={1} valueKind="share" appearance={{ legend: 'compact' }}
+      segments={[{ id: 'small', label: 'Small', value: 0.001 }]}
+      shareFormatter={() => 'less than one percent'} />);
+    try {
+      expect(mount.container.textContent).toContain('less than one percent');
+      expect(mount.container.querySelector('[role="listitem"]')?.getAttribute('aria-label')).toBe('Small, less than one percent');
     } finally { mount.unmount(); }
   });
 

@@ -188,7 +188,7 @@ export function UsageChartValues(props: Readonly<{
   if (props.table.rows.length === 0) return null;
   return <View style={{ gap: HAPPIER_DATA_METRICS.blockGapPx }}>
     <HappierPressable testID={props.testID ? `${props.testID}-values-toggle` : undefined} expanded={open}
-      accessibilityLabel={open ? props.labels.hide : props.labels.show} onPress={() => setOpen((value) => !value)}
+      accessibilityLabel={`${props.label} · ${open ? props.labels.hide : props.labels.show}`} onPress={() => setOpen((value) => !value)}
       style={{ alignSelf: 'flex-end' }}>
       <HappierText style={text.captionStrong}>{open ? props.labels.hide : props.labels.show}</HappierText>
     </HappierPressable>

@@ -14,7 +14,8 @@ import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFram
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { t } from '@/text';
 import { usageSignatureAccent } from '../usageAccent';
-import { usageGridTooltip } from '../usageGridPresentation';
+import { usageGridTooltip, UsageGridValues } from '../usageGridPresentation';
+import { usageChartValuesLabels } from './usageChartHost';
 import { USAGE_SETTINGS } from '../usageSettings';
 import { useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -156,13 +157,17 @@ export function UsageNightShiftWidget(props: UsageBodyProps) {
         </View>
       </View>
       {grid ? (
-        <DotGrid
-          testID={`${props.testID}.grid`}
-          theme={chartTheme}
-          showReadout={false}
-          {...grid}
-          renderCell={usageGridTooltip(accent, 'usage-night-cell-trigger')}
-        />
+        <>
+          <DotGrid
+            testID={`${props.testID}.grid`}
+            theme={chartTheme}
+            showReadout={false}
+            {...grid}
+            renderCell={usageGridTooltip(accent, 'usage-night-cell-trigger', grid.label)}
+          />
+          <UsageGridValues theme={chartTheme} label={grid.label} cells={grid.cells} valueColumn={t('usage.events')}
+            labels={usageChartValuesLabels()} testID={`${props.testID}.grid`} />
+        </>
       ) : null}
       {/* Known hours are a quiet fact with Change behind it, never a form above the result. */}
       <UsagePlanDisclosure testID={`${props.testID}.hours`} title={t('usage.board.howYouWork.nightHoursTitle')}

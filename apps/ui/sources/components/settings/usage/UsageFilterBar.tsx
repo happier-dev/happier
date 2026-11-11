@@ -183,6 +183,7 @@ export function UsageFilterBar(
   const metricToggle = props.onMetricChange ? (
         <View style={styles.segment}>
           <SegmentedTabBar
+            role="radiogroup"
             testIDPrefix={`${props.testID}.metric`}
             tabs={metricTabs}
             activeTabId={shownMetric}
@@ -200,6 +201,7 @@ export function UsageFilterBar(
   const period = (
     <View style={phone ? styles.periodPhone : styles.period}>
       <SegmentedTabBar
+        role="radiogroup"
         testIDPrefix={`${props.testID}.period`}
         tabs={periodTabs}
         activeTabId={page.period}

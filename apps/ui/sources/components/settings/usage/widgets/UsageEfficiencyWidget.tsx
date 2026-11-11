@@ -41,8 +41,12 @@ import {
   useUsagePluginTheme,
   type UsageBodyProps,
   UsageBodyNoUsage,
+  UsageBodyNothingYet,
 } from './usageBodyKit';
+import { useUsageWidgetPageNothingRecorded } from './usageWidgetBatch';
 
+/** The waffle's legend: the strip's own key layout (one entry a row), never a page-local legend. */
+const MIX_KEY_LEGEND = { legend: 'compact', layout: 'key' } as const;
 /** A segment's colour is a height:100% fill, so its tooltip trigger fills the segment or the strip paints only its track. */
 const MIX_SEGMENT_TRIGGER_STYLE = { flex: 1 } as const;
 
@@ -57,6 +61,9 @@ const FOUR_ACROSS_FROM_PX = 720;
  */
 export function UsageEfficiencyWidget(props: UsageBodyProps) {
   const unknownValue = t('usage.board.plans.cellUnknown');
+  // A ratio without its basis is a quiet dash in its figure slot; its caption says why (unknowns stay quiet, never a
+  // bold word as the figure). The legend, table and tooltip keep the word, where it reads as a cell, not a figure.
+  const unknownFigure = '—';
   const { theme } = useUnistyles();
   const chartTheme = useUsagePluginTheme();
   const view = useUsageAnalyticsView(props.slice, props.query);
@@ -64,6 +71,7 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
   const presentation = useWidgetPresentation();
   const phone = useDeviceType() === 'phone';
   const text = usePlanText();
+  const pageNothingRecorded = useUsageWidgetPageNothingRecorded();
   useWidgetFrameBodyCaption(usagePeriodPhrase(props.query));
   // The same exact legend either way; only the picture changes with the room there is.
   const waffle =
@@ -104,6 +112,8 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
   const segments = usageCompositionSegments(composition, (index) =>
     usageSeriesColor(theme, index),
   );
+  // Nothing was recorded in the period: the page says so once; this card keeps one quiet line.
+  if (!hasRatios && segments.length === 0 && pageNothingRecorded) return <UsageBodyNothingYet testID={props.testID} />;
   if (!hasRatios && segments.length === 0)
     return (
       <UsageBodyInsufficient
@@ -120,7 +130,7 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
   const exactCacheBasis = view.cacheSavings?.cacheSavingsUsd != null
     ? `USD ${formatHappierDataValue(view.cacheSavings.cacheSavingsUsd, getPreferredLanguage())}` : `${formatTokenCountLong(efficiency.cachedReadTokens)} ${t('usage.board.page.tokensUnit')}`;
   const cacheFigure = <HappierDataMetric testID={`${props.testID}.cacheHit`} theme={chartTheme} size="stat" showLabel
-    label={t('usage.board.page.cacheHit')} value={efficiency.cacheHitRatePct ?? unknownValue}
+    label={t('usage.board.page.cacheHit')} value={efficiency.cacheHitRatePct ?? unknownFigure}
     valueFormatter={value => `${Math.round(value)}%`} caption={cacheCaption} />;
   const cacheHidden = exactCacheRate !== null && (`${Math.round(efficiency.cacheHitRatePct!)}%` !== exactCacheRate
     || !cacheCaption.includes(formatHappierDataValue(view.cacheSavings?.cacheSavingsUsd ?? efficiency.cachedReadTokens!, getPreferredLanguage())));
@@ -139,7 +149,7 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
             size="stat"
             showLabel
             label={t('usage.board.page.perMillionTokens')}
-            value={efficiency.costPerMtokUsd ?? unknownValue}
+            value={efficiency.costPerMtokUsd ?? unknownFigure}
             caption={
               efficiency.costPerMtokUsd === null
                 ? unpriced
@@ -170,7 +180,7 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
             size="stat"
             showLabel
             label={t('usage.board.page.perMergedPr')}
-            value={perMergedPrUsd ?? unknownValue}
+            value={perMergedPrUsd ?? unknownFigure}
             valueFormatter={(value) => formatUsageCost(value, efficiency.currency)}
             caption={
               !merged
@@ -188,7 +198,7 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
             size="stat"
             showLabel
             label={t('usage.board.page.noKeptChange')}
-            value={unknownValue}
+            value={unknownFigure}
             caption={t('usage.board.page.notMeasuredYet')}
           />
         </View>
@@ -203,6 +213,10 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
           segments={segments}
           basis={t('usage.tokens')}
           size={waffle ? 'tile' : 'full'}
+          // Beside the waffle (a phone, a narrow frame) the legend is the strip's key: one entry a row, its share in one
+          // right-aligned column. Two columns of name, share and amount broke "Cache read" into fragments on a phone
+          // (native N1); the exact amounts stay one press away in Exact values.
+          {...(waffle ? { appearance: MIX_KEY_LEGEND } : {})}
           variant={waffle ? 'waffle' : 'strip'}
           minimumVisibleFraction={0.005}
           minimumFillWidth={2}

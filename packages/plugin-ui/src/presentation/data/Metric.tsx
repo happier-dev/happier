@@ -4,7 +4,7 @@ import type { HappierUiTheme } from '../../environment/types.js';
 import { HappierText } from '../text/Text.js';
 import { resolveHappierTextStepStyle } from '../layout/pageText.js';
 import { useOptionalHappierUiTypography } from '../../environment/context.js';
-import { formatHappierDataValue, type HappierDataValue } from './dataModel.js';
+import { formatHappierDataValue, formatHappierDataValueWithPrecision, type HappierDataValue } from './dataModel.js';
 import { HAPPIER_DATA_METRICS, useHappierDataTextStyles } from './dataText.js';
 import { ChartDatum } from './ChartDatum.js';
 
@@ -64,6 +64,8 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
     props.valueFormatter
       ? props.valueFormatter(props.value)
       : exact;
+  const preciseValue = formatHappierDataValueWithPrecision(exact, value);
+  const spokenValue = props.unit ? `${preciseValue} ${props.unit}` : preciseValue;
   const size = props.size ?? 'default';
   const comparisonColor = props.theme.colors.text;
   const valueStyle =
@@ -133,7 +135,7 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
       accessible
       style={{ gap: size === 'default' ? 0 : 2, minWidth: 0 }}
       accessibilityLabel={[
-        `${props.label}: ${props.unit ? `${exact} ${props.unit}` : exact}`,
+        `${props.label}: ${spokenValue}`,
         props.comparison
           ? `${props.comparison.value} ${props.comparison.label}`
           : null,
@@ -207,7 +209,7 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
   // needs another target; the datum uses the same admitted precision as the accessible figure.
   return typeof props.value === 'number' && Number.isFinite(props.value) && !value.includes(exact)
     ? <ChartDatum testID={props.testID ? `${props.testID}-datum` : undefined}
-      datum={{ label: props.label, value: props.unit ? `${exact} ${props.unit}` : exact,
+      datum={{ label: props.label, value: spokenValue,
         subtitle: [value, props.caption, props.comparison ? `${props.comparison.value} ${props.comparison.label}` : null].filter(Boolean).join(' · ') }}>
       {visual}
     </ChartDatum>

@@ -43,7 +43,7 @@ const popoverMarks = [
         labels={{ duration: (ms) => `${Math.round(ms / 1000)}s`, unknownAgent: 'Unknown', detail: (ms, n) => `${ms} · ${n}`, ticks: { minute: '1m', tenMinutes: '10m', hour: '1h', fourHours: '4h' }, caption: '',
             values: { ...markValues, agentColumn: 'Agent', medianColumn: 'Median', p90Column: 'p90', samplesColumn: 'Samples', formatCount: String } }} /> },
     { name: 'steering tide hour', value: '7', body: <UsageSteeringTide {...markBase} model={{ night: null, rows: [{ agentId: 'claude', steersByHour: [7], phoneAnswersByHour: [3], steers: 7, busyMs: 3600000, perBusyHour: 7, phoneAnswers: 3 }] }}
-        labels={{ clock: String, unknownAgent: 'Unknown', perBusyHourHeader: 'Per busy hour', fromPhoneHeader: 'From phone', perBusyHourUnit: 'per hour', answers: 'Answers', rate: String, detail: String, count: String, caption: '' }} /> },
+        labels={{ values: { ...markValues, agentColumn: 'Agent', steersColumn: 'Steers' },  clock: String, unknownAgent: 'Unknown', perBusyHourHeader: 'Per busy hour', fromPhoneHeader: 'From phone', perBusyHourUnit: 'per hour', answers: 'Answers', rate: String, detail: String, count: String, caption: '' }} /> },
     { name: 'planet portrait', value: 'Light: 4 / 30 · Halo: 7 · Trail: 3', body: <UsagePlanetPortrait {...markBase} model={{ activeDays: { active: 4, of: 30 }, peakParallel: 7, streak: { current: 3, best: 12 } }}
         labels={{ rows: { light: 'Light', halo: 'Halo', trail: 'Trail' }, activeDays: (active, of) => `${active} / ${of}`, peak: String, streak: String, notShared: 'Not shared', lightNote: 'Active days', lightRest: '', haloNote: 'Peak parallel', haloRest: '', trailNote: String, trailRest: '' }} /> },
 ];
@@ -97,7 +97,7 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
                 model={{ night: null, rows: agents.map(agent => ({ agentId: agent.id,
                     steersByHour: Array(24).fill(value), phoneAnswersByHour: Array(24).fill(0),
                     steers: value, busyMs: 15_480_000, perBusyHour: value, phoneAnswers: 0 })) }}
-                labels={{ clock: String, unknownAgent: 'Unknown', perBusyHourHeader: 'Per busy hour', fromPhoneHeader: 'From phone',
+                labels={{ values: { ...markValues, agentColumn: 'Agent', steersColumn: 'Steers' },  clock: String, unknownAgent: 'Unknown', perBusyHourHeader: 'Per busy hour', fromPhoneHeader: 'From phone',
                     perBusyHourUnit: 'per hour', answers: 'Answers', rate: v => v === null ? '—' : String(v),
                     detail: steers => `${steers ?? '—'} steers · 4 h 18 min busy`, count: v => v === null ? '—' : String(v), caption: '' }} />
         </UsageChartInteractions>);
@@ -178,13 +178,13 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
     });
 
     describe.each(popoverMarks)('$name', ({ body, value }) => {
-        it.each(['onHoverIn', 'onFocus', 'onPress'] as const)('opens the real popover with its exact datum through %s', async (event) => {
+        it('opens the real popover with its exact datum through press', async () => {
             const screen = await renderChart(<UsageChartInteractions>{body}</UsageChartInteractions>);
             const tooltip = screen.findAllByType(ChartTooltip).find(node => node.props.value === value);
             expect(tooltip, `Missing datum ${value}`).toBeDefined();
-            const trigger = tooltip!.findAll(node => typeof node.type === 'string' && typeof node.props[event] === 'function')[0];
+            const trigger = tooltip!.findAll(node => typeof node.type === 'string' && typeof node.props.onPress === 'function')[0];
             expect(trigger).toBeDefined();
-            await act(async () => { trigger!.props[event](); });
+            await act(async () => { trigger!.props.onPress(); });
             await expectRenderedTooltipValue(screen, value);
         });
     });
@@ -218,13 +218,15 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
                 theme={projectPluginUiTheme(lightTheme)}
                 {...usageHeatmapPresentation({ calendarDays: [{ date: '2026-07-10', eventCount: 42 }], mode: 'daily', nowMs: NOW,
                     accentColor: accent, emptyColor: lightTheme.colors.surface.inset })}
-                renderCell={usageGridTooltip(accent, 'usage-heatmap-cell-trigger')}
+                renderCell={usageGridTooltip(accent, 'usage-heatmap-cell-trigger', 'Calendar')}
                 renderFrame={usageGridFrame}
             />,
         );
 
         const triggers = screen.findAllHostsByTestId('usage-heatmap-cell-trigger');
         expect(triggers.length).toBeGreaterThan(0);
+        expect(triggers.every(trigger => trigger.props.accessibilityLabel?.startsWith('Calendar · '))).toBe(true);
+        expect(triggers.every(trigger => trigger.props.accessible === false && trigger.props.focusable === false)).toBe(true);
         expect(screen.findAllByType(FloatingOverlay)).toHaveLength(0);
 
         // Press the trigger for the active day (last week column contains Jul 10).
@@ -244,12 +246,14 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
                 theme={projectPluginUiTheme(lightTheme)}
                 {...usageHeatmapPresentation({ calendarDays: [{ date: '2026-07-12', eventCount: 7 }], mode: 'daily', days: 7, nowMs: NOW,
                     accentColor: accent, emptyColor: lightTheme.colors.surface.inset })}
-                renderCell={usageGridTooltip(accent, 'usage-heatmap-cell-trigger')}
+                renderCell={usageGridTooltip(accent, 'usage-heatmap-cell-trigger', 'Calendar')}
             />,
         );
 
         const triggers = screen.findAllHostsByTestId('usage-heatmap-cell-trigger');
         expect(triggers).toHaveLength(7);
+        expect(triggers.every(trigger => trigger.props.accessibilityLabel?.startsWith('Calendar · '))).toBe(true);
+        expect(triggers.every(trigger => trigger.props.accessible === false && trigger.props.focusable === false)).toBe(true);
         act(() => {
             pressTestInstance(triggers[6]!, 'usage-heatmap-cell-trigger');
         });
@@ -263,11 +267,13 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
         const screen = await renderChart(
             <StackedSeriesChart theme={projectPluginUiTheme(lightTheme)} label="Rhythm" variant="bar" size="tile" viewportHeight={52}
                 series={createUsageHourRhythmSeries({ hours, busiestHour: 14, peakCount: 96, total: 96 }, accent)}
-                renderBucket={usageSeriesTooltip(accent, 'usage-rhythm-hour-trigger')} testID="rhythm" />,
+                renderBucket={usageSeriesTooltip(accent, 'usage-rhythm-hour-trigger', { label: 'By hour', keyboard: false })} testID="rhythm" />,
         );
 
         const triggers = screen.findAllHostsByTestId('usage-rhythm-hour-trigger');
         expect(triggers).toHaveLength(24);
+        expect(triggers.every(trigger => trigger.props.accessibilityLabel?.startsWith('By hour · '))).toBe(true);
+        expect(triggers.every(trigger => trigger.props.accessible === false && trigger.props.focusable === false)).toBe(true);
         act(() => {
             pressTestInstance(triggers[14]!, 'usage-rhythm-hour-trigger');
         });
@@ -286,13 +292,15 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
                 theme={projectPluginUiTheme(lightTheme)}
                 {...usageDotGridPresentation({ cells, peak: 31, busiest: { weekday: 3, hour: 14, eventCount: 31 }, total: 31 },
                     accent, lightTheme.colors.border.default)}
-                renderCell={usageGridTooltip(accent, 'usage-punchcard-cell-trigger')}
+                renderCell={usageGridTooltip(accent, 'usage-punchcard-cell-trigger', 'Weekday and hour')}
                 testID="punch"
             />,
         );
 
         const triggers = screen.findAllHostsByTestId('usage-punchcard-cell-trigger');
         expect(triggers).toHaveLength(7 * 24);
+        expect(triggers.every(trigger => trigger.props.accessibilityLabel?.startsWith('Weekday and hour · '))).toBe(true);
+        expect(triggers.every(trigger => trigger.props.accessible === false && trigger.props.focusable === false)).toBe(true);
         // The renderer reorders weekdays for its calendar; address the witnessed cell by identity.
         const hottest = triggers.find(trigger => {
             const label = String(trigger.props.accessibilityLabel ?? '');

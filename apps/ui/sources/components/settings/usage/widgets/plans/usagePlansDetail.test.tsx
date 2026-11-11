@@ -37,6 +37,7 @@ import type { UsageWidgetBodyModel } from '../../useUsageWidgetResource';
 import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
 import { getPoolStrategyPresentation } from '@/sync/domains/connectedServices/connectedServicePoolPolicy';
 import { formatPlanMoment } from './UsagePlanParts';
+import { recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
 
 // Machine RPC, native confirmation and the served Home's HTTP transport are external boundaries.
 vi.mock('@/modal', async () =>
@@ -295,6 +296,11 @@ async function invokePlanCommand(title: string, input?: string) {
   });
 }
 
+async function renderPlanAccessibility(node: React.ReactElement) {
+  const { UsageChartInteractions } = await import('../../usageChartInteractions');
+  return renderScreen(wrap(<UsageChartInteractions>{node}</UsageChartInteractions>));
+}
+
 it('presents an already exhausted window as used up in chart and list projections', async () => {
   const now = Date.now();
   const read = quotaRead('spent', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 100,
@@ -319,6 +325,60 @@ it('reveals exact projected percent points without rounding the admitted project
   const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
   const screen = await renderScreen(wrap(<UsageProjectionsWidget {...bodyProps([read])} id="usage_projections" testID="proj" />));
   expect(screen.findAllByType(ChartDatum).find(node => node.props.testID === 'proj.headline.detail')?.props.datum.value).toBe('60.25%');
+});
+
+it('gives projection series one named exact-values path and keeps repeated figures out of keyboard navigation', async () => {
+  const now = Date.now();
+  const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30.125,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }]);
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  const screen = await renderPlanAccessibility(<UsageProjectionsWidget {...bodyProps([read])} id="usage_projections" testID="proj" />);
+  await act(async () => screen.findByTestId('proj.burnUp')!.props.onLayout({ nativeEvent: { layout: { width: 640, height: 150 } } }));
+  const toggle = screen.findByTestId('proj.burnUp-values-toggle')!;
+  expect(toggle.props.accessibilityLabel).toContain(t('usage.board.charts.showValues'));
+  expect(screen.findAllByType(ChartDatum).every(node => node.props.datum.keyboard === false)).toBe(true);
+  expect(screen.findAll(node => typeof node.type === 'string' && node.props.testID === 'proj.headline.detail')[0]?.props.focusable).toBe(false);
+  await screen.pressByTestIdAsync('proj.burnUp-values-toggle');
+  expect(screen.getTextContent()).toContain('60.25');
+});
+
+it('exposes all capacity windows through one exact-values disclosure', async () => {
+  const now = Date.now();
+  const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30.125,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }, { meterId: 'daily', label: 'Daily', usedPct: 12.345,
+    resetAtMs: now + HOUR, windowDurationMs: DAY }]);
+  const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
+  const screen = await renderPlanAccessibility(<UsageCapacityWidget {...bodyProps([read])} id="usage_capacity" testID="cap" />);
+  expect(screen.findByTestId('cap.values-header')?.props.accessibilityLabel).toContain(t('usage.board.charts.showValues'));
+  expect(screen.findAllByType(ChartDatum).every(node => node.props.datum.keyboard === false)).toBe(true);
+  expect(screen.findAll(node => typeof node.type === 'string' && node.props.testID === 'cap.tightest-datum')[0]?.props.focusable).toBe(false);
+  await screen.pressByTestIdAsync('cap.values-header');
+  expect(screen.getTextContent()).toContain('69.88%');
+  expect(screen.getTextContent()).toContain('87.66%');
+});
+
+it('uses the existing plan details as its named exact-values path', async () => {
+  const now = Date.now();
+  const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30.125,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }]);
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const screen = await renderPlanAccessibility(<UsagePlanFitWidget {...bodyProps([read])} id="usage_plan_fit" testID="fit" />);
+  expect(screen.findByTestId('fit.plan.work.details-header')?.props.accessibilityLabel).toContain(t('usage.board.charts.showValues'));
+  await screen.pressByTestIdAsync('fit.plan.work.details-header');
+  expect(screen.findAllByType(ChartDatum).every(node => node.props.datum.keyboard === false)).toBe(true);
+  expect(screen.findByTestId('fit.plan.work.values.exact')?.props.accessibilityLabel).toContain('60.25%');
+});
+
+it('names reset rows as the exact-values path and includes hidden precision without extra focus targets', async () => {
+  const now = Date.now();
+  const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30.125,
+    resetAtMs: now + DAY + 123, windowDurationMs: 7 * DAY }]);
+  const { UsageResetPlannerWidget } = await import('../UsageResetPlannerWidget');
+  const screen = await renderPlanAccessibility(<UsageResetPlannerWidget {...bodyProps([read])} id="usage_resets" testID="reset" />);
+  expect(screen.findByTestId('reset.list')?.props.accessibilityLabel).toContain(t('usage.board.charts.showValues'));
+  expect(screen.findByTestId('reset.list.0')?.props.accessibilityLabel).toContain('69.88%');
+  expect(screen.findAllByType(ChartDatum).every(node => node.props.datum.keyboard === false)).toBe(true);
+  expect(screen.findAll(node => typeof node.type === 'string' && node.props.testID === 'reset.list.0.detail')[0]?.props.focusable).toBe(false);
 });
 
 it('shows the canonical capacity weather and insufficient model/reset basis inside the existing plan fit body', async () => {
@@ -989,6 +1049,8 @@ it('asks whose order to show when several Machines are in scope, instead of call
     createMachineFixture({ id: 'desk', activeAt: now, metadata: { ...createMachineFixture().metadata!, displayName: 'Desk' } }),
     createMachineFixture({ id: 'build', activeAt: now, metadata: { ...createMachineFixture().metadata!, displayName: 'Build box' } }),
   ], true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+  recordMachineRequestSucceeded({ serverId: scope.serverId, accountId: scope.accountId, machineId: 'desk' });
+  recordMachineRequestSucceeded({ serverId: scope.serverId, accountId: scope.accountId, machineId: 'build' });
   const chosen: string[] = [];
   const drill = { available: () => true, selected: () => false, toggle: (field: string, id: string) => { chosen.push(`${field}:${id}`); return true; } };
   const { UsageCapacityWidget } = await import('../UsageCapacityWidget');

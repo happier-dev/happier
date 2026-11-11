@@ -15,6 +15,7 @@ const cells = [
 ];
 const series = [{ id: 'levels', label: 'Activity level', color: '#007aff', points: cells.map(cell => ({ id: cell.id, x: cell.label, y: cell.value })) }];
 const rhythm: UsageRhythmChartProps = {
+  label: 'Work rhythm', values: { show: 'Exact values', hide: 'Hide values', valueColumn: 'Activity level' },
   theme, testID: 'rhythm', spacing: { body: 12, blocks: 20, block: 8 },
   headings: { calendar: <HappierText>Active days</HappierText>, weekdayHour: <HappierText>Weekday and hour</HappierText>, byHour: <HappierText>By hour</HappierText> },
   calendar: { label: 'Calendar levels', unknownLabel: 'Not recorded', cells, rows: [{ id: 'day', label: '' }], columns: [{ id: 'one', label: '' }, { id: 'two', label: '' }] },
@@ -23,6 +24,19 @@ const rhythm: UsageRhythmChartProps = {
 };
 
 describe('Original shared Usage forms', () => {
+  it.each([320, 430])('offers one exact-values path for every visible rhythm mark at width %s', width => {
+    const mount = mountThroughReactNativeWeb(<UsageRhythmChart {...rhythm} width={width} />);
+    try {
+      expect(mount.container.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+      const toggle = mount.container.querySelector<HTMLButtonElement>('[aria-label="Work rhythm · Exact values"]');
+      expect(toggle).not.toBeNull();
+      act(() => toggle!.click());
+      const table = mount.container.querySelector('[role="table"]');
+      expect(table?.textContent).toContain('Monday');
+      expect(table?.textContent).toContain('Busiest');
+      expect(table?.textContent).toContain('Not recorded');
+    } finally { mount.unmount(); }
+  });
   it('renders Daily ordinal data without turning unknown into zero or levels into amounts', () => {
     const mount = mountThroughReactNativeWeb(<UsageDailyChart theme={theme} testID="daily" gap={10}
       chart={{ label: 'Daily activity levels', series, size: 'tile', width: 300, valueFormatter: value => levels[value] ?? 'Not recorded' }} />);
@@ -30,7 +44,7 @@ describe('Original shared Usage forms', () => {
       const chart = mount.container.querySelector('[data-testid="daily.chart"]')!;
       expect(chart).not.toBeNull();
       expect(chart.getAttribute('aria-label')).toContain('Monday: Activity level 4');
-      expect(chart.getAttribute('aria-label')).toContain('Tuesday: Activity level —');
+      expect(chart.getAttribute('aria-label')).toContain('Tuesday: Activity level Not reported');
       expect(chart.getAttribute('aria-label')).not.toMatch(/tokens|events|hours/u);
     } finally { mount.unmount(); }
   });
@@ -42,9 +56,10 @@ describe('Original shared Usage forms', () => {
       expect(mount.container.querySelector('[data-testid="rhythm.punchcard"]')).not.toBeNull();
       expect(mount.container.querySelector('[data-testid="rhythm.hours"]')).toBeNull();
       expect(mount.container.textContent).toContain('Weekday and hour');
-      const labels = [...mount.container.querySelectorAll('[aria-label]')].map(node => node.getAttribute('aria-label')).join(' ');
-      expect(labels).toContain('Monday: 4 (Busiest)');
-      expect(labels).toContain('Tuesday: Not recorded');
+      act(() => mount.container.querySelector<HTMLButtonElement>('[aria-expanded="false"]')!.click());
+      const table = mount.container.querySelector('[role="table"]')!;
+      expect(table.textContent).toContain('MondayBusiest');
+      expect(table.textContent).toContain('TuesdayNot recorded');
     } finally { mount.unmount(); }
   });
 

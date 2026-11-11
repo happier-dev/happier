@@ -4,7 +4,7 @@ import { Circle, G, Path, Rect, Svg } from 'react-native-svg';
 
 import { HappierText } from '../../text/Text.js';
 import { ChartDrawing, ChartMark } from '../../data/ChartDatum.js';
-import { formatHappierDataValue } from '../../data/dataModel.js';
+import { formatHappierDataValue, formatHappierDataValueWithPrecision } from '../../data/dataModel.js';
 import {
   UsageChartCaption, UsageChartColumn, UsageChartValues, resolveUsageChartInk, usageChartMix, usageChartRound as r1, usageSmoothPath,
   useUsageChartSvgText, useUsageChartWidth, type UsageChartAgent, type UsageChartBaseProps, type UsageChartValuesLabels,
@@ -111,6 +111,7 @@ export type UsageSteeringTideLabels = Readonly<{
   perBusyHourHeader: string; fromPhoneHeader: string; perBusyHourUnit: string; answers: string;
   rate: (value: number | null) => string; detail: (steers: number | null, busyMs: number | null) => string; count: (value: number | null) => string;
   caption: string;
+  values: UsageChartValuesLabels & Readonly<{ agentColumn: string; steersColumn: string }>;
 }>;
 
 export function UsageSteeringTide(props: UsageChartBaseProps & Readonly<{ agents: readonly UsageChartAgent[]; model: UsageSteeringTideModel; labels: UsageSteeringTideLabels }>) {
@@ -160,7 +161,7 @@ export function UsageSteeringTide(props: UsageChartBaseProps & Readonly<{ agents
           if (steers === null && answers === null) return null;
           return <ChartMark key={`${row.agentId ?? 'unknown'}-${hour}`} testID={props.testID ? `${props.testID}-hour-${index}-${hour}` : undefined}
             bounds={{ x: axis + hour / 24 * plot, y: index * rowHeight, width: plot / 24, height: rowHeight }}
-            datum={{ label: `${name(row.agentId)} · ${props.labels.clock(hour)}`, value: props.labels.count(steers),
+            datum={{ keyboard: false, label: `${props.label} · ${name(row.agentId)} · ${props.labels.clock(hour)}`, value: props.labels.count(steers),
               subtitle: `${props.labels.fromPhoneHeader}: ${props.labels.count(answers)}`, color: colour(row.agentId) }} />;
         })) : null}
       </ChartDrawing>
@@ -190,6 +191,11 @@ export function UsageSteeringTide(props: UsageChartBaseProps & Readonly<{ agents
       <HappierText style={text.caption}>{props.labels.perBusyHourUnit}</HappierText>
     </View>)}</View> : null}
     <UsageChartCaption theme={props.theme}>{props.labels.caption}</UsageChartCaption>
+    <UsageChartValues theme={props.theme} label={props.label} labels={props.labels.values} testID={props.testID}
+      table={{ columns: [{ label: props.labels.values.agentColumn }, { label: props.labels.values.steersColumn }, { label: props.labels.fromPhoneHeader }],
+        rows: rows.flatMap(row => row.steersByHour.map((steers, hour) => [
+          `${name(row.agentId)} · ${props.labels.clock(hour)}`, props.labels.count(steers), props.labels.count(row.phoneAnswersByHour[hour] ?? null),
+        ])) }} />
   </UsageChartColumn>;
 }
 
@@ -233,8 +239,9 @@ export function UsageRunLength(props: UsageChartBaseProps & Readonly<{ agents: r
   const label = width === null ? 92 : narrow ? Math.min(Math.round(width / 3), Math.max(56, nameWidth)) : Math.max(92, Math.min(Math.round(width / 4), nameWidth));
   const right = narrow ? Math.min(150, Math.max(84, Math.ceil(Math.max(0, ...rows.map((row) => textWidth(props.labels.detail(row.p90Ms, row.samples), svgText.fontSize))) + 10))) : 150;
   const colour = (id: string | null) => agentOf(props.agents, id)?.color ?? ink.neutral;
-  const table = rows.map((row) => [agentOf(props.agents, row.agentId)?.name ?? name(row.agentId), props.labels.duration(row.medianMs), props.labels.duration(row.p90Ms),
-    props.labels.values.formatCount(row.samples)] as const);
+  const exactDuration = (ms: number) => formatHappierDataValueWithPrecision(`${formatHappierDataValue(ms, svgText.styles.locale)} ms`, props.labels.duration(ms));
+  const table = rows.map((row) => [agentOf(props.agents, row.agentId)?.name ?? name(row.agentId), exactDuration(row.medianMs), exactDuration(row.p90Ms),
+    props.labels.values.formatCount(row.samples), row.durationsMs.join(', ')] as const);
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
     <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
       {width !== null ? (() => {
@@ -262,13 +269,13 @@ export function UsageRunLength(props: UsageChartBaseProps & Readonly<{ agents: r
               const offset = (depth % 2 ? 1 : -1) * Math.ceil(depth / 2) * Math.min(4.4, (rowHeight / 2 - 3) / Math.max(1, Math.ceil(depth / 2)));
               targets.push(<ChartMark key={`dot-${index}-${dotIndex}`} testID={props.testID ? `${props.testID}-duration-${index}-${dotIndex}` : undefined}
                 bounds={{ x: cx - RUN_COLUMN_PX / 2, y: r1(cy + offset) - 2.2, width: RUN_COLUMN_PX, height: 4.4 }}
-                datum={{ label: name(row.agentId), value: `${formatHappierDataValue(ms, svgText.styles.locale)} ms`, subtitle: props.labels.duration(ms), color: colour(row.agentId) }} />);
+                datum={{ keyboard: false, label: `${props.label} · ${name(row.agentId)}`, value: `${formatHappierDataValue(ms, svgText.styles.locale)} ms`, subtitle: props.labels.duration(ms), color: colour(row.agentId) }} />);
               return <Circle key={dotIndex} cx={cx} cy={r1(cy + offset)} r={1.9} fill={colour(row.agentId)} fillOpacity={0.78} />;
             });
             for (const [kind, ms, title, h] of [['median', row.medianMs, props.labels.values.medianColumn, 20], ['p90', row.p90Ms, props.labels.values.p90Column, 14]] as const) {
               targets.push(<ChartMark key={`${kind}-${index}`} testID={props.testID ? `${props.testID}-${kind}-${index}` : undefined}
                 bounds={{ x: r1(x(ms)) - 2, y: cy - h / 2, width: 4, height: h }}
-                datum={{ label: `${name(row.agentId)} · ${title}`, value: `${formatHappierDataValue(ms, svgText.styles.locale)} ms`, subtitle: props.labels.duration(ms), color: colour(row.agentId) }} />);
+                datum={{ keyboard: false, label: `${props.label} · ${name(row.agentId)} · ${title}`, value: `${formatHappierDataValue(ms, svgText.styles.locale)} ms`, subtitle: props.labels.duration(ms), color: colour(row.agentId) }} />);
             }
             return <G key={row.agentId ?? 'unknown'}>
               {dots}
@@ -284,6 +291,6 @@ export function UsageRunLength(props: UsageChartBaseProps & Readonly<{ agents: r
     </ChartDrawing>
     <UsageChartCaption theme={props.theme}>{props.labels.caption}</UsageChartCaption>
     <UsageChartValues theme={props.theme} label={props.label} labels={props.labels.values} testID={props.testID}
-      table={{ columns: [{ label: props.labels.values.agentColumn }, { label: props.labels.values.medianColumn }, { label: props.labels.values.p90Column }, { label: props.labels.values.samplesColumn }], rows: table }} />
+      table={{ columns: [{ label: props.labels.values.agentColumn }, { label: props.labels.values.medianColumn }, { label: props.labels.values.p90Column }, { label: props.labels.values.samplesColumn }, { label: `${props.label} (ms)` }], rows: table }} />
   </UsageChartColumn>;
 }

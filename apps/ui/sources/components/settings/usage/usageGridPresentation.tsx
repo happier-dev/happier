@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import type { HappierGridCell, HappierGridFrame, HeatmapProps } from '@happier-dev/plugin-ui/presentation';
-import { formatHappierDataValue } from '@happier-dev/plugin-ui/presentation';
+import type { HappierGridCell, HappierGridFrame, HeatmapProps, UsageChartValuesLabels } from '@happier-dev/plugin-ui/presentation';
+import { formatHappierDataValue, UsageChartValues } from '@happier-dev/plugin-ui/presentation';
 
 import { ChartTooltip, HorizontalChartFrame, resolveHeatmapColor, useHorizontalChartViewport } from '@/components/ui/charts';
 import type { UsagePunchCard, UsageSummaryActivityPoint } from '@/sync/api/account/usageAnalytics';
@@ -81,21 +81,30 @@ export function usageActivityGridPresentation(activity: readonly UsageSummaryAct
 }
 
 /** Canonical host overlay owns hover, touch and keyboard; the renderer owns semantic selection. */
-export function usageGridTooltip(accentColor: string, triggerTestID: string) {
+export function usageGridTooltip(accentColor: string, triggerTestID: string, label: string) {
     return (cell: HappierGridCell, visual: ReactNode, select: () => void) => {
         const value = cell.value === null || !Number.isFinite(cell.value) ? t('usage.noData.title') : cell.valueLabel ?? formatHappierDataValue(cell.value);
-        return <ChartTooltip triggerTestID={triggerTestID} title={cell.label} value={value} accentColor={accentColor}
-            accessibilityLabel={`${cell.label}: ${value}`} onSelect={select} triggerStyle={{ flex: 1 }}>{visual}</ChartTooltip>;
+        return <ChartTooltip triggerTestID={triggerTestID} title={`${label} · ${cell.label}`} value={value} accentColor={accentColor} keyboard={false}
+            accessibilityLabel={`${label} · ${cell.label}: ${value}`} onSelect={select} triggerStyle={{ flex: 1 }}>{visual}</ChartTooltip>;
     };
 }
 
 /** Reuse the incumbent motion owner, but never its replaced grid layout. */
-export function useUsageActivityGridTooltip(accentColor: string, columns: number) {
+export function useUsageActivityGridTooltip(accentColor: string, columns: number, label: string) {
     const animate = useEntrancesEnabled();
     const motion = useMotionPreferences();
-    const tooltip = usageGridTooltip(accentColor, 'usage-activity-square');
+    const tooltip = usageGridTooltip(accentColor, 'usage-activity-square', label);
     return (cell: HappierGridCell, visual: ReactNode, select: () => void) => <RippleCell animate={animate} travel={motion.entrance.kind === 'travel'}
         delayMs={rippleDelayMs(Number(cell.row) * columns + Number(cell.column), columns)}>{tooltip(cell, visual, select)}</RippleCell>;
+}
+
+/** Standalone Usage grids share the same exact-value disclosure as the composed rhythm chart. */
+export function UsageGridValues(props: Readonly<{ theme: HeatmapProps['theme']; label: string; cells: readonly HappierGridCell[];
+    valueColumn: string; labels: UsageChartValuesLabels; testID?: string }>) {
+    return <UsageChartValues theme={props.theme} label={props.label} labels={props.labels} testID={props.testID}
+        table={{ columns: [{ label: t('common.name') }, { label: props.valueColumn }], rows: props.cells.map(cell => [cell.label,
+            cell.value === null || !Number.isFinite(cell.value) ? props.labels.unknownLabel ?? t('usage.noData.title')
+                : cell.valueLabel ?? formatHappierDataValue(cell.value)]) }} />;
 }
 
 function GridViewport({ frame }: { frame: HappierGridFrame }) {

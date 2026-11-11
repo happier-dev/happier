@@ -11,8 +11,9 @@ import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFram
 import { usageCrewLabels, usageOrbitLabels, usagePlanetLabels, usageShippedLabels, usageSkyLabels } from './usageChartLabels';
 import { formatUsageDuration } from './usageHowYouWorkPresentation';
 import {
-  UsageBodyInsufficient, UsageBodyReadFailed, UsageBodyReading, UsageCoverageLine, isUsageReadFailed, isUsageReadOutstanding, usagePeriodPhrase, type UsageBodyProps,
+  UsageBodyInsufficient, UsageBodyNothingYet, UsageBodyReadFailed, UsageBodyReading, UsageCoverageLine, isUsageReadFailed, isUsageReadOutstanding, usagePeriodPhrase, type UsageBodyProps,
 } from './usageBodyKit';
+import { useUsageWidgetPageNothingRecorded } from './usageWidgetBatch';
 import {
   formatUsageChartMetric, usageChartClock, usageChartDateLabels, usageChartMetricName, usageChartPercent, usageChartValuesLabels,
   usageChartWeekdays, useUsageChartHost, type UsageChartMetric,
@@ -35,11 +36,14 @@ const LEVEL_NAMES = () => [t('usage.board.charts.levelNone'), t('usage.board.cha
  */
 export function UsageChartPending(props: Readonly<{ slice: UsageBodyProps['slice']; testID: string; title: string; reason: string; ghost?: React.ReactNode; onRetry: () => void }>) {
   const sources = readUsageChartSources(props.slice);
+  const pageNothingRecorded = useUsageWidgetPageNothingRecorded();
   if (isUsageReadOutstanding(props.slice, sources) || isUsageReadOutstanding(props.slice, [...sources, 'accounting']))
     return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources }} />;
   // A failed read is unknown, never "needs data".
   if (isUsageReadFailed(props.slice, sources))
     return <UsageBodyReadFailed slice={props.slice} sources={sources} testID={props.testID} onRetry={props.onRetry} />;
+  // Nothing was recorded in the period: the page says so once; the chart keeps one quiet line.
+  if (pageNothingRecorded) return <UsageBodyNothingYet testID={props.testID} />;
   const state = <UsageBodyInsufficient testID={`${props.testID}.needsData`} title={props.title} reason={props.reason} replacesContent={!props.ghost} />;
   return props.ghost ? <View style={{ gap: 12 }}>{state}{props.ghost}</View> : state;
 }

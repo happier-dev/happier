@@ -266,7 +266,7 @@ function PlanRow(
     verdict ?? (fit.observed === 0 && !props.noneEndedSaidOnce ? [fitWindow, t('usage.board.plans.fitNoneEnded')].filter(Boolean).join(' · ') : null),
   ].filter(Boolean).join(' · ');
   const figureNode = hiddenFigure && exactFigure ? <ChartDatum testID={`${props.testID}.figure`}
-    datum={{ label: props.name.title, value: exactFigure, subtitle: [priceText, periodText, fitText].join(' · ') }}>{figure}</ChartDatum> : figure;
+    datum={{ keyboard: false, label: props.name.title, value: exactFigure, subtitle: [priceText, periodText, fitText].join(' · ') }}>{figure}</ChartDatum> : figure;
   const identity = <UsagePlanIdentity name={props.name} compact />;
   const secondaryLine = (
     <Text
@@ -285,19 +285,13 @@ function PlanRow(
       style={styles.row}
       accessibilityLabel={[props.name.title, priceText, periodText, paceText].filter(Boolean).join(', ')}
     >
-      {props.compact ? <>
-        <View style={styles.rowHead}>
-          <View style={styles.rowIdentity}>{identity}</View>
-          {figureNode}
-        </View>
-        {secondaryLine}
-      </> : (
-        // The plan row itself opens its details (lab p2sheet-D: one row per plan), never a "Details" line under each.
-        <UsagePlanDisclosure title={`${props.name.title}, ${t('usage.board.plans.planDetails')}`} testID={`${props.testID}.details`}
+      {/* The plan row itself opens its exact values and details at every widget size. */}
+        <UsagePlanDisclosure title={`${props.name.title}, ${t('usage.board.charts.showValues')}`} testID={`${props.testID}.details`}
           label={<>{identity}{secondaryLine}</>} trailing={figureNode}>
           <View style={styles.details}>
             {/* Terms first (what it costs, when it ends), then how it is being used, then what you can do. */}
             <View style={styles.terms}>
+              {hiddenFigure && exactFigure ? <Text style={[styles.fit, text.detail]}>{exactFigure}</Text> : null}
               <Text style={[known ? styles.fit : styles.quiet, text.detail]}>{priceText}</Text>
               <Text style={[renewalKnown ? styles.fit : styles.quiet, text.detail]}>{periodText}</Text>
             </View>
@@ -315,7 +309,6 @@ function PlanRow(
             </View>
           </View>
         </UsagePlanDisclosure>
-      )}
     </View>
   );
 }
@@ -356,7 +349,8 @@ function PlanExtras(props: Readonly<{ value: UsagePlanInsights['accounts'][numbe
       hidden: !formatUsageCost(row.amount, row.currency).includes(formatHappierDataValue(row.amount, getPreferredLanguage()))
         || !formatUsageCost(row.priceAmount, row.currency).includes(formatHappierDataValue(row.priceAmount, getPreferredLanguage())) })),
   ];
-  const visual = <View style={styles.rowFit}>
+  const visual = <View style={styles.rowFit} accessible testID={`${props.testID}.values.exact`}
+    accessibilityLabel={[...numericFacts.map(fact => `${fact.label}: ${fact.exact}`), valueText].join(' · ')}>
     {value.status === 'available' ? <Text testID={`${props.testID}.value`} accessibilityLabel={valueText}
       style={[styles.note, text.detail]} numberOfLines={props.compact ? 2 : undefined}>{valueText}</Text> : null}
     {props.value.weather.filter(row => row.status === 'available').map(row => <Text key={`weather:${row.meterId}`} testID={`${props.testID}.weather.${row.meterId}`}
@@ -378,7 +372,7 @@ function PlanExtras(props: Readonly<{ value: UsagePlanInsights['accounts'][numbe
     </Text>)}
   </View>;
   return numericFacts.some(fact => fact.hidden)
-    ? <ChartDatum testID={`${props.testID}.values.detail`} datum={{ label: t('usage.board.plans.planDetails'),
+    ? <ChartDatum testID={`${props.testID}.values.detail`} datum={{ keyboard: false, label: t('usage.board.plans.planDetails'),
       value: numericFacts.map(fact => `${fact.label}: ${fact.exact}`).join(' · '), subtitle: valueText }}>{visual}</ChartDatum> : visual;
 }
 
@@ -418,7 +412,6 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.border.default,
   },
-  rowHead: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s16 },
   secondary: { ...Typography.default(), color: theme.colors.text.tertiary },
   details: { gap: theme.space.s12 },
   terms: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space.s16, rowGap: theme.space.s2 },
@@ -430,7 +423,6 @@ const styles = StyleSheet.create((theme) => ({
     borderTopColor: theme.colors.border.default,
   },
   factLabel: { ...Typography.default('semiBold'), color: theme.colors.text.primary },
-  rowIdentity: { flex: 1, minWidth: 0 },
   rowFacts: {
     flexGrow: 1,
     flexBasis: 200,

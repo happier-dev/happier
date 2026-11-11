@@ -10,6 +10,7 @@ import {
   formatHappierDataShare,
   formatHappierDataExactShare,
   formatHappierDataValue,
+  formatHappierDataValueWithPrecision,
   resolveHappierDataShares,
   estimateHappierDataColumnWidths,
   resolveHappierDataTableColumns,
@@ -67,8 +68,8 @@ function RowMark(props: Readonly<{ mark: NonNullable<HappierDataRowsProps['marks
   </View>;
 }
 
-function readable(column: HappierDataColumn, value: HappierDataValue | undefined, locale: string | undefined): string | null {
-  return value === undefined || value === '' ? null : `${column.label}: ${formatHappierDataValue(value, locale)}`;
+function readable(column: HappierDataColumn, value: HappierDataValue | undefined, locale: string | undefined, formatted?: string): string | null {
+  return value === undefined || value === '' ? null : `${column.label}: ${formatted ?? formatHappierDataValue(value, locale)}`;
 }
 
 function IncompleteLine(props: Readonly<{ text: string; styles: HappierDataTextStyles; testID?: string }>) {
@@ -114,6 +115,8 @@ export function HappierDataRows(props: HappierDataRowsProps) {
           {props.showProportionShares === false || share === null ? null : <HappierText style={text.caption} tabularNumbers>{` ${formatHappierDataShare(share, text.locale)}`}</HappierText>}
         </HappierText>;
         const exactAmount = typeof amount === 'number' && Number.isFinite(amount) ? formatHappierDataValue(amount, text.locale) : null;
+        const spokenAmount = exactAmount !== null && amount !== null && amount !== undefined
+          ? formatHappierDataValueWithPrecision(exactAmount, visibleValue(amount)) : null;
         const shownShare = rowShare ?? (props.showProportionShares === false ? null : share);
         const exactShare = shownShare === null ? null : formatHappierDataExactShare(shownShare, text.locale);
         const hiddenShare = shownShare !== null && exactShare !== `${formatHappierDataValue(Math.round(shownShare * 100), text.locale)}%`;
@@ -123,7 +126,7 @@ export function HappierDataRows(props: HappierDataRowsProps) {
         const hiddenPrecision = Boolean(admittedDatum) || hiddenAmount || hiddenShare;
         const amountTarget = admittedDatum || exactAmount !== null && amount !== null && amount !== undefined && (hiddenAmount || rowShare === null && hiddenShare)
           ? <ChartDatum testID={props.testID ? `${props.testID}-datum-${rowIndex}` : undefined}
-            datum={admittedDatum ?? { label: title, value: exactAmount!, color: props.proportionColors?.[rowIndex],
+            datum={admittedDatum ?? { label: title, value: `${spokenAmount!} ${props.columns[proportionIndex]!.label}`, color: props.proportionColors?.[rowIndex],
               subtitle: [props.columns[proportionIndex]?.label, amount === null || amount === undefined ? null : visibleValue(amount), exactShare, line].filter(Boolean).join(' · ') }}>
             {amountInk}
           </ChartDatum> : amountInk;
@@ -136,7 +139,13 @@ export function HappierDataRows(props: HappierDataRowsProps) {
             key={props.rowIds?.[rowIndex] ?? rowIndex}
             role="listitem"
             accessible={!(props.renderIdentity || interactive && hiddenPrecision)}
-            accessibilityLabel={[title, ...(mark ? [mark.label] : []), ...props.columns.slice(1).map((column, index) => readable(column, row[index + 1], text.locale)).filter((value): value is string => value !== null),
+            accessibilityLabel={[title, ...(mark ? [mark.label] : []), ...props.columns.slice(1).map((column, index) => {
+              const value = row[index + 1];
+              const spokenValue = index + 1 === proportionIndex && admittedDatum ? admittedDatum.value
+                : index + 1 === proportionIndex && spokenAmount !== null ? spokenAmount
+                : value === undefined ? undefined : formatHappierDataValueWithPrecision(formatHappierDataValue(value, text.locale), visibleValue(value));
+              return readable(column, value, text.locale, spokenValue);
+            }).filter((value): value is string => value !== null),
               ...(shownShare === null ? [] : [formatHappierDataShare(shownShare, text.locale)])].join(', ')}
             testID={props.testID ? `${props.testID}-row-${rowIndex}` : undefined}
           >

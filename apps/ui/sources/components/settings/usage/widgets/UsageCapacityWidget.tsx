@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
-import { ChartDatum, formatHappierDataExactShare, HAPPIER_DATA_METRICS, HappierDataMetric, HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
+import { ChartDatum, formatHappierDataExactShare, HAPPIER_DATA_METRICS, HappierDataMetric, HappierDataRows, HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useWidgetFrameBodyCaption, useWidgetFrameBodyMeta } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
@@ -47,10 +47,14 @@ import {
   isUsagePlanAccountSettledUnread,
   readPendingPlanAccountCount,
   usePlanText,
+  UsagePlanDisclosure,
 } from './plans/UsagePlanParts';
 import { UsagePoolQueue, UsagePoolSteps } from './plans/UsagePoolOrder';
 
-/** Below this width the bar's cells wrap into a two-up grid instead of shrinking into slivers. */
+/**
+ * Below this width per account the per-account cells cannot hold a figure and a name side by side, so they become
+ * one row each (bar, then name and figure), as the narrow pooled bar lists them (native N2: a seven-account phone).
+ */
 const CELL_MIN_WIDTH_PX = 92;
 /** Beside other widgets a segment of the one pooled bar keeps this much room for its label beneath it. */
 const POOLED_SEGMENT_MIN_WIDTH_PX = 64;
@@ -197,23 +201,6 @@ function runKey(run: Run): string {
   return run.pool ? `pool:${run.pool.key}` : `account:${run.cells[0]!.account.key}`;
 }
 
-/**
- * The runs that sit alone in a two-up row: an account outside any framed pool, with no second account after
- * it before a framed pool (which takes the whole row) or the end.
- */
-function readLoneHalfRuns(runs: readonly Run[]): ReadonlySet<Run> {
-  const lone = new Set<Run>();
-  let first: Run | null = null;
-  const closeRow = () => { if (first) lone.add(first); first = null; };
-  for (const run of runs) {
-    if (isFramedRun(run)) { closeRow(); continue; }
-    if (first) first = null;
-    else first = run;
-  }
-  closeRow();
-  return lone;
-}
-
 export function UsageCapacityWidget(props: UsageBodyProps) {
   const chartTheme = useUsagePluginTheme();
   const presentation = useWidgetPresentation();
@@ -317,11 +304,8 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
     : next !== null && (pooled || !lone) ? t('usage.board.plans.limitsNextUnit', { name: tightestName.title })
     : lone ? t('usage.board.plans.capacityLoneUnit')
     : t('usage.board.plans.capacityTightestUnit', { name: tightestName.title });
-  // Equal cells while they fit; a narrow frame (a phone) wraps them two-up rather than shrinking them.
-  const cellBasis =
-    !pooled && width !== null && width / Math.max(1, cellCount) < CELL_MIN_WIDTH_PX ? ('46%' as const) : undefined;
-  // In the two-up grid an odd account keeps its half: an empty half beside it, never a full-width track.
-  const loneRuns = cellBasis ? readLoneHalfRuns(runs) : null;
+  // Equal cells while they fit; a narrow frame (a phone) lists them a row each rather than shrinking them.
+  const listed = !pooled && width !== null && width / Math.max(1, cellCount) < CELL_MIN_WIDTH_PX;
   const renderCells = (run: Run) => run.cells.map((cell) => (
     <CapacityCell
       key={cell.account.key}
@@ -329,7 +313,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
       name={nameOf(cell.account)}
       nowMs={nowMs}
       lone={lone}
-      basis={isFramedRun(run) ? cellBasis : undefined}
+      {...(listed ? { listed } : {})}
       testID={`${props.testID}.cell.${cell.account.accountId}`}
     />
   ));
@@ -344,7 +328,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         <View style={styles.hero}>
           <View style={styles.heroLine}>
             <ChartDatum testID={`${props.testID}.tightest-datum`}
-              datum={{ label: `${tightestName.title} · ${tightest.window.label}`,
+              datum={{ keyboard: false, label: `${tightestName.title} · ${tightest.window.label}`,
                 value: formatHappierDataExactShare(tightest.window.remainingFraction!, getPreferredLanguage()),
                 subtitle: tightest.window.resetAtMs === null ? undefined : formatPlanResetPhrase(tightest.window.resetAtMs, nowMs) ?? undefined }}>
             <HappierDataMetric
@@ -400,28 +384,24 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         <CapacityPooledBar runs={runs} nameOf={nameOf} nowMs={nowMs} staleSaidOnce={everyStale} lone={lone} testID={props.testID}
           listed={width !== null && width / Math.max(1, cellCount) < POOLED_COLUMN_LABEL_MIN_WIDTH_PX} />
       ) : runs.length > 0 ? (
-      <View style={styles.bar} accessibilityRole="list">
+      <View style={listed ? styles.list : styles.bar} accessibilityRole="list" testID={listed ? `${props.testID}.accounts` : undefined}>
         {runs.map((run) => (
-          <React.Fragment key={runKey(run)}>
-            <View
-              testID={run.pool && isFramedRun(run) ? `${props.testID}.pool.${run.pool.groupId}` : undefined}
-              style={[
-                isFramedRun(run) ? styles.pool : styles.run,
-                cellBasis
-                  ? { flexBasis: isFramedRun(run) ? '100%' : '47%', flexGrow: 1 }
-                  : { flexGrow: run.cells.length, flexBasis: 0 },
-              ]}
-            >
-              {/* An outline says which pool it holds, so the cells beside it read as accounts outside it. */}
-              {isFramedRun(run) && (run.outside || run.pool!.name) ? (
-                <Text style={[styles.poolLabel, text.detail]} numberOfLines={1} testID={`${props.testID}.pool.${run.outside ? 'outside' : run.pool!.groupId}.label`}>
-                  {run.outside ? t('usage.board.plans.poolOutside') : run.pool!.name}
-                </Text>
-              ) : null}
-              {isFramedRun(run) ? <View style={styles.run}>{renderCells(run)}</View> : renderCells(run)}
-            </View>
-            {loneRuns?.has(run) ? <View style={styles.halfSpacer} /> : null}
-          </React.Fragment>
+          <View
+            key={runKey(run)}
+            testID={run.pool && isFramedRun(run) ? `${props.testID}.pool.${run.pool.groupId}` : undefined}
+            style={[
+              isFramedRun(run) ? styles.pool : listed ? styles.list : styles.run,
+              listed ? null : { flexGrow: run.cells.length, flexBasis: 0 },
+            ]}
+          >
+            {/* An outline says which pool it holds, so the cells beside it read as accounts outside it. */}
+            {isFramedRun(run) && (run.outside || run.pool!.name) ? (
+              <Text style={[styles.poolLabel, text.detail]} numberOfLines={1} testID={`${props.testID}.pool.${run.outside ? 'outside' : run.pool!.groupId}.label`}>
+                {run.outside ? t('usage.board.plans.poolOutside') : run.pool!.name}
+              </Text>
+            ) : null}
+            {isFramedRun(run) ? <View style={listed ? styles.list : styles.run}>{renderCells(run)}</View> : renderCells(run)}
+          </View>
         ))}
       </View>
       ) : null}
@@ -432,6 +412,12 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         <Text style={[styles.subline, text.detail]} testID={`${props.testID}.unread`}>
           {usageUnreadAccountsLabel(unreadNames)}
         </Text>
+      ) : null}
+      {projection.accounts.some(account => account.windows.length > 0) ? (
+        <UsagePlanDisclosure title={`${t('usage.widgets.usage_capacity')}: ${t('usage.board.charts.showValues')}`}
+          testID={`${props.testID}.values`}>
+          <CapacityExactValues accounts={projection.accounts} nameOf={nameOf} nowMs={nowMs} testID={`${props.testID}.values.rows`} />
+        </UsagePlanDisclosure>
       ) : null}
       {/* Beside other widgets the meters are said once; the switching order lives with the full view (Plans). */}
       {pooled && (!tile || next !== null) ? null : tile ? (
@@ -467,6 +453,24 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
       />
     </View>
   );
+}
+
+/** The disclosure mounts its exact rows on demand, using the same admitted windows as the bars. */
+function CapacityExactValues(props: Readonly<{
+  accounts: readonly UsagePlanAccount[];
+  nameOf: (account: UsagePlanAccount) => UsagePlanAccountName;
+  nowMs: number;
+  testID: string;
+}>) {
+  const theme = useUsagePluginTheme();
+  return <HappierDataRows theme={theme} label={t('usage.board.charts.showValues')} testID={props.testID}
+    columns={[{ label: t('usage.widgets.usage_capacity') }, { label: t('usage.board.charts.showValues') }]}
+    rows={props.accounts.flatMap(account => account.windows.map(window => [
+      `${props.nameOf(account).title} · ${window.label}`,
+      [window.remainingFraction === null ? t('usage.board.plans.cellUnknown')
+        : t('usage.board.plans.cellLeft', { percent: formatHappierDataExactShare(window.remainingFraction, getPreferredLanguage()) }),
+        window.resetAtMs === null ? null : formatPlanResetPhrase(window.resetAtMs, props.nowMs)].filter(Boolean).join(' · '),
+    ]))} />;
 }
 
 /**
@@ -518,7 +522,7 @@ function CapacityPooledBar(props: Readonly<{
         ))}
       </View>
       {props.listed ? (
-        <View style={styles.pooledList} accessibilityRole="list" testID={`${props.testID}.accounts`}>
+        <View style={styles.list} accessibilityRole="list" testID={`${props.testID}.accounts`}>
           {(hidden > 0 ? listedCells.slice(0, POOLED_LIST_LEADING_ROWS) : listedCells).map(({ run, cell }) => label(run, cell, true))}
         </View>
       ) : null}
@@ -558,7 +562,6 @@ function CapacityCell(
     cell: Cell;
     name: UsagePlanAccountName;
     nowMs: number;
-    basis?: `${number}%`;
     /** Under a segment of the pooled bar: the bar is drawn above it by the pooled track. */
     pooled?: boolean;
     /** One row of the list under a narrow pooled bar: the account and its note at the start, its figure at the end. */
@@ -624,7 +627,7 @@ function CapacityCell(
     </Text>
   );
   const valueText = remaining === null || !window ? valueInk : <ChartDatum testID={`${props.testID}.datum`}
-    datum={{ label: `${props.name.title} · ${window.label}`, value: formatHappierDataExactShare(remaining, getPreferredLanguage()),
+    datum={{ keyboard: false, label: `${props.name.title} · ${window.label}`, value: formatHappierDataExactShare(remaining, getPreferredLanguage()),
       subtitle: [window.resetAtMs === null ? null : formatPlanResetPhrase(window.resetAtMs, nowMs),
         ...otherWindows.map(other => windowNote(other))].filter(Boolean).join(' · ') }}>{valueInk}</ChartDatum>;
   const detailLine = detail === null && props.listed ? null : (
@@ -645,13 +648,12 @@ function CapacityCell(
     <View
       testID={props.testID}
       // Every cell sits in a meter list (the bar, the pooled bar, the listed accounts): it is that list's item.
-      accessibilityRole="text"
+      role="listitem"
       style={[
         styles.cell,
         // A listed row stacks in a column: it takes its content's height (a "used up" note under the name),
         // never an equal share of the list that lets the note run into the next row.
         props.listed ? styles.cellListed : null,
-        props.basis ? { flexBasis: props.basis, flexGrow: 1 } : null,
       ]}
       accessibilityLabel={[
         props.name.primaryLabel ?? props.name.title,
@@ -741,7 +743,6 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.space.s12,
   },
   poolLabel: { ...Typography.default('semiBold'), color: theme.colors.text.secondary },
-  halfSpacer: { flexBasis: '47%', flexGrow: 1 },
   cell: { flex: 1, minWidth: 0, gap: theme.space.s6 },
   cellListed: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' },
   cellHead: {
@@ -751,8 +752,8 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   cellIdentity: { flexShrink: 1, minWidth: 0 },
-  // The phone's list under the pooled bar: a row per account, its figure at the end in a column of its own.
-  pooledList: { gap: theme.space.s16 },
+  // A phone's list (under the pooled bar, or in place of the per-account grid): a row per account, its figure at the end.
+  list: { gap: theme.space.s16 },
   listedRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', columnGap: theme.space.s12 },
   listedIdentity: { flex: 1, minWidth: 0, gap: theme.space.s2 },
   cellValue: {

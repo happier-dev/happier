@@ -85,6 +85,18 @@ function barProps(selections: string[]): Bar {
 }
 
 describe('UsageFilterBar', () => {
+  it('announces period and metric choices as radio values with their checked state', async () => {
+    const screen = await renderBar([], { onMetricChange: () => {} });
+    for (const [id, checked] of [['filters.period:7days', true], ['filters.period:today', false],
+      ['filters.metric:tokens', true], ['filters.metric:cost', false]] as const) {
+      const choice = screen.findHostByTestId(id)!;
+      expect(choice.props.accessibilityRole).toBe('radio');
+      expect(choice.props.accessibilityState).toMatchObject({ checked });
+      expect(choice.props.accessibilityState.selected).toBeUndefined();
+    }
+    await screen.unmount();
+  });
+
   it('keeps phone and desktop filter labels inside text hosts as controls settle', async () => {
     for (const width of [390, 1280]) {
       Object.assign(viewport, { width, height: 844 });

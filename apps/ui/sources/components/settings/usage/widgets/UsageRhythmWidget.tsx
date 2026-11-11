@@ -32,6 +32,7 @@ import {
 } from './usageBodyKit';
 import { UsageSkyStyleBody, UsageWeekTideStyleBody, UsageDaylightStyleBody } from './UsageChartStyleBodies';
 import { UsageCalendarArtStyleBody, isUsageCalendarArtStyle } from './UsagePlanetFamilyBodies';
+import { usageChartValuesLabels } from './usageChartHost';
 
 /** One body per widget: its Style own-input picks the encoding of the same question. */
 export function UsageRhythmWidget(props: UsageBodyProps) {
@@ -85,6 +86,7 @@ function UsageRhythmWidgetOriginal(props: UsageBodyProps) {
   const matrix = width === undefined || width >= USAGE_RHYTHM_MATRIX_MIN_WIDTH_PX;
   return (
     <UsageRhythmChart theme={chartTheme} width={width} testID={props.testID}
+      label={t('usage.workRhythm')} values={{ ...usageChartValuesLabels(), valueColumn: t('usage.events') }}
       spacing={{ body: theme.space.s12, blocks: theme.space.s20, block: theme.space.s8 }}
       headings={{
         calendar: <Text style={styles.label}>{t('usage.board.howYouWork.activeDays')}</Text>,
@@ -93,12 +95,12 @@ function UsageRhythmWidgetOriginal(props: UsageBodyProps) {
       }}
       calendar={hasCalendar && calendar ? {
         ...calendar,
-        renderCell: usageGridTooltip(accent, 'usage-heatmap-cell-trigger'),
+        renderCell: usageGridTooltip(accent, 'usage-heatmap-cell-trigger', t('usage.board.howYouWork.activeDays')),
         renderFrame: calendar.layout === 'strip' ? undefined : usageGridFrame,
       } : undefined}
       punch={hasRhythm && matrix ? {
         ...usageDotGridPresentation(view.punchCard, accent, theme.colors.border.default),
-        renderCell: usageGridTooltip(accent, 'usage-punchcard-cell-trigger'),
+        renderCell: usageGridTooltip(accent, 'usage-punchcard-cell-trigger', t('usage.board.howYouWork.weekdayHour')),
       } : undefined}
       hours={hasRhythm && (width === undefined || !matrix) ? {
         label: t('usage.workRhythm'),
@@ -106,7 +108,7 @@ function UsageRhythmWidgetOriginal(props: UsageBodyProps) {
         variant: 'bar', size: 'tile', viewportHeight: 52, barGap: 2, barMinHeight: 2,
         axisTicks: [{ label: '12A', bucket: 0 }, { label: '6A', bucket: 6 }, { label: '12P', bucket: 12 }, { label: '6P', bucket: 18 }],
         showGrid: false, showAnnotations: true, showReadout: false,
-        renderBucket: usageSeriesTooltip(accent, 'usage-rhythm-hour-trigger'),
+        renderBucket: usageSeriesTooltip(accent, 'usage-rhythm-hour-trigger', { label: t('usage.board.howYouWork.byHour'), keyboard: false }),
       } : undefined}
       footer={<UsageCoverageLine
         testID={`${props.testID}.coverage`}

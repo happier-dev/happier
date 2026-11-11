@@ -183,6 +183,7 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
   testID,
 }) => {
   useUnistyles();
+  const tooltipId = React.useId();
   // On a phone the lens takes the screen's width inside the page gutters, under the crosshair, so its
   // rows keep their names whole; beside a wide chart it stays a narrow card next to the crosshair.
   const phone = useDeviceType() === 'phone';
@@ -242,6 +243,8 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
     (focusIndex !== null && focusIndex < count ? focusIndex : null);
   const content = shownIndex !== null ? buckets[shownIndex] ?? null : null;
   const held = shownIndex !== null && shownIndex === heldIndex;
+  // Chart-owned focus stays with the chart; this lens dismisses its own hover and held selections.
+  const localSelectionActive = heldIndex !== null || activeIndex !== null;
   const definitions: CurrentUiContextLocalCommand[] = [];
   buckets.forEach((bucket, index) => {
     if (!bucket) return;
@@ -256,7 +259,7 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
       },
     });
   });
-  if (content && (heldIndex !== null || activeIndex !== null)) definitions.push({
+  if (content && localSelectionActive) definitions.push({
     key: 'dismiss', title: `${t('common.close')}: ${content.title}`,
     invoke: input => {
       release();
@@ -324,6 +327,7 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
     <GestureDetector gesture={gesture} touchAction="pan-y">
       <View
         testID={testID}
+        aria-describedby={content ? tooltipId : undefined}
         style={[styles.container, style]}
       >
         {children}
@@ -351,8 +355,10 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
               anchorRef={crosshairRef}
               backdrop={false}
               passive={!held}
+              dismissWhenAnchorHidden={localSelectionActive}
+              onRequestClose={localSelectionActive ? () => { void commands.invoke('dismiss'); } : undefined}
               // A held lens lets go on Escape or a press anywhere else; that press still lands (a bucket holds anew).
-              {...(held ? { onRequestClose: () => { void commands.invoke('dismiss'); }, consumeOutsidePointerDown: false } : {})}
+              {...(held ? { consumeOutsidePointerDown: false } : {})}
               placement={phone ? 'bottom' : 'right'}
               gap={LENS_GAP}
               maxWidthCap={lensWidth}
@@ -373,7 +379,7 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
                 testID={testID ? `${testID}-lens` : undefined}
               >
                 <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
-                <View style={styles.lensBody} accessibilityLiveRegion="polite">
+                <View style={styles.lensBody} accessibilityLiveRegion="polite" nativeID={tooltipId} role="tooltip">
                   <View style={styles.lensHead}>
                     <Text style={styles.lensTitle} numberOfLines={1}>
                       {content.title}

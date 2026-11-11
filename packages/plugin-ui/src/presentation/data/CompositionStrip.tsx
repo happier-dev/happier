@@ -84,7 +84,7 @@ export function CompositionStrip(props: CompositionStripProps) {
       {props.segments.map((segment, index) => {
         const share = shares[index] ?? null;
         const exact = segment.value === null || !Number.isFinite(segment.value) ? props.unknownLabel ?? 'Unknown' : formatHappierDataValue(segment.value, text.locale);
-        const spokenShare = share === null ? undefined : formatHappierDataShare(share, text.locale);
+        const spokenShare = share === null ? undefined : props.shareFormatter?.(share) ?? formatHappierDataShare(share, text.locale);
         const spoken = props.valueKind === 'share' ? [segment.label, spokenShare ?? exact] : [segment.label, exact, props.basis, spokenShare];
         const swatchColor = segment.color ?? props.theme.colors.accent;
         const swatch = segment.pattern === 'hatched' ? <View style={{ width: 8, height: 8, borderRadius: props.theme.radii.small, overflow: 'hidden', borderWidth: 1,
@@ -98,10 +98,10 @@ export function CompositionStrip(props: CompositionStripProps) {
             </HappierText>
           : share === null ? null : props.appearance ? <HappierText allowFontScaling={props.appearance.allowFontScaling}
             style={{ ...text.captionStrong, ...props.appearance.textStyle }} tabularNumbers>
-            {props.shareFormatter?.(share) ?? formatHappierDataShare(share, text.locale)}
+            {spokenShare}
           </HappierText> : <View style={{ borderRadius: props.theme.radii.small, paddingHorizontal: props.theme.spacing.xsmall,
             backgroundColor: props.theme.colors.control }}><HappierText style={{ ...text.captionStrong, color: props.theme.colors.text }} tabularNumbers>
-            {props.shareFormatter?.(share) ?? formatHappierDataShare(share, text.locale)}
+            {spokenShare}
           </HappierText></View>;
         // A compact legend sits in narrow hosts (a rail, a small widget): name and figure are one text group beside the swatch, so when they do not fit one line the figure
         // drops under the name (flush with its left edge) and the swatch stays on the first line instead of the entry clipping.

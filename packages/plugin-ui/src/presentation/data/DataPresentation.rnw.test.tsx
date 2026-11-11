@@ -11,6 +11,7 @@ import { HappierDataChart } from './Chart.js';
 import { HappierDataRows } from './DataRows.js';
 import { HappierDataMetric } from './Metric.js';
 import { ChartInteractionProvider } from './ChartDatum.js';
+import { RankedRows } from './RankedRows.js';
 
 const query = (root: HTMLElement, testID: string) => root.querySelector<HTMLElement>(`[data-testid="${testID}"]`);
 
@@ -20,6 +21,40 @@ function layout(element: Element | null, width: number) {
 }
 
 describe('public data nodes through React Native Web', () => {
+  it.each([
+    { label: 'Cost', value: 30.05874, formatted: '$30.06', exact: '30.05874' },
+    { label: 'Tokens', value: 4186010, formatted: '4.2M', exact: '4,186,010' },
+  ])('keeps $label units and precision in row and metric exact-value names', ({ label, value, formatted, exact }) => {
+    const theme = createSurfaceContext().theme;
+    const mount = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual, testID) =>
+      <button data-testid={testID} aria-label={`${datum.label}: ${datum.value}`}>{visual}</button>}>
+      <RankedRows theme={theme} testID="units" label="Models" basis={label}
+        rows={[{ id: 'sol', label: 'Sol', value }]} valueFormatter={() => formatted} />
+      <HappierDataMetric theme={theme} testID="unit-metric" label={label} value={value}
+        unit={label === 'Tokens' ? 'tokens' : undefined} valueFormatter={() => formatted} />
+    </ChartInteractionProvider>);
+    try {
+      for (const testID of ['units-datum-0', 'unit-metric-datum']) {
+        const target = query(mount.container, testID);
+        expect(target?.tagName).toBe('BUTTON');
+        expect(target?.getAttribute('aria-label')).toContain(exact);
+        if (label === 'Cost') expect(target?.getAttribute('aria-label')).toContain('$30.06');
+        else expect(target?.getAttribute('aria-label')).toMatch(/tokens/i);
+      }
+      expect(query(mount.container, 'units-row-0')?.getAttribute('aria-label')).toContain(formatted);
+      expect(query(mount.container, 'unit-metric')?.getAttribute('aria-label')).toContain(formatted);
+    } finally { mount.unmount(); }
+  });
+
+  it('uses admitted unit-bearing amounts in static row names', () => {
+    const mount = mountThroughReactNativeWeb(<HappierDataRows theme={createSurfaceContext().theme} testID="admitted-units"
+      columns={[{ label: 'Model' }, { label: 'Cost', proportion: true }]} rows={[[ 'Sol', '$30.06' ]]}
+      rowDatums={[{ label: 'Sol', value: 'USD 30.05874' }]} showProportionShares={false} />);
+    try {
+      expect(query(mount.container, 'admitted-units-row-0')?.getAttribute('aria-label')).toContain('USD 30.05874');
+    } finally { mount.unmount(); }
+  });
+
   it('keeps a string amount datum beside its row action so inspecting its precision never navigates', () => {
     const navigate = vi.fn();
     const reveal = vi.fn();
@@ -64,7 +99,8 @@ describe('public data nodes through React Native Web', () => {
       <HappierDataMetric theme={theme} testID="money" label="Cost" value={0} valueFormatter={() => '$0.00'} />
     </ChartInteractionProvider>);
     try {
-      expect(query(mount.container, 'compact-datum')!.title).toContain('Tokens: 4,186,010 tokens');
+      expect(query(mount.container, 'compact-datum')!.title).toContain('4,186,010');
+      expect(query(mount.container, 'compact-datum')!.title).toContain('tokens');
       expect(query(mount.container, 'compact-value')!.textContent).toContain('4.2M');
       expect(query(mount.container, 'complete-datum')).toBeNull();
       expect(query(mount.container, 'money-datum')).toBeNull();
@@ -117,7 +153,7 @@ describe('public data nodes through React Native Web', () => {
       const row = query(mount.container, 'ledger-row-0')!;
       expect(query(row, 'marks')).not.toBeNull();
       expect(row.textContent).toBe('glassCX38');
-      expect(row.getAttribute('aria-label')).toBe('glass, Cost: 38, 100%');
+      expect(row.getAttribute('aria-label')).toBe('glass, Cost: 38');
       expect(query(mount.container, 'ledger-row-1')!.textContent).toBe('relay12');
     } finally { mount.unmount(); }
   });

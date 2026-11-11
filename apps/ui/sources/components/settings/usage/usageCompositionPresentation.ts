@@ -1,10 +1,10 @@
-import type { CompositionSegment } from '@happier-dev/plugin-ui/presentation';
+import { formatHappierDataShare, type CompositionSegment } from '@happier-dev/plugin-ui/presentation';
 
 import type { UsageComposition } from '@/sync/api/account/usageAnalytics';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 
 export function usageCompositionShareLabel(share: number): string {
-    return share > 0 && share < 0.01 ? '<1%' : `${Math.round(share * 100)}%`;
+    return formatHappierDataShare(share, getPreferredLanguage());
 }
 
 /** Translate domain facts without recomputing their supplied whole or shares. */
