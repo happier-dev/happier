@@ -28,6 +28,7 @@ function createMachineReachabilityActionSpecsV1() {
     description: 'Read selected network facts or prepare a proposed change without mutation or native admission.',
     approval: { result: 'required' }, approvalScope: 'machine', safety: 'safe', sideEffectClass: 'read',
     executionPlacement: 'machine', placements: [], originalExecution: { daemonIngressSurfaces: ['ui', 'cli'] }, surfaces,
+    operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' } },
     bindings: { mcpToolName: 'machines_reachability_inspect', rpcMethod: RPC_METHODS.MACHINES_REACHABILITY_INSPECT },
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'reachability', 'inspect'], visibility: 'canonical' }] },
     inputSchema: MachineReachabilityInspectInputV1Schema, outputSchema: MachineReachabilityInspectResultV1Schema,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PublicActionIdSchema } from '../../actions/actionSpecs.js';
+import { getActionSpec, PublicActionIdSchema } from '../../actions/actionSpecs.js';
 import { MachineIngressCapabilityV1Schema, MachineReachabilityObservationV1Schema, MachineReachabilityPostureV1Schema } from './machineReachabilityPostureV1.js';
 import { MachineReachabilityPlanBasisV1Schema } from './actionsV1.js';
 
@@ -21,6 +21,12 @@ describe('Machine ingress and demanded private-network contracts', () => {
     for (const actionId of ['machines.reachability.inspect', 'machines.reachability.configure']) {
       expect(PublicActionIdSchema.safeParse(actionId).success).toBe(true);
     }
+  });
+
+  it('gives protected Network inspection an operation to surface its password task', () => {
+    expect(getActionSpec('machines.reachability.inspect').operation).toMatchObject({
+      visibility: 'activity', presentation: { onStart: 'activity' },
+    });
   });
 
   it('retains the observed builtin native profile as closed nonsecret parent-review evidence', () => {

@@ -213,8 +213,8 @@ describe('firewall through the same P10 installed root invocation', () => {
         expect(metadata.reachabilityPosture.management.publicSsh).toEqual({ kind: 'closed' });
     });
 
-    it('inspects native SSH endpoints without desired posture using only the installed root CHECK', async () => {
-        const f = await fixture('preauthorized');
+    it.each(['ask', 'preauthorized'] as const)('inspects native SSH endpoints through the %s root CHECK without APPLY', async mode => {
+        const f = await fixture(mode);
         await f.setFirewallFacts({ interfaces: {
             ens18: [{ address: '10.10.0.4', netmask: '255.255.255.0', family: 'IPv4',
                 mac: '00:00:00:00:00:01', internal: false, cidr: '10.10.0.4/24' }],
@@ -224,21 +224,23 @@ describe('firewall through the same P10 installed root invocation', () => {
             status: 'available', ownedTable: 'absent', externalInterfaces: ['ens18'], privateInterfaces: [],
             retainedSshEndpoints: [{ interfaceName: 'ens18', hostAddress: '0.0.0.0', port: 2205, sourceCidrs: ['0.0.0.0/0'] }],
         } });
-        expect(f.launches).toEqual([expect.objectContaining({ executable: 'sudo', args: expect.arrayContaining(['-n', '-u', 'root']) })]);
+        expect(f.launches).toEqual([expect.objectContaining({ executable: 'sudo', args: expect.arrayContaining([mode === 'ask' ? '-S' : '-n', '-u', 'root']) })]);
         expect(f.frames).toEqual([expect.objectContaining({ mode: 'check' })]);
-        expect(f.prompt).not.toHaveBeenCalled();
+        expect(f.prompt).toHaveBeenCalledTimes(mode === 'ask' ? 1 : 0);
+        expect(f.authentication).toEqual(mode === 'ask' ? ['one-use-password\n'] : []);
         expect(f.readTable()).toBeUndefined();
         expect(f.calls.filter(call => call.executable === 'systemctl' && call.args[0] !== 'show'
             || call.args.includes('-f') && !call.args.includes('-c') || call.args[0] === 'delete')).toEqual([]);
     });
 
-    it('returns a typed unavailable reason when native inspection would need an Ask prompt', async () => {
+    it('retains password attendance recovery when no interactive task is available', async () => {
         const f = await fixture('ask');
         expect(await inspectMachineReachabilityNativeFirewall({ machineId: 'machine', requestId: 'inspect',
-            basis: { kind: 'setup', machineId: 'machine', desiredRevision: 0 } }, f.deps))
-            .toMatchObject({ ok: false, errorCode: 'not_preauthorized' });
+            basis: { kind: 'setup', machineId: 'machine', desiredRevision: 0 } }, { ...f.deps, prompt: undefined }))
+            .toMatchObject({ ok: false, errorCode: 'machine_admin_access_required', details: { elevation: {
+                outcome: 'needs_attendance', operationId: 'inspect', prompt: { kind: 'sudo.password', adminUsername: 'operator' },
+            } } });
         expect(f.launches).toEqual([]);
-        expect(f.prompt).not.toHaveBeenCalled();
     });
 
     it.each([

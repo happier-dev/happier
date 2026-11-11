@@ -1,4 +1,8 @@
 import { homedir } from 'node:os';
+import type { InteractiveSystemTaskContext } from '@happier-dev/cli-common/systemTasks/interactiveTaskKinds';
+import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
+import { assertMachineSystemTaskResponseCurrent } from '@/capabilities/service';
+import { MachineSudoPasswordPromptV1Schema, type MachineSudoPasswordPromptV1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -111,7 +115,7 @@ export async function executeDaemonMachineReachabilityAction(options: MetadataRo
     const context = { ...projected, ...invocation.context,
       actionRequestId: invocation.context.actionRequestId ?? projected.actionRequestId ?? ingress.transportRequestId };
     if (!context.actionRequestId) throw new RpcError('Current Action correlation is required', RPC_ERROR_CODES.FORBIDDEN);
-    const execute = async (context: RpcActionExecutorContext): Promise<unknown> => {
+    const execute = async (context: RpcActionExecutorContext, taskContext: InteractiveSystemTaskContext): Promise<unknown> => {
       const runtime = actionId === 'machines.reachability.configure' ? await client.resolveMachineSetupRuntime(ingress) : null;
       const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
       const signal = context.signal ?? ingress.signal;
@@ -139,12 +143,19 @@ export async function executeDaemonMachineReachabilityAction(options: MetadataRo
         ...(runtime ? { runtime } : {}), ...(ingress.machineAdmission ? { machineAdmission: ingress.machineAdmission } : {}),
         installationPublicKey: decodeBase64(identity.publicKey, 'base64url'), installationIdentityFile: configuration.installationIdentityFile,
         elevation: { installationId: target.installationId, ...resolveMachineEffectCli(),
+          prompt: question => taskContext.prompt({ ...question, validateResponse: async authorization => {
+            await assertMachineSystemTaskResponseCurrent(authorization, {
+              admission: ingress.machineAdmission!, verifyCurrent: isCurrent,
+            });
+            await question.validateResponse?.(authorization);
+          } }),
           readPolicy: () => admittedAdminPolicy ??= (async () => {
             const policy = await getMachineAdminAccessV1(port);
             if (policy.status !== 'ready') throw Object.assign(new Error('machine_admin_access_policy_unavailable'), { code: 'machine_admin_access_policy_unavailable' });
             return policy.policy;
           })(), observe: async () => (await options.adminAccess.observer.inspect()).observation,
           emit: (event: Parameters<NonNullable<import('@/machines/adminAccess/runElevatedEffect').MachineElevationDependencies['emit']>>[0]) => {
+            taskContext.emit(event);
             if (event.data && typeof event.data === 'object' && 'phase' in event.data && typeof event.data.phase === 'string') {
               context.operationProgress?.update({ phase: event.data.phase });
             }
@@ -175,7 +186,39 @@ export async function executeDaemonMachineReachabilityAction(options: MetadataRo
       }
     };
     try {
-      return await execute(context);
+      const tasks = getLiveSystemTasksRunnerAdapter();
+      const operationId = context.operationAcceptance?.operationId ?? context.actionRequestId;
+      const publishTask = (task: Readonly<{ taskId: string }>, prompt?: MachineSudoPasswordPromptV1) => {
+        context.operationOwnerUpdate?.update({ domainRef: { kind: 'machineSetup', serverId: target.serverId,
+          machineId: target.machineId, setupTask: { id: task.taskId, taskKind: 'machine.setup.apply.v1', ...(prompt ? { prompt } : {}) } } });
+      };
+      let result: unknown;
+      let failure: unknown;
+      const task = await tasks.startAdmitted({ run: async taskContext => {
+        try {
+          result = await execute({ ...context, signal: taskContext.signal
+            ? AbortSignal.any([ingress.signal, taskContext.signal]) : ingress.signal }, taskContext);
+          return { operationId };
+        } catch (error) { failure = error; throw error; }
+      } }, 'machine.setup.apply.v1', { started: task => publishTask(task), prompt: (task, question) => {
+        const data = question?.data;
+        const prompt = question?.kind === 'sudo.password' && data && typeof data === 'object' && !Array.isArray(data)
+          && 'machineId' in data && data.machineId === target.machineId
+          && 'installationId' in data && data.installationId === target.installationId
+          && 'operationId' in data && (data.operationId === operationId || data.operationId === context.actionRequestId)
+          ? MachineSudoPasswordPromptV1Schema.safeParse({ kind: question.kind,
+              adminUsername: 'administratorUsername' in data ? data.administratorUsername : undefined }) : null;
+        publishTask(task, prompt?.success ? prompt.data : undefined);
+      } });
+      const cancel = () => { void tasks.cancel(task); };
+      ingress.signal.addEventListener('abort', cancel, { once: true });
+      if (ingress.signal.aborted) cancel();
+      try {
+        const settled = await tasks.wait(task);
+        if (failure) throw failure;
+        return result ?? (settled.ok ? { ok: false, errorCode: 'machine_setup_operation_unavailable', error: 'machine_setup_operation_unavailable' }
+          : { ok: false, errorCode: settled.error.code, error: settled.error.message });
+      } finally { ingress.signal.removeEventListener('abort', cancel); }
     } catch (error) {
       throwMachineReachabilityRpcError(error);
     }

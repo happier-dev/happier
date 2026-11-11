@@ -192,7 +192,7 @@ export async function runElevatedMachineReboot(input: Pick<RunElevatedEffectInpu
         : result.outcome === 'checked' ? { outcome: 'outcome_unknown' } : result;
 }
 
-/** Safe review uses the same fixed root entry, never APPLY or an Ask prompt. */
+/** Protected review uses the same elevation policy and password prompt as APPLY, without mutation. */
 export async function checkElevatedMachineSetupPlan(input: Pick<RunElevatedEffectInput, 'machineId' | 'operationId' | 'signal'> & Readonly<{
     basis: MachineSetupEffectPlanV1['basis']; steps: MachineRecipeStepV1[]; checks?: MachineRecipeCheckV1[];
 }>, dependencies: MachineElevationDependencies): Promise<MachineSetupEffectPlanV1 | null> {
@@ -310,7 +310,7 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
     if (initialRefusal) return refused(initialRefusal);
     const policy = transitionAuthentication ?? await dependencies.readPolicy();
     if (policy.mode === 'none') return request.kind === 'check'
-        // Read-only CHECK never prompts. Ordinary effects still support Ask.
+        // Off cannot read protected facts; retain its existing configuration recovery.
         ? { outcome: 'not_applied', reasonCode: 'mode_none',
             recovery: { kind: 'configure_admin_access', mode: 'preauthorized' } }
         : refused('mode_none');
@@ -318,7 +318,6 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
     if (observation.reasonCode === 'platformUnsupported') return refused('platform_unsupported');
     if (policy.mode === 'preauthorized' && !hasPromptlessElevation(policy, observation)) return refused('not_preauthorized');
     const ask = policy.mode === 'ask';
-    if (request.kind === 'check' && ask) return refused('not_preauthorized');
     if (ask && !dependencies.prompt) return { outcome: 'needs_attendance', operationId: input.operationId,
         prompt: { kind: 'sudo.password', adminUsername: policy.administratorUsername } };
     let password: Buffer | null = null;

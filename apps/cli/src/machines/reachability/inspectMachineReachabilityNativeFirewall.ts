@@ -4,7 +4,7 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import { checkElevatedMachineSetupPlanResult, type MachineElevationDependencies } from '../adminAccess/runElevatedEffect';
 
 /** Read the native owner's protected facts through its existing root CHECK.
- * No posture, APPLY frame, interactive elevation or native admission is needed. */
+ * No posture, APPLY frame or native admission is needed; Ask uses the elevation owner’s password prompt. */
 export async function inspectMachineReachabilityNativeFirewall(input: Readonly<{
   machineId: string; requestId: string; signal?: AbortSignal;
   basis: MachineSetupEffectPlanV1['basis'];
@@ -14,8 +14,10 @@ export async function inspectMachineReachabilityNativeFirewall(input: Readonly<{
   const result = await checkElevatedMachineSetupPlanResult({ machineId: input.machineId,
     operationId: input.requestId, signal: input.signal, basis: input.basis, steps: [step] }, elevation);
   if (result.outcome !== 'checked') {
-    const code = result.outcome === 'not_applied' ? result.reasonCode : 'machine_recipe_native_unavailable';
+    const code = result.outcome === 'not_applied' ? result.reasonCode
+      : result.outcome === 'needs_attendance' ? 'machine_admin_access_required' : 'machine_recipe_native_unavailable';
     return { ok: false as const, errorCode: code, error: code,
+      ...(result.outcome === 'needs_attendance' ? { details: { elevation: result } } : {}),
       ...('recovery' in result && result.recovery ? { details: { recovery: result.recovery } } : {}) };
   }
   const observation = result.plan.nativeFacts.find(fact => fact.stepId === step.id);

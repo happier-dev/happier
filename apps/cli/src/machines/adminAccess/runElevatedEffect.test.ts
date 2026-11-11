@@ -13,7 +13,7 @@ import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requ
 import { createSystemTasksRunner } from '@happier-dev/cli-common/systemTasks/interactiveTaskKinds';
 import { machineSetup } from '@happier-dev/cli-common';
 import type { MachineAdminAccessObservationV1, MachineRecipeStepV1 } from '@happier-dev/protocol';
-import { checkElevatedMachineSetupPlan, runElevatedEffect, runElevatedMachineReboot, runElevatedMachineSetupIntent, prepareMachinePoweroff, type MachineElevationSpawn, type MachineElevationDependencies } from './runElevatedEffect';
+import { checkElevatedMachineSetupPlanResult, checkElevatedMachineSetupPlan, runElevatedEffect, runElevatedMachineReboot, runElevatedMachineSetupIntent, prepareMachinePoweroff, type MachineElevationSpawn, type MachineElevationDependencies } from './runElevatedEffect';
 import { MachineEffectInternalRequestSchema } from '../setup/effectInternalProtocol';
 import { runMachineSetupEffectInternal } from '../setup/effectInternal';
 import { MachineElevatedEffectV1Schema, MachineSetupEffectBasisV1Schema, MachineRecipeStepV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
@@ -356,19 +356,30 @@ describe('one operation-scoped sudo stdin hand-off', () => {
         expect(mutations).toEqual(['intent-member', daemonUsername, daemonUsername, 'happier-agent']);
         expect(members.has('foreign')).toBe(true);
     });
-    it('checks the reviewed root facts without APPLY, prompting, or host mutation', async () => {
+    it('checks protected facts in Ask mode using the password prompt without applying', async () => {
         const f = nativeFixture();
         const plan = await planFor(f);
-        const input = { machineId: 'machine-a', operationId: 'review', basis, steps: plan.steps };
-        const prompt = async (): Promise<never> => { throw new Error('Read-only review must not ask for a password'); };
-        expect(await checkElevatedMachineSetupPlan(input, { ...f.dependencies, prompt })).toBeNull();
-        expect(f.launches).toEqual([]);
-        expect(await checkElevatedMachineSetupPlan(input, { ...f.dependencies, prompt,
-            readPolicy: async () => ({ version: 1, mode: 'preauthorized' }),
-            observe: async () => ({ ...observation, passwordlessSudoToRoot: 'allowed' }) })).toEqual(plan);
-        expect(f.boundaryFailures).toEqual([]);
+        const prompt = vi.fn(async () => ({ password: 'one-use-password' }));
+        expect(await checkElevatedMachineSetupPlan({ machineId: 'machine-a', operationId: 'review', basis, steps: plan.steps },
+            { ...f.dependencies, prompt })).toEqual(plan);
+        expect(prompt).toHaveBeenCalledOnce();
+        expect(f.authentication).toEqual(['one-use-password']);
         expect(f.mutations).toEqual([]);
-        expect(f.authentication).toEqual([]);
+        expect(f.boundaryFailures).toEqual([]);
+    });
+    it('keeps protected CHECK attendance distinct from Off and unavailable preauthorization', async () => {
+        const f = nativeFixture();
+        const input = { machineId: 'machine-a', operationId: 'review', basis, steps: (await planFor(f)).steps };
+        expect(await checkElevatedMachineSetupPlanResult(input, f.dependencies)).toMatchObject({
+            outcome: 'needs_attendance', operationId: 'review', prompt: { kind: 'sudo.password', adminUsername: 'operator' },
+        });
+        for (const mode of ['none', 'preauthorized'] as const) {
+            expect(await checkElevatedMachineSetupPlanResult(input, { ...f.dependencies,
+                readPolicy: async () => ({ version: 1, mode }) })).toMatchObject({
+                outcome: 'not_applied', reasonCode: mode === 'none' ? 'mode_none' : 'not_preauthorized',
+            });
+        }
+        expect(f.launches).toEqual([]);
     });
     it('requires a fresh transient task answer for each operation and authenticates once for every step in that operation', async () => {
         const f = nativeFixture();
