@@ -251,6 +251,8 @@ function FleetBody(props: MachineWidgetBodyProps) {
     const listed = size === 'wide' && shown.length > 1
       ? <MachineWidgetTwoColumns lead={rows(shown.slice(0, half), false)} rest={rows(shown.slice(half), false)} />
       : rows(shown, size === 'small');
+    // Nothing to list: the quiet line is the whole body, a one-line state the frame sizes the card to.
+    if (!listed && rest) return <>{freshness}<MachineWidgetState kind="unavailable" size="line" title={rest} testID={props.testID} /></>;
     return (
       <MachineWidgetColumn testID={props.testID}>
         {freshness}
@@ -271,6 +273,9 @@ function FleetBody(props: MachineWidgetBodyProps) {
       {rows(offline, false)}
     </>
   ) : null) : offlineLine ? <Text testID={`${props.testID}.rest`} numberOfLines={2} style={styles.rest}>{offlineLine}</Text> : null;
+  if (online.length === 0 && size !== 'tall' && offlineLine) {
+    return <>{freshness}<MachineWidgetState kind="unavailable" size="line" title={offlineLine} testID={props.testID} /></>;
+  }
   if (size === 'full') {
     const half = Math.ceil(online.length / 2);
     return <MachineWidgetColumn testID={props.testID}>{freshness}<MachineWidgetTwoColumns lead={rows(online.slice(0, half), false)}

@@ -1612,7 +1612,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
       loading: { title: '正在載入外掛內容', reason: 'Happier 載入最新更新時，將顯示目前可用的內容。' },
       refreshing: { title: '正在重新整理外掛內容', reason: 'Happier 檢查更新時，將顯示上次可用的內容。' },
       stale: { title: '外掛內容可能已過期', reason: '正在顯示上次可用的內容。請重試以檢查更新。' },
-      offline: { title: '外掛內容處於離線狀態', reason: '重新連線前，將以唯讀方式顯示上次可用的內容。', titleNothingLoaded: '這台機器已離線', reasonNothingLoaded: '尚未從它載入任何內容。請選擇另一台機器來執行。' },
+      offline: { nothingCached: '離線 · 尚無快取內容', title: '外掛內容處於離線狀態', reason: '重新連線前，將以唯讀方式顯示上次可用的內容。', titleNothingLoaded: '這台機器已離線', reasonNothingLoaded: '尚未從它載入任何內容。請選擇另一台機器來執行。' },
             unreachable: { title: '無法連線到這台機器' },
             sourceUnavailable: { title: '它的來源無法使用', reason: '原定的執行位置已不存在或已變更，因此尚未載入任何內容。請選擇另一個來源來執行它。' },
             connecting: { title: '正在連線這台機器', reason: '機器回應後，此檢視就會開啟。' },

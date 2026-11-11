@@ -1338,6 +1338,7 @@ const enPluginSurfaces = {
       reason:
         'Showing the last available content in read-only mode until reconnection.',
       titleNothingLoaded: 'This machine is offline',
+      nothingCached: 'Offline · nothing cached yet',
       reasonNothingLoaded:
         'Nothing has loaded from it yet. Choose another machine to run it on.',
     },

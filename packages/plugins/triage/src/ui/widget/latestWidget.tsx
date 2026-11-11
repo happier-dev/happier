@@ -163,6 +163,11 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
       ? <Status testID="triage-latest-widget.degraded" tone="muted" presentation="inline"
         label={text('plugins.triage.surface.empty.incomplete.title', 'This list is not complete yet')} /> : null;
 
+  // Under the host's outage band with nothing to show, the card's one line: a failure state that claims the host's
+  // sentence and Retry ("Offline · nothing cached yet"), so the host draws none and the card is that line.
+  const offlineNothingCached = <ErrorState testID="triage-latest-widget.offline" layout="line"
+    titleKey="plugins.triage.widget.error" title="The latest entries could not be read" />;
+
   if (rows === undefined) {
     if (snapshot.error !== undefined) {
       return (
@@ -184,9 +189,9 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
         /></>
       );
     }
-    // Under the host's outage band nothing will load until its Machine answers: loading rows would promise rows
-    // that cannot come, so the band stands alone over the frame's held room.
-    if (hostOutage.settled) return header;
+    // Under the host's outage nothing will load until its Machine answers: loading rows would promise rows that
+    // cannot come, so the card is the one offline line.
+    if (hostOutage.settled) return <>{header}{offlineNothingCached}</>;
     return (
       <>{header}<LoadingState
         testID="triage-latest-widget.loading"
@@ -221,7 +226,7 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
     // every source answered; a failed or unfinished read says so instead, in the same words the page uses.
     const empty = readTriageListEmptyState(shellState, 0, { narrowing: NOT_NARROWED, text });
     // The host's outage band already says why nothing could be read: the frame keeps its room under that one notice.
-    if (empty !== null && empty.kind !== 'healthy' && hostOutage.speaks) return header;
+    if (empty !== null && empty.kind !== 'healthy' && hostOutage.speaks) return <>{header}{offlineNothingCached}</>;
     if (empty !== null && empty.kind !== 'healthy') {
       const keys = readTriageListEmptyStateKeys(empty.kind);
       return (<>{header}

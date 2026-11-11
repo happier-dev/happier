@@ -1808,7 +1808,7 @@ export const es: TranslationStructure = {
             loading: { title: 'Cargando contenido del complemento', reason: 'Se muestra el contenido disponible mientras Happier carga la última actualización.' },
             refreshing: { title: 'Actualizando contenido del complemento', reason: 'Se muestra el último contenido disponible mientras Happier busca actualizaciones.' },
             stale: { title: 'El contenido del complemento puede estar desactualizado', reason: 'Se muestra el último contenido disponible. Vuelve a intentarlo para buscar actualizaciones.' },
-            offline: { title: 'El contenido del complemento está sin conexión', reason: 'Se muestra el último contenido disponible en modo de solo lectura hasta que se restablezca la conexión.', titleNothingLoaded: 'Esta máquina está sin conexión', reasonNothingLoaded: 'Todavía no se ha cargado nada desde ella. Elige otra máquina para ejecutarlo.' },
+            offline: { nothingCached: 'Sin conexión · aún no hay nada en caché', title: 'El contenido del complemento está sin conexión', reason: 'Se muestra el último contenido disponible en modo de solo lectura hasta que se restablezca la conexión.', titleNothingLoaded: 'Esta máquina está sin conexión', reasonNothingLoaded: 'Todavía no se ha cargado nada desde ella. Elige otra máquina para ejecutarlo.' },
             unreachable: { title: 'No se puede acceder a esta máquina' },
             sourceUnavailable: { title: 'Su origen no está disponible', reason: 'El lugar donde debía ejecutarse ya no existe o ha cambiado, así que no se ha cargado nada. Elige otro origen para ejecutarlo.' },
             connecting: { title: 'Conectando con esta máquina', reason: 'Esta vista se abre en cuanto la máquina responda.' },

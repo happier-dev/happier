@@ -1,6 +1,8 @@
 import * as React from 'react';
 
-import type { SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
+import { PluginUiSurfaceNoticeContext, type PluginUiSurfaceNotice } from '@happier-dev/plugin-ui/advanced';
+
+import { SurfaceStateContentContext, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { PluginMachineExecutionOriginStateV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { t } from '@/text';
 import { resolvePluginExecutionOriginReasonDetail } from '@/sync/domains/surfaces/copy';
@@ -170,3 +172,47 @@ export function useOfflineSurfaceNotice(available: boolean, snapshotTitle: strin
             kind: 'unavailable',
         };
 }
+
+/**
+ * The offline notice of a surface that was live, offered to the body as its one sentence (the plugin-ui claim seam,
+ * `PluginUiSurfaceNoticeContext`). A body that still shows cached content claims nothing, and the boundary says
+ * "showing the last available content" above it. A body with nothing cached for this part says so where it would have
+ * shown it, with the boundary's Retry, by claiming the notice from its failure state. The boundary then draws no line
+ * of its own, and tells the frame the body is one line so the card shrinks to it (owner 2026-11-11, B capture).
+ */
+export function useClaimableOfflineNotice(input: Readonly<{ offline: boolean; retry?: SurfaceStateAction }>): Readonly<{
+    claimed: boolean;
+    provide: (children: React.ReactNode) => React.ReactNode;
+}> {
+    const outer = React.useContext(PluginUiSurfaceNoticeContext);
+    const reportContent = React.useContext(SurfaceStateContentContext);
+    const [claimants, setClaimants] = React.useState<ReadonlySet<string>>(NO_CLAIMANTS);
+    const claim = React.useCallback((id: string) => {
+        setClaimants((current) => (current.has(id) ? current : new Set(current).add(id)));
+        return () => setClaimants((current) => {
+            if (!current.has(id)) return current;
+            const next = new Set(current);
+            next.delete(id);
+            return next;
+        });
+    }, []);
+    const retry = input.retry;
+    const notice = React.useMemo<PluginUiSurfaceNotice | null>(() => input.offline ? {
+        sentence: t('pluginSurfaces.state.offline.nothingCached'),
+        claim,
+        ...(retry ? { action: { label: retry.label, onPress: () => { void retry.onPress(); } } } : {}),
+    } : null, [claim, input.offline, retry]);
+    const claimed = input.offline && claimants.size > 0;
+    const [reportKey] = React.useState(() => Symbol('claimed-offline-notice'));
+    React.useEffect(() => {
+        if (!claimed || !reportContent) return;
+        reportContent(reportKey, { empty: false, line: true, loading: false });
+        return () => reportContent(reportKey, null);
+    }, [claimed, reportContent, reportKey]);
+    const provide = React.useCallback((children: React.ReactNode) => React.createElement(
+        PluginUiSurfaceNoticeContext.Provider, { value: notice ?? outer }, children,
+    ), [notice, outer]);
+    return { claimed, provide };
+}
+
+const NO_CLAIMANTS: ReadonlySet<string> = new Set();

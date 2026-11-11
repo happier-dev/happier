@@ -1789,7 +1789,7 @@ export const ja: TranslationStructure = {
             loading: { title: 'プラグインコンテンツを読み込み中', reason: 'Happier が最新の更新を読み込む間、利用可能なコンテンツを表示しています。' },
             refreshing: { title: 'プラグインコンテンツを更新中', reason: 'Happier が更新を確認する間、最後に利用できたコンテンツを表示しています。' },
             stale: { title: 'プラグインコンテンツが古い可能性があります', reason: '最後に利用できたコンテンツを表示しています。更新を確認するには再試行してください。' },
-            offline: { title: 'プラグインコンテンツはオフラインです', reason: '再接続するまで、最後に利用できたコンテンツを読み取り専用で表示しています。', titleNothingLoaded: 'このマシンはオフラインです', reasonNothingLoaded: 'まだ何も読み込まれていません。実行する別のマシンを選択してください。' },
+            offline: { nothingCached: 'オフライン · まだキャッシュがありません', title: 'プラグインコンテンツはオフラインです', reason: '再接続するまで、最後に利用できたコンテンツを読み取り専用で表示しています。', titleNothingLoaded: 'このマシンはオフラインです', reasonNothingLoaded: 'まだ何も読み込まれていません。実行する別のマシンを選択してください。' },
             unreachable: { title: 'このマシンに接続できません' },
             sourceUnavailable: { title: '実行元を利用できません', reason: '実行先に設定されていた場所がなくなったか変更されたため、何も読み込まれていません。実行する別の実行元を選択してください。' },
             connecting: { title: 'このマシンに接続しています', reason: 'マシンが応答するとこのビューが開きます。' },

@@ -15,6 +15,7 @@ import {
 
 import { createDeferred, findTestInstanceByTypeContainingText, flushHookEffects, invokeTestInstanceHandler, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import type { SurfaceStateContentReport } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolveMachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import {
@@ -78,6 +79,7 @@ await import('@/sync/domains/machines/resources/machineRpc');
 const { useMachineWidgetMachine } =
   await import('@/components/machines/widgets/machineWidgetKit');
 const { storage } = await import('@/sync/domains/state/storageStore');
+const { SurfaceStateContentContext } = await import('@/components/ui/surfaces/SurfaceStateCard');
 const { clearMachineRequestReachabilityForTest } = await import('@/sync/domains/machines/reachability/machineReachability');
 const { machineResourceStore } =
   await import('@/sync/domains/machines/resources/machineResourceStore');
@@ -934,6 +936,7 @@ describe('Vitals attention block', () => {
     }));
     await vi.waitFor(() => expect(screen.findAllByType(MachineVitalsWidget).length).toBeGreaterThan(0));
     if (filtered) {
+      await act(async () => screen.findAll(node => node.props.testID === 'machines.index.search:toggle' && typeof node.props.onPress === 'function')[0]!.props.onPress());
       const search = screen.findAll(node => node.props.testID === 'machines.index.search' && typeof node.props.onChangeText === 'function')[0]!;
       await act(async () => search.props.onChangeText('m2'));
       expect(screen.findByTestId(`machines.index.row.machine:${serverId}:m1`)).toBeNull();
@@ -1067,6 +1070,25 @@ describe('Machines widget presentation', () => {
       for (const machine of offline) expect(screen.findByTestId(`fleet.machine.${machine.id}`)).toBeNull();
       expect(screen.findByTestId('fleet.rest')).not.toBeNull();
       expect(screen.getTextContent()).not.toContain('machines.widgets.body.fleet.offlineGroup');
+      await screen.unmount();
+    }
+  });
+
+  it('says a fleet that is all offline as one line state, so the frame sizes the card to that line (owner 1111 B capture)', async () => {
+    const serverId = getActiveServerSnapshot().serverId;
+    const offline = ['old-a', 'old-b', 'old-c'].map((id) => createMachineFixture({ id, active: false, activeAt: Date.now() - 86_400_000 }));
+    storage.getState().applyMachines(offline, true, { sourceServerId: serverId });
+    for (const size of ['small', 'medium'] as const) {
+      const reports = new Map<symbol, SurfaceStateContentReport>();
+      const report = (key: symbol, value: SurfaceStateContentReport | null) => { if (value) reports.set(key, value); else reports.delete(key); };
+      const screen = await renderScreen(<SurfaceStateContentContext.Provider value={report}>
+        <WidgetPresentationProvider value={{ size, footprint: getWidgetSizeFootprintV1('home', size)! }}>
+          <MachineFleetWidget input={{ metrics: [] }} serverId={serverId} testID="fleet" />
+        </WidgetPresentationProvider>
+      </SurfaceStateContentContext.Provider>);
+      await flushHookEffects({ cycles: 2 });
+      for (const machine of offline) expect(screen.findByTestId(`fleet.machine.${machine.id}`)).toBeNull();
+      expect([...reports.values()]).toEqual([{ empty: false, line: true, loading: false }]);
       await screen.unmount();
     }
   });

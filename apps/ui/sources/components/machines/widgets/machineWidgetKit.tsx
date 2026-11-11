@@ -209,7 +209,7 @@ export function MachineWidgetState(
         reason?: string;
         testID: string;
       }
-    | { kind: 'unavailable'; title: string; reason?: string; testID: string }
+    | { kind: 'unavailable'; title: string; reason?: string; size?: 'line'; testID: string }
     | {
         kind: 'error';
         title?: string;
@@ -282,6 +282,7 @@ export function MachineWidgetState(
         testID={`${props.testID}.unavailable`}
         kind="unavailable"
         replacesContent
+        {...(props.size ? { size: props.size } : {})}
         title={props.title}
         {...(props.reason ? { reason: props.reason } : {})}
       />

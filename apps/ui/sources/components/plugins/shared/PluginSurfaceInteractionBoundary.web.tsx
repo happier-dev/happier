@@ -7,6 +7,7 @@ import {
     PluginSurfaceInteractionAvailabilityContext,
     PluginSurfaceMachineRecoveryContext,
     PluginSurfacePageHeaderContext,
+    useClaimableOfflineNotice,
     useOfflineSurfaceNotice,
 } from './pluginSurfaceInteractionAvailability';
 
@@ -49,6 +50,11 @@ export function PluginSurfaceInteractionBoundary(
     const companion = React.useContext(PluginSurfaceCompanionContext);
     const pageIdentity = React.useContext(PluginSurfacePageHeaderContext);
     const machineRecovery = React.useContext(PluginSurfaceMachineRecoveryContext);
+    // A body with nothing cached claims the offline notice as its one line; the boundary then draws none.
+    const offlineClaim = useClaimableOfflineNotice({
+        offline: !props.enabled && !offlineNotice.nothingLoaded && !companion,
+        ...(machineRecovery?.retry ? { retry: machineRecovery.retry } : {}),
+    });
     const interactionEnabled = props.enabled && props.focusEligible !== false;
     const wasEnabledRef = React.useRef(props.enabled);
     const wasInteractionEnabledRef = React.useRef(interactionEnabled);
@@ -103,7 +109,7 @@ export function PluginSurfaceInteractionBoundary(
 
     return (
         <>
-            {!offlineNotice.nothingLoaded && machineRecovery && !companion ? (
+            {!offlineNotice.nothingLoaded && machineRecovery && !companion && !offlineClaim.claimed ? (
                 <SurfaceStateCard
                     testID={`plugin-surface-machine-unavailable:${props.surfaceId}`}
                     kind="unavailable" size="line"
@@ -137,7 +143,7 @@ export function PluginSurfaceInteractionBoundary(
                     {offlineNotice.nothingLoaded ? null : (
                         <PluginSurfaceInteractionAvailabilityContext.Provider value={props.enabled}>
                             <PluginSurfacePageHeaderContext.Provider value={null}>
-                                {props.children}
+                                {offlineClaim.provide(props.children)}
                             </PluginSurfacePageHeaderContext.Provider>
                         </PluginSurfaceInteractionAvailabilityContext.Provider>
                     )}
@@ -154,7 +160,7 @@ export function PluginSurfaceInteractionBoundary(
                     action={offlineNotice.kind === 'unavailable' ? machineRecovery?.retry : undefined}
                     secondaryAction={offlineNotice.kind === 'unavailable' ? machineRecovery?.chooseMachine : undefined}
                 />
-            ) : !props.enabled && !machineRecovery ? (
+            ) : !props.enabled && !machineRecovery && !offlineClaim.claimed ? (
                 <div
                     data-testid={`plugin-surface-offline-summary:${props.surfaceId}`}
                     role="status"

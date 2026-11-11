@@ -1635,7 +1635,7 @@ export const pl: TranslationStructure = {
             loading: { title: 'Ładowanie treści wtyczki', reason: 'Wyświetlana jest dostępna treść, podczas gdy Happier ładuje najnowszą aktualizację.' },
             refreshing: { title: 'Odświeżanie treści wtyczki', reason: 'Wyświetlana jest ostatnia dostępna treść, podczas gdy Happier sprawdza aktualizacje.' },
             stale: { title: 'Treść wtyczki może być nieaktualna', reason: 'Wyświetlana jest ostatnia dostępna treść. Spróbuj ponownie, aby sprawdzić aktualizacje.' },
-            offline: { title: 'Treść wtyczki jest offline', reason: 'Do czasu ponownego połączenia ostatnia dostępna treść jest wyświetlana tylko do odczytu.', titleNothingLoaded: 'Ta maszyna jest offline', reasonNothingLoaded: 'Nic jeszcze z niej nie wczytano. Wybierz inną maszynę, na której ma działać.' },
+            offline: { nothingCached: 'Offline · nic jeszcze nie zapisano', title: 'Treść wtyczki jest offline', reason: 'Do czasu ponownego połączenia ostatnia dostępna treść jest wyświetlana tylko do odczytu.', titleNothingLoaded: 'Ta maszyna jest offline', reasonNothingLoaded: 'Nic jeszcze z niej nie wczytano. Wybierz inną maszynę, na której ma działać.' },
             unreachable: { title: 'Nie można połączyć się z tą maszyną' },
             sourceUnavailable: { title: 'Jego źródło jest niedostępne', reason: 'Miejsce, w którym miał działać, zniknęło lub się zmieniło, więc nic nie zostało załadowane. Wybierz inne źródło, aby go uruchomić.' },
             connecting: { title: 'Łączenie z tą maszyną', reason: 'Ten widok otworzy się, gdy maszyna odpowie.' },

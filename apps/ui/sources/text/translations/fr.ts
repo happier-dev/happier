@@ -1643,7 +1643,7 @@ export const fr: TranslationStructure = {
             loading: { title: 'Chargement du contenu du plugin', reason: 'Affichage du contenu disponible pendant que Happier charge la dernière mise à jour.' },
             refreshing: { title: 'Actualisation du contenu du plugin', reason: 'Affichage du dernier contenu disponible pendant que Happier vérifie les mises à jour.' },
             stale: { title: 'Le contenu du plugin est peut-être obsolète', reason: 'Affichage du dernier contenu disponible. Réessaie pour vérifier les mises à jour.' },
-            offline: { title: 'Le contenu du plugin est hors ligne', reason: 'Affichage du dernier contenu disponible en lecture seule jusqu’à la reconnexion.', titleNothingLoaded: 'Cette machine est hors ligne', reasonNothingLoaded: 'Rien n’a encore été chargé depuis elle. Choisis une autre machine pour l’exécuter.' },
+            offline: { nothingCached: 'Hors ligne · rien en cache pour l’instant', title: 'Le contenu du plugin est hors ligne', reason: 'Affichage du dernier contenu disponible en lecture seule jusqu’à la reconnexion.', titleNothingLoaded: 'Cette machine est hors ligne', reasonNothingLoaded: 'Rien n’a encore été chargé depuis elle. Choisis une autre machine pour l’exécuter.' },
             unreachable: { title: 'Impossible de joindre cette machine' },
             sourceUnavailable: { title: 'Sa source n’est pas disponible', reason: 'L’endroit où il devait s’exécuter n’existe plus ou a changé, donc rien n’a été chargé. Choisis une autre source pour l’exécuter.' },
             connecting: { title: 'Connexion à cette machine', reason: 'Cette vue s’ouvre dès que la machine répond.' },

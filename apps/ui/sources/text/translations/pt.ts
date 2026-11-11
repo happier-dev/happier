@@ -1843,7 +1843,7 @@ export const pt: TranslationStructure = {
             loading: { title: 'A carregar conteúdo do plugin', reason: 'A mostrar o conteúdo disponível enquanto o Happier carrega a atualização mais recente.' },
             refreshing: { title: 'A atualizar conteúdo do plugin', reason: 'A mostrar o último conteúdo disponível enquanto o Happier procura atualizações.' },
             stale: { title: 'O conteúdo do plugin pode estar desatualizado', reason: 'A mostrar o último conteúdo disponível. Tente novamente para procurar atualizações.' },
-            offline: { title: 'O conteúdo do plugin está offline', reason: 'A mostrar o último conteúdo disponível em modo somente leitura até à reconexão.', titleNothingLoaded: 'Esta máquina está offline', reasonNothingLoaded: 'Ainda nada foi carregado a partir dela. Escolha outra máquina para o executar.' },
+            offline: { nothingCached: 'Offline · ainda nada em cache', title: 'O conteúdo do plugin está offline', reason: 'A mostrar o último conteúdo disponível em modo somente leitura até à reconexão.', titleNothingLoaded: 'Esta máquina está offline', reasonNothingLoaded: 'Ainda nada foi carregado a partir dela. Escolha outra máquina para o executar.' },
             unreachable: { title: 'Não é possível alcançar esta máquina' },
             sourceUnavailable: { title: 'A origem não está disponível', reason: 'O local onde devia ser executado já não existe ou mudou, por isso nada foi carregado. Escolha outra origem para o executar.' },
             connecting: { title: 'A ligar a esta máquina', reason: 'Esta vista abre assim que a máquina responder.' },

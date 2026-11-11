@@ -1641,7 +1641,7 @@ export const ca: TranslationStructure = {
             loading: { title: 'S’està carregant el contingut del connector', reason: 'Es mostra el contingut disponible mentre Happier carrega l’última actualització.' },
             refreshing: { title: 'S’està actualitzant el contingut del connector', reason: 'Es mostra l’últim contingut disponible mentre Happier comprova si hi ha actualitzacions.' },
             stale: { title: 'El contingut del connector pot estar desactualitzat', reason: 'Es mostra l’últim contingut disponible. Torna-ho a provar per comprovar si hi ha actualitzacions.' },
-            offline: { title: 'El contingut del connector està fora de línia', reason: 'Es mostra l’últim contingut disponible en mode de només lectura fins que es torni a connectar.', titleNothingLoaded: 'Aquesta màquina està fora de línia', reasonNothingLoaded: 'Encara no s’hi ha carregat res. Tria una altra màquina on executar-lo.' },
+            offline: { nothingCached: 'Fora de línia · encara no hi ha res desat', title: 'El contingut del connector està fora de línia', reason: 'Es mostra l’últim contingut disponible en mode de només lectura fins que es torni a connectar.', titleNothingLoaded: 'Aquesta màquina està fora de línia', reasonNothingLoaded: 'Encara no s’hi ha carregat res. Tria una altra màquina on executar-lo.' },
             unreachable: { title: 'No es pot accedir a aquesta màquina' },
             sourceUnavailable: { title: 'L’origen no està disponible', reason: 'El lloc on s’havia d’executar ja no existeix o ha canviat, així que no s’ha carregat res. Tria un altre origen per executar-lo.' },
             connecting: { title: 'Connectant amb aquesta màquina', reason: 'Aquesta vista s’obre tan bon punt la màquina respongui.' },

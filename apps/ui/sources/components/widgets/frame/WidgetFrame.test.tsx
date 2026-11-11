@@ -748,6 +748,23 @@ describe('WidgetFrame', () => {
         expect(HAPPIER_WIDGET_GROUP_CARD_CELL_INSETS.topPx).toBeGreaterThan(0);
     });
 
+    it('sizes a body whose only content is a one-line state to that line, and does not stretch it to its row (owner 1111 B capture)', async () => {
+        const presentation = { size: 'medium' as const, footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half' as const, height: 'regular' as const } };
+        const line = await renderFrame({ placement: 'home', fill: true, widgetPresentation: presentation, body: { kind: 'content',
+            children: <SurfaceStateCard testID="offline-line" kind="unavailable" size="line" replacesContent title="36 machines are offline" /> } });
+        await flushHookEffects({ cycles: 2 });
+        // A one-line state is the whole body: the card is that line, not a tall empty room.
+        expect(StyleSheet.flatten(line.findByTestId('frame.viewport')!.props.style).height).toBeUndefined();
+        expect(StyleSheet.flatten(line.findByTestId('frame.hover')!.props.style).flexGrow).toBeUndefined();
+        standardCleanup();
+        // Rows keep the declared room and the row's height.
+        const rows = await renderFrame({ placement: 'home', fill: true, widgetPresentation: presentation,
+            body: { kind: 'content', children: <Text>row one</Text> } });
+        await flushHookEffects({ cycles: 2 });
+        expect(StyleSheet.flatten(rows.findByTestId('frame.viewport')!.props.style).height).toBeGreaterThan(0);
+        expect(StyleSheet.flatten(rows.findByTestId('frame.hover')!.props.style).flexGrow).toBe(1);
+    });
+
     it('keeps the same header, body and footer when drawn plain', async () => {
         const open = vi.fn();
         const screen = await renderFrame({

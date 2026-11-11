@@ -1620,7 +1620,7 @@ export const zhHans: TranslationStructure = {
             loading: { title: '正在加载插件内容', reason: 'Happier 加载最新更新时，将显示当前可用内容。' },
             refreshing: { title: '正在刷新插件内容', reason: 'Happier 检查更新时，将显示上次可用的内容。' },
             stale: { title: '插件内容可能已过期', reason: '正在显示上次可用的内容。请重试以检查更新。' },
-            offline: { title: '插件内容处于离线状态', reason: '重新连接前，将以只读方式显示上次可用的内容。', titleNothingLoaded: '这台机器已离线', reasonNothingLoaded: '尚未从它加载任何内容。请选择另一台机器来运行。' },
+            offline: { nothingCached: '离线 · 尚无缓存内容', title: '插件内容处于离线状态', reason: '重新连接前，将以只读方式显示上次可用的内容。', titleNothingLoaded: '这台机器已离线', reasonNothingLoaded: '尚未从它加载任何内容。请选择另一台机器来运行。' },
             unreachable: { title: '无法连接到这台机器' },
             sourceUnavailable: { title: '它的来源不可用', reason: '原定的运行位置已不存在或已更改，因此尚未加载任何内容。请选择另一个来源来运行它。' },
             connecting: { title: '正在连接这台机器', reason: '机器响应后，此视图就会打开。' },

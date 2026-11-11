@@ -289,6 +289,9 @@ describe('the New for you widget', () => {
         await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
         await expect(widget.queryByText('Example forge · example/repository could not be read')).resolves.toBeUndefined();
         await expect(widget.queryByText('Nothing new right now')).resolves.toBeUndefined();
+        // Nothing is cached for this card: its one line is a failure state, which claims the host's offline
+        // sentence and Retry where the host offers them (here, no host notice: its own words).
+        await expect(widget.getByText('The latest entries could not be read')).resolves.toBeDefined();
     });
     it('draws no loading rows under the host\'s outage line when nothing loaded, but keeps them while it connects', async () => {
         const never = new Promise<never>(() => {});
@@ -296,6 +299,7 @@ describe('the New for you widget', () => {
             { machine: { machineExecutionReady: false } });
         await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
         await expect(out.queryByRole('progressbar', { name: 'Loading the latest entries' })).resolves.toBeUndefined();
+        await expect(out.getByText('The latest entries could not be read')).resolves.toBeDefined();
         const connecting = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), async () => await never, undefined,
             { machine: { machineExecutionReady: false, machineConnectionPending: true } });
         await vi.waitFor(() => connecting.getByRole('progressbar', { name: 'Loading the latest entries' }));

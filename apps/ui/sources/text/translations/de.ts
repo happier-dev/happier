@@ -1427,6 +1427,7 @@ export const de: TranslationStructure = {
                 title: 'Plugin-Inhalt ist offline',
                 reason: 'Zeigt den zuletzt verfügbaren Inhalt schreibgeschützt, bis die Verbindung wieder steht.',
                 titleNothingLoaded: 'Dieser Rechner ist offline',
+                nothingCached: 'Offline · noch nichts zwischengespeichert',
                 reasonNothingLoaded: 'Von ihm wurde noch nichts geladen. Wähle einen anderen Rechner, um es auszuführen.',
             },
             unreachable: { title: 'Dieses Gerät ist nicht erreichbar' },

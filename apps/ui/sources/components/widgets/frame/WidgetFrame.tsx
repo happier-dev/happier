@@ -31,7 +31,7 @@ import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/pl
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { reanimatedDisclosureMotion } from '@/components/ui/lists/ExpandableItem';
 import { SurfaceFreshnessLine, SurfaceFreshnessOnSheetProvider } from '@/components/ui/surfaces/SurfaceFreshnessLine';
-import { SurfaceStateCard, SurfaceStateContentContext, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceStateCard, SurfaceStateContentContext, type SurfaceStateAction, type SurfaceStateContentReport } from '@/components/ui/surfaces/SurfaceStateCard';
 import { projectWidgetGroupCellContent } from '@happier-dev/plugin-ui/components';
 import { SurfaceStateSizeProvider, useSurfaceStateCardSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -225,26 +225,34 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     const styles = stylesheet;
     const phone = useDeviceType() === 'phone';
     const inheritedStateSize = useSurfaceStateCardSize();
-    const [replacementStates, setReplacementStates] = React.useState<ReadonlyMap<symbol, boolean>>(() => new Map());
-    const reportContentState = React.useCallback((key: symbol, empty: boolean | null) => {
+    const [replacementStates, setReplacementStates] = React.useState<ReadonlyMap<symbol, SurfaceStateContentReport>>(() => new Map());
+    const reportContentState = React.useCallback((key: symbol, report: SurfaceStateContentReport | null) => {
         setReplacementStates(previous => {
-            if (empty === null ? !previous.has(key) : previous.get(key) === empty) return previous;
+            const current = previous.get(key);
+            if (report === null ? current === undefined
+                : current !== undefined && current.empty === report.empty && current.line === report.line && current.loading === report.loading) return previous;
             const next = new Map(previous);
-            if (empty === null) next.delete(key); else next.set(key, empty);
+            if (report === null) next.delete(key); else next.set(key, report);
             return next;
         });
     }, []);
     const emptyBody = props.body?.kind === 'empty' || (props.body?.kind === 'content'
-        && replacementStates.size > 0 && [...replacementStates.values()].every(empty => empty));
+        && replacementStates.size > 0 && [...replacementStates.values()].every(report => report.empty));
     // A phone stacks every card in one column, so a card with nothing to show is its one line (F2): a first-run
     // phone page of scenes would run several screens. It takes its content's height; rows return with content.
     const phoneEmpty = phone && emptyBody;
+    // A body whose only content is one-line states (offline with nothing cached, "36 machines are offline") is that
+    // line on every placement: no reserved rows, and it does not stretch to a taller card beside it (owner 2026-11-11).
+    // Loading keeps the room, so nothing below moves when the rows arrive; an empty state keeps the empty rule above.
+    const lineBody = props.body?.kind === 'content' && replacementStates.size > 0
+        && [...replacementStates.values()].every(report => report.line && !report.loading && !report.empty);
+    const contentSized = phoneEmpty || lineBody;
     const bodyFootprint = props.widgetPresentation ? projectWidgetGroupCellContent(
         { id: props.testID, ...props.widgetPresentation.footprint }, props.grouped && emptyBody ? 'empty' : undefined,
     ) : undefined;
     const reservedRows = bodyFootprint ? widgetFootprintBodyRows(bodyFootprint)
         : props.rows ?? (props.placement === 'home' ? HOME_WIDGET_BODY_ROWS : 0);
-    const rows = phoneEmpty ? 0 : reservedRows;
+    const rows = contentSized ? 0 : reservedRows;
     const rowHeight = useWidgetBodyRowHeight();
     const inheritedPresentation = useWidgetPresentation();
     const [geometry, setGeometry] = React.useState<WidgetBodyPresentation['geometry']>();
@@ -505,7 +513,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             footer={footerNode}
             // A card with a footprint keeps its rows' height unless its host asks it to fill its grid cell (so
             // cards sharing a row share its height); inside a group its cell is the band's, so it fills it.
-            fill={props.fill ?? (props.widgetPresentation && !props.grouped ? false : props.grouped)}
+            fill={contentSized ? false : props.fill ?? (props.widgetPresentation && !props.grouped ? false : props.grouped)}
             bodyStyle={props.bodyStyle}
             accessibilityLabel={props.accessibilityLabel
                 ?? (typeof props.source === 'string' && typeof props.title === 'string' ? `${props.title}, ${props.source}` : undefined)}
@@ -531,10 +539,10 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
                 ) : props.widgetPresentation ? (
                     <HappierScrollArea testID={`${props.testID}.viewport`} onLayout={onFixedViewportLayout}
                         onScroll={bodyFades.onScroll} scrollEventThrottle={16}
-                        scrollEnabled={!phoneEmpty}
-                        style={{ height: phoneEmpty ? undefined : props.viewportHeight ?? rows * rowHeight, minWidth: 0,
-                            ...(!phoneEmpty && bodyFadeMask ? { maskImage: bodyFadeMask.maskImage, WebkitMaskImage: bodyFadeMask.WebkitMaskImage } : {}) }}
-                        contentContainerStyle={{ minHeight: phoneEmpty ? undefined : '100%' }}>
+                        scrollEnabled={!contentSized}
+                        style={{ height: contentSized ? undefined : props.viewportHeight ?? rows * rowHeight, minWidth: 0,
+                            ...(!contentSized && bodyFadeMask ? { maskImage: bodyFadeMask.maskImage, WebkitMaskImage: bodyFadeMask.WebkitMaskImage } : {}) }}
+                        contentContainerStyle={{ minHeight: contentSized ? undefined : '100%' }}>
                         <View ref={viewportContentRef} testID={`${props.testID}.viewportContent`} onLayout={onFixedContentLayout} style={styles.fixedBodyContent}>
                             <WidgetFrameBodyView testID={props.testID} body={body} rows={rows} />
                         </View>
@@ -553,9 +561,9 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         </HappierWidgetFrame>
     );
     return (
-        <SurfaceStateContentContext.Provider value={props.grouped || phone ? reportContentState : null}>
+        <SurfaceStateContentContext.Provider value={reportContentState}>
         <WidgetFrameResourceActivityContext.Provider value={reportResourceActivity}>
-        <View testID={`${props.testID}.hover`} style={props.fill ? styles.hoverFill : styles.hover}
+        <View testID={`${props.testID}.hover`} style={props.fill && !contentSized ? styles.hoverFill : styles.hover}
             onPointerEnter={engagement.engage} onPointerLeave={engagement.release}
             // Focus within (a keyboard reaching the ⋯) reveals the controls too; only web has focus capture.
             {...(Platform.OS === 'web' ? { onFocusCapture: engagement.engage, onBlurCapture: engagement.release } : null)}>

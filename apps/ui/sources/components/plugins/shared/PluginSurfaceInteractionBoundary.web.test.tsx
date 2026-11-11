@@ -119,6 +119,33 @@ describe('PluginSurfaceInteractionBoundary.web', () => {
         }
     });
 
+    it('lets a body with nothing cached claim the offline notice as its one line, and says nothing cached (owner 1111 B capture)', async () => {
+        const { PluginSurfaceInteractionBoundary } = await import('./PluginSurfaceInteractionBoundary.web');
+        const { PluginSurfaceMachineRecoveryContext } = await import('./pluginSurfaceInteractionAvailability');
+        const { useClaimedPluginUiSurfaceNotice, PluginUiSurfaceNoticeContext } = await import('@happier-dev/plugin-ui/advanced');
+        function Claimant(props: { failure: boolean }) {
+            const sentence = useClaimedPluginUiSurfaceNotice(props.failure);
+            const action = React.useContext(PluginUiSurfaceNoticeContext)?.action;
+            return <span data-testid="claimant">{sentence ?? 'rows'}{action ? ` + ${action.label}` : ''}</span>;
+        }
+        const retry = { label: t('common.retry'), onPress: vi.fn() };
+        const mount = (enabled: boolean, failure: boolean) => (
+            <PluginSurfaceMachineRecoveryContext.Provider value={{ retry }}>
+                <PluginSurfaceInteractionBoundary surfaceId="widget" snapshotTitle="New for you" enabled={enabled}>
+                    <Claimant failure={failure} />
+                </PluginSurfaceInteractionBoundary>
+            </PluginSurfaceMachineRecoveryContext.Provider>
+        );
+        const screen = await renderScreen(mount(true, true));
+        await screen.update(mount(false, true));
+        // The body has nothing for this part: it says the host's one sentence with the host's Retry, the host nothing.
+        expect(screen.findByTestId('plugin-surface-machine-unavailable:widget')).toBeNull();
+        expect(screen.findByTestId('claimant')?.props.children.join('')).toBe(`${t('pluginSurfaces.state.offline.nothingCached')} + ${t('common.retry')}`);
+        // A body that still shows its cached rows claims nothing: the host's offline line stays, above the rows.
+        await screen.update(mount(false, false));
+        expect(screen.findByTestId('plugin-surface-machine-unavailable:widget')).not.toBeNull();
+    });
+
     it('keeps an offline summary perceivable while the executable snapshot is inert', async () => {
         const { PluginSurfaceInteractionBoundary } = await import('./PluginSurfaceInteractionBoundary.web');
         const offlineSnapshot = (enabled: boolean) => (
