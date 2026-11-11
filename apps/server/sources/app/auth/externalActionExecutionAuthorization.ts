@@ -2138,7 +2138,7 @@ function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExe
     // decision, spends the unchanged signed root. Reads confer no mutation authority.
     const readsExecutionConfig = actionId === 'projects.script.run' || actionId === 'projects.compute.exec'
         || actionId === 'localServices.launcher.start' || actionId === 'localServices.actions.restartManaged'
-        || actionId === 'approval.request.decide';
+        || actionId === 'approval.request.create' || actionId === 'approval.request.decide';
     if (Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) || actionId === 'projects.inspect' || readsExecutionConfig) {
         if (url.search !== '' || url.hash !== '') return false;
         if (method === 'GET' && proof.body === undefined) return readsExecutionConfig && url.pathname === '/v1/account/encryption';

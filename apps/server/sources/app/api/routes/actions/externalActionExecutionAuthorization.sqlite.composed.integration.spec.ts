@@ -2858,7 +2858,7 @@ describe("external Action execution authorization", () => {
     });
 
     it.each(['projects.prepare', 'projects.script.run', 'projects.compute.exec', 'projects.inspect', 'projects.worker.status', 'localServices.launcher.start',
-        'localServices.actions.restartManaged', 'approval.request.decide',
+        'localServices.actions.restartManaged', 'approval.request.create', 'approval.request.decide',
         'machines.terminal.open', 'machines.terminal.list', 'machines.terminal.read', 'machines.terminal.write',
         'machines.terminal.close', 'machines.terminal.restart'] as const)(
         'confines Project rows to requester read custody for %s without granting row mutation', async actionId => {
@@ -2892,6 +2892,11 @@ describe("external Action execution authorization", () => {
             : actionId === 'projects.worker.status' ? { workspace: { serverId: homeId, refId: ref.id },
                 destination: { kind: 'machine', machineId: fixture.machine.id }, purpose: 'finite' }
             : actionId === 'approval.request.decide' ? { artifactId: 'setup-approval', decision: 'approve' }
+            : actionId === 'approval.request.create' ? { actionId: 'localServices.actions.restartManaged',
+                actionArgs: { requestId: 'restart-review', action: 'restart_managed',
+                    target: { kind: 'managed_service', managedServiceId: 'service', machineId: fixture.machine.id },
+                    confirmationNonce: 'reviewed-service', force: false },
+                summary: 'Restart the declared Service', createdBy: { surface: 'system' } }
             : actionId === 'localServices.actions.restartManaged' ? { requestId: 'restart-review', action: 'restart_managed',
                 target: { kind: 'managed_service', managedServiceId: 'service', machineId: fixture.machine.id },
                 confirmationNonce: 'reviewed-service', force: false }
