@@ -12,7 +12,6 @@ export type GlassMaterialEnvironment = Readonly<{
     nativeWindowMaterialLive?: boolean;
     reduceTransparency?: boolean;
     highContrast?: boolean;
-    windowActive?: boolean;
     atmosphereBehind?: 'none' | 'band' | 'wallpaper';
     /** The measured tone of the picture behind content, published by the atmosphere while it covers an area. */
     atmosphereTone?: GlassAtmosphereTone;
@@ -42,14 +41,17 @@ export type GlassAtmosphereTone = Readonly<{
 
 export type GlassSurfaceResolution = Readonly<{
     material: GlassSurfaceMaterial;
-    reason: 'reduceTransparency' | 'inactiveWindow' | 'noBacking' | 'unsupported' | 'unavailable' | null;
+    reason: 'reduceTransparency' | 'noBacking' | 'unsupported' | 'unavailable' | null;
 }>;
 
 function isWallpaperShellPlane(group: GlassSurfaceGroup, environment: GlassMaterialEnvironment): boolean {
     return environment.atmosphereBehind === 'wallpaper' && (group === 'chrome' || group === 'sidebar');
 }
 
-/** Stored choices survive accessibility and window-focus overrides. Never fade foreground content. */
+/**
+ * Stored choices survive accessibility overrides. Never fade foreground content. Window focus is not an input: an
+ * unfocused window keeps its glass (owner 2026-11-11: it went fully opaque whenever the window lost focus).
+ */
 export function resolveGlassSurfaceMaterial(settings: GlassMaterialSettings, group: GlassSurfaceGroup, environment: GlassMaterialEnvironment = {}): GlassSurfaceResolution {
     const requested = (environment.nativeRenderer === true ? readGlassMaterials(settings) : readGlassTintedMaterials(settings))[group];
     // A shown background backs content; Wallpaper also backs the title bar, rail and sidebar (A2/A3).
@@ -57,7 +59,6 @@ export function resolveGlassSurfaceMaterial(settings: GlassMaterialSettings, gro
     const atmosphereBacked = isWallpaperShellPlane(group, environment)
         || (group === 'content' && (environment.atmosphereBehind === 'band' || environment.atmosphereBehind === 'wallpaper'));
     const reason: GlassSurfaceResolution['reason'] = environment.reduceTransparency ? 'reduceTransparency'
-        : environment.windowActive === false ? 'inactiveWindow'
         : group === 'card' && environment.atmosphereBehind !== 'band' && environment.atmosphereBehind !== 'wallpaper'
             && resolveGlassSurfaceMaterial(settings, 'content', environment).material.opacity === 1 ? 'noBacking'
         : atmosphereBacked ? null

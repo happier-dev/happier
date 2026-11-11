@@ -3727,7 +3727,6 @@ const effectiveTranslations = { "ca": {
         "effectiveUniform": "Vidre uniforme a tota la finestra.",
         "effectiveCustom": "Vidre a la finestra tal com l’has personalitzat.",
         "effectiveUnavailable": "El vidre de finestra no està disponible. Els controls flotants mantenen el material triat.",
-        "effectiveInactive": "Sòlid mentre la finestra és inactiva.",
         "effectiveTint": "Controls flotants tenyits; el desenfocament del fons no està disponible.",
         "description": "Deixa veure l’escriptori a través de la finestra i la pàgina sota els controls flotants.",
         "descriptionBrowser": "Deixa veure la pàgina sota els menús i diàlegs, i el fons sota els elements.",

@@ -50,7 +50,8 @@ function normalizeState(value: unknown): DesktopGlassState {
     if (['supported', 'materialLive', 'reduceTransparency', 'highContrast', 'windowActive'].some((key) => typeof data[key] !== 'boolean')) return unavailable;
     return {
         supported: data.supported === true,
-        materialLive: data.materialLive === true && data.supported === true && data.reduceTransparency === false && data.windowActive === true,
+        // Focus is not an input: an unfocused window keeps its material (owner 2026-11-11).
+        materialLive: data.materialLive === true && data.supported === true && data.reduceTransparency === false,
         reduceTransparency: data.reduceTransparency === true,
         highContrast: data.highContrast === true,
         windowActive: data.windowActive === true,

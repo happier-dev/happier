@@ -47,11 +47,10 @@ export function GlassMaterialRuntime(props: Readonly<{ children: React.ReactNode
         desktopWindow,
         nativeWindowMaterialLive: nativeState?.materialLive === true,
         reduceTransparency: reduceTransparency || nativeState?.reduceTransparency === true,
-        windowActive: nativeState?.windowActive ?? true,
         atmosphereBehind,
         atmosphereTone,
         nativeRenderer: Platform.OS !== 'web',
-    }), [desktopWindow, nativeState?.materialLive, nativeState?.reduceTransparency, nativeState?.windowActive, reduceTransparency, atmosphereBehind, atmosphereTone]);
+    }), [desktopWindow, nativeState?.materialLive, nativeState?.reduceTransparency, reduceTransparency, atmosphereBehind, atmosphereTone]);
     useWebRootCanvasPresentation(shouldRevealNativeGlassCanvas(environment));
 
     React.useEffect(() => {

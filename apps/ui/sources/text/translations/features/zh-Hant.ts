@@ -3720,7 +3720,6 @@ const effectiveTranslations = { "zh-Hant": {
         "effectiveUniform": "此視窗全域使用統一玻璃。",
         "effectiveCustom": "此視窗使用你自訂的玻璃。",
         "effectiveUnavailable": "視窗玻璃無法使用。浮動控制項仍使用所選材質。",
-        "effectiveInactive": "此視窗未啟用時使用不透明材質。",
         "effectiveTint": "此裝置的浮動控制項帶有色調，背景模糊無法使用。",
         "description": "讓桌面透過視窗，讓頁面透過浮動控制項。",
         "descriptionBrowser": "讓頁面透過選單和對話框，讓背景透過元素。",

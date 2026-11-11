@@ -136,7 +136,6 @@ describe('iOS material without blur', () => {
     for (const [materials, environment, alpha] of [
       [custom, {}, 0.33],
       [custom, { reduceTransparency: true }, 1],
-      [custom, { windowActive: false }, 1],
       [glassPresetMaterials('solid'), {}, 1],
     ] as const) {
       const screen = await renderScreen(

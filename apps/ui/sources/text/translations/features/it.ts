@@ -3727,7 +3727,6 @@ const effectiveTranslations = { "it": {
         "effectiveUniform": "Vetro uniforme in tutta questa finestra.",
         "effectiveCustom": "Vetro in questa finestra secondo le tue impostazioni.",
         "effectiveUnavailable": "Il vetro della finestra non è disponibile. I controlli mobili usano il materiale scelto.",
-        "effectiveInactive": "Opaco mentre questa finestra è inattiva.",
         "effectiveTint": "Controlli mobili colorati; la sfocatura di sfondo non è disponibile.",
         "description": "Lascia vedere il desktop attraverso la finestra e la pagina sotto i controlli mobili.",
         "descriptionBrowser": "Lascia vedere la pagina sotto menu e finestre di dialogo, e il tuo sfondo sotto gli elementi.",

@@ -25,7 +25,7 @@ export type ResolveGlassCapabilityInput = GlassMaterialEnvironment & Readonly<{
 
 export function resolveGlassCapability(input: ResolveGlassCapabilityInput): GlassCapability {
     const material = input.settings ? resolveGlassSurfaceMaterial(input.settings, input.surfaceGroup ?? 'floating', input).material : null;
-    if (input.reduceTransparency || input.windowActive === false || material?.opacity === 1) {
+    if (input.reduceTransparency || material?.opacity === 1) {
         return 'solid';
     }
     // In-flow Elements may be numerous. Native uses their coat without mounting an SDK view per card.

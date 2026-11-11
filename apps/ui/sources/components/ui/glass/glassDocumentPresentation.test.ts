@@ -143,9 +143,6 @@ describe('live document material boundary', () => {
         const reduced = paint({ desktopWindow: true, nativeWindowMaterialLive: true, reduceTransparency: true });
         expect(doc.body.style.backgroundColor).toBe('rgb(12, 14, 16)');
         reduced();
-        const inactive = paint({ desktopWindow: true, nativeWindowMaterialLive: true, windowActive: false });
-        expect(doc.body.style.backgroundColor).toBe('rgb(12, 14, 16)');
-        inactive();
     });
 
     it('restores absent inline paint and an existing important background after a mounted canvas update', () => {

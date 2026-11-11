@@ -3725,7 +3725,6 @@ const effectiveTranslations = { "fr": {
         "effectiveUniform": "Verre uniforme dans toute cette fenêtre.",
         "effectiveCustom": "Verre dans cette fenêtre selon tes réglages.",
         "effectiveUnavailable": "Le verre de fenêtre est indisponible. Les commandes flottantes utilisent le matériau choisi.",
-        "effectiveInactive": "Opaque tant que cette fenêtre est inactive.",
         "effectiveTint": "Commandes flottantes teintées ; le flou d’arrière-plan est indisponible.",
         "description": "Laisse voir le bureau à travers la fenêtre et la page sous les commandes flottantes.",
         "descriptionBrowser": "Laisse voir la page sous les menus et dialogues, et ton fond sous les éléments.",

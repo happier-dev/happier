@@ -3727,7 +3727,6 @@ const effectiveTranslations = { "pt": {
         "effectiveUniform": "Vidro uniforme em toda esta janela.",
         "effectiveCustom": "Vidro nesta janela conforme seus ajustes.",
         "effectiveUnavailable": "O vidro da janela está indisponível. Os controles flutuantes usam o material escolhido.",
-        "effectiveInactive": "Opaco enquanto esta janela está inativa.",
         "effectiveTint": "Controles flutuantes coloridos; o desfoque de fundo está indisponível.",
         "description": "Deixe o desktop aparecer pela janela e a página sob os controles flutuantes.",
         "descriptionBrowser": "Deixe a página aparecer sob menus e diálogos, e o seu fundo sob os elementos.",

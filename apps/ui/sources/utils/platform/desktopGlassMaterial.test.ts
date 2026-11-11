@@ -23,13 +23,20 @@ describe('desktop glass material', () => {
         expect(host.invoke).toHaveBeenCalledWith('desktop_apply_glass_material', { enabled: true, blur: 'strong' });
     });
 
-    it('never treats refused, malformed, reduced-transparency or inactive effects as live', async () => {
+    // Owner 2026-11-11: the window's glass went fully opaque whenever it lost focus. An unfocused window keeps it.
+    it('keeps the window material live while the window is unfocused', async () => {
+        host.isDesktop.mockReturnValue(true);
+        const { readDesktopGlassState } = await import('./desktopGlassMaterial');
+        host.invoke.mockResolvedValue({ ...live, windowActive: false });
+        expect((await readDesktopGlassState()).materialLive).toBe(true);
+    });
+
+    it('never treats refused, malformed or reduced-transparency effects as live', async () => {
         host.isDesktop.mockReturnValue(true);
         const { readDesktopGlassState } = await import('./desktopGlassMaterial');
         for (const payload of [
             { ...live, materialLive: false },
             { ...live, reduceTransparency: true },
-            { ...live, windowActive: false },
             { ...live, supported: false },
             { ...live, materialLive: 'true' },
         ]) {

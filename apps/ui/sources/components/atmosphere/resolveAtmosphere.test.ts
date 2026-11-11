@@ -98,7 +98,6 @@ describe('effective atmosphere owner', () => {
     it.each([
         { name: 'Solid', glassSettings: { glassBlurEnabled: false }, glassEnvironment: {} },
         { name: 'Auto web', glassSettings: {}, glassEnvironment: {} },
-        { name: 'inactive window', glassSettings: clearGlass, glassEnvironment: { windowActive: false } },
         { name: 'custom solid', glassSettings: { glassSurfaceMaterials: { ...glassPresetMaterials('clear'), content: { blur: 'strong' as const, opacity: 1 } } }, glassEnvironment: {} },
         { name: 'unavailable desktop glass', glassSettings: clearGlass, glassEnvironment: { desktopWindow: true, nativeWindowMaterialLive: false } },
         { name: 'Reduce Transparency', glassSettings: clearGlass, glassEnvironment: { reduceTransparency: true } },

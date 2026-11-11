@@ -356,11 +356,11 @@ describe('Atmosphere input locality', () => {
             return null;
         }
         const child = <Probe />;
-        const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ windowActive: true }}>{child}</GlassRuntimeEnvironmentProvider>);
+        const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ highContrast: true }}>{child}</GlassRuntimeEnvironmentProvider>);
         publications = 0;
         renders = 0;
         for (let index = 0; index < 5; index += 1) {
-            await screen.update(<GlassRuntimeEnvironmentProvider value={{ windowActive: index % 2 === 0 }}>{child}</GlassRuntimeEnvironmentProvider>);
+            await screen.update(<GlassRuntimeEnvironmentProvider value={{ highContrast: index % 2 === 0 }}>{child}</GlassRuntimeEnvironmentProvider>);
         }
         expect(publications).toBe(0);
         expect(renders).toBe(0);

@@ -3719,7 +3719,6 @@ const effectiveTranslations = { "de": {
         "effectiveUniform": "Einheitliches Glas in diesem Fenster.",
         "effectiveCustom": "Glas in diesem Fenster nach deinen Einstellungen.",
         "effectiveUnavailable": "Fensterglas ist hier nicht verfügbar. Schwebende Bedienelemente verwenden dein Material.",
-        "effectiveInactive": "Deckend, solange dieses Fenster inaktiv ist.",
         "effectiveTint": "Getönte schwebende Bedienelemente; Hintergrundunschärfe ist nicht verfügbar.",
         "description": "Lass den Desktop durch das Fenster und die Seite durch schwebende Bedienelemente scheinen.",
         "descriptionBrowser": "Lass die Seite durch Menüs und Dialoge scheinen und deinen Hintergrund durch Elemente.",

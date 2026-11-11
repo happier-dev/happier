@@ -24,7 +24,6 @@ describe('glass material Account owner', () => {
             // Native renderers have no backdrop tone or card blur: they keep the stored coat, not the tint's hair.
             expect(resolveGlassSurfaceMaterial(settings, 'card', { atmosphereBehind, nativeRenderer: true }).material).toEqual(settings.glassSurfaceMaterials.card);
             expect(resolveGlassSurfaceMaterial(settings, 'card', { atmosphereBehind, reduceTransparency: true }).material).toEqual(solid);
-            expect(resolveGlassSurfaceMaterial(settings, 'card', { atmosphereBehind, windowActive: false }).material).toEqual(solid);
         }
         expect(resolveGlassSurfaceMaterial(settings, 'card', { desktopWindow: true, nativeWindowMaterialLive: true }).material)
             .toEqual(readGlassTintedMaterials(settings).card);
@@ -66,7 +65,6 @@ describe('glass material Account owner', () => {
                 .toEqual({ material: readGlassTintedMaterials(auto)[group], reason: null });
             expect(resolveGlassSurfaceMaterial({ glassSurfaceMaterials: glassPresetMaterials('solid') }, group, { atmosphereBehind: 'wallpaper' }).material).toEqual(solid);
             expect(resolveGlassSurfaceMaterial(auto, group, { atmosphereBehind: 'wallpaper', reduceTransparency: true }).material).toEqual(solid);
-            expect(resolveGlassSurfaceMaterial(auto, group, { atmosphereBehind: 'wallpaper', windowActive: false }).material).toEqual(solid);
         }
     });
 
@@ -82,8 +80,6 @@ describe('glass material Account owner', () => {
                     .toEqual(auto.glassSurfaceMaterials.content);
                 expect(resolveGlassSurfaceMaterial(auto, 'content', { ...environment, reduceTransparency: true }))
                     .toEqual({ material: solid, reason: 'reduceTransparency' });
-                expect(resolveGlassSurfaceMaterial(auto, 'content', { ...environment, windowActive: false }))
-                    .toEqual({ material: solid, reason: 'inactiveWindow' });
                 expect(resolveGlassSurfaceMaterial({ glassSurfaceMaterials: glassPresetMaterials('solid') }, 'content', environment).material)
                     .toEqual(solid);
             }
@@ -393,10 +389,9 @@ describe('glass material Account owner', () => {
             .toEqual({ blur: 'strong', opacity: 0 });
     });
 
-    it('keeps choice stored while Reduce Transparency and inactive windows temporarily resolve Solid', () => {
+    it('keeps choice stored while Reduce Transparency temporarily resolves Solid', () => {
         const settings = { glassSurfaceMaterials: glassPresetMaterials('everywhere') };
         expect(resolveGlassSurfaceMaterial(settings, 'floating', { reduceTransparency: true })).toEqual({ material: { blur: 'off', opacity: 1 }, reason: 'reduceTransparency' });
-        expect(resolveGlassSurfaceMaterial(settings, 'floating', { windowActive: false }).material.blur).toBe('off');
         expect(readGlassPreset(settings)).toBe('everywhere');
         expect(resolveGlassSurfaceMaterial(settings, 'floating').material.blur).toBe('strong');
     });

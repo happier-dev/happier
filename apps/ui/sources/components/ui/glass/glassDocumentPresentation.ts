@@ -24,7 +24,7 @@ export function resolveGlassPresentationVariables(settings: GlassMaterialSetting
 /** Reveal only backing that the main desktop window has successfully applied. */
 export function shouldRevealNativeGlassCanvas(environment: GlassMaterialEnvironment): boolean {
     return environment.desktopWindow === true && environment.nativeWindowMaterialLive === true
-        && !environment.reduceTransparency && environment.windowActive !== false;
+        && !environment.reduceTransparency;
 }
 
 /** The DOM boundary publishes live material values without rerendering the shell. */

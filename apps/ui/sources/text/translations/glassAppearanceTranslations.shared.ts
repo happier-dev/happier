@@ -45,7 +45,6 @@ export const effectiveTranslationsEnglish = { "en": {
         "effectiveUniform": "Glass across this window, with one uniform coat.",
         "effectiveCustom": "Glass across this window, as you customized it.",
         "effectiveUnavailable": "Window glass is unavailable here. Floating controls still use your chosen material.",
-        "effectiveInactive": "Solid while this window is inactive.",
         "effectiveTint": "Tinted floating controls on this device; background blur is unavailable.",
         "description": "Let your desktop show through the window, and the page through floating controls.",
         "descriptionBrowser": "Let the page show through menus and dialogs, and your backdrop through elements.",

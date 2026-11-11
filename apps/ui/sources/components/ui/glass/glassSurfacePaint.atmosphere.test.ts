@@ -10,11 +10,11 @@ describe('session atmosphere coats at the glass owner', () => {
             const settings = { glassSurfaceMaterials: preset === 'custom'
                 ? { ...glassPresetMaterials('clear'), content: { blur: 'off' as const, opacity: 0.347 } }
                 : glassPresetMaterials(preset) };
-            for (const overrides of [{}, { windowActive: false }, { reduceTransparency: true }]) {
+            for (const overrides of [{}, { reduceTransparency: true }]) {
                 for (const atmosphereBehind of ['band', 'wallpaper'] as const) {
                     const environment = { ...overrides, atmosphereBehind };
                     expect(resolveGlassSurfacePlaneMaterial(settings, 'content', environment)).toEqual({ blur: 'off', opacity: 0 });
-                    if (preset === 'solid' || 'windowActive' in overrides || 'reduceTransparency' in overrides) {
+                    if (preset === 'solid' || 'reduceTransparency' in overrides) {
                         for (const group of ['chrome', 'sidebar', 'card', 'floating'] as const) {
                             expect(resolveGlassSurfacePlaneMaterial(settings, group, environment)).toEqual({ blur: 'off', opacity: 1 });
                             expect(glassSurfacePlaneBackdropStyle(settings, group, false, environment)).toBeNull();

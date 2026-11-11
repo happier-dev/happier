@@ -274,7 +274,6 @@ export function GlassEffectiveStateLine(props: Readonly<{
     const hasAndroidTint = Platform.OS === 'android' && resolveGlassSurfaceMaterial(props.settings, 'floating', { ...environment, reduceTransparency }).material.opacity < 1;
     const windowReason = resolveGlassSurfaceMaterial(props.settings, 'chrome', { ...environment, reduceTransparency }).reason;
     const state = reduceTransparency ? 'reduceTransparency' : preset === 'solid' ? Platform.OS === 'web' && !environment.desktopWindow ? 'effectiveBrowserSolid' : 'effectiveSolid'
-        : environment.windowActive === false ? 'effectiveInactive'
         : environment.desktopWindow && windowReason === 'unavailable' ? 'effectiveUnavailable'
         : environment.desktopWindow ? preset === 'auto' ? 'effectiveLayered' : preset === 'everywhere' ? 'effectiveUniform' : 'effectiveCustom'
         : Platform.OS === 'web' ? preset === 'custom' && floating === 'solid' ? 'effectiveBrowserCustom' : 'effectiveBrowser'

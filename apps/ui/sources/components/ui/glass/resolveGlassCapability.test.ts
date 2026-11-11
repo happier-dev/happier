@@ -44,7 +44,6 @@ describe('resolveGlassCapability', () => {
         };
         expect(resolveGlassCapability({ ...input, surfaceGroup: 'content' })).toBe('solid');
         expect(resolveGlassCapability({ ...input, surfaceGroup: 'floating', highContrast: true })).toBe('webBlur');
-        expect(resolveGlassCapability({ ...input, surfaceGroup: 'floating', windowActive: false })).toBe('solid');
     });
 
     it.each([

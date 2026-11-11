@@ -327,7 +327,6 @@ describe('web glass material', () => {
                     { environment, preset: 'auto', opacity: dark ? 0.66 : 0.56 },
                     { environment, preset: 'solid', opacity: 1 },
                     { environment: { ...environment, reduceTransparency: true }, preset: 'auto', opacity: 1 },
-                    { environment: { ...environment, windowActive: false }, preset: 'auto', opacity: 1 },
                     { environment, preset: 'auto', opacity: dark ? 0.66 : 0.56 },
                 ] as const) {
                     await screen.update(scene(state.environment, state.preset));

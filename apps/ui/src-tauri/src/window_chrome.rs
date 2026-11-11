@@ -124,9 +124,9 @@ fn desktop_glass_material_requested(
     request: DesktopGlassMaterialRequest,
     supported: bool,
     reduce_transparency: bool,
-    window_active: bool,
 ) -> bool {
-    request.enabled && supported && !reduce_transparency && window_active
+    // Focus is not an input: an unfocused window keeps its glass (owner 2026-11-11: it went fully opaque on blur).
+    request.enabled && supported && !reduce_transparency
 }
 
 #[cfg(target_os = "macos")]
@@ -197,7 +197,7 @@ fn glass_platform_supported(window: &WebviewWindow, panel: bool) -> bool {
 fn apply_native_glass(
     window: &WebviewWindow,
     applied: Option<DesktopGlassApplied>,
-    panel: bool,
+    _panel: bool,
 ) -> Result<(), String> {
     use window_vibrancy::{NSVisualEffectMaterial as Material, NSVisualEffectState};
     let blur = applied.map(|applied| applied.blur);
@@ -214,11 +214,12 @@ fn apply_native_glass(
     // Tauri's public effect path uses this same crate but drops its Result.
     // Replacing a step removes the old native view instead of stacking blur planes.
     window_vibrancy::clear_vibrancy(window).map_err(|error| error.to_string())?;
-    // A floating panel never becomes the key window, so its material stays active.
+    // Always active: the main window keeps its material while unfocused (owner 2026-11-11), and a floating panel
+    // never becomes the key window.
     window_vibrancy::apply_vibrancy(
         window,
         material,
-        Some(if panel { NSVisualEffectState::Active } else { NSVisualEffectState::FollowsWindowActiveState }),
+        Some(NSVisualEffectState::Active),
         applied.and_then(|applied| applied.radius),
     )
     .map_err(|error| error.to_string())?;
@@ -351,7 +352,6 @@ fn refresh_desktop_glass(window: &WebviewWindow, announce: bool) -> Result<Deskt
         inner.request,
         supported,
         reduce_transparency,
-        window_active,
     );
     let desired = wants_material.then_some(DesktopGlassApplied {
         blur: inner.request.blur,
@@ -1381,27 +1381,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn glass_requires_supported_live_material_and_respects_reduce_transparency_and_focus() {
+    fn glass_requires_supported_live_material_and_respects_reduce_transparency() {
         let request = DesktopGlassMaterialRequest {
             enabled: true,
             blur: DesktopGlassBlur::Strong,
         };
-        assert!(desktop_glass_material_requested(request, true, false, true));
-        assert!(!desktop_glass_material_requested(
-            request, false, false, true
-        ));
-        assert!(!desktop_glass_material_requested(request, true, true, true));
-        assert!(!desktop_glass_material_requested(
-            request, true, false, false
-        ));
+        assert!(desktop_glass_material_requested(request, true, false));
+        assert!(!desktop_glass_material_requested(request, false, false));
+        assert!(!desktop_glass_material_requested(request, true, true));
         assert!(!desktop_glass_material_requested(
             DesktopGlassMaterialRequest {
                 enabled: false,
                 ..request
             },
             true,
-            false,
-            true
+            false
         ));
         // Off removes blur, not the transparent window backing requested by Custom.
         assert!(desktop_glass_material_requested(
@@ -1410,8 +1404,7 @@ mod tests {
                 ..request
             },
             true,
-            false,
-            true
+            false
         ));
     }
 

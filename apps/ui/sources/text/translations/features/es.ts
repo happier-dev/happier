@@ -3727,7 +3727,6 @@ const effectiveTranslations = { "es": {
         "effectiveUniform": "Cristal uniforme en toda esta ventana.",
         "effectiveCustom": "Cristal en esta ventana según tus ajustes.",
         "effectiveUnavailable": "El cristal de ventana no está disponible. Los controles flotantes usan el material elegido.",
-        "effectiveInactive": "Opaco mientras esta ventana está inactiva.",
         "effectiveTint": "Controles flotantes tintados; el desenfoque de fondo no está disponible.",
         "description": "Deja ver el escritorio a través de la ventana y la página bajo los controles flotantes.",
         "descriptionBrowser": "Deja ver la página bajo los menús y diálogos, y tu fondo bajo los elementos.",

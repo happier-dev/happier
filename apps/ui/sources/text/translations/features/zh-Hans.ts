@@ -3720,7 +3720,6 @@ const effectiveTranslations = { "zh-Hans": {
         "effectiveUniform": "此窗口全局使用统一玻璃。",
         "effectiveCustom": "此窗口使用你自定义的玻璃。",
         "effectiveUnavailable": "窗口玻璃不可用。浮动控件仍使用所选材质。",
-        "effectiveInactive": "此窗口未激活时使用不透明材质。",
         "effectiveTint": "此设备的浮动控件带有色调，背景模糊不可用。",
         "description": "让桌面透过窗口，让页面透过浮动控件。",
         "descriptionBrowser": "让页面透过菜单和对话框，让背景透过元素。",

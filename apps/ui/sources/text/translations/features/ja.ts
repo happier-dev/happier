@@ -3725,7 +3725,6 @@ const effectiveTranslations = { "ja": {
         "effectiveUniform": "このウィンドウ全体に均一なガラスを使います。",
         "effectiveCustom": "このウィンドウにカスタマイズしたガラスを使います。",
         "effectiveUnavailable": "ウィンドウのガラスは利用できません。フローティング操作部は選んだ素材を使います。",
-        "effectiveInactive": "ウィンドウが非アクティブな間は不透明です。",
         "effectiveTint": "フローティング操作部は色付きです。背景のぼかしは利用できません。",
         "description": "ウィンドウからデスクトップ、フローティング操作部からページを透かします。",
         "descriptionBrowser": "メニューとダイアログからページを、要素から背景を透かします。",

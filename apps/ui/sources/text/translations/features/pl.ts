@@ -3738,7 +3738,6 @@ const effectiveTranslations = { "pl": {
         "effectiveUniform": "Jednolita warstwa szkła w całym oknie.",
         "effectiveCustom": "Szkło w tym oknie według twoich ustawień.",
         "effectiveUnavailable": "Szkło okna jest niedostępne. Pływające kontrolki używają wybranego materiału.",
-        "effectiveInactive": "Nieprzezroczyste, gdy okno jest nieaktywne.",
         "effectiveTint": "Przyciemnione pływające kontrolki; rozmycie tła jest niedostępne.",
         "description": "Zobacz pulpit przez okno i stronę pod pływającymi kontrolkami.",
         "descriptionBrowser": "Zobacz stronę pod menu i oknami dialogowymi, a tło pod elementami.",

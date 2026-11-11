@@ -22,7 +22,7 @@ describe('glass renderer paint', () => {
             const settings = { glassSurfaceMaterials: preset === 'custom'
                 ? { ...glassPresetMaterials('everywhere'), content: { blur: 'off' as const, opacity: 0.347 } }
                 : glassPresetMaterials(preset) };
-            for (const overrides of [{}, { windowActive: false }, { reduceTransparency: true }]) {
+            for (const overrides of [{}, { reduceTransparency: true }]) {
                 const environment = { ...liveDesktop, ...overrides };
                 const ordinary = resolveGlassSurfaceColor('#112233', 'content', settings, environment, true, false);
                 expect(resolveGlassSurfaceColor('#112233', 'content', settings, { ...environment, atmosphereBehind: 'none' }, true, false, undefined, true)).toBe(ordinary);
@@ -60,7 +60,6 @@ describe('glass renderer paint', () => {
         expect(resolveGlassSurfaceColor('#112233', 'content', solid, liveDesktop, true)).toBe('#112233');
         expect(resolveGlassSurfaceColor('#112233', 'content', settings, { ...liveDesktop, reduceTransparency: true }, true)).toBe('#112233');
         expect(resolveGlassSurfaceColor('#112233', 'content', settings, { desktopWindow: true }, true)).toBe('#112233');
-        expect(resolveGlassSurfaceColor('#112233', 'content', settings, { ...liveDesktop, windowActive: false }, true)).toBe('#112233');
     });
 
     it('keeps SDK colors solid on platforms without a tint fallback', () => {
