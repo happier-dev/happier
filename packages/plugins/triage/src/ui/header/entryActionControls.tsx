@@ -3,6 +3,7 @@ import type { ActionSessionAddressV1 } from '@happier-dev/plugin-sdk/sessions';
 import {
   AgentActionButton,
   Button,
+  Icon,
   Menu,
   Row,
   Stack,
@@ -242,15 +243,21 @@ function TriageEntryActionButton(props: Readonly<{
   label?: string;
   joinedEdge?: 'end';
   singleLine?: boolean;
+  /** Drawn as this glyph alone, named by its words for assistive technology (Ask in the pinned phone band). */
+  glyph?: 'conversations';
   onPress: (request: TriageEntryActionRequestV1) => void;
 }>): React.ReactElement {
   const seededKey = readTriageActionTitleKeyV1(props.action);
   const starts = props.withoutRepository && seededKey !== null && props.action.actionId === TRIAGE_DEFAULT_FIX_ACTION_ID_V1;
   const titleKey = starts ? 'plugins.triage.surface.actions.start' : seededKey;
+  const words = props.label ?? (starts ? 'Start' : props.action.label);
+  const name = props.glyph === undefined
+    ? { ...(titleKey === null || props.label !== undefined ? {} : { titleKey }), title: words }
+    : { ...(titleKey === null || props.label !== undefined ? {} : { accessibilityLabelKey: titleKey }), accessibilityLabel: words,
+      icon: <Icon name={props.glyph} size="small" /> };
   return (
     <Button
-      {...(titleKey === null || props.label !== undefined ? {} : { titleKey })}
-      title={props.label ?? (starts ? 'Start' : props.action.label)}
+      {...name}
       variant={props.primary ? 'primary' : 'secondary'}
       size="small"
       {...(props.joinedEdge === undefined ? {} : { joinedEdge: props.joinedEdge })}
@@ -372,7 +379,8 @@ export function TriageEntryActionControls(
   );
   // A renamed control shows the person's own words in every locale; a still-shipped one keeps its translation.
   // `titleKey` is therefore resolved from the record, never stored in it.
-  const button = (action: TriageActionV1, onPress: (request: TriageEntryActionRequestV1) => void, split?: Readonly<{ label?: string }>) => (
+  const button = (action: TriageActionV1, onPress: (request: TriageEntryActionRequestV1) => void, split?: Readonly<{ label?: string }>,
+    glyph?: 'conversations') => (
     <TriageEntryActionButton
       key={action.actionId}
       action={action}
@@ -382,6 +390,7 @@ export function TriageEntryActionControls(
       primary={action.actionId === primaryActionId}
       withoutRepository={props.withoutRepository === true}
       singleLine={compact && action === primary}
+      {...(glyph === undefined ? {} : { glyph })}
       {...(split === undefined ? {} : { joinedEdge: 'end' as const, ...(split.label === undefined ? {} : { label: split.label }) })}
       onPress={onPress}
     />
@@ -527,7 +536,7 @@ export function TriageEntryActionControls(
             onSelectDestination={selectStartItem}
           />
         )}
-        {beside === null ? null : compact ? <Stack style={COMPACT_KEEP_STYLE_V1}>{button(beside, press)}</Stack> : button(beside, press)}
+        {beside === null ? null : compact ? <Stack style={COMPACT_KEEP_STYLE_V1}>{button(beside, press, undefined, 'conversations')}</Stack> : button(beside, press)}
         {hasOverflow ? (
           <Menu
             open={moreOpen}
@@ -583,7 +592,10 @@ export function TriageEntryActionControls(
 const START_MENU_RECENT_ROWS = 3;
 
 const COMPACT_PRIMARY_STYLE_V1 = Object.freeze({ flexShrink: 1, minWidth: 0 });
-/** Ask keeps its word whole; only the primary gives way. */
+/**
+ * In the pinned phone band Ask is the chat glyph, named "Ask" (lab merged-detail-pr phone; owner 2026-11-11), so the
+ * primary keeps its whole label beside it at 360; it keeps its own width. Wherever the band has room it keeps its word.
+ */
 const COMPACT_KEEP_STYLE_V1 = Object.freeze({ flexShrink: 0 });
 
 /** The attention reason sits at the far end of the action row, as the lab places it. */
