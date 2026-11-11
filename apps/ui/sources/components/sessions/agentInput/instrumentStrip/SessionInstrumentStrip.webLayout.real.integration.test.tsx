@@ -144,6 +144,49 @@ describe('the composer status line on a phone (owner 2026-11-10)', () => {
   });
 });
 
+describe('a long host status beside a readiness badge at 390 (owner 2026-11-11)', () => {
+  it('stays one line: the status ellipsizes while its action and the badge keep their width', async () => {
+    const { SessionInstrumentStrip } = await import('./SessionInstrumentStrip');
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <View testID="frame" style={{ width: 358 }}>
+          <SessionInstrumentStrip
+            connectionStatus={{
+              text: 'Claude needs sign-in',
+              color: '#b60',
+              dotColor: '#b60',
+              action: { label: 'Sign in', onPress: () => {} },
+            }}
+            statusBadges={[{ key: 'ready', label: 'Base branch needed to start', tone: 'warning', emphasis: 'prominent', testID: 'badge' }]}
+            statusTrailingActions={<View testID="close" style={{ width: 24, height: 24 }} />}
+          />
+        </View>,
+      );
+    });
+    const layout = await measureWebLayout(host, {
+      viewport: { width: 400, height: 300 },
+      texts: ['Sign in', 'Base branch needed to start'],
+      settle: (replay) => act(replay),
+    });
+    const frame = layout.rect('frame');
+    const sentence = layout.rect('agent-input-connection-status-text');
+    const action = layout.rect('agent-input-connection-recovery');
+    const badge = layout.rect('badge');
+    // One line: no wrapped status and no second row.
+    expect(frame.bottom - frame.top).toBeLessThanOrEqual(40);
+    expect(sentence.bottom - sentence.top).toBeLessThanOrEqual(20);
+    // The status gives way first; the action and the badge stay whole and on the line.
+    expect(action.right - action.left).toBeGreaterThanOrEqual(layout.textRects('Sign in')[0]!.width - 0.5);
+    expect(badge.right).toBeLessThanOrEqual(frame.right + 0.5);
+    expect(layout.textRects('Base branch needed to start')).toHaveLength(1);
+    expect(layout.textRects('Base branch needed to start')[0]!.bottom - layout.textRects('Base branch needed to start')[0]!.top)
+      .toBeLessThanOrEqual(20);
+  });
+});
+
 describe('the status line band (owner 2026-11-11)', () => {
   it('centres its line in the band, so the free space is not all piled up between it and the composer', async () => {
     const { SessionInstrumentStrip } = await import('./SessionInstrumentStrip');

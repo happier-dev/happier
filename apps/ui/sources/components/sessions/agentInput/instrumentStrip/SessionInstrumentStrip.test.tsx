@@ -200,14 +200,14 @@ describe('SessionInstrumentStrip', () => {
         expect(tree!.root.findAll((n) => n.props?.testID === 'secondary')).toHaveLength(0);
     });
 
-    it('keeps a line whose action is a name to one line, and lets other actions wrap the sentence', () => {
+    it('keeps the status line to one line whatever its action (owner 2026-11-11: the sentence ellipsizes)', () => {
         const text = () => tree!.root.findAll((n) => n.props?.testID === 'agent-input-connection-status-text' && typeof n.type !== 'string')[0]!;
         const status = { text: 'Claude needs sign-in', color: '#b60', dotColor: '#b60',
             action: { label: 'ai1@happier.dev', onPress: vi.fn(), truncates: true } };
         act(() => { tree = create(<SessionInstrumentStrip connectionStatus={status} />); });
         expect(text().props.numberOfLines).toBe(1);
         act(() => { tree!.update(<SessionInstrumentStrip connectionStatus={{ ...status, action: { label: 'Restart', onPress: vi.fn() } }} />); });
-        expect(text().props.numberOfLines).toBe(2);
+        expect(text().props.numberOfLines).toBe(1);
     });
 
     it('cross-fades the line when the guard moment changes, and simply shows the first line', () => {

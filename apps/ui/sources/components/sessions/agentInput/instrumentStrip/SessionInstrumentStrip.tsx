@@ -372,7 +372,9 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
                                 props.connectionStatus.action?.truncates ? instrumentStripStyles.connectionTextKept : null,
                                 { color: props.connectionStatus.color },
                             ]}
-                            numberOfLines={props.connectionStatus.action && !props.connectionStatus.action.truncates ? 2 : 1}
+                            // The status row stays one line (owner 2026-11-11): the sentence gives way with an ellipsis,
+                            // its action and the instruments keep their width; its full words stay its accessible text.
+                            numberOfLines={1}
                         >
                             {props.connectionStatus.text}
                             {props.connectionStatus.countdownTo !== undefined ? (
