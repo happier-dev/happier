@@ -21,6 +21,7 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
@@ -522,6 +523,26 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                     />
                     );
                 })() : null}
+                </ItemGroup>
+            ));
+        }
+
+        // Keep the roster section visible while its first page is in flight. The
+        // shared pager owns the request lifetime; this surface only presents its
+        // canonical loading state and preserves any rows during refresh.
+        if (members.status === 'loading' && members.rows.length === 0) {
+            add('members-loading', () => (
+                <ItemGroup
+                    title={t('teams.groups.membersSection')}
+                    action={addMemberAction}
+                    virtualizedSegment={{ first: true, last: true }}
+                >
+                    <ItemLoadStateRows
+                        testID="team-group-members-loading"
+                        state={{ kind: 'loading' }}
+                        rows={3}
+                        accessibilityLabel={t('teams.loading')}
+                    />
                 </ItemGroup>
             ));
         }
