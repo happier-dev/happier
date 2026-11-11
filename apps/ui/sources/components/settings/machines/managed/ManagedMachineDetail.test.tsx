@@ -2334,7 +2334,7 @@ describe('managed Machine detail', () => {
         expect(moveTargets).toEqual([{ kind: 'machine', machineId: next.machineId }]);
         expect(screen.tree.findByType(ManagedCreationProgress).props.machine.controller).toEqual(controller);
     });
-    it.each(['controller', 'guest', 'cleanup-retry', 'stalled-target', 'read-unavailable-after-review', 'controller-refusal', 'typed-controller-read-failure'] as const)('requires controller Manage and deletes only after a settled in-page review (%s)', async authority => {
+    it.each(['controller', 'guest', 'cleanup-retry', 'canceled-no-native-ref', 'canceled-native-ref', 'canceled-bound', 'canceled-absent', 'creator-canceled', 'stalled-target', 'read-unavailable-after-review', 'controller-refusal', 'typed-controller-read-failure'] as const)('requires controller Manage and deletes only after a settled in-page review (%s)', async authority => {
         await sodium.ready;
         const installation = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(11));
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-delete-review.test', scope: 'tab' });
@@ -2346,11 +2346,13 @@ describe('managed Machine detail', () => {
         await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token });
         const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Paid guest', choices: {} };
         const controller = { machineId: 'controller', installationId: 'installation' };
+        const canceled = authority.startsWith('canceled-') || authority === 'creator-canceled';
+        const creatorOnly = authority === 'creator-canceled';
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
             id: controller.machineId, installationId: controller.installationId, updatedAt: Date.now(),
             access: { custodian: { accountId: 'foreign-owner', displayName: 'Foreign owner' },
-                role: authority === 'guest' ? 'use' : 'manage', resourceMode: 'plain', accessState: 'ready' },
+                role: authority === 'guest' || creatorOnly ? 'use' : 'manage', resourceMode: 'plain', accessState: 'ready' },
         }), ...(authority === 'guest' ? [createMachineFixture({ id: 'guest', installationId: 'guest-installation', updatedAt: Date.now(),
             access: { custodian: { accountId: 'foreign-owner', displayName: 'Foreign owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
         })] : [])]);
@@ -2363,6 +2365,20 @@ describe('managed Machine detail', () => {
                 requestId: 'original-cleanup', controller } } : {}),
             reviewedFacts: { launch, controller, optionStatus: 'current', billing: { location: 'cloud', stoppedBilling: 'billed' }, prerequisites: [],
                 retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
+        if (canceled) {
+            machine.creationState = 'canceled';
+            machine.enrolledMachineId = undefined;
+            machine.desired = 'delete';
+            machine.cleanup = { disposition: 'pending', reason: 'creation_canceled' };
+            if (authority !== 'canceled-bound') {
+                machine.allocation = authority === 'canceled-absent' ? 'confirmed-absent' : 'may-exist';
+                machine.resource = undefined;
+            }
+            if (authority === 'canceled-native-ref') machine.nativeOperationRef = {
+                contributionRef: launch.provider, schemaVersion: 1, value: { resourceId: 'retained-acquisition' },
+            };
+            if (creatorOnly) machine.enrollmentAccountId = 'owner';
+        }
         const nativeRequests: unknown[] = [];
         const additionalConfirmations: string[] = [];
         const deleted: unknown[] = [];
@@ -2374,7 +2390,7 @@ describe('managed Machine detail', () => {
                 deleted.push(request.input);
                 return { kind: 'accepted', managedId: machine.id, intentRevision: machine.intentRevision + 1,
                     operation: { operationId: 'delete-operation' }, machineReferences: { homeId: machine.homeId,
-                        machineId: machine.enrolledMachineId, coverage: 'complete', references: [], unavailable: [] } };
+                        machineId: machine.enrolledMachineId ?? null, coverage: 'complete', references: [], unavailable: [] } };
             },
         }));
         const minted: Array<ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>> = [];
@@ -2386,7 +2402,7 @@ describe('managed Machine detail', () => {
         const plainControllerRow = createPlainMachineRowFixture({ id: controller.machineId, accountId: 'foreign-owner' });
         const controllerRow = { ...plainControllerRow,
             access: { custodian: { accountId: 'foreign-owner', displayName: 'Foreign owner' },
-                role: authority === 'guest' ? 'use' : 'manage', resourceMode: 'plain', accessState: 'ready' },
+                role: authority === 'guest' || creatorOnly ? 'use' : 'manage', resourceMode: 'plain', accessState: 'ready' },
             installationId: controller.installationId, installationPublicKey: encodeBase64(installation.publicKey, 'base64') };
         expect(readMachineInstallationPublicKey(controllerRow.installationPublicKey)).toEqual(installation.publicKey);
         setRuntimeFetch(async (input, init) => {
@@ -2454,26 +2470,30 @@ describe('managed Machine detail', () => {
             expect(await readOriginalAccountActionMachine(account, controller.machineId)).toMatchObject({
                 id: controller.machineId, kind: 'persistent', installationId: controller.installationId, installationPublicKey: installation.publicKey,
                 revokedAt: null, replacedByMachineId: null,
-                access: { custodian: { accountId: 'foreign-owner' }, accessState: 'ready', role: authority === 'guest' ? 'use' : 'manage' },
+                access: { custodian: { accountId: 'foreign-owner' }, accessState: 'ready', role: authority === 'guest' || creatorOnly ? 'use' : 'manage' },
             });
         } finally { account.dispose(); }
-        const screen = await renderScreen(<ManagedEnrolledMachineSections enrolledMachineId="guest" serverId={target.id}
-            executeAction={createFrontDoorActionExecute(createDefaultActionExecutor())} />);
-        if (authority === 'guest') {
+        const executeAction = createFrontDoorActionExecute(createDefaultActionExecutor());
+        const screen = await renderScreen(canceled
+            ? <ManagedMachineDetail managedId={machine.id} serverId={target.id} executeAction={executeAction} />
+            : <ManagedEnrolledMachineSections enrolledMachineId="guest" serverId={target.id} executeAction={executeAction} />);
+        if (authority === 'guest' || creatorOnly || authority === 'canceled-absent') {
             // OWNER-RULINGS 2026-10-31: Use has no Machine-wide resource controls.
             await flushHookEffects({ cycles: 30 });
             expect(screen.findByTestId('managed-machine.detail')).not.toBeNull();
             expect(screen.findByTestId('managed-machine.delete')).toBeNull();
+            expect(screen.findByTestId('managed-machine.progress:deleteNow')).toBeNull();
             expect(nativeRequests).toEqual([]);
             expect(minted).toEqual([]);
             await screen.unmount();
             return;
         }
+        const deleteButton = canceled ? 'managed-machine.progress:deleteNow' : 'managed-machine.delete';
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
-            expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.delete' && typeof node.props.onPress === 'function')).not.toHaveLength(0);
+            expect(screen.tree.findAll(node => node.props?.testID === deleteButton && typeof node.props.onPress === 'function')).not.toHaveLength(0);
         });
-        const remove = screen.tree.findAll(node => node.props?.testID === 'managed-machine.delete' && typeof node.props.onPress === 'function')[0];
+        const remove = screen.tree.findAll(node => node.props?.testID === deleteButton && typeof node.props.onPress === 'function')[0];
         expect(remove).toBeDefined();
         expect(remove?.props.disabled).not.toBe(true);
         reviewingDelete = true;
@@ -2490,7 +2510,7 @@ describe('managed Machine detail', () => {
         // The review opens in place under the receipt that holds Delete…, and names who has access and who is using it.
         const aside = screen.findByTestId('managed-machine.detail.receipt-aside');
         expect(aside?.findAll(node => node.props?.testID === 'managed-machine.delete-review').length).toBeGreaterThan(0);
-        expect(aside?.findAll(node => node.props?.testID === 'managed-machine.delete-audience').length).toBeGreaterThan(0);
+        if (machine.enrolledMachineId) expect(aside?.findAll(node => node.props?.testID === 'managed-machine.delete-audience').length).toBeGreaterThan(0);
         // The decision is one closing button row: the button names it, so no row repeats "Delete machine".
         expect(screen.findByTestId('managed-machine.delete-decision')).not.toBeNull();
         expect(screen.findByTestId('managed-machine.delete-decision.cancel')).not.toBeNull();

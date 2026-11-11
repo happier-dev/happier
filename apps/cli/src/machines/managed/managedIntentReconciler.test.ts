@@ -2435,6 +2435,20 @@ describe('managed native intent through the accepted Action', () => {
             ...(ending === 'confirmed' ? { result: { kind: 'confirmed' }, observation: { availability: 'absent' } }
                 : { result: { kind: 'unknown', code: 'native_request_failed' } }) });
     });
+    it('deletes a canceled acquisition only after recovering its exact native resource from correlation', async () => {
+        const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, true);
+        test.setMachine({ creationState: 'canceled', allocation: 'may-exist', resource: undefined,
+            nativeOperationRef: undefined, enrolledMachineId: undefined,
+            cleanup: { disposition: 'pending', reason: 'creation_canceled' } });
+        await expect(test.run()).resolves.toMatchObject({ kind: 'accepted', managedId: 'managed' });
+        expect(test.effects).toEqual(['reconcile', 'destroy']);
+        expect(test.nativeInputs[0]).toMatchObject({ correlation: {
+            managedId: 'managed', requestId: 'control', launch: {},
+        } });
+        expect(test.nativeInputs[1]).toMatchObject({ resource: {} });
+        expect(test.readMachine()).toMatchObject({ allocation: 'confirmed-absent', resource: { value: {} },
+            observation: { availability: 'absent' } });
+    });
     it.each(['active', 'canceled'] as const)('deletes proven-owned pending native attachments from an %s row without a Machine id', async creationState => {
         const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, true);
         test.setMachine({ creationState, allocation: 'may-exist', resource: undefined, enrolledMachineId: undefined,

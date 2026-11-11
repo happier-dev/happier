@@ -822,6 +822,7 @@ export function ManagedMachineSections(props: SectionProps) {
                 buildManagedMachineConfigurationRoute({ serverId: props.serverId, provisioner: buildQualifiedPluginContributionKey(machine.launch.provider),
                     ...(machine.controller ? { controller: machine.controller } : {}),
                     ...(machine.preset ? { presetId: machine.preset.id } : {}) }) as never) } : {}),
+            ...(canMutate && currentControllerAvailable ? { deleteNow: reviewDependencies } : {}),
             ...(canMutate && currentControllerAvailable && machine.creationState === 'active'
                 && machine.submittedNativeEffect?.intent === 'delete' ? { tryAgain: reviewDependencies } : {}),
             ...(canMutate && props.binding?.accountId === machine.custodianAccountId ? {
