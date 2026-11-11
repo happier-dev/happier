@@ -80,7 +80,10 @@ type PopoverLayoutProps = Omit<PopoverRenderProps, 'requestClose'>;
 
 const RECT_UPDATE_TOLERANCE = 1;
 const NATIVE_PORTAL_SHADOW_OUTSET = 16;
-const TOP_PLACED_CONTENT_STYLE = { justifyContent: 'flex-end' } as const satisfies ViewStyle;
+// A popover placed above its anchor hangs its content from the box's bottom edge (a gap above the anchor) through an
+// auto top margin. Unlike end-aligning the box's content, an auto margin takes no negative room: content taller
+// than its box starts at the box's top and never rises past it (QA-B3 r173, web 1280×577).
+const TOP_PLACED_CONTENT_STYLE = { marginTop: 'auto' } as const satisfies ViewStyle;
 
 /**
  * Width bounds of a content-sized popover (`portal.sizeToContent`): wide enough for a row's title
@@ -1269,12 +1272,16 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
             // panel spans its boundary from the boundary's edge, so a root edge off the screen placed it out of
             // sight with its backdrop live (SESSION-PHONE 21:50). A root the screen does not show leaves no room:
             // the popover stays unplaced (and inert) rather than open where nobody can see it.
+            // A boundary measured in window space (web, or native without a portal root) gets the same rule: a
+            // boundary reaching past a short window gave the docked composer's engine picker its 420 cap as room,
+            // and its option rail started above the window (QA-B3 r173, web 1280×577).
             const portalRootWindowRect = portalRootNode ? await measureInWindow(portalRootNode) : null;
             if (!isMountedRef.current) return false;
             const boundaryRect: WindowRect = (() => {
-                if (!portalRootWindowRect) return unoccludedBoundary;
-                const screenTop = safeAreaTop - portalRootWindowRect.y;
-                const screenLeft = -portalRootWindowRect.x;
+                const screenOrigin = portalRootNode ? portalRootWindowRect : { x: 0, y: 0 };
+                if (!screenOrigin) return unoccludedBoundary;
+                const screenTop = safeAreaTop - screenOrigin.y;
+                const screenLeft = -screenOrigin.x;
                 const left = Math.max(unoccludedBoundary.x, screenLeft);
                 const top = Math.max(unoccludedBoundary.y, screenTop);
                 const right = Math.min(unoccludedBoundary.x + unoccludedBoundary.width, screenLeft + windowWidth);
@@ -2179,9 +2186,6 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
                     placementStyle,
                     paddingStyle,
                     containerStyle,
-                    // Placed above its anchor, the box ends a gap above the anchor and its content hangs from that
-                    // edge: shorter content never sits at the top of the room (native QA r3n, Search "This Home").
-                    shownPlacement === 'top' ? TOP_PLACED_CONTENT_STYLE : null,
                     nativePortalShadowPaddingStyle,
                     // A content-sized popover carries its own (narrower) bounds in `placementStyle`.
                     typeof placementStyle.maxWidth === 'number' ? null : { maxWidth: contentContainerMaxWidth },
@@ -2249,6 +2253,8 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
                                 disabled={portalOpacity === 0}
                                 kind="popover"
                                 direction={popoverMotionDirection}
+                                // Placed above its anchor, the content hangs from the box's bottom edge (native QA r3n).
+                                style={shownPlacement === 'top' ? TOP_PLACED_CONTENT_STYLE : undefined}
                                 {...(props.passive ? { pointerEvents: 'none' as const } : {})}
                             >
                                 {renderedChildren}
@@ -2261,6 +2267,7 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
                         disabled={portalOpacity === 0}
                         kind="popover"
                         direction={popoverMotionDirection}
+                        style={shownPlacement === 'top' ? TOP_PLACED_CONTENT_STYLE : undefined}
                         // A popover's content stands on floating glass: native moves it by transform alone.
                         material
                         {...(props.passive ? { pointerEvents: 'none' as const } : {})}

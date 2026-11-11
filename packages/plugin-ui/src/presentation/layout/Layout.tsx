@@ -1,9 +1,18 @@
 import { Children, cloneElement, createContext, Fragment, isValidElement, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import {
+  Platform,
   ScrollView,
   View,
   type ViewStyle,
 } from 'react-native';
+
+/**
+ * A drag of the content lets the keyboard go (following the finger on iOS), so a form opened with a field focused
+ * never hides the rest of itself. Web keeps focus while scrolling.
+ */
+function scrollKeyboardDismissMode(): 'interactive' | 'on-drag' | undefined {
+  return Platform.OS === 'ios' ? 'interactive' : Platform.OS === 'web' ? undefined : 'on-drag';
+}
 
 import type {
   HappierAlignment,
@@ -188,6 +197,7 @@ export function HappierScrollArea({
   ...scrollProps
 }: HappierScrollAreaProps) {
   const scrollSourceRef = useRef<ScrollView | null>(null);
+  const dismissMode = scrollKeyboardDismissMode();
   const host = useOptionalPluginUiPresentationHost();
   const pageChrome = useHappierPageChrome();
   const columnMaxWidthPx = scrollProps.horizontal === true ? undefined : pageChrome?.columnMaxWidthPx;
@@ -263,6 +273,7 @@ export function HappierScrollArea({
         style={style}
         contentContainerStyle={[insetStyle, contentContainerStyle]}
         keyboardShouldPersistTaps={keyboardShouldPersistTaps}
+        {...(dismissMode === undefined ? {} : { keyboardDismissMode: dismissMode })}
       >
         {head === null ? null : column(<View onLayout={(event) => { leadHeightRef.current = event.nativeEvent.layout.height; }}>{head.lead}</View>)}
         {head === null ? null : (
