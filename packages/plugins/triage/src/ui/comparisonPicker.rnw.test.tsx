@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
+import { flushSync } from 'react-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createPluginClientTestkit, createPluginUiTestkit, createSurfaceContextFixture, type PluginClientTestkit, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -31,7 +32,7 @@ afterEach(async () => {
   for (const client of clients.splice(0)) await client.dispose();
 });
 
-async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIdentity?: boolean; skipSelect?: boolean; paged?: boolean; onGet?: () => void }> = {}) {
+async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIdentity?: boolean; skipSelect?: boolean; paged?: boolean; onGet?: () => void; closeOnSettle?: boolean }> = {}) {
   const native = createTriageSourceV1Fixture();
   const source = native.configuredInstance.instance.source;
   const { collections, control } = createTestkitCorpusCollections();
@@ -54,10 +55,19 @@ async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIden
   const reads = { scans: 0, details: 0 };
   const sharedScope = createTriageEphemeralSharedScopeFixture();
   let published: PluginUiContextEnrichmentV1 | null = null;
+  let closeAuthor = () => {};
+  function AuthorLifetime({ children }: { children: React.ReactNode }) {
+    const [open, setOpen] = React.useState(true);
+    React.useLayoutEffect(() => { closeAuthor = () => setOpen(false); }, []);
+    return open ? children : null;
+  }
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({ identity: { instanceId: 'comparison-picker', mountNonce: 'comparison-picker-mount' },
-      authorPlugin: { id: 'happier.triage', version: '0.0.0' }, surface: renderSurface,
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' }, surface: context => {
+        const rendered = renderSurface(context) as React.ReactElement<{ children: React.ReactNode }>;
+        return React.cloneElement(rendered, {}, <AuthorLifetime>{rendered.props.children}</AuthorLifetime>);
+      },
       surfaceContext: createSurfaceContextFixture({ targetedContributions: {
         target: { pluginId: 'happier.triage', occurrenceId: 'triage-current', sourceCustody: { kind: 'development', registeredRootId: 'triage' } },
         points: [{ pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocols: [{ protocol,
@@ -99,7 +109,15 @@ async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIden
           return TriageGetResultV1Schema.parse({ ...result, comparisonSource: comparison,
             localRef: options.wrongIdentity ? { ...result.localRef, entryId: 'someone-else' } : result.localRef });
         },
-        settleEphemeralInput: ({ settlement }) => { settlements.push(settlement); },
+        settleEphemeralInput: async ({ settlement, signal }) => {
+          settlements.push(settlement);
+          // Closing the modal unmounts its author subtree while the host acknowledges the finite write.
+          if (options.closeOnSettle) {
+            flushSync(() => closeAuthor());
+            // The native host rejects a withdrawn request before returning its acknowledgement.
+            signal.throwIfAborted();
+          }
+        },
       },
     });
   });
@@ -141,6 +159,12 @@ async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIden
 }
 
 describe('mounted Triage comparison picker', () => {
+  it('acknowledges an agent choice after the host closes its picker', async () => {
+    const { settlements, comparison, native, invoke } = await mountPicker({ skipSelect: true, closeOnSettle: true });
+    expect(await invoke({ kind: 'attachEntry', entryRef: native.detailInput.observation.entryRef }))
+      .toEqual({ status: 'applied' });
+    expect(settlements).toEqual([{ kind: 'completed', input: comparison }]);
+  });
   it('keeps the opener unchanged on cancellation and permits a later choice', async () => {
     const controller = new AbortController();
     let firstRead = true;

@@ -144,23 +144,25 @@ export const SessionScmReviewDetailsView = React.memo(
     const comparison = useSessionScmReviewComparison(props.sessionId, props.serverId, props.target?.comparison, props.active !== false);
     const target = React.useMemo(() => comparison && !props.target?.comparison
       ? { ...props.target, comparison } : props.target, [comparison, props.target]);
-    if (
-      comparison &&
+    const reviewScope = useWorkspaceScopeForSession(props.sessionId, props.serverId);
+    return (
+      <InputTypePickerHostProvider enabled={props.active !== false} requiresPluginTypes={false} sessionId={props.sessionId} serverId={props.serverId}
+        contextKey={JSON.stringify([props.serverId, props.sessionId, reviewScope?.machineId, reviewScope?.rootPath])}>
+      {comparison &&
       resolveFilesComparisonPresentation(comparison, {
         showTurnViewToggle: false,
         showTurnAgentReportedViewToggle: false,
         showTurnCheckpointViewToggle: false,
         showSessionViewToggle: false,
-      }).kind === 'captured'
-    )
-      return (
+      }).kind === 'captured' ? (
         <SessionCapturedScmReviewDetailsView
           {...props}
           target={target}
           comparison={comparison}
         />
-      );
-    return <SessionWorkingScmReviewDetailsView {...props} target={target} />;
+      ) : <SessionWorkingScmReviewDetailsView {...props} target={target} />}
+      </InputTypePickerHostProvider>
+    );
   },
 );
 
@@ -971,8 +973,6 @@ const SessionWorkingScmReviewDetailsView = React.memo(
     };
 
     return (
-      <InputTypePickerHostProvider enabled={props.active !== false} requiresPluginTypes={false} sessionId={props.sessionId} serverId={props.serverId}
-        contextKey={JSON.stringify([props.serverId, props.sessionId, reviewScope?.machineId, reviewScope?.rootPath])}>
       <WorkspaceScmReviewBody
         activeReviewFile={activeReviewFile}
         comparison={shownComparison}
@@ -1045,7 +1045,6 @@ const SessionWorkingScmReviewDetailsView = React.memo(
           />
         )}
       />
-      </InputTypePickerHostProvider>
     );
   },
 );

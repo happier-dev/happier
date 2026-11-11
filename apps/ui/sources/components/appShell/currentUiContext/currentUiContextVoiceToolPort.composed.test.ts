@@ -5,6 +5,7 @@ import { renderScreen } from '@/dev/testkit';
 import { createHomeGovernanceHarness, createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { ModalProvider, useOptionalModal } from '@/modal';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getStorage } from '@/sync/domains/state/storage';
@@ -62,7 +63,8 @@ import { createPluginUiTranslationRuntime } from '@/sync/domains/plugins/ui/i18n
 import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import { SOCKET_RPC_EVENTS, SocketRpcCancellationPayloadSchema, SocketRpcRequestIdSchema } from '@happier-dev/protocol/socketRpc';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import type { ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 
 // Daemon replies are an external Socket boundary. Home selection, Account
 // mode, machine transport, mediation policy and issuance/cancellation stay real.
@@ -731,9 +733,11 @@ describe('current UI context Voice tool port', () => {
         actionSchemasByQualifiedId.set(`${ACTION_ID.pluginId}/${ACTION_ID.localId}`, { inputSchema: {
             type: 'object', properties: { ticket: { type: 'string' }, sessionId: { type: 'string' } }, required: ['ticket'], additionalProperties: false,
         } });
-        const schemaRead = daemonReply.getMockImplementation()!;
-        daemonReply.mockImplementation(async request => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE
-            ? { ok: true, result: { applied: true } } : schemaRead(request));
+        const effects = vi.fn(async (_input: unknown, _context: Readonly<{ invocation: ExternalActionRequesterInvocationV1 }>) => ({ applied: true }));
+        await answerExternalActionAccountForHome(homes, actionHomeId, {
+            actionId: 'action.invoke', machineId: 'machine-actions', tokenEpoch: 0, requesterInvocation: 'required',
+            execute: effects,
+        });
         const port = createCurrentUiContextVoiceToolPort({
             reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
             readProjection: () => projection, readNavigationBinding: () => null,
@@ -750,7 +754,6 @@ describe('current UI context Voice tool port', () => {
             action: ACTION_ID, input: operands, signal: controller.signal,
             spokenActionRequest: { actionRequestId: 'daemon-person-request', turnOrigin: 'person', playHostText },
         }));
-        const effects = () => daemonReply.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
         const tapped = new Promise<'tap'>(resolve => { onVisibleVoiceConfirmation = () => resolve('tap'); });
         let pending!: Promise<string>;
         await act(async () => { pending = invoke(); });
@@ -759,15 +762,17 @@ describe('current UI context Voice tool port', () => {
             expect(result).not.toBe('tap');
             if (runtimeShape === 'retired') {
                 expect(result).toMatchObject({ ok: false });
-                expect(effects()).toHaveLength(0);
+                expect(effects).not.toHaveBeenCalled();
             } else {
                 expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { applied: true } });
-                expect(effects()).toHaveLength(1);
+                expect(effects).toHaveBeenCalledOnce();
                 if (runtimeShape === 'native' || runtimeShape === 'session') {
                     expect(playHostText).toHaveBeenCalledWith(expect.objectContaining({ text: 'Confirm ticket creation' }));
                 }
-                expect(effects()[0]![0].payload).toMatchObject({ input: operands,
-                    expectedContributorOccurrenceId: 'acme-triage-occurrence-27', presentUserIntent: 'confirmed' });
+                expect(effects.mock.calls[0]![0]).toMatchObject({ action: ACTION_ID, input: operands,
+                    expectedContributorOccurrenceId: 'acme-triage-occurrence-27' });
+                expect(effects.mock.calls[0]![1].invocation).toMatchObject({ surface: 'voice',
+                    presentUserConfirmation: { actionId: 'action.invoke', target: { kind: 'machine', machineId: 'machine-actions' } } });
                 if (runtimeShape === 'session') {
                     // A Session operand must not re-enter the dispatcher and
                     // normalize the same operation before its inner read-back.
@@ -2740,14 +2745,22 @@ describe('current UI context Voice tool port', () => {
             throw new Error('daemon Action RPC did not start');
         };
         let observedSignal: AbortSignal | undefined;
-        daemonReply.mockReset();
-        daemonReply.mockImplementation((input: Readonly<{ signal?: AbortSignal }>) => (
-            new Promise<Reply>((resolve) => {
-                observedSignal = input.signal;
-                resolveRpc = resolve;
-                rpcStarted();
-            })
-        ));
+        await answerExternalActionAccountForHome(homes, actionHomeId, {
+            actionId: 'action.invoke', machineId: 'machine-actions', tokenEpoch: 0, requesterInvocation: 'required',
+            // Native host commands use the Home's private requester carrier.
+            // Only its network response is simulated; custody and crypto stay real.
+            execute: async (_input, context) => {
+                observedSignal = context.signal ?? undefined;
+                const reply = await new Promise<Reply>((resolve, reject) => {
+                    resolveRpc = resolve;
+                    context.signal?.addEventListener('abort', () => reject(new DOMException('Request aborted', 'AbortError')), { once: true });
+                    rpcStarted();
+                });
+                return reply.ok ? reply.result : reply;
+            },
+            failure: result => result && typeof result === 'object' && 'ok' in result && result.ok === false
+                && 'code' in result && typeof result.code === 'string' ? { errorCode: result.code, error: result.code } : null,
+        });
         const projection = createDaemonActionProjection({ dangerLevel: 'writesRemote' });
         const port = createCurrentUiContextVoiceToolPort({
             reader: {
@@ -2762,7 +2775,7 @@ describe('current UI context Voice tool port', () => {
         let pending!: Promise<CurrentUiContextVoiceInvocationOutcome>;
         await act(async () => { pending = requireCommandInvoker(port)({ commandId: COMMAND_ID, signal: attempt.signal }); });
         await vi.waitFor(() => expect(modalScreen.findByTestId('app-shell-confirmation-confirm')).not.toBeNull());
-        expect(daemonRequests).toEqual([]);
+        expect(homes.requestsFor('/v1/actions/action.invoke')).toEqual([]);
         await modalScreen.pressByTestIdAsync('app-shell-confirmation-confirm');
         await rpcStartedPromise;
         current = null;
@@ -2780,16 +2793,7 @@ describe('current UI context Voice tool port', () => {
         await expect(pending).resolves.toEqual(cancellation === 'caller cancellation'
             ? { ok: false, code: 'outcome_unknown' }
             : { ok: true, result: { ticketId: 'T-126' } });
-        const calls = transportSockets.flatMap(socket => vi.mocked(socket.emitWithAck).mock.calls);
-        const dispatched = calls.find(([event, payload]) => event === SOCKET_RPC_EVENTS.CALL
-            && payload && typeof payload === 'object' && 'method' in payload
-            && payload.method === `machine-actions:${RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE}`);
-        expect(dispatched).toBeDefined();
-        const requestId = SocketRpcRequestIdSchema.parse(dispatched?.[1]?.requestId);
-        const cancellations = transportSockets.flatMap(socket => vi.mocked(socket.emit).mock.calls)
-            .filter(([event]) => event === SOCKET_RPC_EVENTS.CANCEL)
-            .map(([, payload]) => SocketRpcCancellationPayloadSchema.parse(payload));
-        expect(cancellations.map(receipt => receipt.requestId)).toEqual(cancellation === 'caller cancellation' ? [requestId] : []);
+        expect(homes.requestsFor('/v1/actions/action.invoke')).toHaveLength(1);
     });
 
     it.each(['action', 'command'] as const)('admits a Session-scoped client %s using only the host current Session binding', async (entryPoint) => {
@@ -3028,7 +3032,7 @@ describe('current UI context Voice tool port', () => {
             isCurrent: () => modalOpen,
         });
         const handler = vi.fn(async () => {
-            await carrier.api.settleEphemeralInput({ kind: 'completed', input: { pullRequestNumber: 63 } }, { signal: selectionAttempt.signal });
+            await carrier.api.settleEphemeralInput({ kind: 'completed', input: { pullRequestNumber: 63 } }, { signal: attempt.signal });
             return { status: 'applied' };
         });
         const fixture = createCurrentUiClientActionFixture({ handler });

@@ -11,7 +11,7 @@ import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializations
     PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema,
     PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE, PluginAccountAvailabilityIntentReadResponseV1Schema,
     PluginMachineMaterializationV1Schema } from '@happier-dev/protocol/plugins/availability';
-import { createMachineFixture, flushHookEffects } from '@/dev/testkit';
+import { createMachineFixture, createSessionFixture, flushHookEffects } from '@/dev/testkit';
 import { renderWithAppProviders } from '@/dev/testkit/render/renderWithAppProviders';
 import { createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
@@ -528,7 +528,7 @@ it('refreshes a restored source-not-ready origin when its surface is presented a
     }
 });
 
-it('keeps a closed comparison picker cold and discovers its current contributed picker when opened', async () => {
+it.each(['picker', 'captured-session'] as const)('keeps a closed %s comparison picker cold and discovers its current contributed picker when opened', async surface => {
     const { accountId, machines, home, requestsByMachineId, manifestReadsByMachineId } = await serveSourceFleet();
     let tree: Awaited<ReturnType<typeof renderWithAppProviders>> | undefined;
     try {
@@ -537,15 +537,23 @@ it('keeps a closed comparison picker cold and discovers its current contributed 
         storage.getState().applyMachines(machines, true, { sourceServerId: serverId });
         observeMachinePresenceForTest({ serverId, accountId }, machines.map(machine => machine.id));
         const machineId = machines[0]!.id;
-        tree = await renderWithAppProviders(<InputTypePickerHostProvider enabled requiresPluginTypes={false}
+        const picker = <InputTypePickerHostProvider enabled requiresPluginTypes={false}
             machineId={machineId} serverId={serverId}>
             <ScmComparisonScopePicker current={{ kind: 'workingTree' }} currentLabel="Working tree" fileCount={null}
                 options={[{ comparison: null, sourceKind: 'pullRequest', group: 'explainOnly', label: 'Pull request',
                     subtitle: 'Select source evidence', fileCount: null }]} onSelect={() => {}} />
-        </InputTypePickerHostProvider>);
+        </InputTypePickerHostProvider>;
+        const { SessionScmReviewDetailsView } = await import('@/components/sessions/files/views/SessionScmReviewDetailsView');
+        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+        const session = createSessionFixture({ id: 'captured-picker-session', serverId, active: true,
+            metadata: { path: '/repo', machineId, host: 'source-fleet', flavor: 'codex' } });
+        storage.setState({ sessions: { ...storage.getState().sessions, [session.id]: session } });
+        tree = await renderWithAppProviders(surface === 'picker' ? picker
+            : <AppPaneProvider><SessionScmReviewDetailsView sessionId={session.id} serverId={serverId}
+                scopeId={`session:${session.id}`} target={{ comparison: { kind: 'session' }, view: 'files' }} /></AppPaneProvider>);
         await flushHookEffects({ cycles: 3 });
         expect([...requestsByMachineId.values()]).toHaveLength(0);
-        const menu = () => tree!.tree.root.findByType(DropdownMenu);
+        const menu = () => tree!.tree.root.find(node => node.type === Reflect.get(ScmComparisonScopePicker, 'type')).findByType(DropdownMenu);
         await act(async () => menu().props.onOpenChange(true));
         await waitForHomeGovernance(async () => {
             await flushHookEffects();

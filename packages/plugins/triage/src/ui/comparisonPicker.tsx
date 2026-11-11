@@ -56,7 +56,8 @@ function useComparisonSelection() {
         signal: controller.signal });
       if (controller.signal.aborted) return { status: 'unavailable' };
       if (comparison?.kind !== 'pullRequest') { setFailed(true); return { status: 'rejected' }; }
-      await host.settleEphemeralInput({ kind: 'completed', input: comparison }, { signal: controller.signal });
+      // The finite acknowledgement belongs to the caller; closing its picker only stops acquisition.
+      await host.settleEphemeralInput({ kind: 'completed', input: comparison }, { signal });
       return { status: 'applied' };
     } catch {
       if (!controller.signal.aborted) setFailed(true);
