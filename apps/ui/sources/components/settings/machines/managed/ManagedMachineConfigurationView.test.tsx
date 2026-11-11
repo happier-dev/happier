@@ -1,6 +1,7 @@
 import {
   createManagedCpuOptionsFixture,
   createMachineProvisionerOptionsFixture,
+  createDelegatedManagedPresetFixture,
   createManagedControllerMachineFixture as createMachineFixture,
 } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import * as React from 'react';
@@ -28,6 +29,8 @@ import {
 import { findAllHostTestInstances } from '@/dev/testkit/render/renderScreen';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import tweetnacl from 'tweetnacl';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -233,6 +236,137 @@ const provisioner: MachineProvisionersListResultV1['provisioners'][number] = {
 };
 
 describe('mounted managed configurator', () => {
+  it('projects the pool owner answer before Use without deciding availability again', async () => {
+    const { isManagedPoolUnavailableAtReview } = await import('./ManagedMachineConfigurationView');
+    expect(isManagedPoolUnavailableAtReview({ availability: { state: 'known', connectedCount: 0, enabledCount: 1 } }, true)).toBe(true);
+    expect(isManagedPoolUnavailableAtReview({ availability: { state: 'known', connectedCount: 1, enabledCount: 1 } }, true)).toBe(false);
+    expect(isManagedPoolUnavailableAtReview({ availability: { state: 'unknown' } }, true)).toBe(false);
+    expect(isManagedPoolUnavailableAtReview({ availability: { state: 'known', connectedCount: 0, enabledCount: 1 } }, false)).toBe(false);
+  });
+
+  it.each(['account', 'team', 'saved-account'] as const)('authors and saves a Devcontainer preset without a controller, native tools, or an effect digest (%s)', async ownerKind => {
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const { DEVCONTAINER_PLUGIN } = await import('../../../../../../../packages/plugins/devcontainer/src/manifest');
+    const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+    const { installBundledPluginUiDeclarationsForTests } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
+    const manifest = PluginPortableReleaseManifestV1Schema.parse(DEVCONTAINER_PLUGIN.manifest);
+    onTestFinished(installBundledPluginUiDeclarationsForTests([{ pluginId: manifest.id, pluginVersion: manifest.version,
+      packageName: '@happier-dev/plugins-devcontainer', displayName: 'Docker container Machines', hasMachineProvisioners: true,
+      entriesById: {}, normalizedManifest: manifest }]));
+    const homeId = `srv_devcontainer_author_${ownerKind}`;
+    const serverId = await harness.addHome({ name: 'Compute', serverUrl: `https://devcontainer-author-${ownerKind}.example.test`,
+      serverIdentityId: homeId, accountId: 'owner', currentAccount: true,
+      teamsEnabled: ownerKind === 'team', machinePoolsEnabled: ownerKind === 'team' });
+    const poolId = '1a1bf092-44af-49c1-9af3-90d8c6b0f102';
+    if (ownerKind === 'team') {
+      const { teamSummaryFixture, teamCapabilitiesFixture } = await import('@/dev/testkit/fixtures/teamFixtures');
+      const { TeamsPageV1Schema, TeamSummaryV1Schema } = await import('@happier-dev/protocol/teams');
+      const team = TeamSummaryV1Schema.parse(teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageSettings: true }) }));
+      harness.answer(serverId, '/v1/teams/list', { body: TeamsPageV1Schema.parse({ items: [team], nextCursor: null }) });
+      harness.answer(serverId, '/v1/teams/get', { body: team });
+      const { machinePoolActionEndpointPathV1 } = await import('@happier-dev/protocol/machines/pools/actionsV1');
+      const { MachinePoolListOutputV1Schema } = await import('@happier-dev/protocol/machines/pools/v1');
+      harness.answer(serverId, machinePoolActionEndpointPathV1('machines.pools.list'), { body: MachinePoolListOutputV1Schema.parse({ pools: [{
+        pool: { id: poolId, name: 'Build computers', description: null, revision: 1, createdAt: 1, updatedAt: 1,
+          audience: { kind: 'team', teamId: team.id }, members: [] }, availability: { state: 'unknown' },
+        access: { canManage: true, canResolve: true, canViewMembers: true },
+      }] }) });
+    }
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
+    const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } =
+      await import('@/sync/domains/plugins/availability/projection');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' };
+    replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    const declarations = await readPluginAccountAvailability(scope).ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
+    if (declarations.kind !== 'available') throw new Error('Expected the bundled provisioner declaration');
+    const { projectAccountManagedProvisioners } = await import('@happier-dev/cli-common/machines/managed/provisioners');
+    const selected = projectAccountManagedProvisioners(declarations.declarations).find(row => row.contribution.pluginId === manifest.id);
+    if (!selected) throw new Error('Expected the real Devcontainer descriptor');
+    harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      return { body: { v: 1, actionId: request.actionId, requestId: request.requestId,
+        execution: { ok: true, result: { provisioners: [selected] } } } };
+    } });
+    const { ManagedMachinePresetCreateInputV1Schema, ManagedMachinePresetUpdateInputV1Schema, ManagedMachinePresetV1Schema,
+      PresetMutationResultV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+    let retained: ReturnType<typeof ManagedMachinePresetV1Schema.parse> | undefined;
+    if (ownerKind === 'saved-account') {
+      const { readDevcontainerEffectReview } = await import('../../../../../../../packages/plugins/devcontainer/src/machine/effectReview');
+      // The earlier save path stored the native review's launch, including its real derived digest.
+      // Only image inspection is a process boundary; no controller or installed native tool is used by the editor.
+      const reviewed = await readDevcontainerEffectReview({ docker: { kind: 'managedDependency', id: { pluginId: manifest.id, localId: 'docker' } },
+        signal: new AbortController().signal, environment: {}, exec: { run: async () => ({
+          termination: { requestedBy: { kind: 'none' }, observed: { kind: 'exit', exitCode: 0 } },
+          stdout: new TextEncoder().encode(JSON.stringify([{ Id: 'sha256:captured-image', Config: {} }])),
+          stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false,
+        }) } }, { runtime: 'docker', configuration: { kind: 'image', image: 'ubuntu:22.04' } });
+      retained = ManagedMachinePresetV1Schema.parse({ id: 'existing-container', homeId, revision: 3,
+        name: 'Development container', owner: { kind: 'account', accountId: 'owner' },
+        launch: { provider: selected.contribution, schemaVersion: selected.descriptor.schemaVersion, name: 'Development container',
+          choices: { ...reviewed.launch, reviewedEffectDigest: reviewed.effectReview.reviewedEffectDigest } } });
+      harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: retained } });
+    }
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(selected.contribution)} presetId={retained?.id} presetOnly />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:configuration.image'), screen.getTextContent()).not.toBeNull());
+      if (!retained) expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
+      await act(async () => screen.changeTextByTestId('managed-config.field:configuration.image', 'ubuntu:24.04'));
+      if (screen.findByTestId('managed-config.advanced')) await screen.pressByTestIdAsync('managed-config.advanced');
+      await act(async () => screen.changeTextByTestId('managed-config.field:configuration.setupScript', 'apt-get update'));
+      await act(async () => screen.changeTextByTestId('managed-config.field:workspaceFolder', '/home/owner/projects/website'));
+      await act(async () => screen.changeTextByTestId('managed-config.setup.setup.input', 'echo ready'));
+      if (ownerKind === 'team') {
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const menu = (testID: string) => screen.tree.findAllByType(DropdownMenu).find(node => node.props.itemTrigger?.itemProps?.testID === testID);
+        await waitForHomeGovernance(() => expect(menu('managed-config.audience')?.props.items,
+          JSON.stringify(harness.requests.filter(request => request.path.includes('teams') || request.path.includes('features')).map(request => ({ path: request.path, input: request.input }))))
+          .toContainEqual(expect.objectContaining({ id: 'team-1' })));
+        await act(async () => menu('managed-config.audience')?.props.onSelect('team-1'));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.controller-target:pool')?.props.disabled).toBe(false));
+        // A Team preset needs an authored target; authoring never resolves the empty pool to a controller.
+        expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync('managed-config.controller-target:pool');
+        await waitForHomeGovernance(() => expect(menu('managed-config.controller-pool')?.props.items).toContainEqual(expect.objectContaining({ id: poolId })));
+        await act(async () => menu('managed-config.controller-pool')?.props.onSelect(poolId));
+      }
+      const choices = { runtime: 'docker', workspaceFolder: '/home/owner/projects/website',
+        configuration: { kind: 'image', image: 'ubuntu:24.04', setupScript: 'apt-get update' } };
+      const setup = MachineSetupV1Schema.parse({ scripts: [{ body: 'echo ready' }] });
+      const savePath = retained ? '/v1/machines/presets/update' : '/v1/machines/presets/create';
+      harness.answer(serverId, savePath, { select: value => ({
+        body: PresetMutationResultV1Schema.parse({ kind: 'saved', preset: {
+          ...(retained ? { ...retained, launch: { ...retained.launch, choices }, setup }
+            : ManagedMachinePresetCreateInputV1Schema.parse(value)), revision: retained ? retained.revision + 1 : 1,
+        } }),
+      }) });
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+      expect(screen.findByTestId('managed-config.field:reviewedEffectDigest')).toBeNull();
+      expect(harness.requestsFor(savePath)).toHaveLength(0);
+      await screen.pressByTestIdAsync('managed-config.create');
+      await waitForHomeGovernance(() => expect(harness.requestsFor(savePath)).toHaveLength(1));
+      await waitForHomeGovernance(() => expect(route.replace).toHaveBeenCalled());
+      const request = harness.requestsFor(savePath)[0]?.input;
+      const saved = retained ? ManagedMachinePresetUpdateInputV1Schema.parse(request).patch : ManagedMachinePresetCreateInputV1Schema.parse(request);
+      if (!retained) expect(saved).toHaveProperty('owner', ownerKind === 'team' ? { kind: 'team', teamId: 'team-1' } : { kind: 'account', accountId: 'owner' });
+      expect(saved).toMatchObject({ setup,
+        launch: { provider: selected.contribution, schemaVersion: selected.descriptor.schemaVersion, choices } });
+      if (retained) expect(saved).toHaveProperty('controller', null);
+      else expect(saved).not.toHaveProperty('controller');
+      expect(saved.launch?.choices).toEqual(choices);
+      if (ownerKind === 'team') expect(saved).toHaveProperty('controllerPoolId', poolId);
+      else if (!retained) expect(saved).not.toHaveProperty('controllerPoolId');
+      expect(saved).not.toHaveProperty('launch.choices.reviewedEffectDigest');
+      expect(saved).not.toHaveProperty('effectReview');
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.check')).toHaveLength(0);
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(0);
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+      const { machinePoolActionEndpointPathV1 } = await import('@happier-dev/protocol/machines/pools/actionsV1');
+      expect(harness.requestsFor(machinePoolActionEndpointPathV1('machines.pools.resolve'))).toHaveLength(0);
+      expect(nativeBoundary.rpc).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
+  });
   it.each([false, true])('requires saved recipe inputs before creation or composer use (composer: %s)', async composer => {
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: `https://recipe-inputs-${composer}.example.test`,
       serverIdentityId: 'srv_recipe_inputs', accountId: 'owner', currentAccount: true });

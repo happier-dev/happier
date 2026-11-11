@@ -69,7 +69,8 @@ import { readMachineSetupRecipeInputState } from './machineSetupRecipeInputs';
 import { isAuthoritativeScopedSnapshotRefusal } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { ManagedScopeRow } from './ManagedScopeRow';
 import { ManagedPresetControllerSection } from './ManagedPresetControllerSection';
-import { useMachinePoolName } from '@/sync/engine/machines/useMachinePoolProjections';
+import { useMachinePoolName, useMachinePoolView } from '@/sync/engine/machines/useMachinePoolProjections';
+import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { ManagedMachineConfigurator } from './ManagedMachineConfigurator';
 import { ManagedCreationDisabledBanner } from './ManagedMachineStateRow';
 import { useManagedControllerScope } from './useManagedControllerScope';
@@ -95,6 +96,8 @@ import type { ManagedPrerequisiteV1 } from '@happier-dev/protocol/machines/manag
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { formatRetentionDuration } from './managedRetentionPresentation';
 import { presentConnectSheet } from '../../connectedServices/setup/ConnectedServiceSetupModal';
+import { ConnectedServiceMark } from '../../connectedServices/ConnectedServiceMark';
+import { Icon } from '@/components/ui/icons/Icon';
 import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import type { PopoverAnchor } from '@/components/ui/popover/_types';
 import { resolveConnectedServiceSettingsErrorMessage } from '../../connectedServices/connectedServiceSettingsErrors';
@@ -124,6 +127,10 @@ export type ManagedMachineConfigurationViewProps = Readonly<{
 }>;
 const NO_SERVERS: readonly string[] = [];
 const NO_PRESETS: readonly ManagedMachinePresetV1[] = [];
+
+export function isManagedPoolUnavailableAtReview(view: Pick<MachinePoolViewV1, 'availability'> | null, reviewable: boolean): boolean {
+    return reviewable && view?.availability.state === 'known' && view.availability.connectedCount === 0;
+}
 
 export function ManagedMachineConfigurationView(props: ManagedMachineConfigurationViewProps) {
     // "Start from" is chosen above the per-preset draft below, so its own list stays while that draft is re-read.
@@ -317,11 +324,14 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // The account a purpose draws on is named by its service, never by the purpose id.
     const connectedServices = useProjectedConnectedServicesRegistry();
     const localizeServiceText = useProjectedPluginLocalizedTextResolver();
+    const purposeService = React.useCallback((purpose: string) => (provisioner && readDeclaredConnectedAccountPurposeV1({
+        purpose: { consumer: provisioner.contribution, purpose }, projection: presentation.projection,
+        machineProvisionersById: presentation.projection.machineProvisionersById })?.serviceRefs[0]) || undefined,
+    [provisioner, presentation.projection]);
     const purposeAccountTitle = React.useCallback((purpose: string) => {
-        const service = provisioner && readDeclaredConnectedAccountPurposeV1({ purpose: { consumer: provisioner.contribution, purpose },
-            projection: presentation.projection, machineProvisionersById: presentation.projection.machineProvisionersById })?.serviceRefs[0];
+        const service = purposeService(purpose);
         return service ? resolveQualifiedConnectedServiceRegistryDisplayName(connectedServices, service, t, localizeServiceText) : undefined;
-    }, [provisioner, presentation.projection, connectedServices, localizeServiceText]);
+    }, [purposeService, connectedServices, localizeServiceText]);
     const credentialFieldOptions = React.useMemo(() => buildSessionActionFieldOptionsResolver({}), []);
     // The form comes from the catalog occurrence's own options Action. `missing` means the controller's presentation
     // doesn't describe that occurrence (not loaded, or still an earlier one after a plugin reload).
@@ -352,9 +362,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const readSelectorKey = JSON.stringify(readSelectors);
     // The fields show what the read is asked with: the person's values over the provider's declared defaults.
     const fieldInput = React.useMemo<Record<string, unknown>>(() => {
-        const savedChoices = props.presetOnly ? draft?.selected?.launch : undefined;
         let base = draft?.optionsSelectors ? { ...draft.optionsSelectors }
-            : savedChoices && typeof savedChoices === 'object' && !Array.isArray(savedChoices) ? { ...savedChoices }
             : selectors && typeof selectors === 'object' && !Array.isArray(selectors) ? { ...selectors } : {};
         if (draft?.preset) return base;
         // Only declared form fields consume native defaults. Fixed launch facts (for example
@@ -620,7 +628,12 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // computer that manages it. A delegated receipt also uses that label without reading the controller.
     // A pool-backed preset is managed by whichever connected machine in its pool takes it. Its editor names the pool;
     // a delegated review never reads the pool list, so it says "its pool".
+    const poolId = pooledDraft ? draft?.controllerPoolId ?? creationPreset?.controllerPoolId : undefined;
+    const poolView = useMachinePoolView(props.serverId, poolId);
     const poolName = useMachinePoolName(props.serverId, props.presetOnly && pooledDraft ? draft?.controllerPoolId || null : null);
+    // The shared Pool projection already owns the current availability answer. A known zero-connected
+    // pool cannot satisfy Use; show its typed refusal at review instead of waiting for Send to fail.
+    const poolUnavailableAtReview = isManagedPoolUnavailableAtReview(poolView, !props.presetOnly && props.onUse !== undefined && poolId !== undefined);
     const controllerName = pooledDraft ? poolName ?? t('machinePresets.controllerPoolAny') : knownControllerName ?? t('managedMachines.receipt.managingComputer');
     const controllerSentence = !pooledDraft ? controllerName : poolName ? t('machinePresets.controllerPoolIn', { pool: poolName })
         : t('machinePresets.controllerPoolInUnnamed');
@@ -643,6 +656,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         : accountHostUnreadable ? t('common.unavailable')
         : accountHostPending ? t('managedMachines.options.loading', { provider: title })
         : (!catalogPlacementAvailable || (teamId || preset?.owner.kind === 'team') && !pooledDraft && !catalogController) && !delegatedReview ? t('managedMachines.controller.requiredUnnamed')
+        : poolUnavailableAtReview ? t('managedMachines.poolNoMachine')
         : !credentialsReady ? t('managedMachines.credential.choose')
         : !props.presetOnly && accountSettings.settings?.managedMachineCreationEnabled === false ? t('managedMachines.creation.disabledTitle')
         : !accountSettings.settings || !props.presetOnly && accountSettings.settings.managedMachineCreationEnabled !== true ? t(accountSettings.error ? 'common.unavailable' : 'common.loading')
@@ -1076,6 +1090,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 testID={`managed-config.connect:${purpose.purpose}`} title={t(credentialSelections.some(entry =>
                     qualifiedPurposeKey(entry.purpose) === qualifiedPurposeKey(purpose)) ? 'connectedServices.detail.actions.reconnect' : 'managedMachines.add.action.connect')}
                 subtitle={purposeAccountTitle(purpose.purpose)}
+                // It opens the Connect sheet: the service's own mark, or Connect's plug while the service is not named.
+                icon={purposeService(purpose.purpose) ? <ConnectedServiceMark legacyServiceId={null}
+                    pluginId={purposeService(purpose.purpose)!.pluginId} size="card" /> : <Icon name="plug" />}
                 disabled={!catalogPlacementAvailable || !catalogProvisioner || busy || !!preset && !props.presetOnly}
                 onPress={event => { void openAccountSetup(purpose.purpose, resolvePressTriggerAnchor(event)); }} />)}
         </ItemGroup> : null}
