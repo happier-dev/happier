@@ -979,6 +979,32 @@ describe('PermissionRequestCoordinator', () => {
         expect(apply).toHaveBeenCalledTimes(1);
     });
 
+    it.each(['approved_for_session', 'approved_execpolicy_amendment'] as const)(
+        'retains the accepted %s choice when native observation reports approval before its ACK', async decision => {
+        const { coordinator, session } = createHarness();
+        const pending = coordinator.requestDecision(bashRequest);
+        const context = coordinator.getResponseContext(bashRequest.requestId)!;
+        const submitted = { decision, nativeChoice: { requirementId: 'native-requirement', choiceId: 'offered-persistent-choice' } };
+        let observation: Promise<boolean> | undefined;
+        const response = coordinator.completeResponse({ context,
+            completion: { result: submitted, completedRequest: { status: 'approved', decision,
+                extraCompletedFields: { nativeChoice: submitted.nativeChoice } } },
+            acknowledgeDecisionApplication: async () => {
+                observation = coordinator.completeObservedResponse({ context, completion: {
+                    result: { decision: 'approved' }, completedRequest: { status: 'approved', decision: 'approved' },
+                } });
+            },
+        });
+        await expect(response).resolves.toBe(true);
+        await expect(observation).resolves.toBe(true);
+        await expect(pending).resolves.toEqual(submitted);
+        expect(session.agentState.requests?.[bashRequest.requestId]).toBeUndefined();
+        expect(session.agentState.completedRequests?.[bashRequest.requestId]).toMatchObject({
+            status: 'approved', decision, nativeChoice: submitted.nativeChoice,
+        });
+        await coordinator.dispose();
+    });
+
     it.each(['conflict', 'refusal'] as const)('retains the actual observed native decision after application %s', async outcome => {
         const { coordinator, session } = createHarness();
         const pending = coordinator.requestDecision(bashRequest);

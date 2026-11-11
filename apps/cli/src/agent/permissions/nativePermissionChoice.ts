@@ -10,11 +10,20 @@ import { deepEqual } from '@/utils/deterministicJson';
 export function observedPermissionResultMatches(accepted: unknown, observed: unknown): boolean {
     if (!accepted || !observed || typeof accepted !== 'object' || typeof observed !== 'object'
         || Array.isArray(accepted) || Array.isArray(observed)) return deepEqual(accepted, observed);
-    return Object.entries(observed).every(([key, value]) => deepEqual(Reflect.get(accepted, key), value));
+    return Object.entries(observed).every(([key, value]) => {
+        const acceptedValue = Reflect.get(accepted, key);
+        // Native observations report the disposition, not the host's accepted
+        // persistence scope. The acknowledged choice retains that scope.
+        if (key === 'decision' && value === 'approved'
+            && (acceptedValue === 'approved_for_session' || acceptedValue === 'approved_execpolicy_amendment')) return true;
+        return deepEqual(acceptedValue, value);
+    });
 }
 
 /** Preserve the canonical vendor decision payload without the transport's approved/id fields. */
-export function nativePermissionResult(response: PermissionResult): PermissionResult {
+export function nativePermissionResult(response: Pick<PermissionResult,
+    'decision' | 'nativeChoice' | 'mode' | 'allowedTools' | 'updatedPermissions' | 'execPolicyAmendment'
+>): PermissionResult {
     return {
         decision: response.decision,
         ...(response.nativeChoice !== undefined ? { nativeChoice: response.nativeChoice } : {}),
