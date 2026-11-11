@@ -610,6 +610,21 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         }
     });
 
+    it('does not diagnose a reachable Machine as unavailable when declaration admission refuses an Action', async () => {
+        const controller = createBoundPluginSurfaceController({ facts: {
+            ...FACTS, machineDisplayName: 'Studio Mac', daemonReachable: true,
+            daemonInteractionEnabled: false,
+        } });
+        try {
+            const invocation = request('executeAction', { action: 'refresh-index', input: {} });
+            const result = await settlePluginSurfaceHostApiRequest(invocation, () => controller.hostApi.handleRequest(invocation));
+            expect(result).toMatchObject({ kind: 'error', payload: {
+                code: 'unavailable', diagnostics: expect.arrayContaining(['plugin_surface_contributed_action_unavailable']),
+            } });
+            expect(result).not.toHaveProperty('payload.message');
+        } finally { controller.dispose(); }
+    });
+
     it('preserves a failed target read through Action and Resource refusals instead of claiming Machine incapability', async () => {
         let failed = true;
         let pending = true;

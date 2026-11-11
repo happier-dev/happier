@@ -1506,6 +1506,9 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                 ? { sentence: explained.sentence, managePluginId: input.facts.pluginId }
                 : { sentence: explained.sentence };
         }
+        // A reachable daemon can still refuse declaration admission. Its
+        // transport is not the cause of that refusal.
+        if (readActionInputFacts().daemonReachable === true) return undefined;
         const machineId = machineBindingFacts.machineId?.trim();
         if (!machineId) {
             const kind = input.facts.executionOriginSelectionKind;
