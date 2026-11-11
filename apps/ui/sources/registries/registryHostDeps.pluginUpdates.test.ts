@@ -28,6 +28,10 @@ it('checks PL50 installed on a later carrier and exposes its source revision thr
         createMachineFixture({ id: otherMachine, createdAt: 2, activeAt: Date.now() }),
         createMachineFixture({ id: installedMachine, createdAt: 1, activeAt: Date.now() }),
     ] });
+    await account.publishMachines(scope.serverId, [
+        createMachineFixture({ id: otherMachine, createdAt: 2, activeAt: Date.now() }),
+        createMachineFixture({ id: installedMachine, createdAt: 1, activeAt: Date.now() }),
+    ]);
     const reader = createPluginAccountAvailabilityReader({ scope, snapshot: { availabilityCursor: 1, intentReads: [],
         snapshots: [], inventoryComplete: true, materializations: [PluginMachineMaterializationV1Schema.parse({
             serverIdentityId: 'srv_plugin_update_carriers', machineId: installedMachine, materializationId: 'pl50-native',
@@ -44,8 +48,11 @@ it('checks PL50 installed on a later carrier and exposes its source revision thr
     await answerExternalActionAccountForHome(account.home, scope.serverId, {
         machineId: otherMachine, additionalMachines: [{ machineId: installedMachine }],
         actionId: 'registries.updates.check', tokenEpoch: 0, requesterInvocation: 'none',
+        failure: result => result && typeof result === 'object' && '__placementRefusal' in result
+            ? { errorCode: 'machine_unavailable', error: 'External Action placement refused' } : null,
         execute: (input, context) => {
             const filter = REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.updates.check'].parse(input);
+            if (context.target.machineId === otherMachine) return { __placementRefusal: true, errorClass: 'PlacementRefusal', refusalBranch: 'machine_unavailable', requestId: 'd2-live-request' };
             calls.push({ machineId: context.target.machineId, ...(filter.kind ? { kind: filter.kind } : {}) });
             return REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse({ checkedAt: 10,
                 results: context.target.machineId === installedMachine && (!filter.kind || filter.kind === 'plugin')
@@ -56,7 +63,7 @@ it('checks PL50 installed on a later carrier and exposes its source revision thr
     const captured = await captureLazyActionAccountContext(scope.serverId);
     try {
         const port = createUiPromptLibraryArtifactStore(captured.workflowArtifacts, captured).organization!;
-        const host = await createUiRegistryHostV1(captured, port, {});
+        const host = await createUiRegistryHostV1(captured, port, {}, { explicitRefresh: true });
         const result = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse(
             await host.execute('registries.updates.check', {}));
         expect(result.results.find(item => item.kind === 'plugin' && item.key === pluginId)).toMatchObject({ kind: 'plugin', key: pluginId,
@@ -66,7 +73,6 @@ it('checks PL50 installed on a later carrier and exposes its source revision thr
         const view = buildStoreUpdates(rows, result.results, check, hook.getCurrent().entries);
         expect(view.freshness.checked).toBe(1);
         expect(view.sections).toMatchObject([{ kind: 'plugin', entries: [{ state: 'available', to: sourceVersion }] }]);
-        expect(calls.filter(call => call.kind === undefined)).toHaveLength(1);
         expect(calls).toContainEqual({ machineId: installedMachine, kind: 'plugin' });
     } finally { captured.dispose(); }
 });

@@ -198,15 +198,21 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
             // Machine and browser profiles already follow the same per-carrier path.
             const includeExtensions = filter?.kind === undefined || filter.kind === 'browserExtension';
             const includePlugins = filter?.kind === undefined || filter.kind === 'plugin';
-            const checks = await Promise.all([
+            const checks = await Promise.allSettled([
                 checkOnMachine(machineId, filter),
                 ...[...carriers].flatMap(target => [
                     ...(includeExtensions ? [checkOnMachine(target, { ...filter, kind: 'browserExtension' })] : []),
                     ...(includePlugins ? [checkOnMachine(target, { ...filter, kind: 'plugin' })] : []),
                 ]),
             ]);
-            return { checkedAt: checks.reduce((oldest, check) => Math.min(oldest, check.checkedAt), checks[0].checkedAt),
-                results: checks.flatMap(check => check.results) };
+            const successful = checks.flatMap(check => check.status === 'fulfilled' ? [check.value] : []);
+            if (!successful.length) {
+                const failed = checks.find(check => check.status === 'rejected');
+                if (failed?.status === 'rejected') throw failed.reason;
+                throw new RegistryFetchErrorV1({ state: 'unreachable' });
+            }
+            return { checkedAt: successful.reduce((oldest, check) => Math.min(oldest, check.checkedAt), successful[0].checkedAt),
+                results: successful.flatMap(check => check.results) };
         },
         createSourceOnDaemon: async input => {
             account.assertCurrent();context.signal?.throwIfAborted();
