@@ -421,7 +421,10 @@ describe('MessageView Account attribution', () => {
 
     it.each([
         [{ v: 1, kind: 'happierSession', sourceSessionId: 'session-source-a', via: 'mcp' }, 'message.provenanceFrom(source=Lead A)'],
-        [{ v: 1, kind: 'pluginSession', pluginId: 'acme.preview', contributionLocalId: 'inbound', surface: 'unspecified' }, 'message.pluginAttribution(pluginId=acme.preview)'],
+        [{ v: 1, kind: 'pluginSession', pluginId: 'happier.channels', contributionLocalId: 'inbound', surface: 'background',
+            displayNameSnapshot: 'Telegram · Release planning', externalActor: { kind: 'human', displayNameSnapshot: 'Ada' },
+            contentProvenance: 'original' }, 'message.pluginAttributionExternal(sender=Ada,pluginId=Telegram · Release planning)'],
+        [{ v: 1, kind: 'pluginSession', pluginId: 'acme.preview', contributionLocalId: 'inbound', surface: 'unspecified' }, 'message.pluginAttribution(pluginId=message.pluginAttributionSource)'],
         [{ v: 1, kind: 'automation', automationId: 'automation-a', runId: 'run-a' }, 'message.provenanceFrom(source=message.provenanceAutomation)'],
         [{ v: 2, kind: 'workflow_invocation', runId: 'run-a', invocationRecordId: 'invocation-a' }, 'message.provenanceFrom(source=message.provenanceWorkflow)'],
     ] satisfies [SessionMessageProvenance, string][])('attributes %j to its producer', async (provenance, label) => {
@@ -805,7 +808,7 @@ describe('MessageView Account attribution', () => {
         // authenticated Account byline are independent siblings. Either may be
         // absent, but the presence of one must never suppress the other.
         expect(screen.findHostByTestId('transcript-plugin-attribution:actor-message')?.props.accessibilityLabel)
-            .toBe('message.pluginAttribution(pluginId=acme.preview)');
+            .toBe('message.pluginAttribution(pluginId=message.pluginAttributionSource)');
         expect(JSON.stringify(screen.tree.toJSON())).not.toContain('private-account-id');
     });
 

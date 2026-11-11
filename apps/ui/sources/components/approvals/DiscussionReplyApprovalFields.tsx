@@ -43,7 +43,7 @@ export function DiscussionReplyApprovalFields(props: Readonly<{
     const current = reading?.binding === binding && reading.discussionId === discussionId && reading.messageId === messageId
         ? reading : null;
     const destination = current?.destination;
-    const missingName = binding && !current ? t('common.loading') : t('common.unavailable');
+    const missingName = t('common.unavailable');
     const presentation = React.useMemo(() => describeApprovalActionFields({ ...props.request,
         context: destination?.kind !== 'none' && discussionId && messageId ? { discussionReplyDestination: {
             discussionId, messageId, connectionName: destination?.connectionName ?? missingName,

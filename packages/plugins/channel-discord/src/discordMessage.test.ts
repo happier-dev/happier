@@ -22,6 +22,12 @@ function message(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 describe('Discord message parser', () => {
+  it('retains the guild nickname as sender presentation without changing identity', () => {
+    expect(parseDiscordMessageDispatch({ event: 'MESSAGE_CREATE', context,
+      channel: { kind: 'shared', channelId: 'channel-1' },
+      payload: message({ member: { nick: 'Countess Ada' }, author: { id: 'user-1', username: 'ada', global_name: 'Ada Lovelace' } }),
+    })).toMatchObject({ actor: { principalId: 'discord:user:user-1', label: 'Countess Ada' } });
+  });
   it.each(['caption', ''])('projects attachment metadata with content %j without retaining signed URLs', (content) => {
     const parsed = parseDiscordMessageDispatch({
       event: 'MESSAGE_CREATE',

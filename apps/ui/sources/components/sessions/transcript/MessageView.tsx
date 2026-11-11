@@ -195,22 +195,23 @@ function RecoveredHistoryIndicator(props: Readonly<{ message: Message }>) {
  */
 function readPluginMessageAttributionLabel(
   provenance: Readonly<{
-    pluginId: string;
+    displayNameSnapshot?: string;
     externalActor?: Readonly<{ kind: 'human' | 'bot'; displayNameSnapshot?: string }>;
     contentProvenance?: 'original' | 'forwarded' | 'viaBot';
   }>,
 ): string {
   const externalActor = provenance.externalActor;
+  const source = provenance.displayNameSnapshot ?? t('message.pluginAttributionSource');
   if (!externalActor) {
-    return t('message.pluginAttribution', { pluginId: provenance.pluginId });
+    return t('message.pluginAttribution', { pluginId: source });
   }
   const sender = externalActor.displayNameSnapshot
     ?? (externalActor.kind === 'bot'
       ? t('message.pluginAttributionExternalBot')
       : t('message.pluginAttributionExternalSender'));
   return provenance.contentProvenance === 'forwarded'
-    ? t('message.pluginAttributionExternalForwarded', { sender, pluginId: provenance.pluginId })
-    : t('message.pluginAttributionExternal', { sender, pluginId: provenance.pluginId });
+    ? t('message.pluginAttributionExternalForwarded', { sender, pluginId: source })
+    : t('message.pluginAttributionExternal', { sender, pluginId: source });
 }
 
 function MessageProvenanceAttributionLabel(props: Readonly<{

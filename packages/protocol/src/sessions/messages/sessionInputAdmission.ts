@@ -187,6 +187,7 @@ export const PluginSessionInputSourceV1Schema = lazyZodSchema(() => z.strictObje
   sourceRevisionOrEpoch: SourceRevisionOrEpochSchema,
   remoteApprovalMaxScope: z.enum(['off', 'request', 'session']),
   requestedPermissionCeiling: asProtocolZod(AgentPermissionIntentV1Schema),
+  displayNameSnapshot: z.optional(DisplayNameSnapshotSchema),
   externalActor: z.optional(ExternalActorV1Schema),
   contentProvenance: z.optional(ContentProvenanceV1Schema),
 }).check(z.superRefine(requireCoPresentExternalProvenance)));
@@ -292,6 +293,7 @@ const PluginSessionProvenanceSchema = lazyZodSchema(() => z.strictObject({
   surface: z.union([PluginInvocationSurfaceV1Schema, z.literal('unspecified')]),
   sourceRef: zMini.optional(SourceRefSchema),
   sourceRevisionOrEpoch: zMini.optional(SourceRevisionOrEpochSchema),
+  displayNameSnapshot: z.optional(DisplayNameSnapshotSchema),
   externalActor: z.optional(ExternalActorV1Schema),
   contentProvenance: z.optional(ContentProvenanceV1Schema),
 }).check(z.superRefine((value, context) => {

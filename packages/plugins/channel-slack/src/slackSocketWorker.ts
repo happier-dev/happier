@@ -2,6 +2,7 @@ import type { ConversationProviderFailureV1, ConversationProviderObservationInge
 import type { HttpService, PluginWebSocketConnection } from '@happier-dev/plugin-sdk/http';
 import type { createSlackApi, SlackIdentity } from './slackApi.js';
 import { mapSlackEventToIngress } from './slackObservation.js';
+import { readSlackPrincipalId } from './slackPluginConstants.js';
 
 export type SlackSocketWorkerResult =
   | Readonly<{ kind: 'stopped'; unprovenContinuity?: true }>
@@ -10,7 +11,7 @@ export type SlackSocketWorkerResult =
       transportFact?: Readonly<{ kind: 'historyGap'; reason: 'applicationAdmissionLost' }> }>;
 export type SlackSocketWorkerInput = Readonly<{
   connection: Readonly<{ connectionId: string; authorityEpoch: number; identity: SlackIdentity }>;
-  api: Pick<ReturnType<typeof createSlackApi>, 'openConnection' | 'getChannel'>;
+  api: Pick<ReturnType<typeof createSlackApi>, 'openConnection' | 'getChannel' | 'getUser'>;
   webSockets: Pick<HttpService, 'openWebSocket'>;
   admitObservation(value: ConversationProviderObservationIngestInputV1, options: Readonly<{ signal: AbortSignal }>): Promise<void>;
   reportConnectionStatus?(status: 'ready'): void | Promise<void>;
@@ -93,7 +94,22 @@ export function startSlackSocketWorker(input: SlackSocketWorkerInput): SlackSock
           }
           if ('kind' in channel) return { kind: 'notReady', failure: channel,
             transportFact: { kind: 'historyGap', reason: 'applicationAdmissionLost' } };
-          const observation = mapSlackEventToIngress({ payload, identity: input.connection.identity, channel });
+          let observation = mapSlackEventToIngress({ payload, identity: input.connection.identity, channel });
+          if (observation?.kind === 'fullText') {
+            const actor = observation.observation.actor;
+            const sender = actor.principalId === null ? null : readSlackPrincipalId(actor.principalId);
+            if (sender && !actor.isIntegrationSelf) {
+              try {
+                const user = await input.api.getUser(sender.userId, { signal });
+                if (!('kind' in user) && user.teamId === sender.teamId && !user.deleted && user.label !== user.id) {
+                  observation = { ...observation, observation: { ...observation.observation,
+                    actor: { ...actor, label: user.label.normalize('NFC') } } };
+                }
+              } catch {
+                // Names are optional presentation; a failed profile read cannot drop authenticated input.
+              }
+            }
+          }
           if (observation) await input.admitObservation({ connectionId: input.connection.connectionId,
             authorityEpoch: input.connection.authorityEpoch, entry: { observation, eventCandidate: null } }, { signal });
           admissionPending = false;

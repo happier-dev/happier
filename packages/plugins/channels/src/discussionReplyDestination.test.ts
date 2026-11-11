@@ -103,7 +103,7 @@ it('exposes destination names through the registered portable Account Action and
   try {
     expect(await core.invokeAction(DISCUSSION_REPLY_DESTINATION_ACTION_ID_V1, {
       discussionId: 'discussion-id', messageId: 'followup',
-    }, { surface: 'ui' })).toEqual({ kind: 'channel', connectionName: 'Team mailbox', conversationName });
+    }, { surface: 'ui' })).toEqual({ kind: 'channel', connectionName: 'Channel owner', conversationName });
     // Owner ruling 2026-11-10: posting participants may outward-reply; display uses readable provenance, never foreign local IDs.
     foreign = true;
     for (const messageId of ['original', 'followup']) {

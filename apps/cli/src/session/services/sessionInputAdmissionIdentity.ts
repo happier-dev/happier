@@ -112,6 +112,7 @@ export function buildPluginSessionInputAdmissionV1(params: Readonly<{
         ? {
             sourceRef: source.sourceRef,
             sourceRevisionOrEpoch: source.sourceRevisionOrEpoch,
+            ...(source.displayNameSnapshot === undefined ? {} : { displayNameSnapshot: source.displayNameSnapshot }),
             ...(source.externalActor && source.contentProvenance
               ? {
                   externalActor: source.externalActor,

@@ -167,6 +167,8 @@ export type SessionMessageProvenanceV1 =
         surface: 'cli' | 'mcp' | 'agent' | 'ui' | 'background' | 'unspecified';
         sourceRef?: string;
         sourceRevisionOrEpoch?: string;
+        /** Descriptive source name only; never grants routing or approval authority. */
+        displayNameSnapshot?: string;
         externalActor?: { kind: 'human' | 'bot'; displayNameSnapshot?: string };
         contentProvenance?: 'original' | 'forwarded' | 'viaBot';
     }

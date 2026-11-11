@@ -7914,10 +7914,16 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
 
   it('rejoins a label-only replay without replacing the admitted evidence', async () => {
     const harness = createIngressHarness();
+    const binding = harness.rows.get('binding-1')!;
+    const payload = record(binding.value.payload);
+    harness.rows.set(binding.rowId, stateRow({ ...binding.value, payload: {
+      ...payload, endpoint: { ...record(payload.endpoint), label: 'Release planning' },
+    } }, binding.revision));
     const first = observation({
       messageRevision: 'edit:1',
       actorLabel: 'Ada',
     });
+    Object.assign(fullTextIngress(first).endpoint, { label: 'Renamed planning' });
 
     await ingestConversationProviderObservationForInvocation(first, harness.context);
 
@@ -7932,6 +7938,8 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
     expect(harness.send).toHaveBeenCalledTimes(1);
     expect(sentUserTextRequest(harness.send.mock.calls[0]?.[0]).source?.externalActor)
       .toMatchObject({ displayNameSnapshot: 'Ada' });
+    expect(sentUserTextRequest(harness.send.mock.calls[0]?.[0]).source)
+      .toHaveProperty('displayNameSnapshot', 'Ingress fixture · Release planning');
     const obligation = [...harness.rows.values()].find(
       (row) => row.value['record-kind'] === 'ingress-obligation',
     );

@@ -36,13 +36,15 @@ function socketBoundary(frames: readonly unknown[]) {
   return { socket, sent };
 }
 
-function httpBoundary(channelResults: readonly Readonly<{ status: number; body: unknown; headers?: Record<string, string> }>[] = []) {
+function httpBoundary(channelResults: readonly Readonly<{ status: number; body: unknown; headers?: Record<string, string> }>[] = [],
+  userBody: unknown = { ok: true, user: { id: 'U2', team_id: 'T1', is_bot: false, deleted: false, profile: { display_name: 'Ada Lovelace' } } }) {
   let channelReads = 0;
   const request = vi.fn(async ({ url }: Readonly<{ url: string }>) => {
     const isChannel = url.includes('conversations.info');
     const reply = isChannel ? channelResults[channelReads++] : undefined;
     return { status: reply?.status ?? 200, finalUrl: url, headers: reply?.headers ?? {}, body: new TextEncoder().encode(JSON.stringify(
-      reply?.body ?? (isChannel ? { ok: true, channel: { id: 'C1', is_im: false, is_mpim: false, is_private: false, is_archived: false } }
+      reply?.body ?? (url.includes('users.info') ? userBody
+        : isChannel ? { ok: true, channel: { id: 'C1', is_im: false, is_mpim: false, is_private: false, is_archived: false } }
         : { ok: true, url: 'wss://wss.slack.com/link/?ticket=secret' }),
     )) };
   });
@@ -50,6 +52,20 @@ function httpBoundary(channelResults: readonly Readonly<{ status: number; body: 
 }
 
 describe('Slack Socket Mode worker', () => {
+  it('admits and acknowledges input when the optional sender profile is unavailable', async () => {
+    const boundary = socketBoundary([hello, envelope, { type: 'disconnect', reason: 'refresh_requested' }]);
+    const admissions: unknown[] = [];
+    const http = httpBoundary([], { ok: false, error: 'missing_scope' });
+    const worker = startSlackSocketWorker({ connection: { connectionId: 'connection-1', authorityEpoch: 7, identity },
+      api: http.api, webSockets: { openWebSocket: async () => boundary.socket },
+      admitObservation: async value => { admissions.push(value); }, signal: new AbortController().signal });
+    await expect(worker.result).resolves.toEqual({ kind: 'stopped' });
+    expect(admissions).toHaveLength(1);
+    expect(admissions[0]).toMatchObject({ entry: { observation: { observation: {
+      actor: { principalId: 'slack:T1:user:U2' }, message: { text: 'hello' },
+    } } } });
+    expect(boundary.sent).toEqual([{ kind: 'text', text: JSON.stringify({ envelope_id: 'envelope-1' }) }]);
+  });
   it('ACKs only after the real normalized ingress reaches durable core custody', async () => {
     const boundary = socketBoundary([hello, envelope]);
     let settle!: () => void;
@@ -62,6 +78,7 @@ describe('Slack Socket Mode worker', () => {
     const worker = startSlackSocketWorker({ connection: { connectionId: 'connection-1', authorityEpoch: 7, identity }, api: httpBoundary().api,
       webSockets: { openWebSocket: async () => boundary.socket }, admitObservation, signal: new AbortController().signal });
     await vi.waitFor(() => expect(admissions).toHaveLength(1));
+    expect(admissions[0]).toMatchObject({ entry: { observation: { observation: { actor: { label: 'Ada Lovelace' } } } } });
     expect(boundary.sent).toEqual([]);
     settle();
     await vi.waitFor(() => expect(boundary.sent).toEqual([{ kind: 'text', text: JSON.stringify({ envelope_id: 'envelope-1' }) }]));

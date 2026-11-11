@@ -183,7 +183,7 @@ describe('Slack provider Actions', () => {
     expect(await resolveSlackEndpoint({ ...connection, query: 'D1' }, boundary({ direct: true }).context)).toMatchObject({ kind: 'resolved', candidates: [
       { kind: 'direct', audience: 'direct', id: 'slack:T1:channel:D1' }] });
     expect(await resolveSlackEndpoint({ ...connection, query: 'slack:T1:channel:C1:thread:1700000000.000001' }, boundary().context)).toMatchObject({ kind: 'resolved', candidates: [
-      { kind: 'thread', audience: 'shared', id: 'slack:T1:channel:C1:thread:1700000000.000001', parentId: 'slack:T1:channel:C1' }] });
+      { kind: 'thread', audience: 'shared', id: 'slack:T1:channel:C1:thread:1700000000.000001', parentId: 'slack:T1:channel:C1', label: 'deploys' }] });
   });
   it('resolves only exact authenticated same-workspace users, never display names or foreign IDs', async () => {
     const endpoint = { kind: 'shared', audience: 'shared', id: 'slack:T1:channel:C1' };

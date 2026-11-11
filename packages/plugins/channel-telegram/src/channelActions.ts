@@ -401,7 +401,7 @@ function normalizedIngressFromUpdate(
     endpoint,
     actor: {
       principalId: message.senderId,
-      ...(message.senderId === null ? {} : { label: message.senderId }),
+      ...(message.senderLabel === undefined ? {} : { label: message.senderLabel }),
       kind: message.senderId === null ? 'unknown' : (message.senderIsBot ? 'bot' : 'human'),
       isIntegrationSelf: message.senderId === identity.id,
     },
@@ -979,6 +979,7 @@ export async function deliverTelegramHostMessage(input: unknown, context: Plugin
       ...(created.retryAfterMs === undefined ? {} : { retryAfterMs: created.retryAfterMs }) };
     const endpoint: ConversationResolvedEndpointV1 = {
       kind: 'thread', audience: 'shared', id: `${chatId}:${created.messageThreadId}`, parentId: chatId,
+      label: name, ...(chat.label ? { parentLabel: chat.label } : {}),
     };
     if (context.signal.aborted) return { kind: 'outcomeUnknown', endpoint };
     const result = await sendTelegramText({ api, request, chatId,

@@ -31,6 +31,7 @@ type DiscordInboundMessageRoutingEvidence = Readonly<{
   endpoint: ConversationResolvedEndpointV1;
   actor: Readonly<{
     principalId: string | null;
+    label?: string;
     kind: 'human' | 'integration' | 'bot' | 'unknown';
     isIntegrationSelf: boolean;
   }>;
@@ -226,14 +227,18 @@ function readActor(payload: JsonRecord, context: DiscordMessageParseContext): Di
     };
   }
   if (!authorId) return { principalId: null, kind: 'unknown', isIntegrationSelf: false };
+  const member = isRecord(payload.member) ? payload.member : null;
+  const label = readNonEmptyString(member?.nick) ?? readNonEmptyString(author?.global_name) ?? readNonEmptyString(author?.username);
+  const presentation = label === null ? {} : { label: label.normalize('NFC') };
   if (author?.bot === true) {
     return {
       principalId: `discord:user:${authorId}`,
+      ...presentation,
       kind: 'bot',
       isIntegrationSelf: authorId === context.botUserId,
     };
   }
-  return { principalId: `discord:user:${authorId}`, kind: 'human', isIntegrationSelf: false };
+  return { principalId: `discord:user:${authorId}`, ...presentation, kind: 'human', isIntegrationSelf: false };
 }
 
 function endpointForChannel(channel: DiscordChannelAddress): ConversationResolvedEndpointV1 | null {

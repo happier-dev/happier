@@ -158,7 +158,7 @@ describe('Telegram Bot API adapter', () => {
       calls.push(input.url);
       return jsonResponse({ ok: true, result: [{ update_id: 1, message: {
         message_id: 2, date: 1700000000, chat: { id: 456, type: 'private' },
-        from: { id: 789, is_bot: false }, caption: '@HappierBot inspect',
+        from: { id: 789, is_bot: false, first_name: 'Ada', last_name: 'Lovelace', username: 'ada' }, caption: '@HappierBot inspect',
         caption_entities: [{ type: 'mention', offset: 0, length: 11 }],
         photo: [
           { file_id: 'large', width: 800, height: 600, file_size: 1000 },
@@ -169,7 +169,7 @@ describe('Telegram Bot API adapter', () => {
     } } });
     const result = await api.getUpdates({ offset: '1', limit: 1, timeoutSeconds: 0 });
     expect(result).toMatchObject({ kind: 'updates', updates: [{ message: {
-      text: '@HappierBot inspect', textEntities: [{ type: 'mention', text: '@HappierBot' }],
+      senderLabel: 'Ada Lovelace', text: '@HappierBot inspect', textEntities: [{ type: 'mention', text: '@HappierBot' }],
       attachments: [{ fileId: 'large', name: 'photo-2.jpg', mediaType: 'image/jpeg', byteLength: 1000 }],
     } }] });
     expect(calls).toHaveLength(1);

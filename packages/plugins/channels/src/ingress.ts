@@ -157,7 +157,7 @@ import {
   refreshSessionPullRequestBindingsForInvocation,
   type ConversationPairingManager,
 } from './management.js';
-import { readCurrentProviderContributionForPersistedSelection } from './providerContributions.js';
+import { readCurrentProviderContributionForPersistedSelection, readCurrentConversationProviderDisplayName } from './providerContributions.js';
 import { readSessionPullRequestWatchPolicy, resolveSessionPullRequestWatchAdmission,
   buildSessionPullRequestWatchInstructions, type SessionPullRequestWatchDefaults } from './sessionPullRequestWatchPolicy.js';
 import { readSessionPullRequestWatchDefaults } from './sessionPullRequestWatch.js';
@@ -175,7 +175,7 @@ type IngressAttemptRetention = Readonly<{
   /** The background owner observes completion and drains its work on shutdown. */
   retainDiscussionAttempt: (attempt: Promise<unknown>) => void;
 }>;
-type IngressExecutionSource = Readonly<{ pullRequestProvider?: SessionPullRequestProvider }> & (
+type IngressExecutionSource = Readonly<{ pullRequestProvider?: SessionPullRequestProvider; providerDisplayName?: string | null }> & (
   | Readonly<{
     kind: 'providerObservation';
     caller: PluginCaller | undefined;
@@ -1217,6 +1217,40 @@ function sessionDisplayNameSnapshot(label: string | undefined): string | undefin
     return undefined;
   }
   return label;
+}
+
+function sessionExternalProvenance(observation: ConversationObservationV1) {
+  const kind = observation.actor.kind;
+  if (observation.endpoint.kind === 'githubPullRequest' || (kind !== 'human' && kind !== 'bot')) return {};
+  const displayNameSnapshot = sessionDisplayNameSnapshot(observation.actor.label);
+  return { externalActor: { kind, ...(displayNameSnapshot === undefined ? {} : { displayNameSnapshot }) },
+    contentProvenance: observation.message.contentProvenance };
+}
+
+async function sessionSourceDisplayNameSnapshot(context: PluginInvocationContext,
+  connectionId: string, bindingId: string, authority: IngressDispatchAuthority | undefined,
+  binding: ChannelBindingRecord | undefined, providerDisplayName?: string | null): Promise<string | undefined> {
+  try {
+    // An already-attempting replay has no fresh admission object. Read names only;
+    // these records never change the frozen destination or its permissions.
+    const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
+    const connection = authority?.connection.value
+      ?? asConnection(readStateRow(await collection.get(connectionId, { signal: context.signal })))?.value;
+    const displayBinding = binding
+      ?? asBinding(readStateRow(await collection.get(bindingId, { signal: context.signal })))?.value;
+    const providerName = providerDisplayName !== undefined ? providerDisplayName
+      : connection === undefined ? null : await readCurrentConversationProviderDisplayName({
+      targetedContributions: context.services.targetedContributions, signal: context.signal,
+    }, connection.payload.providerPluginId).catch(() => null);
+    const title = readConversationBindingEndpointName(displayBinding?.payload.endpoint ?? {});
+    const label = [providerName, title].filter(Boolean).join(' · ').normalize('NFC');
+    // The Protocol display snapshot contract owns this bound, independently of routing identities.
+    const characters = Array.from(label);
+    return label ? characters.length > 128 ? `${characters.slice(0, 127).join('')}…` : label : undefined;
+  } catch {
+    // Optional presentation cannot prevent an admitted message from reaching its Session.
+    return undefined;
+  }
 }
 
 type IngressAdmissionDecision = Readonly<{
@@ -2879,6 +2913,7 @@ async function admitNewSessionInitialPrompt(input: Readonly<{
   target: FrozenSessionTarget;
   obligation: IngressObligationRecord;
   observation: ConversationObservationV1;
+  providerDisplayName?: string | null;
 }>): Promise<Readonly<{ ready: boolean; sessionInput?: IngressObligationPayload['sessionInput'] }>> {
   const newSession = input.target.newSession;
   if (newSession === null) return { ready: true };
@@ -2889,13 +2924,8 @@ async function admitNewSessionInitialPrompt(input: Readonly<{
   const binding = input.authority.bindings[0];
   if (binding === undefined || binding.value.payload.target.kind !== 'session') return { ready: false };
   const fullText = input.observation;
-  const displayNameSnapshot = sessionDisplayNameSnapshot(fullText.actor.label);
-  const externalActor = fullText.actor.kind === 'human' || fullText.actor.kind === 'bot'
-    ? {
-        kind: fullText.actor.kind,
-        ...(displayNameSnapshot === undefined ? {} : { displayNameSnapshot }),
-      }
-    : undefined;
+  const displayNameSnapshot = await sessionSourceDisplayNameSnapshot(input.context,
+    input.authority.connection.value.id, binding.value.id, input.authority, binding.value, input.providerDisplayName);
   const session = await readSessionForIngressDispatch(
     input.context,
     binding.value.payload.target.sessionId,
@@ -2910,8 +2940,8 @@ async function admitNewSessionInitialPrompt(input: Readonly<{
       sourceRevisionOrEpoch: `${input.obligation.payload.sourceAuthority.connectionAuthorityEpoch}:${input.obligation.payload.sourceAuthority.bindingAuthorityEpoch}`,
       remoteApprovalMaxScope: input.target.remoteApprovalMaxScope,
       requestedPermissionCeiling: input.target.requestedPermissionCeiling,
-      ...(externalActor === undefined ? {} : { externalActor }),
-      contentProvenance: fullText.message.contentProvenance,
+      ...(displayNameSnapshot === undefined ? {} : { displayNameSnapshot }),
+      ...sessionExternalProvenance(fullText),
     },
   }, { signal: input.context.signal });
   if (result.status === 'accepted' || result.status === 'alreadyAccepted') {
@@ -3129,6 +3159,7 @@ async function dispatchNewSessionRotation(input: Readonly<{
     target,
     obligation: obligation.value,
     observation: input.observation,
+    providerDisplayName: input.source.providerDisplayName,
   });
   if (!promptAdmitted.ready) return 'unsettled';
   const custody = await writeNewSessionControlResponseCustody({
@@ -4267,16 +4298,10 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
         observation: fullText,
       });
     }
-    const displayNameSnapshot = sessionDisplayNameSnapshot(fullText.actor.label);
+    const displayNameSnapshot = fullText.endpoint.kind === 'githubPullRequest' ? undefined
+      : await sessionSourceDisplayNameSnapshot(input.context,
+        input.connectionId, input.bindingId, authority, currentBinding?.value, input.source.providerDisplayName);
     const actorKind = fullText.actor.kind;
-    const externalActor = fullText.endpoint.kind !== 'githubPullRequest' && (actorKind === 'human' || actorKind === 'bot')
-      ? {
-          kind: actorKind,
-          ...(displayNameSnapshot === undefined
-            ? {}
-            : { displayNameSnapshot }),
-        }
-      : undefined;
     const session = preparedSession ?? await readSessionForIngressDispatch(input.context, target.sessionId);
     if (session === null) {
       throw pluginError(
@@ -4333,7 +4358,8 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
         sourceRevisionOrEpoch: `${obligation.value.payload.sourceAuthority.connectionAuthorityEpoch}:${obligation.value.payload.sourceAuthority.bindingAuthorityEpoch}`,
         remoteApprovalMaxScope: fullText.endpoint.kind === 'githubPullRequest' ? 'off' : target.remoteApprovalMaxScope,
         requestedPermissionCeiling: requestedPermissionCeiling ?? target.requestedPermissionCeiling,
-        ...(externalActor === undefined ? {} : { externalActor, contentProvenance: fullText.message.contentProvenance }),
+        ...(displayNameSnapshot === undefined ? {} : { displayNameSnapshot }),
+        ...sessionExternalProvenance(fullText),
       },
     }, { signal: input.context.signal });
     if (result.status === 'accepted' || result.status === 'alreadyAccepted') {
@@ -6307,6 +6333,7 @@ export async function runConversationCheckpointedPollForInvocation(input: Readon
   let pollBindings: ConversationPollInputV1['bindings'];
   let pollBindingRows: Awaited<ReturnType<typeof readBindingsForConnection>>;
   let pullRequestProvider: SessionPullRequestProvider | undefined;
+  let providerDisplayName: string | null;
   try {
     const provider = await readCurrentProviderContributionForPersistedSelection({
       context: {
@@ -6318,6 +6345,7 @@ export async function runConversationCheckpointedPollForInvocation(input: Readon
     });
     const poll = provider.operations.observationsPoll;
     pullRequestProvider = provider.descriptor?.pullRequests;
+    providerDisplayName = provider.descriptor?.displayName?.trim() || null;
     if (poll === undefined) {
       throw pluginError(
         'channels_checkpointed_poll_provider_unavailable',
@@ -6500,6 +6528,7 @@ export async function runConversationCheckpointedPollForInvocation(input: Readon
     connection: current,
     bindingRows: pollBindingRows,
     pullRequestProvider,
+    providerDisplayName,
   };
   let settled: ConversationConnectionUpdateResult;
   try {

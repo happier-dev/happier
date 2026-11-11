@@ -58,13 +58,14 @@ export async function readConversationDiscussionReplyDestination(input: Readonly
     || readExternalSource(message) !== undefined);
   if (!origin) return { kind: 'none' };
   const bindingId = readConversationDiscussionInputBindingId(origin.localId);
-  if (bindingId !== undefined) {
+  const source = readExternalSource(origin);
+  if (source === undefined && bindingId !== undefined) {
     const names = await readConversationDiscussionBindingDestination({ ...input, bindingId });
     return names ? { kind: 'channel', ...names } : { kind: 'none' };
   }
   // Foreign local IDs and binding records are private. Display provenance is already readable,
   // and never becomes authority for the outward projection above.
-  const source = readExternalSource(origin)!;
+  if (source === undefined) return { kind: 'none' };
   const ownerName = origin.accountActor?.profile ? resolveAccountDisplayLabelV1(origin.accountActor.profile) : null;
   const providerName = await input.readProviderName?.(source.providerPluginId);
   return { kind: 'channel', connectionName: [ownerName, providerName].filter(Boolean).join(' · ') || null,

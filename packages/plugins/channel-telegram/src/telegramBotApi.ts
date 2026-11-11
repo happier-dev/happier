@@ -25,6 +25,7 @@ type TelegramRequestOptions = Readonly<{ signal?: AbortSignal }>;
 type TelegramUser = Readonly<{
   id: number;
   isBot: boolean;
+  label?: string;
 }>;
 
 export type TelegramBotIdentity = Readonly<{
@@ -62,6 +63,7 @@ export type TelegramIncomingMessage = Readonly<{
   isTopicMessage: boolean;
   senderId: string | null;
   senderIsBot: boolean;
+  senderLabel?: string;
   text: string | null;
   textEntities: readonly TelegramTextEntity[];
   attachments: readonly TelegramIncomingAttachment[];
@@ -177,7 +179,9 @@ function parseTelegramUser(value: unknown): TelegramUser | null {
   if (!isRecord(value)) return null;
   const id = readSafeInteger(value.id);
   if (id === null || typeof value.is_bot !== 'boolean') return null;
-  return { id, isBot: value.is_bot };
+  const name = [readString(value.first_name)?.trim(), readString(value.last_name)?.trim()].filter(Boolean).join(' ');
+  const label = name || readString(value.username)?.trim();
+  return { id, isBot: value.is_bot, ...(label ? { label: label.normalize('NFC') } : {}) };
 }
 
 function parseBotApiEnvelope(body: Uint8Array):
@@ -364,6 +368,7 @@ function parseIncomingMessage(value: unknown): TelegramIncomingMessage | null {
     isTopicMessage: value.is_topic_message === true,
     senderId: senderId === null ? null : String(senderId),
     senderIsBot: sender?.isBot === true,
+    ...(sender?.label === undefined ? {} : { senderLabel: sender.label }),
     text,
     textEntities,
     attachments: parseIncomingAttachments(value, String(messageId)),

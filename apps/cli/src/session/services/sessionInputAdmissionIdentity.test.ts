@@ -116,6 +116,7 @@ describe('derivePluginSessionInputLocalIdV1', () => {
       caller,
       surface: 'mcp',
       source: {
+        displayNameSnapshot: 'Telegram · Release planning',
         sourceRef: 'channel-7',
         sourceRevisionOrEpoch: 'message-42',
         remoteApprovalMaxScope: 'request',
@@ -127,6 +128,7 @@ describe('derivePluginSessionInputLocalIdV1', () => {
       provenance: {
         v: 1,
         kind: 'pluginSession',
+        displayNameSnapshot: 'Telegram · Release planning',
         pluginId: 'acme.channels',
         contributionLocalId: 'inbound',
         surface: 'mcp',

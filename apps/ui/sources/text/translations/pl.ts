@@ -16494,6 +16494,7 @@ settingsSession: {
       byModel: "według modelu",
       noUsageTitle: "Brak użycia w tym okresie",
       noUsageReason: "Sesje uruchamiane na dowolnej maszynie pojawią się tutaj.",
+      nothingYetTitle: "Jeszcze nic",
       vsPrevious: "względem poprzedniego okresu",
       sessionsCount: ({ count }: { count: string | number }) => `Sesje: ${count}`,
       atApiPrices: ({ amount }: { amount: string | number }) => `≈ ${amount} wartości według aktualnych cen API`,

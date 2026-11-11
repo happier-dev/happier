@@ -26,7 +26,7 @@ import { verifySlackSocketIdentity } from './slackSocketWorker.js';
 import {
   SLACK_PLUGIN_ID, SLACK_CONNECTED_ACCOUNT_ID, SLACK_CREDENTIAL_PURPOSE,
   SLACK_BOT_TOKEN_ENVIRONMENT_KEY, SLACK_APP_TOKEN_ENVIRONMENT_KEY,
-  createSlackEndpointIdentity, createSlackPrincipalId, readSlackEndpointId,
+  createSlackEndpointIdentity, createSlackPrincipalId, readSlackEndpointId, readSlackPrincipalId,
 } from './slackPluginConstants.js';
 
 export const SLACK_SETUP_INPUT_PROTOCOL_SCHEMA = defineProtocolObject({ credentialRef: QualifiedConnectedAccountRefSchema }, { policy: 'closed' });
@@ -96,7 +96,7 @@ function endpointFor(identity: SlackIdentity, channel: SlackChannel, threadTs?: 
   const endpoint = createSlackEndpointIdentity(identity, channel, threadTs);
   const label = channel.name ?? channel.id;
   return threadTs === undefined ? { ...endpoint, label }
-    : { ...endpoint, label: `${label} · ${threadTs}`, parentLabel: label };
+    : { ...endpoint, label, parentLabel: label };
 }
 
 export async function setupSlackChannels(input: unknown, context: PluginInvocationContext): Promise<ConversationProviderSetupResultV1> {
@@ -184,9 +184,9 @@ export async function resolveSlackPrincipal(input: unknown, context: PluginInvoc
   const endpoint = readSlackEndpointId(request.endpoint.id);
   if (!endpoint || endpoint.teamId !== ready.identity.teamId) return invalidConfiguration();
   const query = request.query.trim();
-  const qualified = /^slack:([A-Z0-9]+):user:([UW][A-Z0-9]+)$/.exec(query);
-  const userId = qualified?.[2] ?? (/^[UW][A-Z0-9]+$/.test(query) ? query : null);
-  if (!userId || (qualified && qualified[1] !== ready.identity.teamId)) return { kind: 'resolved', candidates: [] };
+  const qualified = readSlackPrincipalId(query);
+  const userId = qualified?.userId ?? (/^[UW][A-Z0-9]+$/.test(query) ? query : null);
+  if (!userId || (qualified && qualified.teamId !== ready.identity.teamId)) return { kind: 'resolved', candidates: [] };
   const user = await ready.api.getUser(userId, { signal: context.signal });
   context.signal.throwIfAborted();
   if ('kind' in user) return user;

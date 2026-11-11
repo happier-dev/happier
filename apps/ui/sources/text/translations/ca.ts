@@ -15543,6 +15543,7 @@ settingsSession: {
           byModel: "per model",
           noUsageTitle: "No hi ha ús en aquest període",
           noUsageReason: "Les sessions que executis a qualsevol màquina apareixeran aquí.",
+          nothingYetTitle: "Encara res",
           vsPrevious: "respecte al període anterior",
           sessionsCount: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'sessió' : 'sessions'}`,
           atApiPrices: ({ amount }: { amount: string | number }) => `≈ ${amount} de valor als preus actuals d’API`,

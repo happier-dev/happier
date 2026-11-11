@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -26,6 +26,40 @@ import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/action
 import { DeploymentReviewConflictFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { presentApprovalFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { DiscussionReplyDestinationResultV1Schema } from '@happier-dev/channels-protocol/v1';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+
+it('shows unavailable destination names while an optional Account name read remains pending', async () => {
+    const home = await upsertServerProfile({ name: 'Personal', serverUrl: 'https://reply-names-pending.test' });
+    profiles.push(home.id);
+    const accountId = 'reply-names-account';
+    await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, {
+        token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+    });
+    // Network transport is the boundary; keep the real credential scope and Action executor.
+    vi.stubGlobal('fetch', () => new Promise<Response>(() => {}));
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+        createdBy: { surface: 'cli' }, actionId: 'discussion.reply', summary: 'Reply',
+        actionArgs: { discussionId: 'pending-discussion', replyTarget: { kind: 'message', messageId: 'pending-message' },
+            content: { v: 1, parts: [{ t: 'text', text: 'Ready.' }] } },
+        executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+            serverId: home.id, actionId: 'discussion.reply', requestId: 'pending-reply' } });
+    let bound = false;
+    function BoundApproval() {
+        const { binding } = useServerCredentialAccountScopeBinding(home.id);
+        bound = binding !== null;
+        return <ActionApprovalFieldsCard request={request} serverId={home.id} presentation={describeApprovalActionFields(request)} />;
+    }
+    try {
+        const screen = await renderScreen(<BoundApproval />);
+        await vi.waitFor(() => expect(bound).toBe(true));
+        expect(screen.getTextContent()).toContain(t('common.unavailable'));
+        expect(screen.getTextContent()).not.toContain(t('common.loading'));
+        await screen.unmount();
+    } finally {
+        vi.unstubAllGlobals();
+        await TokenStorage.removeCredentialsForServerUrl(home.serverUrl, { serverId: home.id });
+    }
+});
 
 it('renders settled failure facts and recovery in the shared disclosure in both approval anatomies', async () => {
     const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'deployment_conflict', error: 'deployment_conflict',

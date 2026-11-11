@@ -19895,6 +19895,7 @@ const enUsage = {
       byModel: "by model",
       noUsageTitle: "No usage in this period",
       noUsageReason: "Sessions you run on any machine show up here.",
+      nothingYetTitle: "Nothing yet",
       vsPrevious: "vs the period before",
       sessionsCount: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'session' : 'sessions'}`,
       atApiPrices: ({ amount }: { amount: string | number }) => `≈ ${amount} value at current API prices`,

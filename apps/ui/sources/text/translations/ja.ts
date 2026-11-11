@@ -16659,6 +16659,7 @@ settingsSession: {
             byModel: "モデル別",
             noUsageTitle: "この期間の使用はありません",
             noUsageReason: "どのマシンで実行したセッションもここに表示されます。",
+            nothingYetTitle: "まだありません",
             vsPrevious: "前の期間と比較",
             sessionsCount: ({ count }: { count: string | number }) => `${count} セッション`,
             atApiPrices: ({ amount }: { amount: string | number }) => `現在の API 価格で約 ${amount} の価値`,

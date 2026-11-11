@@ -16326,6 +16326,7 @@ settingsSession: {
             byModel: "по моделям",
             noUsageTitle: "За этот период использования нет",
             noUsageReason: "Здесь появятся сеансы с любой вашей машины.",
+            nothingYetTitle: "Пока ничего",
             vsPrevious: "к предыдущему периоду",
             sessionsCount: ({ count }: { count: string | number }) => `Сеансов: ${count}`,
             atApiPrices: ({ amount }: { amount: string | number }) => `≈ ${amount} по текущим ценам API`,

@@ -253,7 +253,7 @@ describe('Telegram Channel provider actions', () => {
         newThread: { recipients: ['456'], subject: 'Brief' },
          linkPreviewPolicy: 'suppress',
       }, coreContext(http, { signal: controller.signal }));
-      const endpoint = { kind: 'thread', audience: 'shared', id: '-100456:17', parentId: '-100456' };
+      const endpoint = { kind: 'thread', audience: 'shared', id: '-100456:17', parentId: '-100456', label: 'Brief', parentLabel: 'QA' };
       expect(result).toEqual(outcome === 'sent'
         ? { kind: 'delivered', providerMessageIds: ['71'], endpoint }
         : outcome === 'createUnknown' ? { kind: 'outcomeUnknown' }

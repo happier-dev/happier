@@ -32,6 +32,11 @@ export function createSlackPrincipalId(teamId: string, userId: string): string {
   return `slack:${teamId}:user:${userId}`;
 }
 
+export function readSlackPrincipalId(value: string): Readonly<{ teamId: string; userId: string }> | null {
+  const match = /^slack:([A-Z0-9]+):user:([UW][A-Z0-9]+)$/.exec(value);
+  return match ? { teamId: match[1], userId: match[2] } : null;
+}
+
 /** One provider-authenticated topology projection for resolution and ingress. */
 export function createSlackEndpointIdentity(
   identity: Pick<SlackIdentity, 'teamId'>,

@@ -792,6 +792,7 @@ describe('session input admission metadata', () => {
       pluginId: 'example.channels',
       contributionLocalId: 'inbound',
       surface: 'background',
+      displayNameSnapshot: 'Telegram · Release planning',
       externalActor: { kind: 'human', displayNameSnapshot: 'Ada' },
       contentProvenance: 'forwarded',
     } as const;
