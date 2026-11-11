@@ -14,6 +14,7 @@ import { ExternalActionMachineBootstrapV1Schema, ExternalActionExecutionAuthoriz
     ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { readExplicitActionApprovalPreferenceV1 } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { createProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { DaemonLocalServiceLauncherSnapshotResponseV1Schema, DaemonLocalServiceLauncherStartRequestV1Schema,
     DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -27,7 +28,7 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import type { ServiceRow } from '@/sync/domains/local/services/serviceRow';
-import { decideApprovalAsInbox, installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
+import { installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import {
@@ -179,6 +180,7 @@ describe('ProjectRightPanelServicesView', () => {
         await home.reset();
         serverId = await home.addHome({ name: 'Project Home', serverUrl: 'https://project.example.test', accountId: 'project-account',
             serverIdentityId: 'srv_services_project', currentAccount: true });
+        home.answer(serverId, '/v1/projects/execution/config/read', { body: { status: 'absent' } });
         const features = await publishFeatures(serverId, true);
         if (!features.capabilities.serverIdentity.serverIdentityId) throw new Error('expected_home_identity');
         serverIdentityId = features.capabilities.serverIdentity.serverIdentityId;
@@ -403,18 +405,24 @@ describe('ProjectRightPanelServicesView', () => {
         await screen.unmount();
     });
 
-    it('opens and consumes the shared approval for a declared Service Start without granting the feed launch authority', async () => {
+    it.each([true, false])('answers a declared Service Start Ask through native review without granting the feed launch authority (accepted=%s)', async accepted => {
         const workspace = { serverId, machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' };
         const target = { id: 'declared:web', source: 'managed_service' as const, machineId: workspace.machineId,
             workspace, declaration: { workspaceRefId: workspace.workspaceId, selection: { kind: 'manifest' as const, name: 'web' } },
             title: 'Web', confidence: 'high' as const, state: 'unavailable' as const, unavailableReason: 'launch_unavailable', actions: [] };
         await home.requireUiApproval(serverId, 'localServices.launcher.start');
+        const readApprovalPreference = () => readExplicitActionApprovalPreferenceV1('localServices.launcher.start',
+            storage.getState().settings.actionsSettingsV1, { surface: 'ui' });
+        expect(readApprovalPreference()).toBe(true);
+        modalConfirmMock.mockResolvedValueOnce(accepted);
         await installOwnMachineApprovalReplayBoundary({ harness: home, serverId, accountId: 'project-account', machineId: workspace.machineId,
             runtimeActionExecute: createDefaultRuntimeActionExecutor() });
         const running = { ...target, state: 'available' as const, serviceState: 'running' as const, actions: ['manage' as const] };
         rpc.machine.mockImplementation(async ({ method, payload }) => {
             if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT && payload.startReview) {
-                // Native review is a read-only daemon boundary before the real approval writer.
+                // Native review resolves the effect independently of the feed's launch suggestion.
+                // The preceding placement read must retain the Account's Ask preference.
+                expect(readApprovalPreference()).toBe(true);
                 const request = DaemonLocalServiceLauncherStartRequestV1Schema.parse(payload.startReview.request);
                 return DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse({ protocolVersion: 1,
                     snapshot: { v: 1, machineId: workspace.machineId, updatedAt: 1, targets: [target] },
@@ -436,16 +444,13 @@ describe('ProjectRightPanelServicesView', () => {
                 v: 1, machineId: workspace.machineId, updatedAt: 1, targets: [target],
             })} />);
         try {
-            screen.pressByTestId('project-rightpanel-services-row:declared:web-start');
-            await vi.waitFor(() => expect(home.artifacts(serverId).list(), JSON.stringify({
-                requests: home.requests.map(({ path, input }) => ({ path, input })),
-                alerts: modalAlertMock.mock.calls, machineCalls: rpc.machine.mock.calls,
-            })).toHaveLength(1));
-            const artifactId = home.artifacts(serverId).list()[0]!.id;
-            expect(navigation.push).toHaveBeenCalledWith(expect.stringContaining(`/inbox/approvals/${artifactId}`));
-            expect(rpc.machine.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START)).toHaveLength(0);
-            expect(await decideApprovalAsInbox(serverId, artifactId, 'approve')).toMatchObject({ ok: true });
-            await vi.waitFor(() => expect(rpc.machine.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START)).toHaveLength(1));
+            await screen.pressByTestIdAsync('project-rightpanel-services-row:declared:web-start');
+            expect(modalConfirmMock).toHaveBeenCalledTimes(1);
+            expect(readApprovalPreference()).toBe(true);
+            expect(home.artifacts(serverId).list()).toEqual([]);
+            expect(navigation.push).not.toHaveBeenCalled();
+            expect(rpc.machine.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START))
+                .toHaveLength(accepted ? 1 : 0);
             expect(modalAlertMock).not.toHaveBeenCalled();
         } finally { await screen.unmount(); }
     });

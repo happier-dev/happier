@@ -14,6 +14,9 @@ import type {
 import { executeLocalServiceActionWithAdmission, isLocalServiceActionAdmissionCurrent, readLocalServiceSetupConsentReview, type LocalServiceActionAdmission } from './localServiceActionAdmission';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useProjectServiceStartDestination } from '@/components/projects/detail/services/projectServicePlacementObservation';
+import { executeProjectWorkerActionV1 } from '@/sync/ops/actions/projectWorkerActions';
+import { resolveMachinePool } from '@/sync/ops/machinePools';
+import { randomUUID } from '@/platform/randomUUID';
 
 function normalizeNonEmptyString(value: string | null | undefined): string | undefined {
     if (typeof value !== 'string') return undefined;
@@ -158,6 +161,27 @@ export function useLocalServiceLauncherStartAction(
                 || (target.source === 'package_script' && !(target.workspace && target.declaration))) {
                 return undefined;
             }
+            const resolveDestination = async (selected?: ProjectExecutionChoiceV1): Promise<ProjectExecutionChoiceV1 | undefined> => {
+                if (selected || !target.workspace || target.declaration?.selection.kind !== 'manifest') return selected;
+                // Every surface addresses the saved receiving Machine before
+                // native Start. The Action owns credential admission, independent
+                // of whether a placement observation provider has resolved yet.
+                const workspace = { serverId: target.workspace.serverId, refId: target.declaration.workspaceRefId };
+                const placement = await executeProjectWorkerActionV1('projects.service.placement.get', {
+                    workspace, serviceName: target.declaration.selection.name,
+                }, { expectedAccountId: context.expectedAccountId, signal: context.signal });
+                if (placement.status !== 'ready') throw new Error('project_service_placement_unavailable');
+                const destination = placement.placement.runsOn;
+                if (destination.kind !== 'workers' || destination.destination.kind !== 'pool') return destination;
+                if (destination.destination.selection === 'ask') throw new Error('choice_required');
+                const resolved = await resolveMachinePool(workspace.serverId, { poolId: destination.destination.poolId,
+                    purpose: 'service-start', workspace, requestKey: randomUUID() }, { expectedAccountId: context.expectedAccountId });
+                if (resolved.kind !== 'resolved') {
+                    if (placement.placement.unavailable === 'primary') return { kind: 'primary' };
+                    throw new Error(resolved.reason);
+                }
+                return { kind: 'workers', destination: { kind: 'machine', machineId: resolved.machineId } };
+            };
             const dispatch = async (choice?: ProjectExecutionChoiceV1) => {
                 if (!isLocalServiceActionAdmissionCurrent(context)) return undefined;
                 const request = buildLocalServiceLauncherStartRequest({
@@ -175,7 +199,8 @@ export function useLocalServiceLauncherStartAction(
                     ...(sessionId ? { defaultSessionId: sessionId } : {}),
                     context: { ...context, runtimeActionExecute, serverId, applyLauncherSnapshot } });
             };
-            return executeStart ? executeStart(target, choice, dispatch, context.signal) : dispatch(choice);
+            return executeStart ? executeStart(target, choice, resolveDestination, dispatch, context.signal)
+                : dispatch(await resolveDestination(choice));
         };
     }, [applyLauncherSnapshot, machineId, runtimeActionExecute, serverId, sessionId, workspaceId, executeStart,
         context.expectedAccountId, context.signal, context.isCurrent, context.reviewEffect, context.reviewSetupConsent, context.onApprovalPending]);

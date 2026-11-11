@@ -13,6 +13,9 @@ import { renderHook } from '@/dev/testkit';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import { areServerProfileIdentifiersEquivalent, removeServerProfile, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 
+// Load the real Action graph during collection, outside each behavior case's clock.
+await import('./launcherStartAction');
+
 const startedSnapshot = {
     v: 1,
     machineId: 'machine-a',
@@ -222,7 +225,7 @@ describe('launcher start action helpers', () => {
         const reviewEffect = vi.fn(async (_review: unknown) => accepted);
         const context = { runtimeActionExecute, serverId: 'server-a', expectedAccountId: 'initiating-account', reviewEffect };
         const hook = await renderHook(() => useLocalServiceLauncherStartAction(context));
-        const result = await hook.getCurrent()?.(target);
+        const result = await hook.getCurrent()?.(target, { kind: 'primary' });
         expect(reviewEffect).toHaveBeenCalledWith(expect.objectContaining({ target, reviewedEffect, reviewedEffectDigest: digest }));
         expect(requests).toHaveLength(accepted ? 2 : 1);
         expect(requests[0]?.input).not.toHaveProperty('expectedEffectDigest');
@@ -307,7 +310,7 @@ describe('launcher start action helpers', () => {
                 declaration: { workspaceRefId: 'workspace-a', selection: { kind: 'manifest' as const, name: 'web' } },
             };
             const hook = await renderHook(() => useLocalServiceLauncherStartAction({ runtimeActionExecute, serverId: home.id }));
-            expect(await hook.getCurrent()?.(target)).toBe(receipt);
+            expect(await hook.getCurrent()?.(target, { kind: 'primary' })).toBe(receipt);
             expect(requests[0]).toMatchObject({ actionId: 'localServices.launcher.start',
                 input: { workspace: target.workspace, declaration: target.declaration }, context: { serverId: 'srv_service_start_home' } });
             expect(requests[0]?.input).not.toHaveProperty('sessionId');

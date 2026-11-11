@@ -23,9 +23,6 @@ import type { ActionApprovalRegistration } from '@/components/approvals/actionAp
 import type { ServiceRelocationOutcome } from './serviceRelocationAction';
 import { publishActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { invalidateLocalServiceLauncherStores } from '@/sync/domains/local/services/launch/sharedStore';
-import { executeProjectWorkerActionV1 } from '@/sync/ops/actions/projectWorkerActions';
-import { resolveMachinePool } from '@/sync/ops/machinePools';
-import { randomUUID } from '@/platform/randomUUID';
 import { LocalServiceManagedServiceActionTargetV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { approvalArtifactBodyMatchesHeaderV1, APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
@@ -69,6 +66,7 @@ type ObservationContext = Readonly<{
   observeManaged: (name: string, scopeKey: string) => () => void;
   resolveStart: (target: LocalServiceLaunchTarget, signal?: AbortSignal) => Promise<ProjectExecutionChoiceV1 | null> | undefined;
   executeStart: (target: LocalServiceLaunchTarget, choice: ProjectExecutionChoiceV1 | undefined,
+    resolveDestination: (choice?: ProjectExecutionChoiceV1) => Promise<ProjectExecutionChoiceV1 | undefined>,
     execute: (choice?: ProjectExecutionChoiceV1) => Promise<unknown>, signal?: AbortSignal) => Promise<unknown>;
 }>;
 const Context = React.createContext<ObservationContext | null>(null);
@@ -308,50 +306,28 @@ function ScopedObservationProvider(props: Readonly<{
     const selected = selectedRef.current.get(name);
     if (selected) return selected.purpose === 'start' ? managedRef.current.get(name)?.acquire(signal) ?? Promise.resolve(null)
       : Promise.resolve(null);
-    // The declaration belongs to SOURCE; its saved next-start placement owns the
-    // receiving address. Resolve it before constructing the native Start request.
-    return (async () => {
-      const binding = props.binding;
-      const assertCurrent = () => {
-        if (signal?.aborted || !binding?.isCurrent()) throw new Error('project_service_placement_unavailable');
-      };
-      assertCurrent();
-      const workspace = { serverId: props.source.serverId, refId: props.source.refId };
-      const placement = await executeProjectWorkerActionV1('projects.service.placement.get', { workspace, serviceName: name },
-        { expectedAccountId: binding!.accountId, signal });
-      assertCurrent();
-      if (placement.status !== 'ready') throw new Error('project_service_placement_unavailable');
-      const choice = placement.placement.runsOn;
-      if (choice.kind !== 'workers' || choice.destination.kind !== 'pool') return choice;
-      if (choice.destination.selection === 'ask') throw new Error('choice_required');
-      const resolved = await resolveMachinePool(props.source.serverId, { poolId: choice.destination.poolId,
-        purpose: 'service-start', workspace, requestKey: randomUUID() }, { expectedAccountId: binding!.accountId });
-      assertCurrent();
-      if (resolved.kind !== 'resolved') {
-        if (placement.placement.unavailable === 'primary') return { kind: 'primary' as const };
-        throw new Error(resolved.reason);
-      }
-      return { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: resolved.machineId } };
-    })();
-  }, [props.binding, props.source.machineId, props.source.refId, props.source.serverId]);
-  const executeStart = React.useCallback<ObservationContext['executeStart']>(async (target, choice, execute, signal) => {
+    return undefined;
+  }, [props.source.machineId, props.source.refId, props.source.serverId]);
+  const executeStart = React.useCallback<ObservationContext['executeStart']>(async (target, choice, resolveDestination, execute, signal) => {
     const declaration = target.declaration;
     if (!target.workspace || declaration?.selection.kind !== 'manifest'
       || declaration.workspaceRefId !== props.source.refId || target.workspace.machineId !== props.source.machineId
-      || !areServerProfileIdentifiersEquivalent(target.workspace.serverId, props.source.serverId)) return execute(choice);
+      || !areServerProfileIdentifiersEquivalent(target.workspace.serverId, props.source.serverId)) return execute(await resolveDestination(choice));
     const name = declaration.selection.name;
     // This is the existing local Start invocation's lifetime. Native operations
     // take over its presentation as soon as they are observed.
     setStartRequests(current => new Map(current).set(name, choice ?? observedPlacements.current.get(name)?.placement.runsOn ?? null));
     try {
-      const resolved = choice ?? await resolveStart(target, signal);
-      if (!resolved || signal?.aborted || !props.binding?.isCurrent()) return undefined;
+      const selected = choice ?? await resolveStart(target, signal);
+      if (selected === null || signal?.aborted) return undefined;
+      const resolved = await resolveDestination(selected);
+      if (!resolved || signal?.aborted) return undefined;
       setStartRequests(current => new Map(current).set(name, resolved));
       return await execute(resolved);
     } finally {
       setStartRequests(current => { const next = new Map(current); next.delete(name); return next; });
     }
-  }, [props.binding, props.source.machineId, props.source.refId, props.source.serverId, resolveStart]);
+  }, [props.source.machineId, props.source.refId, props.source.serverId, resolveStart]);
   React.useEffect(() => {
     const retirement = props.binding?.onRetire(() => setEntries(new Map()));
     return () => retirement?.dispose();
