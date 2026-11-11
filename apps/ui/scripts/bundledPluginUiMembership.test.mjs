@@ -2,10 +2,12 @@
 import '../../../packages/cli-common/registerSourceRuntime.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { collectBundledPluginUiArtifactSources, generateBundledPluginUiArtifacts } from './generateBundledPluginUiArtifacts.mjs';
+import { fileURLToPath } from 'node:url';
+import { readBundledPluginPackageNames, pluginPackageNameToPackageId } from '../../cli/scripts/build-owned/bundledPluginMembership.ts';
+import { collectBundledPluginUiArtifactSources, generateBundledPluginUiArtifacts, listBundledPluginUiArtifactExports } from './generateBundledPluginUiArtifacts.mjs';
 
 // All packaged inputs below are constructed in the fixture; no workspace dist
 // or publication output is consumed by this source-only contract.
@@ -45,4 +47,19 @@ test('bundled UI membership excludes nonpackages and reservations while preservi
   } finally {
     await rm(repoRoot, { recursive: true, force: true });
   }
+});
+
+// Source preparation compiles executable graphs only for app dependencies.
+test('every bundled executable UI plugin belongs to the app dependency closure', async () => {
+  const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
+  const app = JSON.parse(await readFile(join(repoRoot, 'apps/ui/package.json'), 'utf8'));
+  const missing = [];
+  for (const name of readBundledPluginPackageNames(repoRoot)) {
+    const pkg = JSON.parse(await readFile(join(repoRoot, 'packages/plugins',
+      pluginPackageNameToPackageId(name), 'package.json'), 'utf8'));
+    if (listBundledPluginUiArtifactExports(pkg).length > 0 && !app.dependencies?.[name]) {
+      missing.push(name);
+    }
+  }
+  assert.deepEqual(missing, [], 'bundled executable UI must be installed before source artifact preparation');
 });
