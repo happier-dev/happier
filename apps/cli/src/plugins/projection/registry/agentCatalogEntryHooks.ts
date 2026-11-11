@@ -1423,7 +1423,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             }
             : {}),
         getPreflightSessionControlsProbeAdapter: async () => Object.freeze({
-            ...((contribution.jsonRpcCommands?.length ?? 0) > 0 ? { withNativeInspection } : {}),
+            ...(acpDeclaration || (contribution.jsonRpcCommands?.length ?? 0) > 0 ? { withNativeInspection } : {}),
             // JSON-RPC preflight is the existing retryable probe form; static
             // command parsing uses the incumbent one-shot/cooldown behavior.
             ...((contribution.jsonRpcCommands?.length ?? 0) > 0
