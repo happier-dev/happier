@@ -18,7 +18,7 @@ import { readActiveConfiguredSourceRows } from '../corpus/configuration/readConf
 import { configuredSourceInstanceIsOwnedBy } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { createTriageConfigureSourceOfferV1 } from '../corpus/configuration/sourceSetupOffer.js';
 import { entryReferenceComponents, renderSourceQualifiedId, sameTriageEntryReference } from '../corpus/identity/components.js';
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../definition.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
 import { linkEntryToSession, unlinkEntryFromSession, type TriageEntrySessionLinkDisplayV1 } from './entrySessionLinks.js';
 import { readTriageSessionLinksPageV1, readTriageSessionLinksForEntriesV1, readTriageSessionLinksForSessionsV1 } from './readEntrySessionLinks.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1, isInternalTaskConfiguredInstanceV1 } from '../internalTasks/configuration.js';

@@ -972,9 +972,8 @@ export function defineContributionPoint<
 }
 
 /**
- * Projects typed target point refs after `definePlugin` has assigned actual
- * local point IDs. `targeted` is retained here because this is host-routing
- * projection, not a public authoring constructor.
+ * Projects typed target point refs from the plugin id and canonical point declarations.
+ * Readers can share these declarations with `definePlugin` without importing activation.
  */
 export function projectDefinedTargetedContributionPoints<
     TPluginId extends string,

@@ -1,7 +1,7 @@
 import type { PluginCancellationOptions, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../definition.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
 import type { TriageAdmittedSourceV1 } from './listEntries.js';
 
 type TriageCallerContext = Pick<PluginInvocationContext, 'caller' | 'surface' | 'signal'> & Readonly<{

@@ -44,6 +44,7 @@ export type {
 } from '../targetedContributionAuthoring.js';
 export type { TargetedContributionPointRef } from '../services/targetedContributions.js';
 export {
+    projectDefinedTargetedContributionPoints,
     defineContributionPoint,
     defineContributionProtocol,
     PluginTargetedContributionSelectionV1Schema,

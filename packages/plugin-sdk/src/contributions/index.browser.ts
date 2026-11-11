@@ -39,3 +39,4 @@ export type { SurfaceFields } from '../targetedContributionAuthoring.js';
 export type { TargetedContributionPointRef } from '../services/targetedContributions.js';
 export { defineContributionPoint } from '../targetedContributionAuthoring.js';
 export { defineContributionProtocol } from '../targetedContributionAuthoring.js';
+export { projectDefinedTargetedContributionPoints } from '../targetedContributionAuthoring.js';

@@ -1,3 +1,4 @@
+import type { TriageListSortFieldV1 } from '@happier-dev/triage-protocol/v1';
 import * as React from 'react';
 import {
   Badge,
@@ -44,7 +45,7 @@ export { readTriageTaskDueV1, readTriageTaskProgressV1 } from './taskColumns.js'
 const NO_SHARED_GROUP_REASONS: ReadonlyMap<TriageListGroupIdV1, string> = new Map();
 const NO_TASK_REREAD = async () => undefined;
 import type { TriageAgentStatusV1 } from '../detail/agentState.js';
-import { TRIAGE_ENTRY_DRAG_SOURCE_ID_V1, TRIAGE_ENTRY_SESSION_DROP_TARGET_ID_V1, TRIAGE_PERSONAL_TASK_ORDER_TARGET_ID_V1 } from './entryDragDrop.js';
+import { TRIAGE_ENTRY_DRAG_SOURCE_ID_V1, TRIAGE_ENTRY_SESSION_DROP_TARGET_ID_V1, TRIAGE_PERSONAL_TASK_ORDER_TARGET_ID_V1 } from './entryDragDropProtocol.js';
 import { isPersonalTaskReferenceV1 } from '../../internalTasks/identity.js';
 import { TriageSourceMark } from './sourceMark.js';
 import type { PersonalTaskOrder } from './usePersonalTaskOrder.js';
@@ -544,6 +545,7 @@ export function readTriageDataColumnsV1(input: Readonly<{
  */
 export function useTriageListAnatomyV1(input: Readonly<{
   withSignal: boolean;
+  sortFields?: readonly TriageListSortFieldV1[];
   withAgent?: boolean;
   /** Whether any row says why it is here (`readTriageRowSaysReasonV1`); otherwise the column is not drawn. */
   withReason?: boolean;
@@ -578,7 +580,7 @@ export function useTriageListAnatomyV1(input: Readonly<{
   const { withAgent = true, organizing = false, sharedGroupReasons = NO_SHARED_GROUP_REASONS, tasks = false, onTaskApplied = NO_TASK_REREAD, pinMarks = false } = input;
   const withSignal = input.withSignal && !tasks;
   const withReason = (input.withReason ?? true) && !tasks;
-  const { taskItems, taskGroupOf, readBlockerName, personalTaskOrder, onTaskOrderOutcome, taskAudience = 'mine' } = input;
+  const { sortFields, taskItems, taskGroupOf, readBlockerName, personalTaskOrder, onTaskOrderOutcome, taskAudience = 'mine' } = input;
   return React.useMemo<CollectionAnatomy<TriageListItemV1>>(() => {
     const descriptorOf = (item: TriageListItemV1) => resolveTriageSourceDescriptorV1(targetedContributions, item.row.entryRef.source);
     const agent = (item: TriageListItemV1) => {
@@ -706,7 +708,7 @@ export function useTriageListAnatomyV1(input: Readonly<{
                 </Stack>
               </Row>
             );
-          } }),
+          } }).map(field => ({ ...field, sortable: sortFields?.some(value => value === field.key) === true })),
         listFact: createTriageTaskListFactV1({ locale, text, renderAgent: agent, agentSpeaks: (state) => readTriageAgentBadgeV1(state) !== null }),
       } : {}),
       ...(withReason ? { reason: (item: TriageListItemV1) => {
@@ -764,5 +766,5 @@ export function useTriageListAnatomyV1(input: Readonly<{
         age: text('plugins.triage.surface.column.age', 'Age'),
       },
     };
-  }, [contributionSnapshotJson, locale, onTaskApplied, organizing, pinMarks, sharedGroupReasons, tasks, taskAudience, text, withAgent, withReason, withSignal, taskItems, taskGroupOf, readBlockerName, personalTaskOrder, onTaskOrderOutcome]);
+  }, [sortFields, contributionSnapshotJson, locale, onTaskApplied, organizing, pinMarks, sharedGroupReasons, tasks, taskAudience, text, withAgent, withReason, withSignal, taskItems, taskGroupOf, readBlockerName, personalTaskOrder, onTaskOrderOutcome]);
 }

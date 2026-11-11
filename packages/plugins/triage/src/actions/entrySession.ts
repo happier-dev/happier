@@ -15,7 +15,7 @@ import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollectio
 import { configuredSourceInstanceIsOwnedBy, findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { renderSourceQualifiedId, sameTriageEntryReference } from '../corpus/identity/components.js';
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../definition.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { indexTriageAdmittedSourcesV1 } from './listEntries.js';
 import { createTriageSourceSessionRelations } from '../sessions/sourceSessionRelations.js';

@@ -1,3 +1,5 @@
-import { TRIAGE_PLUGIN } from './definition.js';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { TRIAGE_ACCOUNT_DEFINITION } from './accountDefinition.js';
 
-export const activate = TRIAGE_PLUGIN.activateAccount;
+/** Compile only the canonical Account registrations, retaining their execution placement. */
+export const activate = definePlugin(TRIAGE_ACCOUNT_DEFINITION).activateAccount;

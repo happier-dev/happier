@@ -21,6 +21,7 @@ import { INTERNAL_TASK_DATA_UNAVAILABLE_V1 } from '../internalTasks/failure.js';
 import { entryReferenceComponents } from '../corpus/identity/components.js';
 import {
     readActiveConfiguredSourceRowPage,
+    readActiveConfiguredSourceRows,
     readActiveConfiguredSourceRow,
 } from '../corpus/configuration/readConfiguredSourceRows.js';
 import type { CorpusCollectionHandleV1 } from '../corpus/collections/handles.js';
@@ -38,11 +39,12 @@ import {
     type TriageListWindowV1,
 } from '../projection/listWindow.js';
 import { toTriageListWireRows } from '../projection/listWindowWire.js';
+import { readTriageListSortFieldsV1, selectTriageListSourcesV1 } from '../projection/listSort.js';
 import {
     runTriageScanPass,
     type TriageScanLaneV1,
 } from '../projection/scanPass.js';
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../definition.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
 import {
     MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
     triageListRowBudgetV1,
@@ -130,6 +132,7 @@ function lensFrom(
     return {
         ...(!taskOnly || input.tasks === undefined ? {} : { tasks: input.tasks }),
         order: input.order,
+        ...(input.sort === undefined ? {} : { sort: input.sort }),
         // The one closed policy owner decides. An omitted or unrecognized
         // ladder resolves to the retained default rather than to no order at
         // all, and it is never repaired into a nearby one.
@@ -207,7 +210,9 @@ export async function assembleTriageListPass(
     // retirement while Account storage is pending, and either read can fail first.
     const [configured, admitted] = await Promise.all([
         sources.kind === 'allConfigured'
-            ? readActiveConfiguredSourceRowPage(deps.sourceInstances, {
+            ? input.sort !== undefined && input.limit > 0
+                ? readActiveConfiguredSourceRows(deps.sourceInstances, options)
+                : readActiveConfiguredSourceRowPage(deps.sourceInstances, {
                 limit: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
                 ...(sources.cursor === undefined ? {} : { cursor: sources.cursor }),
             }, options)
@@ -221,6 +226,9 @@ export async function assembleTriageListPass(
         deps.readAdmittedSources(options),
     ]);
     const configuredRows = configured.rows;
+    const selectedSortSourceIds = input.sort === undefined ? undefined : new Set(selectTriageListSourcesV1(
+        configuredRows.map(row => row.configured.instance), input.filters ?? TRIAGE_LIST_NO_FILTERS_V1,
+    ).map(source => source.sourceInstanceId));
     const configuredRecords = configured.records;
     const configuredSourcesStatus = configured.status;
     const configuredSourcesNextCursor = 'nextCursor' in configured ? configured.nextCursor : undefined;
@@ -298,10 +306,12 @@ export async function assembleTriageListPass(
                 ? {}
                 : { displayLabel: displayLabel.value, ...(displayLabel.truncated ? { projectionTruncated: true as const } : {}) }),
             available,
+            ...(contribution?.descriptor.sortFields === undefined ? {} : { sortFields: contribution.descriptor.sortFields }),
             ...(configuredScopes.has(row.configured.instance.sourceInstanceId)
                 ? { scope: configuredScopes.get(row.configured.instance.sourceInstanceId) } : {}),
         });
-        if (input.limit === 0 || !walkAdmits(input, row.configured.instance.sourceInstanceId)) continue;
+        if (input.limit === 0 || !walkAdmits(input, row.configured.instance.sourceInstanceId)
+            || selectedSortSourceIds !== undefined && !selectedSortSourceIds.has(row.configured.instance.sourceInstanceId)) continue;
         const selectedKindIds = deps.taskOnly
             ? contribution?.descriptor.kinds.filter((kind) => kind.task === true).map((kind) => kind.id)
             : undefined;
@@ -322,6 +332,7 @@ export async function assembleTriageListPass(
             sourceInstanceId: row.configured.instance.sourceInstanceId,
             source,
             declaredKindIds,
+            ...(input.sort === undefined ? {} : { sort: input.sort }),
             ...(contribution.descriptor.minimumScanPageSize === undefined ? {} : {
                 minimumScanPageSize: contribution.descriptor.minimumScanPageSize,
             }),
@@ -343,7 +354,17 @@ export async function assembleTriageListPass(
         });
     }
 
-    const lens = lensFrom(input, lanes.length, deps.taskOnly);
+    // Admission owns the selected-source capability decision. An agent cannot
+    // request a field that the same lens would not offer in the UI.
+    const sortSupported = input.sort === undefined || readTriageListSortFieldsV1(configuredSources.filter(source =>
+        selectionAdmits(input, source.sourceInstanceId) && selectedSortSourceIds?.has(source.sourceInstanceId),
+    )).includes(input.sort.field);
+    const admittedLanes = sortSupported ? lanes : lanes.map(lane => ({ ...lane,
+        scan: async (): Promise<TriageScanResultV1> => ({ kind: 'failed', failure: {
+            class: 'unsupportedContract', code: 'triage/sortUnsupported',
+        } }),
+    }));
+    const lens = lensFrom(input, admittedLanes.length, deps.taskOnly);
     // One transport page walks every admitted lane fairly without fetching rows
     // the result cannot carry. The shared per-lane geometry is the largest whole
     // share whose first round fits the result row budget. The pass honors a
@@ -356,10 +377,10 @@ export async function assembleTriageListPass(
     // An explicitly selected new lane starts before existing walks deepen.
     // Other unfinished lanes keep the rotation order returned by scanPass;
     // configured-row ordering must not restart the rotation on every window.
-    const orderedLanes = input.resume === undefined ? lanes : [
-        ...lanes.filter((lane) => !resumeByInstance.has(lane.sourceInstanceId)),
+    const orderedLanes = input.resume === undefined ? admittedLanes : [
+        ...admittedLanes.filter((lane) => !resumeByInstance.has(lane.sourceInstanceId)),
         ...[...resumeByInstance.keys()].flatMap((sourceInstanceId) => {
-            const lane = lanes.find((candidate) => candidate.sourceInstanceId === sourceInstanceId);
+            const lane = admittedLanes.find((candidate) => candidate.sourceInstanceId === sourceInstanceId);
             return lane === undefined ? [] : [lane];
         }),
     ];

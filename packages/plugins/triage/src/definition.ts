@@ -1,5 +1,6 @@
+import { TRIAGE_ACCOUNT_ACTIONS, TRIAGE_ACCOUNT_RESOURCES, TRIAGE_ACCOUNT_DEFINITION } from './accountDefinition.js';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from './accountExecution.js';
-import { createTriageRunConfiguredActionHandler } from './actions/configuredActionRun.js';
+
 import {
   SessionPullRequestLinkCompletionsContributionProtocolV1,
   SESSION_PULL_REQUEST_LINK_COMPLETIONS_CONTRIBUTION_POINT_ID_V1,
@@ -17,11 +18,9 @@ import {
   PluginWorkItemTransitionInputV1Schema,
 } from '@happier-dev/plugin-sdk';
 import type { DefinedContributionPointProtocolMap } from '@happier-dev/plugin-sdk/contributions';
-import { TRIAGE_WORK_ITEMS_TRANSITION_ACTION_LOCAL_ID_V1, transitionTriageWorkItem } from './workItems/runtime.js';
+import { TRIAGE_WORK_ITEMS_TRANSITION_ACTION_LOCAL_ID_V1 } from './workItems/runtime.js';
 import {
   TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1,
-  TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_ID_V1,
-  TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1,
   TRIAGE_REVIEW_WORKSPACE_OPERATION_V1,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
@@ -33,7 +32,6 @@ import {
   TriageTaskWriteResultV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
-import { createTriageAdministerSourceInstanceActionHandler } from './actions/administerSourceInstanceAction.js';
 import {
   TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1,
   TriageRunConfiguredActionInputV1Schema,
@@ -46,10 +44,6 @@ import {
   TriageReadEntryDetailResultV1Schema,
 } from './actions/entryDetailProtocol.js';
 
-import { createTriageListEntriesActionHandler } from './actions/listEntries.js';
-import { createTriageSearchEntriesActionHandler } from './actions/searchEntries.js';
-import { createTriageCreateTaskActionHandler, createTriageEditTaskActionHandler, createTriageTransitionTaskActionHandler } from './actions/tasks.js';
-import { createTriageReadTaskOriginErrorActionHandler, createTriageSetTaskOriginErrorActionHandler } from './actions/taskOrigin.js';
 import {
   TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1,
   TriageReadTaskOriginErrorInputV1Schema, TriageReadTaskOriginErrorResultV1Schema,
@@ -71,37 +65,26 @@ import {
   TriageListEntriesInputV1Schema,
   TriageListEntriesResultV1Schema,
 } from './actions/listEntriesProtocol.js';
-import { createTriageReadConfiguredSourceInstancesActionHandler } from './actions/readConfiguredSourceInstances.js';
+
 import {
   TRIAGE_SEARCH_ENTRIES_ACTION_LOCAL_ID_V1,
   TRIAGE_SEARCH_PROVIDER_LOCAL_ID_V1,
 } from './actions/searchEntriesProtocol.js';
-import { createTriageReadEntryDetailActionHandler } from './actions/readEntryDetail.js';
-import { createTriageReobserveEntryActionHandler } from './actions/reobserveEntry.js';
-import { createTriageResolveResourceActionHandler } from './actions/resolveResource.js';
+
 import {
   TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1,
   TriageResolveResourceActionInputV1Schema,
   TriageResolveResourceActionResultV1Schema,
 } from './actions/resolveResourceProtocol.js';
-import { createTriageReadPullRequestStatusActionHandler, createTriageReadPullRequestStatusObserver } from './actions/readPullRequestStatus.js';
-import { TRIAGE_SESSION_LINKS_RESOURCE_LOCAL_ID_V1, TRIAGE_SESSION_LINKS_RESOURCE_RUNTIME } from './sessions/sessionLinksResource.js';
-import { TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_LOCAL_ID_V1, TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_RUNTIME } from './sessions/sessionPullRequestResource.js';
-import { TRIAGE_SESSION_PULL_REQUEST_INBOX_RESOURCE_LOCAL_ID_V1, TRIAGE_SESSION_PULL_REQUEST_INBOX_RESOURCE_RUNTIME } from './sessions/sessionPullRequestInbox.js';
-import { observeTriageSourceSessionLinks } from './sessions/sessionLinksObservation.js';
+
+import { TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_LOCAL_ID_V1 } from './sessions/sessionPullRequestResource.js';
+
 import {
   TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1,
   TriageReobserveEntryInputV1Schema,
   TriageReobserveEntryResultV1Schema,
 } from './actions/reobserveEntryProtocol.js';
-import {
-  createTriageListPinnedEntriesActionHandler,
-  createTriageSetEntryPinnedActionHandler,
-} from './actions/userMarks.js';
-import {
-  createTriageReadFixPullRequestsActionHandler,
-  createTriageSetFixPullRequestActionHandler,
-} from './actions/fixPullRequests.js';
+
 import {
   TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1,
   TRIAGE_SET_FIX_PULL_REQUEST_ACTION_LOCAL_ID_V1,
@@ -118,12 +101,7 @@ import {
   TriageSetEntryPinnedInputV1Schema,
   TriageSetEntryPinnedResultV1Schema,
 } from './actions/userMarksProtocol.js';
-import {
-  createTriageStartEntrySessionActionHandler,
-  createTriageStartPullRequestReviewActionHandler,
-  createTriageUnlinkEntryFromSessionActionHandler,
-  createTriageVerifyExistingReviewWorkspaceActionHandler,
-} from './actions/entrySession.js';
+import { createTriageStartEntrySessionActionHandler, createTriageStartPullRequestReviewActionHandler } from './actions/entrySession.js';
 import {
   TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
   TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
@@ -138,7 +116,7 @@ import {
   TriageVerifyExistingReviewWorkspaceInputV1Schema,
   TriageVerifyExistingReviewWorkspaceResultV1Schema,
 } from './actions/entrySessionProtocol.js';
-import { createTriageLinkEntryToSessionActionHandler, createTriageReadSourceSessionLinksActionHandler } from './actions/sessionLinks.js';
+
 import {
   TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1,
   TriageLinkEntryToSessionActionResultV1Schema,
@@ -147,10 +125,7 @@ import {
   TriageReadSourceSessionLinksInputV1Schema,
   TriageReadSourceSessionLinksActionResultV1Schema,
 } from './actions/sessionLinksProtocol.js';
-import {
-  createTriageAdministerActionActionHandler,
-  createTriageReadActionsActionHandler,
-} from './actions/actionsCatalog.js';
+
 import {
   TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1,
   TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1,
@@ -159,10 +134,7 @@ import {
   TriageReadActionsActionInputV1Schema,
   TriageReadActionsActionResultV1Schema,
 } from './actions/actionsCatalogProtocol.js';
-import {
-  createTriageAdministerSavedViewActionHandler,
-  createTriageReadSavedViewsActionHandler,
-} from './actions/savedViews.js';
+
 import {
   TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1,
   TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1,
@@ -190,7 +162,7 @@ import {
 } from './corpus/collections/ids.js';
 import { TRIAGE_DISPLAY_NAME } from './displayName.js';
 import { TRIAGE_RESOURCE_DETAILS_LOCAL_ID_V1, triageResourceLinks } from './ui/contributions.js';
-import { mintTriageOpaqueIdV1 } from './opaqueId.js';
+
 import { TRIAGE_ENTRIES_CONTROL_ICON_V1 } from './ui/contributions.js';
 import {
   TRIAGE_ENTITY_DRAG_DROP_ARTIFACT_ID_V1,
@@ -278,33 +250,13 @@ type TriagePlugin = DefinedPlugin<
 
 function createTriagePlugin(): TriagePlugin {
   const plugin = definePlugin({
-    id: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-    version: '0.0.0',
-    displayName: 'PRs, Issues & Tasks',
+    ...TRIAGE_ACCOUNT_DEFINITION,
     description: 'Aggregates pull requests, issues and error groups from configured sources into one reviewable surface.',
     brand: { iconResourceId: 'brand-icon', monochrome: true },
     resources: {
+      ...TRIAGE_ACCOUNT_RESOURCES,
       'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
-      [TRIAGE_SESSION_LINKS_RESOURCE_LOCAL_ID_V1]: {
-        source: 'dynamic',
-        kind: 'config',
-        scope: 'session',
-        contentType: 'application/json',
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        runtime: TRIAGE_SESSION_LINKS_RESOURCE_RUNTIME,
-      },
-      [TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_LOCAL_ID_V1]: {
-        source: 'dynamic', kind: 'config', scope: 'session', contentType: 'application/json',
-        hostAccess: ['account-storage'], execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        runtime: TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_RUNTIME,
-      },
-      [TRIAGE_SESSION_PULL_REQUEST_INBOX_RESOURCE_LOCAL_ID_V1]: {
-        source: 'dynamic', kind: 'config', scope: 'surface', contentType: 'application/json',
-        sessionInbox: { detailResourceId: TRIAGE_SESSION_PULL_REQUEST_STATUS_RESOURCE_LOCAL_ID_V1 },
-        hostAccess: ['account-storage'], execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        runtime: TRIAGE_SESSION_PULL_REQUEST_INBOX_RESOURCE_RUNTIME,
-      },
+
       "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
       "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
       "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
@@ -392,14 +344,8 @@ function createTriagePlugin(): TriagePlugin {
       },
     },
     actions: {
-      [TRIAGE_WORK_ITEMS_TRANSITION_ACTION_LOCAL_ID_V1]: {
-        title: 'Change Work Item status', description: 'Uses the task source’s declared native transition.',
-        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [], dangerLevel: 'writesRemote', hostAccess: ['account-storage'],
-        confirmation: { title: 'Change this task’s status?', body: 'This applies the selected status transition in its source.', confirmLabel: 'Change status' },
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        inputSchema: PluginWorkItemTransitionInputV1Schema, resultSchema: TriageTaskWriteResultV1Schema,
-        run: transitionTriageWorkItem,
-      },
+      ...TRIAGE_ACCOUNT_ACTIONS,
+
       'attention/publish-v1': {
         title: 'Publish source attention', description: 'Updates one source-owned attention item with its exact Triage detail destination.',
         surfaces: ['plugin'], dangerLevel: 'safe', hostAccess: ['account-storage'],
@@ -414,47 +360,7 @@ function createTriagePlugin(): TriagePlugin {
         resultSchema: SessionPullRequestLinkCompletionResultV1Schema,
         run: createTriageCompletePullRequestLinkActionHandler(),
       },
-      ...INTERNAL_TASK_ACTIONS_V1,
-      [TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1]: {
-        title: 'List tasks',
-        description: 'Reads the current task kinds from configured sources through the shared list window.',
-        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [],
-        inputSchema: TriageListEntriesInputV1Schema,
-        resultSchema: TriageListEntriesResultV1Schema,
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageListEntriesActionHandler({ taskOnly: true }),
-      },
-      [TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1]: {
-        title: 'Create a task',
-        description: 'Creates a task at the selected configured source using its declared create Action.',
-        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [],
-        // The selected source Action owns the effect and its approval default.
-        inputSchema: TriageCreateTaskActionInputV1Schema,
-        resultSchema: TriageCreateTaskActionResultV1Schema,
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageCreateTaskActionHandler(),
-      },
-      [TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1]: {
-        title: 'Link or unlink a task origin error',
-        description: 'Records the selected origin error on an existing task without creating another task.',
-        surfaces: ['ui', 'voice', 'plugin', 'agent', 'mcp', 'cli'], placementBindings: [],
-        inputSchema: TriageSetTaskOriginErrorInputV1Schema,
-        resultSchema: TriageSetTaskOriginErrorResultV1Schema,
-        hostAccess: ['account-storage'], execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageSetTaskOriginErrorActionHandler(),
-      },
-      [TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1]: {
-        title: 'Read a task origin error',
-        description: 'Reads the exact origin error selected for this task.',
-        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [],
-        dangerLevel: 'safe', readOnly: true,
-        inputSchema: TriageReadTaskOriginErrorInputV1Schema,
-        resultSchema: TriageReadTaskOriginErrorResultV1Schema,
-        hostAccess: ['account-storage'], execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageReadTaskOriginErrorActionHandler(),
-      },
+
       [TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1]: {
         title: { key: 'plugins.triage.tasks.create', fallback: 'Create task' },
         description: 'Choose where the task belongs, then review and create it.',
@@ -473,40 +379,7 @@ function createTriagePlugin(): TriagePlugin {
         execution: { target: 'client', client: { artifactId: 'triage-mounted-ui-action-native', exportName: 'activate' }, platforms: ['web', 'ios', 'android'] },
         inputSchema: TriageCheckTaskWriteInputV1Schema, resultSchema: TriageMountedUiResultV1Schema,
       },
-      [TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1]: {
-        title: 'Edit a task',
-        description: 'Edits supported task fields through the selected source’s declared edit Action.',
-        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [],
-        inputSchema: TriageEditTaskActionInputV1Schema,
-        resultSchema: TriageTaskWriteResultV1Schema,
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageEditTaskActionHandler(),
-      },
-      [TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1]: {
-        title: 'Change a task’s status',
-        description: 'Applies a provider-native task transition through the selected source’s declared Action.',
-        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: [],
-        inputSchema: TriageTransitionTaskActionInputV1Schema,
-        resultSchema: TriageTaskWriteResultV1Schema,
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageTransitionTaskActionHandler(),
-      },
-      [TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1]: {
-        title: 'Link a task to a session',
-        description: 'Records task work through the existing entry-to-session relation owner.',
-        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [],
-        dangerLevel: 'writesLocal',
-        confirmationWhen: { presentUserUi: false },
-        sessionTarget: { field: 'sessionId', cardinality: 'one' },
-        confirmation: { title: 'Link this task to the session?', body: 'This records the task as work for the selected session in this Happier Account.', confirmLabel: 'Link task' },
-        inputSchema: TriageLinkEntryToSessionInputV1Schema,
-        resultSchema: TriageLinkEntryToSessionActionResultV1Schema,
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageLinkEntryToSessionActionHandler(),
-      },
+
       [TRIAGE_SOURCE_PANEL_REVEAL_ACTION_V1]: {
         title: 'Reveal selected occurrence user details',
         description: 'Reveals user details already read by the addressed active source panel. Concealment uses the ordinary mounted Action.',
@@ -539,140 +412,7 @@ function createTriagePlugin(): TriagePlugin {
         inputSchema: TriageMountedUiInputV1Schema,
         resultSchema: TriageMountedUiResultV1Schema,
       },
-      [TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1]: {
-        title: {
-          key: 'plugins.triage.action.listEntries.title',
-          fallback: 'Read the current list window',
-        },
-        description: {
-          key: 'plugins.triage.action.listEntries.description',
-          fallback: 'Reads one bounded ordered window of pull requests, issues and error groups from the configured sources.',
-        },
-        // UI, Voice and automated callers share the same bounded read owner.
-        surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        inputSchema: TriageListEntriesInputV1Schema,
-        resultSchema: TriageListEntriesResultV1Schema,
-        // The one Collection it touches is `source-instances`, read-only.
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageListEntriesActionHandler(),
-      },
-      [TRIAGE_SEARCH_ENTRIES_ACTION_LOCAL_ID_V1]: {
-        // The Universal Search section header. It is the product name the
-        // views already carry, which is a proper noun rather than translated
-        // copy — the same reason `ui.views` declares it directly.
-        title: TRIAGE_DISPLAY_NAME,
-        description: 'Search configured GitHub issues, pull requests and error groups by title or repository text. Each result.command.input contains entryRef and sourceInstance. For an exact GitHub issue URL, including before pin issue, unpin or subscribe, use entries/resolve-resource-v1 instead; it explains how to obtain instance, localRef and routingToken for source Actions. For a text-search result, call entries/read-detail-v1 for instance and entries/reobserve-v1 for the current observation.outcome.locator.routingToken, using its entryRef and sourceInstance.sourceInstanceId.',
-        // Search and automated callers share the Account scan/fold owner.
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
-        // The provider section IS the affordance. A query Action is not also a
-        // command-palette entry, and the manifest owner refuses one that is.
-        placementBindings: [],
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        // The one canonical search contract, imported rather than restated, so
-        // the declaration and the host's parse cannot describe two shapes.
-        inputSchema: PluginSearchQueryV1Schema,
-        resultSchema: PluginSearchResultV1Schema,
-        run: createTriageSearchEntriesActionHandler(),
-      },
-      [TRIAGE_SET_ENTRY_PINNED_ACTION_LOCAL_ID_V1]: {
-        title: 'Pin or unpin an entry',
-        description: 'Keeps one pull request, issue or error group at the top of the list, or removes that mark again.',
-        // Every caller reaches the same reversible user-mark writer.
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        // Pins stay direct for agents too; session starts and configuration
-        // writes keep Ask for agents while a present-user UI press is sufficient.
-        inputSchema: TriageSetEntryPinnedInputV1Schema,
-        resultSchema: TriageSetEntryPinnedResultV1Schema,
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageSetEntryPinnedActionHandler(),
-      },
-      [TRIAGE_SET_FIX_PULL_REQUEST_ACTION_LOCAL_ID_V1]: {
-        title: 'Link or unlink a fix pull request',
-        description: 'Records, or removes, the pull request that fixes one issue or error group.',
-        // The caller is this plugin's own mounted detail affordance, like Pin.
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        // Default `safe`: durable user state whose exact inverse is one press
-        // away, touching nothing outside Happier. It writes only `user-marks`.
-        inputSchema: TriageSetFixPullRequestInputV1Schema,
-        resultSchema: TriageSetFixPullRequestResultV1Schema,
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageSetFixPullRequestActionHandler(),
-      },
-      [TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1]: {
-        title: 'Read the fix pull requests',
-        description: 'Reads the pull requests linked as fixes for one issue or error group.',
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        inputSchema: TriageReadFixPullRequestsInputV1Schema,
-        resultSchema: TriageReadFixPullRequestsResultV1Schema,
-        // Reads `user-marks` and `session-links`; writes nothing.
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageReadFixPullRequestsActionHandler(),
-      },
-      [TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1]: {
-        title: 'Read the pinned entries',
-        description: 'Reads one bounded page of the entries the user pinned, newest first.',
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        inputSchema: TriageListPinnedEntriesInputV1Schema,
-        resultSchema: TriageListPinnedEntriesResultV1Schema,
-        // The one Collection it touches is `user-marks`, read-only.
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageListPinnedEntriesActionHandler(),
-      },
-      [TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1]: {
-        title: 'Link an entry to a session',
-        description: 'Records that a pull request, issue or error group is being worked on in one session.',
-        // Reversible relationship writes are Direct on every surface.
-        surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        // It writes durable Account state — the connection between a Session and
-        // the entry it was started from — and nothing outside Happier.
-        dangerLevel: 'safe',
-        sessionTarget: { field: 'sessionId', cardinality: 'one' },
-        inputSchema: TriageLinkEntryToSessionInputV1Schema,
-        resultSchema: TriageLinkEntryToSessionActionResultV1Schema,
-        // The one Collection it touches is `session-links`, and it is the sole
-        // writer of it.
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageLinkEntryToSessionActionHandler(),
-      },
-      [TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1]: {
-        title: 'Read source session links',
-        description: 'Reads relationships owned by configured sources for the selected session.',
-        surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], placementBindings: [],
-        readOnly: true,
-        sessionTarget: { field: 'sessionId', cardinality: 'one' },
-        inputSchema: TriageReadSourceSessionLinksInputV1Schema,
-        resultSchema: TriageReadSourceSessionLinksActionResultV1Schema,
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageReadSourceSessionLinksActionHandler(),
-        observeRead: observeTriageSourceSessionLinks,
-      },
-      [TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1]: {
-        title: 'Verify an existing review workspace',
-        description: 'Checks the accepted Session checkout against the currently authorized pull request without preparing or changing it.',
-        surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        readOnly: true,
-        sessionTarget: { field: 'session.sessionId', cardinality: 'one' },
-        inputSchema: TriageVerifyExistingReviewWorkspaceInputV1Schema,
-        resultSchema: TriageVerifyExistingReviewWorkspaceResultV1Schema,
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        hostAccess: ['account-storage'],
-        run: createTriageVerifyExistingReviewWorkspaceActionHandler(),
-      },
+
       [TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1]: {
         title: 'Start a session on an entry',
         description: 'Creates or rejoins one session for a pull request, issue or error group, records the link, and opens it.',
@@ -713,195 +453,7 @@ function createTriagePlugin(): TriagePlugin {
         resultSchema: TriageStartPullRequestReviewResultV1Schema,
         run: createTriageStartPullRequestReviewActionHandler(),
       },
-      [TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1]: {
-        title: 'Run a configured entry action',
-        description: 'Runs the selected Ask, Fix, Review or custom action for one or many entries at the chosen destination.',
-        surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        dangerLevel: 'writesLocal',
-        confirmationWhen: { presentUserUi: false },
-        sessionTarget: { field: 'handoff.sessionChoice.session', cardinality: 'one' },
-        confirmation: {
-          title: 'Run this configured action?',
-          body: 'This starts the configured work for the selected entries at the chosen session destination.',
-          confirmLabel: 'Run action',
-        },
-        inputSchema: TriageRunConfiguredActionInputV1Schema,
-        resultSchema: TriageRunConfiguredActionResultV1Schema,
-        execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
-        run: createTriageRunConfiguredActionHandler(),
-      },
-      [TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1]: {
-        title: 'Unlink an entry from a session',
-        description: 'Removes the record that a pull request, issue or error group is being worked on in one session.',
-        // Every admitted caller uses the same reversible relationship default.
-        surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        dangerLevel: 'safe',
-        sessionTarget: { field: 'sessionId', cardinality: 'one' },
-        inputSchema: TriageUnlinkEntryFromSessionActionInputV1Schema,
-        resultSchema: TriageUnlinkEntryFromSessionActionResultV1Schema,
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageUnlinkEntryFromSessionActionHandler(),
-      },
-      [TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1]: {
-        title: 'Configure a source',
-        description: 'Creates, reconfigures, removes or restores one configured pull-request, issue or error-group source.',
-        // Settings and automated invocations share the configured-instance writer.
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        // It writes durable Account state — the record of which sources the user
-        // configured — and nothing outside Happier.
-        dangerLevel: 'writesLocal',
-        confirmationWhen: { presentUserUi: false },
-        confirmation: {
-          title: 'Apply this source change?',
-          body: 'This creates, reconfigures, removes, or restores the selected source in this Happier Account. Removing a source takes its entries out of the list; your pins and Session links stay.',
-          confirmLabel: 'Apply change',
-        },
-        inputSchema: TriageSourceAdministrationActionInputV1Schema,
-        resultSchema: TriageSourceAdministrationActionResultV1Schema,
-        // The one Collection it touches is `source-instances`, and it is the sole
-        // writer of it.
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageAdministerSourceInstanceActionHandler({
-          mintSourceInstanceId: mintTriageOpaqueIdV1,
-          nowMs: () => Date.now(),
-        }),
-      },
-      [TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1]: {
-        title: 'Read the sources you configured',
-        description: 'Reads the pull-request, issue and error-group sources the calling source has configured, so it can change or remove one.',
-        // Host automated callers may discover admitted sources. Plugin callers
-        // remain scoped to their own source by the canonical caller owner.
-        surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        inputSchema: TriageReadConfiguredSourceInstancesInputV1Schema,
-        resultSchema: TriageReadConfiguredSourceInstancesResultV1Schema,
-        // The one Collection it touches is `source-instances`, read-only.
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageReadConfiguredSourceInstancesActionHandler(),
-      },
-      [TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1]: {
-        title: 'Read the durable facts of one entry',
-        description: 'Reads the configured connection and linked Sessions for an exact entry. First resolve a GitHub issue or pull request URL with entries/resolve-resource-v1, or search entries/search-v1. Pass v:1, its entryRef and sourceInstanceId from sourceInstance.sourceInstanceId. On kind read, result.instance is the configured instance required by source read and mutation Actions. The localRef uses kindId, collisionScope and entryId from entryRef; routingToken comes from the resolved locator. Non-secret configuration: instance.configuration.token contains source-selection data, not a credential. Copy the entire returned instance unchanged into source read and mutation Action inputs; never replace its configuration with [REDACTED]. Credentials are acquired internally through the account binding. Keep configuration contents out of user-facing prose. No mounted UI is required.',
-        // Mounted self and host automated callers resolve the exact connection;
-        // unrelated plugins cannot borrow private source configuration.
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        inputSchema: TriageReadEntryDetailInputV1Schema,
-        resultSchema: TriageReadEntryDetailResultV1Schema,
-        // `source-instances` and `session-links`, both read-only.
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageReadEntryDetailActionHandler(),
-      },
-      [TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1]: {
-        title: 'Resolve a GitHub issue or other resource URL',
-        description: 'Resolve a GitHub issue or pull request URL before pin issue, unpin, subscribe or other source Actions, without scanning the list. Pass v:1 and resource:{kind:"issue",url:"https://github.com/OWNER/REPO/issues/NUMBER"}; pull requests use kind:"pullRequest" and /pull/NUMBER. The resolved result contains entryRef, sourceInstance and locator.routingToken. Next call happier.triage/actions/entries/read-detail-v1 with v:1, entryRef and sourceInstanceId:sourceInstance.sourceInstanceId to obtain result.instance. For source Actions, use that instance, localRef:{kindId,collisionScope,entryId} from entryRef, and routingToken from locator.routingToken. Keep these returned values unchanged; do not invent routing fields. The returned instance.configuration.token is non-secret source-selection data required by source Actions; pass it unchanged rather than substituting [REDACTED], while keeping its contents out of user-facing prose. A missing route or unavailable result cannot be used for a write.',
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        dangerLevel: 'safe',
-        readOnly: true,
-        inputSchema: TriageResolveResourceActionInputV1Schema,
-        resultSchema: TriageResolveResourceActionResultV1Schema,
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageResolveResourceActionHandler(),
-      },
-      [TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1]: {
-        title: 'Re-read an entry after a provider change',
-        description: 'Reads the exact selected entry through its configured source after a provider Action settles.',
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        inputSchema: TriageReobserveEntryInputV1Schema,
-        resultSchema: TriageReobserveEntryResultV1Schema,
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageReobserveEntryActionHandler(),
-      },
-      [TRIAGE_READ_PULL_REQUEST_STATUS_ACTION_LOCAL_ID_V1]: {
-        title: 'Read pull request status',
-        description: 'Reads checks, reviews, mergeability and branches for the exact selected pull request.',
-        surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        dangerLevel: 'safe',
-        readOnly: true,
-        inputSchema: TriageReobserveEntryInputV1Schema,
-        resultSchema: TriagePullRequestStatusResultV1Schema,
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageReadPullRequestStatusActionHandler(),
-        observeRead: createTriageReadPullRequestStatusObserver(),
-      },
-      [TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1]: {
-        title: 'Read the saved views',
-        description: 'Reads the saved filter and order views. Select one on this device with ui/mounted-v1 selectSavedView.',
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        inputSchema: TriageReadSavedViewsInputV1Schema,
-        resultSchema: TriageReadSavedViewsResultV1Schema,
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageReadSavedViewsActionHandler(),
-      },
-      [TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1]: {
-        title: 'Save, update or delete a view',
-        description: 'Creates, renames, updates or removes one saved filter and order view. Selection uses ui/mounted-v1 selectSavedView on the addressed client.',
-        // The same mounted UI surface as the list read: the caller is this plugin's
-        // own mounted lens control, which holds no Settings member of its own.
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        // It writes durable Account state, and the exact inverse is one press
-        // away; nothing outside Happier is touched.
-        dangerLevel: 'writesLocal',
-        confirmationWhen: { presentUserUi: false },
-        confirmation: {
-          title: 'Apply this saved-view change?',
-          body: 'This creates, renames, updates, or removes a saved PRs & Issues view in this Happier Account.',
-          confirmLabel: 'Apply change',
-        },
-        inputSchema: TriageAdministerSavedViewInputV1Schema,
-        resultSchema: TriageAdministerSavedViewResultV1Schema,
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageAdministerSavedViewActionHandler(),
-      },
-      [TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1]: {
-        title: 'Read the configured actions',
-        description: 'Reads the configured set of things a reader can start from a pull request, issue or error group.',
-        // The editor and external handoff surfaces read this same Account owner.
-        surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        inputSchema: TriageReadActionsActionInputV1Schema,
-        resultSchema: TriageReadActionsActionResultV1Schema,
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageReadActionsActionHandler(),
-      },
-      [TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1]: {
-        title: 'Add, change, remove, reorder or restore actions',
-        description: 'Creates, renames, disables, reconfigures, removes or reorders one configured action, or restores the shipped defaults.',
-        surfaces: ['ui', 'agent', 'mcp', 'cli'],
-        placementBindings: [],
-        // It writes durable Account state, and the exact inverse is one press
-        // away; nothing outside Happier is touched.
-        dangerLevel: 'writesLocal',
-        confirmationWhen: { presentUserUi: false },
-        confirmation: {
-          title: 'Apply this configured-action change?',
-          body: 'This adds, changes, removes, enables, disables, reorders, or restores the default entry actions in this Happier Account.',
-          confirmLabel: 'Apply change',
-        },
-        inputSchema: TriageAdministerActionInputV1Schema,
-        resultSchema: TriageAdministerActionResultV1Schema,
-        hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
-        run: createTriageAdministerActionActionHandler(),
-      },
+
     },
     /**
      * The one Universal Search provider.
@@ -1204,22 +756,7 @@ function createTriagePlugin(): TriagePlugin {
 /** The one Triage plugin value: manifest, activation and contribution points. */
 export const TRIAGE_PLUGIN: TriagePlugin = createTriagePlugin();
 
-/**
- * The exact target-owned point used to observe admitted V1 source
- * contributions.
- *
- * It is the reference `definePlugin` attached to the declaration in
- * `PLUGIN_MANIFEST`, so the observed point and the declared point can never be
- * two different values. Every consumer dereferences it inside a handler body,
- * never at module evaluation, which is what keeps the deliberate
- * definition ↔ handler import cycle initialization-safe.
- */
-export const TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 =
-  TRIAGE_PLUGIN.contributionPoints[TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1];
-
-/** The point plugins declare agent action records at; read by the `triage.actions` catalog readers, same rules as above. */
-export const TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_REF_V1 =
-  TRIAGE_PLUGIN.contributionPoints[TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_ID_V1];
+export { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1, TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_REF_V1 } from './targetedContributions.js';
 import { runTriageAttention } from './attention/runtime.js';
 import { publishSourceAttention } from './attention/publish.js';
 import { TriagePublishAttentionInputV1Schema, TriagePublishAttentionResultV1Schema } from '@happier-dev/triage-protocol/v1';

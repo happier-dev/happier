@@ -2975,7 +2975,7 @@ admission and RPC path. A selected Message never changes the Action's placement.
 and opening the draft performs no task write. Loaded-runtime verification and
 registry publication remain separate from this development-source contract.
 
-[`definePlugin`](../packages/plugin-sdk/src/definePlugin.ts) is the code-defined author path. It projects a portable manifest and compiles registration callbacks into the named `activate(api)` ABI declared in [`activation.ts`](../packages/plugin-sdk/src/activation.ts). Raw host-generated `contributes` is not an additional `definePlugin` author input.
+[`definePlugin`](../packages/plugin-sdk/src/definePlugin.ts) is the code-defined author path. It projects a portable manifest and compiles registration callbacks into the named `activate(api)` ABI declared in [`activation.ts`](../packages/plugin-sdk/src/activation.ts). Raw host-generated `contributes` is not an additional `definePlugin` author input. In 0.3 development, `projectDefinedTargetedContributionPoints` from `@happier-dev/plugin-sdk/contributions` derives routing refs from the same plugin id and contribution-point declarations passed to `definePlugin`. Keep those declarations in a lightweight module so readers need not import the plugin activation or handlers.
 
 The canonical manifest schema and normalizer remain Protocol/platform-owned. [`manifest/v2.ts`](../packages/protocol/src/plugins/manifest/v2.ts) admits runtime API version 1 and an **optional** non-wildcard `engines.happier` range. Host/runtime ABI admission and package SemVer are separate contracts; do not infer a host compatibility range from a package version or source build identity. See [protocol evolution](compatibility.md#sdk-protocol-evolution).
 
@@ -6907,7 +6907,7 @@ File viewers use the existing `contributes.openableContentViewers` family. The
 host's `resolveFileViewerKind` supplies both built-in body selection and plugin
 openable-content metadata: SVG is `image/svg+xml` with image content class; PDF,
 audio and video keep their specific MIME with binary content class. Markdown is
-`text/markdown`; code remains `text/plain`. A Markdown viewer that previously
+`text/markdown`; HTML is `text/html` with text content class; code remains `text/plain`. A Markdown viewer that previously
 matched `text/plain` should match `text/markdown` or a Markdown extension instead.
 The existing plugin read budgets are unchanged, and the built-in viewer remains
 available in the chooser. Every matching, currently available installed viewer
@@ -8324,8 +8324,8 @@ Cursor has two conversation stores, and the plugin labels each row with its sour
   - **No content search:** content search does not cover the app store.
   - **No resume:** an app conversation id is not a Cursor CLI/ACP session id, so the CLI cannot resume it.
     - Cursor declares no takeover contribution and `writerSafety: 'unsupported'`, so the footer never offers a resume or takeover.
-    - Continuing it means a new session seeded by the existing replay owner: Import (materialize, which reads this source's `pageTranscript`/`readAfterTranscript`), then Fork → Replay.
-    - A one-step "Continue in a new session" footer action is not built. It needs a host/UI decision about when takeover is unavailable, and it is not Cursor-specific.
+    - Continuing it means a new session seeded by the existing replay owner: Import (materialize, which reads this source's `pageTranscript`/`readAfterTranscript`), then a Replay fork.
+    - The footer's one-step "Continue in a new session" does both. It is generic, not Cursor-specific: `resolveSessionViewExternalControlFooter` offers it when the status is known, the outside Agent is not running and neither `canTakeOverDirect` nor `canTakeOverPersist` holds, and only while `sessionReplayEnabled` is on. `useExternalSessionContinueInNewSession` calls the existing materialize owner when the transcript is machine-only, waits for the published snapshot, then opens the fork strategy modal with `autoSubmitRoute: 'replay'`, which stays the one progress/approval/failure surface.
 
 ### External Session JSONL read progress (0.3 development)
 

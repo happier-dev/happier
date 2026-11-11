@@ -11,6 +11,7 @@
 | `.` | `ActionOperationDeclarationV1` | type | any |
 | `.` | `BackupDestinationContributionV1` | type | any |
 | `.` | `BackupDestinationCredentialBindingV1ProtocolSchema` | value | any |
+| `.` | `BackupDestinationOpenInputV1` | type | any |
 | `.` | `BackupDestinationOpenV1` | type | any |
 | `.` | `BackupDestinationOpenV1ProtocolSchema` | value | any |
 | `.` | `BuiltinUsagePublicPresentationV1` | type | any |
@@ -130,6 +131,10 @@
 | `.` | `HealthCheckSetupDraftV1ProtocolSchema` | value | any |
 | `.` | `HealthCheckSetupInputV1` | type | any |
 | `.` | `HealthCheckSetupInputV1ProtocolSchema` | value | any |
+| `.` | `HealthCheckSetupPreviewInputV1` | type | any |
+| `.` | `HealthCheckSetupPreviewInputV1ProtocolSchema` | value | any |
+| `.` | `HealthCheckSetupPreviewResultV1` | type | any |
+| `.` | `HealthCheckSetupPreviewResultV1ProtocolSchema` | value | any |
 | `.` | `HealthCheckSourceConfigV1` | type | any |
 | `.` | `HealthCheckSourceConfigV1ProtocolSchema` | value | any |
 | `.` | `HealthCheckSourceSelectorV1` | type | any |
@@ -344,6 +349,7 @@
 | `.` | `machineConnectorCredentialDirectory` | value | any |
 | `.` | `nativeCaddyProfile` | value | any |
 | `.` | `parseJsonLine` | value | any |
+| `.` | `parseQualifiedPluginContributionKey` | value | any |
 | `.` | `parseTimestampMs` | value | any |
 | `.` | `projectPluginFailureText` | value | any |
 | `.` | `readPluginErrorRequestIdV1` | value | any |
@@ -604,6 +610,7 @@
 | `./actions` | `MessagingActionResultById` | type | any |
 | `./actions` | `ModelPreferencesActionInputById` | type | any |
 | `./actions` | `ModelPreferencesActionResultById` | type | any |
+| `./actions` | `NOTIFICATION_NOTIFY_ME_ACTION_ID` | value | any |
 | `./actions` | `NotificationConfigurationActionInputById` | type | any |
 | `./actions` | `NotificationConfigurationActionResultById` | type | any |
 | `./actions` | `NotificationsActionInputById` | type | any |
@@ -699,6 +706,8 @@
 | `./actions` | `ReviewCommentsActionResultById` | type | any |
 | `./actions` | `RolesActionInputById` | type | any |
 | `./actions` | `RolesActionResultById` | type | any |
+| `./actions` | `SAVED_HEALTH_ALERT_TEST_ACTION_ID` | value | any |
+| `./actions` | `SavedHealthAlertTestResultSchema` | value | any |
 | `./actions` | `SavedSecretSharingActionInputById` | type | any |
 | `./actions` | `SavedSecretSharingActionResultById` | type | any |
 | `./actions` | `ScmDiffSummaryActionInputById` | type | any |
@@ -779,6 +788,7 @@
 | `./actions` | `VoiceControlsActionInputById` | type | any |
 | `./actions` | `VoiceControlsActionResultById` | type | any |
 | `./actions` | `VoiceProviderSettingsJsonValueV1` | type | any |
+| `./actions` | `WEBHOOK_NOTIFICATION_TEST_ACTION_ID` | value | any |
 | `./actions` | `WidgetDefinitionBodyV1` | type | any |
 | `./actions` | `WidgetDefinitionBodyV1Input` | type | any |
 | `./actions` | `WidgetsActionInputById` | type | any |
@@ -1600,6 +1610,7 @@
 | `./contributions` | `TargetedContributionPointRef` | type | any |
 | `./contributions` | `defineContributionPoint` | value | any |
 | `./contributions` | `defineContributionProtocol` | value | any |
+| `./contributions` | `projectDefinedTargetedContributionPoints` | value | any |
 | `./errors` | `ActionFailureCauseV1` | type | any |
 | `./errors` | `ActionFailureCauseV1ProtocolSchema` | value | any |
 | `./errors` | `ActionFailureCauseV1Schema` | value | any |
@@ -1712,6 +1723,9 @@
 | `./fs` | `createSecureTempDirectorySync` | value | daemon |
 | `./fs` | `expandHomePath` | value | daemon |
 | `./fs` | `isCanonicalAbsolutePathInsideRoot` | value | daemon |
+| `./fs` | `isWindowsAbsolutePath` | value | daemon |
+| `./fs` | `joinNativePath` | value | daemon |
+| `./fs` | `joinPosixPath` | value | daemon |
 | `./fs` | `linkDirectoryChildren` | value | daemon |
 | `./fs` | `listConnectedServiceNativeHomes` | value | daemon |
 | `./fs` | `openSqliteDatabaseSync` | value | daemon |
@@ -1891,6 +1905,7 @@
 | `./machine-provisioners` | `managedMachineResizeRequiresRestartV1` | value | any |
 | `./machine-provisioners` | `observeMachineProvisionerNativeRead` | value | any |
 | `./machine-provisioners` | `prepareMachineProvisionerStoredSchemas` | value | any |
+| `./machine-provisioners` | `projectMachineProvisionerActionFailure` | value | any |
 | `./machine-provisioners` | `projectMachineProvisionerSelectionV1` | value | any |
 | `./machine-provisioners` | `readMachineProvisionerResizeCapabilityV1` | value | any |
 | `./machine-provisioners` | `readMachineProvisionerResizeRequirementsV1` | value | any |
@@ -2925,7 +2940,6 @@
 | `./sessions/external` | `AgentExternalSessionTranscriptRawRecord` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionTranscriptRawRecordSchema` | value | daemon |
 | `./sessions/external` | `AgentExternalSessionUserProjection` | type | daemon |
-| `./sessions/external` | `AgentExternalSessionsCandidatePreparation` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionsContribution` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionsFailureCode` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionsHydrateCandidatesRequest` | type | daemon |
@@ -2953,6 +2967,8 @@
 | `./sessions/external` | `AgentExternalSessionsResult` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionsRipgrep` | type | daemon |
 | `./sessions/external` | `AgentExternalSessionsTranscriptPage` | type | daemon |
+| `./sessions/external` | `ExternalSessionActivityPageBudgetError` | value | daemon |
+| `./sessions/external` | `ExternalSessionActivityPosition` | type | daemon |
 | `./sessions/external` | `ExternalSessionAgentId` | type | daemon |
 | `./sessions/external` | `ExternalSessionAgentIdSchema` | value | daemon |
 | `./sessions/external` | `ExternalSessionAttachResult` | type | daemon |
@@ -2982,6 +2998,7 @@
 | `./sessions/external` | `HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1` | value | daemon |
 | `./sessions/external` | `HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1` | value | daemon |
 | `./sessions/external` | `HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1` | value | daemon |
+| `./sessions/external` | `compareExternalSessionActivityPositions` | value | daemon |
 | `./sessions/external` | `compareExternalSessionCandidatePrecedence` | value | daemon |
 | `./sessions/external` | `createAgentExternalSessionsProducerOverflowFailure` | value | daemon |
 | `./sessions/external` | `createExternalSessionContentMatchSnippet` | value | daemon |
@@ -2990,6 +3007,8 @@
 | `./sessions/external` | `getAgentExternalSessionsInvocationFailure` | value | daemon |
 | `./sessions/external` | `isAgentExternalSessionsFailureCode` | value | daemon |
 | `./sessions/external` | `isAgentExternalSessionsResultWithinByteBudget` | value | daemon |
+| `./sessions/external` | `pageExternalSessionCandidatesByActivity` | value | daemon |
+| `./sessions/external` | `parseExternalSessionActivityPosition` | value | daemon |
 | `./sessions/external` | `readSessionInputPromptUserTextV1` | value | daemon |
 | `./sessions/external` | `resolveExternalSessionCandidateIdentityKey` | value | daemon |
 | `./sessions/external` | `runWithSessionInputPromptUserTextReader` | value | daemon |
@@ -3002,6 +3021,7 @@
 | `./sessions/external` | `validateAgentExternalSessionTakeoverLaunchPlan` | value | daemon |
 | `./sessions/external` | `validateAgentExternalSessionTakeoverResolveLaunchRequest` | value | daemon |
 | `./sessions/external` | `validateAgentExternalSessionTakeoverResolveLaunchResult` | value | daemon |
+| `./sessions/file-stores` | `AGENT_UNSUPPORTED_CONTENT_TEXT` | value | any |
 | `./sessions/file-stores` | `AgentAccountingJsonlProjection` | type | daemon |
 | `./sessions/file-stores` | `AgentAccountingJsonlState` | type | daemon |
 | `./sessions/file-stores` | `ContentPrefilterParams` | type | daemon |
@@ -3040,6 +3060,7 @@
 | `./sessions/file-stores` | `readJsonlFileBackwardPage` | value | daemon |
 | `./sessions/file-stores` | `readJsonlFileForward` | value | daemon |
 | `./sessions/file-stores` | `readJsonlFileForwardLines` | value | daemon |
+| `./sessions/file-stores` | `readJsonlSessionLastActivityMs` | value | daemon |
 | `./sessions/file-stores` | `readSessionIdFromFileHead` | value | daemon |
 | `./sessions/file-stores` | `resolveSessionFileStoreDirs` | value | daemon |
 | `./sessions/file-stores` | `resolveSessionFileStoreDirsSync` | value | daemon |

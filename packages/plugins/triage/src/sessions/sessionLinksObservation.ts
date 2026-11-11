@@ -5,7 +5,7 @@ import type { TriageReadSourceSessionLinksInputV1 } from '../actions/sessionLink
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { CORPUS_SESSION_LINKS_COLLECTION, CORPUS_SOURCE_INSTANCES_COLLECTION } from '../corpus/collections/definitions.js';
 import { CORPUS_SOURCE_INSTANCES_INDEX_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../definition.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { createTriageSourceSessionRelations } from './sourceSessionRelations.js';
 import { triageSessionLinksSelectionV1 } from './readEntrySessionLinks.js';

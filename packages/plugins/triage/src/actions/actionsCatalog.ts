@@ -3,7 +3,7 @@ import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
 import { prepareTriageActionDefaultsV1 } from './actionDefaults.js';
 import { TRIAGE_DEFAULT_FIX_ACTION_ID_V1, TRIAGE_DEFAULT_INVESTIGATE_ACTION_ID_V1, type TriageSessionHandoffChoicesV1 } from '@happier-dev/triage-protocol/v1';
 
-import { TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_REF_V1 } from '../definition.js';
+import { TRIAGE_AGENT_ACTIONS_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
 import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
 import {
     applyTriageActionLaunchModeV1,
