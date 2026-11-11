@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { ApprovalRequestV2Schema } from './approvalRequestV1.js';
+import { ApprovalRequestV1Schema, ApprovalRequestV2Schema } from './approvalRequestV1.js';
 import {
   approvalArtifactBodyMatchesHeaderV1,
+  readApprovalArtifactAdmissionV1,
   buildApprovalRequestArtifactHeaderV1,
   buildExecutionRunHostActionApprovalArtifactHeaderV1,
   buildTargetActionApprovalArtifactHeaderV1,
@@ -466,6 +467,20 @@ describe('approval Artifact header correspondence', () => {
     // A header written before the facts existed is unclassified, not contradictory.
     const { approvalListFacts: _facts, ...unclassified } = header;
     expect(approvalArtifactBodyMatchesHeaderV1(unclassified, JSON.stringify(discussion))?.request).toEqual(discussion);
+  });
+
+  it('settles an obsolete v1 Discussion body whose header carries newer list facts', () => {
+    const legacy = ApprovalRequestV1Schema.parse({ v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'agent', sessionId: 'session-1' }, requestedSurface: 'agent',
+      actionId: 'discussion.post', actionArgs: { discussionId: 'discussion-1', content: 'Hello' }, summary: 'Post' });
+    const currentHeader = buildApprovalRequestArtifactHeaderV1(legacy);
+    expect(currentHeader.approvalListFacts).toEqual({});
+    expect(readApprovalArtifactAdmissionV1(currentHeader, JSON.stringify(legacy))).toMatchObject({ kind: 'presented' });
+    const header = { ...buildApprovalRequestArtifactHeaderV1(legacy), approvalListFacts: { discussionId: 'discussion-1' } };
+    expect(approvalArtifactBodyMatchesHeaderV1(header, JSON.stringify(legacy))).toBeNull();
+    expect(readApprovalArtifactAdmissionV1(header, JSON.stringify(legacy))).toMatchObject({ kind: 'not_presented', reason: 'superseded_header_facts' });
+    expect(readApprovalArtifactAdmissionV1(header, '{"v":9}')).toEqual({ kind: 'unreadable' });
+    expect(readApprovalArtifactAdmissionV1(header, null)).toEqual({ kind: 'unreadable' });
   });
 
   it('rejects an unhydrated or wrong-family body instead of trusting the index header', () => {

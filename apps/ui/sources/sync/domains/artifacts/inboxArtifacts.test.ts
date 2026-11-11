@@ -43,6 +43,22 @@ function approvalArtifact(id: string, updatedAt: number): Extract<DecryptedArtif
 }
 
 describe('admitted Inbox Artifact projection', () => {
+    it('certifies a retained superseded approval while presenting the current item', () => {
+        const legacy = ApprovalRequestV1Schema.parse({ v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent', sessionId: 'session-legacy' }, requestedSurface: 'agent',
+            actionId: 'discussion.post', actionArgs: { discussionId: 'discussion-legacy', content: 'retained' }, summary: 'Post' });
+        const stale: DecryptedArtifact = { id: 'retired-approval', isDecrypted: true,
+            header: { ...buildApprovalRequestArtifactHeaderV1(legacy), approvalListFacts: { discussionId: 'discussion-legacy' } },
+            body: JSON.stringify(legacy), title: 'Post', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        const current = approvalArtifact('current-approval', 2);
+        const store = createStore<ArtifactsDomain>((set, get) => createArtifactsDomain({ set, get }));
+        store.getState().applyArtifacts([stale, current]);
+        const items = projectInboxArtifactItems(store.getState().artifactInboxOrder, 'account-a');
+        expect(items.complete).toBe(true);
+        expect(items.openApprovals.map(artifact => artifact.id)).toEqual(['current-approval']);
+        expect(store.getState().artifacts[stale.id]).toEqual(stale);
+    });
+
     it('reuses unchanged admissions across unrelated Artifact publications and strictly admits changed bodies', () => {
         const request = ApprovalRequestV1Schema.parse({ v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
             createdBy: { surface: 'agent', sessionId: 'session-a' }, requestedSurface: 'agent',

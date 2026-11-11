@@ -38,6 +38,11 @@ export type ParsedApprovalArtifactBodyV1 =
   | Readonly<{ family: 'target_action'; request: TargetActionApprovalRequestV1 }>
   | Readonly<{ family: 'execution_run_host_action'; request: ExecutionRunHostActionApprovalRequestV1 }>;
 
+export type ApprovalArtifactAdmissionV1 =
+  | Readonly<{ kind: 'presented'; parsed: ParsedApprovalArtifactBodyV1 }>
+  | Readonly<{ kind: 'not_presented'; reason: 'superseded_header_facts' }>
+  | Readonly<{ kind: 'unreadable' }>;
+
 function optionalExactStringMatches(actual: unknown, expected: string | null): boolean {
   return expected === null
     ? actual === undefined || actual === null
@@ -156,6 +161,7 @@ export function buildApprovalRequestArtifactHeaderV1(
 export function approvalRequestArtifactHeaderMatches(
   header: ApprovalArtifactHeaderCandidateV1,
   request: ApprovalRequest,
+  options: Readonly<{ ignoreListFacts?: boolean }> = {},
 ): boolean {
   const origin = request.v === 2 ? request.executionOriginV1 : null;
   const sessionId = origin?.sessionId
@@ -171,7 +177,7 @@ export function approvalRequestArtifactHeaderMatches(
     && (request.actionId === 'localServices.launcher.start' && header.approvalSubjectKey === undefined
       || optionalExactStringMatches(header.approvalSubjectKey, approvalSubjectKey))
     && sessionBindingMatches(header, sessionId || null)
-    && (header.approvalListFacts === undefined || listFactsEqual(header.approvalListFacts, deriveApprovalArtifactListFactsV1(request)))
+    && (options.ignoreListFacts === true || header.approvalListFacts === undefined || listFactsEqual(header.approvalListFacts, deriveApprovalArtifactListFactsV1(request)))
     && (header.workflowRunId === undefined
       || header.workflowRunId === (readWorkflowPublicationApprovalTargetV1({ family: 'built_in', request })?.runId ?? null))
     && (request.v === 1 || (
@@ -379,6 +385,49 @@ export function approvalArtifactBodyMatchesHeaderV1(
       : null;
   }
   return null;
+}
+
+/**
+ * The single stored approval admission owner. A v1 body with non-empty list
+ * facts is a positively classified row from the superseded pre-facts writer:
+ * the current v1 writer emits `{}` and therefore cannot produce this shape.
+ * It remains retained but is not presented; malformed, unavailable and other
+ * header/body disagreements stay unreadable.
+ */
+export function readApprovalArtifactAdmissionV1(
+  header: ApprovalArtifactHeaderCandidateV1,
+  body: string | null | undefined,
+): ApprovalArtifactAdmissionV1 {
+  if (typeof body !== 'string') return { kind: 'unreadable' };
+  let value: unknown;
+  try { value = JSON.parse(body); } catch { return { kind: 'unreadable' }; }
+  if (header.kind === APPROVAL_ARTIFACT_KINDS_V1.builtIn) {
+    const parsed = StoredApprovalRequestSchema.safeParse(value);
+    if (!parsed.success) return { kind: 'unreadable' };
+    const candidate = { family: 'built_in' as const, request: parsed.data };
+    if (approvalRequestArtifactHeaderMatches(header, parsed.data)) return { kind: 'presented', parsed: candidate };
+    const facts = header.approvalListFacts;
+    if (parsed.data.v === 1 && facts && typeof facts === 'object' && !Array.isArray(facts)
+      && Object.keys(facts).length > 0 && approvalRequestArtifactHeaderMatches(header, parsed.data, { ignoreListFacts: true })) {
+      return { kind: 'not_presented', reason: 'superseded_header_facts' };
+    }
+    return { kind: 'unreadable' };
+  }
+  if (header.kind === APPROVAL_ARTIFACT_KINDS_V1.targetAction) {
+    const parsed = StoredTargetActionApprovalRequestV1Schema.safeParse(value);
+    if (!parsed.success) return { kind: 'unreadable' };
+    const candidate = { family: 'target_action' as const, request: parsed.data };
+    return targetActionApprovalArtifactHeaderMatches(header, parsed.data)
+      ? { kind: 'presented', parsed: candidate } : { kind: 'unreadable' };
+  }
+  if (header.kind === APPROVAL_ARTIFACT_KINDS_V1.executionRunHostAction) {
+    const parsed = StoredExecutionRunHostActionApprovalRequestV1Schema.safeParse(value);
+    if (!parsed.success) return { kind: 'unreadable' };
+    const candidate = { family: 'execution_run_host_action' as const, request: parsed.data };
+    return executionRunHostActionApprovalArtifactHeaderMatches(header, parsed.data)
+      ? { kind: 'presented', parsed: candidate } : { kind: 'unreadable' };
+  }
+  return { kind: 'unreadable' };
 }
 
 type ApprovalListArtifactV1 = Readonly<{

@@ -6,7 +6,7 @@ import { ACCOUNT_NOTICE_ARTIFACT_KIND_V1, USAGE_NOTICE_ARTIFACT_KIND_V1,
 import { normalizeAccountNoticeArtifactV1, projectOpenUsageNoticeHeaderV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import type { OwnedNoticeArtifactAdmissionV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 
-import { isOpenApprovalInboxArtifact, readOpenApprovalInboxEntry, listOpenApprovalInboxArtifactHydrationRequests,
+import { readOpenApprovalInboxAdmission, readOpenApprovalInboxEntry, listOpenApprovalInboxArtifactHydrationRequests,
     readListedOpenApproval, type ListedOpenApproval, type OpenApprovalInboxEntry } from './approvalArtifactAdmission';
 import { readAccountNoticeArtifactAdmission, isOpenAccountNotice, isUnreadAccountNotice,
     type AccountNoticeArtifact, type OpenUsageNoticeArtifact } from './usageNoticeArtifacts';
@@ -245,7 +245,7 @@ function isInboxArtifactAdmissionComplete(artifact: DecryptedArtifact, accountId
             const status = kind === APPROVAL_ARTIFACT_KINDS_V1.targetAction ? TargetActionApprovalRequestV1Schema.shape.status
                 : kind === APPROVAL_ARTIFACT_KINDS_V1.executionRunHostAction ? ApprovalRequestStatusSchema : ApprovalRequestV2StatusSchema;
             if (!status.safeParse(artifact.header.approvalStatus).success
-                || (artifact.header.approvalStatus === 'open' && !isOpenApprovalInboxArtifact(artifact))) return false;
+                || (artifact.header.approvalStatus === 'open' && readOpenApprovalInboxAdmission(artifact).kind === 'unreadable')) return false;
         } else {
             // A known foreign/shared/public notice is not this Account's Inbox. Missing authority is unknown.
             if ((artifact.ownerAccountId !== undefined && artifact.ownerAccountId !== accountId)

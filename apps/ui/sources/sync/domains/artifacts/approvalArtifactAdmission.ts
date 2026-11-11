@@ -1,6 +1,6 @@
 import { approvalArtifactBodyMatchesHeaderV1, readApprovalArtifactHeaderListFactsV1, readApprovalRequestArtifactSubjectKeyV1,
     readOpenWorkflowPublicationApprovalTargetV1, readWorkflowPublicationApprovalHeaderRunIdV1,
-    type ParsedApprovalArtifactBodyV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+    readApprovalArtifactAdmissionV1, type ParsedApprovalArtifactBodyV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ApprovalRequestV2Schema, type ApprovalRequest, type ApprovalRequesterConfirmationV1, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
@@ -144,6 +144,7 @@ export type OpenApprovalAttentionArtifactForSession = OpenApprovalArtifactForSes
 type AdmittedApprovalBody = Readonly<{
     body: string | null;
     parsed: ParsedApprovalArtifactBodyV1 | null;
+    disposition: 'presented' | 'not_presented' | 'unreadable';
     subjectKey: string | null;
     sessionEntry: OpenApprovalAttentionArtifactForSession | null;
 }>;
@@ -159,21 +160,41 @@ export function readAdmittedApprovalArtifactBody(artifact: DecryptedArtifact): A
     const body = typeof artifact.body === 'string' ? artifact.body : null;
     const admitted = admittedApprovalBodies.get(header);
     if (admitted?.body === body && (!admitted.sessionEntry || admitted.sessionEntry.artifact.id === artifact.id)) return admitted;
-    const parsed = admitted?.body === body ? admitted.parsed : approvalArtifactBodyMatchesHeaderV1(header, body);
+    const strict = admitted?.body === body ? admitted.parsed : approvalArtifactBodyMatchesHeaderV1(header, body);
+    const admission = admitted?.body === body ? null : strict
+        ? { kind: 'presented' as const, parsed: strict }
+        : readApprovalArtifactAdmissionV1(header, body);
+    const parsed = strict ?? (admission?.kind === 'presented' ? admission.parsed : null);
     const subjectKey = admitted?.parsed === parsed ? admitted.subjectKey
         : parsed?.family === 'built_in' ? readApprovalRequestArtifactSubjectKeyV1(parsed.request) : null;
     const sessionEntry = parsed?.family === 'built_in' || parsed?.family === 'target_action'
         ? { artifact: { id: artifact.id, header }, approval: parsed.request } : null;
-    const value = { body, parsed, subjectKey, sessionEntry };
+    const value = { body, parsed, disposition: admission?.kind ?? admitted?.disposition ?? 'unreadable', subjectKey, sessionEntry };
     admittedApprovalBodies.set(header, value);
     return value;
 }
 
-export function readOpenApprovalInboxArtifact(artifact: DecryptedArtifact): ParsedApprovalArtifactBodyV1 | null {
+export type OpenApprovalInboxAdmission = Readonly<
+    | { kind: 'presented'; parsed: ParsedApprovalArtifactBodyV1 }
+    | { kind: 'not_presented'; reason: 'superseded_header_facts' }
+    | { kind: 'unreadable' }
+>;
+
+export function readOpenApprovalInboxAdmission(artifact: DecryptedArtifact): OpenApprovalInboxAdmission {
     if (artifact.draft === true || artifact.header?.approvalStatus !== 'open'
-        || !Object.values(APPROVAL_ARTIFACT_KINDS_V1).some(kind => kind === artifact.header?.kind)) return null;
-    const parsed = readAdmittedApprovalArtifactBody(artifact)?.parsed;
-    return parsed?.request.status === 'open' ? parsed : null;
+        || !Object.values(APPROVAL_ARTIFACT_KINDS_V1).some(kind => kind === artifact.header?.kind)) {
+        return { kind: 'unreadable' };
+    }
+    const admitted = readAdmittedApprovalArtifactBody(artifact);
+    if (admitted?.disposition === 'not_presented') return { kind: 'not_presented', reason: 'superseded_header_facts' };
+    return admitted?.parsed?.request.status === 'open'
+        ? { kind: 'presented', parsed: admitted.parsed }
+        : { kind: 'unreadable' };
+}
+
+export function readOpenApprovalInboxArtifact(artifact: DecryptedArtifact): ParsedApprovalArtifactBodyV1 | null {
+    const admission = readOpenApprovalInboxAdmission(artifact);
+    return admission.kind === 'presented' ? admission.parsed : null;
 }
 
 export function isOpenApprovalInboxArtifact(artifact: DecryptedArtifact): boolean {
