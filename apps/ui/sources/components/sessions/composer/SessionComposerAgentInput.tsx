@@ -5,26 +5,27 @@ import {
     useSessionComposerStructuredInputMentions,
     type SessionAgentInputComposerPersistence,
 } from '@/hooks/session/useSessionAgentInputComposerPersistence';
-import { useSessionComposerInputCaps, type SessionComposerInputExpansionState } from './useSessionComposerInputCaps';
+import { useSessionComposerColumn } from './SessionComposerColumn';
 
 /** The live text is subscribed by the composer's text leaf, outside the Session screen's and the chrome's render graph. */
 export function SessionComposerAgentInput({
     textStore,
     pendingText,
     structuredInputPersistence,
-    cardsHeight,
-    expansion,
     ...props
 }: Omit<React.ComponentPropsWithoutRef<typeof AgentInput>, 'value' | 'maxPanelHeight' | 'inputMaxHeight' | 'inputExpansion'> & Readonly<{
     textStore: ComposerTextStore;
     pendingText: string | null;
     structuredInputPersistence: SessionAgentInputComposerPersistence['structuredInputPersistence'];
-    /** Measured height of the cards stacked above the input in the composer's column. */
-    cardsHeight: number;
-    expansion: SessionComposerInputExpansionState;
 }>) {
     const mentions = useSessionComposerStructuredInputMentions(structuredInputPersistence);
-    // The caps read the keyboard scaffold this composer is rendered inside, so they are derived here, not above it.
-    const caps = useSessionComposerInputCaps({ reservedHeight: cardsHeight, expansion });
-    return <AgentInput {...props} {...caps} value={pendingText ?? textStore} structuredInputMentions={props.structuredInputMentions ?? mentions} />;
+    // The column owner (under the keyboard scaffold) decides the caps; the input reports its textless height to it.
+    const column = useSessionComposerColumn();
+    const caps = column?.caps;
+    return <AgentInput {...props}
+        maxPanelHeight={caps?.maxPanelHeight}
+        inputMaxHeight={caps?.inputMaxHeight}
+        inputExpansion={caps?.inputExpansion}
+        onTextlessHeightChange={column?.reportTextlessHeight}
+        value={pendingText ?? textStore} structuredInputMentions={props.structuredInputMentions ?? mentions} />;
 }

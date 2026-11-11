@@ -194,7 +194,7 @@ import { admitInternalRouteHref } from "@/utils/path/routeUtils";
 import * as React from "react";
 import { useSessionFilePaneNavigation } from "@/components/sessions/panes/useSessionFileDetailsOpener";
 import { Platform, View } from "react-native";
-import { useMeasuredStackHeight } from "@/components/sessions/composer/useMeasuredStackHeight";
+import { SessionComposerCardStack, SessionComposerColumn } from "@/components/sessions/composer/SessionComposerColumn";
 import { useUnistyles } from "react-native-unistyles";
 import { shouldRequestRemoteControlAfterPendingEnqueue } from "@/sync/domains/session/control/localControlSwitch";
 import { readControlSwitchUiTimeoutMsFromEnv } from "@/sync/domains/session/control/controlSwitchUiTimeout";
@@ -540,8 +540,6 @@ export type SessionComposerControllerOptions = Readonly<{
     foldCollaborationHeaderEntry: boolean;
     openSessionAccess: () => void;
     openWorkStateRequestKey: number | null;
-    /** Measured height of the Session's own notices (start failure, access) seated above this composer's input. */
-    sessionNoticesHeight?: number;
 }>;
 
 /** One mounted owner for the Session composer; hosts consume its existing subtree and handlers. */
@@ -578,7 +576,6 @@ export function useSessionComposerController({
     openSessionAccess,
     openWorkStateRequestKey,
     embedded,
-    sessionNoticesHeight,
 }: SessionComposerControllerOptions) {
     const embeddedComposerControls = React.useMemo(() => resolveEmbeddedComposerControls(embedded), [embedded]);
     const sessionAccountLifetime = accountBinding && (isEmbedWindowContext() || accountBinding.isCurrent())
@@ -715,11 +712,6 @@ export function useSessionComposerController({
         externalTranscriptAuthority.kind === 'server_snapshot',
     );
     const router = useDestinationRouter();
-    // Notices and a draft conflict stand above the input in the same column, so the panel gets only the room they
-    // leave; capping the panel alone let the column run up over the page tabs (owner 2026-11-11). The caps
-    // themselves are derived inside the composer (SessionComposerAgentInput), under the keyboard scaffold.
-    const [ownCardsHeight, handleComposerCardsLayout] = useMeasuredStackHeight();
-    const composerCardsHeight = ownCardsHeight + (sessionNoticesHeight ?? 0);
     const composerTextStore = useComposerTextStore(() => {
         if (!isEmbedWindowContext() || !sessionAccountScope) return '';
         const draft = getSessionDraftSnapshot(sessionAccountScope, { kind: 'session', sessionId })?.document;
@@ -5825,8 +5817,9 @@ export function useSessionComposerController({
     const input = shouldShowInput ? (
         <PluginContextualResourceStoreProvider>
             <View>
-            {/* Everything stacked above the input shares the composer's room: its measured height comes off the panel cap. */}
-            <View testID="session-composer-cards" onLayout={handleComposerCardsLayout}>
+            {/* The cards above the input and the input share the column's room through one owner (SessionComposerColumn). */}
+            <SessionComposerColumn expansion={inputExpansionState}>
+            <SessionComposerCardStack testID="session-composer-cards">
             {currentModelAskFailure ? (
                 <ComposerAuxiliaryFrame>
                     <RowStatusLine testID="session-model-ask-failure" tone="bad" text={currentModelAskFailure.message} />
@@ -6041,7 +6034,7 @@ export function useSessionComposerController({
             ) : null}
             <PendingNavigationSettledNotice address={companionAddress} />
             <PendingNavigationPill address={companionAddress} presentation="composer" composerText={composerTextStore} />
-            </View>
+            </SessionComposerCardStack>
             <SessionComposerAgentInput
                 composerRef={activeComposerRef}
                 composerReferenceHost={composerDropReferenceHost}
@@ -7782,8 +7775,6 @@ export function useSessionComposerController({
                 extraActionChips={agentInputExtraActionChips}
                 attachmentRowItems={sessionAttachmentRowItems}
                 isSending={isComposerSending}
-                cardsHeight={composerCardsHeight}
-                expansion={inputExpansionState}
                 inputPersistence={inputComposerPersistence.inputPersistence}
                 structuredInputMentions={pendingComposerDocument?.mentions}
                 onStructuredInputMentionsChange={pendingComposerDocument
@@ -7809,6 +7800,7 @@ export function useSessionComposerController({
                     multiple
                 />
             ) : null}
+            </SessionComposerColumn>
             </View>
         </PluginContextualResourceStoreProvider>
     ) : null;

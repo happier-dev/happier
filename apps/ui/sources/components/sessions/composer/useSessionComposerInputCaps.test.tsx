@@ -45,39 +45,45 @@ function scaffoldLayout(
 type Caps = ReturnType<typeof useSessionComposerInputCaps>;
 const expansion = { expanded: false, setExpanded: () => {} };
 
-function Probe(
-  props: Readonly<{ reservedHeight: number; onCaps: (caps: Caps) => void }>,
-) {
-  props.onCaps(
-    useSessionComposerInputCaps({
-      reservedHeight: props.reservedHeight,
-      expansion,
-    }),
-  );
-  return null;
+function Probe(props: Readonly<{ cardsContentHeight: number; textlessHeight: number; onCaps: (caps: Caps) => void }>) {
+    props.onCaps(useSessionComposerInputCaps({
+        cardsContentHeight: props.cardsContentHeight,
+        textlessHeight: props.textlessHeight,
+        expansion,
+    }));
+    return null;
 }
 
-describe('the Session composer caps', () => {
-  it('take the room of the keyboard scaffold the composer is rendered inside, less the cards above the input (native 2026-11-11)', async () => {
+/** An 844 pt phone with the keyboard up: the scaffold leaves 361 pt below the Session header and page tabs. */
+const PHONE_KEYBOARD_UP = { availablePanelHeight: 361, keyboardHeight: 336 };
+/** The composer without its text lines (status row, chips, paddings), as AgentInput measures it. */
+const TEXTLESS = 110;
+/** Two lines of the composer's 22 pt text. */
+const TWO_LINES = 44;
+
+async function capsFor(cardsContentHeight: number): Promise<Caps> {
     let caps: Caps | null = null;
     await renderScreen(
-      <ComposerKeyboardProvider
-        layout={scaffoldLayout({
-          availablePanelHeight: 360,
-          keyboardHeight: 336,
-        })}
-      >
-        <Probe
-          reservedHeight={200}
-          onCaps={(next) => {
-            caps = next;
-          }}
-        />
-      </ComposerKeyboardProvider>,
+        <ComposerKeyboardProvider layout={scaffoldLayout(PHONE_KEYBOARD_UP)}>
+            <Probe cardsContentHeight={cardsContentHeight} textlessHeight={TEXTLESS} onCaps={(next) => { caps = next; }} />
+        </ComposerKeyboardProvider>,
     );
-    // The scaffold leaves 360 above the keyboard; a 200 card stack leaves the panel 160, never the window.
-    expect(caps!.maxPanelHeight).toBe(160);
-    expect(caps!.inputMaxHeight).toBeLessThanOrEqual(160);
-    expect(caps!.inputExpansion.collapsedMaxHeight).toBeLessThanOrEqual(160);
-  });
+    return caps!;
+}
+
+describe('the Session composer column (owner 2026-11-11)', () => {
+    it('keeps the input its controls plus two lines under a ~270 pt card stack, and gives the stack the rest to scroll', async () => {
+        const caps = await capsFor(270);
+        // The input never goes below its floor.
+        expect(caps.maxPanelHeight).toBe(TEXTLESS + TWO_LINES);
+        // The cards get what the floor leaves, as a scrolling max height, so the column never passes the tabs.
+        expect(caps.cardsMaxHeight).toBe(PHONE_KEYBOARD_UP.availablePanelHeight - (TEXTLESS + TWO_LINES));
+        expect(caps.cardsMaxHeight + caps.maxPanelHeight!).toBeLessThanOrEqual(PHONE_KEYBOARD_UP.availablePanelHeight);
+    });
+
+    it('lets short cards stand whole and gives the input the rest', async () => {
+        const caps = await capsFor(60);
+        expect(caps.maxPanelHeight).toBe(PHONE_KEYBOARD_UP.availablePanelHeight - 60);
+        expect(caps.cardsMaxHeight).toBeGreaterThanOrEqual(60);
+    });
 });

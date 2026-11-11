@@ -749,6 +749,11 @@ interface AgentInputProps {
     onStructuredInputMentionsChange?: (mentions: readonly ComposerStructuredInputMention[]) => void;
     maxPanelHeight?: number;
     /**
+     * Reports the composer's measured height without its text lines (status row, chips, paddings): its host keeps
+     * room for that plus a floor of text lines when cards stack above it.
+     */
+    onTextlessHeightChange?: (height: number) => void;
+    /**
      * Defaults to native-floating so existing-session web composers stay flex-bounded
      * without a late measured cap. New-session/modal hosts should use host-constrained
      * when maxPanelHeight is the authoritative all-platform composer budget.
@@ -1450,6 +1455,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         panelHeightPx,
         isConversation,
     ]);
+    const textlessHeightPx = composerBlockHeightPx !== null && inputContainerHeightPx !== null
+        ? Math.max(0, Math.round(composerBlockHeightPx - inputContainerHeightPx + AGENT_INPUT_CONTAINER_VERTICAL_CHROME_HEIGHT))
+        : null;
+    const onTextlessHeightChange = props.onTextlessHeightChange;
+    React.useEffect(() => {
+        if (textlessHeightPx !== null) onTextlessHeightChange?.(textlessHeightPx);
+    }, [onTextlessHeightChange, textlessHeightPx]);
     const inputExpansionCollapsedMaxHeight = normalizeAgentInputExpansionCollapsedMaxHeight(
         props.inputExpansion?.collapsedMaxHeight,
     );
