@@ -1,4 +1,5 @@
 import type { AgentStartupFailureCode, RequesterSessionRuntimeRefusalCode, SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import type { SessionUsageLimitRecoveryOperationResultErrorStatusV1 } from '@happier-dev/protocol/sessions/control/sessionUsageLimitRecoveryOperationResultV1';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
@@ -9593,6 +9594,18 @@ const enSession = {
     },
   },
   usageLimitRecovery: {
+    operationErrors: {
+      inactive: 'Usage-limit recovery is no longer active for this session. Check the session and try again.',
+      exhausted: 'No eligible account is available for recovery. Check the account pool or wait for a limit to reset.',
+      cancelled: 'Usage-limit recovery was cancelled. You can start it again when ready.',
+      rate_limited: 'The provider is still rate limited. Wait for the limit to reset and try again.',
+      unsupported: 'This session does not support the requested usage-limit recovery operation.',
+      malformed_response: 'The session returned an invalid recovery response. Reconnect to its machine and try again.',
+      session_unreachable: 'The session’s machine could not be reached. Reconnect to the machine and try again.',
+      generation_apply_failed: 'The recovery account switch could not be applied to this session. Check its connected accounts and try again.',
+      group_conflict: 'The account pool or recovery request changed before the operation completed. Refresh the session and try again.',
+      not_found: 'This session is no longer available on the selected machine.',
+    } satisfies Record<SessionUsageLimitRecoveryOperationResultErrorStatusV1, string>,
     overloadTitle: 'Model overloaded',
     overloadWaiting: 'Waiting to retry.',
     overloadDispatching: 'Retrying now.',

@@ -1,4 +1,5 @@
 import type { ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import type { SessionUsageLimitRecoveryOperationResultErrorStatusV1 } from '@happier-dev/protocol/sessions/control/sessionUsageLimitRecoveryOperationResultV1';
 
 import {
     resolveConnectedServiceUxDiagnosticPresentation,
@@ -12,7 +13,7 @@ import type { TranslationKey } from '@/text';
 
 export type SessionUsageLimitRecoveryOperationFailureResult = Readonly<{
     ok: false;
-    status?: string;
+    status?: SessionUsageLimitRecoveryOperationResultErrorStatusV1;
     error?: string;
     errorCode?: string;
     uxDiagnostic?: ConnectedServiceUxDiagnosticV1;

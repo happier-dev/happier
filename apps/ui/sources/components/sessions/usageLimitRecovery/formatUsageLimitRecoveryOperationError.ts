@@ -1,22 +1,24 @@
+import {
+    normalizeSessionUsageLimitRecoveryOperationResultV1,
+    type SessionUsageLimitRecoveryOperationResultErrorStatusV1,
+} from '@happier-dev/protocol/sessions/control/sessionUsageLimitRecoveryOperationResultV1';
+
 import { t } from '@/text';
 
 export function formatUsageLimitRecoveryOperationError(result: Readonly<{
     error?: string;
     errorCode?: string;
+    status?: SessionUsageLimitRecoveryOperationResultErrorStatusV1;
 }>): string {
-    const code = result.errorCode ?? result.error ?? 'session_usage_limit_recovery_control_failed';
-    switch (code) {
-        case 'session_usage_limit_recovery_control_remote_unavailable':
-        case 'session_usage_limit_recovery_control_machine_unavailable':
-        case 'session_usage_limit_recovery_control_current_machine_unknown':
-        case 'session_usage_limit_recovery_control_session_machine_unknown':
-        case 'session_usage_limit_recovery_control_metadata_unavailable':
-            return t('errors.daemonUnavailableBody');
-        case 'session_usage_limit_recovery_control_inactive':
-        case 'session_usage_limit_recovery_control_issue_mismatch':
-        case 'session_usage_limit_recovery_control_cwd_unavailable':
-            return t('errors.tryAgain');
-        default:
-            return t('errors.operationFailed');
+    if (result.status !== undefined) {
+        return t(`session.usageLimitRecovery.operationErrors.${result.status}`);
     }
+
+    const normalized = normalizeSessionUsageLimitRecoveryOperationResultV1({
+        ok: false,
+        errorCode: result.errorCode ?? result.error ?? 'session_usage_limit_recovery_control_failed',
+    });
+    return !normalized.ok && normalized.status !== 'unsupported'
+        ? t(`session.usageLimitRecovery.operationErrors.${normalized.status}`)
+        : t('errors.operationFailed');
 }
