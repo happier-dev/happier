@@ -85,6 +85,20 @@ async function host(respond: (request: HttpRequest) => unknown | Promise<unknown
 }
 
 describe('activated Neon managed data target', () => {
+  it('admits selected preparation fields while refusing unknown fields and incomplete link custody', async () => {
+    const h = await host(() => ({ branches: [] }));
+    try {
+      expect(await h.kit.invokeAction('branches-list-read', linked)).toMatchObject({ branches: [] });
+      const requests = h.requests.length;
+      await expect(h.kit.invokeAction('branches-list-read', { ...linked, unexpected: true }))
+        .rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
+      const { providerIdentity: _identity, ...incomplete } = linked;
+      await expect(h.kit.invokeAction('branches-list-read', incomplete))
+        .rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
+      expect(h.requests).toHaveLength(requests);
+    } finally { await h.kit.dispose(); }
+  });
+
   it('offers provider-observed regions as create choices through the existing options Action', async () => {
     const h = await host(request => request.url.includes('/organizations/') ? organization : { regions: [region] });
     try {
@@ -126,7 +140,9 @@ describe('activated Neon managed data target', () => {
       expect(h.kit.registration('actions', 'connections-save')).toBeDefined();
       for (const id of Object.keys(dataActions)) expect(entry.manifest.contributes.actions?.find(action => action.id === id)?.surfaces).toContain('ui');
       expect(h.kit.registration('connectedAccountDescriptors', 'neon')).toBeDefined();
-      expect(entry.manifest.contributes.deploymentTargets?.[0]?.dataV1?.query).toEqual({ readOnly: 'query-read' });
+      const target = entry.manifest.contributes.deploymentTargets?.[0];
+      if (target?.role !== 'data') throw new Error('Missing Neon data target');
+      expect(target.dataV1?.query).toEqual({ readOnly: 'query-read' });
       expect(h.requests).toHaveLength(0);
     } finally { await h.kit.dispose(); }
   });
@@ -266,7 +282,10 @@ describe('activated Neon managed data target', () => {
     } finally { await h.kit.dispose(); }
   });
 
-  it.each([{ database: 'neondb' }, { id: 'database', purpose: 'data.connection' }, { ...createdSaveIntent }])(
+  const incompleteCreationCustody: Record<string, JsonValue>[] = [
+    { database: 'neondb' }, { id: 'database', purpose: 'data.connection' }, { ...createdSaveIntent },
+  ];
+  it.each(incompleteCreationCustody)(
     'refuses incomplete creation custody before contacting Neon (%j)', async partial => {
       const h = await host(() => ({ branch }));
       try {

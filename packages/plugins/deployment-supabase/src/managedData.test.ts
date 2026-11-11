@@ -56,6 +56,20 @@ async function host(respond: (request: HttpRequest) => unknown | Promise<unknown
 }
 
 describe('activated Supabase managed data target', () => {
+  it('admits selected preparation fields while refusing unknown fields and incomplete link custody', async () => {
+    const h = await host(() => []);
+    try {
+      expect(await h.kit.invokeAction('branches-list', linked)).toMatchObject({ branches: [] });
+      const requests = h.requests.length;
+      await expect(h.kit.invokeAction('branches-list', { ...linked, unexpected: true }))
+        .rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
+      const { providerIdentity: _identity, ...incomplete } = linked;
+      await expect(h.kit.invokeAction('branches-list', incomplete))
+        .rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
+      expect(h.requests).toHaveLength(requests);
+    } finally { await h.kit.dispose(); }
+  });
+
   it('offers only observed region objects as creation choices through the options Action', async () => {
     const h = await host(request => request.url.includes('available-regions')
       ? { recommendations: [], all: [{ name: 'Europe', code: 'eu-central-1', type: 'specific', provider: 'AWS' }] }

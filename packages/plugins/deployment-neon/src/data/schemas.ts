@@ -73,7 +73,10 @@ export function inputSchema(product: ProtocolComposableSchema<unknown>, selected
     : selected ? DeploymentTargetRoleInputProtocolSchemasV1['branches.create']
       : DeploymentTargetPreparationBaseV1ProtocolSchema).jsonSchema;
   const variants = (product.jsonSchema.anyOf ?? [product.jsonSchema]).map(member => ({
-    type: 'object' as const, properties: { ...member.properties, ...base.properties },
+    // Retain preparation operands (including providerAccountId) when a selected
+    // role strengthens the required custody fields.
+    type: 'object' as const, properties: { ...member.properties,
+      ...DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties, ...base.properties },
     required: [...new Set([...base.required ?? [], ...member.required ?? []])], additionalProperties: false as const }));
   if (variants.length === 1) return variants[0]!;
   return { type: 'object', properties: Object.fromEntries(variants.flatMap(member => Object.entries(member.properties))),

@@ -41,7 +41,9 @@ export function actionSchema(operation: Operation): PluginJsonSchema {
       : DeploymentTargetPreparationBaseV1ProtocolSchema;
   const product = operands[operation];
   return { ...base.jsonSchema,
-    properties: { ...product.jsonSchema.properties, ...base.jsonSchema.properties },
+    // Selected roles strengthen custody without dropping preparation operands.
+    properties: { ...product.jsonSchema.properties,
+      ...DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties, ...base.jsonSchema.properties },
     required: [...new Set([...(base.jsonSchema.required ?? []), ...(product.jsonSchema.required ?? [])])], additionalProperties: false };
 }
 
