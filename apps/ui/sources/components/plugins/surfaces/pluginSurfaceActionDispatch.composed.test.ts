@@ -2637,6 +2637,43 @@ describe('Account Action placement through the executable dispatcher', () => {
         }
     });
 
+    it('finishes an admitted Account read after the presenting view generation retires', async () => {
+        const accountLifetime = clientAccountLifetime();
+        let current = true;
+        let enteredSignal: AbortSignal | undefined;
+        let release = () => {};
+        const settled = new Promise<void>(resolve => { release = resolve; });
+        const activation = createClientActionActivation({ accountPlacement: true, accountLifetime,
+            accountHandler: async (_value, context) => {
+                enteredSignal = context.signal;
+                await settled;
+                return { rows: ['entry'] };
+            } });
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            const cancellation = new AbortController();
+            const pending = dispatchPluginSurfaceAction({
+                callerPluginId: CALLER_PLUGIN_ID,
+                action: { pluginId: activation.action.pluginId, localId: activation.action.id },
+                input: {}, clientAction: {}, signal: cancellation.signal,
+                isCurrent: () => current,
+                pluginUiProjection: activation.projection,
+                resolveContributedAction: resolveExactClientAction(activation.action),
+            });
+            await vi.waitFor(() => expect(enteredSignal).toBeDefined());
+            current = false;
+            cancellation.abort(new Error('presenting view detached'));
+            release();
+            expect(enteredSignal!.aborted).toBe(false);
+            await expect(pending).resolves.toEqual({ ok: true, result: { rows: ['entry'] } });
+        } finally {
+            release();
+            await activation.composition.unload();
+            accountLifetime.retire();
+        }
+    });
+
     it('refuses an admitted Account Action until its exact executable registration commits, and again after withdrawal', async () => {
         const accountLifetime = clientAccountLifetime();
         let effects = 0;

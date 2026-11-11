@@ -1516,9 +1516,23 @@ async function executeClientContributedAction(
         requestCurrentIntent,
     });
     let redactAccountResult: ((value: string) => string) | undefined;
+    const admittedAccountLifetimeController = !input.readObservation && initial.action.execution.target === 'account'
+        ? new AbortController() : null;
+    const admittedAccountLifetimeRetirement = admittedAccountLifetimeController
+        ? initial.registration.accountLifetime?.onRetire(() => admittedAccountLifetimeController.abort()) : undefined;
+    const admittedAccountInvocationLifetime = admittedAccountLifetimeController
+        ? mergeAbortSignals(input.signal
+            ? [input.signal, admittedAccountLifetimeController.signal]
+            : [admittedAccountLifetimeController.signal]) : null;
     const invocationResult = await (input.readObservation
         ? preparedInput.observe : preparedInput.invoke)({
-        ...(input.signal ? { signal: input.signal } : {}),
+        ...(admittedAccountInvocationLifetime
+            ? { signal: admittedAccountInvocationLifetime.signal }
+            : input.signal ? { signal: input.signal } : {}),
+        ...(!input.readObservation && initial.action.execution.target === 'account'
+            ? { retainHandlerResultAfterCancellation: () => initial.registration.lifecycle.isCurrent()
+                && initial.registration.accountLifetime?.isCurrent() !== false }
+            : {}),
         preDispatch: async (handlerInput) => {
             normalizedInput = handlerInput.input;
             const admission = await presentUserGate.admit({
@@ -1565,16 +1579,29 @@ async function executeClientContributedAction(
             input.onInvocationAdmitted?.();
             // The invocation parser releases its temporary links on settlement.
             // An observer retains a separate link until its subscription ends.
+            const current = initial;
+            const retainsAccountExecution = current.action.execution.target === 'account' && !input.readObservation;
+            const accountExecutionController = retainsAccountExecution ? new AbortController() : null;
+            const accountExecutionLifetime = accountExecutionController
+                ? mergeAbortSignals([current.registration.lifecycle.signal, accountExecutionController.signal]) : null;
+            const accountExecutionRetirement = accountExecutionController
+                ? current.registration.accountLifetime?.onRetire(() => accountExecutionController.abort()) : undefined;
+            let accountExecutionAdmitted = false;
+            const isCurrent = () => retainsAccountExecution && accountExecutionAdmitted
+                ? !accountExecutionLifetime!.signal.aborted
+                    && current.registration.lifecycle.isCurrent()
+                    && current.registration.accountLifetime?.isCurrent() !== false
+                : current.isCurrent();
+            if (retainsAccountExecution) accountExecutionAdmitted = true;
             const observationController = input.readObservation ? new AbortController() : null;
             const observationLifetime = observationController
                 ? mergeAbortSignals([initial.registration.lifecycle.signal, input.signal, observationController.signal]) : null;
-            const signal = observationLifetime?.signal ?? handlerSignal;
-            const current = initial;
+            const signal = observationLifetime?.signal ?? accountExecutionLifetime?.signal ?? handlerSignal;
             const observationRetirement = observationController
                 ? current.registration.accountLifetime?.onRetire(() => observationController.abort()) : undefined;
             const currentUiContext = current.action.execution.target === 'account' ? undefined : readClientActionCurrentUiContext(current);
             const executeHandler = (messageAction?: MessageActionAvailableSnapshotV1) => {
-                if (signal.aborted || !current.isCurrent()) throw new PluginError({ code: 'plugin_action_generation_retired' });
+                if (signal.aborted || !isCurrent()) throw new PluginError({ code: 'plugin_action_generation_retired' });
                 const accountOrigin = current.action.execution.target === 'account'
                     ? readPluginUiAccountExecutableOrigin(current.action) : null;
                 const accountLifetime = current.registration.accountLifetime;
@@ -1598,7 +1625,7 @@ async function executeClientContributedAction(
                     actionInput,
                     ...(input.connectedAccountPurposeBinding ? { connectedAccountPurposeBinding: input.connectedAccountPurposeBinding } : {}),
                     ...(input.managedBootstrapCredential ? { managedBootstrapCredential: input.managedBootstrapCredential } : {}),
-                    sourceCustody: accountOrigin.sourceCustody, accountLifetime, signal, isCurrent: current.isCurrent,
+                    sourceCustody: accountOrigin.sourceCustody, accountLifetime, signal, isCurrent,
                     resolveMachine: resolveAccountMachine,
                     isMachineAvailable: accountSessionTarget ? undefined : input.isMachineAvailable,
                     ...(input.readObservation?.retire ? { retireReadObservation: input.readObservation.retire } : {}),
@@ -1633,7 +1660,7 @@ async function executeClientContributedAction(
                             ...(options.expectedContributorOccurrenceId === undefined ? {} : {
                                 expectedContributorOccurrenceId: options.expectedContributorOccurrenceId,
                             }),
-                            isCurrent: () => current.isCurrent() && options.isCurrent(),
+                            isCurrent: () => isCurrent() && options.isCurrent(),
                         };
                         const nestedIdentity = hostActionChild ? null : resolveContributedActionIdentity(nestedInput);
                         if (nestedIdentity) {
@@ -1702,7 +1729,7 @@ async function executeClientContributedAction(
                             await resolveAccountMachine();
                             const { targetedContributions } = await readAccountTargetedContributionSnapshot({
                                 pluginId: current.action.pluginId, accountLifetime, signal: cancellation.signal,
-                                isCurrent: current.isCurrent, origin: accountOrigin,
+                                isCurrent, origin: accountOrigin,
                                 ...(input.contributedAction ? { machine: input.contributedAction } : {}),
                             });
                             return { accountScope: accountLifetime.scope, targetedContributions };
@@ -1724,9 +1751,12 @@ async function executeClientContributedAction(
                     if (capabilityDisposed) return;
                     capabilityDisposed = true;
                     observationController?.abort();
+                    accountExecutionController?.abort();
                     try { return releaseCapability(); } finally {
                         observationRetirement?.dispose();
                         observationLifetime?.dispose();
+                        accountExecutionRetirement?.dispose();
+                        accountExecutionLifetime?.dispose();
                     }
                 };
                 try {
@@ -1945,6 +1975,8 @@ async function executeClientContributedAction(
             });
         },
     });
+    admittedAccountLifetimeRetirement?.dispose();
+    admittedAccountInvocationLifetime?.dispose();
     const result = redactAccountResult ? projectTargetActionFailure(invocationResult, redactAccountResult) : invocationResult;
     if (result.status === 'executed') {
         return { ok: true, result: result.value as PluginUiJsonValueV1 };
