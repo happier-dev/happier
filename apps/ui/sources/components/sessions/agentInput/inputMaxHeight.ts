@@ -79,21 +79,31 @@ const EXISTING_SESSION_COMPOSER_INPUT_COLLAPSED_VIEWPORT_RATIO = 0.25;
 const EXISTING_SESSION_COMPOSER_INPUT_COLLAPSED_KEYBOARD_VIEWPORT_RATIO = 0.15;
 const EXISTING_SESSION_COMPOSER_INPUT_EXPANDED_VIEWPORT_RATIO = 0.65;
 
+/** The measured column above the input (notices, a draft conflict) shares the composer's room with the panel. */
+function resolveExistingSessionPanelRoom(availablePanelHeight: number, reservedHeight: number | undefined): number {
+    const reserved = Number.isFinite(reservedHeight) ? Math.max(0, Math.round(reservedHeight ?? 0)) : 0;
+    return Math.max(0, Math.round(availablePanelHeight) - reserved);
+}
+
 export function computeExistingSessionComposerPanelMaxHeight(params: {
     availablePanelHeight?: number | null;
+    /** Measured height of everything stacked above the input in the composer column. */
+    reservedHeight?: number;
     viewportHeight?: number | null;
 }): number | undefined {
     if (typeof params.availablePanelHeight !== 'number' || !Number.isFinite(params.availablePanelHeight) || params.availablePanelHeight <= 0) {
         return undefined;
     }
 
-    const available = Math.max(0, Math.round(params.availablePanelHeight));
+    const available = resolveExistingSessionPanelRoom(params.availablePanelHeight, params.reservedHeight);
     if (available <= 0) return undefined;
     return available;
 }
 
 export function computeExistingSessionComposerInputMaxHeight(params: {
     availablePanelHeight?: number | null;
+    /** Measured height of everything stacked above the input in the composer column. */
+    reservedHeight?: number;
     expanded?: boolean;
     keyboardHeight?: number | null;
     viewportHeight?: number | null;
@@ -116,7 +126,7 @@ export function computeExistingSessionComposerInputMaxHeight(params: {
         return viewportCap && viewportCap > 0 ? viewportCap : undefined;
     }
 
-    const available = Math.max(0, Math.round(params.availablePanelHeight));
+    const available = resolveExistingSessionPanelRoom(params.availablePanelHeight, params.reservedHeight);
     if (available <= 0) return viewportCap && viewportCap > 0 ? viewportCap : undefined;
     return Math.min(available, viewportCap ?? available);
 }

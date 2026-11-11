@@ -80,7 +80,8 @@ import { useNewSessionDockHoldsComposerSeat, useNewSessionEntryRouter } from '@/
 import * as React from "react";
 import { AtmosphereSurfaceFrame } from "@/components/atmosphere/AtmosphereSurfaceFrame";
 import { useWorkspaceFileOriginReturn } from "@/components/workspaces/files/useWorkspaceFileOriginReturn";
-import { Platform, Pressable, View, useWindowDimensions } from "react-native";
+import { Platform, Pressable, View, useWindowDimensions, type LayoutChangeEvent } from "react-native";
+import { useMeasuredStackHeight } from "@/components/sessions/composer/useMeasuredStackHeight";
 import { dismissKeyboard } from '@/components/ui/keyboardAvoidance/dismissKeyboard';
 import { layout } from "@/components/ui/layout/layout";
 import { useChromeSafeAreaInsets } from "@/components/ui/layout/useChromeSafeAreaInsets";
@@ -2010,9 +2011,10 @@ function SessionComposerSlot({ renderComposer }: Readonly<{ renderComposer?: Ses
 
 /** Composer state updates its own slot, not the transcript/pane layout. */
 function SessionViewLoadedContent(props: Omit<React.ComponentProps<typeof SessionViewLoadedFrame>, keyof SessionComposerView>) {
-    const { composer, view } = useSessionComposerController(props);
+    const [sessionNoticesHeight, onSessionNoticesLayout] = useMeasuredStackHeight();
+    const { composer, view } = useSessionComposerController({ ...props, sessionNoticesHeight });
     return <SessionComposerModelContext.Provider value={composer}>
-        <SessionViewLoadedFrame {...props} {...view} />
+        <SessionViewLoadedFrame {...props} {...view} onSessionNoticesLayout={onSessionNoticesLayout} />
     </SessionComposerModelContext.Provider>;
 }
 
@@ -2105,7 +2107,10 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     sessionStatusState,
     openModelPicker,
     handleResumeSession,
+    onSessionNoticesLayout,
 }: {
+    /** Reports the notices' measured height: they share the composer's room, so the panel cap subtracts it. */
+    onSessionNoticesLayout?: (event: LayoutChangeEvent) => void;
     renderComposer?: SessionComposerRenderer;
     /** The session header: it opens the transcript column, so it spans the transcript's width. */
     header: React.ReactNode;
@@ -2538,7 +2543,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
                 scopeId={pane.scopeId} active={surfaceFocused && surfacePresented} />
             {/* The notices and the composer share one stack, spaced as the composer's own banners are. */}
             <View>
-                {sessionNotices}
+                <View testID="session-notices" onLayout={onSessionNoticesLayout}>{sessionNotices}</View>
                 <FindComposerSlotHost composer={input} />
             </View>
         </PaneMainComposerAnchor>

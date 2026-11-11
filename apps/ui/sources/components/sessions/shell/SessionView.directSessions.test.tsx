@@ -4637,6 +4637,28 @@ describe('SessionView (direct sessions)', () => {
     expect(findAgentInput(screen).props.maxPanelHeight).toBe(300);
   });
 
+  it('gives the input only the room the cards stacked above it leave (owner 2026-11-11)', async () => {
+    keyboardAvoidanceState.availablePanelHeight = 300;
+
+    const screen = await renderSessionViewAndSettle();
+    const cards = screen.findByTestId('session-composer-cards') as any;
+    await act(async () => {
+      cards.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 120 } } });
+    });
+
+    // A draft conflict (or any notice) above the input is part of the composer's column: the panel shrinks by
+    // its measured height so the column never runs up over the page tabs.
+    expect(findAgentInput(screen).props.maxPanelHeight).toBe(180);
+    expect(findAgentInput(screen).props.inputMaxHeight).toBeLessThanOrEqual(180);
+
+    // The Session's own notices (a failed start, access) stand in the same column and come off the same cap.
+    const notices = screen.findByTestId('session-notices') as any;
+    await act(async () => {
+      notices.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 40 } } });
+    });
+    expect(findAgentInput(screen).props.maxPanelHeight).toBe(140);
+  });
+
   it('caps the existing-session text input viewport while preserving the scaffold panel height', async () => {
     const viewport = vi.spyOn(await import('react-native'), 'useWindowDimensions').mockReturnValue({ width: 1200, height: 800, scale: 1, fontScale: 1 });
     restoreViewportBoundary = () => viewport.mockRestore();

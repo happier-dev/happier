@@ -196,6 +196,7 @@ import { admitInternalRouteHref } from "@/utils/path/routeUtils";
 import * as React from "react";
 import { useSessionFilePaneNavigation } from "@/components/sessions/panes/useSessionFileDetailsOpener";
 import { Platform, View, useWindowDimensions } from "react-native";
+import { useMeasuredStackHeight } from "@/components/sessions/composer/useMeasuredStackHeight";
 import { useUnistyles } from "react-native-unistyles";
 import { shouldRequestRemoteControlAfterPendingEnqueue } from "@/sync/domains/session/control/localControlSwitch";
 import { readControlSwitchUiTimeoutMsFromEnv } from "@/sync/domains/session/control/controlSwitchUiTimeout";
@@ -568,6 +569,8 @@ export type SessionComposerControllerOptions = Readonly<{
     foldCollaborationHeaderEntry: boolean;
     openSessionAccess: () => void;
     openWorkStateRequestKey: number | null;
+    /** Measured height of the Session's own notices (start failure, access) seated above this composer's input. */
+    sessionNoticesHeight?: number;
 }>;
 
 /** One mounted owner for the Session composer; hosts consume its existing subtree and handlers. */
@@ -603,7 +606,8 @@ export function useSessionComposerController({
     foldCollaborationHeaderEntry,
     openSessionAccess,
     openWorkStateRequestKey,
-    embedded
+    embedded,
+    sessionNoticesHeight,
 }: SessionComposerControllerOptions) {
     const embeddedComposerControls = React.useMemo(() => resolveEmbeddedComposerControls(embedded), [embedded]);
     const sessionAccountLifetime = accountBinding && (isEmbedWindowContext() || accountBinding.isCurrent())
@@ -744,30 +748,37 @@ export function useSessionComposerController({
     const scaffoldAvailablePanelHeight = useComposerAvailablePanelHeight();
     const keyboardHeight = useComposerKeyboardHeight();
     const composerAvailablePanelHeight = scaffoldAvailablePanelHeight ?? windowHeight;
+    // Notices and a draft conflict stand above the input in the same column, so the panel gets only the room they
+    // leave; capping the panel alone let the column run up over the page tabs (owner 2026-11-11).
+    const [ownCardsHeight, handleComposerCardsLayout] = useMeasuredStackHeight();
+    const composerCardsHeight = ownCardsHeight + (sessionNoticesHeight ?? 0);
     const maxAgentInputPanelHeight = React.useMemo(
         () => computeExistingSessionComposerPanelMaxHeight({
             availablePanelHeight: composerAvailablePanelHeight,
+            reservedHeight: composerCardsHeight,
             viewportHeight: windowHeight,
         }),
-        [composerAvailablePanelHeight, windowHeight],
+        [composerAvailablePanelHeight, composerCardsHeight, windowHeight],
     );
     const collapsedAgentInputTextHeight = React.useMemo(
         () => computeExistingSessionComposerInputMaxHeight({
             availablePanelHeight: composerAvailablePanelHeight,
+            reservedHeight: composerCardsHeight,
             expanded: false,
             keyboardHeight,
             viewportHeight: windowHeight,
         }),
-        [composerAvailablePanelHeight, keyboardHeight, windowHeight],
+        [composerAvailablePanelHeight, composerCardsHeight, keyboardHeight, windowHeight],
     );
     const expandedAgentInputTextHeight = React.useMemo(
         () => computeExistingSessionComposerInputMaxHeight({
             availablePanelHeight: composerAvailablePanelHeight,
+            reservedHeight: composerCardsHeight,
             expanded: true,
             keyboardHeight,
             viewportHeight: windowHeight,
         }),
-        [composerAvailablePanelHeight, keyboardHeight, windowHeight],
+        [composerAvailablePanelHeight, composerCardsHeight, keyboardHeight, windowHeight],
     );
     const composerTextStore = useComposerTextStore(() => {
         if (!isEmbedWindowContext() || !sessionAccountScope) return '';
@@ -5882,6 +5893,8 @@ export function useSessionComposerController({
     const input = shouldShowInput ? (
         <PluginContextualResourceStoreProvider>
             <View>
+            {/* Everything stacked above the input shares the composer's room: its measured height comes off the panel cap. */}
+            <View testID="session-composer-cards" onLayout={handleComposerCardsLayout}>
             {currentModelAskFailure ? (
                 <ComposerAuxiliaryFrame>
                     <RowStatusLine testID="session-model-ask-failure" tone="bad" text={currentModelAskFailure.message} />
@@ -6096,6 +6109,7 @@ export function useSessionComposerController({
             ) : null}
             <PendingNavigationSettledNotice address={companionAddress} />
             <PendingNavigationPill address={companionAddress} presentation="composer" composerText={composerTextStore} />
+            </View>
             <SessionComposerAgentInput
                 composerRef={activeComposerRef}
                 composerReferenceHost={composerDropReferenceHost}
