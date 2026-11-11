@@ -2,6 +2,7 @@ import React from 'react';
 import { Platform } from 'react-native';
 import { AtmosphereSurfaceFrame } from '@/components/atmosphere/AtmosphereSurfaceFrame';
 import { useNewSessionFloatingComposer } from '@/components/sessions/new/navigation/useNewSessionFloatingComposer';
+import { useComposerKeepsFocusAfterSend } from '@/components/sessions/agentInput/hooks/useComposerKeepsFocusAfterSend';
 import { focusNewSessionComposerWhenPresented } from '@/components/sessions/new/navigation/newSessionComposerFocus';
 import { StoredPluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { ProjectSetupDraftFootnote, ProjectSetupDraftHeader } from '@/components/projects/projectSetup/ProjectSetupReturn';
@@ -379,12 +380,17 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
     }));
     const launchHandOffRef = React.useRef<(() => void) | null>(null);
     const focusNextDraftRef = React.useRef(false);
-    const startAnother = React.useCallback(() => {
+    const keepFocusAfterSend = useComposerKeepsFocusAfterSend();
+    const openAnother = React.useCallback((focus: boolean) => {
         // The launch in flight, if any, was asked for: it keeps running behind the new draft.
         launchHandOffRef.current?.();
-        focusNextDraftRef.current = true;
+        focusNextDraftRef.current = focus;
         openDraft(resolveOrdinaryEntry({ forceFresh: true }));
     }, [openDraft, resolveOrdinaryEntry]);
+    // Pressing Start another is asking to write the next one. After a Send, the next draft takes the keyboard only
+    // when the composer's pin keeps it across sends, as a Session's composer does.
+    const startAnother = React.useCallback(() => openAnother(true), [openAnother]);
+    const startAnotherAfterSend = React.useCallback(() => openAnother(keepFocusAfterSend), [keepFocusAfterSend, openAnother]);
     React.useEffect(() => {
         if (!focusNextDraftRef.current) return;
         focusNextDraftRef.current = false;
@@ -472,7 +478,7 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
             draftOrigin={draftIdentity.draftOrigin}
             statusBadges={statusBadges}
             renderStatusTrailingActions={renderStatusTrailingActions}
-            onStartAnother={startAnother}
+            onStartAnother={startAnotherAfterSend}
             launchHandOffRef={launchHandOffRef}
             automationExactTurnRetarget={props.automationExactTurnRetarget ?? null}
             fixedDirectoryIntent={props.fixedDirectoryIntent}

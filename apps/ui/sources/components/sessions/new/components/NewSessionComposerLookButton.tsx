@@ -6,13 +6,13 @@ import { AGENT_INPUT_QUIET_ICON_SIZE_PX } from '@/components/sessions/agentInput
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { t } from '@/text';
 
-import { useNewSessionStatusIconHitEdges } from './NewSessionComposerCloseButton';
+import { useStatusRowIconHitEdges } from '@/components/sessions/agentInput/instrumentStrip/useStatusRowIconHitEdges';
 
 /** Look for the bottom-anchored floating composer: the row's quiet icon, opening the shared Look panel. */
 export const NewSessionComposerLookButton = React.memo(function NewSessionComposerLookButton(
     props: Readonly<{ target: LookTarget; testID?: string }>,
 ): React.ReactElement {
-    const edges = useNewSessionStatusIconHitEdges();
+    const edges = useStatusRowIconHitEdges();
     const anchorRef = React.useRef<View | null>(null);
     const [open, setOpen] = React.useState(false);
     const close = React.useCallback(() => setOpen(false), []);

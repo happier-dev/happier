@@ -113,7 +113,8 @@ import {
 import { useUserMessageHistory } from '@/hooks/session/useUserMessageHistory';
 import type { NewSessionAfterSendMode } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 import { ComposerHistorySwipeArea, type ComposerHistoryDirection } from './ComposerHistorySwipeArea';
-import { AgentInputKeepKeyboardToggle } from './components/AgentInputKeepKeyboardToggle';
+import { AgentInputKeyboardAccessory } from './components/AgentInputKeyboardAccessory';
+import { useComposerKeepsFocusAfterSend } from './hooks/useComposerKeepsFocusAfterSend';
 import { buildAgentInputSendMenuItems } from './agentInputSendOptions';
 import { getAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/connectionManager';
 import { Theme } from '@/theme';
@@ -220,6 +221,7 @@ import { isGlassComposerSurface } from './composerSurfaceStyle';
 import { resolveComposerSelectionRestore } from './composerSelectionRestore';
 import {
     AGENT_INPUT_ACTION_CHIP_ICON_ONLY_STYLE,
+    AGENT_INPUT_ACTION_CHIP_HEIGHT_PX,
     AGENT_INPUT_ACTION_CHIP_PRESSED_STYLE,
     AGENT_INPUT_ACTION_CHIP_STYLE,
     AGENT_INPUT_FIELD_PADDING_Y,
@@ -1296,11 +1298,10 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     actionButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        borderRadius: Platform.select({ default: 16, android: 20 }),
+        borderRadius: AGENT_INPUT_ACTION_CHIP_HEIGHT_PX / 2,
         paddingHorizontal: theme.space.s8,
-        paddingVertical: theme.space.s6,
         justifyContent: 'center',
-        height: 32,
+        height: AGENT_INPUT_ACTION_CHIP_HEIGHT_PX,
         // Keep vertical alignment consistent with `actionChip` on native.
         ...(Platform.OS === 'web' ? {} : { marginRight: theme.space.s6, marginBottom: NATIVE_ACTION_CHIP_GAP_Y }),
     },
@@ -1687,10 +1688,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     const inputRef = React.useRef<MultiTextInputHandle>(null);
     const hardwareKeyboard = useHardwareKeyboard();
-    const keepFocusAfterSendSetting = useLocalSetting('composerKeepFocusAfterSend');
-    const keepFocusAfterSend = keepFocusAfterSendSetting === true
-        || (keepFocusAfterSendSetting == null && hardwareKeyboard);
-    const showKeepKeyboardToggle = Boolean(props.sessionId) && !hardwareKeyboard;
+    const keepFocusAfterSend = useComposerKeepsFocusAfterSend();
+    // Every touch composer, a new session's included: its pin also keeps the keyboard for the next draft.
+    const showKeyboardAccessory = !hardwareKeyboard;
     // History flicks cycle from an empty field and keep cycling while it shows a recalled message. The
     // person reaching into that message (focus, a caret move, an edit) ends it until the field is empty again.
     const [historyFlicksArmed, setHistoryFlicksArmed] = React.useState(false);
@@ -4356,8 +4356,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     quota={props.instrumentQuota ?? null}
                     statusBadges={props.statusBadges}
                     statusRegions={props.statusRegions}
-                    statusTrailingActions={showKeepKeyboardToggle
-                        ? <>{props.statusTrailingActions}<AgentInputKeepKeyboardToggle /></>
+                    statusTrailingActions={showKeyboardAccessory
+                        ? <><AgentInputKeyboardAccessory />{props.statusTrailingActions}</>
                         : props.statusTrailingActions}
                     activeStatusBadgeKey={props.activeStatusBadgeKey}
                     onActiveStatusBadgeKeyChange={props.onActiveStatusBadgeKeyChange}

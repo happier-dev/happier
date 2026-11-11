@@ -16,10 +16,7 @@ vi.mock('react-native-unistyles', async () => {
 
 import { LookChip } from '@/components/atmosphere/look/LookChip';
 import { AGENT_INPUT_QUIET_ICON_SIZE_PX } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
-import {
-  NewSessionComposerCloseButton,
-  NewSessionComposerKeyboardDismissButton,
-} from '@/components/sessions/new/components/NewSessionComposerCloseButton';
+import { NewSessionComposerCloseButton } from '@/components/sessions/new/components/NewSessionComposerCloseButton';
 import { NewSessionComposerLookButton } from '@/components/sessions/new/components/NewSessionComposerLookButton';
 import { instrumentStripStyles } from './instrumentStripStyles';
 
@@ -56,11 +53,10 @@ describe('the status row\'s host actions', () => {
       <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
         <NewSessionComposerLookButton target={{ surface: 'new-session' }} testID="new-session-look" />
         <NewSessionComposerCloseButton onPress={() => {}} />
-        <NewSessionComposerKeyboardDismissButton onPress={() => {}} />
       </HappierUiPlatformProvider>,
     );
     const size = { width: AGENT_INPUT_QUIET_ICON_SIZE_PX, height: AGENT_INPUT_QUIET_ICON_SIZE_PX };
-    for (const id of ['new-session-look', 'new-session-composer-close', 'new-session-composer-dismiss-keyboard']) {
+    for (const id of ['new-session-look', 'new-session-composer-close']) {
       const area = await layoutHitArea(() => screen.findHostByTestId(id), size);
       expect(area.insets.bottom, id).toBe(0);
       expect(area.insets.top, id).toBeGreaterThan(0);

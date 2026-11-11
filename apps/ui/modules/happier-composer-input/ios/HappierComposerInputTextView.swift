@@ -566,14 +566,17 @@ final class HappierComposerTextView: UITextView, UITextDropDelegate, UIContextMe
     font = UIFontMetrics(forTextStyle: .body).scaledFont(for: authored, compatibleWith: traitCollection)
     textColor = ink("text"); tintColor = ink("selection", fallback: .systemBlue)
     dropCaret.backgroundColor = tintColor
-    placeholderLabel.font = font; placeholderLabel.textColor = ink("placeholder", fallback: .placeholderText)
     textStorage.addAttributes(baseAttributes(), range: fullRange)
     typingAttributes = baseAttributes()
     remeasureChips()
     applyDecorations(); updatePlaceholder(); setNeedsLayout()
   }
   private func updatePlaceholder() {
-    placeholderLabel.text = placeholder; placeholderLabel.isHidden = textStorage.length > 0
+    // The typed line's own attributes (its line height included), so the first typed glyph lands where the
+    // placeholder's did and nothing shifts when typing replaces it.
+    var attributes = baseAttributes(); attributes[.foregroundColor] = ink("placeholder", fallback: .placeholderText)
+    placeholderLabel.attributedText = NSAttributedString(string: placeholder, attributes: attributes)
+    placeholderLabel.isHidden = textStorage.length > 0
     let available = max(0, bounds.width - textContainerInset.left - textContainerInset.right)
     let size = placeholderLabel.sizeThatFits(CGSize(width: available, height: .greatestFiniteMagnitude))
     placeholderLabel.frame = CGRect(x: textContainerInset.left, y: textContainerInset.top, width: available, height: size.height)

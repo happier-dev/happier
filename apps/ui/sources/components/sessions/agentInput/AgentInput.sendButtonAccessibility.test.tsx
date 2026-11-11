@@ -218,8 +218,9 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
     useHasMeaningfulScmStatus: () => false,
 }));
 
+const softKeyboard = vi.hoisted(() => ({ height: 0 }));
 vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
-    useKeyboardHeight: () => 0,
+    useKeyboardHeight: () => softKeyboard.height,
 }));
 
 vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
@@ -386,6 +387,7 @@ describe('AgentInput (send button accessibility)', () => {
         vi.unstubAllGlobals();
         const { storage } = await import('@/sync/domains/state/storage');
         storage.setState({ localSettings: { ...storage.getState().localSettings, composerKeepFocusAfterSend: false } });
+        softKeyboard.height = 0;
         translateOverride.fn = null;
         featureEnabledState.voice = true;
         recognition.text = 'dictated';
@@ -1765,6 +1767,30 @@ describe('AgentInput (send button accessibility)', () => {
         screen.pressByTestId('session-composer-send');
 
         expect(multiTextInputHandleMocks.blur).not.toHaveBeenCalled();
+        await screen.unmount();
+    });
+
+    // Owner 2026-11-11 (phone 05–07): 0.2's accessory above the composer, a chevron that lowers the keyboard and a pin
+    // that keeps it across sends, was missing; the new-session composer had neither.
+    it('shows the keyboard accessory above a new-session composer only while the soft keyboard is open', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const render = () => <AgentInput
+            value="Hello world"
+            placeholder="Type"
+            onChangeText={() => {}}
+            onSend={() => {}}
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />;
+        const closed = await renderScreen(render());
+        expect(closed.findByTestId('agent-input-keep-keyboard')).toBeNull();
+        expect(closed.findByTestId('agent-input-dismiss-keyboard')).toBeNull();
+        await closed.unmount();
+
+        softKeyboard.height = 291;
+        const screen = await renderScreen(render());
+        expect(screen.findByTestId('agent-input-dismiss-keyboard')).not.toBeNull();
+        expect(screen.findByTestId('agent-input-keep-keyboard')?.props.accessibilityState).toEqual({ checked: false });
         await screen.unmount();
     });
 

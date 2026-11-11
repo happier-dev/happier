@@ -57,7 +57,7 @@ type ComposerLayout = React.ComponentProps<
 
 /** The composer's keyboard as its owner publishes it: a height, its subscribers and the lifts held on it. */
 function composerKeyboard(initialHeight: number) {
-  let height = initialHeight;
+  const height = initialHeight;
   const listeners = new Set<(height: number) => void>();
   const shared = { value: 0 } as never;
   const state = { lifts: 0 };
@@ -83,15 +83,7 @@ function composerKeyboard(initialHeight: number) {
       };
     },
   };
-  return {
-    layout,
-    state,
-    hide: () =>
-      act(() => {
-        height = 0;
-        listeners.forEach((listener) => listener(0));
-      }),
-  };
+  return { layout, state };
 }
 
 async function openPicker(anchor: 'chip' | 'caret') {
@@ -117,24 +109,15 @@ async function openPicker(anchor: 'chip' | 'caret') {
   return { composer, latest };
 }
 
-// UI refinements ruling 2026-11-10 (NATIVE-SWEEP L12): with the keyboard up, the engine picker covered the field
-// being written and was cut to a sliver. Opening a chip picker dismisses the keyboard; the slash/@ menu keeps it.
+// Owner 2026-11-11 (phone 05–07), reversing the 2026-11-10 dismissal ruling: tapping a chip while writing closed the
+// keyboard and the whole composer jumped down. A chip picker opens above the keyboard; the field keeps it.
 describe('composer popover layout and the keyboard on iOS', () => {
-  // PHONE-POPOVERS-1109: the dismissal went through React Native's `Keyboard.dismiss()`, which never reached the
-  // composer's native editor, so the engine picker opened with the keyboard still up.
-  it('dismisses the keyboard when a chip picker opens, and does not hold the composer up where it was', async () => {
-    const { composer, latest } = await openPicker('chip');
-    expect(nativeDismissCalls()).toBe(1);
-    expect(composer.state.lifts).toBe(0);
-    composer.hide();
-    expect(latest.layout?.keyboardBottomInset).toBe(0);
-  });
-
-  it('keeps the keyboard, and the composer lifted, for the slash/@ menu written at the caret', async () => {
-    const { composer } = await openPicker('caret');
+  it.each(['chip', 'caret'] as const)('keeps the keyboard, and the composer lifted, when a %s popover opens', async (anchor) => {
+    const { composer, latest } = await openPicker(anchor);
     expect(nativeDismissCalls()).toBe(0);
     expect(keyboard.rnDismiss).not.toHaveBeenCalled();
     expect(composer.state.lifts).toBe(1);
+    expect(latest.layout?.keyboardBottomInset).toBe(336);
   });
 });
 

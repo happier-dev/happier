@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 
-const windowState = vi.hoisted(() => ({ width: 800 }));
+const windowState = vi.hoisted(() => ({ width: 800, keyboardHeight: 0 }));
+
+// The soft keyboard is the platform's; its settled height is read through this one adapter.
+vi.mock('@/hooks/ui/useKeyboardHeight', () => ({ useKeyboardHeight: () => windowState.keyboardHeight }));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -48,6 +51,7 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 describe('NewSessionDraftComposerActions', () => {
     beforeEach(() => {
         windowState.width = 800;
+        windowState.keyboardHeight = 0;
     });
     afterEach(() => standardCleanup());
 
@@ -71,6 +75,24 @@ describe('NewSessionDraftComposerActions', () => {
         await pressTestInstanceAsync(deleteAction);
         expect(onStartAnother).toHaveBeenCalledOnce();
         expect(onDelete).toHaveBeenCalledOnce();
+        await screen.unmount();
+    });
+
+    // Owner 2026-11-11 (phone 05–07): with the keyboard up the composer's keyboard accessory joins the status row,
+    // and a labelled Start another squeezed the machine line to "Machine i…".
+    it('draws Start another as its quiet icon on compact layouts while the soft keyboard is up', async () => {
+        windowState.width = 390;
+        windowState.keyboardHeight = 291;
+        const onStartAnother = vi.fn();
+        const screen = await renderScreen(
+            <NewSessionDraftComposerActions deleteDisabled={false} onStartAnother={onStartAnother} onDelete={vi.fn(async () => undefined)} />,
+        );
+        const startAnother = screen.findByTestId('new-session-draft-start-another');
+        if (!startAnother) throw new Error('Expected Start another');
+        expect(startAnother.props.accessibilityLabel).toBe('sessionDrafts.startAnother');
+        expect(screen.findAll((node) => node.type === 'Text' && node.props.children === 'sessionDrafts.startAnother')).toHaveLength(0);
+        await pressTestInstanceAsync(startAnother);
+        expect(onStartAnother).toHaveBeenCalledOnce();
         await screen.unmount();
     });
 

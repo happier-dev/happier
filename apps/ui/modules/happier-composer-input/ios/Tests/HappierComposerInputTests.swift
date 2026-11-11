@@ -86,6 +86,38 @@ final class HappierComposerInputTests: XCTestCase {
     XCTAssertEqual(try XCTUnwrap(measuredHeight), emptyHeight, accuracy: 1)
   }
 
+  // Owner 2026-11-11 (phone 06/07): the typed line sat lower than the placeholder it replaced, so the text
+  // jumped when typing began. Both are drawn from the same insets and line metrics.
+  func testTypedTextStartsWhereThePlaceholderWasDrawn() throws {
+    func inkBounds(_ configure: (HappierComposerTextView) -> Void) throws -> CGRect {
+      let input = HappierComposerTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 60))
+      input.setTypography(["fontSize": 16.0, "lineHeight": 24.0])
+      input.setTheme(["text": "#000000", "placeholder": "#000000"])
+      input.setPadding(["top": 8, "left": 12, "bottom": 8, "right": 12])
+      configure(input)
+      input.layoutIfNeeded()
+      input.layoutManager.ensureLayout(for: input.textContainer)
+      let format = UIGraphicsImageRendererFormat(); format.scale = 2; format.opaque = false
+      let image = UIGraphicsImageRenderer(bounds: input.bounds, format: format).image { input.layer.render(in: $0.cgContext) }
+      let cgImage = try XCTUnwrap(image.cgImage)
+      let width = cgImage.width, height = cgImage.height
+      var pixels = [UInt8](repeating: 0, count: width * height * 4)
+      let context = try XCTUnwrap(CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+      var minX = width, minY = height, maxX = -1, maxY = -1
+      for y in 0..<height { for x in 0..<width where pixels[(y * width + x) * 4 + 3] > 96 {
+        minX = min(minX, x); minY = min(minY, y); maxX = max(maxX, x); maxY = max(maxY, y)
+      } }
+      XCTAssertGreaterThanOrEqual(maxX, 0, "nothing was drawn")
+      return CGRect(x: CGFloat(minX) / 2, y: CGFloat(minY) / 2, width: CGFloat(maxX - minX) / 2, height: CGFloat(maxY - minY) / 2)
+    }
+    let placeholder = try inkBounds { $0.placeholder = "What would" }
+    let typed = try inkBounds { $0.setControlledDocument(value: "What would", references: []) }
+    XCTAssertEqual(typed.minY, placeholder.minY, accuracy: 0.5)
+    XCTAssertEqual(typed.minX, placeholder.minX, accuracy: 0.5)
+  }
+
   func testActualTextViewUsesAnAttachmentAndReportsUTF16SourceSelection() {
     let input = makeInput()
     XCTAssertEqual(input.text, "😀 \u{fffc} done")

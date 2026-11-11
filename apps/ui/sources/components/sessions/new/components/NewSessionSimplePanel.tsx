@@ -20,10 +20,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { useFloatingComposerEntrance } from './useFloatingComposerEntrance';
 import { useNewSessionFloatingComposer } from '@/components/sessions/new/navigation/useNewSessionFloatingComposer';
-import {
-    NewSessionComposerCloseButton,
-    NewSessionComposerKeyboardDismissButton,
-} from '@/components/sessions/new/components/NewSessionComposerCloseButton';
+import { NewSessionComposerCloseButton } from '@/components/sessions/new/components/NewSessionComposerCloseButton';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { blurActiveElementOnWeb } from '@/utils/platform/deferOnWeb';
 import { AgentInput } from '@/components/sessions/agentInput';
@@ -35,10 +32,7 @@ import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { HandleCreateSessionOptions } from '../hooks/useCreateNewSession';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { layout } from '@/components/ui/layout/layout';
-import {
-    ComposerKeyboardScaffold,
-    useComposerKeyboardLayoutContext,
-} from '@/components/sessions/keyboardAvoidance';
+import { ComposerKeyboardScaffold } from '@/components/sessions/keyboardAvoidance';
 import {
     NewSessionLaunchPendingPreview,
 } from '@/components/sessions/new/components/NewSessionLaunchPendingPreview';
@@ -163,47 +157,6 @@ export type NewSessionSimplePanelProps = Readonly<{
 }>;
 
 /**
- * The bottom-anchored floating composer's own actions at the end of its status row: retract the
- * keyboard while it is up, and leave. The row is the card's header on the band's solid ground, so they
- * are its quiet icons (as on Docked) and read with the status line and draft actions as one cluster.
- *
- * Its own component because the keyboard subscription has to run INSIDE the scaffold's layout
- * provider; read from the panel body it would resolve to a null context and the dismiss control
- * would never appear.
- */
-const NewSessionFloatingComposerCapsules = React.memo(
-    function NewSessionFloatingComposerCapsules(
-        props: Readonly<{
-            onClose: () => void;
-            onDismissKeyboard: () => void;
-        }>,
-    ): React.ReactElement {
-        const layout = useComposerKeyboardLayoutContext();
-        const [isKeyboardOpen, setIsKeyboardOpen] = React.useState(false);
-
-        React.useEffect(() => {
-            const subscribe = layout?.subscribeKeyboardHeight;
-            if (!subscribe) return undefined;
-            // Height rather than a focus flag: focus is claimed before the keyboard is up and held
-            // after it starts leaving, which would flash the control at both ends of the curve.
-            return subscribe((height) => {
-                setIsKeyboardOpen(height > 0);
-            });
-        }, [layout]);
-
-        // Unwrapped, so each icon takes the status row's one gap.
-        return (
-            <>
-                {isKeyboardOpen ? (
-                    <NewSessionComposerKeyboardDismissButton onPress={props.onDismissKeyboard} />
-                ) : null}
-                <NewSessionComposerCloseButton onPress={props.onClose} />
-            </>
-        );
-    },
-);
-
-/**
  * The floating composer's ground on web: the shared modal scrim over the whole window, at the
  * floating glass frost, so the composer, its status line and its actions sit directly on the
  * frosted page with no card around them. Phone layouts use the shared short band instead. Pressing outside closes.
@@ -269,6 +222,7 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
     const isDismissingRef = React.useRef(false);
     const [isDismissing, setIsDismissing] = React.useState(false);
 
+    // A tap on the empty region above a non-floating composer lowers the keyboard alone.
     const handleDismissKeyboard = React.useCallback(() => {
         blurActiveElementOnWeb();
         dismissKeyboard();
@@ -335,10 +289,7 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
             statusTrailingActions: (
                 <>
                     {props.statusTrailingActions}
-                    <NewSessionFloatingComposerCapsules
-                        onClose={handleDismissScreen}
-                        onDismissKeyboard={handleDismissKeyboard}
-                    />
+                    <NewSessionComposerCloseButton onPress={handleDismissScreen} />
                 </>
             ),
         }

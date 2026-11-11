@@ -120,14 +120,20 @@ export function resolveAgentInputPanelStyle(theme: Theme) {
     };
 }
 
+/**
+ * A rail chip's height. The chips draw no resting fill, so their height is the space between the rails: 28 holds
+ * the 16 pt glyph and the label with an even margin and reads the two rails as one block (owner 2026-11-11, phone
+ * 05–07: the 32 pt chips of 0.2 left the rows far apart). Hit areas still meet across the 1 px gap.
+ */
+export const AGENT_INPUT_ACTION_CHIP_HEIGHT_PX = 28;
+
 export const AGENT_INPUT_ACTION_CHIP_STYLE = {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
-    borderRadius: Platform.select({ default: 16, android: 20 }),
+    borderRadius: AGENT_INPUT_ACTION_CHIP_HEIGHT_PX / 2,
     paddingHorizontal: 10,
-    paddingVertical: 6,
     justifyContent: 'center' as const,
-    height: 32,
+    height: AGENT_INPUT_ACTION_CHIP_HEIGHT_PX,
     gap: 6,
     ...(Platform.OS === 'web' ? {} : { marginRight: AGENT_INPUT_ACTION_CHIP_GAP_X, marginBottom: NATIVE_ACTION_CHIP_GAP_Y }),
 };

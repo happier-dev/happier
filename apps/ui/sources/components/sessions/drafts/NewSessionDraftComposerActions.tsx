@@ -7,6 +7,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { useNewSessionEmbeddedHost } from '@/components/sessions/new/navigation/newSessionHost';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { resolveIconButtonGlyphSize } from '@/components/ui/icons/iconButtonGlyphSize';
 import { AGENT_INPUT_QUIET_ICON_SIZE_PX } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
 import { INSTRUMENT_STRIP_LINE_HEIGHT_PX } from '@/components/sessions/agentInput/instrumentStrip/instrumentStripStyles';
@@ -35,8 +36,11 @@ export const NewSessionDraftComposerActions = React.memo(function NewSessionDraf
     const { width } = useWindowDimensions();
     const compact = width < COMPACT_ACTIONS_MAX_WIDTH;
     // Docked on a desktop, the card is narrow and its status row carries the machine line too: the
-    // actions are quiet icons there (owner 2026-11-01), named by their tooltip and accessible name.
-    const icons = useNewSessionEmbeddedHost()?.kind === 'docked' && !isMobileLayoutWidth(width);
+    // actions are quiet icons there (owner 2026-11-01), named by their tooltip and accessible name. A narrow
+    // window does the same while the soft keyboard is up: its accessory (lower, pin) joins the row then, and the
+    // labelled Start another would squeeze the machine line to a stub.
+    const keyboardOpen = useKeyboardHeight() > 0;
+    const icons = (useNewSessionEmbeddedHost()?.kind === 'docked' && !isMobileLayoutWidth(width)) || (compact && keyboardOpen);
     const runDelete = React.useCallback(() => {
         fireAndForget(props.onDelete(), { tag: 'NewSessionDraftComposerActions.delete' });
     }, [props.onDelete]);

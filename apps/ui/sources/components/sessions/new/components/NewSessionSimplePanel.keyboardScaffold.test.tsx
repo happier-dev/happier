@@ -31,13 +31,6 @@ const testState = vi.hoisted(() => ({
     timingFinished: true,
 }));
 
-function setTestKeyboardHeight(height: number): void {
-    const layout = testState.keyboardLayout;
-    if (!layout) return;
-    layout.keyboardHeight = height;
-    for (const listener of layout.listeners) listener(height);
-}
-
 const safeRouterBackSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('@/utils/navigation/safeRouterBack', () => ({
@@ -329,32 +322,6 @@ describe('NewSessionSimplePanel keyboard scaffold integration', () => {
         try {
             screen = await renderScreen(<NewSessionSimplePanel {...createFloatingPanelProps({ shouldBottomAnchor: true })} />);
             expect(testState.scaffoldRender?.props.safeAreaBottom).toBe(16 - 12);
-        } finally {
-            act(() => { screen?.tree.unmount(); });
-        }
-    });
-
-    it('offers a keyboard-dismiss control only while the keyboard is up', async () => {
-        testState.platformOs = 'ios';
-        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
-        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
-
-        try {
-            screen = await renderScreen(<NewSessionSimplePanel {...createFloatingPanelProps()} />);
-            const findDismiss = () => screen!.tree.root.findAll(
-                (node) => node.props?.testID === 'new-session-composer-dismiss-keyboard',
-            );
-
-            // A backdrop tap dismisses the whole screen here, so with the keyboard up no gesture
-            // retracts only the keyboard. The control exists for exactly that window and must not
-            // linger as dead chrome once the keyboard is down.
-            expect(findDismiss()).toHaveLength(0);
-
-            act(() => { setTestKeyboardHeight(291); });
-            expect(findDismiss().length).toBeGreaterThan(0);
-
-            act(() => { setTestKeyboardHeight(0); });
-            expect(findDismiss()).toHaveLength(0);
         } finally {
             act(() => { screen?.tree.unmount(); });
         }
