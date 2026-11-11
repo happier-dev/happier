@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { registerSessionTranscriptDerivedCacheClear } from '@/sync/runtime/sessionTranscriptDerivedCaches';
+import { readEvictedSessionTranscript } from '@/sync/domains/state/sessionTranscriptDiskCache';
+import { prepareWarmCacheEncryptionKey } from '@/sync/domains/state/warmCacheEncryptionKey';
 
 import { createMessagesDomain } from './messages';
 
@@ -95,6 +97,25 @@ describe('messages domain: evictSessionMessages', () => {
 
         domain.evictSessionMessages('s1');
         expect(cleared).toEqual(['s1']);
+    });
+
+    it('persists the evicted transcript to the disk cache before dropping it', async () => {
+        await prepareWarmCacheEncryptionKey();
+        const scope = { serverId: 'server-a', accountId: 'account-a' } as any;
+        const { get, domain } = createHarness({
+            sessions: { s1: buildSessionRow('s1') },
+            sessionLocalStateScope: scope,
+        });
+        domain.applyMessages('s1', [userMessage('m1', 1, 'hello')]);
+        domain.applyMessagesLoaded('s1');
+        // The reducer owns committed message ids, so compare against the store's own ids.
+        const persistedIds = (get().sessionMessages.s1.messageIdsOldestFirst as string[]).slice();
+
+        domain.evictSessionMessages('s1');
+
+        // The store entry is gone, but the disk copy keeps the transcript for warm re-open.
+        expect(get().sessionMessages.s1).toBeUndefined();
+        expect(readEvictedSessionTranscript(scope, 's1')?.map((m: any) => m.id)).toEqual(persistedIds);
     });
 
     it('is a no-op for sessions without a hydrated entry', () => {

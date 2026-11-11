@@ -11,6 +11,7 @@ import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewC
 import type { PendingMessage, Session, Machine, ScmStatus, ScmWorkingSnapshot, DiscardedPendingMessage } from '../domains/state/storageTypes';
 import type { ScmCommitSelectionPatch } from '../domains/state/storageTypes';
 import type { NormalizedMessage } from '../typesRaw';
+import type { Message } from '../domains/messages/messageTypes';
 import type { PermissionMode } from '../domains/permissions/permissionTypes';
 import type { Profile } from '../domains/profiles/profile';
 import type { Purchases } from '../domains/purchases/purchases';
@@ -183,6 +184,8 @@ export interface MessagesDomainSlice {
         latestReadyEventAt: number | null;
     };
     applyMessagesLoaded: (sessionId: string) => void;
+    /** Adopt a persisted-at-eviction transcript baseline (reducer-output `Message` form). */
+    hydrateSessionMessages: (sessionId: string, messages: readonly Message[]) => void;
     resetSessionMessages: (sessionId: string) => void;
     evictSessionMessages: (sessionId: string) => void;
     isMutableToolCall: (sessionId: string, callId: string) => boolean;

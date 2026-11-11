@@ -358,14 +358,20 @@ export function resolveWarmCacheAccountScope(accountId: string | null | undefine
     return warmCacheAccountScope ?? (normalizeScopePart(accountId) || null);
 }
 
-function buildScopedKey(prefix: string, serverId: string | null | undefined, accountId: string | null | undefined): string | null {
+/**
+ * Shared scoped-storage adapters for sibling per-scope disk caches that reuse this module's
+ * storage placement and at-rest encryption decision (for example the evicted session-transcript
+ * cache). Keys are always scope-qualified (`prefix:serverId:accountId`), so a cache written for
+ * one account can never be read under another.
+ */
+export function buildScopedKey(prefix: string, serverId: string | null | undefined, accountId: string | null | undefined): string | null {
     const normalizedServerId = normalizeScopePart(serverId);
     const normalizedAccountId = normalizeScopePart(accountId);
     if (!normalizedServerId || !normalizedAccountId) return null;
     return `${prefix}:${normalizedServerId}:${normalizedAccountId}`;
 }
 
-function loadScopedRecord<T>(
+export function loadScopedRecord<T>(
     key: string | null,
     schema: z.ZodType<T>,
 ): T | null {
@@ -389,7 +395,7 @@ function loadScopedRecord<T>(
     }
 }
 
-function saveScopedRecord<T extends Record<string, unknown>>(key: string | null, value: T): void {
+export function saveScopedRecord<T extends Record<string, unknown>>(key: string | null, value: T): void {
     if (!key) return;
     const storage = getWarmCacheStorage();
     if (!storage) return;
@@ -397,7 +403,13 @@ function saveScopedRecord<T extends Record<string, unknown>>(key: string | null,
         storage.delete(key);
         return;
     }
-    storage.set(key, JSON.stringify(value));
+    try {
+        storage.set(key, JSON.stringify(value));
+    } catch {
+        // Web localStorage enforces a quota (the Tauri desktop shell included): a transcript
+        // larger than the remaining budget throws here. Persistence is best-effort for its
+        // callers — a failed write must never surface as a failed eviction or a broken boot.
+    }
 }
 
 export function loadSessionListWarmCacheEntries(serverId: string | null | undefined, accountId: string | null | undefined): Record<string, SessionListCacheEntryV1> {
