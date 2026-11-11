@@ -5,8 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { OVERLAY_CAPSULE_ROW_HEIGHT } from '@/components/ui/overlays/OverlayCapsuleButton';
-import { resolveComposerBottomOffset } from '@/components/sessions/keyboardAvoidance/composerKeyboardGeometry';
 
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
@@ -206,6 +204,11 @@ function createFloatingPanelProps(
 // Load the real panel graph outside a test's deadline; focused selections otherwise spend their
 // entire first test transforming the screen rather than exercising the animation boundary.
 await import('./NewSessionSimplePanel');
+// App modules load only after the mocks above are installed: `installNewSessionComponentsCommonModuleMocks`
+// registers its `react-native` mock when it runs, not hoisted, and a static import of a UI module reaches the
+// whole app graph (Text → storage → … → the floating-composer hook), which then binds the real platform and the
+// panel stops floating.
+const { resolveComposerBottomOffset } = await import('@/components/sessions/keyboardAvoidance/composerKeyboardGeometry');
 
 describe('NewSessionSimplePanel keyboard scaffold integration', () => {
     beforeEach(() => {
@@ -456,11 +459,9 @@ describe('NewSessionSimplePanel keyboard scaffold integration', () => {
             expect(testState.scaffoldRender?.props.mode).toBe('newSession');
             expect(screen.findByType('MockComposerKeyboardScaffoldContent')).toBeTruthy();
             expect(screen.findByType('MockComposerKeyboardScaffoldComposer')).toBeTruthy();
-            // Reserve the shared capsule row's real platform-minimum press frame plus its gap. It lives
-            // inside the same bottom-anchored slot and nothing else subtracts it, so without the
-            // reservation a long draft grows up past the capsule and off the top of the screen.
-            // `safeAreaTop` is 0 here, so only the row comes off.
-            expect(testState.agentInputProps.at(-1)?.maxPanelHeight).toBe(348 - OVERLAY_CAPSULE_ROW_HEIGHT);
+            // The panel reserves only the status bar (0 here). The close and keyboard controls ride the composer's own
+            // status row, which AgentInput measures inside this room (2de4e02fd3), so nothing else comes off.
+            expect(testState.agentInputProps.at(-1)?.maxPanelHeight).toBe(348);
         } finally {
             act(() => {
                 screen?.tree.unmount();
@@ -514,8 +515,8 @@ describe('NewSessionSimplePanel keyboard scaffold integration', () => {
                 />,
             );
 
-            // Same capsule-row reservation as above, applied to the seeded first-frame height.
-            expect(testState.agentInputProps.at(-1)?.maxPanelHeight).toBe(610 - OVERLAY_CAPSULE_ROW_HEIGHT);
+            // Same room as above, seeded before the scaffold subscription publishes: only the status bar comes off.
+            expect(testState.agentInputProps.at(-1)?.maxPanelHeight).toBe(610);
         } finally {
             act(() => {
                 screen?.tree.unmount();
