@@ -82,7 +82,10 @@ function isEntriesRpcUnsupported(response: ScmStatusEntriesResponse): boolean {
 const inFlightPageRequests = new Map<string, Promise<ScmStatusEntriesResponse>>();
 
 function requestPageKey(machineId: string, resolvedPath: string, request: ScmStatusEntriesRequest): string {
-    return [machineId, resolvedPath, request.expandPath ?? '', request.afterPath ?? '', request.limit ?? ''].join('\u0000');
+    // Every request field that changes the result must be in the key: `untrackedFiles`
+    // switches the paged entry shape (collapsed rows vs per-file), so two concurrent
+    // requests differing only by it must not coalesce onto one wire call.
+    return [machineId, resolvedPath, request.expandPath ?? '', request.afterPath ?? '', request.limit ?? '', request.untrackedFiles ?? ''].join('\u0000');
 }
 
 async function fetchEntriesPage(
@@ -221,9 +224,10 @@ export class ScmStatusEntriesWindow {
     }
 
     /**
-     * Continue a truncated normal-mode window through the paged entries route: the RPC pages
-     * top-level rows with an exclusive `afterPath` cursor (same route the directory expansions
-     * use), so a snapshot whose entry budget cut the list short can still reach the rest.
+     * Continue a truncated normal-mode window through the paged entries route: the RPC
+     * pages top-level rows with an exclusive `afterPath` cursor in the same
+     * collapsed-directory row shape the window started with (`untrackedFiles: 'normal'`),
+     * so a snapshot whose entry budget cut the list short can still reach the rest.
      */
     async loadMoreTopLevel(): Promise<void> {
         if (this.state.mode !== 'window' || this.state.status !== 'ready' || !this.state.truncated) return;
@@ -234,9 +238,14 @@ export class ScmStatusEntriesWindow {
         if (!afterPath) return;
 
         this.publish({ ...this.state, status: 'loading' });
-        const seq = ++this.requestSeq;
+        // Read-only generation: this continuation must not invalidate in-flight expansion
+        // requests (they share `requestSeq` for refresh/disposal invalidation only).
+        const seq = this.requestSeq;
         try {
-            const response = await fetchEntriesPage(target.machineId, target.resolvedPath, { afterPath });
+            const response = await fetchEntriesPage(target.machineId, target.resolvedPath, {
+                afterPath,
+                untrackedFiles: 'normal',
+            });
             if (seq !== this.requestSeq) return;
             if (isEntriesRpcUnsupported(response)) {
                 await this.enterSnapshotFallback();
@@ -247,7 +256,15 @@ export class ScmStatusEntriesWindow {
                 return;
             }
             const knownPaths = new Set(this.state.entries.map((entry) => entry.path));
-            const appended = response.entries.filter((entry) => !knownPaths.has(entry.path));
+            // Mixed-version guard: a daemon that predates `untrackedFiles` on the entries
+            // RPC pages the per-file 'all' shape, whose rows under an already-collapsed
+            // directory row are structural descendants, not top-level rows — they arrive via
+            // that directory's expansion instead.
+            const collapsedDirPrefixes = this.state.entries
+                .filter((entry) => entry.isDirectory === true)
+                .map((entry) => (entry.path.endsWith('/') ? entry.path : `${entry.path}/`));
+            const appended = response.entries.filter((entry) => !knownPaths.has(entry.path)
+                && !collapsedDirPrefixes.some((prefix) => entry.path.startsWith(prefix)));
             this.publish({
                 ...this.state,
                 status: 'ready',
@@ -389,8 +406,17 @@ export class ScmStatusEntriesWindow {
         const seq = this.requestSeq;
         try {
             await this.refreshSnapshotFallback(target, seq);
-        } catch {
-            // Keep the window state honest; the surface renders snapshot rows.
+        } catch (error) {
+            // The fallback fetch failed: restore a recoverable state instead of leaving the
+            // window stuck 'loading' (the ready-guards of loadMoreTopLevel/expandDirectory
+            // would otherwise never re-arm). Last-known rows stay mounted; refresh() and the
+            // load-more/expansion affordances remain retryable.
+            if (seq !== this.requestSeq) return;
+            this.publish({
+                ...this.state,
+                status: 'ready',
+                error: error instanceof Error ? error.message : 'Failed to load source-control entries',
+            });
         }
     }
 

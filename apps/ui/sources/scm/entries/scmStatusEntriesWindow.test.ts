@@ -113,9 +113,81 @@ describe('ScmStatusEntriesWindow', () => {
         expect(machineScmStatusEntriesMock).toHaveBeenCalledWith('machine-a', {
             cwd: '/repo',
             afterPath: 'a-first.ts',
+            untrackedFiles: 'normal',
         });
         expect(window.getState().truncated).toBe(false);
         expect(window.getState().entries.map((entry) => entry.path)).toEqual(['D/', 'a-first.ts', 'z-last.ts']);
+    });
+
+    it('does not invalidate a pending expansion when top-level continuation runs (separate request generation)', async () => {
+        fetchSnapshotForSessionMock.mockResolvedValue(makeCollapsedSnapshot({
+            entriesPresentation: 'truncated',
+            entries: [
+                makeEntry('D/', { isDirectory: true, untrackedFileCount: 30000 }),
+                makeEntry('a-first.ts'),
+            ],
+        }));
+        let resolveExpansion!: (value: ScmStatusEntriesResponse) => void;
+        let resolveTopLevel!: (value: ScmStatusEntriesResponse) => void;
+        machineScmStatusEntriesMock
+            .mockReturnValueOnce(new Promise((resolve) => { resolveExpansion = resolve; }))
+            .mockReturnValueOnce(new Promise((resolve) => { resolveTopLevel = resolve; }));
+
+        const window = new ScmStatusEntriesWindow({ sessionId: 's1' });
+        await window.refresh();
+        const expandPromise = window.expandDirectory('D/');
+        const loadMorePromise = window.loadMoreTopLevel();
+
+        // The top-level continuation started while the expansion is in flight; the
+        // expansion reply must still be accepted.
+        resolveExpansion(makeEntriesPage(['D/a.ts'], false) as ScmStatusEntriesResponse);
+        await expandPromise;
+        expect(window.getState().expansions.get('D/')?.entries.map((entry) => entry.path)).toEqual(['D/a.ts']);
+
+        resolveTopLevel(makeEntriesPage(['z-last.ts'], false) as ScmStatusEntriesResponse);
+        await loadMorePromise;
+        expect(window.getState().entries.map((entry) => entry.path)).toEqual(['D/', 'a-first.ts', 'z-last.ts']);
+    });
+
+    it('filters descendants under collapsed directory rows from a mixed-version continuation reply', async () => {
+        fetchSnapshotForSessionMock.mockResolvedValueOnce(makeCollapsedSnapshot({
+            entriesPresentation: 'truncated',
+            entries: [
+                makeEntry('D/', { isDirectory: true, untrackedFileCount: 30000 }),
+                makeEntry('a-first.ts'),
+            ],
+        }));
+        // Pre-untrackedFiles daemon: pages the per-file 'all' shape — rows under D/ are
+        // structural descendants of the already-collapsed row, not top-level rows.
+        machineScmStatusEntriesMock.mockResolvedValueOnce(makeEntriesPage(['D/a.ts', 'z-last.ts'], false));
+
+        const window = new ScmStatusEntriesWindow({ sessionId: 's1' });
+        await window.refresh();
+        await window.loadMoreTopLevel();
+
+        expect(window.getState().entries.map((entry) => entry.path)).toEqual(['D/', 'a-first.ts', 'z-last.ts']);
+    });
+
+    it('restores a retryable ready state when the fallback fetch rejects during top-level continuation', async () => {
+        fetchSnapshotForSessionMock.mockResolvedValueOnce(makeCollapsedSnapshot({
+            entriesPresentation: 'truncated',
+            entries: [makeEntry('D/', { isDirectory: true, untrackedFileCount: 30000 }), makeEntry('a-first.ts')],
+        }));
+        machineScmStatusEntriesMock.mockResolvedValueOnce({
+            success: false,
+            entries: [],
+            hasMore: false,
+            fetchedAt: 1,
+            errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+        });
+        fetchSnapshotForSessionMock.mockRejectedValueOnce(new Error('rpc down'));
+
+        const window = new ScmStatusEntriesWindow({ sessionId: 's1' });
+        await window.refresh();
+        await window.loadMoreTopLevel();
+
+        expect(window.getState().status).toBe('ready');
+        expect(window.getState().error).toBe('rpc down');
     });
 
     it('drops an in-flight expansion reply that lands after the directory was collapsed', async () => {
