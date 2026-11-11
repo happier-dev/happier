@@ -24,7 +24,13 @@ function normalizedNonEmptyString(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function tagForSourceKey(
+/**
+ * The one derivation of an external conversation's opaque identity
+ * (`direct:v1:<sha256(machine|agent|native id|source key)>`). It is both the
+ * creation tag of a Session linked from Browse and the value the server records
+ * as that Session's `externalIdentityTag`.
+ */
+export function resolveExternalSessionIdentityTag(
   params: Readonly<{
     machineId: string;
     agentId: ExternalSessionsAgentId;
@@ -67,7 +73,7 @@ function resolveConnectedServiceGroupPredecessor(
     + `${connectedServiceProfileId}:${homePath}`;
   return {
     kind: 'connected-service-group-predecessor',
-    tag: tagForSourceKey(params, sourceKey),
+    tag: resolveExternalSessionIdentityTag(params, sourceKey),
     expectedSource: params.source,
     expectedConnectedServiceGroupId,
   };
@@ -89,7 +95,7 @@ export function resolveExternalSessionTagLookupCandidates(
 ] {
   const candidates: ExternalSessionTagLookupCandidate[] = [{
     kind: 'canonical',
-    tag: tagForSourceKey(params, params.sourceKey),
+    tag: resolveExternalSessionIdentityTag(params, params.sourceKey),
     expectedSource: params.source,
   }];
 
@@ -97,7 +103,7 @@ export function resolveExternalSessionTagLookupCandidates(
   // before the public Agent contribution normalized it. New writes use only
   // the canonical tag above; these proven keys remain exact read aliases.
   for (const sourceKey of params.releasedSourceKeys) {
-    const tag = tagForSourceKey(params, sourceKey);
+    const tag = resolveExternalSessionIdentityTag(params, sourceKey);
     if (candidates.some((candidate) => candidate.tag === tag)) continue;
     candidates.push({
       kind: 'released-source-key',

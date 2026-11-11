@@ -14,7 +14,7 @@ import { agentEventLocalIdAttentionImpact } from '@happier-dev/protocol/sessions
 import type { SessionMessageAttentionImpact, SessionStoredMessageContent, V2SessionByIdResponse, V2SessionListResponse, SessionLookupByTagsResponseV2, SessionMetadataInactiveModelIntentExpectationV1, SessionMetadataInactiveModelIntentOwnerPatchV1, SessionMetadataInactiveModelIntentPatchV1, SessionMetadataTuplePatchV1, SessionOrganizationPlacementV1, SessionTurnsProjectionV1, SessionListQueryV1, SessionListQueryResponseV1, SessionListUnavailableQueryV1, SessionAttentionSetResultV1, SessionManagerSetActionInputV1, SessionManagerSetResultV1 } from '@happier-dev/protocol';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SESSION_HISTORICAL_TRANSCRIPT_IMPORT_MAX_ITEMS, SessionTranscriptSurfaceItemReferenceInputV1Schema, type SessionTranscriptSurfaceItemReferenceInputV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
-import { SessionLookupByTagsRequestV2Schema, SessionLookupByTagsResponseV2Schema, V2SessionByIdResponseSchema, V2SessionListResponseSchema, V2SessionMessageResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { SessionExternalIdentityClaimConflictV1Schema, SessionExternalIdentityClaimRequestV1Schema, SessionExternalIdentityClaimResponseV1Schema, SessionLookupByTagsRequestV2Schema, SessionLookupByTagsResponseV2Schema, V2SessionByIdResponseSchema, V2SessionListResponseSchema, V2SessionMessageResponseSchema, type SessionExternalIdentityClaimConflictV1, type SessionExternalIdentityClaimResponseV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { SessionMetadataActiveConflictV1Schema, SessionMetadataInactiveModelIntentPatchSuccessV1Schema, SessionMetadataInactiveModelIntentVersionConflictV1Schema, SessionMetadataTuplePatchSuccessV1Schema, SessionMetadataVersionConflictV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { buildSessionOrganizationAssignmentSnapshotHttpRequestV1, SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
@@ -166,6 +166,8 @@ export type SessionLookupByTagsHttpResult =
       state: 'available';
       tags: readonly string[];
       sessions: SessionLookupByTagsResponseV2['sessions'];
+      /** Present when the lookup asked to match recorded external identities. */
+      externalIdentities?: NonNullable<SessionLookupByTagsResponseV2['externalIdentities']>;
     }>
   | Readonly<{ state: 'unavailable' }>;
 
@@ -256,6 +258,7 @@ function throwSessionDetailProjectionUnavailable(): never {
 
 function parseSessionByIdResponse(
   payload: unknown,
+  expectedSessionId: string,
   accessProjectionVersion: 1 | undefined,
 ): RawSessionRecord {
   const session = parseSessionDetailSchema(
@@ -263,6 +266,11 @@ function parseSessionByIdResponse(
     payload,
     'v2_session_detail',
   ).session;
+  if (session.id !== expectedSessionId) {
+    throw new SessionDetailInvalidResponseError('v2_session_detail', [{
+      code: 'custom', path: ['session', 'id'], message: 'Session identity does not match request',
+    }]);
+  }
   if (accessProjectionVersion === 1) {
     return parseSessionDetailSchema(
       SessionCurrentProjectionRecordV1Schema,
@@ -461,7 +469,7 @@ export async function fetchSessionById(params: Readonly<{
     throwUnexpectedStatusError(`/v2/sessions/${params.sessionId}`, response.status);
   }
 
-  return parseSessionByIdResponse(response.data, accessProjectionVersion);
+  return parseSessionByIdResponse(response.data, params.sessionId, accessProjectionVersion);
 }
 
 export async function lookupSessionsByTags(params: Readonly<{
@@ -470,12 +478,14 @@ export async function lookupSessionsByTags(params: Readonly<{
     method: 'POST'; path: string; body: unknown;
   }>) => Readonly<Record<string, string>> | null;
   tags: readonly string[];
+  /** Also match recorded external identities (0.3 servers); rows then carry `externalIdentities`. */
+  matchExternalIdentity?: true;
   signal?: AbortSignal;
   deadlineAtMs?: number;
 }>): Promise<SessionLookupByTagsHttpResult> {
   const request = parseOrThrow(
     SessionLookupByTagsRequestV2Schema,
-    { tags: [...params.tags] },
+    { tags: [...params.tags], ...(params.matchExternalIdentity ? { matchExternalIdentity: true } : {}) },
     'Invalid /v2/sessions/lookup-by-tags request',
   );
   const remainingMs = params.deadlineAtMs === undefined
@@ -523,11 +533,68 @@ export async function lookupSessionsByTags(params: Readonly<{
     response.data,
     'Unexpected /v2/sessions/lookup-by-tags response shape',
   );
+  // Absent means a tag-only answer (rows matched by creation tag, no recorded
+  // identity known); present must describe exactly the returned rows.
+  if (
+    parsed.externalIdentities
+    && (
+      parsed.externalIdentities.length !== parsed.sessions.length
+      || parsed.externalIdentities.some((identity, index) => identity.sessionId !== parsed.sessions[index]!.id)
+    )
+  ) {
+    throw new Error('Unexpected /v2/sessions/lookup-by-tags external identity projection');
+  }
   return {
     state: 'available',
     tags: request.tags,
     sessions: parsed.sessions,
+    ...(parsed.externalIdentities ? { externalIdentities: parsed.externalIdentities } : {}),
   };
+}
+
+export type SessionExternalIdentityClaimHttpResult =
+  | Readonly<{ status: SessionExternalIdentityClaimResponseV1['externalIdentity'] }>
+  | Readonly<{ status: 'conflict'; reason: SessionExternalIdentityClaimConflictV1['reason'] }>;
+
+/**
+ * Records a Session's external identity through the Session PATCH owner. The
+ * server sets it at most once and answers a typed conflict instead of
+ * overwriting another Session's (or this Session's different) claim.
+ */
+export async function claimSessionExternalIdentity(params: Readonly<{
+  token: string;
+  sessionId: string;
+  externalIdentityTag: string;
+  signal?: AbortSignal;
+}>): Promise<SessionExternalIdentityClaimHttpResult> {
+  const body = parseOrThrow(
+    SessionExternalIdentityClaimRequestV1Schema,
+    { externalIdentityTag: params.externalIdentityTag },
+    'Invalid Session external identity claim',
+  );
+  const path = `/v2/sessions/${encodeSessionIdPathSegment(params.sessionId)}`;
+  const response = await axios.patch(`${resolveServerHttpBaseUrl()}${path}`, body, {
+    headers: {
+      ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
+      Authorization: `Bearer ${params.token}`,
+      'Content-Type': 'application/json',
+    },
+    timeout: configuration.sessionControlHttpTimeoutMs,
+    ...(params.signal ? { signal: params.signal } : {}),
+    validateStatus: () => true,
+  });
+  if (isAuthenticationStatus(response.status)) throwAuthenticationStatusError(response.status);
+  if (response.status === 409) {
+    const conflict = SessionExternalIdentityClaimConflictV1Schema.safeParse(response.data);
+    if (conflict.success) return { status: 'conflict', reason: conflict.data.reason };
+  }
+  if (response.status !== 200) throwUnexpectedStatusError(path, response.status);
+  const claimed = parseOrThrow(
+    SessionExternalIdentityClaimResponseV1Schema,
+    response.data,
+    'Unexpected Session external identity claim response',
+  );
+  return { status: claimed.externalIdentity };
 }
 
 /**
@@ -1166,6 +1233,22 @@ export async function applySessionAgentTransitionCutover(params: Readonly<{
 }
 
 /** Scalar-only inventory read. Omitted documents are never full-snapshot replacements. */
+/**
+ * Optional content-free observation of one session-list or read-batch HTTP exchange:
+ * request start to parsed response, plus the wire size the server declared (null when absent).
+ */
+export type SessionReadHttpObserver = (exchange: Readonly<{
+  kind: 'list' | 'readBatch';
+  ms: number;
+  bytes: number | null;
+}>) => void;
+
+function readDeclaredResponseBytes(headers: unknown): number | null {
+  const raw = headers && typeof headers === 'object' ? (headers as Record<string, unknown>)['content-length'] : undefined;
+  const bytes = typeof raw === 'string' || typeof raw === 'number' ? Number(raw) : Number.NaN;
+  return Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : null;
+}
+
 export async function fetchSessionListPage(params: Readonly<{
   token: string;
   resolveAuthorizationHeaders?: (request: Readonly<{
@@ -1176,6 +1259,7 @@ export async function fetchSessionListPage(params: Readonly<{
   activeOnly?: boolean;
   archivedOnly?: boolean;
   signal?: AbortSignal;
+  observeHttp?: SessionReadHttpObserver;
 }>): Promise<Readonly<{
   sessions: RawCompactSessionListRow[];
   nextCursor: string | null;
@@ -1210,6 +1294,7 @@ export async function fetchSessionListPage(params: Readonly<{
   const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path: requestPath })
     ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
   if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
+  const listStartedAtMs = performance.now();
   const response = await axios.get(`${serverUrl}${requestPath}`, {
     headers: {
       ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
@@ -1237,6 +1322,7 @@ export async function fetchSessionListPage(params: Readonly<{
   if (!Array.isArray(parsed.sessions)) {
     throw new Error(`Unexpected ${path} response shape`);
   }
+  params.observeHttp?.({ kind: 'list', ms: performance.now() - listStartedAtMs, bytes: readDeclaredResponseBytes(response.headers) });
 
   const attentionContinuation = readSessionListAttentionContinuation(parsed);
 
@@ -1269,6 +1355,7 @@ type SessionSnapshotBatchParams = Readonly<{
   includeMessages?: boolean;
   signal?: AbortSignal;
   resolveAuthorizationHeaders?: SessionListDocumentAuthorization;
+  observeHttp?: SessionReadHttpObserver;
 }>;
 
 type SessionReadBatchPart = SessionReadBatchResponseV1['results'][number];
@@ -1306,6 +1393,7 @@ export async function fetchSessionSnapshotsBatch(params: SessionSnapshotBatchPar
     const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'POST', path, body })
       ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.token}` });
     if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
+    const batchStartedAtMs = performance.now();
     const response = await axios.post<unknown>(`${serverUrl}${path}`, body, {
       headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...authorizationHeaders,
         'Content-Type': 'application/json' },
@@ -1334,6 +1422,7 @@ export async function fetchSessionSnapshotsBatch(params: SessionSnapshotBatchPar
     if (!parsed.success) throw invalidSessionReadBatchResponse();
     for (const part of parsed.data.results) acceptPart(part);
     if (expected.size) throw invalidSessionReadBatchResponse();
+    params.observeHttp?.({ kind: 'readBatch', ms: performance.now() - batchStartedAtMs, bytes: readDeclaredResponseBytes(response.headers) });
   }
   return parts;
 }

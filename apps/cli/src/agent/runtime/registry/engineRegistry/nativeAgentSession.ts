@@ -165,6 +165,7 @@ import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/erro
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { ensureExternalSessionLink } from '@/api/session/external/linking/ensureExternalSessionLink';
+import { recordHostedExternalSessionIdentity } from '@/api/session/external/linking/externalSessionIdentity';
 import {
     agentDeclaresExplicitTerminalFollow,
     createLiveConfiguredPluginExternalSessionsAdapter,
@@ -1409,6 +1410,8 @@ type NativeAgentSessionDirectFacets = Readonly<{
     cancellation: NativeAgentSessionCancellation;
     configuration: NativeAgentSessionConfiguration;
     compaction: NativeAgentSessionCompaction;
+    /** Host observer of every native session id the runtime reports. */
+    observeProviderSessionId?: (providerSessionId: string) => void;
 }>;
 
 type NativeAgentSessionCancellation =
@@ -2606,7 +2609,10 @@ export function createNativeAgentSessionOperations(
                 });
             }
         }
-        if (event.kind === 'provider-session-id') lastProviderSessionEvent = event;
+        if (event.kind === 'provider-session-id') {
+            lastProviderSessionEvent = event;
+            directFacets?.observeProviderSessionId?.(event.providerSessionId);
+        }
         if (firstAssistantTextTiming
             && isForegroundTurnRuntimeTranscriptEvent(event)
             && event.turnId === firstAssistantTextTiming.turnId
@@ -4766,6 +4772,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             );
             const accountingAccountId = readAccountIdFromToken(params.sessionInput.credentials.token);
             let resolveAccountingWitness: NonNullable<NativeAgentSessionUsagePublisher['resolveAccountingWitness']> = async () => undefined;
+            let observeProviderSessionId: ((providerSessionId: string) => void) | undefined;
             const hasDeclaredInstances = params.agent.richDefinition?.definition.surfaces?.externalSession.sources.some(
                 (source) => (source.instances?.length ?? 0) > 0,
             ) === true;
@@ -4871,6 +4878,33 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 };
                 if (signal.aborted) disposeOnAbort();
                 else signal.addEventListener('abort', disposeOnAbort, { once: true });
+                // A hosted Session records which external conversation it is once
+                // its native id is known, so Browse opens it instead of linking a
+                // second Session. A linked Session already carries its identity.
+                let identityRecordedFor: string | null = null;
+                observeProviderSessionId = (nativeSessionId) => {
+                    if (boundExternalSessionSource || identityRecordedFor === nativeSessionId) return;
+                    identityRecordedFor = nativeSessionId;
+                    void recordHostedExternalSessionIdentity({
+                        credentials: params.sessionInput.credentials,
+                        sessionId,
+                        machineId: hostRuntimeParams.machineId,
+                        agentId: ExternalSessionsAgentIdSchema.parse(params.agent.id),
+                        remoteSessionId: nativeSessionId,
+                        signal,
+                        resolveSourceIdentity: async (request) => {
+                            const configuredExternalSessions = await readExternalSessions();
+                            return configuredExternalSessions
+                                ? await configuredExternalSessions.resolveSourceIdentity(request)
+                                : { status: 'unavailable' as const, code: 'plugin_external_sources_unavailable' };
+                        },
+                        resolveSourceKeyOwner: (agentId, source) => createExternalSessionSourceKeyOwnerFromAgentProjection(
+                            { agents: [params.agent] }, agentId, source,
+                        ),
+                    }).catch(() => {
+                        if (identityRecordedFor === nativeSessionId) identityRecordedFor = null;
+                    });
+                };
                 resolveAccountingWitness = async (nativeSessionId) => {
                     if (!accountingAccountId || !params.agent.identity || signal.aborted
                         || !identity.isCurrent() || (boundExternalSessionSource && boundExternalSessionSource.remoteSessionId !== nativeSessionId)) return undefined;
@@ -5029,7 +5063,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 NativeAgentNewTurnAdmissionWitness | null => null;
             const applyPermissionModeIntent: NonNullable<NativeAgentSessionInteractionParams['applyPermissionModeIntent']> = async (permissionMode) => {
                 await hostRuntimeParams.session.updateMetadataAsCurrentPublisher((metadata) => (
-                    applyPermissionModeIntentSessionMetadata(metadata, { permissionMode, updatedAt: Date.now() })
+                    applyPermissionModeIntentSessionMetadata(metadata, { v: 1, permissionMode, updatedAt: Date.now() })
                 ));
             };
             const nativeSessionServiceParams = {
@@ -5182,7 +5216,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                                 ...resolvedLateSensitiveEnvironmentVariableNames,
                                 ...publicBinding.environmentOverlay
                                     .filter((entry) =>
-                                        entry.value !== null)
+                                        entry.value !== null && entry.value.length > 0)
                                     .map((entry) => entry.name),
                             ]),
                         ]);
@@ -5250,7 +5284,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     ...new Set([
                         ...resolvedLateSensitiveEnvironmentVariableNames,
                         ...teamBinding.environmentOverlay
-                            .filter((entry) => entry.value !== null)
+                            .filter((entry) => entry.value !== null && entry.value.length > 0)
                             .map((entry) => entry.name),
                     ]),
                 ]);
@@ -5962,6 +5996,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 () => ownedAbortController.abort(),
                 {
                     readAppliedTeamCredentialModel: () => appliedTeamCredentialModel,
+                    ...(observeProviderSessionId ? { observeProviderSessionId } : {}),
                     scmCommandRunner: params.scmCommandRunner,
                     ...(params.managedProviderRunServices ? { managedProviderRunServices: params.managedProviderRunServices } : {}),
                     openedWithoutConnectedServices: () => openedWithoutConnectedServices,

@@ -36,6 +36,7 @@ import {
     createTerminalHostFixture as createClaudeTerminalHostFixture,
 } from '../../../../../../../packages/plugins/claude/src/agent/runtime/engine.testkit';
 import * as processIdentity from '@/daemon/processIdentity';
+import { CODEBUDDY_PROVIDER_BINDING_ADAPTER_V1 } from '../../../../../../../packages/plugins/codebuddy/src/agent/providerBinding/adapter';
 
 it('restricts native MCP catalogs through the session matcher without confusing server prefixes', () => {
     const servers = { wilson: { command: 'fixture' }, 'wilson-other': { command: 'fixture' } };
@@ -8066,7 +8067,7 @@ describe('native Agent session host adapter', () => {
         expect(open).not.toHaveBeenCalled();
     });
 
-    it('keeps the public managed Provider marker through one invocation and native sessions.open', async () => {
+    it('keeps the public managed Provider marker and CodeBuddy cleared settings through native sessions.open', async () => {
         const placeholder =
             'happier_runner_placeholder_AAAAAAAAAAAAAAAAAAAAAAAAAAA';
         const credential = 'runner-owned-secret';
@@ -8113,6 +8114,23 @@ describe('native Agent session host adapter', () => {
                 }),
         );
         const cleanup = vi.fn();
+        const transport = {
+            id: 'runtime-bearer', protocols: ['openai-responses'], uses: ['runtime'],
+            destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' },
+        } as const;
+        const codebuddyMaterialization = CODEBUDDY_PROVIDER_BINDING_ADAPTER_V1.materialize({
+            v: 1,
+            prepared: CODEBUDDY_PROVIDER_BINDING_ADAPTER_V1.prepare(),
+            binding: {
+                v: 1, agentTargetKey: 'agent:happier.agent.codebuddy/codebuddy',
+                selection: { connectionId: 'pc_public', model: { id: 'provider-model-public', name: 'Provider model' } },
+                contributionKey: 'acme.providers/gateway',
+                endpoint: { endpointTemplateId: 'responses', normalizedUrl: 'https://gateway.example/v1',
+                    protocol: 'openai-responses', publicHeaders: {} },
+                runtimeCredentialTransport: transport, compatibilityFingerprint: 'pcf1:codebuddy-fixture',
+            },
+            credential: { kind: 'apiKey', transport, value: placeholder },
+        });
         const prepareManagedProviderBinding = vi.fn(async () => {
             events.push('public-provider-prepare');
             return Object.freeze({
@@ -8128,7 +8146,7 @@ describe('native Agent session host adapter', () => {
                     name: 'HAPPIER_PROVIDER_KEY',
                     value: placeholder,
                     source: 'provider' as const,
-                })],
+                }), ...codebuddyMaterialization.env],
                 additionalRedactionValues: Object.freeze([]),
                 transformAgentChildLaunchEnvironment,
                 cleanup,
@@ -8147,6 +8165,12 @@ describe('native Agent session host adapter', () => {
                 expect(request.launchEnvironment?.values
                     .HAPPIER_PROVIDER_KEY).toBe(placeholder);
                 expect(JSON.stringify(request)).not.toContain(credential);
+                expect(request.launchEnvironment?.values).toMatchObject({
+                    CODEBUDDY_API_KEY: placeholder,
+                    CODEBUDDY_AUTH_TOKEN: '',
+                    CODEBUDDY_CUSTOM_HEADERS: '',
+                });
+                expect(redactBugReportSensitiveText(`value=${placeholder}`)).toBe('value=[REDACTED]');
                 return {
                     send: vi.fn(async () => ({ status: 'admitted' as const })),
                     watch: () => ({ dispose: () => undefined }),
@@ -8390,14 +8414,18 @@ describe('native Agent session host adapter', () => {
                 upstream: { protocol: 'openai-responses', normalizedUrl: 'https://provider.example/v1', credential: 'apiKey' },
                 materialization: { v: 1, kind: 'spawnEnv' },
             },
-            environmentOverlay: [], additionalRedactionValues: [], cleanup: () => undefined,
+            environmentOverlay: [{ name: 'TEAM_PROVIDER_CLEARED', value: '', source: 'provider' }], additionalRedactionValues: [], cleanup: () => undefined,
         }));
         const plan = await createNativeAgentRuntimeSessionPlan({
-            runtime: { sessions: { open: async () => nativeSession } },
+            runtime: { sessions: { open: async request => {
+                expect(request.launchEnvironment?.values.TEAM_PROVIDER_CLEARED).toBe('');
+                return nativeSession;
+            } } },
             lease: createLease(agentId), backend: contributions.backend, agent: contributions.agent,
             createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
             prepareTeamCredentialProviderBinding: prepare,
             sessionInput: buildPluginSessionBindingInput({
+                resolveLateEnvironment: async () => ({ environmentVariables: {}, unsetEnvironmentVariables: [], sensitiveEnvironmentVariableNames: [] }),
                 credentials, directory: `/tmp/${agentId}`, backendTarget: { kind: 'backend', backendId: agentId },
                 modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey: `backend:${agentId}`, providerConnectionId: null, modelId: 'team-model' } },
                 teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource-direct', expectedResourceRevision: 3, deliveryMode: 'direct', teamId: 'team-1' }],

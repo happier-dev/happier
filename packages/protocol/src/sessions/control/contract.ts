@@ -531,18 +531,74 @@ export const SESSION_LOOKUP_BY_TAGS_TAG_MAX_CODE_UNITS_V2 = 256;
 const SessionLookupTagV2Schema = lazyZodSchema(() => z
   .string().check(z.minLength(1), maxCodeUnits(SESSION_LOOKUP_BY_TAGS_TAG_MAX_CODE_UNITS_V2)));
 
+/**
+ * The Session's server-owned "which external conversation is this" fact: the
+ * opaque `direct:v1:<sha256>` identity the owning daemon derives for an
+ * external conversation (Machine, Agent, native session id, Agent source key).
+ * It is distinct from the immutable creation `tag`, unique per Account, and
+ * replaceable only by the Session that holds it.
+ */
+export const SessionExternalIdentityTagV1Schema = lazyZodSchema(() => z
+  .string().check(z.regex(/^direct:v1:[0-9a-f]{64}$/)));
+export type SessionExternalIdentityTagV1 = z.infer<typeof SessionExternalIdentityTagV1Schema>;
+
 export const SessionLookupByTagsRequestV2Schema = lazyZodSchema(() => z.strictObject({
     tags: z
       .array(SessionLookupTagV2Schema).check(z.minLength(1), z.maxLength(SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2), z.refine((tags) => new Set(tags).size === tags.length, {
         message: 'Session lookup tags must be unique',
       })),
+    /**
+     * 0.3: also match Sessions whose recorded external identity is one of
+     * `tags`, and answer `externalIdentities` for every returned row. Absent
+     * keeps the released tag-only lookup.
+     */
+    matchExternalIdentity: z.optional(z.literal(true)),
   }));
 export type SessionLookupByTagsRequestV2 = z.infer<typeof SessionLookupByTagsRequestV2Schema>;
 
+/** Why one returned row matched an external-identity lookup. */
+export const SessionLookupExternalIdentityV2Schema = lazyZodSchema(() => z.strictObject({
+    sessionId: z.string().check(z.minLength(1)),
+    /** The row's recorded external identity, or null when none is recorded yet. */
+    externalIdentityTag: z.nullable(SessionExternalIdentityTagV1Schema),
+    /** True when the row's immutable creation tag is one of the requested tags. */
+    tagMatched: z.boolean(),
+  }));
+export type SessionLookupExternalIdentityV2 = z.infer<typeof SessionLookupExternalIdentityV2Schema>;
+
 export const SessionLookupByTagsResponseV2Schema = lazyZodSchema(() => z.strictObject({
     sessions: z.array(V2SessionRecordSchema).check(z.maxLength(SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2)),
+    /** Present exactly when the request set `matchExternalIdentity`; one entry per returned row. */
+    externalIdentities: z.optional(z.array(SessionLookupExternalIdentityV2Schema).check(z.maxLength(SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2))),
   }));
 export type SessionLookupByTagsResponseV2 = z.infer<typeof SessionLookupByTagsResponseV2Schema>;
+
+/**
+ * `PATCH /v2/sessions/:sessionId` mode that records the Session's external
+ * identity. A Session may replace its own recorded identity (it moved to
+ * another native thread or Machine); the server never lets two Sessions of
+ * one Account hold the same identity (by recorded identity or creation tag).
+ */
+export const SessionExternalIdentityClaimRequestV1Schema = lazyZodSchema(() => z.strictObject({
+    externalIdentityTag: SessionExternalIdentityTagV1Schema,
+  }));
+export type SessionExternalIdentityClaimRequestV1 = z.infer<typeof SessionExternalIdentityClaimRequestV1Schema>;
+
+export const SessionExternalIdentityClaimResponseV1Schema = lazyZodSchema(() => z.strictObject({
+    /**
+     * `claimed`: recorded now. `already_claimed`: this Session already held it.
+     * `replaced`: this Session's previous identity was replaced and no longer resolves to it.
+     */
+    externalIdentity: z.enum(['claimed', 'already_claimed', 'replaced']),
+  }));
+export type SessionExternalIdentityClaimResponseV1 = z.infer<typeof SessionExternalIdentityClaimResponseV1Schema>;
+
+/** 409 typed refusal: `taken` = another Session of the Account holds the identity. */
+export const SessionExternalIdentityClaimConflictV1Schema = lazyZodSchema(() => z.strictObject({
+    code: z.literal('session_external_identity_conflict'),
+    reason: z.literal('taken'),
+  }));
+export type SessionExternalIdentityClaimConflictV1 = z.infer<typeof SessionExternalIdentityClaimConflictV1Schema>;
 
 /**
  * The canonical server-owned proof used only to admit one new
