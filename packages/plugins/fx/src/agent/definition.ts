@@ -22,7 +22,7 @@ export const AGENT_DEFINITION = Object.freeze({
     runtimeInput: { inFlightSteerSupported: true, terminalPromptInjectionSupported: false },
     tools: { delivery: 'native_mcp', support: 'supported' },
   },
-  sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
+  sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' } as const,
   sessionModesKind: 'acpAgentModes',
   modelConfig: {
     supportsSelection: true,

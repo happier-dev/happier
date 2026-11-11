@@ -146,7 +146,7 @@ export const AGENT_DEFINITION = Object.freeze({
     tools: { delivery: 'native_mcp', support: 'supported',
       mcpToolControl: { off: 'hidden' as const, approval: 'host' as const }, mcpToolCallIdMetaKey: 'callId' },
   },
-  sessionModeDescriptor: { source: 'acp', semantics: 'policy-presets', runtimeSwitch: 'metadata-gating' },
+  sessionModeDescriptor: { source: 'acp', semantics: 'policy-presets', runtimeSwitch: 'metadata-gating' } as const,
   sessionModesKind: 'acpPolicyPresets',
   modelConfig: {
     supportsSelection: true,

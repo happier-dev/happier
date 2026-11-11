@@ -20,7 +20,7 @@ export const AGENT_DEFINITION = Object.freeze({
     handoff: { vendorStateTransfer: 'unsupported' },
     tools: { delivery: 'unsupported', support: 'unsupported' },
   },
-  sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
+  sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' } as const,
   sessionModesKind: 'none',
   modelConfig: {
     supportsSelection: false,

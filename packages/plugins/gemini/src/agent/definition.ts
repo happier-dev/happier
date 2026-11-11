@@ -58,7 +58,7 @@ export const AGENT_DEFINITION = Object.freeze({
     tools: { delivery: 'native_mcp', support: 'supported',
       mcpToolControl: { off: 'blocked' as const, approval: 'host' as const } },
   },
-  sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
+  sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' } as const,
   sessionModesKind: 'none',
   modelConfig: {
     supportsSelection: true,

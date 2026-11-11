@@ -22,7 +22,7 @@ export const AGENT_DEFINITION = Object.freeze({
     tools: { delivery: 'native_mcp', support: 'experimental',
       mcpToolControl: { off: 'blocked' as const, approval: 'host' as const } },
   },
-  sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
+  sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' } as const,
   sessionModesKind: 'acpAgentModes',
   modelConfig: {
     supportsSelection: true,

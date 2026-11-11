@@ -31,7 +31,7 @@ export const AGENT_DEFINITION = Object.freeze({
       nativeImageGeneration: 'unsupported',
     },
   },
-  sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
+  sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' } as const,
   sessionModesKind: 'acpAgentModes',
   modelConfig: {
     supportsSelection: true,
