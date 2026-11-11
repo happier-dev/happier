@@ -85,7 +85,7 @@ export const DeploymentMoveToRepositoryResultV1Schema = lazyZodSchema(() => z.di
   z.strictObject({ kind: z.literal('previewCreate'), review: z.strictObject({
     document, path: ScmRepositoryContainedSubdirV1Schema, workspace: ProjectAccountWorkspaceRefKeyV1Schema,
     createRepository: DeploymentMoveToRepositoryCreateRepositoryV1Schema, selectors: z.optional(DeploymentComposeSelectorsV1Schema),
-    files: z.optional(z.array(z.strictObject({ path: ScmRepositoryContainedSubdirV1Schema, before: z.null(), content: z.string() }))),
+    files: z.optional(z.array(z.strictObject({ path: ScmRepositoryContainedSubdirV1Schema, before: z.nullable(z.string()), content: z.string() }))),
   }) }),
   z.strictObject({ kind: z.literal('pullRequest'), continuation: DeploymentMoveToRepositoryContinuationV1Schema,
     repository: z.optional(DeploymentMoveToRepositoryResolvedRepositoryV1Schema) }),

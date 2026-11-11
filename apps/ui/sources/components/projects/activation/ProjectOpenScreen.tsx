@@ -99,6 +99,8 @@ function readParam(value: string | string[] | undefined): string | null {
 
 type ProjectOpenHostProps = Readonly<{
   onClose?: () => void;
+  /** A containing chooser takes the admitted checkout while keeping its current page. */
+  onSelected?: (result: Extract<OpenProjectResultV1, { kind: 'opened' }>) => void;
   /** The dialog host (`showProjectOpenDialog`): its address, instead of the page route's own params. */
   routeParams?: Readonly<Record<string, string>>;
   /** The dialog host's card chrome: the footer goes in its footer slot. */
@@ -142,7 +144,7 @@ export const ProjectOpenScreen = React.memo(function ProjectOpenScreen(
   if (!hydration || hydration.draftKey !== draftKey) return <AttentionBanner testID="projects.open.resolving" tone="neutral" title={t('projects.open.resolving')} />;
   if (!hydration.ready) return <AttentionBanner testID="projects.open.draftUnavailable" title={t('projects.open.unsupported')} details={['project_open_draft_unavailable']} />;
   return <ProjectOpenForm key={`${scope.serverId}:${scope.accountId}:${draftId}`} scope={scope} draftId={draftId}
-    seedIfMissing={!requestedDraftId} onClose={props.onClose} routeParams={props.routeParams} setChrome={props.setChrome} />;
+    seedIfMissing={!requestedDraftId} onClose={props.onClose} onSelected={props.onSelected} routeParams={props.routeParams} setChrome={props.setChrome} />;
 });
 
 function readMachineHomeDir(machine: Readonly<{ metadata?: unknown }> | null | undefined): string | null {
@@ -178,7 +180,11 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
   const requestedDraftId = readParam(params.draftId);
   const draftId = props.draftId;
   const open = useProjectOpen({ scope: props.scope, draftId, seedIfMissing: props.seedIfMissing, initialDraft: seed ?? undefined,
-    attachedDashboard: readProjectAttachedDashboardSelection(params), onOpened: opened });
+    attachedDashboard: readProjectAttachedDashboardSelection(params), onOpened: opened,
+    ...(props.onSelected ? { onSelected: (result: Extract<OpenProjectResultV1, { kind: 'opened' }>) => {
+      props.onSelected?.(result);
+      props.onClose?.();
+    } } : {}) });
   const draftRef = React.useRef(open.draft);
   draftRef.current = open.draft;
   React.useEffect(() => {

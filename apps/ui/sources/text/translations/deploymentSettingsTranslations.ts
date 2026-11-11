@@ -5,6 +5,7 @@ import type { SupportedLanguage } from '../_all';
 const moveToRepositoryCopy = {
   title: 'Move to repository',
   createRepository: 'Create a repository',
+  chooseDestination: 'Choose a folder',
   repositoryAddress: 'Repository URL',
   chooseRepository: 'Choose repository',
   existingPullRequest: 'Existing pull request URL',

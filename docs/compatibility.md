@@ -7906,9 +7906,11 @@ development cut changes no wire epoch or persistence format. The inspected
 Sync handoff schema at this path.
 
 Unreleased 0.3 Environment create/update storage projections accept an optional
-`referencedSavedSecretRevisions: null` marker from admitted template preparation.
-It preserves the existing incomplete capture state until the binding writer
-commits. Public Action inputs and the persisted column format are unchanged.
+`referencedSavedSecretRevisions` capture array from admitted template preparation.
+The existing resource-id/revision format omits routing for pending bindings;
+updates retain previous reference identities until the binding writer commits.
+Canonical Saved Secret use admission protects incoming identities. Public Action
+inputs and the persisted column format are unchanged.
 Matching CLI, Protocol and Home source reload together; earlier strict storage
 readers reject the new field. Omission preserves existing binding-free behavior.
 This is a direct development cut, without a new epoch, capability or migration.
@@ -10533,6 +10535,14 @@ workspace manifest alongside `compose.yaml`.
 Current development components must update together: older closed readers reject
 the new fields. There is no alternate writer, migration or supported reverse
 development rollback. The optional fields preserve existing file-free inputs.
+
+The Move Create preview's existing closed `files` entries now accept a string
+or null for `before`, so an existing committed checkout can retain its file
+before-images. Matching development Protocol, CLI and UI readers update together;
+older null values remain accepted. This changes no persisted record or wire epoch.
+The scoped-clean `../0.2` frontier at
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75` has neither the Move schema nor its CLI
+owner at the corresponding paths; no predecessor adapter is introduced.
 
 ## Optional app-template Domain health (0.3 development source)
 

@@ -189,7 +189,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         {detail.content.definition.kind === 'stored' ? <StoredDefinitionEditor environment={detail.environment}
           definition={detail.content.definition} document={props.definitionDocument} editing={editing} change={change} /> : null}
         {editing ? <MoveDefinitionToRepository detail={detail} lifetime={props.lifetime ?? null}
-          move={editing.actions.moveToRepository ?? null} review={editing.review} onChanged={editing.onChanged} /> : null}
+          move={editing.actions.moveToRepository ?? null} review={editing.review} onChanged={editing.onChanged} machineName={machineName} /> : null}
         <ItemGroup
           testID={section('servers-build')}
           title={t('projects.deployments.sectionServersBuild')}

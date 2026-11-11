@@ -7,7 +7,7 @@ import type { DeploymentMoveToRepositoryInputV1, DeploymentMoveToRepositoryResul
 import { DeploymentEnvironmentUpdateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { ScmPullRequestGetResponseSchema } from '@happier-dev/protocol/scm/pullRequests';
 import { ScmFileAtRevisionResponseSchema } from '@happier-dev/protocol/scm/fileAtRevision';
-import { ScmRemoteResponseSchema } from '@happier-dev/protocol/scm';
+import { ScmRemoteResponseSchema, ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol/scm';
 import { readScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import { DeploymentEnvironmentContentV1Schema, type DeploymentEnvironmentDetailV1,
   DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
@@ -20,6 +20,7 @@ import type { ScmBackendRegistry } from '@/scm/registry';
 import { admitStoredComposeDefinition, parseNativeComposeSource, storedComposeDefinitionDigest } from '@/workspaces/projectSetup/nativeComposeSource';
 import { prepareRepositoryFilesPullRequest, openRepositoryFilesPullRequest,
   type RepositoryFilesPullRequestHost } from '@/scm/actions/repositoryFilesPullRequest';
+import { previewRepositoryForDefinition } from '@/scm/actions/provisionRepositoryForDefinition';
 
 type Host = Readonly<{
   serverId: string; machineId: string;
@@ -59,11 +60,34 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
       const definition = current.content.definition;
       if (!input.continuation && !isDeepStrictEqual(pinOf(definition), input.definition)) return { kind: 'conflict', reason: 'definition_changed' };
       await admitStoredComposeDefinition(definition);
+      const files = [{ path: input.path, content: definition.document }, ...(definition.publicFiles ?? [])
+        .map(file => ({ path: sidecarPath(input.path, file.path), content: file.content }))];
+      if (input.mode === 'preview' && input.createRepository) {
+        const placed = await resolveAdmittedRepositoryWorkspace({ workspace: input.workspace, context,
+          readWorkspaceRows: host.readWorkspaceRows, fallbackActionId: 'deployments.environments.moveToRepository' });
+        if (!('kind' in placed) || placed.kind !== 'resolved') return placed;
+        if (placed.workspace.machineId !== host.machineId) return fail('target_mismatch');
+        const filesHost = host.repositoryFiles(placed.workspace.rootPath, context, executeCanonicalAction);
+        const status = ScmStatusSnapshotResponseSchema.parse(await filesHost.executeScm('scm.status.snapshot', { includeWorktreeStatus: false }));
+        if (!status.success) return fail(status.errorCode ?? 'COMMAND_FAILED');
+        const branch = status.snapshot?.branch;
+        const existingBase = branch?.headOid && branch.head ? { baseCommit: branch.headOid, baseBranch: branch.head } : undefined;
+        const publication = previewRepositoryForDefinition(input.createRepository, existingBase);
+        const existingReview = existingBase ? await prepareRepositoryFilesPullRequest({ cwd: placed.workspace.rootPath,
+          ...existingBase, branchName: publication.initialBranch, title: `Move ${current.content.name} definition to repository`, files }, filesHost) : undefined;
+        return { kind: 'previewCreate', review: { document: definition.document, path: input.path, workspace: input.workspace,
+          createRepository: input.createRepository, selectors: input.selectors ?? { profiles: definition.profiles,
+            services: definition.services, ...(definition.primaryService ? { primaryService: definition.primaryService } : {}) },
+          files: [...publication.files.map(file => ({ ...file, before: null })),
+            ...files.map((file, index) => ({ ...file, before: existingReview?.files[index]?.before ?? null }))],
+        } };
+      }
       if (!input.repository || !input.workspace || !input.baseCommit || !input.baseBranch)
         return { kind: 'refused', reason: 'repository_provisioning_unavailable' };
       const loaded = await host.readSource({ serverId: input.serverId, sourceId: current.environment.projectSourceId }, context);
       if (!loaded.ok) return fail('errorCode' in loaded ? loaded.errorCode : loaded.error);
-      const source = loaded.source;
+      const source = input.mode === 'preview' && !loaded.source.repository && input.sourceRepository
+        ? { ...loaded.source, repository: input.sourceRepository } : loaded.source;
       if (!source.repository || !sameScmHostingRepositoryIdentity(readScmHostingRepositoryIdentity({ ...source.repository.provider,
         nameWithOwner: source.repository.repository.nameWithOwner }), input.repository)) return { kind: 'conflict', reason: 'source_changed' };
       const placed = await resolveAdmittedRepositoryWorkspace({ workspace: input.workspace, context,
@@ -81,8 +105,6 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
       const selectors = input.selectors ?? input.continuation?.selectors ?? { profiles: definition.profiles, services: definition.services,
         ...(definition.primaryService ? { primaryService: definition.primaryService } : {}) };
       if (input.continuation) return await continueMove(input, input.continuation, current, filesHost, source, selectors, context);
-      const files = [{ path: input.path, content: definition.document }, ...(definition.publicFiles ?? [])
-        .map(file => ({ path: sidecarPath(input.path, file.path), content: file.content }))];
       const branchName = `happier/move-${createHash('sha256').update(JSON.stringify({ environmentId: input.environmentId,
         definition: input.definition, repository: input.repository, path: input.path, baseCommit: input.baseCommit })).digest('hex')}`;
       const review = await prepareRepositoryFilesPullRequest({ cwd: workspace.rootPath, baseCommit: input.baseCommit,

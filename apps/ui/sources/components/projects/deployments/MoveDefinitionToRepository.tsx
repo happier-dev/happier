@@ -7,12 +7,15 @@ import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/host
 import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 
 import { ProjectSourceWorkspaceChoice, useProjectSourceWorkspaceChoice } from '@/components/projects/sources/ProjectSourceWorkspaceChoice';
+import { seedAndOpenProjectDraft } from '@/components/projects/activation/projectOpenDraftSeed';
+import { showProjectOpenDialog } from '@/components/projects/activation/projectOpenPresentation';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
@@ -21,6 +24,7 @@ import { createActionInputForm } from '@/components/plugins/actions/actionInputF
 import { presentActionInputForm } from '@/components/plugins/actions/presentActionInputForm';
 import { localizeBuiltinInputHints } from '@/text/builtinInputPrompts';
 import { useProjectSourceAddress } from '@/components/projects/sources/useProjectSourceAddress';
+import { presentProjectSourceAddressRefusal } from '@/components/projects/sources/resolveProjectSourceAddress';
 import type { createDeploymentActions } from './deploymentActions';
 import { readDeploymentActionError, type DeploymentActionOutcome } from './deploymentActionOutcome';
 import type { DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
@@ -30,7 +34,7 @@ const COPY = 'projects.deployments.settingsSections.moveToRepository' as const;
 type MoveInput = Omit<DeploymentMoveToRepositoryInputV1, 'serverId'>;
 type Move = ReturnType<typeof createDeploymentActions>['moveToRepository'];
 type Props = Readonly<{ detail: DeploymentEnvironmentReadDetailV1; lifetime: ServerAccountScopeLifetime | null;
-    move: Move | null; review: DeploymentReviewHandle; onChanged: () => void }>;
+    move: Move | null; review: DeploymentReviewHandle; onChanged: () => void; machineName: (machineId: string) => string }>;
 type Progress = Readonly<{ result: DeploymentMoveToRepositoryResultV1 | null; captured: MoveInput | null }>;
 
 /** A secondary door; repository reads and checkout subscriptions belong only to the opened leaf. */
@@ -117,6 +121,25 @@ function MoveRepositoryFields(props: Props & Readonly<{ lifetime: ServerAccountS
             } });
         presentActionInputForm({ form, actionId: spec.id });
     };
+    const destinationMachineId = selection.workspace?.machineId ?? props.detail.environment.controllerMachineId;
+    const chooseDestination = async () => {
+        if (busy.current || !destinationMachineId) return;
+        busy.current = true; props.onRunning(true); setFailure(null);
+        try {
+            const selected = await openMachinePathBrowserModal({ machineId: destinationMachineId,
+                serverId: props.lifetime.scope.serverId, title: t(`${COPY}.chooseDestination`),
+                selectionMode: 'directory', allowMachineChange: true });
+            if (!selected) return;
+            await seedAndOpenProjectDraft({ lifetime: props.lifetime,
+                selection: { serverId: props.lifetime.scope.serverId, machineId: selected.machineId,
+                    source: { kind: 'folder', path: selected.path }, materialization: { kind: 'attach' } },
+                navigate: route => showProjectOpenDialog(route, result => {
+                    if (props.lifetime.isCurrent()) setWorkspaceKey({ kind: 'workspace-ref',
+                        serverId: result.workspace.serverId, id: result.workspace.workspaceId });
+                }) });
+        } catch (error) { setFailure(readDeploymentActionError(error)); }
+        finally { busy.current = false; props.onRunning(false); }
+    };
     const editable = result === null || result.kind === 'refused' || result.kind === 'conflict';
     const continuation = result && 'continuation' in result ? result.continuation : null;
     const pullRequest = result?.kind === 'pullRequestStatus' || result?.kind === 'reviewMerged'
@@ -150,19 +173,23 @@ function MoveRepositoryFields(props: Props & Readonly<{ lifetime: ServerAccountS
                         <Item title={t(`${COPY}.chooseRepository`)} showChevron={false} rightElement={<SectionActionButton
                             testID={`${ID}.chooseRepository`} title={t(`${COPY}.chooseRepository`)} icon="git-branch"
                             disabled={running || !repositoryAddress.trim()} onPress={() => { void address.resolve(repositoryAddress, selection.workspace?.machineId); }} />} />
-                        {address.refusal ? <SurfaceStateCard size="line" kind="warning" title={t(address.refusal)} /> : null}
+                        {address.refusal ? <SurfaceStateCard size="line" kind="warning"
+                            title={presentProjectSourceAddressRefusal(address.resolution, address.refusal, props.machineName)} /> : null}
                     </> : null}
                     {!selection.source.repository ? <Item title={createRepository?.repositoryName ?? t(`${COPY}.createRepository`)} showChevron={false}
                         rightElement={<SectionActionButton testID={`${ID}.createRepository`} title={t(`${COPY}.createRepository`)}
                             icon="plus" disabled={running} onPress={chooseCreateRepository} />} /> : null}
                     <ProjectSourceWorkspaceChoice model={selection} value={workspaceKey} onChange={setWorkspaceKey}
                         disabled={running} showBase={!createRepository} testID={`${ID}.workspace`} />
+                    {createRepository ? <Item title={t(`${COPY}.chooseDestination`)} showChevron={false}
+                        rightElement={<SectionActionButton testID={`${ID}.chooseDestination`} title={t(`${COPY}.chooseDestination`)}
+                            icon="folder" disabled={running || !destinationMachineId} onPress={() => { void chooseDestination(); }} />} /> : null}
                     <Item title={t(`${COPY}.path`)} accessoryLayout="stacked" showChevron={false}
                         rightElement={<FieldTextInput testID={`${ID}.path.input`} value={path} onChangeText={setPath}
                             editable={!running} accessibilityLabel={t(`${COPY}.path`)} />} />
                     <Item title={t(`${COPY}.preview`)} showChevron={false} rightElement={<SectionActionButton
                         testID={`${ID}.preview`} title={t(`${COPY}.preview`)} icon="git-diff" loading={running}
-                        disabled={running || !path.trim() || !selection.workspace || !createRepository && (!selection.baseCommit || !selection.baseBranch)}
+                        disabled={running || !path.trim() || !selection.workspace || !createRepository && (!selection.repository || !selection.baseCommit || !selection.baseBranch)}
                         onPress={() => preview()} />} />
                     {!createRepository ? <>
                         <Item title={t(`${COPY}.existingPullRequest`)} accessoryLayout="stacked" showChevron={false}
@@ -170,7 +197,7 @@ function MoveRepositoryFields(props: Props & Readonly<{ lifetime: ServerAccountS
                                 onChangeText={setPullRequestUrl} editable={!running} accessibilityLabel={t(`${COPY}.existingPullRequest`)} />} />
                         <Item title={t(`${COPY}.continueExisting`)} showChevron={false} rightElement={<SectionActionButton
                             testID={`${ID}.continueExisting`} title={t(`${COPY}.continueExisting`)} icon="git-pull-request"
-                            disabled={running || !pullRequestUrl.trim() || !selection.workspace || !selection.baseCommit || !selection.baseBranch}
+                            disabled={running || !pullRequestUrl.trim() || !selection.workspace || !selection.repository || !selection.baseCommit || !selection.baseBranch}
                             onPress={() => preview({ url: pullRequestUrl.trim() })} />} />
                     </> : null}
                 </>}

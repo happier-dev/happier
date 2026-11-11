@@ -263,7 +263,14 @@ Production workloads or incomplete placement facts.
 
 The selected wildcard Domain supplies one expanded hostname and planned URL.
 Explicit `domainUrl` and `primaryUrl` deployment facts may use that URL before the
-child route exists. Route creation follows successful deployment through the
+child route exists. For fork Create and ordinary Deploy, the owning controller
+captures the selected template Domain fact once when a dynamic preview binding
+needs it, before initial remote preparation. Signed native preparation carries
+the selected Domain id and URL before the candidate exists; the existing
+candidate and receipt then carry that fact through review, build and member
+execution. Retained snapshots reuse their captured fact, or the owning
+operation's captured fact when absent; later roles do not reacquire the parent.
+Route creation follows successful deployment through the
 ordinary Domains Action; a planned URL alone does not establish serving, DNS or
 TLS readiness.
 
@@ -1109,6 +1116,16 @@ the prepared content reference. Signed private authoring publishes its invocatio
 Artifact even when the selected content is unchanged. Neither an export
 declaration nor a source save opens a firewall rule or deploys the change.
 
+The 0.3 development `deployments.environments.moveToRepository` preview reviews
+the stored Compose document and public supporting files at a selected admitted
+workspace. A Source without a repository can preview an explicit repository
+selector. Create previews include the initial README for a new Git checkout;
+an existing committed checkout instead supplies its immutable file before-images
+through the shared SCM file reviewer. Preview leaves the Source, Environment and
+hosted repository unchanged. Repository creation, Source attachment and the final
+merged-definition switch remain under implementation; preview success alone does
+not establish those flows.
+
 The Iroh export contract is development-only. Activation requires one effective loopback
 TCP publication for the exported container port, bound to a literal loopback
 address with an actual host port. Host networking cannot establish that mapping.
@@ -1561,11 +1578,14 @@ enrollment failure is reported alongside the successful save and can be retried.
 Saving a template creates no database or child Environment.
 The host preview-admission owner opens the private parent template before a fork
 can create a child or acquire deployment runtime, provider or registry resources.
-Forks with `forkPreviews: off` are refused. `approveEachCommit` also remains
-unavailable until an exact-head, per-Action approval producer and eligible
-non-production execution are supplied; standing Workflow approval does not
-substitute for either. This decision runs on the host for encrypted Accounts as
-well as plaintext Accounts, before binding or data credential acquisition.
+Forks with `forkPreviews: off` are refused. For `approveEachCommit`, the existing
+preview Create is the exact-head person-approval root; Deploy executes as its
+reviewed child through APPR-CHILD. No child Environment, source fetch, image build
+or data preparation runs before that person approves the exact head commit.
+Fork execution requires non-production placement, inherits no secrets and provisions
+no data; standing Workflow approval does not substitute for the person's approval. This
+uses the existing Actions and approval owner, without a new Action, store or hold,
+for encrypted and plaintext Accounts alike.
 
 Protected preview provenance has one strict schema shared by the private
 Environment content reader and public read-only consumers. It carries the full
@@ -1582,8 +1602,9 @@ A standard data companion instead records one unique
 `previewCompanionOfEnvironmentId` relation to the actual preview. Read-only
 approval metadata derives its template id through that relation, so the companion
 uses the template's approval scope without acquiring a second PR identity.
-This storage relation does not establish current-head/fork approval. The Workflow
-claimant reads current `previewTemplate.data` for each PR occurrence. It creates
+This storage relation does not establish current-head/fork approval. For
+same-repository previews, the Workflow claimant reads current
+`previewTemplate.data` for each PR occurrence. It creates
 `pr-<number>` through the ordinary Environment writer, using fresh child runtime
 and data links, then executes the selected data target's declared branch-create
 Action with the saved parent reference. Neon declares schema-only initialization;
@@ -4243,6 +4264,13 @@ check. Stored definitions and workspace-free provider Git paths do not acquire
 a checkout and are unchanged.
 
 ## Authored Domain and binding Actions (0.3 development)
+
+A template install that has saved its definition but cannot save required secret
+bindings remains partial. New development writes retain incomplete secret
+requirements until `deployments.bindings.set` commits; Deploy returns Home's
+existing `secret_scope_*` reason before native work. Complete binding saves
+restore readiness through the same writer. See [Environment installation
+grants](encryption.md#environment-installation-grants-03-development-source).
 
 `deployments.domains.add` accepts either authored `content` or prepared Artifact
 references. Both forms use the same canonical Domain content schema. The installed

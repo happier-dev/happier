@@ -8,6 +8,9 @@ import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import type { OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
+
+type ProjectOpenSelection = (result: Extract<OpenProjectResultV1, { kind: 'opened' }>) => void;
 
 /** An Open address: a retained draft (`draftId`, `serverId`) or a nonexecuting seed. */
 export type ProjectOpenRoute = Readonly<{
@@ -32,7 +35,7 @@ const LazyProjectOpenScreen = retryableLazy(async () => {
 
 function ProjectOpenDialog(
   props: CustomModalInjectedProps &
-    Readonly<{ routeParams: Readonly<Record<string, string>> }>,
+    Readonly<{ routeParams: Readonly<Record<string, string>>; onSelected?: ProjectOpenSelection }>,
 ) {
   return (
     <React.Suspense
@@ -46,6 +49,7 @@ function ProjectOpenDialog(
     >
       <LazyProjectOpenScreen
         routeParams={props.routeParams}
+        onSelected={props.onSelected}
         onClose={props.onClose}
         setChrome={props.setChrome}
       />
@@ -58,10 +62,10 @@ function ProjectOpenDialog(
  * one card-modal owner. The draft lives in the draft repository under its id, so closing the dialog
  * keeps every choice for the next Open of the same draft.
  */
-export function showProjectOpenDialog(route: ProjectOpenRoute): void {
+export function showProjectOpenDialog(route: ProjectOpenRoute, onSelected?: ProjectOpenSelection): void {
   Modal.show({
     component: ProjectOpenDialog,
-    props: { routeParams: route.params },
+    props: { routeParams: route.params, onSelected },
     closeOnBackdrop: true,
     chrome: {
       kind: 'card',

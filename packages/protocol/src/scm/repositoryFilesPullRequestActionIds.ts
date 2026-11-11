@@ -50,8 +50,7 @@ export function deploymentMoveToRepositoryReviewedChildrenV1(
     ...(input.mode === 'apply' ? [{ action: DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
       role: DEPLOYMENT_MOVE_DEFINITION_CHILD_ROLE_V1, scopeInput: { serverId: input.serverId, environmentId: input.environmentId } } as const] : []),
   ] };
-  if (input.mode === 'preview') return { children: input.repository ? REPOSITORY_FILES_PULL_REQUEST_READ_CHILDREN_V1
-    : children(['scm.status.snapshot']) };
+  if (input.mode === 'preview') return { children: REPOSITORY_FILES_PULL_REQUEST_READ_CHILDREN_V1 };
   return { children: [...children(REPOSITORY_FILES_PULL_REQUEST_ACTION_IDS_V1),
     ...(input.createRepository ? children(REPOSITORY_PROVISIONING_ACTION_IDS_V1) : [])] };
 }

@@ -20,6 +20,8 @@ export type UseProjectOpenOptions = Readonly<{
     seedIfMissing?: boolean;
     attachedDashboard?: ProjectAttachedDashboardSelection;
     onOpened?: (result: Extract<OpenProjectResultV1, { kind: 'opened' }>) => void;
+    /** Return the admitted checkout to a containing chooser instead of focusing its Project. */
+    onSelected?: (result: Extract<OpenProjectResultV1, { kind: 'opened' }>) => void;
 }>;
 
 /** A mounted client may focus an accepted leaf; the Action itself never focuses one. */
@@ -30,9 +32,11 @@ export function useProjectOpen(options: UseProjectOpenOptions) {
     checkoutsRef.current = checkouts;
     const [focusUnavailable, setFocusUnavailable] = React.useState(false);
     const onOpenedRef = React.useRef(options.onOpened);
+    const onSelectedRef = React.useRef(options.onSelected);
     const attachedDashboardRef = React.useRef(options.attachedDashboard);
     const openExistingRef = React.useRef(openExistingProject);
     onOpenedRef.current = options.onOpened;
+    onSelectedRef.current = options.onSelected;
     attachedDashboardRef.current = options.attachedDashboard;
     openExistingRef.current = openExistingProject;
     const controller = React.useMemo<ProjectOpenController>(() => createProjectOpenController({
@@ -42,6 +46,10 @@ export function useProjectOpen(options: UseProjectOpenOptions) {
             executor: createDefaultActionExecutor(), captureLifetime: captureActiveServerAccountScopeLifetime,
             getCheckouts: () => Array.isArray(checkoutsRef.current) ? checkoutsRef.current : [],
             onOpened: async (result, isCurrent) => {
+                if (onSelectedRef.current) {
+                    if (isCurrent()) onSelectedRef.current(result);
+                    return;
+                }
                 let account: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | undefined;
                 try {
                     account = await captureLazyActionAccountContext(result.workspace.serverId);

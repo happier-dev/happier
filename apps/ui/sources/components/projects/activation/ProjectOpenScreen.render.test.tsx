@@ -158,7 +158,7 @@ describe('Project Open rendered choices', () => {
         writeProjectOpenDraft({ scope, draftId, patch: { selection: { serverId, machineId: 'machine', source: { ...source, id: acceptedSourceId } } } });
         const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
         const { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
-        home.answer(serverId, `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: createPlainProjectAccountRowListFixture({
+        home.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: createPlainProjectAccountRowListFixture({
             workspaceRefs: [{ ...checkout, source: { sourceId: acceptedSourceId, revision: 1 } }],
         }) });
         projectOpenAccountActionBoundary.capture = true;
@@ -186,8 +186,8 @@ describe('Project Open rendered choices', () => {
         else expect(url.searchParams.has('dashboardArtifactId')).toBe(false);
     });
 
-    it('adds a Project opened from a folder to the Projects list (owner 11-08: the list shows Projects the person added)', async () => {
-        const draftId = '00000000-0000-4000-8000-000000000085';
+    it.each(['focus', 'select'] as const)('accepts a folder with %s completion, preserving the default Projects-list behavior', async completion => {
+        const draftId = completion === 'focus' ? '00000000-0000-4000-8000-000000000085' : '00000000-0000-4000-8000-000000000086';
         const { createHomeGovernanceHarness, installHomeGovernanceBoundaries } = await import('@/dev/testkit/harness/homeGovernanceHarness');
         const home = createHomeGovernanceHarness();
         installHomeGovernanceBoundaries(home);
@@ -203,7 +203,7 @@ describe('Project Open rendered choices', () => {
         const checkout = { id: 'fixture-ref', serverId, machineId: 'machine', rootPath: '/Users/tester/fixture', createdAtMs: 1, projectKey: 'fixture-ref' };
         const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
         const { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowMutationRequestV1Schema } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
-        home.answer(serverId, `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: createPlainProjectAccountRowListFixture({ workspaceRefs: [checkout] }) });
+        home.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: createPlainProjectAccountRowListFixture({ workspaceRefs: [checkout] }) });
         const written: unknown[] = [];
         home.answer(serverId, `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`, { select: async (_input, request) => {
             const mutation = ProjectAccountRowMutationRequestV1Schema.parse(JSON.parse(String(request.init?.body)));
@@ -216,10 +216,18 @@ describe('Project Open rendered choices', () => {
         projectOpenAccountActionBoundary.opened = { kind: 'opened', setup: 'notRequired', directory: checkout.rootPath,
             workspace: { serverId, machineId: 'machine', workspaceId: checkout.id, rootPath: checkout.rootPath },
             facts: { projectKey: checkout.projectKey } };
-        const screen = await renderScreen(<ProjectOpenScreen routeParams={{ draftId, serverId }} />);
+        const selected = vi.fn();
+        const screen = await renderScreen(<ProjectOpenScreen routeParams={{ draftId, serverId }}
+            onSelected={completion === 'select' ? selected : undefined} />);
         await vi.waitFor(() => expect(screen.findByTestId('projects.open.submit')?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('projects.open.submit');
         await vi.waitFor(() => expect(projectOpenAccountActionBoundary.calls).toHaveLength(1));
+        if (completion === 'select') {
+            await vi.waitFor(() => expect(selected).toHaveBeenCalledWith(projectOpenAccountActionBoundary.opened));
+            expect(routerSpies.navigation).toEqual([]);
+            expect(written).toEqual([]);
+            return;
+        }
         await vi.waitFor(() => expect(written).not.toEqual([]));
         // No Session or recency marks a folder the person added: its organization row says it is shown.
         expect(written).toEqual([{ key: { kind: 'project-organization', serverId: 'srv_project_open_add', projectKey: checkout.projectKey },
