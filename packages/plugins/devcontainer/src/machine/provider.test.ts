@@ -200,9 +200,17 @@ describe('Devcontainer native roles', () => {
       if (!options.base?.available) throw new Error('Expected selected runtime availability');
       // The image is the container's one native choice: the receipt and review name it.
       expect(options.base.nativeFacts?.image).toEqual({ id: 'example:latest', title: 'example:latest' });
-      const selectedLaunch = DevcontainerLaunchSchema.parse(options.base.launch);
+      expect(options.base.launch).not.toHaveProperty('reviewedEffectDigest');
+      const selectedLaunch = DevcontainerReviewQuerySchema.parse(options.base.launch);
+      const reviewedEffectDigest = options.base.effectReview?.reviewedEffectDigest;
+      if (!reviewedEffectDigest) throw new Error('Expected computed native effect review');
       const guestHome = { origin: 'https://home.example.test:9443', addresses: ['100.64.0.5'] };
-      const acquired = DEVCONTAINER_RECONCILIATION_SCHEMAS.result.parse(await kit.invokeAction('acquire', { launch: selectedLaunch, managedId: 'managed-a', guestHome }, { surface: 'plugin' }));
+      expect(await kit.invokeAction('acquire', { launch: selectedLaunch, managedId: 'managed-a', guestHome }, { surface: 'plugin' }))
+        .toMatchObject({ kind: 'rejected', code: 'invalid_request' });
+      expect(await kit.invokeAction('acquire', { launch: selectedLaunch, reviewedEffectDigest: '0'.repeat(64), managedId: 'managed-a', guestHome }, { surface: 'plugin' }))
+        .toMatchObject({ kind: 'rejected', code: 'request_conflict' });
+      expect(requests.some(request => request.args?.[0] === 'run')).toBe(false);
+      const acquired = DEVCONTAINER_RECONCILIATION_SCHEMAS.result.parse(await kit.invokeAction('acquire', { launch: selectedLaunch, reviewedEffectDigest, managedId: 'managed-a', guestHome }, { surface: 'plugin' }));
       if (acquired.kind !== 'bound') throw new Error('Expected actual retained image');
       const retained = acquired.resource.value;
       expect(retained).toMatchObject({ containerId, runtime, storage: { kind: 'child', childPath: '/workspace' }, volumes: [{ name: volume, childPath: '/workspace' }] });
@@ -212,7 +220,7 @@ describe('Devcontainer native roles', () => {
       expect(await kit.invokeAction('power', { resource: retained, intent: 'stop' }, { surface: 'plugin' })).toMatchObject({ kind: 'confirmed' });
       expect(await kit.invokeAction('power', { resource: retained, intent: 'start' }, { surface: 'plugin' })).toMatchObject({ kind: 'confirmed' });
       expect(requests.filter(request => request.args?.at(-1) === 'touch /workspace/prepared')).toHaveLength(1);
-      const rebuilt = await kit.invokeAction('rebuild', { resource: retained, reviewedEffectDigest: selectedLaunch.reviewedEffectDigest, guestHome }, { surface: 'plugin' });
+      const rebuilt = await kit.invokeAction('rebuild', { resource: retained, reviewedEffectDigest, guestHome }, { surface: 'plugin' });
       expect(rebuilt).toMatchObject({ kind: 'bound', resource: { value: { containerId: 'b'.repeat(64), volumes: retained.volumes } } });
       expect(requests.filter(request => request.args?.at(-1) === 'touch /workspace/prepared')).toHaveLength(2);
       expect(requests.filter(request => request.args?.[0] === 'run').map(request => request.args)).toEqual([

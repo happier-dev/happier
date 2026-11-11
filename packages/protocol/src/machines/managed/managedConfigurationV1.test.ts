@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
+import tweetnacl from 'tweetnacl';
+import { signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1 } from '../../actions/externalActionExecutionAuthorization.js';
 
 import * as protocol from './managedConfigurationV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
@@ -10,6 +12,31 @@ import { MachineProvisionerContributionV1Schema, MachineProvisionerOptionsResult
 import { createPluginJsonSchemaZodValueAdapter } from '../../plugins/actions/jsonSchemaValidation.js';
 
 describe('managed preset executable selection', () => {
+  it('binds computed native effects to acquisition facts without putting the digest in saved operands', () => {
+    const choices = z.strictObject({ image: z.string() });
+    const launch = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1,
+      name: 'Guest', choices: { image: 'example:latest' } };
+    const effectReview = { kind: 'devcontainer' as const, reviewedEffectDigest: 'a'.repeat(64), effects: [] };
+    const facts = protocol.buildManagedConfigurationFactsV1({ choicesSchema: choices, launch,
+      optionProjection: { kind: 'ready', launch: launch.choices, prices: [], nativeFacts: {}, effectReview },
+      optionStatus: 'current', prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' },
+      retentionCapabilities: { supportedIntents: ['delete'] } });
+    expect(facts).toMatchObject({ launch, reviewedEffectDigest: effectReview.reviewedEffectDigest });
+    expect(facts).not.toHaveProperty('effectReview');
+    expect(facts.launch.choices).not.toHaveProperty('reviewedEffectDigest');
+    const request = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
+      retention: facts.retention, wakeOnAcceptedMessage: facts.wakeOnAcceptedMessage,
+      enrollmentIdentity: { kind: 'existingUser', role: 'adopted' }, reviewedFacts: facts });
+    expect(request.reviewedFacts).toMatchObject({ reviewedEffectDigest: effectReview.reviewedEffectDigest });
+    const key = tweetnacl.sign.keyPair();
+    const approval = { authorizationToken: 'original-acquisition', actionId: 'machines.managed.acquire',
+      target: { kind: 'machine' as const, machineId: 'controller' }, input: request };
+    const signature = signExternalActionApprovalInputV1({ ...approval, privateKey: key.secretKey });
+    expect(verifyExternalActionApprovalInputV1({ ...approval, signature, publicKey: key.publicKey })).toBe(true);
+    expect(verifyExternalActionApprovalInputV1({ ...approval, input: { ...request,
+      reviewedFacts: { ...facts, reviewedEffectDigest: 'b'.repeat(64) } },
+      signature, publicKey: key.publicKey })).toBe(false);
+  });
   it('captures native option facts for an already authored launch through the shared receipt builder', () => {
     const launchSchema = { type: 'object', properties: { cpu: { type: 'integer' }, image: { type: 'string' } },
       required: ['cpu', 'image'], additionalProperties: false } as const;

@@ -307,6 +307,12 @@ uses a container-owned volume. A Dev Container file or inline configuration is
 available for advanced setups. Presets, Team presets, pools and retention use the
 existing managed Machine flows.
 
+You can save or edit a container preset without a connected computer. It stores
+your image, setup script and configuration choices. When you create a Machine
+from it, the selected computer checks availability and presents the native effects
+for approval. Those reviewed effects belong to that creation, rather than the
+reusable preset.
+
 The image must provide a Linux shell and the `id`, `chown` and `sleep` commands.
 Happier replaces the image's entrypoint and command to keep the child running;
 Dev Container metadata hooks are not run in image mode. The setup script runs

@@ -7,7 +7,7 @@ import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { DEVCONTAINER_PLUGIN, DEVCONTAINER_ROLE_SCHEMAS } from '../manifest.js';
-import { DevcontainerLaunchSchema } from './schemas.js';
+import { DevcontainerReviewQuerySchema } from './schemas.js';
 
 const roots: string[] = [];
 const pinnedFeature = `example/feature@sha256:${'a'.repeat(64)}`;
@@ -115,8 +115,7 @@ describe('Devcontainer public passive effect review', () => {
     expect(options.dimensions).toEqual({ size: [], image: [], location: [], network: [], duration: [] });
     expect(options.base).toMatchObject({ available: true, launch: {
       workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath,
-      reviewedEffectDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
-    }, effectReview: { kind: 'devcontainer', effects: expect.arrayContaining([
+    }, effectReview: { kind: 'devcontainer', reviewedEffectDigest: expect.stringMatching(/^[a-f0-9]{64}$/u), effects: expect.arrayContaining([
       expect.objectContaining({ scope: 'host', kind: 'initialize', details: ['host-setup'] }),
       expect.objectContaining({ scope: 'child', kind: 'lifecycle', details: ['child-setup'] }),
       expect.objectContaining({ scope: 'child', kind: 'environment', details: ['API_TOKEN'] }),
@@ -145,7 +144,7 @@ describe('Devcontainer public passive effect review', () => {
     boundary.nativeConfiguration.configuration.service = 'app';
     const options = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(
       { workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath }, boundary.context));
-    await boundary.handlers.get('acquire')!({ launch: options.base?.launch, managedId: 'native-env-row' }, boundary.context);
+    await boundary.handlers.get('acquire')!({ launch: options.base?.launch, reviewedEffectDigest: options.base?.effectReview?.reviewedEffectDigest, managedId: 'native-env-row' }, boundary.context);
     const nativeReadsAndLaunch = boundary.requests.filter(request => request.args?.[0] === 'read-configuration' || request.args?.[0] === 'up');
     expect(nativeReadsAndLaunch.some(request => request.args?.[0] === 'up')).toBe(true);
     for (const request of nativeReadsAndLaunch) {
@@ -163,12 +162,12 @@ describe('Devcontainer public passive effect review', () => {
     const boundary = await reviewBoundary();
     const options = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(
       { workspaceFolder: boundary.workspaceFolder, configPath: boundary.configPath }, boundary.context));
-    const selected = projectMachineProvisionerSelectionV1({ options, selection: {}, launchSchema: DevcontainerLaunchSchema.jsonSchema });
+    const selected = projectMachineProvisionerSelectionV1({ options, selection: {}, launchSchema: DevcontainerReviewQuerySchema.jsonSchema });
     expect(selected.kind).toBe('ready');
     if (selected.kind !== 'ready') throw new Error('Reviewed Devcontainer launch must be executable');
     expect(selected.launch).toEqual(options.base?.launch);
     expect(selected.effectReview).toEqual(options.base?.effectReview);
-    const input = DEVCONTAINER_ROLE_SCHEMAS.acquireInput.parse({ launch: selected.launch, managedId: 'managed-review' });
+    const input = DEVCONTAINER_ROLE_SCHEMAS.acquireInput.parse({ launch: selected.launch, reviewedEffectDigest: selected.effectReview?.reviewedEffectDigest, managedId: 'managed-review' });
     boundary.nativeConfiguration.configuration.initializeCommand = 'different-host-setup';
     const acquired = await boundary.handlers.get('acquire')!(input, boundary.context);
     expect(acquired).toMatchObject({ kind: 'rejected', code: 'request_conflict' });
@@ -189,8 +188,9 @@ describe('Devcontainer public passive effect review', () => {
     ]));
     vi.stubEnv('HAPPIER_REVIEW_HOOK', 'touch /tmp/${managedMachineNamespace}');
     const second = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(second.base?.launch).not.toEqual(first.base?.launch);
-    const acquired = await boundary.handlers.get('acquire')!({ launch: first.base?.launch, managedId: 'managed-review' }, boundary.context);
+    expect(second.base?.launch).toEqual(first.base?.launch);
+    expect(second.base?.effectReview?.reviewedEffectDigest).not.toEqual(first.base?.effectReview?.reviewedEffectDigest);
+    const acquired = await boundary.handlers.get('acquire')!({ launch: first.base?.launch, reviewedEffectDigest: first.base?.effectReview?.reviewedEffectDigest, managedId: 'managed-review' }, boundary.context);
     expect(acquired).toMatchObject({ kind: 'rejected', code: 'request_conflict' });
     expect(boundary.requests.some(request => request.args?.[0] === 'up')).toBe(false);
   });
@@ -213,7 +213,8 @@ describe('Devcontainer public passive effect review', () => {
     expect(JSON.stringify(first)).not.toContain('inherited-secret-value');
     vi.stubEnv('HAPPIER_REVIEW_TOKEN', 'different-inherited-secret');
     const second = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(second.base?.launch).not.toEqual(first.base?.launch);
+    expect(second.base?.launch).toEqual(first.base?.launch);
+    expect(second.base?.effectReview?.reviewedEffectDigest).not.toEqual(first.base?.effectReview?.reviewedEffectDigest);
     expect(JSON.stringify(second)).not.toContain('different-inherited-secret');
   });
 
@@ -257,7 +258,7 @@ describe('Devcontainer public passive effect review', () => {
     expect(boundary.requests.find(request => request.args?.[0] === 'compose')?.args).toEqual(
       ['compose', '--project-directory', join(boundary.workspaceFolder, '.devcontainer'), '-f', composePath, '--profile', '*', 'config', '--format', 'json']);
     boundary.compose.services.app.network_mode = 'none';
-    const acquired = await boundary.handlers.get('acquire')!({ launch: options.base?.launch, managedId: 'managed-review' }, boundary.context);
+    const acquired = await boundary.handlers.get('acquire')!({ launch: options.base?.launch, reviewedEffectDigest: options.base?.effectReview?.reviewedEffectDigest, managedId: 'managed-review' }, boundary.context);
     expect(acquired).toMatchObject({ kind: 'rejected', code: 'request_conflict' });
     expect(boundary.requests.some(request => request.args?.[0] === 'up')).toBe(false);
   });
@@ -274,6 +275,7 @@ describe('Devcontainer public passive effect review', () => {
     boundary.composeNamespace.inherited = 'another-uncontrolled-project';
     const second = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
     expect(second.base?.launch).toEqual(first.base?.launch);
+    expect(second.base?.effectReview?.reviewedEffectDigest).toEqual(first.base?.effectReview?.reviewedEffectDigest);
     expect(first.base?.effectReview?.effects).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'mount', details: expect.arrayContaining(['volume: data → /data']) }),
       expect.objectContaining({ kind: 'mount', details: expect.arrayContaining(['data: ${managedMachineNamespace}_data']) }),
@@ -299,8 +301,9 @@ describe('Devcontainer public passive effect review', () => {
     ]));
     vi.stubEnv('HAPPIER_EXTERNAL_NETWORK', '${managedMachineNamespace}-cache');
     const second = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(second.base?.launch).not.toEqual(first.base?.launch);
-    const acquired = await boundary.handlers.get('acquire')!({ launch: first.base?.launch, managedId: 'external-network-review' }, boundary.context);
+    expect(second.base?.launch).toEqual(first.base?.launch);
+    expect(second.base?.effectReview?.reviewedEffectDigest).not.toEqual(first.base?.effectReview?.reviewedEffectDigest);
+    const acquired = await boundary.handlers.get('acquire')!({ launch: first.base?.launch, reviewedEffectDigest: first.base?.effectReview?.reviewedEffectDigest, managedId: 'external-network-review' }, boundary.context);
     expect(acquired).toMatchObject({ kind: 'rejected', code: 'request_conflict' });
     expect(boundary.requests.some(request => request.args?.[0] === 'up')).toBe(false);
   });
@@ -337,12 +340,14 @@ describe('Devcontainer public passive effect review', () => {
     }] };
     const second = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
     expect(second.base?.launch).toEqual(first.base?.launch);
+    expect(second.base?.effectReview?.reviewedEffectDigest).toEqual(first.base?.effectReview?.reviewedEffectDigest);
     boundary.nativeConfiguration.featuresConfiguration = { featureSets: [{
       sourceInformation: { type: 'oci', userFeatureId: 'example/feature:1', manifestDigest: 'sha256:different-source' },
       features: [{ id: 'feature', postCreateCommand: 'feature-setup', cachePath: '/native/staging/second/feature' }],
     }] };
     const changed = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(changed.base?.launch).not.toEqual(second.base?.launch);
+    expect(changed.base?.launch).toEqual(second.base?.launch);
+    expect(changed.base?.effectReview?.reviewedEffectDigest).not.toEqual(second.base?.effectReview?.reviewedEffectDigest);
   });
 
   it('reads future source effects rather than changing the review when an incumbent appears', async () => {
@@ -352,6 +357,7 @@ describe('Devcontainer public passive effect review', () => {
     boundary.incumbent.present = true;
     const second = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
     expect(second.base?.launch).toEqual(first.base?.launch);
+    expect(second.base?.effectReview?.reviewedEffectDigest).toEqual(first.base?.effectReview?.reviewedEffectDigest);
     expect(JSON.stringify(second)).not.toContain('incumbent-only-hook');
     expect(boundary.requests.filter(request => request.args?.[0] === 'read-configuration').every(request =>
       request.args?.includes('happier.managed-machine= '))).toBe(true);
@@ -374,7 +380,8 @@ describe('Devcontainer public passive effect review', () => {
     ]));
     await writeFile(dockerfile, 'FROM example:latest\nRUN different-package\n');
     const changed = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
-    expect(changed.base?.launch).not.toEqual(first.base?.launch);
+    expect(changed.base?.launch).toEqual(first.base?.launch);
+    expect(changed.base?.effectReview?.reviewedEffectDigest).not.toEqual(first.base?.effectReview?.reviewedEffectDigest);
   });
 
   it('allows a Dockerfile with known hooks but refuses unavailable base-image hook origins without disclosing their effective values', async () => {
@@ -394,7 +401,7 @@ describe('Devcontainer public passive effect review', () => {
     // template/base-image identity is absent from public read-configuration.
     boundary.nativeConfiguration.mergedConfiguration.postCreateCommands = ['echo unidentified-base-secret', 'echo inherited-build-secret'];
     await expect(boundary.handlers.get('options')!(query, boundary.context)).rejects.toMatchObject({ code: 'native_observation_unavailable' });
-    const acquired = await boundary.handlers.get('acquire')!({ launch: known.base?.launch, managedId: 'unavailable-origin-review' }, boundary.context);
+    const acquired = await boundary.handlers.get('acquire')!({ launch: known.base?.launch, reviewedEffectDigest: known.base?.effectReview?.reviewedEffectDigest, managedId: 'unavailable-origin-review' }, boundary.context);
     expect(acquired).toMatchObject({ kind: 'rejected', code: 'provider_unavailable' });
     expect(boundary.requests.some(request => request.args?.[0] === 'up')).toBe(false);
   });
@@ -463,6 +470,7 @@ describe('Devcontainer public passive effect review', () => {
     }] };
     const second = MachineProvisionerOptionsResultV1Schema.parse(await boundary.handlers.get('options')!(query, boundary.context));
     expect(second.base?.launch).toEqual(first.base?.launch);
+    expect(second.base?.effectReview?.reviewedEffectDigest).toEqual(first.base?.effectReview?.reviewedEffectDigest);
     expect(JSON.stringify(second)).not.toContain('different-unlocked-feature-setup');
   });
 

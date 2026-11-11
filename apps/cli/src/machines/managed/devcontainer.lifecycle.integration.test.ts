@@ -16,6 +16,8 @@ import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTar
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/jsonSchemaValidation';
 import { deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { ManagedAdmissionInputV1Schema, ManagedEnrollmentCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { AcquireResultV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -208,7 +210,8 @@ async function lifecycleFixture(root: string, onTestFinished: (cleanup: () => vo
     if (path.endsWith('/admit')) {
       const admission = ManagedAdmissionInputV1Schema.parse(body);
       if (admission.input.selection.kind !== 'one-off') throw new Error('This boundary accepts only the reviewed one-off selection');
-      row = ManagedMachineV1Schema.parse({ ...row, launch: admission.input.selection.launch, enrollmentIdentity: admission.input.enrollmentIdentity });
+      row = ManagedMachineV1Schema.parse({ ...row, launch: admission.input.selection.launch,
+        reviewedFacts: admission.input.reviewedFacts, enrollmentIdentity: admission.input.enrollmentIdentity });
       return { status: 200, data: { machine: row, replayed: false } };
     }
     if (path.endsWith('/context')) return { status: 200, data: { machine: row, requestId: 'approved-create' } };
@@ -320,7 +323,12 @@ describe('public-author Devcontainer lifecycle composition', () => {
       expect(selected.effectReview).toEqual(reviewed.base?.effectReview);
       expect(nativeRequests.some(request => request.args?.[0] === 'up')).toBe(false);
       const launch = { provider: contribution, schemaVersion: 1, name: 'First-party child', choices: selected.launch };
-      const failedEnrollment = driver.execute('machines.managed.acquire', { enrollmentIdentity: { kind: 'existingUser', role: 'adopted' }, selection: { kind: 'one-off', homeId, launch,
+      const reviewedFacts = buildManagedConfigurationFactsV1({ launch,
+        choicesSchema: createPluginJsonSchemaZodValueAdapter(descriptor.launchSchema), optionProjection: selected, optionStatus: 'current',
+        prerequisites: [], billing: descriptor.billing, retentionCapabilities: descriptor.retention });
+      expect(reviewedFacts.reviewedEffectDigest).toBe(selected.effectReview?.reviewedEffectDigest);
+      expect(reviewedFacts.launch.choices).not.toHaveProperty('reviewedEffectDigest');
+      const failedEnrollment = driver.execute('machines.managed.acquire', { reviewedFacts, enrollmentIdentity: { kind: 'existingUser', role: 'adopted' }, selection: { kind: 'one-off', homeId, launch,
         controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } }, f.options);
       await expect(failedEnrollment).rejects.toBeInstanceOf(SystemTaskExecutionError);
       await expect(failedEnrollment).rejects.toMatchObject({ code: 'system_task_failed' });
@@ -328,6 +336,7 @@ describe('public-author Devcontainer lifecycle composition', () => {
       expect(releaseRequests, `Release HTTP boundary was not reached: ${failure instanceof Error ? failure.message : String(failure)}; native commands: ${JSON.stringify(nativeRequests.map(request => request.args))}`)
         .toBeGreaterThan(0);
       const bound = f.readRow();
+      expect(bound.reviewedFacts?.reviewedEffectDigest).toBe(reviewedFacts.reviewedEffectDigest);
       expect(bound).toMatchObject({ id: 'retained-child', allocation: 'bound', controller,
         resource: { contributionRef: contribution, value: { containerId, user: 'custom-user', workspaceRoot: '/work/custom' },
           devcontainerObservation: { nativeResourceId: containerId, user: 'custom-user', workspaceFolder: '/work/custom',

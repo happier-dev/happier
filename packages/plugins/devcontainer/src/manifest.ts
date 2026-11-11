@@ -13,9 +13,10 @@ import type { MachineProvisionerAuthorDefinitionV1, MachineProvisionerCheckResul
 import { createDevcontainerProvider, DEVCONTAINER_PLUGIN_ID, DEVCONTAINER_PROVISIONER_ID } from './machine/provider.js';
 import { DevcontainerLaunchSchema, DevcontainerResourceSchema, DevcontainerReviewQuerySchema, DevcontainerNativeOperationSchema, DevcontainerRuntimeSchema } from './machine/schemas.js';
 import { readDevcontainerEffectReview, readDevcontainerNativeEnvironment } from './machine/effectReview.js';
+import { materializeDevcontainerConfiguration } from './machine/configuration.js';
 
-export const DEVCONTAINER_ROLE_SCHEMAS = defineMachineProvisionerSchemas({ launch: DevcontainerLaunchSchema, resource: DevcontainerResourceSchema });
-export const DEVCONTAINER_RECONCILIATION_SCHEMAS = defineMachineProvisionerReconciliationSchemas({ launch: DevcontainerLaunchSchema, resource: DevcontainerResourceSchema,
+export const DEVCONTAINER_ROLE_SCHEMAS = defineMachineProvisionerSchemas({ launch: DevcontainerReviewQuerySchema, resource: DevcontainerResourceSchema });
+export const DEVCONTAINER_RECONCILIATION_SCHEMAS = defineMachineProvisionerReconciliationSchemas({ launch: DevcontainerReviewQuerySchema, resource: DevcontainerResourceSchema,
   nativeOperation: DevcontainerNativeOperationSchema });
 const processAccess = 'devcontainer-process';
 const devcontainerDependencyId = 'devcontainer-cli';
@@ -60,7 +61,7 @@ export const DEVCONTAINER_MACHINE_PROVISIONER = {
   title: 'Docker container', icon: 'cube', resourceKind: 'devcontainer', schemaVersion: 1,
   description: 'A container from any image, using Docker or Podman.',
   enrollmentRole: 'sandbox',
-  launchSchema: DevcontainerLaunchSchema.jsonSchema, resourceSchema: DevcontainerResourceSchema.jsonSchema,
+  launchSchema: DevcontainerReviewQuerySchema.jsonSchema, resourceSchema: DevcontainerResourceSchema.jsonSchema,
   platforms: ['darwin', 'linux', 'win32'],
   prerequisites: [],
   billing: { location: 'local', stoppedBilling: 'not-billed' },
@@ -123,7 +124,8 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
           const reviewed = await readDevcontainerEffectReview(await nativeTools(context, input), input);
           // An image launch names its image, the native fact a receipt and review say for a local machine.
           const image = input.configuration?.kind === 'image' ? input.configuration.image : undefined;
-          return { base: { available: true, prerequisites: [], guestPlatform: 'linux' as const, ...reviewed,
+          return { base: { available: true, prerequisites: [], guestPlatform: 'linux' as const,
+            launch: input, effectReview: reviewed.effectReview,
             ...(image ? { nativeFacts: { image: { id: image, title: image } } } : {}) }, dimensions };
         } catch (error) {
           if (!(error instanceof MissingDependency)) throw error;
@@ -149,7 +151,12 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
     acquire: { ...defaults, title: 'Realize Devcontainer child', dangerLevel: 'writesLocal', inputSchema: DEVCONTAINER_ROLE_SCHEMAS.acquireInput,
       confirmation: { title: 'Create Devcontainer', body: 'Runs the reviewed host and child setup hooks on this controller.', confirmLabel: 'Create' },
       resultSchema: DEVCONTAINER_RECONCILIATION_SCHEMAS.result,
-      async run(input, context) { try { return await (await provider(context, input.launch)).acquire(input.launch, input.managedId ?? '', input.guestHome); }
+      async run(input, context) { try {
+        if (!input.reviewedEffectDigest) return { kind: 'rejected' as const, code: 'invalid_request' as const };
+        const launch = DevcontainerLaunchSchema.parse({ ...await materializeDevcontainerConfiguration(input.launch),
+          reviewedEffectDigest: input.reviewedEffectDigest });
+        return await (await provider(context, launch)).acquire(launch, input.managedId ?? '', input.guestHome);
+      }
         catch (error) { return { kind: 'unknown' as const, recovery: { reference: input.launch.configPath ?? input.managedId ?? '', reason: code(error) } }; } } },
     bootstrap: { ...defaults, title: 'Resolve private child enrollment transport', dangerLevel: 'writesLocal',
       confirmation: { title: 'Prepare Devcontainer enrollment' },

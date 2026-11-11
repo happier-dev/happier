@@ -223,6 +223,9 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
         let result: AcquireResultV1;
         try {
             result = AcquireResultV1Schema.parse(await invoke('acquire', { managedId: machine.id, launch: machine.launch.choices,
+                ...(machine.reviewedFacts?.reviewedEffectDigest === undefined ? {} : {
+                    reviewedEffectDigest: machine.reviewedFacts.reviewedEffectDigest,
+                }),
                 ...(bootstrapPublicKey ? { bootstrapPublicKey } : {}),
                 ...(guestHostPublicKey === undefined ? {} : { guestHostPublicKey }) }));
         } catch (error) {
@@ -252,6 +255,9 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
         if (continueRetainedAcquisition) {
             const continued = AcquireResultV1Schema.parse(await invoke('acquire', {
                 managedId: machine.id, launch: machine.launch.choices, resource: boundResource.value,
+                ...(machine.reviewedFacts?.reviewedEffectDigest === undefined ? {} : {
+                    reviewedEffectDigest: machine.reviewedFacts.reviewedEffectDigest,
+                }),
             }));
             if (continued.kind !== 'bound') throw acquisitionFailure(continued);
             if (!pluginJsonValuesEqual(continued.resource, machine.resource)) throw new ManagedMachineControllerError('resource_mismatch');

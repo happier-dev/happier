@@ -2315,6 +2315,7 @@ export type ManagedMachinesActionInputById = {
                 };
                 monthlyCapStatus?: 'none' | 'unknown' | undefined;
             };
+            reviewedEffectDigest?: string | undefined;
             setup?: unknown;
             preset?: undefined | {
                 id: string;
@@ -4542,6 +4543,7 @@ export type ManagedMachinesActionInputById = {
                 };
                 monthlyCapStatus?: 'none' | 'unknown' | undefined;
             };
+            reviewedEffectDigest?: string | undefined;
             setup?: unknown;
             preset?: undefined | {
                 id: string;
@@ -5151,6 +5153,7 @@ export type ManagedMachinesActionInputById = {
                     templateVolumeId: string;
                     source: string;
                 }[];
+                companions?: string[] | undefined;
                 deploy?: undefined | {
                     requestKey: string;
                 };
@@ -5714,6 +5717,7 @@ export type ManagedMachinesActionInputById = {
                         templateVolumeId: string;
                         source: string;
                     }[];
+                    companions?: string[] | undefined;
                     deploy?: undefined | {
                         requestKey: string;
                     };
@@ -8049,6 +8053,7 @@ export type ManagedMachinesActionInputById = {
                         templateVolumeId: string;
                         source: string;
                     }[];
+                    companions?: string[] | undefined;
                     deploy?: undefined | {
                         requestKey: string;
                     };
@@ -11563,6 +11568,7 @@ export type ManagedMachinesActionResultById = {
                     };
                     monthlyCapStatus?: 'none' | 'unknown' | undefined;
                 };
+                reviewedEffectDigest?: string | undefined;
                 setup?: Readonly<{
                     toolchain?: undefined | {
                         adapterId: string;
@@ -12290,6 +12296,7 @@ export type ManagedMachinesActionResultById = {
                 };
                 monthlyCapStatus?: 'none' | 'unknown' | undefined;
             };
+            reviewedEffectDigest?: string | undefined;
             setup?: Readonly<{
                 toolchain?: undefined | {
                     adapterId: string;
@@ -13048,6 +13055,7 @@ export type ManagedMachinesActionResultById = {
                     };
                     monthlyCapStatus?: 'none' | 'unknown' | undefined;
                 };
+                reviewedEffectDigest?: string | undefined;
                 setup?: Readonly<{
                     toolchain?: undefined | {
                         adapterId: string;
@@ -13826,6 +13834,7 @@ export type ManagedMachinesActionResultById = {
                     };
                     monthlyCapStatus?: 'none' | 'unknown' | undefined;
                 };
+                reviewedEffectDigest?: string | undefined;
                 setup?: Readonly<{
                     toolchain?: undefined | {
                         adapterId: string;
@@ -14576,6 +14585,7 @@ export type ManagedMachinesActionResultById = {
                 };
                 monthlyCapStatus?: 'none' | 'unknown' | undefined;
             };
+            reviewedEffectDigest?: string | undefined;
             setup?: Readonly<{
                 toolchain?: undefined | {
                     adapterId: string;
@@ -17289,6 +17299,7 @@ export type ManagedMachinesActionResultById = {
                     templateVolumeId: string;
                     source: string;
                 }[];
+                companions?: string[] | undefined;
                 deploy?: undefined | {
                     requestKey: string;
                 };
@@ -20856,6 +20867,7 @@ export type ManagedMachinesActionResultById = {
                             templateVolumeId: string;
                             source: string;
                         }[];
+                        companions?: string[] | undefined;
                         deploy?: undefined | {
                             requestKey: string;
                         };
@@ -22536,6 +22548,7 @@ export type ManagedMachinesActionResultById = {
                         templateVolumeId: string;
                         source: string;
                     }[];
+                    companions?: string[] | undefined;
                     deploy?: undefined | {
                         requestKey: string;
                     };
@@ -23262,6 +23275,7 @@ export type ManagedMachinesActionResultById = {
                 };
                 monthlyCapStatus?: 'none' | 'unknown' | undefined;
             };
+            reviewedEffectDigest?: string | undefined;
             setup?: Readonly<{
                 toolchain?: undefined | {
                     adapterId: string;
@@ -24061,6 +24075,7 @@ export type ManagedMachinesActionResultById = {
                 };
                 monthlyCapStatus?: 'none' | 'unknown' | undefined;
             };
+            reviewedEffectDigest?: string | undefined;
             setup?: Readonly<{
                 toolchain?: undefined | {
                     adapterId: string;
@@ -24787,6 +24802,7 @@ export type ManagedMachinesActionResultById = {
                 };
                 monthlyCapStatus?: 'none' | 'unknown' | undefined;
             };
+            reviewedEffectDigest?: string | undefined;
             setup?: Readonly<{
                 toolchain?: undefined | {
                     adapterId: string;

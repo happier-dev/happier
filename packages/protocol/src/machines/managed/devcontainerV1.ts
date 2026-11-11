@@ -6,7 +6,7 @@ const id = () => z.string().check(z.trim(), z.minLength(1));
 const path = () => z.string().check(z.minLength(1), z.regex(/^[^\u0000]+$/u));
 const childPath = () => z.string().check(z.regex(/^\/[^\u0000]*$/u));
 
-/** Transient native disclosure. Only its digest belongs in retained launch choices. */
+/** Native disclosure bound to acquisition review; reusable launch operands contain no digest. */
 export const DevcontainerEffectReviewV1Schema = lazyDefinition(() => z.strictObject({
   kind: z.literal('devcontainer'),
   reviewedEffectDigest: z.string().check(z.regex(/^[a-f0-9]{64}$/u)),

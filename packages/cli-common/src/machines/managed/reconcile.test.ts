@@ -162,6 +162,38 @@ function boundary(initial: ManagedMachineV1 = machine) {
 }
 
 describe('portable managed reconciliation', () => {
+    it.each(['initial', 'continued', 'unreviewed'] as const)(
+        'passes only the admitted effect digest to native acquisition (%s)', async mode => {
+            const digest = 'a'.repeat(64);
+            const reviewedFacts = ManagedConfigurationFactsV1Schema.parse({
+                launch: machine.launch, controller: machine.controller, optionStatus: 'current',
+                billing: provisioner.billing, retentionCapabilities: provisioner.retention, prerequisites: [],
+                retention: machine.retention, wakeOnAcceptedMessage: machine.wakeOnAcceptedMessage,
+                reviewedEffectDigest: digest,
+            });
+            const run = boundary({ ...machine, ...(mode === 'unreviewed' ? {} : { reviewedFacts }),
+                ...(mode === 'continued' ? { allocation: 'bound', resource } : {}) });
+            const acquired: unknown[] = [];
+            const result = await reconcileManagedMachine({ ...run.input,
+                ...(mode === 'continued' ? { provisioner: { ...provisioner, reconciliation: {
+                    action: 'reconcile', nativeOperationSchema: provisioner.resourceSchema, continueAcquire: true,
+                } } } : {}),
+                createNative: (...args) => {
+                    const native = run.input.createNative(...args);
+                    return { ...native, invoke: async (role, body, io) => {
+                        if (role !== 'acquire') return native.invoke(role, body, io);
+                        acquired.push(body);
+                        return { kind: 'bound', resource };
+                    } };
+                },
+            });
+            expect(result.enrolledMachineId).toBe('guest');
+            expect(acquired).toEqual([{ managedId: machine.id, launch: machine.launch.choices,
+                ...(mode === 'continued' ? { resource: resource.value } : {}),
+                ...(mode === 'unreviewed' ? {} : { reviewedEffectDigest: digest }),
+            }]);
+        });
+
     it.each(['machines.managed.acquire', 'machines.managed.bootstrap.retry'] as const)(
         'publishes native power and storage in the first enrolled observation through %s', async action => {
             const run = boundary(action === 'machines.managed.acquire' ? machine : { ...machine, allocation: 'bound', resource });

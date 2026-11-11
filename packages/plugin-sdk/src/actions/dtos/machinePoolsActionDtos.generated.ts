@@ -777,6 +777,7 @@ export type MachinePoolsActionResultById = {
                     };
                     monthlyCapStatus?: 'none' | 'unknown' | undefined;
                 };
+                reviewedEffectDigest?: string | undefined;
                 setup?: Readonly<{
                     toolchain?: undefined | {
                         adapterId: string;

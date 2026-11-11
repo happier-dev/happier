@@ -27,6 +27,8 @@ const reviewedEffectDigest = defineProtocolString({ pattern: '^[a-f0-9]{64}$' })
 const launchFields = { runtime: DevcontainerRuntimeSchema.optional(), reviewedEffectDigest };
 const advancedFields = { ...launchFields, workspaceFolder: path, configPath: path, configuration: advancedConfiguration.optional() };
 const imageFields = { ...launchFields, workspaceFolder: path.optional(), configPath: path.optional(), configuration: imageConfiguration };
+// Native executable facts belong to retained resources and reconciliation.
+// Presets and acquire launch operands use DevcontainerReviewQuerySchema.
 export const DevcontainerLaunchSchema = defineProtocolUnion([
   defineProtocolObject(advancedFields, closed), defineProtocolObject(imageFields, closed),
 ]);

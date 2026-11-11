@@ -21,6 +21,7 @@ import { MachineSetupV1Schema, type MachineSetupV1 } from './machineSetupV1.js';
 import { MachineProvisionerContributionV1Schema, type MachineProvisionerContributionV1,
   type MachineProvisionerSelectionProjectionV1 } from '../../plugins/contributions/machineProvisioners.js';
 import { pluginJsonValuesEqual } from '../../plugins/contributions/jsonSchemaValues.js';
+import { DevcontainerEffectReviewV1Schema } from './devcontainerV1.js';
 
 export { resolveManagedConfigurationCost, formatProviderAmount, formatPriceUnit, presentManagedCost, presentManagedAcquireStep,
   formatRetentionDuration, describeRetention, formatManagedSizeBytes, managedSizeDimensions, describeManagedSize,
@@ -57,6 +58,7 @@ export function createManagedConfigurationFactsV1Schema<Choices extends z.core.$
     billing: BillingCapabilitiesV1Schema,
     localResources: mini.optional(ManagedLocalResourceFactsV1Schema),
     nativeFacts: mini.optional(ProviderNativeOptionFactsV1Schema),
+    reviewedEffectDigest: z.optional(DevcontainerEffectReviewV1Schema.shape.reviewedEffectDigest),
     prerequisites: z.array(ManagedPrerequisiteV1Schema), retentionCapabilities: RetentionCapabilitiesV1Schema,
     retention: RetentionV1Schema, wakeOnAcceptedMessage: z.boolean(),
     setup: z.optional(MachineSetupV1Schema),
@@ -103,6 +105,7 @@ export function buildManagedConfigurationFactsV1<Choices extends z.core.$ZodType
     ...(prices !== undefined ? { prices } : {}),
     ...(input.localResources !== undefined ? { localResources: input.localResources } : {}),
     ...(nativeFacts !== undefined ? { nativeFacts } : {}),
+    ...(selected?.effectReview ? { reviewedEffectDigest: selected.effectReview.reviewedEffectDigest } : {}),
     ...(input.setup !== undefined ? { setup: input.setup } : {}),
     ...(input.preset ? { preset: { id: input.preset.id, revision: input.preset.revision,
       ...(input.preset.name !== undefined ? { name: input.preset.name } : {}) } } : {}),

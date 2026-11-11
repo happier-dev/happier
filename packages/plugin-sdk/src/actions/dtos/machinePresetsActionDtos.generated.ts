@@ -778,6 +778,7 @@ export type MachinePresetsActionResultById = {
                         };
                         monthlyCapStatus?: 'none' | 'unknown' | undefined;
                     };
+                    reviewedEffectDigest?: string | undefined;
                     setup?: Readonly<{
                         toolchain?: undefined | {
                             adapterId: string;
@@ -1493,6 +1494,7 @@ export type MachinePresetsActionResultById = {
                         };
                         monthlyCapStatus?: 'none' | 'unknown' | undefined;
                     };
+                    reviewedEffectDigest?: string | undefined;
                     setup?: Readonly<{
                         toolchain?: undefined | {
                             adapterId: string;
@@ -2213,6 +2215,7 @@ export type MachinePresetsActionResultById = {
                         };
                         monthlyCapStatus?: 'none' | 'unknown' | undefined;
                     };
+                    reviewedEffectDigest?: string | undefined;
                     setup?: Readonly<{
                         toolchain?: undefined | {
                             adapterId: string;
@@ -2930,6 +2933,7 @@ export type MachinePresetsActionResultById = {
                         };
                         monthlyCapStatus?: 'none' | 'unknown' | undefined;
                     };
+                    reviewedEffectDigest?: string | undefined;
                     setup?: Readonly<{
                         toolchain?: undefined | {
                             adapterId: string;
@@ -3647,6 +3651,7 @@ export type MachinePresetsActionResultById = {
                         };
                         monthlyCapStatus?: 'none' | 'unknown' | undefined;
                     };
+                    reviewedEffectDigest?: string | undefined;
                     setup?: Readonly<{
                         toolchain?: undefined | {
                             adapterId: string;
@@ -4364,6 +4369,7 @@ export type MachinePresetsActionResultById = {
                         };
                         monthlyCapStatus?: 'none' | 'unknown' | undefined;
                     };
+                    reviewedEffectDigest?: string | undefined;
                     setup?: Readonly<{
                         toolchain?: undefined | {
                             adapterId: string;
