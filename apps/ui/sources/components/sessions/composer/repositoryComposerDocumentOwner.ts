@@ -100,12 +100,9 @@ function readRepositoryComposerDocument(
  * Semantic Composer adapter over the synchronized draft repository. It owns no
  * persistence and no revision store.
  *
- * A Session draft has an incumbent persisted `documentRevision`, so this owner
- * projects it unchanged: the supported offscreen `composers.get({kind:'session'})`
- * path constructs a fresh owner for every read and apply, and an instance-local
- * counter would restart at zero and let a stale transaction overwrite a newer
- * draft. New Session scopes have no incumbent persisted revision, so they keep
- * one host-private monotonic live revision per instance instead.
+ * Drafts project the repository revision unchanged, including New Session when
+ * its responsive presentation remounts. A fresh adapter must not restart at zero
+ * and admit a stale transaction against the same document.
  */
 export function createRepositoryComposerDocumentOwner(input: Readonly<{
     scope: ServerAccountScope;
@@ -139,9 +136,9 @@ export function createRepositoryComposerDocumentOwner(input: Readonly<{
         ? `extensions.happier.${executionRunLauncherDraftFieldPath(input.launcherDraftKey, field).fieldId}`
         : `composer.${field}`;
     const fieldIds = (['text', 'mentions', 'attachments'] as const).map(fieldId);
-    // A mounted launcher owns a participant instance, like New Session. Parent
+    // A mounted launcher owns a participant instance. Parent
     // composer edits must not invalidate that independent document's revision.
-    const projectsRepositoryRevision = address.kind !== 'newSession' && !input.launcherDraftKey;
+    const projectsRepositoryRevision = !input.launcherDraftKey;
     const initial = readRepositoryComposerDocument(input.scope, address, input.launcherDraftKey);
     let observed = {
         document: initial.document,
@@ -175,8 +172,11 @@ export function createRepositoryComposerDocumentOwner(input: Readonly<{
             : subscribeSessionDraft(input.scope, address, () => {
             if (input.isCurrent?.() === false) return;
             const previousRevision = observed.revision;
+            const previousDocument = observed.document;
             const next = refresh();
-            if (next.revision !== previousRevision) listener();
+            // New Session authoring shares the repository record, but changing
+            // its folder/model must not republish an unchanged Composer.
+            if (next.revision !== previousRevision && (address.kind !== 'newSession' || next.document !== previousDocument)) listener();
         }),
         apply: (expectedRevision, mutation) => {
             if (input.isCurrent?.() === false) return { status: 'composerUnavailable' };

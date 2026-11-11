@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import { activateStorageAccountScope } from '@/dev/testkit/runtime/storageRuntime';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 import {
     getSessionDraftSnapshot,
@@ -23,9 +26,7 @@ afterEach(() => {
 
 describe('repositoryComposerDocumentOwner', () => {
     it('settles accepted fields after its view closes but never after the captured Account retires', async () => {
-        const { activateStorageAccountScope } = await import('@/dev/testkit/runtime/storageRuntime');
-        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
-        const fixture = await activateStorageAccountScope(scope);
+        const fixture = await activateStorageAccountScope(scope, getStorage());
         try {
             const lifetime = captureActiveServerAccountScopeLifetime();
             if (!lifetime) throw new Error('Expected the active Account lifetime');
@@ -469,7 +470,7 @@ describe('repositoryComposerDocumentOwner Session revision', () => {
             .toBe('newer');
     });
 
-    it('keeps the New Session composer revision host-private and instance-local', () => {
+    it('preserves the New Session revision across presentation owners and refuses an older edit', () => {
         const ref = { kind: 'newSession', instanceId: 'draft-revision-a' } as const;
         writeNewSessionDraft({
             scope,
@@ -479,9 +480,13 @@ describe('repositoryComposerDocumentOwner Session revision', () => {
         });
 
         const owner = createRepositoryComposerDocumentOwner({ scope, ref });
-
-        expect(owner.read().revision).toBe(0);
-        expect(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId: ref.instanceId })?.revision)
-            .toBeGreaterThan(0);
+        const before = owner.read();
+        owner.replaceDocument({ ...before.document, text: 'newer unsent input' });
+        const current = owner.read();
+        const remounted = createRepositoryComposerDocumentOwner({ scope, ref });
+        expect(remounted.read()).toEqual(current);
+        expect(remounted.apply(before.revision, { text: 'stale', references: [], attachments: [] }))
+            .toEqual({ status: 'conflict', currentRevision: current.revision });
+        expect(remounted.read().document.text).toBe('newer unsent input');
     });
 });

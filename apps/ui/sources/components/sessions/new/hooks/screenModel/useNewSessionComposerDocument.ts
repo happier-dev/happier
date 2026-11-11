@@ -61,6 +61,10 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { ComposerStructuredInputMention } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import {
+    patchAgentInputLocalUiState,
+    readAgentInputLocalUiState,
+} from '@/sync/domains/input/draftValues/agentInputLocalUiStateStore';
 import type { NewSessionComposerAttachmentSeedV1 } from '@/sync/domains/state/persistence';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
@@ -134,6 +138,7 @@ export type NewSessionComposerDocument = Readonly<{
      * idea of it; the snapshot below then carries the caret that is on screen.
      */
     inputPersistence: Readonly<{
+        initialSelection?: NonNullable<ComposerSnapshotV1['selection']>;
         restoreToken: string;
         onSelectionChangePersist: (
             selection: NonNullable<ComposerSnapshotV1['selection']>,
@@ -249,13 +254,10 @@ export function useNewSessionComposerDocument(params: Readonly<{
     refRef.current = ref;
     const mountedRef = React.useRef(true);
     const composerInputFocusedRef = React.useRef(false);
-    // The caret belongs to the mounted input and to this exact document
-    // identity. A replaced owner mints a new identity, so a stale caret from
-    // the retired scope can never be reported as this document's.
-    const composerSelectionRef = React.useRef<Readonly<{
-        instanceId: string;
-        selection: NonNullable<ComposerSnapshotV1['selection']>;
-    }> | null>(null);
+    // The existing device-local input owner retains the caret for this exact
+    // Account/draft when responsive presentation replaces the mounted input.
+    const inputStateScope = draftScope ?? composerAccountLifetime?.scope ?? null;
+    const inputStateOwner = React.useMemo(() => ({ kind: 'newSession' as const, flowId: ref.instanceId }), [ref.instanceId]);
     const composerActionBarLayoutRef = React.useRef<ComposerSnapshotV1['layout']>('wrap');
     const composerFocusRequestRef = React.useRef<(() => void) | null>(null);
     const composerBlurRequestRef = React.useRef<(() => void) | null>(null);
@@ -445,14 +447,20 @@ export function useNewSessionComposerDocument(params: Readonly<{
 
     const onSelectionChangePersist = React.useCallback((
         selection: NonNullable<ComposerSnapshotV1['selection']>,
+        textLength: number,
     ) => {
         if (!mountedRef.current || !composerRefsV1Equal(refRef.current, ref)) return;
-        composerSelectionRef.current = { instanceId: ref.instanceId, selection };
-    }, [ref]);
+        patchAgentInputLocalUiState(inputStateScope, inputStateOwner, { selection, textLength });
+    }, [inputStateOwner, inputStateScope, ref]);
+    const readSelection = React.useCallback(() => {
+        const selection = readAgentInputLocalUiState(inputStateScope, inputStateOwner)?.selection;
+        return selection && selection.end <= params.promptStore.getPrompt().length ? selection : undefined;
+    }, [inputStateOwner, inputStateScope, params.promptStore]);
     const inputPersistence = React.useMemo(() => ({
+        get initialSelection() { return readSelection(); },
         restoreToken: ref.instanceId,
         onSelectionChangePersist,
-    }), [onSelectionChangePersist, ref.instanceId]);
+    }), [onSelectionChangePersist, readSelection, ref.instanceId]);
 
     const onComposerActionBarLayoutChange = React.useCallback((layout: ComposerSnapshotV1['layout']) => {
         if (!mountedRef.current || !composerRefsV1Equal(refRef.current, ref)) return;
@@ -539,12 +547,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
         // programmatic write can shorten the document between two input
         // events, and an offset into text that no longer exists would restore
         // a selection over bytes the person never chose.
-        const reported = composerSelectionRef.current;
-        const selection = reported !== null
-            && reported.instanceId === ref.instanceId
-            && reported.selection.end <= text.length
-            ? reported.selection
-            : undefined;
+        const selection = readSelection();
         // Readiness gates submission, not authoring. In particular an
         // unavailable seeded attachment must remain removable so the user can
         // clear the canonical placeholder and its pending seed custody.
@@ -575,7 +578,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
                 ...(inputLock ? { inputLock } : {}),
             },
         };
-    }, [composerInputEffects.readComposerInputLock, documentOwner, params.composerAttachmentEntriesById, params.promptStore, pendingAttachmentSeeds, ref]);
+    }, [composerInputEffects.readComposerInputLock, documentOwner, params.composerAttachmentEntriesById, params.promptStore, pendingAttachmentSeeds, readSelection, ref]);
 
     const commitDocument = React.useCallback((input: Readonly<{
         expectedRevision: number;

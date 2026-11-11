@@ -1,5 +1,8 @@
 import renderer, { act } from 'react-test-renderer';
 import * as React from 'react';
+import 'fake-indexeddb/auto';
+import { activateStorageAccountScope } from '@/dev/testkit/runtime/storageRuntime';
+import { prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -419,55 +422,64 @@ describe('useNewSessionComposerDocument', () => {
     });
 
     it('projects New Session regions through the shared host on the app target', async () => {
+        await prepareSessionDraftPersistenceStorage();
+        const scope = { serverId: 'server-1', accountId: 'region-account' };
+        const account = await activateStorageAccountScope(scope);
         pluginSurfaceHostSpy.mockClear();
-        const promptStore = createNewSessionPromptStore('Draft prompt');
-        const projectionInputs = publishDaemonMergedProjectionInputs({
-            projection: PluginProjectionV2Schema.parse({
-                v: 2,
-                generation: 5,
-                installedPackagesById: {},
-                familiesById: {
-                    composerRegions: { family: 'composerRegions', entriesById: { [newSessionRegion.id]: newSessionRegion } },
+        try {
+            const promptStore = createNewSessionPromptStore('Draft prompt');
+            const projectionInputs = publishDaemonMergedProjectionInputs({
+                projection: PluginProjectionV2Schema.parse({
+                    v: 2,
+                    generation: 5,
+                    installedPackagesById: {},
+                    familiesById: {
+                        composerRegions: { family: 'composerRegions', entriesById: { [newSessionRegion.id]: newSessionRegion } },
+                    },
+                }),
+                composerSurfaceCatalog: [newSessionComposerCatalogEntry()],
+            });
+            const hook = await renderHook(() => useNewSessionComposerDocument({
+                draftScope: scope, draftId: 'region-draft',
+                promptStore,
+                persistedAttachments: [],
+                composerAttachmentEntriesById: {},
+                composerPluginProjection: {
+                    machineId: 'machine-1',
+                    serverId: 'server-1',
+                    phase: 'ready',
+                    inputs: projectionInputs,
                 },
-            }),
-            composerSurfaceCatalog: [newSessionComposerCatalogEntry()],
-        });
-        const hook = await renderHook(() => useNewSessionComposerDocument({
-            promptStore,
-            persistedAttachments: [],
-            composerAttachmentEntriesById: {},
-            composerPluginProjection: {
-                machineId: 'machine-1',
-                serverId: 'server-1',
-                phase: 'ready',
-                inputs: projectionInputs,
-            },
-            scopeKey: 'server-a/account-a',
-            canSubmitRef: { current: true },
-            isSubmitting: false,
-        }));
+                scopeKey: 'server-1/region-account',
+                canSubmitRef: { current: true },
+                isSubmitting: false,
+            }));
 
-        await renderScreen(<>{hook.getCurrent().beforeComposer}</>);
+            await renderScreen(<>{hook.getCurrent().beforeComposer}</>);
 
-        expect(pluginSurfaceHostSpy).toHaveBeenCalledWith(expect.objectContaining({
-            composerMount: expect.objectContaining({
-                physicalTarget: { kind: 'app' },
-                mount: expect.objectContaining({
-                    kind: 'composer',
+            expect(pluginSurfaceHostSpy).toHaveBeenCalledWith(expect.objectContaining({
+                composerMount: expect.objectContaining({
+                    physicalTarget: { kind: 'app' },
                     mount: expect.objectContaining({
-                        role: 'region',
-                        input: expect.objectContaining({
-                            composer: {
-                                kind: 'newSession',
-                                instanceId: hook.getCurrent().ref.instanceId,
-                            },
+                        kind: 'composer',
+                        mount: expect.objectContaining({
+                            role: 'region',
+                            input: expect.objectContaining({
+                                composer: {
+                                    kind: 'newSession',
+                                    instanceId: hook.getCurrent().ref.instanceId,
+                                },
+                            }),
                         }),
                     }),
                 }),
-            }),
-        }));
+            }));
 
-        await hook.unmount();
+            await hook.unmount();
+        } finally {
+            await standardCleanup();
+            account.dispose();
+        }
     });
 
     it('seeds the persisted Automation edit references so an untouched composer resubmits them', async () => {

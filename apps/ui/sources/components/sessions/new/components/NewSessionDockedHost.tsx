@@ -326,17 +326,19 @@ function DockedComposer() {
         {/* The card clears the bar; its paint reaches only through the gap above that bar. */}
         <DockedBackdrop shown={!leaving} progress={entrance.enterProgress} phone={phone} cardTop={cardTop} clearanceAbove={clearanceAbove}
             reach={phone ? { right: reach.right, bottom: reach.bottom - clearedChrome } : { left: sideRoom, right: sideRoom, bottom: reach.bottom }} />
-        {resizable ? (
+        {Platform.OS === 'web' ? (
             <ResizableDockedPane testID="new-session-docked-resize" resizeEdge="both"
-                widthPx={dockWidth} minWidthPx={minWidth} maxWidthPx={columnWidth}
+                widthPx={resizable ? dockWidth : columnWidth}
+                minWidthPx={resizable ? minWidth : columnWidth} maxWidthPx={columnWidth}
                 onCommitWidthPx={commitDockWidth} onResetRequest={resetDockWidth}>
                 {card}
             </ResizableDockedPane>
         ) : card}
     </View>;
-    // A desktop seat spans the page column and centres the card in it, so a resize keeps the centre.
-    const composer = phone ? dock : <View pointerEvents={pointer.nativePointerEvents}
-        style={[styles.desktopSeat, pointer.webStyle, { marginLeft: pane.left, width: pane.width, marginBottom: reach.bottom }]}>
+    // Keep the same seat and card wrappers through a breakpoint. Reparenting
+    // the input retires its open plugin dialogs and drops the editor's caret.
+    const composer = <View pointerEvents={pointer.nativePointerEvents}
+        style={phone ? [pointer.webStyle, { width: '100%' }] : [styles.desktopSeat, pointer.webStyle, { marginLeft: pane.left, width: pane.width, marginBottom: reach.bottom }]}>
         {dock}
     </View>;
     return <EscapeLayerProvider layer={layer}>

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 
@@ -17,6 +18,41 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createT
 afterEach(async () => {
     resetSessionDraftRepositoryForTests();
     await standardCleanup();
+});
+
+it('retains the exact durable document revision and selection when its presentation remounts', async () => {
+    await prepareSessionDraftPersistenceStorage();
+    const scope = { serverId: 'retained-new-home', accountId: 'retained-new-account' };
+    const account = await activateStorageAccountScope(scope);
+    const draftId = 'responsive-new-draft';
+    const text = 'Unsent café é 👩🏽‍💻 日本語';
+    writeNewSessionDraft({ scope, draftId, patch: { text }, materializationIntent: 'userEdit' });
+    const promptStore = createNewSessionPromptStore(text);
+    const holder: { current: ReturnType<typeof useNewSessionComposerDocument> | null } = { current: null };
+    function DocumentProbe() {
+        holder.current = useNewSessionComposerDocument({
+            promptStore, persistedAttachments: [], composerAttachmentEntriesById: {},
+            draftScope: scope, draftId, scopeKey: `${scope.serverId}/${scope.accountId}`,
+            canSubmitRef: { current: true }, isSubmitting: false,
+        });
+        return null;
+    }
+    const screen = await renderScreen(<DocumentProbe key="desktop" />);
+    try {
+        await act(async () => { promptStore.setPrompt(`${text} edited`); });
+        holder.current!.inputPersistence.onSelectionChangePersist({ start: 0, end: 2 }, promptStore.getPrompt().length);
+        const before = holder.current!.readCurrentDocumentSnapshot();
+        expect(before).toMatchObject({ text: `${text} edited`, selection: { start: 0, end: 2 } });
+        await screen.update(<DocumentProbe key="phone" />);
+        expect.soft(holder.current!.readCurrentDocumentSnapshot()).toMatchObject({
+            ref: before!.ref, revision: before!.revision, text: before!.text, selection: before!.selection,
+            references: before!.references, attachments: before!.attachments,
+        });
+        expect(holder.current!.inputPersistence).toMatchObject({ initialSelection: { start: 0, end: 2 } });
+    } finally {
+        await screen.unmount();
+        account.dispose();
+    }
 });
 
 it('clears an accepted durable New Session draft after its presentation unmounts', async () => {
