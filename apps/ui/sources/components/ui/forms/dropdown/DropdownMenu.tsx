@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View, ViewStyle, StyleProp, TextStyle } from 'react-native';
+import { Platform, View, ViewStyle, StyleProp, TextStyle, useWindowDimensions } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Popover, type PopoverAnchor, type PopoverPlacement } from '@/components/ui/popover';
@@ -263,6 +263,10 @@ export function DropdownMenu(props: DropdownMenuProps) {
     const createItemDisplay = props.createItemDisplay ?? null;
     const matchTriggerWidth = props.matchTriggerWidth ?? true;
     const maxWidthCap = props.maxWidthCap ?? (matchTriggerWidth ? 1024 : 320);
+    // Let content grow to the available room without requiring a whole window below the trigger.
+    const { height: windowHeight } = useWindowDimensions();
+    const maxHeightCap = props.maxHeightCap ?? windowHeight;
+    const placementMinSpace = props.maxHeightCap ?? 320;
     const emptyLabel = props.emptyLabel === undefined ? t('commandPalette.noCommandsFound') : props.emptyLabel;
     const contentPadding = rowVariant === 'slim' ? 12 : 16;
     const resultsPaddingBottom = typeof props.resultsPaddingBottom === 'number'
@@ -645,7 +649,8 @@ export function DropdownMenu(props: DropdownMenuProps) {
                     anchor={props.popoverAnchor}
                     placement={props.placement ?? 'auto-vertical'}
                     gap={props.gap ?? 0}
-                    maxHeightCap={props.maxHeightCap ?? 320}
+                    maxHeightCap={maxHeightCap}
+                    placementMinSpace={placementMinSpace}
                     maxWidthCap={maxWidthCap}
                     edgePadding={edgePadding}
                     portal={{
