@@ -398,9 +398,6 @@ export function DeploymentDatabasePage(
     title: t('projects.deployments.databaseConnectTitle'),
     testID: 'project-deployments.connect.modal',
   }) : null;
-  const openConsole = database.kind === 'selfHosted' && detail.environment.capabilities.manage && lifetime
-    ? () => showDeploymentAddSheet({ detail, catalogFilters: DEPLOYMENT_CONSOLE_CATALOG_FILTER, lifetime,
-      review: props.review, machineName, onNavigate: props.onNavigate }) : null;
   const openMove = database.kind === 'selfHosted' && database.data.engine === 'postgres' && controller && actions && factsInput
     && detail.environment.capabilities.manage ? () => showDeploymentDatabaseMoveSheet({
       controller, source: detail, data: database.data, actions, backupTarget: factsInput,
@@ -488,23 +485,13 @@ export function DeploymentDatabasePage(
           ) : null}
 
           {database.kind === 'selfHosted' ? (
-            <ItemGroup
-              testID={`${id}.console`}
-              title={t('projects.deployments.overviewStatus.consoleTitle')}
-              description={t('projects.deployments.overviewStatus.consoleNeedsPrivateRoute')}
-              action={openConsole ? (
-                <SectionActionButton
-                  testID={`${id}.console.add`}
-                  title={t('projects.deployments.overviewStatus.consoleAdd')}
-                  onPress={openConsole}
-                />
-              ) : undefined}
-            >
+            // A console opens only over a private route, never publicly; no private Domain provider serves one yet.
+            <ItemGroup testID={`${id}.console`} title={t('projects.deployments.overviewStatus.consoleTitle')}>
               <Item
-                testID={`${id}.console.domains`}
-                title={t('projects.deployments.tabDomains')}
-                icon={<Icon name="globe" size={18} color={theme.colors.text.secondary} />}
-                onPress={() => props.onNavigate({ tab: 'domains' })}
+                testID={`${id}.console.access`}
+                title={t('projects.deployments.overviewStatus.consolePrivateAccess')}
+                mode="info"
+                detail={t('projects.deployments.overviewStatus.consolePrivateUnavailable')}
               />
             </ItemGroup>
           ) : null}
@@ -674,10 +661,6 @@ export function DeploymentDatabasePage(
 /** The Store catalog condition Data → Add opens with. */
 export const DEPLOYMENT_DATABASE_CATALOG_FILTER: SettingsCollectionFilter = Object.freeze({
   category: Object.freeze({ include: ['database'], exclude: [] }),
-});
-
-const DEPLOYMENT_CONSOLE_CATALOG_FILTER: SettingsCollectionFilter = Object.freeze({
-  category: Object.freeze({ include: ['administration-tool'], exclude: [] }),
 });
 
 /** P10: Add a service or database to this Environment, in place over it. Never routes to Store. */
