@@ -405,10 +405,13 @@ export function saveScopedRecord<T extends Record<string, unknown>>(key: string 
     }
     try {
         storage.set(key, JSON.stringify(value));
-    } catch {
+    } catch (error) {
         // Web localStorage enforces a quota (the Tauri desktop shell included): a transcript
         // larger than the remaining budget throws here. Persistence is best-effort for its
-        // callers — a failed write must never surface as a failed eviction or a broken boot.
+        // callers — a failed write must never surface as a failed eviction or a broken boot —
+        // but it stays observable: the key prefix names the failing cache without logging any
+        // record content.
+        console.warn(`[warm-cache] failed to persist record under ${key.split(':')[0] ?? key}`, error);
     }
 }
 
