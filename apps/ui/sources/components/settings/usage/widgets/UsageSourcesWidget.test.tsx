@@ -18,11 +18,13 @@ import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { t } from '@/text';
 import { UsageSourcesMachines, projectUsageSourcesMachines } from './UsageSourcesWidget';
+import { UsageBodySettledReportContext } from './usageBodyHeightMemory';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { act } from 'react-test-renderer';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced';
+import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
 import { createNearViewportTracker } from '@/components/widgets/nearViewport';
 import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
@@ -335,6 +337,44 @@ describe('Usage Sources body', () => {
     expect(screen.getTextContent()).toContain('MacBook Pro');
     // The grouped "Looking" line is replaced by the held section, never said twice.
     expect(screen.findByTestId('sources.lookingMachines')).toBeFalsy();
+    await screen.unmount();
+  });
+  it('reports its height settled only once the machine inventory is read, and draws a machine\'s rows before its place is measured (#6)', async () => {
+    // The dispatch remembers a body's height when it reports settled; a settled report from a loading inventory
+    // recorded a 104 px room, and rows hidden until measured drew the body 536 px short at 390.
+    const reports: { facts: boolean; settled: boolean }[] = [];
+    const report = (state: { facts: boolean; settled: boolean }) => { reports.push(state); };
+    const boundary = machineBoundary(found, [found]);
+    const props = { lifetime, serverId: 'home', executor: boundary.executor, testID: 'sources', input: { agents: [], machines: [], sources: [] } };
+    getStorage().setState({ machineListStatusByServerId: { home: 'loading' } });
+    const screen = await renderScreen(<UsageBodySettledReportContext.Provider value={report}>
+      <UsageSourcesMachines {...props} machines={[]} />
+    </UsageBodySettledReportContext.Provider>);
+    expect(screen.findByTestId('sources.loading')).toBeTruthy();
+    expect(reports.some(state => state.settled)).toBe(false);
+    // A machine whose place in the page is not measured yet (no node to measure here) draws its rows.
+    type Done = (x: number, y: number, width: number, height: number) => void;
+    const tracker = createNearViewportTracker({ quantum: 44, initialViewportHeight: 900, overscan: false,
+      readContentNode: () => ({ measureInWindow: (done: Done) => done(0, 0, 1000, 6000) }) });
+    await screen.update(<UsageBodySettledReportContext.Provider value={report}>
+      <PluginUiScrollActivityProvider tracker={tracker}>
+        <UsageSourcesMachines {...props} machines={[{ id: 'mac', name: 'MacBook Pro', online: true, homeDir: '/Users/ada' }]} />
+      </PluginUiScrollActivityProvider>
+    </UsageBodySettledReportContext.Provider>);
+    await vi.waitFor(() => expect(screen.findByTestId('sources.machine.mac.source.claude-default.add')).toBeTruthy());
+    expect(reports.at(-1)?.settled).toBe(true);
+    await screen.unmount();
+  });
+  it('lays a phone-width body out stacked from its first frame, before it measures itself (#6: +536 px at 390)', async () => {
+    const boundary = machineBoundary(found, [found]);
+    const screen = await renderScreen(<WidgetPresentationProvider value={{ size: 'large', footprint: { columns: 2, columnSpan: 2, rowSpan: 1, width: 'full', height: 'regular' },
+      geometry: { width: 358, height: 600 } }}>
+      <UsageSourcesMachines lifetime={lifetime} serverId="home" executor={boundary.executor} testID="sources"
+        input={{ agents: [], machines: [], sources: [] }} machines={[{ id: 'mac', name: 'MacBook Pro', online: true }]} />
+    </WidgetPresentationProvider>);
+    // Stacked: the status sits under the title inside the row's body, so the row has only its mark and its body.
+    const happier = screen.findHostByTestId('sources.happier')!;
+    expect(happier.children.filter(child => typeof child !== 'string')).toHaveLength(2);
     await screen.unmount();
   });
   it('leads with what is counted: Happier sessions live, then each counted source with the time it was read', async () => {

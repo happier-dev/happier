@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { useWindowDimensions, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { isUsageSourceMissing, selectUsageSourceDiscoveryInventory, matchesUsageSourceAccountingScope, USAGE_SOURCE_CONSENT_DISCLOSURE, type UsageSourceV1 } from '@happier-dev/protocol/usage/usageSources';
 import { UsageSourceInventoryScopeSchema, type UsageSourceInventoryScope } from '@happier-dev/protocol/inputs/usageQuery';
@@ -136,8 +136,12 @@ export function UsageSourcesMachines(
   const online = machines.filter(machine => machine.online);
   const offlineCount = machines.length - online.length;
   const [widthPx, setWidthPx] = React.useState<number | null>(null);
-  // Below the row-stack width a source's status moves beneath its folder (phones recompose).
-  const wide = widthPx === null || widthPx >= HAPPIER_PAGE_METRICS.rowStackBelowWidthPx;
+  // Below the row-stack width a source's status moves beneath its folder (phones recompose). Before the body measures
+  // itself the frame's width decides, or else the window's (the body is never wider), so a phone draws stacked rows
+  // from its first frame instead of wide rows that re-stack 536 px taller one layout later (#6 at 390).
+  const frameWidthPx = useWidgetPresentation()?.geometry?.width ?? null;
+  const windowWidthPx = useWindowDimensions().width;
+  const wide = (widthPx ?? frameWidthPx ?? windowWidthPx) >= HAPPIER_PAGE_METRICS.rowStackBelowWidthPx;
   // Only a derived per-machine state leaves each controller (counted content, nothing found, still
   // looking, or unreadable). Inventory, source state and demand stay at the mounted leaf; the grouped
   // lines cannot label a previous Account or selection as current.
@@ -160,8 +164,11 @@ export function UsageSourcesMachines(
   const states = stateProjection?.lifetime === props.lifetime && stateProjection.key === projectionKey ? stateProjection.states : null;
   const countIn = (state: UsageSourcesMachineState) => online.filter(machine => (states?.get(machine.id)?.state ?? 'looking') === state).length;
   const emptyCount = countIn('none');
-  // Every online machine has answered (or failed): the dispatch's cold-load floor gives way to the drawn list.
-  useReportUsageBodySettled(online.length === 0 || states !== null && countIn('looking') === 0);
+  // Every online machine has answered (or failed): the dispatch's cold-load room gives way to the drawn list and
+  // remembers its height. A machine inventory still loading is not an empty fleet: settling on it recorded a 104 px
+  // room that the next cold load held before growing by the whole list (#6).
+  const inventoryLoading = props.machines.length === 0 && inventoryStatus === 'loading';
+  useReportUsageBodySettled(!inventoryLoading && (online.length === 0 || states !== null && countIn('looking') === 0));
   const unreadable = online.filter(machine => states?.get(machine.id)?.state === 'unreadable');
   // The server disclosure is said once for the page, beside the sources it governs.
   const consentable = online.some(machine => states?.get(machine.id)?.consentable === true);
@@ -323,7 +330,11 @@ const MachineSources = React.memo(function MachineSources(
   const { theme } = useUnistyles();
   const tracker = useOptionalPluginUiScrollActivityTracker();
   const shellRef = React.useRef<View | null>(null);
-  const { near, measure } = useMeasuredNearViewport(tracker, shellRef, true, props.machineId);
+  const placement = useMeasuredNearViewport(tracker, shellRef, true, props.machineId);
+  const { measure } = placement;
+  // Until its place is measured a machine draws its rows: hiding them first drew a body short by every found row, which
+  // grew once the page measured it (#6: +536 px on a warm revisit at 390). A far machine then holds its drawn height.
+  const near = placement.near || !placement.measured;
   const [bodyHeight, setBodyHeight] = React.useState(0);
   const { controller, snapshot, ready } = useUsageSourcesController({
     machineId: props.machineId,

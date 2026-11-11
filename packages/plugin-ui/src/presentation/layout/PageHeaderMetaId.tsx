@@ -39,8 +39,8 @@ export function HappierMiddleEllipsisText(props: Readonly<{ value: string; style
   const split = Platform.OS === 'web' ? splitForWebMiddleEllipsis(props.value) : null;
   if (split === null) return <HappierText testID={props.testID} style={props.style} numberOfLines={1} ellipsizeMode="middle">{props.value}</HappierText>;
   return <HappierText testID={props.testID} style={[props.style, HAPPIER_MIDDLE_ELLIPSIS_STYLE.row]}>
-    <HappierText style={HAPPIER_MIDDLE_ELLIPSIS_STYLE.head} numberOfLines={1} ellipsizeMode="tail">{split.head}</HappierText>
-    <HappierText style={HAPPIER_MIDDLE_ELLIPSIS_STYLE.tail} numberOfLines={1}>{split.tail}</HappierText>
+    <HappierText style={split.headStyle} numberOfLines={1} ellipsizeMode="tail">{split.head}</HappierText>
+    <HappierText style={split.tailStyle} numberOfLines={1}>{split.tail}</HappierText>
   </HappierText>;
 }
 

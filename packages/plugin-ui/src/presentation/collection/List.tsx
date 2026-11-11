@@ -443,8 +443,8 @@ export function HappierListSection({
       style={[titleStyle, hasAction || titleMiddle !== null ? sectionHeadingTitleBesideActionStyle : sectionHeadingTitleStyle]}>
       {titleMiddle === null ? titleContent ?? title : (
         <>
-          <HappierText style={HAPPIER_MIDDLE_ELLIPSIS_STYLE.head} numberOfLines={1}>{titleMiddle.head}</HappierText>
-          <HappierText style={HAPPIER_MIDDLE_ELLIPSIS_STYLE.tail} numberOfLines={1}>{titleMiddle.tail}</HappierText>
+          <HappierText style={titleMiddle.headStyle} numberOfLines={1}>{titleMiddle.head}</HappierText>
+          <HappierText style={titleMiddle.tailStyle} numberOfLines={1}>{titleMiddle.tail}</HappierText>
         </>
       )}
     </HappierText>
@@ -956,8 +956,8 @@ export function HappierListItem({
             >
               {titleMiddle === null ? titleContent ?? title : (
                 <>
-                  <HappierText style={HAPPIER_MIDDLE_ELLIPSIS_STYLE.head} numberOfLines={1}>{titleMiddle.head}</HappierText>
-                  <HappierText style={HAPPIER_MIDDLE_ELLIPSIS_STYLE.tail} numberOfLines={1}>{titleMiddle.tail}</HappierText>
+                  <HappierText style={titleMiddle.headStyle} numberOfLines={1}>{titleMiddle.head}</HappierText>
+                  <HappierText style={titleMiddle.tailStyle} numberOfLines={1}>{titleMiddle.tail}</HappierText>
                 </>
               )}
             </HappierText>

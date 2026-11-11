@@ -353,6 +353,21 @@ it('shows the canonical capacity weather and insufficient model/reset basis insi
     .find(node => node.props.legacyServiceId === 'claude-subscription')).toBeTruthy();
 });
 
+it('draws a plan row only for an account with a reading; a first read in flight is not a placeholder row (Plans #7)', async () => {
+  const { createCanonicalJsonSigningInput } = await import('@happier-dev/protocol/crypto/canonicalJson');
+  const now = Date.now();
+  const props = bodyProps([quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 80,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }])]);
+  // On a cold load every account is in flight; a row per pending account grew the list and shrank it again as the
+  // never-read ones collapsed into their one line.
+  const slice = { ...props.slice, sources: [...props.slice.sources, { source: `quota:${createCanonicalJsonSigningInput({
+    bindingKind: 'account', ref: { service, accountId: 'spare' } })}`, status: 'pending' as const }] };
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const screen = await renderScreen(wrap(<UsagePlanFitWidget {...props} slice={slice} id="usage_plan_fit" testID="fit" />));
+  expect(screen.findByTestId('fit.plan.work')).toBeTruthy();
+  expect(screen.findByTestId('fit.plan.spare')).toBeFalsy();
+});
+
 it('shows the entered monthly amount without inventing a provider billing period', async () => {
   const now = Date.now();
   const read = quotaRead('work', now, [], {}, { subscription: { status: 'unavailable', renewal: 'unknown',

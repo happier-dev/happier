@@ -34,6 +34,24 @@ function useLayoutClass(): string {
   return `${Math.round(windowWidth / WIDTH_STEP_PX)}:${footprint ? `${footprint.columnSpan}/${footprint.columns}` : '-'}`;
 }
 
+function useHeightKey(occurrence: string): string {
+  return `h:${encodeURIComponent(occurrence)}:${useLayoutClass()}`;
+}
+
+/** One Usage body occurrence: the body and the web host's loading fallback name it the same way. */
+export function usageBodyOccurrence(serverId: string, testID: string): string {
+  return `${serverId}:${testID}`;
+}
+
+/**
+ * The room a body last drew, for the web host's fallback while the body's code loads: without it the frame drew a
+ * generic loader and grew once the body mounted inside its remembered room (#6: 223 → 2048 px at 390).
+ */
+export function useUsageBodyRememberedHeight(occurrence: string): number | null {
+  const key = useHeightKey(occurrence);
+  return React.useMemo(() => readHeight(key), [key]);
+}
+
 function readHeight(key: string): number | null {
   const value = store()?.getNumber(key);
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
@@ -53,7 +71,7 @@ export function useUsageBodyHeightMemory(occurrence: string, state: Readonly<{ f
   style: ViewStyle | undefined;
   onLayout: (event: LayoutChangeEvent) => void;
 }> {
-  const key = `h:${encodeURIComponent(occurrence)}:${useLayoutClass()}`;
+  const key = useHeightKey(occurrence);
   const remembered = React.useMemo(() => readHeight(key), [key]);
   const written = React.useRef<Readonly<{ key: string; height: number | null }>>({ key, height: remembered });
   const { facts, settled } = state;

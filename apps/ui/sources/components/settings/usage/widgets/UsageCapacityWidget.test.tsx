@@ -421,6 +421,11 @@ it('names only pending accounts once in the held headline row, and drops it once
   expect.soft(screen.getTextContent()).toContain(t('usage.board.plans.capacityReading', { count: 2 }));
   // The headline owns first-load progress; a second polite footer must stay quiet.
   expect.soft(screen.findAllByType(SurfaceFreshnessLine)).toHaveLength(0);
+  // A never-read account in flight is said by that line, not drawn as a cell: on a cold load every account is in
+  // flight, and drawing each as a dash cell grew the grid past its settled size (Plans #5: 838 → 400).
+  expect(screen.findHostByTestId('capacity.cell.work')).not.toBeNull();
+  expect(screen.findHostByTestId('capacity.cell.personal')).toBeNull();
+  expect(screen.findHostByTestId('capacity.cell.shared')).toBeNull();
   expect((await render(settled)).findByTestId('capacity.reading')).toBeNull();
 });
 

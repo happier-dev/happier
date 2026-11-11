@@ -126,6 +126,15 @@ export function isUsagePlanAccountSettledUnread(account: UsagePlanAccount): bool
   return account.observedAtMs === null && account.state.status !== 'pending';
 }
 
+/**
+ * Whether a plan body draws the account as a row or segment: only once it has a reading. A first read still in flight
+ * is said by the body's reading line instead; drawn as a placeholder row, every account of a cold load grew the body
+ * past its settled size and it shrank as never-read accounts collapsed (Plans #5 Capacity 838 → 400, #7 Plan fit).
+ */
+export function isUsagePlanAccountDrawn(account: UsagePlanAccount): boolean {
+  return account.observedAtMs !== null;
+}
+
 export function UsagePlanAccountStates(props: Readonly<{
   accounts: readonly UsagePlanAccount[];
   nameOf(account: UsagePlanAccount): UsagePlanAccountName;

@@ -355,7 +355,11 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   // Cost bases are named by the first usage read; until it answers (or fails) the toolbar holds the chip's room.
   // The toolbar's second row is held from first paint too: until the layout answers, the widgets it follows are unknown.
   const layoutLoading = layout.state.status === 'loading';
-  const costBasisPending = (layoutLoading || usageWidgets.length > 0) && facts.costBasisPending;
+  // The chip's choices come from every usage read on the view, not only Tokens/Cost widgets: Sources' Coverage and
+  // Unpriced read usage too, and their chip arriving with the first read pushed a phone page down a line (N4).
+  const readsUsage = React.useMemo(() => ready !== null && flattenWidgetLayoutWidgetsV1(ready.items)
+    .some(row => row.instance.definition.kind === 'builtin' && isUsageQueryWidget(row.instance.definition.id)), [ready]);
+  const costBasisPending = (layoutLoading || readsUsage) && facts.costBasisPending;
   const bindingSelectLayout = binding.selectLayout;
   const selectAreaLayout = React.useCallback(async (layoutId: string, callerContext?: ActionExecutorContext) =>
     (await bindingSelectLayout(layoutId, callerContext)).ok, [bindingSelectLayout]);

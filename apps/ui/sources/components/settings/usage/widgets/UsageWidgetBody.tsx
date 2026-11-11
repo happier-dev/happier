@@ -40,7 +40,7 @@ import { UsageSourcesWidget } from './UsageSourcesWidget';
 import { UsageSourceCoverageWidget, UsageUnpricedWidget } from './UsageSourcePanels';
 import { UsageConstellationBody, UsagePlanetBody, UsageRunLengthBody, UsageScoreBody } from './UsageChartStyleBodies';
 import { UsageAtmosphereBody, UsageMachinesBody, UsageOrbitStyleBody, UsageProjectsBody } from './UsagePlanetFamilyBodies';
-import { UsageBodyReadingPlaceholderContext, UsageBodySettledReportContext, useReportUsageBodySettled, useUsageBodyHeightMemory, type UsageBodyReadState } from './usageBodyHeightMemory';
+import { UsageBodyReadingPlaceholderContext, UsageBodySettledReportContext, usageBodyOccurrence, useReportUsageBodySettled, useUsageBodyHeightMemory, type UsageBodyReadState } from './usageBodyHeightMemory';
 
 const NOT_READ: UsageBodyReadState = Object.freeze({ facts: false, settled: false });
 
@@ -111,7 +111,7 @@ export function UsageWidgetBody(
   }, []);
   const shown = React.useMemo((): UsageBodyReadState => placeholders > 0 && readState.facts
     ? { facts: false, settled: readState.settled } : readState, [placeholders, readState]);
-  const memory = useUsageBodyHeightMemory(`${props.serverId}:${props.testID}`, shown);
+  const memory = useUsageBodyHeightMemory(usageBodyOccurrence(props.serverId, props.testID), shown);
   return <UsageChartInteractions>
     <UsageBodyReadingPlaceholderContext.Provider value={registerPlaceholder}>
     <UsageBodySettledReportContext.Provider value={report}>

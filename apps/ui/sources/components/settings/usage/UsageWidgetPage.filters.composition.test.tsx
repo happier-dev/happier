@@ -598,6 +598,31 @@ describe('mounted Usage page scope commands', () => {
         expect(screen.findAllByTestId('usage-area.unavailable')).toHaveLength(0);
     });
 
+    it('holds the cost-basis chip from first paint on a view whose widgets read usage but have no Tokens/Cost (Sources at 390, N4)', async () => {
+        // The chip followed only Tokens/Cost widgets while pending, but its choices follow every usage read: on Sources it
+        // arrived with the first read and pushed the whole page down a phone line (42 px).
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-basis-hold.test', accountId: 'account-a' }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query') return new Promise<Response>(() => {});
+                return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        publishAppliedActiveServerRuntimeAvailability(true);
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <UsageWidgetPage initialFilters={{ layoutId: 'sources', period: '7days', metric: 'tokens', costMode: 'auto', focus: null }} />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        await waitForHomeGovernance(() => expect(screen.findAllByTestId('usage-area.widget.sources:group:0:widget:1').length).toBeGreaterThan(0));
+        await flushHookEffects({ cycles: 20 });
+        expect(screen.findByType(UsageFilterBar).props.costBasisPending).toBe(true);
+    });
+
     it('publishes the failed page read Retry and recovers through the agent command', async () => {
         let readFails = true;
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });

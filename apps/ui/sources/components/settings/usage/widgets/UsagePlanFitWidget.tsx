@@ -29,6 +29,7 @@ import {
   planPaceReasonText,
   UsagePlanIdentity,
   UsagePlanAccountStates,
+  isUsagePlanAccountDrawn,
   isUsagePlanAccountSettledUnread,
   UsagePlanSectionHead,
   UsagePlansNothingRead,
@@ -69,9 +70,10 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
   }
   const insightsOf = (account: UsagePlanAccount) => props.slice.planInsights?.accounts.find(entry => entry.source.ref.accountId === account.accountId
     && entry.source.ref.service.pluginId === account.service.pluginId && entry.source.ref.service.localId === account.service.localId);
-  // Never-read accounts are one quiet line, not rows (R1); a missing price shared by every row is said once (R9).
-  const drawn = projection.accounts.filter((account) => !isUsagePlanAccountSettledUnread(account));
-  const unreadCount = projection.accounts.length - drawn.length;
+  // Never-read accounts are one quiet line, not rows (R1), and a first read in flight is said by the state line under
+  // the rows; a missing price shared by every row is said once (R9).
+  const drawn = projection.accounts.filter(isUsagePlanAccountDrawn);
+  const unreadCount = projection.accounts.filter(isUsagePlanAccountSettledUnread).length;
   const noPriceOnce = drawn.length > 1 && drawn.every((account) => readPlanKeyFact(account, insightsOf(account), nowMs) === null);
   // Rows with no ended window yet say so once under the list, not on every row (sweep 1110 item 19).
   const noneEndedOnce = drawn.filter((account) => account.read?.current

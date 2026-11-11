@@ -43,6 +43,7 @@ import {
   UsagePlansNothingRead,
   UsagePlanIdentity,
   UsagePlanAccountStates,
+  isUsagePlanAccountDrawn,
   isUsagePlanAccountSettledUnread,
   readPendingPlanAccountCount,
   usePlanText,
@@ -207,8 +208,9 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
     ? <TextLinkButton label={t('usage.board.plans.plansAndResets')} tone="accent" size="meta" onPress={openPlans} testID={`${props.testID}.plansLink`} />
     : null, [pooled, tile, openPlans, props.testID]);
   useWidgetFrameBodyMeta(plansLink);
-  // Never-read accounts collapse into one quiet line; accounts in flight keep their segment's room.
-  const drawn = React.useMemo(() => projection.accounts.filter((account) => !isUsagePlanAccountSettledUnread(account)), [projection.accounts]);
+  // Only an account with a reading is a segment: never-read accounts collapse into one quiet line, and a first read
+  // still in flight is said by the reading line.
+  const drawn = React.useMemo(() => projection.accounts.filter(isUsagePlanAccountDrawn), [projection.accounts]);
   const unreadNames = projection.accounts.filter(isUsagePlanAccountSettledUnread).map(account => nameOf(account).title);
   const runs = React.useMemo(
     () => {
@@ -585,7 +587,7 @@ function CapacityCell(
     <View
       testID={props.testID}
       // Every cell sits in a meter list (the bar, the pooled bar, the listed accounts): it is that list's item.
-      accessibilityRole="listitem"
+      accessibilityRole="text"
       style={[
         styles.cell,
         // A listed row stacks in a column: it takes its content's height (a "used up" note under the name),

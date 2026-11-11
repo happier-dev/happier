@@ -5,7 +5,7 @@ import { HAPPIER_MIDDLE_ELLIPSIS_STYLE, splitForWebMiddleEllipsis } from '@happi
 
 import { Text } from '@/components/ui/text/Text';
 
-const { row: ROW_STYLE, head: HEAD_STYLE, tail: TAIL_STYLE } = HAPPIER_MIDDLE_ELLIPSIS_STYLE;
+const { row: ROW_STYLE } = HAPPIER_MIDDLE_ELLIPSIS_STYLE;
 
 /** The split is plugin-ui's, so a plugin row and a core row give up the same middle. */
 export { splitForWebMiddleEllipsis };
@@ -30,8 +30,8 @@ export function MiddleEllipsisText(props: Readonly<{
     }
     return (
         <Text testID={props.testID} style={[props.style, ROW_STYLE]} accessibilityRole={props.accessibilityRole}>
-            <Text style={HEAD_STYLE} numberOfLines={1} ellipsizeMode="tail">{split.head}</Text>
-            <Text style={TAIL_STYLE} numberOfLines={1}>{split.tail}</Text>
+            <Text style={split.headStyle} numberOfLines={1} ellipsizeMode="tail">{split.head}</Text>
+            <Text style={split.tailStyle} numberOfLines={1}>{split.tail}</Text>
         </Text>
     );
 }

@@ -1,7 +1,7 @@
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, standardCleanup } from '@/dev/testkit';
-import { useUsageBodyHeightMemory } from './usageBodyHeightMemory';
+import { useUsageBodyHeightMemory, useUsageBodyRememberedHeight } from './usageBodyHeightMemory';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -26,6 +26,11 @@ describe('the Usage body height memory (sweep 1110 N3)', () => {
       first.getCurrent()!.onLayout(layout(322));
     });
     await first.unmount();
+
+    // Before the body's code has loaded (the web host's fallback), the same room is already known (#6: 223 → 2048).
+    const fallback = await renderHook(() => useUsageBodyRememberedHeight('home:usage-area.widget.overview:0'));
+    expect(fallback.getCurrent()).toBe(322);
+    await fallback.unmount();
 
     // Next visit, before any read answers: the first render already holds exactly that room, so a taller reading
     // placeholder cannot push the page and the facts land inside it.
