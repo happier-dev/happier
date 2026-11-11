@@ -7895,6 +7895,24 @@ predecessor adapter is introduced.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Workspace Sync reconnect accepts the existing signed SOURCE
+relationship projection without a new target bootstrap choice. The target owner
+requires exact persisted READY custody before rehydrating that relationship.
+The closed V1 request fields and physical SOURCE admission remain in force.
+Matching Protocol and CLI source reload together because earlier development
+readers require a bootstrap choice for every transient projection. This direct
+development cut changes no wire epoch or persistence format. The inspected
+`../0.2` frontier `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no Workspace
+Sync handoff schema at this path.
+
+Unreleased 0.3 Environment create/update storage projections accept an optional
+`referencedSavedSecretRevisions: null` marker from admitted template preparation.
+It preserves the existing incomplete capture state until the binding writer
+commits. Public Action inputs and the persisted column format are unchanged.
+Matching CLI, Protocol and Home source reload together; earlier strict storage
+readers reject the new field. Omission preserves existing binding-free behavior.
+This is a direct development cut, without a new epoch, capability or migration.
+
 Unreleased 0.3 Session spawn errors accept optional `failureCause` through the
 existing closed `ActionFailureCauseV1` schema. Directory preparation preserves
 the lower admission phase and code for path and managed creation callers; the
@@ -10682,10 +10700,13 @@ Machine preset contracts.
 Each enrolled managed Machine keeps its own Account, Team and Group grants.
 Manage on a controller also supplies Manage on its guests, including nested
 guests; Can use on a controller supplies no guest authority. Cyclic controller
-references propagate only existing Manage authority. The managed-role owner
-(`managedRows.ts`, with its pure rule in `managedRole.ts`) supplies the same rule
-to managed list/detail/control and the ordinary Machine permission graph.
-Session, terminal, service and Action admission consume that Machine result.
+references propagate only existing Manage authority. The ordinary Machine
+permission graph owns guest access for Session, terminal, service and Action
+admission. Native resource custody is separate: `managedRole.ts` caps a guest's
+own role at Use for the managed-resource projection. Only controller Manage or
+controller-less custody supplies resource Manage, required for native lifecycle
+control and unredacted custodian credential/bootstrap selectors. Granting admin
+on a guest does not delegate the custodian's billed resource.
 Team workload authority uses the Team's grant, independently of any member's
 personal Machine grant. Pools retain their separate ownership and audience
 contract.

@@ -6,10 +6,10 @@ export function inheritManagedControllerRole(controllerRole: MachineAccessRoleV1
     return controllerRole === 'manage' ? 'manage' : guestRole;
 }
 
-/** Native custody before enrollment and the enrolled guest consume the same role rule. */
+/** Guest access permits resource visibility; native Manage remains with controller authority or direct custody. */
 export function resolveManagedMachineRole(row: Readonly<{ custodianAccountId: string; controllerMachineId: string | null }>,
     actorAccountId: string, controllerRole: MachineAccessRoleV1 | null = null,
     guestRole: MachineAccessRoleV1 | null = null): MachineAccessRoleV1 | null {
     return inheritManagedControllerRole(controllerRole,
-        row.controllerMachineId === null && row.custodianAccountId === actorAccountId ? 'manage' : guestRole);
+        row.controllerMachineId === null && row.custodianAccountId === actorAccountId ? 'manage' : guestRole ? 'use' : null);
 }

@@ -5,7 +5,7 @@ import type { Tx } from '@/storage/inTx';
 import { db } from '@/storage/db';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { ManagedMachineError, readManagedMachineInTx, readManagedEnrollmentAccountId, projectManagedMachine,
-    readManagedController, sameManagedInput, resolveManagedMachineRoleInTx,
+    readManagedController, sameManagedInput, resolveManagedMachineRolesInTx,
     requireManagedControllerInTx, inManagedMachinePublicationTx, invalidateManagedMachineInTx, type StoredManagedMachine } from './managedRows';
 
 type ManagedGuestPublisher = Readonly<{ accountId: string; machineId: string; installationId: string }>;
@@ -48,7 +48,7 @@ export async function resolveManagedGuestActivityAdmissionInTx(tx: Tx, input: Re
         if (row.enrolledMachineId !== input.machineId || !sameManagedInput(readManagedController(row), input.target.controller)
             || !release && (row.intentRevision !== input.target.expectedRevision || row.creationState !== 'active'
                 || row.archivedAt !== null || row.allocation !== 'bound' || row.resource === null)) return null;
-        if (await resolveManagedMachineRoleInTx(tx, row, input.actorAccountId) !== 'manage') return null;
+        if ((await resolveManagedMachineRolesInTx(tx, row, input.actorAccountId)).guestActivityRole !== 'manage') return null;
         await requireManagedControllerInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId,
             controller: input.target.controller });
         const enrollmentAccountId = readManagedEnrollmentAccountId(row);

@@ -10939,7 +10939,7 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
-    it('admits exact native control from guest Manage without opening the controller and retains submitted work after withdrawal', async () => {
+    it('refuses guest-only native control, admits controller Manage, and retains submitted work after withdrawal', async () => {
         const { fixture, homeId, controller, input } = await createManagedNativeAuthFixture();
         const creationRequestId = crypto.randomUUID();
         const created = await admitManagedAcquire({ requesterAccountId: fixture.account.id, custodianAccountId: fixture.account.id,
@@ -10969,8 +10969,8 @@ describe("external Action execution authorization", () => {
             headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: controller.machineId,
                 envelope: { v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: controller.machineId },
                     input: { homeId, managedId: created.machine.id } } } });
-        const grant = (level: 'view' | 'admin') => inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
-            actorAccountId: fixture.account.id, machineId: guest.id,
+        const grant = (level: 'view' | 'admin', machineId = guest.id) => inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
+            actorAccountId: fixture.account.id, machineId,
             principal: { kind: 'account', accountId: actor.account.id }, level }));
         try {
             await grant('view');
@@ -10978,6 +10978,11 @@ describe("external Action execution authorization", () => {
             expect((await inspect()).statusCode).toBe(409);
             await grant('admin');
             expect(await resolveMachineAccess({ actorAccountId: actor.account.id, machineId: controller.machineId })).toBeNull();
+            expect((await issue()).statusCode).toBe(409);
+            expect((await inspect()).statusCode).toBe(409);
+            await grant('admin', controller.machineId);
+            expect(await resolveMachineAccess({ actorAccountId: actor.account.id, machineId: controller.machineId }))
+                .toMatchObject({ role: 'manage' });
             const inspected = await inspect();
             expect(inspected.statusCode, inspected.body).toBe(200);
             const issued = await issue();
@@ -10995,7 +11000,7 @@ describe("external Action execution authorization", () => {
             const correlation = { homeId, managedId: created.machine.id, expectedIntentRevision: 1, requestId, controller };
             const submitted = await post('/v1/machines/managed/controller/submit-intent', correlation);
             expect(submitted.statusCode, submitted.body).toBe(200);
-            await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: fixture.account.id, machineId: guest.id,
+            await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: fixture.account.id, machineId: controller.machineId,
                 principal: { kind: 'account', accountId: actor.account.id } }));
             const settled = await post('/v1/machines/managed/controller/report-intent', { ...correlation,
                 result: { kind: 'confirmed' }, observation: { observedAt: 30, availability: 'present', power: 'stopped' } });

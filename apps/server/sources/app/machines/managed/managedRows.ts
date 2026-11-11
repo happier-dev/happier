@@ -35,7 +35,8 @@ import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import { ManagedConfigurationFactsV1ReadSchema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveEffectiveMachineAccessForMachinesInTx } from '@/app/machines/machineAccess';
-import { resolveManagedMachineRole } from './managedRole';
+import { inheritManagedControllerRole, resolveManagedMachineRole } from './managedRole';
+import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 export { resolveManagedMachineRole } from './managedRole';
 import { readMachineAudienceAccountIdsForMachinesInTx } from '@/app/machines/machineRecipientWork';
 import { serializeManagedMachineRef, serializeManagedInputRuntime } from '@/app/machines/machineSerialization';
@@ -47,13 +48,22 @@ export function hasPossibleManagedNativeResource(row: Pick<StoredManagedMachine,
     return row.allocation !== 'unsubmitted' && row.allocation !== 'confirmed-absent';
 }
 
-export async function resolveManagedMachineRoleInTx(tx: Tx, row: Pick<StoredManagedMachine, 'custodianAccountId' | 'controllerMachineId' | 'enrolledMachineId'>, actorAccountId: string) {
+/** Acquire once; native resource power and guest activity have distinct existing authorities. */
+export async function resolveManagedMachineRolesInTx(tx: Tx, row: Pick<StoredManagedMachine, 'custodianAccountId' | 'controllerMachineId' | 'enrolledMachineId'>, actorAccountId: string): Promise<Readonly<{
+    resourceRole: MachineAccessRoleV1 | null; guestActivityRole: MachineAccessRoleV1 | null;
+}>> {
     const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, {
         machineIds: [row.controllerMachineId, row.enrolledMachineId].filter((id): id is string => id !== null), accountIds: [actorAccountId],
     });
-    return resolveManagedMachineRole(row, actorAccountId,
+    const guestRole = row.enrolledMachineId ? access.get(row.enrolledMachineId)?.get(actorAccountId) ?? null : null;
+    const resourceRole = resolveManagedMachineRole(row, actorAccountId,
         row.controllerMachineId ? access.get(row.controllerMachineId)?.get(actorAccountId) ?? null : null,
-        row.enrolledMachineId ? access.get(row.enrolledMachineId)?.get(actorAccountId) ?? null : null);
+        guestRole);
+    return { resourceRole, guestActivityRole: inheritManagedControllerRole(resourceRole, guestRole) };
+}
+
+export async function resolveManagedMachineRoleInTx(tx: Tx, row: Pick<StoredManagedMachine, 'custodianAccountId' | 'controllerMachineId' | 'enrolledMachineId'>, actorAccountId: string) {
+    return (await resolveManagedMachineRolesInTx(tx, row, actorAccountId)).resourceRole;
 }
 
 /** The invoking host admitted this person's descriptor; it is not a server plugin declaration. */

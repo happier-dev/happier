@@ -133,7 +133,7 @@ export async function createCreatorFixture() {
 }
 
 export async function exerciseManagedCreatorAccess() {
-    const { homeId, custodian, creator, stranger, controller, row, create } = await createCreatorFixture();
+    const { homeId, custodian, creator, stranger, controller, launch, row, create } = await createCreatorFixture();
     const unrelated = await create(stranger.id);
     const legacy = await create();
     const target = { homeId, managedId: row.id };
@@ -147,9 +147,32 @@ export async function exerciseManagedCreatorAccess() {
     const controls = [
         { action: 'machines.managed.power.set', requestId: randomUUID(), input: { ...target, when: 'now', intent: 'start', expectedRevision: 0 } },
         { action: 'machines.managed.delete', requestId: randomUUID(), input: { ...target, when: 'now', intent: 'delete', expectedRevision: 0, reviewedDependencies: true } },
+        { action: 'machines.managed.resize', requestId: randomUUID(), input: { ...target, size: { cpuCores: 2 } } },
     ] as const;
     for (const input of controls) await expect(admitManagedControl({ actorAccountId: creator.id,
         custodianAccountId: custodian.id, input })).rejects.toMatchObject({ code: 'permission_denied' });
+    const enrolled = await create(creator.id);
+    const guest = await db.machine.create({ data: { id: randomUUID(), accountId: creator.id,
+        metadata: '{}', installationId: randomUUID() } });
+    await db.machineAccountGrant.create({ data: { machineId: guest.id, accountId: stranger.id,
+        accessLevel: 'admin', createdByAccountId: creator.id } });
+    await db.managedMachine.update({ where: { id: enrolled.id }, data: { enrolledMachineId: guest.id, allocation: 'bound',
+        resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'guest-native-resource' } },
+        launch: { ...launch, credentials: [{ purpose: { consumer: launch.provider, purpose: 'native' },
+            account: { service: { pluginId: 'fixture.creator', localId: 'native-account' }, accountId: 'private-company-connection' } }] },
+        bootstrapCredentialRef: { kind: 'shared_resource', resourceId: 'private-bootstrap' } } });
+    for (const actor of [creator, stranger]) {
+        expect(await inTx(tx => resolveEffectiveMachineRoleInTx(tx, { actorAccountId: actor.id, machineId: guest.id }))).toBe('manage');
+        const visible = await getManagedMachine({ actorAccountId: actor.id, input: { homeId, managedId: enrolled.id } });
+        expect(visible.launch).not.toHaveProperty('credentials');
+        expect(visible).not.toHaveProperty('bootstrapCredentialRef');
+        const listed = (await listManagedMachines({ actorAccountId: actor.id, input: { homeId } })).machines.find(machine => machine.id === enrolled.id);
+        expect(listed?.launch).not.toHaveProperty('credentials');
+        expect(listed).not.toHaveProperty('bootstrapCredentialRef');
+        for (const input of controls) await expect(admitManagedControl({ actorAccountId: actor.id,
+            custodianAccountId: custodian.id, input: { ...input, input: { ...input.input, managedId: enrolled.id } } }))
+            .rejects.toMatchObject({ code: 'permission_denied' });
+    }
     expect(await cancelManagedCreation({ actorAccountId: creator.id, input: { ...target, expectedIntentRevision: 0 } }))
         .toMatchObject({ machine: { id: row.id, creationState: 'canceled', desired: 'delete' } });
     expect(await getManagedMachine({ actorAccountId: custodian.id, input: target })).toMatchObject({ id: row.id });
@@ -215,7 +238,7 @@ export async function exerciseManagedCreatorSetupRecovery() {
     const { homeId, creator, stranger, launch, row } = await createCreatorFixture();
     const guest = await db.machine.create({ data: { id: randomUUID(), accountId: creator.id, metadata: '{}', installationId: randomUUID() } });
     await db.machineAccountGrant.create({ data: { machineId: guest.id, accountId: stranger.id,
-        accessLevel: 'view', createdByAccountId: creator.id } });
+        accessLevel: 'admin', createdByAccountId: creator.id } });
     const setup = { scripts: [{ body: 'echo admitted' }] };
     await db.managedMachine.update({ where: { id: row.id }, data: { allocation: 'bound', enrolledMachineId: guest.id,
         resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: randomUUID() } },
