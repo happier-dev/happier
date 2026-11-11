@@ -38,7 +38,7 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 const rpc = createProviderSettingsHarness({ machines: [] });
 installProviderSettingsRpcBoundary(rpc);
 const account = createProviderSettingsAccountHarness();
-const { presentConnectSheet } = await import('./ConnectedServiceSetupModal');
+const { openPluginConnectedAccountSheet } = await import('@/components/plugins/surfaces/openPluginConnectedAccountSheet');
 const { ModalProvider } = await import('@/modal');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } =
@@ -66,7 +66,7 @@ afterEach(async () => {
     resetConnectedAccountCatalogSnapshotsForTests();
 });
 
-it.each([390, 1440])('changes the GitLab resource purpose from the real Connect sheet nested picker (%i px)', async (width) => {
+it.each([390, 1440])('changes an Account purpose through the plugin Host producer with a selected Machine and real Connect picker (%i px)', async (width) => {
     onTestFinished(installPurposeDeclarations());
     onTestFinished(await installRealActionExecutorModuleLoader());
     const scope = await account.restore({ machines: [], currentAccount: true, features,
@@ -114,10 +114,10 @@ it.each([390, 1440])('changes the GitLab resource purpose from the real Connect 
     </InjectedAuthProvider></ModalProvider>));
     const chooser = `connected-account-purpose:${service.pluginId}/${service.localId}`;
     async function openPicker(capturedScope = scope) {
-        let result!: ReturnType<typeof presentConnectSheet>;
-        await act(async () => { result = presentConnectSheet({ scope: capturedScope, service,
-            anchor: { kind: 'rect', rect: { left: 100, top: 200, width: 150, height: 30 } },
-            purposeRequest: { scope: capturedScope, purpose }, purposeSettlement: 'resourceDefault' }); });
+        let result!: ReturnType<typeof openPluginConnectedAccountSheet>;
+        await act(async () => { result = openPluginConnectedAccountSheet({ scope: capturedScope, request: { service, purpose },
+            machineId: 'unavailable-selected-machine', serverId: capturedScope.serverId,
+            anchor: { kind: 'rect', rect: { left: 100, top: 200, width: 150, height: 30 } } }); });
         await vi.waitFor(() => {
             const trigger = document.querySelector<HTMLElement>(`[data-testid="${chooser}"]`);
             expect(trigger).not.toBeNull();

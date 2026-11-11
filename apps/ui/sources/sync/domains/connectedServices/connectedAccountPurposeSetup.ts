@@ -15,6 +15,27 @@ export type ConnectedAccountPurposeSetupRequest = Readonly<{
     purpose: QualifiedConnectedAccountPurposeV1;
 }>;
 
+/** A surface's selected Machine is context; the consumer declares where its purpose lives. */
+export function resolveConnectedAccountPurposeSetupPlacement(request: ConnectedAccountPurposeSetupRequest | null,
+    selection: Extract<PluginAccountExecutionSelectionV1, { kind: 'available' }> | Readonly<{ kind: 'unavailable' }>
+        | null | undefined): Readonly<{ kind: 'account' | 'machine'; request: ConnectedAccountPurposeSetupRequest }> | null {
+    if (!request) return null;
+    const requested = { kind: request.machineId === undefined ? 'account' as const : 'machine' as const, request };
+    if (selection?.kind !== 'available') return requested;
+    const declaration = readDeclaredConnectedAccountPurposeV1({ purpose: request.purpose, accountSelection: selection });
+    if (!declaration) return requested;
+    const contributions = selection.manifest.contributes;
+    const consumerId = request.purpose.consumer.localId;
+    const actionId = declaration.consumerKind === 'machineProvisioner'
+        ? contributions.machineProvisioners.find(entry => entry.id === consumerId)?.actions.acquire : consumerId;
+    const consumer = declaration.consumerKind === 'resource' ? contributions.resources.find(entry => entry.id === consumerId)
+        : contributions.actions.find(entry => entry.id === actionId);
+    if (!consumer || !('execution' in consumer)) return requested;
+    return consumer.execution?.target === 'account'
+        ? { kind: 'account', request: request.machineId === undefined ? request : { scope: request.scope, purpose: request.purpose } }
+        : { kind: 'machine', request };
+}
+
 export type ConnectedAccountPurposeSetupHandoff = Readonly<{
     request: ConnectedAccountPurposeSetupRequest;
     lifetime: ServerAccountScopeLifetime;

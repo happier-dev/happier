@@ -10,7 +10,7 @@ import { useConnectedAccountPurposeDefaults } from '@/hooks/server/connectedServ
 import { ConnectedAccountCatalogOperationError } from '@/sync/api/account/apiConnectedAccountCatalog';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { captureActiveServerAccountScopeLifetime, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import { readConnectedAccountPurposeSetupDeclaration, resolveConnectedAccountPurposeSetupSelectedAccount,
+import { readConnectedAccountPurposeSetupDeclaration, resolveConnectedAccountPurposeSetupSelectedAccount, resolveConnectedAccountPurposeSetupPlacement,
     type ConnectedAccountPurposeSetupRequest, type ConnectedAccountPurposeSetupRuntime } from '@/sync/domains/connectedServices/connectedAccountPurposeSetup';
 import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import { projectConnectedServiceRegistryEntries, type ConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
@@ -37,7 +37,14 @@ export function useConnectedAccountPurposeSetup(input: Readonly<{
     onSettled?: (account: QualifiedConnectedAccountRef, kind: 'selected' | 'connected', facts?: ConnectedAccountSetupFacts) => void | Promise<void>;
     onClose: () => void;
 }>) {
-    const { request } = input;
+    const requested = input.request;
+    const pluginId = requested?.purpose.consumer.pluginId;
+    const accountReader = usePluginAccountAvailabilityReader(requested?.scope, pluginId,
+        { enabled: Boolean(requested) });
+    const accountSelection = pluginId ? accountReader?.readCurrentAccountExecution(pluginId) : null;
+    const placement = React.useMemo(() => resolveConnectedAccountPurposeSetupPlacement(requested, accountSelection),
+        [requested, accountSelection]);
+    const request = placement?.request ?? null;
     const viewer = useActiveServerAccountScope();
     const profile = useProfile(profile => request ? ({ id: profile.id, connectedAccountsV4: profile.connectedAccountsV4,
         connectedAccountGroupsV4: profile.connectedAccountGroupsV4 }) : null,
@@ -45,15 +52,11 @@ export function useConnectedAccountPurposeSetup(input: Readonly<{
     const { catalog: purposeCatalog, mutateDefaults, execution } = useConnectedAccountPurposeDefaults(undefined,
         { enabled: Boolean(request) && !input.onSelected });
     const lifetime = React.useMemo(() => captureActiveServerAccountScopeLifetime(), [viewer]);
-    const accountRequest = Boolean(request && request.machineId === undefined);
-    const pluginId = request?.purpose.consumer.pluginId;
-    const accountReader = usePluginAccountAvailabilityReader(accountRequest ? request?.scope : null, pluginId,
-        { enabled: accountRequest });
-    const accountSelection = accountRequest && pluginId ? accountReader?.readCurrentAccountExecution(pluginId) : null;
+    const accountRequest = placement?.kind === 'account';
     React.useEffect(() => {
-        if (accountRequest && pluginId && accountReader && accountSelection?.kind === 'unavailable'
+        if (requested && pluginId && accountReader && accountSelection?.kind === 'unavailable'
             && accountSelection.code === 'plugin_ui_declaration_pending') void accountReader.ensureCurrentAccountExecution(pluginId);
-    }, [accountRequest, pluginId, accountReader, accountSelection?.kind,
+    }, [requested, pluginId, accountReader, accountSelection?.kind,
         accountSelection?.kind === 'unavailable' ? accountSelection.code : null]);
     const machineRuntime = useScopedPluginUiProjection({ machineId: request?.machineId, serverId: request?.scope.serverId,
         enabled: Boolean(request) && !accountRequest, includeConnectedAccountPurposes: Boolean(request) && !accountRequest });
@@ -65,7 +68,7 @@ export function useConnectedAccountPurposeSetup(input: Readonly<{
                 sourceKind: hostAccountOrigin.sourceCustody.kind === 'bundled_first_party' ? 'bundled' : 'account_release',
                 availability: { state: 'available', reason: 'account_declaration' }, diagnostics: [] })) }
         : machineRuntime.connectedAccountProjection, [accountRequest, accountDescriptors, machineRuntime.connectedAccountProjection]);
-    // A Machine-less purpose consumes the admitted Account manifest, never a substitute daemon.
+    // Account placement consumes the admitted Account manifest.
     const runtime: ConnectedAccountPurposeSetupRuntime | null = accountRequest
         ? accountSelection?.kind === 'available' && lifetime ? { accountSelection, accountLifetime: lifetime, connectedAccountProjection,
             readAccountExecution: accountReader?.readCurrentAccountExecution } : null

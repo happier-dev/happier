@@ -64,7 +64,7 @@ it.each(['plain', 'e2ee'] as const)('admits the GitHub source purpose in its %s 
     expect(hook.getCurrent().declaration).toMatchObject({ consumerKind: 'action', serviceRefs: [GITHUB_CONNECTED_ACCOUNT_SERVICE] });
     expect(hook.getCurrent().registry?.entries.some(entry => entry.service?.pluginId === manifest.id)).toBe(true);
     await act(async () => { expect(await hook.getCurrent().select({ kind: 'account', account: connected.ref })).toEqual(connected.ref); });
-    expect(selected).toHaveBeenCalledWith(connected.ref, 'selected');
+    expect(selected).toHaveBeenCalledWith(connected.ref, 'selected', undefined);
     expect(rpc.state.requests).toHaveLength(0);
     const ownRequest = request;
     request = { ...ownRequest, scope: { ...scope, accountId: 'another-account' } };
@@ -75,7 +75,8 @@ it.each(['plain', 'e2ee'] as const)('admits the GitHub source purpose in its %s 
     expect(hook.getCurrent().unavailableReason).toBe('purpose_unavailable');
     request = { ...ownRequest, machineId: 'unavailable-machine' };
     await hook.rerender();
-    expect(hook.getCurrent().unavailableReason).toBe('purpose_unavailable');
+    expect(hook.getCurrent().unavailableReason).toBeNull();
+    await act(async () => { expect(await hook.getCurrent().select({ kind: 'account', account: connected.ref })).toEqual(connected.ref); });
     request = ownRequest;
     await hook.rerender();
     expect(hook.getCurrent().unavailableReason).toBeNull();
