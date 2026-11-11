@@ -58,6 +58,65 @@ async function withSource(run: (kit: Awaited<ReturnType<typeof createPluginTestk
 }
 
 describe('registered internal Happier task source', () => {
+  const sortedTasks = [
+    { ...predecessor, id: 'delta', state: 'started', createdAt: 20, updatedAt: 30, dueAt: 30 },
+    { ...predecessor, id: 'bravo', state: 'backlog', createdAt: 30, updatedAt: 10, dueAt: 10 },
+    { ...predecessor, id: 'alpha', state: 'completed', done: true, createdAt: 10, updatedAt: 20 },
+    { ...predecessor, id: 'echo', state: 'unstarted', ownerAccountId: 'other', createdAt: 50, updatedAt: 50, dueAt: 20 },
+    { ...predecessor, id: 'charlie', state: 'canceled', done: true, createdAt: 40, updatedAt: 40, dueAt: 20 },
+  ];
+  const sortedList = { status: 'ok', scope, todos: sortedTasks,
+    undoneOrder: ['delta', 'bravo'], completedOrder: ['charlie', 'alpha'] };
+  it.each([
+    ['updated', 'asc', ['bravo', 'alpha', 'delta', 'charlie', 'echo']],
+    ['updated', 'desc', ['echo', 'charlie', 'delta', 'alpha', 'bravo']],
+    ['created', 'asc', ['alpha', 'delta', 'bravo', 'charlie', 'echo']],
+    ['created', 'desc', ['echo', 'charlie', 'bravo', 'delta', 'alpha']],
+    ['status', 'asc', ['bravo', 'charlie', 'alpha', 'delta', 'echo']],
+    ['status', 'desc', ['echo', 'delta', 'alpha', 'charlie', 'bravo']],
+    ['due', 'asc', ['bravo', 'charlie', 'echo', 'delta', 'alpha']],
+    ['due', 'desc', ['delta', 'charlie', 'echo', 'bravo', 'alpha']],
+  ] as const)('orders internal Tasks by %s %s before cutting each page', async (field, direction, expected) => {
+    await withSource(async (kit, calls) => {
+      const sort = { field, direction };
+      const first = TriageScanResultV1Schema.parse(await kit.invokeAction('internal/tasks/scan-v1', {
+        v: 1, instance, sort, page: { kind: 'initial', limit: 3 },
+      }));
+      if (first.kind !== 'page') throw new Error('Expected the first task page');
+      const second = TriageScanResultV1Schema.parse(await kit.invokeAction('internal/tasks/scan-v1', {
+        v: 1, instance, sort, page: { kind: 'continuation', continuation: first.continuation },
+      }));
+      if (second.kind !== 'complete') throw new Error('Expected the final task page');
+      expect(first.observations.map(value => value.localRef.entryId)).toEqual(expected.slice(0, 3));
+      expect(second.observations.map(value => value.localRef.entryId)).toEqual(expected.slice(3));
+      // One host inventory read per source scan; field sorting adds no per-task reads.
+      expect(calls).toEqual([{ id: 'tasks.internal.list', input: {} }, { id: 'tasks.internal.list', input: {} }]);
+    }, sortedList);
+  });
+  it('binds internal Task continuations to the exact requested sort', async () => {
+    await withSource(async (kit) => {
+      const first = TriageScanResultV1Schema.parse(await kit.invokeAction('internal/tasks/scan-v1', {
+        v: 1, instance, sort: { field: 'created', direction: 'asc' }, page: { kind: 'initial', limit: 2 },
+      }));
+      if (first.kind !== 'page') throw new Error('Expected a task continuation');
+      for (const sort of [undefined, { field: 'created', direction: 'desc' }, { field: 'updated', direction: 'asc' }]) {
+        expect(await kit.invokeAction('internal/tasks/scan-v1', {
+          v: 1, instance, ...(sort === undefined ? {} : { sort }),
+          page: { kind: 'continuation', continuation: first.continuation },
+        })).toEqual({ kind: 'failed', failure: { class: 'unsupportedContract', code: 'invalidTaskAddress' } });
+      }
+    }, sortedList);
+  });
+  it('preserves personal manual order followed by shared Tasks when no field sort is requested', async () => {
+    await withSource(async (kit) => {
+      const page = TriageScanResultV1Schema.parse(await kit.invokeAction('internal/tasks/scan-v1', {
+        v: 1, instance, page: { kind: 'initial', limit: 10 },
+      }));
+      if (page.kind !== 'complete') throw new Error('Expected all Tasks');
+      expect(page.observations.map(value => value.localRef.entryId)).toEqual(['delta', 'bravo', 'charlie', 'alpha', 'echo']);
+    }, sortedList);
+  });
+
   it.each(['notStarted', 'denied', 'cancelled', 'responseLost'] as const)('preserves the internal host write outcome for create, edit and transition: %s', async outcome => {
     await withSource(async (kit, calls) => {
       const expected = outcome === 'notStarted'

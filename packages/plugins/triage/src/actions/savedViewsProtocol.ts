@@ -1,3 +1,4 @@
+import { TriageListSortV1Schema } from '@happier-dev/triage-protocol/v1';
 import {
     defineProtocolArray,
     defineProtocolLiteral,
@@ -57,6 +58,7 @@ const TriageSavedViewV1Schema = defineProtocolObject({
     query: TriageListSettledQueryV1Schema,
     filters: TriageSurfaceFilterSelectionV1Schema,
     order: TriageListOrderV1Schema,
+    sort: TriageListSortV1Schema.optional(),
     smartPolicy: TriageSmartPolicyV1Schema,
     view: TriageSavedViewPresentationV1Schema.optional(),
 }, { policy: 'closed' });
@@ -97,6 +99,7 @@ const TriageSavedViewDraftV1Schema = {
     query: TriageListSettledQueryV1Schema,
     filters: TriageSurfaceFilterSelectionV1Schema,
     order: TriageListOrderV1Schema,
+    sort: TriageListSortV1Schema.optional(),
     smartPolicy: TriageSmartPolicyV1Schema,
     view: TriageSavedViewPresentationV1Schema.optional(),
 } as const;
@@ -154,6 +157,7 @@ export const TriageAdministerSavedViewResultV1Schema = defineProtocolObject({
         defineProtocolLiteral('duplicateFacetValue'),
         defineProtocolLiteral('filterValue'),
         defineProtocolLiteral('order'),
+        defineProtocolLiteral('sort'),
         defineProtocolLiteral('smartPolicy'),
         defineProtocolLiteral('view'),
         defineProtocolLiteral('valueTooLarge'),

@@ -1,3 +1,4 @@
+import { readTriageListSortFieldsV1, selectTriageListSourcesV1 } from '../../projection/listSort.js';
 import * as React from 'react';
 import { createTriageListPublicationV1 } from '../list/publication.js';
 import { assignTriageTaskStatusGroup } from '../list/taskGroupMembership.js';
@@ -87,7 +88,7 @@ import {
 } from '../detail/sourceSurface.js';
 import {
   readTriageFilterDoneLabelV1, readTriageOrderChoicesV1, readTriageOrderOptionsV1, TriageFilterRail, TriageFilterSheet,
-  TriageOrderPlacement,
+  TriageOrderPlacement, readTriageOrderSelectionV1, readTriageOrderColumnsV1,
 } from '../filters/rail.js';
 import { planTriageFilterFacetsV1, readTriageRefineCountV1 } from '../filters/plan.js';
 import { planTriageTaskViewInventoryV1, TRIAGE_PR_VIEW_INVENTORY_V1 } from '../list/viewInventory.js';
@@ -247,6 +248,7 @@ function seedFromLocation(subPath: string | undefined): TriageSurfaceStateV1 {
   return {
     ...TRIAGE_SURFACE_INITIAL_STATE_V1,
     order: lens.order,
+    ...(lens.sort === undefined ? {} : { sort: lens.sort }),
     smartPolicy: lens.smartPolicy,
     filters: lens.filters,
     selectedViewId: lens.selectedViewId,
@@ -611,7 +613,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
               return retained == null ? [] : [retained];
             }),
           ],
-          lens: { query: windowLens.query, filters: windowLens.filters },
+          lens: { query: windowLens.query, filters: windowLens.filters, sort: windowLens.sort },
           locale: surfaceContext.locale,
           workflowSubjectOf: (entryRef) => resolveTriageSourceWorkflowSubjectV1(
             surfaceContext.targetedContributions,
@@ -632,7 +634,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             hasSessions: (key) => (sessionActivity.linkedSessions.get(key)?.length ?? 0) > 0,
           } }),
     }, previous),
-    [completedSinceMs, exactPinReads, listedStale, staleCompletedAtMs, marks.pins, pinsByEntry, personalTaskOrder.value, sessionActivity.agentStates, sessionActivity.linkedSessions, surfaceContext.locale, surfaceContext.targetedContributions, taskAudience, text, viewInventory, window.readOwner, windowLens.filters, windowLens.query]
+    [completedSinceMs, exactPinReads, listedStale, staleCompletedAtMs, marks.pins, pinsByEntry, personalTaskOrder.value, sessionActivity.agentStates, sessionActivity.linkedSessions, surfaceContext.locale, surfaceContext.targetedContributions, taskAudience, text, viewInventory, window.readOwner, windowLens.filters, windowLens.query, windowLens.sort]
   );
   listPublication.setPlanner(planItems);
   const items = listsItems ? listPublication.getItems() : NO_LIST_ITEMS;
@@ -948,11 +950,19 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const changeOrder = React.useCallback((order: TriageSurfaceStateV1['order']) => {
     applyLensEdit({ kind: 'orderChanged', order }, 'lens');
   }, [applyLensEdit]);
-  const orderOptions = React.useMemo(() => readTriageOrderOptionsV1(text), [text]);
+  const sortFields = React.useMemo(() => readTriageListSortFieldsV1(
+    selectTriageListSourcesV1(window.snapshot.configuredSources, surface.filters),
+  ), [window.snapshot.configuredSources, surface.filters]);
+  const orderOptions = React.useMemo(() => readTriageOrderOptionsV1(text, sortFields), [text, sortFields]);
+  const orderColumns = React.useMemo(() => readTriageOrderColumnsV1(orderOptions), [orderOptions]);
+  const changeSort = React.useCallback((sort: NonNullable<TriageSurfaceStateV1['sort']>) => {
+    applyLensEdit({ kind: 'sortChanged', sort }, 'lens');
+  }, [applyLensEdit]);
   const changeCollectionOrder = React.useCallback((key: string) => {
     const order = orderOptions.find((option) => option.key === key);
-    if (order !== undefined) changeOrder(order.key);
-  }, [changeOrder, orderOptions]);
+    if (order?.sort !== undefined) changeSort(order.sort);
+    else if (order !== undefined) changeOrder(order.key);
+  }, [changeOrder, changeSort, orderOptions]);
   const changeSmartPolicy = React.useCallback((smartPolicy: CorpusSmartPolicyV1) => {
     applyLensEdit({ kind: 'smartPolicyChanged', smartPolicy }, 'lens');
   }, [applyLensEdit]);
@@ -1038,6 +1048,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       query: effective.query,
       filters: effective.filters,
       order: effective.order,
+      ...(effective.sort === undefined ? {} : { sort: effective.sort }),
       smartPolicy: effective.smartPolicy,
     };
   }, [configuredSourceIdentities]);
@@ -1062,6 +1073,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       query: surface.search.query,
       filters: surface.filters,
       order: surface.order,
+      ...(surface.sort === undefined ? {} : { sort: surface.sort }),
       smartPolicy: surface.smartPolicy,
       view: collectionView,
     }, expectedRevision));
@@ -1072,7 +1084,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     if (action === null) return true;
     await settleLensEditBeforeDurable(action);
     return true;
-  }, [collectionView, readProjectedSelectionAction, savedViews, settleLensEditBeforeDurable, surface.filters, surface.order, surface.search.query, surface.smartPolicy]);
+  }, [collectionView, readProjectedSelectionAction, savedViews, settleLensEditBeforeDurable, surface.filters, surface.order, surface.sort, surface.search.query, surface.smartPolicy]);
 
   const renameView = React.useCallback(async (view: CorpusSavedViewV1, label: string): Promise<boolean> => {
     if (savedViews.revision === null) return false;
@@ -1089,10 +1101,11 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       query: surface.search.query,
       filters: surface.filters,
       order: surface.order,
+      ...(surface.sort === undefined ? {} : { sort: surface.sort }),
       smartPolicy: surface.smartPolicy,
       view: collectionView,
     }, savedViews.revision));
-  }, [collectionView, savedViews, surface.filters, surface.order, surface.search.query, surface.smartPolicy]);
+  }, [collectionView, savedViews, surface.filters, surface.order, surface.sort, surface.search.query, surface.smartPolicy]);
 
   const deleteView = React.useCallback((view: CorpusSavedViewV1) => {
     const expectedRevision = savedViews.revision;
@@ -1704,7 +1717,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         // compatibility entrance when choosing PRs, so reload keeps the choice.
         if (props.tasksPage && operation.filters.tasks === undefined) {
           const location = preflightTriageRouteLensV1({ ...readTriageRouteLensV1(surface),
-            query: operation.query, filters: operation.filters, order: operation.order, smartPolicy });
+            query: operation.query, filters: operation.filters, order: operation.order, sort: operation.sort, smartPolicy });
           if (location.kind === 'refused') return { status: 'rejected' };
           const selection = surface.selection;
           const launch = selection === null ? undefined : buildTriageEntryDetailLaunchInput({
@@ -1716,7 +1729,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           break;
         }
         if (await settleLensEditBeforeDurable({ kind: 'savedViewApplied', viewId: surface.selectedViewId,
-          query: operation.query, filters: operation.filters, order: operation.order, smartPolicy }) === null) return { status: 'rejected' };
+          query: operation.query, filters: operation.filters, order: operation.order, sort: operation.sort, smartPolicy }) === null) return { status: 'rejected' };
         break;
       }
       case 'selectSavedView': return await selectView(operation.viewId, signal);
@@ -1800,11 +1813,13 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     const { tasks: _tasks, ...prsFilters } = surface.filters;
     return {
       tasks: { kind: 'setLens', query: surface.search.query, filters: { ...surface.filters, tasks: taskAudience ?? 'mine' },
-        order: surface.order, smartPolicy: surface.smartPolicy } satisfies TriageMountedUiOperationV1,
+        order: surface.order, ...(surface.sort === undefined ? {} : { sort: surface.sort }),
+        smartPolicy: surface.smartPolicy } satisfies TriageMountedUiOperationV1,
       prs: { kind: 'setLens', query: surface.search.query, filters: prsFilters, order: surface.order,
+        ...(surface.sort === undefined ? {} : { sort: surface.sort }),
         smartPolicy: surface.smartPolicy } satisfies TriageMountedUiOperationV1,
     };
-  }, [surface.filters, surface.order, surface.search.query, surface.smartPolicy, taskAudience]);
+  }, [surface.filters, surface.order, surface.sort, surface.search.query, surface.smartPolicy, taskAudience]);
   const mountedCommands = React.useMemo(() => {
     const command = (title: string, operation: TriageMountedUiOperationV1): CurrentUiCommandDeclarationV1 => ({
       title, command: { kind: 'executeAction', action: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, input: { mountId, operation } },
@@ -1840,7 +1855,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       )]),
       ...(taskAudience === undefined ? [] : (['mine', 'agents', 'everyone'] as const).map((audience) => command(
         text(`plugins.triage.tasks.${audience}`, audience === 'mine' ? 'Mine' : audience === 'agents' ? 'Agents' : 'Everyone'),
-        { kind: 'setLens', query: surface.search.query, filters: { ...surface.filters, tasks: audience }, order: surface.order, smartPolicy: surface.smartPolicy },
+        { kind: 'setLens', query: surface.search.query, filters: { ...surface.filters, tasks: audience }, order: surface.order,
+          ...(surface.sort === undefined ? {} : { sort: surface.sort }), smartPolicy: surface.smartPolicy },
       ))),
       ...(detailSessions?.key !== selectedKey || detailSessions.loadMore === null ? [] : [command(
         `${text('plugins.triage.surface.loadMore', 'Load more')} ${text('plugins.triage.surface.detail.sessions', 'Sessions')}`,
@@ -1878,18 +1894,19 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       )]),
       ...(isTriageBulkSessionsPhaseRunningV1(bulkSessions.phase) ? [command(text('plugins.triage.surface.bulk.cancel', 'Stop'), { kind: 'cancelRun' })] : []),
     ];
-  }, [creatingTask, taskDraftWrite.busy, selectedBulkKeys, bulkActionChoices, addSourceLabel, addSourceOffers, addSourceOpen, configureOffers, configuredSources.sources, editingActions, editingSources, listWindow?.outsideSourcesAttention, openSourceDetails, organizing, sourceHealthRows, bulkSessions.phase, bulkSessions.retryable, collectionWindow, detailTabs, detailSessions, detailFixRetry, doneOpen, mountId, pageViewOperations, pinsUnreachable, refreshState.kind, selectedKey, sessionActivityUnavailable, sourcePanel.commands, surface.filters, surface.order, surface.search.query, surface.smartPolicy, taskAudience, text, viewsUnreachable]);
+  }, [creatingTask, taskDraftWrite.busy, selectedBulkKeys, bulkActionChoices, addSourceLabel, addSourceOffers, addSourceOpen, configureOffers, configuredSources.sources, editingActions, editingSources, listWindow?.outsideSourcesAttention, openSourceDetails, organizing, sourceHealthRows, bulkSessions.phase, bulkSessions.retryable, collectionWindow, detailTabs, detailSessions, detailFixRetry, doneOpen, mountId, pageViewOperations, pinsUnreachable, refreshState.kind, selectedKey, sessionActivityUnavailable, sourcePanel.commands, surface.filters, surface.order, surface.sort, surface.search.query, surface.smartPolicy, taskAudience, text, viewsUnreachable]);
   // Focus and IME composition are local reader state, not published context.
   // Keep that producer's inputs stable so moving the cursor does not retire
   // and recreate every host command address for an unchanged selection/lens.
   const currentContextSurface = React.useMemo(() => ({
     selection: surface.selection,
     order: surface.order,
+    ...(surface.sort === undefined ? {} : { sort: surface.sort }),
     smartPolicy: surface.smartPolicy,
     filters: surface.filters,
     selectedViewId: surface.selectedViewId,
     search: { query: surface.search.query },
-  }), [surface.selection, surface.order, surface.smartPolicy, surface.filters, surface.selectedViewId, surface.search.query]);
+  }), [surface.selection, surface.order, surface.sort, surface.smartPolicy, surface.filters, surface.selectedViewId, surface.search.query]);
   const projectCurrentContext = React.useCallback((visibleRows: readonly TriageListRowV1[]) => projectTriageCurrentUiContextV1({
     surface: currentContextSurface, visibleRows, mountedCommands,
     mountedAction: { action: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 }, mountId },
@@ -1937,6 +1954,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const itemAnatomy = useTriageListAnatomyV1({
     ...readTriageDataColumnsV1({ tasks: taskAudience !== undefined, items, sharedGroupReasons }),
     organizing,
+    sortFields,
     sharedGroupReasons,
     tasks: taskAudience !== undefined,
     taskAudience,
@@ -1951,7 +1969,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   // Every row names its own selection below; the current detail must not
   // replace all row destinations when the rest of the lens is unchanged.
   const routeLens = React.useMemo(() => readTriageRouteLensV1({ ...surface, selection: null }), [
-    surface.order, surface.smartPolicy, surface.filters, surface.search.query, surface.selectedViewId,
+    surface.order, surface.sort, surface.smartPolicy, surface.filters, surface.search.query, surface.selectedViewId,
   ]);
   const anatomy = React.useMemo(() => ({ ...itemAnatomy,
     destination: (item: TriageListItemV1) => {
@@ -2110,6 +2128,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         query: surface.search.query,
         filters: surface.filters,
         order: surface.order,
+        ...(surface.sort === undefined ? {} : { sort: surface.sort }),
         smartPolicy: surface.smartPolicy,
         view: collectionView,
       },
@@ -2268,6 +2287,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         render: () => (
           <TriageFilterRail
             order={surface.order}
+            sort={surface.sort}
+            sortFields={sortFields}
+            onChangeSort={changeSort}
             smartPolicy={surface.smartPolicy}
             text={text}
             onChangeOrder={changeOrder}
@@ -2293,6 +2315,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         },
         ...(orderedByTable ? {} : { foldedChoices: readTriageOrderChoicesV1({
           order: surface.order,
+          sort: surface.sort, sortFields, onChangeSort: changeSort,
           smartPolicy: surface.smartPolicy,
           text,
           onChangeOrder: changeOrder,
@@ -2600,9 +2623,11 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           // lower sources and the steps stay reachable on a phone. A populated list keeps its one scroller.
           {...(state.kind === 'configureSources' || empty?.kind === 'taskFirstRun' ? { scroll: 'page' as const } : {})}
           {...(nothingToArrange ? {} : { sort: {
-            key: surface.order,
-            direction: surface.order === 'oldest' ? 'ascending' as const : 'descending' as const,
+            key: readTriageOrderSelectionV1(surface.order, surface.sort),
+            direction: surface.sort === undefined ? (surface.order === 'oldest' ? 'ascending' as const : 'descending' as const)
+              : surface.sort.direction === 'asc' ? 'ascending' as const : 'descending' as const,
             orders: orderOptions,
+            orderColumns,
             onChange: changeCollectionOrder,
           } })}
           detail="auto"
@@ -3175,15 +3200,15 @@ function useTriageWindowLensBinding(
   setLens: (lens: TriageListLensV1) => void,
   lens: TriageListLensV1,
 ): void {
-  const { filters, limit, order, query, smartPolicy } = lens;
+  const { filters, limit, order, query, sort, smartPolicy } = lens;
   const completedSinceMs = lens.tasks?.completedSinceMs;
 
   // Called before the page-view demand and after the window subscription.
   // Binding a cold window is not itself a materialization producer.
   React.useEffect(() => {
-    setLens({ filters, limit, order, query, smartPolicy,
+    setLens({ filters, limit, order, query, smartPolicy, ...(sort === undefined ? {} : { sort }),
       ...(completedSinceMs === undefined ? {} : { tasks: { completedSinceMs } }) });
-  }, [completedSinceMs, filters, limit, order, query, setLens, smartPolicy]);
+  }, [completedSinceMs, filters, limit, order, query, setLens, sort, smartPolicy]);
 }
 
 /** A connection that could not be read while others still list rows: its name and why, and the fix beside them. */

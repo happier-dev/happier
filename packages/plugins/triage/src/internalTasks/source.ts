@@ -26,6 +26,7 @@ type TaskReadContext = Pick<TriageDataActionContext, 'signal'> & Readonly<{ serv
 const UNAVAILABLE = INTERNAL_TASK_DATA_UNAVAILABLE_V1;
 const INVALID_ADDRESS = { class: 'unsupportedContract', code: 'invalidTaskAddress' } as const;
 
+export const INTERNAL_TASK_SORT_FIELDS_V1 = Object.freeze(['updated', 'created', 'status', 'due'] as const);
 export const INTERNAL_TASK_STATES_V1 = ['backlog', 'unstarted', 'started', 'completed', 'canceled'] as const;
 /** Fields this adapter maps to internal task writes; the contribution advertises this same subset. */
 export const INTERNAL_TASK_EDIT_FIELDS_V1 = Object.freeze(['title', 'body', 'assigneeIds', 'labelIds', 'dueDate', 'parent', 'blockedBy'] as const);
@@ -123,6 +124,9 @@ export async function scanInternalTasks(input: TriageScanInputV1, context: Triag
 /** Scan, order and links consume this operation's already authorized Task inventory. */
 export function projectInternalTaskScan(input: TriageScanInputV1, list: TaskList | null): TriageScanResultV1 {
   if (list === null) return { kind: 'failed', failure: UNAVAILABLE };
+  const sort = input.sort;
+  if (sort !== undefined && !INTERNAL_TASK_SORT_FIELDS_V1.some(field => field === sort.field)) return { kind: 'failed', failure: INVALID_ADDRESS };
+  const sortKey = sort === undefined ? undefined : JSON.stringify([sort.field, sort.direction]);
   const completedSinceMs = input.completed?.kindIds.includes('task') ? input.completed.sinceMs : undefined;
   let after: string | undefined;
   let limit: number;
@@ -133,7 +137,8 @@ export function projectInternalTaskScan(input: TriageScanInputV1, list: TaskList
       if (typeof cursor !== 'object' || cursor === null || !('after' in cursor) || typeof cursor.after !== 'string'
         || !('limit' in cursor) || typeof cursor.limit !== 'number' || !Number.isSafeInteger(cursor.limit) || cursor.limit < 1
         || ('completedSinceMs' in cursor ? cursor.completedSinceMs : undefined) !== completedSinceMs
-        || Object.keys(cursor).some(key => key !== 'after' && key !== 'limit' && key !== 'completedSinceMs')) return { kind: 'failed', failure: INVALID_ADDRESS };
+        || ('sortKey' in cursor ? cursor.sortKey : undefined) !== sortKey
+        || Object.keys(cursor).some(key => key !== 'after' && key !== 'limit' && key !== 'completedSinceMs' && key !== 'sortKey')) return { kind: 'failed', failure: INVALID_ADDRESS };
       after = cursor.after; limit = cursor.limit;
     } catch { return { kind: 'failed', failure: INVALID_ADDRESS }; }
   }
@@ -149,6 +154,31 @@ export function projectInternalTaskScan(input: TriageScanInputV1, list: TaskList
     return task !== undefined && (completedSinceMs === undefined || task.state !== 'completed'
       || task.completedAt !== undefined && task.completedAt >= completedSinceMs);
   });
+  if (sort !== undefined) {
+    const valueOf = (task: Task) => {
+      switch (sort.field) {
+        case 'updated': return task.updatedAt;
+        case 'created': return task.createdAt;
+        case 'status': return internalTaskStateV1(task.state).nativeLabel;
+        case 'due': return taskDueDate(task);
+        case 'repository': return null;
+      }
+    };
+    ids.sort((leftId, rightId) => {
+      const left = byId.get(leftId)!;
+      const right = byId.get(rightId)!;
+      const leftValue = valueOf(left);
+      const rightValue = valueOf(right);
+      // Missing fields remain last in either direction; equal values retain a stable native identity order.
+      if (leftValue === null && rightValue !== null) return 1;
+      if (rightValue === null && leftValue !== null) return -1;
+      const primary = leftValue === null || rightValue === null ? 0
+        : typeof leftValue === 'number' && typeof rightValue === 'number' ? leftValue - rightValue
+        : String(leftValue).localeCompare(String(rightValue));
+      return (sort.direction === 'asc' ? primary : -primary)
+        || left.id.localeCompare(right.id) || ownerOf(left, list).localeCompare(ownerOf(right, list));
+    });
+  }
   const start = after === undefined ? 0 : ids.indexOf(after) + 1;
   if (after !== undefined && start === 0) return { kind: 'failed', failure: { class: 'transient', code: 'taskOrderChanged' } };
   const pageIds = ids.slice(start, start + limit);
@@ -163,7 +193,8 @@ export function projectInternalTaskScan(input: TriageScanInputV1, list: TaskList
       : { kind: 'partial', reason: 'taskContentUnavailable' } }
     : { kind: 'page', observations: page, evidence: { kind: 'partial', reason: 'pageLimit' },
       continuation: { v: 1, token: JSON.stringify({ after: ids[start + limit - 1], limit,
-        ...(completedSinceMs === undefined ? {} : { completedSinceMs }) }) } };
+        ...(completedSinceMs === undefined ? {} : { completedSinceMs }),
+        ...(sortKey === undefined ? {} : { sortKey }) }) } };
 }
 
 export async function getInternalTask(input: TriageGetInputV1, context: TriageDataActionContext): Promise<TriageGetResultV1> {

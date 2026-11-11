@@ -485,3 +485,10 @@ describe('Triage surface reducer — the five filter facets compose', () => {
     expect(applied.filters.states).toEqual(['done']);
   });
 });
+
+it('keeps the source-owned field sort in the canonical lens and clears it for a named order', () => {
+  const sort = { field: 'created', direction: 'asc' } as const;
+  const sorted = reduceTriageSurfaceV1(TRIAGE_SURFACE_INITIAL_STATE_V1, { kind: 'sortChanged', sort });
+  expect(sorted.sort).toEqual(sort);
+  expect(reduceTriageSurfaceV1(sorted, { kind: 'orderChanged', order: sorted.order }).sort).toBeUndefined();
+});

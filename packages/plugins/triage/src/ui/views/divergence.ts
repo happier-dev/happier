@@ -72,7 +72,9 @@ export function sameTriageSavedViewLensV1(
   left: TriageSavedViewLensV1,
   right: TriageSavedViewLensV1,
 ): boolean {
-  return left.order === right.order
+  return left.sort?.field === right.sort?.field
+    && left.sort?.direction === right.sort?.direction
+    && left.order === right.order
     && left.query === right.query
     && left.smartPolicy.precedence[0] === right.smartPolicy.precedence[0]
     && sameTriageFilterSelectionV1(left.filters, right.filters);

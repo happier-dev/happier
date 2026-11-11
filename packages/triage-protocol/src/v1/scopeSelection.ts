@@ -15,6 +15,7 @@ import {
     TriageSourceCredentialScopeContextV1Schema,
 } from './instances.js';
 import { TriageScanContinuationV1Schema } from './observations.js';
+import { TriageListSortFieldsV1Schema } from './sorting.js';
 
 /** Source-native selection ids are opaque to the aggregate; they are not entry identities. */
 // Retained source ids can be repository paths, longer than entry identifiers.
@@ -65,6 +66,8 @@ const pageFields = {
     kind: defineProtocolLiteral('page'),
     selection: TriageSourceScopeSelectionV1Schema,
     units: defineProtocolArray(TriageSourceScopeUnitV1Schema),
+    /** Configured-source override; an empty set explicitly offers no field order. */
+    sortFields: TriageListSortFieldsV1Schema.optional(),
 };
 export const TriageListScopeUnitsResultV1Schema = defineProtocolUnion([
     defineProtocolObject({ ...pageFields, status: defineProtocolLiteral('complete') }, { policy: 'closed' }),

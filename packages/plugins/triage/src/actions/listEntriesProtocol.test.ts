@@ -133,3 +133,20 @@ describe('the aggregate list wire string bounds', () => {
         }
     });
 });
+
+describe('the aggregate list source sort contract', () => {
+    it('accepts the closed field and direction shape', () => {
+        for (const field of ['updated', 'created', 'status', 'repository', 'due']) {
+            for (const direction of ['asc', 'desc']) {
+                const value = inputWith({ sort: { field, direction } });
+                expect(admits(value)).toBe(true);
+            }
+        }
+    });
+
+    it('rejects unknown fields, directions and members', () => {
+        expect(admits(inputWith({ sort: { field: 'title', direction: 'asc' } }))).toBe(false);
+        expect(admits(inputWith({ sort: { field: 'updated', direction: 'up' } }))).toBe(false);
+        expect(admits(inputWith({ sort: { field: 'updated', direction: 'asc', extra: true } }))).toBe(false);
+    });
+});

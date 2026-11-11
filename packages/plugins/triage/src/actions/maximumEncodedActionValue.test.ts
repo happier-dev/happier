@@ -246,7 +246,9 @@ function withTaskFactsWitness(fragment: PluginJsonSchema): PluginJsonSchema {
             Object.entries(fragment.properties)
                 .filter(([key]) => key !== 'labels' && key !== 'labelColors')
                 .map(([key, child]) => [key,
-                key === 'scope' ? { const: {
+                ['configuredSources', 'lanes', 'continuations'].includes(key) && child.type === 'array'
+                    ? { ...withTaskFactsWitness(child), maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1 }
+                    : key === 'scope' ? { const: {
                     unit: { singularLabel: 'Project', pluralLabel: 'projects' },
                     projection: { kind: 'page', status: 'complete', selection: { kind: 'selected', unitIds: ['project-1'] },
                         units: [{ id: 'project-1', label: 'Platform' }] },
@@ -301,7 +303,8 @@ function withFieldAllocation(fragment: PluginJsonSchema, bytes: number): PluginJ
         && fieldBounds.has(fragment['x-happier-max-utf8-bytes']);
     return {
         ...fragment,
-        ...(allocated ? { 'x-happier-max-utf8-bytes': bytes } : {}),
+        ...(allocated ? { 'x-happier-max-utf8-bytes': fragment['x-happier-max-utf8-bytes'] === MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1
+            ? bytes * MAX_TRIAGE_LIST_WINDOW_ROWS_V1 : bytes } : {}),
         ...(fragment.anyOf === undefined ? {} : { anyOf: fragment.anyOf.map(child => withFieldAllocation(child, bytes)) }),
         ...(fragment.items === undefined ? {} : { items: withFieldAllocation(fragment.items, bytes) }),
         ...(fragment.properties === undefined ? {} : { properties: Object.fromEntries(
@@ -356,7 +359,7 @@ describe('aggregate Action value shapes', () => {
             MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1, MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
             MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
         ], `fixedBytes=${fixedBytes}, escapedFieldUnits=${escapedFieldUnits}, derived=${derived}`)
-            .toEqual(Array.from({ length: 6 }, () => derived));
+            .toEqual([...Array.from({ length: 5 }, () => derived), derived * MAX_TRIAGE_LIST_WINDOW_ROWS_V1]);
         // Share this finite witness with the continuation proof rather
         // than rebuilding the same 24 MB shape in two overlapping tests.
         await setImmediate();
@@ -387,10 +390,10 @@ describe('aggregate Action value shapes', () => {
         };
         const laneTokenCount = parsed.window.continuations.length;
         expect(laneTokenCount).toBe(MAX_TRIAGE_LIST_SOURCE_BATCH_V1);
-        const encodedBytesPerTokenByte = encodedJsonBytes(tokenAt(derived + 1))
-            - encodedJsonBytes(tokenAt(derived));
+        const encodedBytesPerTokenByte = encodedJsonBytes(tokenAt(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 + 1))
+            - encodedJsonBytes(tokenAt(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1));
         expect(encodedBytesPerTokenByte).toBeGreaterThan(0);
-        const firstRejectedTokenUtf8Bytes = derived
+        const firstRejectedTokenUtf8Bytes = MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1
             + Math.floor((EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES - maximalBytes)
                 / (laneTokenCount * encodedBytesPerTokenByte)) + 1;
         const widenedToken = tokenAt(firstRejectedTokenUtf8Bytes);
@@ -409,7 +412,7 @@ describe('aggregate Action value shapes', () => {
         await setImmediate();
         const oversizedBytes = measureExternalActionResultResponseEnvelopeUtf8BytesV1(oversized);
         expect(oversizedBytes).toBe(maximalBytes
-            + (firstRejectedTokenUtf8Bytes - derived) * laneTokenCount * encodedBytesPerTokenByte);
+            + (firstRejectedTokenUtf8Bytes - MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1) * laneTokenCount * encodedBytesPerTokenByte);
         expect(oversizedBytes - laneTokenCount * encodedBytesPerTokenByte)
             .toBeLessThanOrEqual(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
         expect(oversizedBytes).toBeGreaterThan(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);

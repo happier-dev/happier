@@ -1,3 +1,4 @@
+import type { TriageListSortV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -57,6 +58,7 @@ async function create(
         query: string;
         filters: SurfaceFilterSelectionV1;
         order: 'newest' | 'oldest' | 'smart';
+        sort?: TriageListSortV1;
     }>> = {},
 ) {
     void fixture;
@@ -67,6 +69,7 @@ async function create(
         query: overrides.query ?? '',
         filters: overrides.filters ?? filters(),
         order: overrides.order ?? 'newest',
+        ...(overrides.sort === undefined ? {} : { sort: overrides.sort }),
         smartPolicy: CORPUS_DEFAULT_SMART_POLICY_V1,
     });
 }
@@ -198,7 +201,7 @@ describe('mutateTriageSavedViews', () => {
         expect(after.value.views[0]).toMatchObject({ label: 'Renamed by A', order: 'newest' });
     });
 
-    it('restores saved definitions exactly after restart and deletes only the named view', async () => {
+    it('restores a source-owned field sort exactly after restart and deletes only the named view', async () => {
         const fixture = createTestkitAccountKv();
         const deps = createDeps(fixture);
 
@@ -211,6 +214,7 @@ describe('mutateTriageSavedViews', () => {
             query: 'authentication',
             filters: lens,
             order: 'smart',
+            sort: { field: 'created', direction: 'asc' },
         });
         const second = await create(fixture, deps, 'Everything');
         expect(first.status).toBe('applied');
@@ -228,6 +232,7 @@ describe('mutateTriageSavedViews', () => {
             query: 'authentication',
             filters: lens,
             order: 'smart',
+            sort: { field: 'created', direction: 'asc' },
             smartPolicy: CORPUS_DEFAULT_SMART_POLICY_V1,
             view: 'list',
         });

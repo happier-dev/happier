@@ -1,3 +1,4 @@
+import { selectTriageListSourcesV1 } from './listSort.js';
 import { isPluginError, readPluginErrorRequestIdV1, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import { createCoalescedScheduler } from '@happier-dev/plugin-sdk/async';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
@@ -279,9 +280,15 @@ function sameConfiguredSourceAcquisitionSet(
     });
 }
 
-function sameAcquisitionLens(left: TriageListLensV1, right: TriageListLensV1): boolean {
+function sameAcquisitionLens(left: TriageListLensV1, right: TriageListLensV1, sources: TriageListEntriesResultV1['configuredSources']): boolean {
     return left.tasks?.completedSinceMs === right.tasks?.completedSinceMs
-        && left.limit === right.limit;
+        && left.limit === right.limit
+        && left.sort?.field === right.sort?.field
+        && left.sort?.direction === right.sort?.direction
+        && (left.sort === undefined && right.sort === undefined || pluginJsonValuesEqual(
+            selectTriageListSourcesV1(sources, left.filters).map(source => source.sourceInstanceId),
+            selectTriageListSourcesV1(sources, right.filters).map(source => source.sourceInstanceId),
+        ));
 }
 
 function errorFrom(cause: unknown): TriageListWindowErrorV1 {
@@ -334,6 +341,8 @@ export function createTriageListWindowStore(deps: Readonly<{
     /** Provider frontiers retained only for this mounted store's lifetime. */
     const continuations = new Map<string, LaneContinuation>();
     let lens: TriageListLensV1 = deps.lens ?? TRIAGE_LIST_DEFAULT_LENS_V1;
+    /** Entry order emitted by the aggregate for this mounted sorted prefix. */
+    let orderedEntryKeys: readonly string[] | null = null;
     let configuredSources: TriageListEntriesResultV1['configuredSources'] = [];
     let configuredSourcesStatus: TriageListEntriesResultV1['configuredSourcesStatus'] = 'complete';
     let window: TriageListWindowV1 | null = null;
@@ -406,9 +415,13 @@ export function createTriageListWindowStore(deps: Readonly<{
         return !disposed;
     }
 
+    function acquisitionSources(acquisitionLens = lens): TriageListEntriesResultV1['configuredSources'] {
+        return acquisitionLens.sort === undefined ? configuredSources : selectTriageListSourcesV1(configuredSources, acquisitionLens.filters);
+    }
+
     function completedAtMs(): number | undefined {
         let oldest: number | undefined;
-        for (const summary of configuredSources) {
+        for (const summary of acquisitionSources()) {
             if (!summary.available) continue;
             const completed = lanes.get(summary.sourceInstanceId)?.completedAtMs;
             if (completed == null) return undefined;
@@ -420,7 +433,7 @@ export function createTriageListWindowStore(deps: Readonly<{
     function freshness(completed: number | undefined): TriageListWindowSnapshotV1['freshness'] {
         if (window === null) return 'unknown';
         if (error !== null || completed === undefined) return 'stale';
-        for (const summary of configuredSources) {
+        for (const summary of acquisitionSources()) {
             if (!summary.available) continue;
             const lane = lanes.get(summary.sourceInstanceId);
             if (
@@ -475,8 +488,12 @@ export function createTriageListWindowStore(deps: Readonly<{
      * eligible.
      */
     function refreshBlock(): TriageRefreshPacingBlockV1 | null {
+        if (lens.sort !== undefined) return coordinator.pacingBlock({
+            sourceInstanceIds: acquisitionSources().filter(source => source.available).map(source => source.sourceInstanceId),
+            requireAllSources: true, trigger: 'manual',
+        });
         let earliest: TriageRefreshPacingBlockV1 | null = null;
-        for (const summary of configuredSources) {
+        for (const summary of acquisitionSources()) {
             if (!summary.available) continue;
             const blocked = coordinator.pacingBlock({
                 sourceInstanceId: summary.sourceInstanceId,
@@ -527,7 +544,7 @@ export function createTriageListWindowStore(deps: Readonly<{
 
     /** Whether any lane stopped holding a page a deeper window could continue from. */
     function anyLaneHoldsFrontier(): boolean {
-        const availableSourceCount = configuredSources.filter((summary) => summary.available).length;
+        const availableSourceCount = acquisitionSources().filter((summary) => summary.available).length;
         return continuations.size > 0
             || availableSourceCount > windowsRequested * MAX_TRIAGE_LIST_WINDOW_ROWS_V1;
     }
@@ -641,11 +658,22 @@ export function createTriageListWindowStore(deps: Readonly<{
     }
 
     function projectRetained(projectionLens: TriageListLensV1, retainWindow = true): TriageListWindowV1 {
-        const observations: CorpusQualifiedObservationV1[] = [];
+        const intendedSources = acquisitionSources(projectionLens);
+        let observations: CorpusQualifiedObservationV1[] = [];
         const walked: TriageListLaneV1[] = [];
         for (const lane of lanes.values()) {
             observations.push(...lane.observations);
             walked.push(lane.lane);
+        }
+        if (projectionLens.sort !== undefined && orderedEntryKeys !== null) {
+            const byEntry = new Map<string, CorpusQualifiedObservationV1[]>();
+            for (const observation of observations) {
+                const key = triageEntryRowKey(observation.entryRef);
+                const values = byEntry.get(key) ?? [];
+                values.push(observation);
+                byEntry.set(key, values);
+            }
+            observations = orderedEntryKeys.flatMap(key => byEntry.get(key) ?? []);
         }
         return foldTriageListWindow({
             // A one-off reader shares admitted rows, but does not replace the mounted lens's window baseline.
@@ -657,9 +685,9 @@ export function createTriageListWindowStore(deps: Readonly<{
             observations,
             // Every configured source is a lane of this window, including one no
             // pass could ask: this mount set out to cover it either way.
-            lanes: triageListCoverageLanes({ intended: configuredSources, walked }),
+            lanes: triageListCoverageLanes({ intended: intendedSources, walked }),
             configuredSourcesStatus,
-            activeSourceInstanceIds: configuredSources
+            activeSourceInstanceIds: intendedSources
                 .filter((summary) => summary.available)
                 .map((summary) => summary.sourceInstanceId),
             // The reader's lens, at this mount's own accumulated depth. The
@@ -676,7 +704,7 @@ export function createTriageListWindowStore(deps: Readonly<{
         window = projectRetained({ ...lens, limit: foldLimit() });
     }
 
-    /** Provider acquisition follows task scope and page geometry. Text, facets,
+    /** Provider acquisition follows task scope, page geometry and source-owned sort. Text, facets,
      * order and Smart policy project retained rows locally, including appended pages. */
     function scanInputFor(
         sourceInstances: Extract<TriageListEntriesInputV1['sources'], { kind: 'selected' }>['sourceInstances'],
@@ -706,6 +734,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             ...(resume === undefined ? {} : { resume }),
             limit,
             order: lens.order,
+            ...(lens.sort === undefined ? {} : { sort: lens.sort }),
             smartPolicy: lens.smartPolicy,
             ...(lens.tasks === undefined ? {} : { tasks: lens.tasks }),
         };
@@ -780,7 +809,10 @@ export function createTriageListWindowStore(deps: Readonly<{
         pagingResetPending = false;
         appendFailed = false;
         appending = false;
-        if (input.replacesGeneration) generationReplacementPending = true;
+        if (input.replacesGeneration) {
+            generationReplacementPending = true;
+            orderedEntryKeys = null;
+        }
     }
 
     function syncConfiguredSources(
@@ -893,24 +925,26 @@ export function createTriageListWindowStore(deps: Readonly<{
             rebuild();
             publish();
         }
-        // The Action is a finite JSON result, so sources sharing an invocation
-        // cannot publish independently. Spend the existing window row budget
-        // across source-local reads; a slow/refused source then owns only its
-        // own result, never the rows another source has already returned.
+        // Explicit field order is merged by the aggregate before paging. Named
+        // local orders retain independent source settlement and publication.
         const rowShare = Math.floor(MAX_TRIAGE_LIST_WINDOW_ROWS_V1 / input.sourceInstanceIds.length);
         const extraRows = MAX_TRIAGE_LIST_WINDOW_ROWS_V1 % input.sourceInstanceIds.length;
         const configuredBySourceInstanceId = new Map(configuredSources.map(source => [source.sourceInstanceId, source]));
-        await Promise.all(input.sourceInstanceIds.map(async (sourceInstanceId, index) => {
+        const batches = acquisitionLens.sort === undefined
+            ? input.sourceInstanceIds.map(sourceInstanceId => [sourceInstanceId])
+            : [input.sourceInstanceIds];
+        await Promise.all(batches.map(async (sourceInstanceIds, index) => {
             if (!isCurrent() || input.signal.aborted) return;
-            const sourceInstanceIds = [sourceInstanceId];
             const resume = activeCycleIsAppend
-                ? [continuations.get(sourceInstanceId)].filter((entry): entry is LaneContinuation => entry !== undefined)
+                ? sourceInstanceIds.map(id => continuations.get(id)).filter((entry): entry is LaneContinuation => entry !== undefined)
                 : undefined;
             // The Action already chose this lane's native geometry. Its whole
             // atomic page must fit the transport even when the fair share shrinks.
             const batchRowBudget = Math.max(
-                rowShare + (index < extraRows ? 1 : 0),
-                resume?.[0]?.pageLimit ?? 0,
+                acquisitionLens.sort === undefined
+                    ? rowShare + (index < extraRows ? 1 : 0)
+                    : MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
+                ...(resume ?? []).map(entry => entry.pageLimit),
             );
 
             let result: TriageListEntriesResultV1;
@@ -924,8 +958,10 @@ export function createTriageListWindowStore(deps: Readonly<{
                 );
             } catch (cause) {
                 activeCycleAggregateFailed = true;
-                if (!input.signal.aborted) recordLaneError(sourceInstanceId, errorFrom(cause));
-                outcomes.set(sourceInstanceId, { kind: 'interrupted' });
+                for (const sourceInstanceId of sourceInstanceIds) {
+                    if (!input.signal.aborted) recordLaneError(sourceInstanceId, errorFrom(cause));
+                    outcomes.set(sourceInstanceId, { kind: 'interrupted' });
+                }
                 publishRead();
                 return;
             }
@@ -937,7 +973,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             // submitted its cursor. Task scope or page geometry can change while the
             // provider page is awaiting; adopting that page would briefly publish the old
             // frontier under the new lens before the queued replacement runs.
-            if (!sameAcquisitionLens(acquisitionLens, lens)) {
+            if (!sameAcquisitionLens(acquisitionLens, lens, configuredSources)) {
                 return;
             }
 
@@ -967,58 +1003,66 @@ export function createTriageListWindowStore(deps: Readonly<{
             // Action may execute on another machine, so its assembledAtMs is not
             // comparable with this mounted store's freshness clock.
             const batchCompletedAtMs = deps.nowMs();
-            continuations.delete(sourceInstanceId);
-            const next = nextContinuations.get(sourceInstanceId);
-            if (next !== undefined) continuations.set(sourceInstanceId, next);
+            if (acquisitionLens.sort !== undefined) {
+                const emittedKeys = result.window.rows.map(row => triageEntryRowKey(row.entryRef));
+                const retainsPreviousPrefix = activeCycleIsAppend || result.window.lanes.some(
+                    lane => lane.health.kind === 'failed' || lane.health.kind === 'unavailable',
+                );
+                orderedEntryKeys = retainsPreviousPrefix
+                    ? [...new Set([...(orderedEntryKeys ?? []), ...emittedKeys])]
+                    : emittedKeys;
+            }
+            for (const sourceInstanceId of sourceInstanceIds) {
+                continuations.delete(sourceInstanceId);
+                const next = nextContinuations.get(sourceInstanceId);
+                if (next !== undefined) continuations.set(sourceInstanceId, next);
 
-            const lane = result.window.lanes.find(
-                (candidate) => candidate.sourceInstanceId === sourceInstanceId,
-            );
-            const laneObservations = laneObservationsFromWire(result, sourceInstanceId);
-            const walkObservations = retainObservations(
-                resume?.some((entry) => entry.sourceInstanceId === sourceInstanceId)
-                    ? lanes.get(sourceInstanceId)?.walkObservations ?? []
-                    : [],
-                laneObservations,
-                true,
-            );
-            if (lane === undefined) {
-                outcomes.set(sourceInstanceId, { kind: 'interrupted' });
-                publishRead();
-                return;
+                const lane = result.window.lanes.find(
+                    (candidate) => candidate.sourceInstanceId === sourceInstanceId,
+                );
+                const laneObservations = laneObservationsFromWire(result, sourceInstanceId);
+                const walkObservations = retainObservations(
+                    resume?.some((entry) => entry.sourceInstanceId === sourceInstanceId)
+                        ? lanes.get(sourceInstanceId)?.walkObservations ?? []
+                        : [],
+                    laneObservations,
+                    true,
+                );
+                if (lane === undefined) {
+                    outcomes.set(sourceInstanceId, { kind: 'interrupted' });
+                    continue;
+                }
+                if (lane.health.kind === 'failed') {
+                    recordLaneFailure(sourceInstanceId, lane, {
+                        code: lane.health.failure.code,
+                        message: lane.health.failure.detail ?? lane.health.failure.class,
+                    }, walkObservations, result.window.taskProjection);
+                    outcomes.set(sourceInstanceId, { kind: 'failed', failure: lane.health.failure });
+                    continue;
+                }
+                if (lane.health.kind === 'unavailable') {
+                    recordLaneFailure(sourceInstanceId, lane, {
+                        ...UNREADABLE_IN_THIS_PASS_V1,
+                        ...lane.health.error,
+                    }, walkObservations, result.window.taskProjection);
+                    outcomes.set(sourceInstanceId, { kind: 'interrupted' });
+                    continue;
+                }
+                const observations = activeCycleReplacesGeneration || lane.exhausted
+                    ? reconcileAdmittedObservations(lanes.get(sourceInstanceId)?.observations ?? [], walkObservations)
+                    : retainObservations(lanes.get(sourceInstanceId)?.observations ?? [], walkObservations);
+                lanes.set(sourceInstanceId, {
+                    lane,
+                    // A completed walk replaces its membership; an unfinished
+                    // walk retains the last known rows beside its new pages.
+                    observations,
+                    taskProjection: reconcileTaskProjection(sourceInstanceId, result.window.taskProjection, observations),
+                    ...(continuations.has(sourceInstanceId) ? { walkObservations } : {}),
+                    error: null,
+                    completedAtMs: batchCompletedAtMs,
+                });
+                outcomes.set(sourceInstanceId, { kind: 'completed' });
             }
-            if (lane.health.kind === 'failed') {
-                recordLaneFailure(sourceInstanceId, lane, {
-                    code: lane.health.failure.code,
-                    message: lane.health.failure.detail ?? lane.health.failure.class,
-                }, walkObservations, result.window.taskProjection);
-                outcomes.set(sourceInstanceId, { kind: 'failed', failure: lane.health.failure });
-                publishRead();
-                return;
-            }
-            if (lane.health.kind === 'unavailable') {
-                recordLaneFailure(sourceInstanceId, lane, {
-                    ...UNREADABLE_IN_THIS_PASS_V1,
-                    ...lane.health.error,
-                }, walkObservations, result.window.taskProjection);
-                outcomes.set(sourceInstanceId, { kind: 'interrupted' });
-                publishRead();
-                return;
-            }
-            const observations = activeCycleReplacesGeneration || lane.exhausted
-                ? reconcileAdmittedObservations(lanes.get(sourceInstanceId)?.observations ?? [], walkObservations)
-                : retainObservations(lanes.get(sourceInstanceId)?.observations ?? [], walkObservations);
-            lanes.set(sourceInstanceId, {
-                lane,
-                // A completed walk replaces its membership; an unfinished
-                // walk retains the last known rows beside its new pages.
-                observations,
-                taskProjection: reconcileTaskProjection(sourceInstanceId, result.window.taskProjection, observations),
-                ...(continuations.has(sourceInstanceId) ? { walkObservations } : {}),
-                error: null,
-                completedAtMs: batchCompletedAtMs,
-            });
-            outcomes.set(sourceInstanceId, { kind: 'completed' });
             publishRead();
         }));
         // A superseded lens can discard every source result. Its admitted read
@@ -1285,7 +1329,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             // is: the pass reached no provider evidence about any of them. Only
             // instances the cycle would actually have asked are named — one no
             // pass would have touched must not be accused.
-            for (const summary of configuredSources) {
+            for (const summary of acquisitionSources()) {
                 if (!summary.available) continue;
                 recordLaneError(summary.sourceInstanceId, UNREADABLE_IN_THIS_PASS_V1);
             }
@@ -1298,12 +1342,14 @@ export function createTriageListWindowStore(deps: Readonly<{
             return;
         }
 
-        const availableSourceInstanceIds = configuredSources
+        const availableSourceInstanceIds = acquisitionSources()
             .filter((summary) => summary.available)
             .map((summary) => summary.sourceInstanceId);
         const firstUnvisitedSourceIndex = (windowsRequested - 1) * MAX_TRIAGE_LIST_WINDOW_ROWS_V1;
         const appendSourceInstanceIds = cycleWasAppend
-            ? [...new Set([
+            ? lens.sort !== undefined
+                ? availableSourceInstanceIds.filter(id => continuations.has(id) || lanes.get(id)?.lane.exhausted !== true)
+                : [...new Set([
                 // A page with more configured connections than rows resumes the
                 // next configured slice before deepening an earlier lane. The
                 // slice is derived from the existing mounted depth; retained
@@ -1321,8 +1367,12 @@ export function createTriageListWindowStore(deps: Readonly<{
             // One row is the smallest fair share for one selected lane. Do not
             // tell the coordinator a connection started when the 56-row window
             // cannot ask it at all; the untouched suffix remains derivable from
-            // the mounted lane map and is taken first by Load More.
-            sourceInstanceIds: appendSourceInstanceIds.slice(0, MAX_TRIAGE_LIST_WINDOW_ROWS_V1),
+            // the mounted lane map and is taken first by Load More. Explicit sort
+            // needs every live head in one aggregate request before cutting rows.
+            sourceInstanceIds: lens.sort === undefined
+                ? appendSourceInstanceIds.slice(0, MAX_TRIAGE_LIST_WINDOW_ROWS_V1)
+                : appendSourceInstanceIds,
+            requireAllSources: lens.sort !== undefined,
             trigger,
         });
         if (pagingResetPending) {
@@ -1406,7 +1456,7 @@ export function createTriageListWindowStore(deps: Readonly<{
                 row: previous,
                 observation,
                 lanes: [...lanes.values()].map(value => value.lane),
-                activeSourceInstanceIds: configuredSources.filter(source => source.available).map(source => source.sourceInstanceId),
+                activeSourceInstanceIds: acquisitionSources().filter(source => source.available).map(source => source.sourceInstanceId),
                 assembledAtMs: observation.observedAtMs,
                 keepViewerFacts,
             });
@@ -1496,7 +1546,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             if (pluginJsonValuesEqual(lens, next)) return;
             // Text, facets, order and Smart policy project retained pages without
             // replacing their provider walk or its continuation.
-            const acquisitionChanged = !sameAcquisitionLens(lens, next);
+            const acquisitionChanged = !sameAcquisitionLens(lens, next, configuredSources);
             lens = next;
             if (acquisitionChanged) {
                 coordinator.cancel();

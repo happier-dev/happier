@@ -1,3 +1,4 @@
+import { TriageListSortV1Schema } from '@happier-dev/triage-protocol/v1';
 import {
   defineProtocolArray,
   defineProtocolLiteral,
@@ -38,7 +39,7 @@ export const TriageMountedUiOperationV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('setGroupExpanded'), group: defineProtocolLiteral('completed'),
     expanded: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]) }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('setLens'), query: TriageListSettledQueryV1Schema, filters: TriageSurfaceFilterSelectionV1Schema,
-    order: TriageListOrderV1Schema,
+    order: TriageListOrderV1Schema, sort: TriageListSortV1Schema.optional(),
     smartPolicy: TriageSmartPolicyV1Schema.optional() }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('selectSavedView'), viewId: identifier.nullable() }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('setSelection'), entryRefs: defineProtocolArray(TriageEntryRefV1Schema) }, closed),

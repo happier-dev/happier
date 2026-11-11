@@ -79,3 +79,9 @@ describe('the saved-view lens status', () => {
         })).toBe('unsaved');
     });
 });
+
+it('marks a changed source-owned field sort as a modified saved view', () => {
+ const sort = { field: 'created', direction: 'asc' } as const;
+ expect(readTriageSavedViewLensStatusV1({ selected: { ...STORED, sort }, lens: { ...STORED_LENS, sort, view: 'list' } })).toBe('saved');
+ expect(readTriageSavedViewLensStatusV1({ selected: { ...STORED, sort }, lens: { ...STORED_LENS, sort: { ...sort, direction: 'desc' }, view: 'list' } })).toBe('modified');
+});

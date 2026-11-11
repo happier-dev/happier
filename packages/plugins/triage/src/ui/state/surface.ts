@@ -1,3 +1,4 @@
+import type { TriageListSortV1 } from '@happier-dev/triage-protocol/v1';
 import type { TriageEntryRefV1, TriageSourceInstanceIdV1 } from '@happier-dev/triage-protocol/v1';
 
 import { sameTriageSourceIdentity } from '../../corpus/identity/components.js';
@@ -125,6 +126,7 @@ export type TriageSurfaceStateV1 = Readonly<{
    * `order` fields and no rule saying which one is authoritative.
    */
   order: TriageListOrderV1;
+  sort?: TriageListSortV1;
   /**
    * Carried whatever the order is. A reader who set the Smart precedence and
    * then looked at the list by date has not withdrawn the preference, so
@@ -188,6 +190,7 @@ export type TriageSurfaceActionV1 =
       visibleOrder: readonly TriageVisibleRowV1[];
     }>
   | Readonly<{ kind: 'orderChanged'; order: TriageSurfaceStateV1['order'] }>
+  | Readonly<{ kind: 'sortChanged'; sort: TriageListSortV1 }>
   /** One facet value in or out; every other facet is untouched. */
   | Readonly<{ kind: 'filterValueToggled' } & TriageFilterFacetValueV1>
   | Readonly<{ kind: 'filtersCleared' }>
@@ -210,6 +213,7 @@ export type TriageSurfaceActionV1 =
       query: string;
       filters: SurfaceFilterSelectionV1;
       order: TriageListOrderV1;
+      sort?: TriageListSortV1;
       smartPolicy: CorpusSmartPolicyV1;
     }>
   /** The named view is gone; the lens it produced is not. */
@@ -374,7 +378,13 @@ export function reduceTriageSurfaceV1(
       return repairFocus(state, action.previousOrder, action.visibleOrder);
 
     case 'orderChanged':
-      return action.order === state.order ? state : { ...state, order: action.order };
+      if (action.order === state.order && state.sort === undefined) return state;
+      const { sort: _sort, ...named } = state;
+      return { ...named, order: action.order };
+
+    case 'sortChanged':
+      return state.sort?.field === action.sort.field && state.sort.direction === action.sort.direction
+        ? state : { ...state, sort: action.sort };
 
     case 'taskAudienceChanged':
       return state.filters.tasks === action.audience ? state
@@ -410,6 +420,7 @@ export function reduceTriageSurfaceV1(
         search: { query: action.query, composing: null },
         filters: withPageAudience(action.filters),
         order: action.order,
+        sort: action.sort,
         smartPolicy: action.smartPolicy,
       };
 

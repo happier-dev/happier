@@ -128,6 +128,9 @@ describe('the PRs & Issues grouping axis', () => {
     expect(items.map(item => item.row.entryRef.entryId)).toEqual(['c', 'external-1', 'working', 'a', 'external-2', 'b']);
     expect(byGroup(items).started).toEqual(['working']);
     expect(byGroup(items).unstarted).toEqual(['c', 'external-1', 'a', 'external-2', 'b']);
+    const fieldOrdered = planTriageListItemsV1({ rows, pins: [], workflowSubjectOf: pullRequests, tasks,
+      lens: { query: '', filters: TRIAGE_LIST_NO_FILTERS_V1, sort: { field: 'created', direction: 'asc' } } });
+    expect(fieldOrdered.map(item => item.row.entryRef.entryId)).toEqual(rows.map(row => row.entryRef.entryId));
   });
   it('never pulls a shared task with a colliding id into the viewer personal order', () => {
     const task = (id: string, collisionScope: string) => ({ ...row(id, { kindId: 'task' }),

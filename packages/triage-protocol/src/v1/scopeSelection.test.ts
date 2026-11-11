@@ -25,6 +25,15 @@ describe('shared source scope selection', () => {
         ]) expect(TriageSourceScopeSelectionV1Schema.safeParse(invalid).success).toBe(false);
     });
 
+    it('carries configured sort capability including explicit absence and rejects foreign fields', () => {
+        const page = { kind: 'page', status: 'complete', selection: { kind: 'all' }, units: [] };
+        for (const sortFields of [[], ['created']]) {
+            expect(TriageListScopeUnitsResultV1Schema.parse({ ...page, sortFields })).toEqual({ ...page, sortFields });
+        }
+        expect(TriageListScopeUnitsResultV1Schema.safeParse({ ...page, sortFields: ['title'] }).success).toBe(false);
+        expect(TriageListScopeUnitsResultV1Schema.safeParse({ ...page, sortFields: ['created', 'created'] }).success).toBe(false);
+    });
+
     it('keeps configuration-only projection and paged provider discovery on the same strict source contract', () => {
         const fixture = createTriageSourceV1Fixture();
         const draft = fixture.listInstancesResult.candidates[0]!;

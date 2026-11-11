@@ -3,7 +3,7 @@ import { TriageSourceDescriptorV1Schema, TriageSourcesContributionProtocolV1, Tr
 import { defineProtocolLiteral, defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 import {
   INTERNAL_TASK_DRAFT_V1, INTERNAL_TASK_STATES_V1, internalTaskStateV1,
-  INTERNAL_TASK_EDIT_FIELDS_V1,
+  INTERNAL_TASK_EDIT_FIELDS_V1, INTERNAL_TASK_SORT_FIELDS_V1,
   scanInternalTasks, getInternalTask, createInternalTask, editInternalTask, transitionInternalTask,
   linkInternalTaskSession, readInternalTaskSessionLinks,
 } from './source.js';
@@ -19,6 +19,7 @@ export const INTERNAL_TASK_DESCRIPTOR_V1 = TriageSourceDescriptorV1Schema.parse(
     taskCapabilities: { completedScan: true, createFields: fields, editFields: fields, completingTransitionId: 'completed',
       initialStatuses: statuses.map(status => ({ ...status, ...(status.id === 'unstarted' ? { isDefault: true } : {}) })),
       transitions: statuses } }, ...TRIAGE_NATIVE_INVESTIGATION_KINDS_V1],
+  sortFields: INTERNAL_TASK_SORT_FIELDS_V1,
   sessionRelations: { kindIds: ['task'] },
 });
 const surfaces = ['plugin', 'ui', 'agent', 'mcp', 'cli'] as const;

@@ -93,6 +93,8 @@ export type TriageRefreshCoordinatorV1 = Readonly<{
     request(input: Readonly<{
         sourceInstanceIds: readonly string[];
         trigger: TriageRefreshTriggerV1;
+        /** Ordered merges need a head from every requested source. */
+        requireAllSources?: boolean;
     }>): TriageRefreshRequestResultV1;
     /**
      * What this trigger would be told right now, without asking for a pass.
@@ -103,8 +105,7 @@ export type TriageRefreshCoordinatorV1 = Readonly<{
      * It is a pure read of process-local pacing state: it starts nothing, records
      * nothing, and opens no slot.
      */
-    pacingBlock(input: Readonly<{
-        sourceInstanceId: string;
+    pacingBlock(input: Readonly<({ sourceInstanceId: string } | { sourceInstanceIds: readonly string[]; requireAllSources: true }) & {
         trigger: TriageRefreshTriggerV1;
     }>): TriageRefreshPacingBlockV1 | null;
     /** Retirement, reconfiguration, or contribution loss for one instance. */
@@ -194,6 +195,27 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
         slots.delete(slot.sourceInstanceId);
     }
 
+    function eligibleSources(sourceInstanceIds: readonly string[], requireAllSources = false): Readonly<{
+        eligible: readonly string[];
+        blocked: TriageRefreshRequestResultV1['blocked'];
+    }> {
+        const blocked: Array<{ sourceInstanceId: string; reason: TriageRefreshPacingBlockV1 }> = [];
+        const eligible: string[] = [];
+        for (const sourceInstanceId of sourceInstanceIds) {
+            const eligibility = evaluateRefreshEligibility({ nowMs: deps.nowMs(),
+                retryNotBeforeMs: slots.get(sourceInstanceId)?.retryNotBeforeMs ?? null });
+            if (eligibility.kind === 'blocked') blocked.push({ sourceInstanceId, reason: {
+                reason: eligibility.reason, nextEligibleAtMs: eligibility.nextEligibleAtMs,
+            } });
+            else eligible.push(sourceInstanceId);
+        }
+        if (requireAllSources && blocked.length > 0) {
+            const latest = blocked.reduce((left, right) => left.reason.nextEligibleAtMs >= right.reason.nextEligibleAtMs ? left : right);
+            return { eligible: [], blocked: sourceInstanceIds.map(sourceInstanceId => ({ sourceInstanceId, reason: latest.reason })) };
+        }
+        return { eligible, blocked };
+    }
+
     return Object.freeze({
         request(input): TriageRefreshRequestResultV1 {
             if (disposed) {
@@ -207,29 +229,9 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
                     })),
                 };
             }
-            const activeSlots: RefreshSlot[] = [];
-            const blocked: Array<{
-                sourceInstanceId: string;
-                reason: TriageRefreshBlockedV1;
-            }> = [];
-            for (const sourceInstanceId of input.sourceInstanceIds) {
-                const existing = slots.get(sourceInstanceId);
-                const eligibility = evaluateRefreshEligibility({
-                    nowMs: deps.nowMs(),
-                    retryNotBeforeMs: existing?.retryNotBeforeMs ?? null,
-                });
-                if (eligibility.kind === 'blocked') {
-                    blocked.push({
-                        sourceInstanceId,
-                        reason: {
-                            reason: eligibility.reason,
-                            nextEligibleAtMs: eligibility.nextEligibleAtMs,
-                        },
-                    });
-                } else {
-                    activeSlots.push(openSlot(sourceInstanceId));
-                }
-            }
+            const eligibility = eligibleSources(input.sourceInstanceIds, input.requireAllSources);
+            const activeSlots = eligibility.eligible.map(openSlot);
+            const blocked = eligibility.blocked;
             const startedSourceInstanceIds = activeSlots.map((slot) => slot.sourceInstanceId);
             return {
                 disposition: activeSlots.length === 0 ? 'blocked' : 'started',
@@ -240,15 +242,9 @@ export function createTriageRefreshCoordinator(deps: Readonly<{
         },
         pacingBlock(input): TriageRefreshPacingBlockV1 | null {
             if (disposed) return null;
-            const slot = slots.get(input.sourceInstanceId);
-            if (slot?.retired) return null;
-            const eligibility = evaluateRefreshEligibility({
-                nowMs: deps.nowMs(),
-                retryNotBeforeMs: slot?.retryNotBeforeMs ?? null,
-            });
-            return eligibility.kind === 'blocked'
-                ? { reason: eligibility.reason, nextEligibleAtMs: eligibility.nextEligibleAtMs }
-                : null;
+            const sourceInstanceIds = 'sourceInstanceId' in input ? [input.sourceInstanceId] : input.sourceInstanceIds;
+            const eligibility = eligibleSources(sourceInstanceIds, 'sourceInstanceIds' in input);
+            return triageRefreshPacingBlock(eligibility.blocked[0]?.reason);
         },
         retire(sourceInstanceId: string): void {
             const slot = slots.get(sourceInstanceId);

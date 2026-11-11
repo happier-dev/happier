@@ -170,6 +170,7 @@ function createHarness(options: Readonly<{
     sameSourceForB?: boolean;
     /** Substitute only the provider scan boundary for a discriminating walk fixture. */
     scanA?: ScanFn;
+    sortFields?: readonly import('@happier-dev/triage-protocol/v1').TriageListSortFieldV1[];
 }> = {}) {
     const admitSourceB = options.admitSourceB ?? true;
     const sourceForB = options.sameSourceForB ? SOURCE_A : SOURCE_B;
@@ -214,6 +215,7 @@ function createHarness(options: Readonly<{
                 v: 1,
                 purpose: 'triage-source',
                 displayName: 'Example forge',
+                ...(options.sortFields === undefined ? {} : { sortFields: options.sortFields }),
                 kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }],
             },
             operations: { listInstances: {}, scan: handle, get: {} },
@@ -3208,4 +3210,117 @@ describe('appending another bounded window to one mount', () => {
 
         store.dispose();
     });
+});
+
+it('restarts provider acquisition for a source-owned field sort and carries it on every page', async () => {
+  const inputs: TriageListEntriesInputV1[] = [];
+  const harness = createHarness({ configureSourceB: false, admitSourceB: false, sortFields: ['created'] });
+  harness.state.mixedSourcesNeverFinish = true;
+  const store = createTriageListWindowStore({ readEntries: async input => {
+    inputs.push(input);
+    return harness.readEntries(input);
+  }, nowMs: () => harness.clock.nowMs });
+  try {
+    await store.refresh('view');
+    const before = inputs.length;
+    const sort = { field: 'created', direction: 'asc' } as const;
+    store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, sort });
+    await store.refresh('view');
+    const firstSortedPage = inputs.length;
+    await store.loadMore();
+    expect(inputs.length).toBeGreaterThan(firstSortedPage);
+    expect(inputs.slice(before).filter(input => input.sources.kind === 'selected')).not.toHaveLength(0);
+    expect(inputs.slice(before).filter(input => input.limit > 0).every(input => input.sort?.field === 'created' && input.sort.direction === 'asc')).toBe(true);
+  } finally { store.dispose(); }
+});
+it('keeps one aggregate sorted prefix across selected source lanes instead of regrouping returned rows', async () => {
+ const harness = createHarness({ sortFields: ['created', 'updated'] });
+ const inputs: TriageListEntriesInputV1[] = [];
+ let expectedKeys: string[] = [];
+ const store = createTriageListWindowStore({ lens: { ...TRIAGE_LIST_DEFAULT_LENS_V1, sort: { field: 'created', direction: 'asc' } },
+  readEntries: async input => {
+   inputs.push(input);
+   const result = await harness.readEntries(input);
+   if (input.limit === 0) return result;
+   // The real Action builds the wire rows; this transport fixture publishes their authoritative alternating order.
+   const grouped = result.window.rows;
+   const a = grouped.filter(row => row.entryRef.source.pluginId === SOURCE_A.pluginId);
+   const b = grouped.filter(row => row.entryRef.source.pluginId === SOURCE_B.pluginId);
+   const rows = Array.from({ length: Math.max(a.length, b.length) }, (_, index) => [b[index], a[index]])
+    .flat().filter((row): row is (typeof grouped)[number] => row !== undefined);
+   expectedKeys = rows.map(row => triageEntryRowKey(row.entryRef));
+   return TriageListEntriesResultV1Schema.parse({ ...result, window: { ...result.window, rows } });
+  }, nowMs: () => harness.clock.nowMs });
+ try {
+  await store.refresh('view');
+  const sortedReads = inputs.filter(input => input.limit > 0);
+  expect(sortedReads).toHaveLength(1);
+  expect(sortedReads[0]?.sources).toEqual({ kind: 'selected', sourceInstances: [
+   { sourceInstanceId: INSTANCE_A, configurationRowId: expect.any(String) },
+   { sourceInstanceId: INSTANCE_B, configurationRowId: expect.any(String) },
+  ] });
+  expect(store.getSnapshot().window?.rows.map(row => triageEntryRowKey(row.entryRef))).toEqual(expectedKeys);
+  const before = inputs.length;
+  store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, sort: { field: 'created', direction: 'asc' },
+   filters: { ...TRIAGE_LIST_DEFAULT_LENS_V1.filters, sources: [{ source: SOURCE_B }] } });
+  await store.refresh('view');
+  const selectedReads = inputs.slice(before).filter(input => input.limit > 0);
+  expect(selectedReads).not.toHaveLength(0);
+  expect(selectedReads.every(input => input.sources.kind === 'selected'
+   && input.sources.sourceInstances.length === 1 && input.sources.sourceInstances[0]?.sourceInstanceId === INSTANCE_B)).toBe(true);
+ } finally { store.dispose(); }
+});
+
+it('retains the last aggregate ordered prefix as stale when a sorted refresh fails before emitting rows', async () => {
+ const harness = createHarness({ configureSourceB: false, admitSourceB: false, sortFields: ['created'] });
+ const store = createTriageListWindowStore({ lens: { ...TRIAGE_LIST_DEFAULT_LENS_V1, sort: { field: 'created', direction: 'asc' } },
+  readEntries: harness.readEntries, nowMs: () => harness.clock.nowMs });
+ try {
+  await store.refresh('view');
+  const before = store.getSnapshot().window?.rows.map(row => triageEntryRowKey(row.entryRef));
+  expect(before?.length).toBeGreaterThan(0);
+  harness.state.sourceAFailure = { class: 'transient', code: 'source-busy' };
+  await store.refresh('manual');
+  expect(store.getSnapshot().window?.rows.map(row => triageEntryRowKey(row.entryRef))).toEqual(before);
+  expect(store.getSnapshot().freshness).toBe('stale');
+ } finally { store.dispose(); }
+});
+
+it('admits a sorted head beyond the window row count before choosing the first visible row', async () => {
+ const lastId = String(MAX_TRIAGE_LIST_WINDOW_ROWS_V1 + 3).padStart(8, '0') + '-1111-4111-8111-111111111111';
+ const harness = createHarness({ configureSourceB: false, wholeCatalog: true, sortFields: ['updated'],
+  scanA: async input => {
+   const id = input.instance.instance.sourceInstanceId;
+   return { kind: 'complete', observations: [presentObservation({ entryId: id, title: id,
+    sourceUpdatedAtMs: id === lastId ? 1_000_000 : 1 })], evidence: { kind: 'walkFinished' } };
+  } });
+ for (let index = 0; index <= MAX_TRIAGE_LIST_WINDOW_ROWS_V1; index += 1) {
+  const id = String(index + 3).padStart(8, '0') + '-1111-4111-8111-111111111111';
+  harness.control.sourceInstances.seed(toCorpusStoredValue(instanceRow('s' + String(index).padStart(4, '0') + 'x', SOURCE_A, id, index + 3, 'account-s' + index)));
+ }
+ const store = createTriageListWindowStore({ lens: { ...TRIAGE_LIST_DEFAULT_LENS_V1, sort: { field: 'updated', direction: 'desc' } },
+  readEntries: harness.readEntries, nowMs: () => harness.clock.nowMs });
+ try {
+  await store.refresh('view');
+  expect(store.getSnapshot().window?.rows[0]?.entryRef.entryId).toBe(lastId);
+  expect(store.getSnapshot().window?.rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
+  expect(store.getSnapshot().loadMore?.kind).toBe('available');
+ } finally { store.dispose(); }
+});
+
+it('keeps a source-silent default projection honest about sources outside its sorted acquisition', async () => {
+ const harness = createHarness({ sortFields: ['created'] });
+ const store = createTriageListWindowStore({ lens: { ...TRIAGE_LIST_DEFAULT_LENS_V1,
+  sort: { field: 'created', direction: 'asc' },
+  filters: { ...TRIAGE_LIST_DEFAULT_LENS_V1.filters, sources: [{ source: SOURCE_B }] } },
+  readEntries: harness.readEntries, nowMs: () => harness.clock.nowMs });
+ try {
+  await store.refresh('view');
+  expect(store.getSnapshot().window?.coverage).toBe('complete');
+  const reads = harness.actionInputs.length;
+  const projected = store.project(TRIAGE_LIST_DEFAULT_LENS_V1);
+  expect(projected?.lanes.map(lane => lane.sourceInstanceId)).toEqual([INSTANCE_A, INSTANCE_B]);
+  expect(projected?.coverage).toBe('partial');
+  expect(harness.actionInputs).toHaveLength(reads);
+ } finally { store.dispose(); }
 });

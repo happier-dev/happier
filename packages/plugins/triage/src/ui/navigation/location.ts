@@ -1,3 +1,5 @@
+import type { TriageListSortV1 } from '@happier-dev/triage-protocol/v1';
+import { TriageListSortV1Schema } from '@happier-dev/triage-protocol/v1';
 import { normalizePluginUiSubPathV1, type PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 import { buildTriageEntryRouteSegmentV1, readTriageEntryRouteSegmentV1, type TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
@@ -71,6 +73,7 @@ import {
 /** The route-carried lens. Pagination and cursor depth are never in it. */
 export type TriageRouteLensV1 = Readonly<{
   order: TriageSurfaceStateV1['order'];
+  sort?: TriageListSortV1;
   /**
    * Carried on every lens, not only a `smart` one, because the reducer retains
    * it across an order switch: a copied link that dropped it would reproduce a
@@ -174,6 +177,7 @@ function readClosedTokens<TValue extends string>(
  */
 export function parseTriageRouteSubPathV1(subPath: string | undefined): TriageRouteLensV1 {
   let order = TRIAGE_ROUTE_DEFAULT_LENS_V1.order;
+  let sort: TriageListSortV1 | undefined;
   let smartPolicy = TRIAGE_ROUTE_DEFAULT_LENS_V1.smartPolicy;
   let query = TRIAGE_ROUTE_DEFAULT_LENS_V1.query;
   let selectedViewId = TRIAGE_ROUTE_DEFAULT_LENS_V1.selectedViewId;
@@ -203,6 +207,11 @@ export function parseTriageRouteSubPathV1(subPath: string | undefined): TriageRo
       if (value !== null && (ORDERS as readonly string[]).includes(value)) {
         order = value as TriageRouteLensV1['order'];
       }
+      continue;
+    }
+    if (key === 's' && components.length === 2) {
+      const parsed = TriageListSortV1Schema.safeParse({ field: decode(components[0] ?? ''), direction: decode(components[1] ?? '') });
+      if (parsed.success) sort = parsed.data;
       continue;
     }
     if (key === 'sp' && components.length === 1) {
@@ -267,6 +276,7 @@ export function parseTriageRouteSubPathV1(subPath: string | undefined): TriageRo
 
   return Object.freeze({
     order,
+    ...(sort === undefined ? {} : { sort }),
     smartPolicy,
     filters: Object.freeze({
       ...(tasks === undefined ? {} : { tasks }),
@@ -285,6 +295,7 @@ export function parseTriageRouteSubPathV1(subPath: string | undefined): TriageRo
 /** Build the canonical location for one lens. Absent fields stay absent. */
 export function buildTriageRouteSubPathV1(lens: TriageRouteLensV1): string {
   const segments: string[] = [];
+  if (lens.sort !== undefined) segments.push(`s,${lens.sort.field},${lens.sort.direction}`);
   if (lens.filters.tasks !== undefined) segments.push(`tasks,${lens.filters.tasks}`);
   if (lens.selectedViewId !== null) segments.push(`sv,${encode(lens.selectedViewId)}`);
   if (lens.order !== TRIAGE_ROUTE_DEFAULT_LENS_V1.order) {
@@ -339,10 +350,11 @@ export function buildTriageRouteSubPathV1(lens: TriageRouteLensV1): string {
 
 /** The route-carried view of the reducer's current state. */
 export function readTriageRouteLensV1(state: Pick<TriageSurfaceStateV1,
-  'order' | 'smartPolicy' | 'filters' | 'selectedViewId' | 'selection'
+  'order' | 'sort' | 'smartPolicy' | 'filters' | 'selectedViewId' | 'selection'
 > & Readonly<{ search: Pick<TriageSurfaceStateV1['search'], 'query'> }>): TriageRouteLensV1 {
   return Object.freeze({
     order: state.order,
+    ...(state.sort === undefined ? {} : { sort: state.sort }),
     smartPolicy: state.smartPolicy,
     filters: state.filters,
     // The settled query only. An IME-intermediate composition reaches neither

@@ -1,4 +1,4 @@
-import { TriageConfiguredSourceInstanceV1Schema, type TriageScanResultV1 } from '@happier-dev/triage-protocol/v1';
+import { MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1, TriageConfiguredSourceInstanceV1Schema, type TriageListSortV1, type TriageScanResultV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
@@ -130,6 +130,220 @@ function completedPage(entryId: string): TriageScanResultV1 {
         observations: [presentObservation('pull-request', entryId)],
     } as unknown as TriageScanResultV1;
 }
+
+
+function orderedLane(sourceInstanceId: string, values: readonly number[], calls: number[], sort: TriageListSortV1 = { field: 'created', direction: 'asc' }): TriageScanLaneV1 {
+    return { ...answeringLane({ sourceInstanceId, declaredKindIds: ['issue'], scan: async input => {
+        const offset = input.page.kind === 'initial' ? 0 : Number(input.page.continuation.token);
+        const limit = input.page.kind === 'initial' ? input.page.limit : calls[0]!;
+        calls.push(limit);
+        const observations = values.slice(offset, offset + limit).map(value => ({
+            ...presentObservation('issue', String(value).padStart(5, '0')),
+            snapshot: testkitSnapshot({ createdAtMs: value }), sourceUpdatedAtMs: value, nativeRevision: `revision-${value}`,
+        }));
+        return offset + limit >= values.length
+            ? { kind: 'complete', evidence: WALK_FINISHED, observations }
+            : { kind: 'page', evidence: { kind: 'partial', reason: 'more-pages' }, observations,
+                continuation: { v: 1, token: String(offset + limit) } };
+    } }), sort };
+}
+
+describe('cross-source field order', () => {
+    it.each(['configuration', 'binding'] as const)('rejects a retained buffer after the configured %s changes under the same instance id', async change => {
+        const firstCalls: number[] = [];
+        const secondCalls: number[] = [];
+        const sources = [orderedLane(INSTANCE_ID, [1, 3], firstCalls), orderedLane(OTHER_INSTANCE_ID, [2, 4], secondCalls)];
+        const first = await runTriageScanPass({ lanes: sources, pageLimit: 2, observationBudget: 1, nowMs: () => 1000 });
+        const next = sources.map(lane => ({ ...lane,
+            configured: TriageConfiguredSourceInstanceV1Schema.parse({ ...lane.configured,
+                ...(change === 'configuration' ? { configuration: { v: 1, token: 'changed-routing-token' } }
+                    : { binding: { purpose: 'triage-source', account: { service: { pluginId: SOURCE.pluginId, localId: 'accounts' }, accountId: 'other-account' } } }) }),
+            resume: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.continuation }));
+        const pass = await runTriageScanPass({ lanes: next, pageLimit: 2, observationBudget: 1, nowMs: () => 2000 });
+        expect(pass.observations).toEqual([]);
+        expect(pass.lanes.map(lane => lane.health)).toEqual(Array.from({ length: 2 }, () => ({
+            kind: 'failed', failure: { class: 'unsupportedContract', code: 'triage/invalidSortContinuation' },
+        })));
+        expect(pass.stopped).toEqual([]);
+        expect(firstCalls).toEqual([2]);
+        expect(secondCalls).toEqual([2]);
+    });
+
+    it('discards earlier retained rows from a lane whose native refill violates the page contract', async () => {
+        const original = orderedLane(INSTANCE_ID, [1, 3, 5, 7], []);
+        const sources = [{ ...original, scan: async (request, options) => request.page.kind === 'continuation'
+            ? { kind: 'complete' as const, evidence: WALK_FINISHED, observations: [presentObservation('undeclared', 'bad')] }
+            : original.scan(request, options) } satisfies TriageScanLaneV1, orderedLane(OTHER_INSTANCE_ID, [2, 4, 6, 8], [])];
+        const first = await runTriageScanPass({ lanes: sources, pageLimit: 2, observationBudget: 1, nowMs: () => 1000 });
+        const next = sources.map(lane => ({ ...lane,
+            resume: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.continuation }));
+        const second = await runTriageScanPass({ lanes: next, pageLimit: 2, observationBudget: 4, nowMs: () => 2000 });
+        expect(second.observations.map(item => item.entryRef.entryId)).toEqual(['00002']);
+        expect(second.lanes[0]?.health).toMatchObject({ kind: 'failed', failure: { class: 'unsupportedContract', code: 'triage/undeclaredKind' } });
+        expect(second.stopped).toEqual([]);
+    });
+
+    it('retains an ordinary 28-row source page within the canonical allocation without draining its 10,000-row inventory', async () => {
+        const firstCalls: number[] = [];
+        const secondCalls: number[] = [];
+        const sources = [orderedLane(INSTANCE_ID, Array.from({ length: 10_000 }, (_, index) => index), firstCalls),
+            orderedLane(OTHER_INSTANCE_ID, Array.from({ length: 10_000 }, (_, index) => index + 10_000), secondCalls)];
+        const first = await runTriageScanPass({ lanes: sources, pageLimit: 28, observationBudget: 56, nowMs: () => 1000 });
+        expect(first.observations.map(item => item.entryRef.entryId)).toEqual(Array.from({ length: 28 }, (_, index) => String(index).padStart(5, '0')));
+        expect(first.stopped).toHaveLength(2);
+        const next = sources.map(lane => ({ ...lane,
+            resume: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.continuation }));
+        const second = await runTriageScanPass({ lanes: next, pageLimit: 28, observationBudget: 56, nowMs: () => 2000 });
+        expect(second.observations.map(item => item.entryRef.entryId)).toEqual(Array.from({ length: 28 }, (_, index) => String(index + 28).padStart(5, '0')));
+        expect(firstCalls).toEqual([28, 28]);
+        expect(secondCalls).toEqual([28]);
+        expect(second.stopped).toHaveLength(2);
+    });
+
+    it('keeps the already merged prefix when cancellation settles a subsequent native body', async () => {
+        const controller = new AbortController();
+        const original = orderedLane(INSTANCE_ID, [1, 3, 5, 7], []);
+        const sources = [{ ...original, scan: async (request, options) => {
+            expect(options?.signal).toBe(controller.signal);
+            const page = await original.scan(request, options);
+            if (request.page.kind === 'continuation') controller.abort();
+            return page;
+        } } satisfies TriageScanLaneV1, orderedLane(OTHER_INSTANCE_ID, [2, 4, 6, 8], [])];
+        const first = await runTriageScanPass({ lanes: sources, pageLimit: 2, observationBudget: 1, nowMs: () => 1000, signal: controller.signal });
+        const next = sources.map(lane => ({ ...lane,
+            resume: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.continuation }));
+        const second = await runTriageScanPass({ lanes: next, pageLimit: 2, observationBudget: 4, nowMs: () => 2000, signal: controller.signal });
+        expect(second.observations.map(item => item.entryRef.entryId)).toEqual(['00002', '00003']);
+        expect(second.stopped).toEqual([]);
+    });
+
+    it('keeps the original observation clock and native currentness when replaying retained source rows', async () => {
+        const calls: number[] = [];
+        const sources = [orderedLane(INSTANCE_ID, [1, 3], calls), orderedLane(OTHER_INSTANCE_ID, [2, 4], [])];
+        const first = await runTriageScanPass({ lanes: sources, pageLimit: 2, observationBudget: 1, nowMs: () => 1000 });
+        const next = sources.map(lane => ({ ...lane,
+            resume: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.continuation }));
+        const second = await runTriageScanPass({ lanes: next, pageLimit: 2, observationBudget: 1, nowMs: () => 2000 });
+        expect(second.observations.map(item => item.entryRef.entryId)).toEqual(['00002']);
+        expect(second.observations[0]?.observedAtMs).toBe(1000);
+        expect(second.observations[0]?.outcome).toMatchObject({ nativeRevision: 'revision-2' });
+        expect(calls).toEqual([2]);
+    });
+
+    it.each(['updated', 'created', 'status', 'repository', 'due'] as const)('orders %s in both directions with missing values last and ascending stable ids', async field => {
+        for (const direction of ['asc', 'desc'] as const) {
+            const sort = { field, direction };
+            const observation = (id: string, value?: number) => ({
+                ...presentObservation('issue', id),
+                snapshot: testkitSnapshot({ createdAtMs: field === 'created' ? value : undefined,
+                    scopeLabel: field === 'repository' ? (value === 1 ? 'alpha' : 'zeta') : 'scope',
+                    state: { presentation: 'active', ...(field === 'status' && value === undefined ? {} : { nativeLabel: value === 1 ? 'alpha' : 'zeta' }) },
+                    dueDate: field === 'due' && value !== undefined ? `2026-11-${value === 1 ? '01' : '02'}` : undefined }),
+                ...(field === 'updated' && value !== undefined ? { sourceUpdatedAtMs: value } : {}),
+            });
+            const left = [observation('b', 1), observation('d', 2)];
+            const right = [observation('a', 1), observation('c', 2)];
+            if (direction === 'desc') { left.reverse(); right.reverse(); }
+            // scopeLabel is required, so repository has no missing-value arm.
+            if (field !== 'repository') right.push(observation('missing'));
+            const lanes = [[INSTANCE_ID, left], [OTHER_INSTANCE_ID, right]] as const;
+            const pass = await runTriageScanPass({ lanes: lanes.map(([sourceInstanceId, observations]) => ({
+                ...answeringLane({ sourceInstanceId, declaredKindIds: ['issue'], scan: async () => ({ kind: 'complete', evidence: WALK_FINISHED, observations }) }), sort,
+            })), pageLimit: 5, observationBudget: 5, nowMs: () => 1000 });
+            const expected = direction === 'asc' ? ['a', 'b', 'c', 'd'] : ['c', 'd', 'a', 'b'];
+            expect(pass.observations.map(item => item.entryRef.entryId)).toEqual(field === 'repository' ? expected : [...expected, 'missing']);
+        }
+    });
+
+    it('does not resume other lanes after a non-exhausted source ends exactly at the output boundary', async () => {
+        const pass = await runTriageScanPass({ lanes: [
+            { ...answeringLane({ sourceInstanceId: INSTANCE_ID, declaredKindIds: ['issue'], scan: async () => ({
+                kind: 'complete', evidence: { kind: 'partial', reason: 'provider-ceiling' },
+                observations: [{ ...presentObservation('issue', 'first'), snapshot: testkitSnapshot({ createdAtMs: 1 }) }],
+            }) }), sort: { field: 'created', direction: 'asc' } },
+            orderedLane(OTHER_INSTANCE_ID, [2, 3], []),
+        ], pageLimit: 2, observationBudget: 1, nowMs: () => 1000 });
+        expect(pass.observations.map(item => item.entryRef.entryId)).toEqual(['first']);
+        expect(pass.lanes[0]?.exhausted).toBe(false);
+        expect(pass.stopped).toEqual([]);
+    });
+
+    it('ends the whole continuation visibly when an unshown source row exceeds the canonical token allocation', async () => {
+        const pass = await runTriageScanPass({ lanes: [orderedLane(INSTANCE_ID, [1, 2], []),
+            { ...answeringLane({ sourceInstanceId: OTHER_INSTANCE_ID, declaredKindIds: ['issue'], scan: async () => ({
+                kind: 'complete', evidence: { kind: 'partial', reason: 'native-partial', omittedItemCount: 1,
+                    failure: { class: 'transient', code: 'native_omission' } },
+                observations: [{ ...presentObservation('issue', 'large'), snapshot: testkitSnapshot({ createdAtMs: 3,
+                    labels: ['x'.repeat(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 + 1)] }) }],
+            }) }), sort: { field: 'created', direction: 'asc' } }],
+            pageLimit: 2, observationBudget: 1, nowMs: () => 1000 });
+        expect(pass.observations.map(item => item.entryRef.entryId)).toEqual(['00001']);
+        expect(pass.lanes[1]).toMatchObject({ exhausted: false, health: { kind: 'partial', reason: 'continuation-unavailable',
+            omittedItemCount: 1, failure: { class: 'transient', code: 'native_omission' } } });
+        expect(pass.stopped).toEqual([]);
+    });
+
+    it('rejects a retained buffer resumed with a different field order', async () => {
+        const original = [orderedLane(INSTANCE_ID, [1, 3], []), orderedLane(OTHER_INSTANCE_ID, [2, 4], [])];
+        const first = await runTriageScanPass({ lanes: original, pageLimit: 2, observationBudget: 1, nowMs: () => 1000 });
+        const resumed = original.map(lane => ({ ...lane, sort: { field: 'created', direction: 'desc' } as const,
+            resume: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.continuation }));
+        const pass = await runTriageScanPass({ lanes: resumed, pageLimit: 2, observationBudget: 1, nowMs: () => 1000 });
+        expect(pass.observations).toEqual([]);
+        expect(pass.lanes.every(lane => lane.health.kind === 'failed')).toBe(true);
+        expect(pass.stopped).toEqual([]);
+    });
+
+    it('merges source heads before cutting each page and resumes every unconsumed row', async () => {
+        const firstCalls: number[] = [];
+        const secondCalls: number[] = [];
+        const lanes = [orderedLane(INSTANCE_ID, [1, 3, 5, 7], firstCalls),
+            orderedLane(OTHER_INSTANCE_ID, [2, 4, 6, 8], secondCalls)];
+        const seen: string[] = [];
+        let next = lanes;
+        for (let index = 0; index < 10; index += 1) {
+            const pass = await runTriageScanPass({ lanes: next, pageLimit: 3, observationBudget: 3, nowMs: () => 1000 });
+            seen.push(...pass.observations.map(item => item.entryRef.entryId));
+            expect(pass.observations.length).toBeLessThanOrEqual(3);
+            if (pass.stopped.length === 0) break;
+            next = lanes.flatMap(lane => {
+                const stop = pass.stopped.find(item => item.sourceInstanceId === lane.sourceInstanceId);
+                return stop === undefined ? [] : [{ ...lane, resume: stop.continuation, pageLimit: stop.pageLimit }];
+            });
+        }
+        expect(seen).toEqual(['00001', '00002', '00003', '00004', '00005', '00006', '00007', '00008']);
+        expect(firstCalls).toEqual([3, 3]);
+        expect(secondCalls).toEqual([3, 3]);
+    });
+
+    it('fetches at most one bounded native page per source with 10,000 available rows', async () => {
+        const firstCalls: number[] = [];
+        const secondCalls: number[] = [];
+        const pass = await runTriageScanPass({
+            lanes: [orderedLane(INSTANCE_ID, Array.from({ length: 10_000 }, (_, index) => index * 2), firstCalls),
+                orderedLane(OTHER_INSTANCE_ID, Array.from({ length: 10_000 }, (_, index) => index * 2 + 1), secondCalls)],
+            pageLimit: 2, observationBudget: 4, nowMs: () => 1000,
+        });
+        // The next unknown A head can precede B's remaining head: keep that row for the next transport page.
+        expect(pass.observations.map(item => item.entryRef.entryId)).toEqual(['00000', '00001', '00002']);
+        expect(firstCalls).toEqual([2]);
+        expect(secondCalls).toEqual([2]);
+        expect([...firstCalls, ...secondCalls].reduce((total, count) => total + count, 0)).toBe(4);
+        expect(pass.stopped).toHaveLength(2);
+    });
+
+    it('does not emit another source head when an unavailable source has unknown order', async () => {
+        const pass = await runTriageScanPass({ lanes: [orderedLane(INSTANCE_ID, [2, 3], []),
+            { ...answeringLane({ sourceInstanceId: OTHER_INSTANCE_ID, declaredKindIds: ['issue'], scan: async () => {
+                throw new PluginError({ code: 'source_read_refused', retryable: true, message: 'private' });
+            } }), sort: { field: 'created', direction: 'asc' } }],
+            pageLimit: 2, observationBudget: 2, nowMs: () => 1000 });
+        expect(pass.observations).toEqual([]);
+        expect(pass.lanes.find(lane => lane.sourceInstanceId === OTHER_INSTANCE_ID)?.health)
+            .toMatchObject({ kind: 'unavailable', error: { code: 'source_read_refused' } });
+        expect(pass.stopped).toEqual([]);
+    });
+});
 
 describe('one materialization pass', () => {
     it.each([

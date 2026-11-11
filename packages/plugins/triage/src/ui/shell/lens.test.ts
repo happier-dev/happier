@@ -52,3 +52,8 @@ describe('the window lens the shell reads from the one reducer', () => {
       .toBe(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
   });
 });
+
+it('carries a source-owned field sort from the surface into provider acquisition', () => {
+  const sort = { field: 'created', direction: 'asc' } as const;
+  expect(readTriageWindowLensV1({ ...TRIAGE_SURFACE_INITIAL_STATE_V1, sort }).sort).toEqual(sort);
+});

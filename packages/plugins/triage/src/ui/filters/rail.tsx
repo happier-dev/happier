@@ -1,3 +1,4 @@
+import { TRIAGE_LIST_SORT_DIRECTIONS_V1, type TriageListSortFieldV1, type TriageListSortV1 } from '@happier-dev/triage-protocol/v1';
 import * as React from 'react';
 import { View } from 'react-native';
 import {
@@ -43,6 +44,9 @@ import { TRIAGE_LIST_ORDERS_V1 } from '../../projection/listWindow.js';
 /** The wide row's ordering controls beside the search; the filters open from the search field's funnel. */
 export type TriageFilterRailPropsV1 = Readonly<{
   order: TriageSurfaceStateV1['order'];
+  sort?: TriageListSortV1;
+  sortFields?: readonly TriageListSortFieldV1[];
+  onChangeSort?: (sort: TriageListSortV1) => void;
   smartPolicy: CorpusSmartPolicyV1;
   text: TriageTextResolverV1;
   onChangeOrder: (order: TriageSurfaceStateV1['order']) => void;
@@ -57,11 +61,38 @@ const ORDER_LABELS = {
 const ORDER_COPY = TRIAGE_LIST_ORDERS_V1.map(value => [value, ...ORDER_LABELS[value]] as const);
 
 /** The same named ladders for the toolbar and the Collection's table title. */
-export function readTriageOrderOptionsV1(text: TriageTextResolverV1): readonly Readonly<{
-  key: TriageSurfaceStateV1['order'];
-  label: string;
-}>[] {
-  return ORDER_COPY.map(([key, labelKey, fallback]) => ({ key, label: text(labelKey, fallback) }));
+export type TriageOrderOptionV1 = Readonly<{ label: string } & (
+  | { key: TriageSurfaceStateV1['order']; sort?: undefined }
+  | { key: string; sort: TriageListSortV1 }
+)>;
+const FIELD_ORDER_LABELS = {
+ updated: ['Updated: oldest first', 'Updated: newest first'],
+ created: ['Created: oldest first', 'Created: newest first'],
+ status: ['Status: A to Z', 'Status: Z to A'],
+ repository: ['Repository: A to Z', 'Repository: Z to A'],
+ due: ['Due: earliest first', 'Due: latest first'],
+} satisfies Record<TriageListSortFieldV1, readonly [string, string]>;
+export function readTriageOrderSelectionV1(order: TriageSurfaceStateV1['order'], sort?: TriageListSortV1): string {
+ return sort === undefined ? order : `sort:${sort.field}:${sort.direction}`;
+}
+export function readTriageOrderOptionsV1(text: TriageTextResolverV1, fields: readonly TriageListSortFieldV1[] = []): readonly TriageOrderOptionV1[] {
+ return [...ORDER_COPY.map(([key, labelKey, fallback]) => ({ key, label: text(labelKey, fallback) })),
+  ...fields.flatMap(field => TRIAGE_LIST_SORT_DIRECTIONS_V1.map((direction, index) => {
+   const sort = { field, direction };
+   return { key: readTriageOrderSelectionV1('smart', sort), sort,
+    label: text(`plugins.triage.surface.sort.${field}.${direction}`, FIELD_ORDER_LABELS[field][index]) };
+  }))];
+}
+/** Existing Collection column identities consume the same named-order choices as the toolbar. */
+export function readTriageOrderColumnsV1(options: readonly TriageOrderOptionV1[]): Readonly<Record<string, readonly string[]>> {
+ const columns = { updated: 'age', created: null, status: 'field:status', repository: 'where', due: 'field:due' } satisfies Record<TriageListSortFieldV1, string | null>;
+ const result: Record<string, string[]> = { age: ['newest', 'oldest'] };
+ for (const option of options) {
+  if (option.sort === undefined) continue;
+  const column = columns[option.sort.field];
+  if (column !== null) (result[column] ??= []).push(option.key);
+ }
+ return result;
 }
 
 /**
@@ -87,23 +118,27 @@ const SMART_ROW_PREFIX = 'triage-smart:';
  */
 export function readTriageOrderChoicesV1(props: Readonly<{
   order: TriageSurfaceStateV1['order'];
+  sort?: TriageListSortV1;
+  sortFields?: readonly TriageListSortFieldV1[];
+  onChangeSort?: (sort: TriageListSortV1) => void;
   smartPolicy: CorpusSmartPolicyV1;
   text: TriageTextResolverV1;
   onChangeOrder: (order: TriageSurfaceStateV1['order']) => void;
   onChangeSmartPolicy: (smartPolicy: CorpusSmartPolicyV1) => void;
 }>): NonNullable<NonNullable<CollectionToolbarProps['refine']>['foldedChoices']> {
-  const { order, smartPolicy, text } = props;
+  const { order, sort, smartPolicy, text } = props;
+  const options = readTriageOrderOptionsV1(text, props.sortFields);
   const orderLabel = text('plugins.triage.surface.order', 'Order');
   const smartLabel = text('plugins.triage.surface.smartPolicy', 'Smart order');
   const groups: MenuGroup[] = [
     {
       id: 'order',
       accessibilityLabel: orderLabel,
-      items: readTriageOrderOptionsV1(text).map(({ key, label }) => ({
+      items: options.map(({ key, label }) => ({
         id: `${ORDER_ROW_PREFIX}${key}`, label, kind: 'radio' as const, radioGroupId: 'order',
       })),
     },
-    ...(order === 'smart' ? [{
+    ...(order === 'smart' && sort === undefined ? [{
       id: 'smart',
       accessibilityLabel: smartLabel,
       items: SMART_PRECEDENCE_COPY.map(([value, key, fallback]) => ({
@@ -114,14 +149,18 @@ export function readTriageOrderChoicesV1(props: Readonly<{
   return {
     groups,
     radioGroups: [
-      { id: 'order', accessibilityLabel: orderLabel, selectedId: `${ORDER_ROW_PREFIX}${order}` },
-      ...(order === 'smart'
+      { id: 'order', accessibilityLabel: orderLabel, selectedId: `${ORDER_ROW_PREFIX}${readTriageOrderSelectionV1(order, sort)}` },
+      ...(order === 'smart' && sort === undefined
         ? [{ id: 'smart', accessibilityLabel: smartLabel, selectedId: `${SMART_ROW_PREFIX}${smartPolicy.precedence[0]}` }]
         : []),
     ],
     onSelect: (id) => {
-      const match = ORDER_COPY.find(([candidate]) => `${ORDER_ROW_PREFIX}${candidate}` === id);
-      if (match !== undefined) { props.onChangeOrder(match[0]); return; }
+      const match = options.find(option => `${ORDER_ROW_PREFIX}${option.key}` === id);
+      if (match !== undefined) {
+        if (match.sort === undefined) props.onChangeOrder(match.key);
+        else props.onChangeSort?.(match.sort);
+        return;
+      }
       const tuple = CORPUS_SMART_PRECEDENCE_TUPLES_V1.find((candidate) => `${SMART_ROW_PREFIX}${candidate[0]}` === id);
       if (tuple !== undefined) props.onChangeSmartPolicy({ v: 1, precedence: tuple });
     },
@@ -293,14 +332,20 @@ export function TriageFilterRail(props: TriageFilterRailPropsV1): React.ReactEle
     onChangeOrder,
     onChangeSmartPolicy,
     order,
+    sort,
+    sortFields,
+    onChangeSort,
     smartPolicy,
     text,
   } = props;
 
   const onOrderChange = React.useCallback((value: unknown) => {
-    const match = ORDER_COPY.find(([candidate]) => candidate === value);
-    if (match !== undefined) onChangeOrder(match[0]);
-  }, [onChangeOrder]);
+    const match = readTriageOrderOptionsV1(text, sortFields).find(option => option.key === value);
+    if (match !== undefined) {
+      if (match.sort === undefined) onChangeOrder(match.key);
+      else onChangeSort?.(match.sort);
+    }
+  }, [onChangeOrder, onChangeSort, sortFields, text]);
 
   const onPrecedenceChange = React.useCallback((value: unknown) => {
     const tuple = CORPUS_SMART_PRECEDENCE_TUPLES_V1.find((candidate) => candidate[0] === value);
@@ -312,8 +357,8 @@ export function TriageFilterRail(props: TriageFilterRailPropsV1): React.ReactEle
       {layout?.composition !== 'table' ? <Select
         label={text('plugins.triage.surface.order', 'Order')}
         presentation="menu"
-        value={order}
-        options={readTriageOrderOptionsV1(text).map(({ key, label }) => ({ value: key, label }))}
+        value={readTriageOrderSelectionV1(order, sort)}
+        options={readTriageOrderOptionsV1(text, sortFields).map(({ key, label }) => ({ value: key, label }))}
         onChange={onOrderChange}
       /> : null}
       {/*
@@ -321,7 +366,7 @@ export function TriageFilterRail(props: TriageFilterRailPropsV1): React.ReactEle
         the preference survives, but a control that visibly reorders nothing is
         a control that lies about what it does.
       */}
-      {order === 'smart' ? (
+      {order === 'smart' && sort === undefined ? (
         <Select
           label={text('plugins.triage.surface.smartPolicy', 'Smart order')}
           presentation="menu"

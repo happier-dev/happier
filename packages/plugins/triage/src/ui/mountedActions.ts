@@ -16,17 +16,21 @@ export function executeTriageMountedUiAction(host: PluginUiHostApi, mountId: str
       code: result.status === 'rejected' ? 'denied' : 'unavailable',
       diagnostics: [{ code: `triage_mounted_ui_${result.status}`, severity: 'error' }],
     });
-  }).catch((error: unknown) => {
+  }).catch((error: unknown) => presentTriageMountedUiActionFailure(host, error, text));
+}
+
+/** Mounted controls share one diagnostic and visible refusal presenter. */
+export async function presentTriageMountedUiActionFailure(host: PluginUiHostApi, error: unknown,
+  text: (key: string, fallback: string) => string): Promise<void> {
     const diagnostics = isPluginError(error) && error.diagnostics?.length
       ? error.diagnostics : [{ code: 'triage_mounted_ui_failed', severity: 'error' as const }];
     for (const diagnostic of diagnostics) host.diagnostic(diagnostic);
-    void host.notify(isPluginError(error) && error.code === 'denied'
+    await host.notify(isPluginError(error) && error.code === 'denied'
       ? text('happier.plugin-ui.action.error.denied', 'This isn’t allowed here.')
       : text('happier.plugin-ui.action.error.unavailable', 'This isn’t available right now. Try again in a moment.'),
     { severity: 'error' }).catch(() => {
       host.diagnostic({ code: 'triage_mounted_ui_notification_unavailable', severity: 'warning' });
     });
-  });
 }
 
 function acquire(scope: PluginEphemeralSharedScope, mountId: string) {

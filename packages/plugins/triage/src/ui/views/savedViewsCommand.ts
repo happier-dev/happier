@@ -1,3 +1,4 @@
+import type { TriageListSortV1 } from '@happier-dev/triage-protocol/v1';
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 
@@ -63,6 +64,7 @@ export type TriageSavedViewLensV1 = Readonly<{
   query: string;
   filters: SurfaceFilterSelectionV1;
   order: TriageListOrderV1;
+  sort?: TriageListSortV1;
   smartPolicy: CorpusSmartPolicyV1;
   view: TriageSavedViewPresentationV1;
 }>;
@@ -177,6 +179,7 @@ export function readTriageSavedViewsProjectionV1(projection: Readonly<{
       query: view.query,
       filters: view.filters,
       order: view.order,
+      ...(view.sort === undefined ? {} : { sort: view.sort }),
       smartPolicy,
       view: view.view ?? 'list',
     });
@@ -201,6 +204,7 @@ export function triageCreateSavedViewInputV1(
     query: lens.query,
     filters: lens.filters,
     order: lens.order,
+    ...(lens.sort === undefined ? {} : { sort: lens.sort }),
     smartPolicy: lens.smartPolicy,
     view: lens.view,
   };
@@ -228,6 +232,7 @@ export function triageRenameSavedViewInputV1(
     query: view.query,
     filters: view.filters,
     order: view.order,
+      ...(view.sort === undefined ? {} : { sort: view.sort }),
     smartPolicy: view.smartPolicy,
     view: view.view,
   };
@@ -248,6 +253,7 @@ export function triageUpdateSavedViewInputV1(
     query: lens.query,
     filters: lens.filters,
     order: lens.order,
+    ...(lens.sort === undefined ? {} : { sort: lens.sort }),
     smartPolicy: lens.smartPolicy,
     view: lens.view,
   };

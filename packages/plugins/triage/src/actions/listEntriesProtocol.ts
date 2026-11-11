@@ -29,6 +29,7 @@ import {
     TriageSourceScopeUnitDescriptorV1Schema,
     TriageListScopeUnitsResultV1Schema,
     TriageSourceScopeUnitIdV1Schema,
+    TriageListSortV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -213,9 +214,7 @@ const TriageListSourceSelectionV1Schema = defineProtocolUnion([
         sourceInstances: defineProtocolArray(defineProtocolObject({
             sourceInstanceId: TriageSourceInstanceIdV1Schema,
             configurationRowId: triageIdentifier,
-        }, { policy: 'closed' }), {
-            maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
-        }),
+        }, { policy: 'closed' })),
     }, { policy: 'closed' }),
 ]);
 
@@ -270,6 +269,8 @@ export const TriageListEntriesInputV1Schema = defineProtocolObject({
         maximum: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
     }),
     order: TriageListOrderV1Schema,
+    /** A source-owned field order. Sources apply it before paginating. */
+    sort: TriageListSortV1Schema.optional(),
     /**
      * The bounded Smart precedence ladder, as the caller's saved view or
      * unsaved default retains it. Omitted means the retained default; the two
@@ -311,9 +312,7 @@ export const TriageListEntriesInputV1Schema = defineProtocolObject({
      * With allConfigured, a supplied resume walks only its unfinished lanes.
      * Explicitly selected lanes not in resume still start at their initial page.
     */
-    resume: defineProtocolArray(TriageLaneContinuationV1Schema, {
-        maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
-    }).optional(),
+    resume: defineProtocolArray(TriageLaneContinuationV1Schema).optional(),
     /** The settled search text. */
     // Empty means no query and stays omitted on this transport. Saved lenses
     // use the wider settled-value schema above because their field is required.

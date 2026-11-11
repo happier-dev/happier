@@ -65,6 +65,7 @@ export function applyTriageSettledSubPathV1(input: Readonly<{
   return {
     ...input.candidate,
     order: lens.order,
+    sort: lens.sort,
     smartPolicy: lens.smartPolicy,
     // Own route settlement need not erase a client-local connection choice.
     // Copied/reloaded/external lenses still adopt their instance-free facets.

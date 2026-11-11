@@ -216,3 +216,20 @@ describe('triage refresh coordinator', () => {
         expect(harness.passes).toHaveLength(1);
     });
 });
+
+it('keeps an ordered source group intact while any required source is paced', async () => {
+    const harness = createHarness();
+    const initial = request(harness.coordinator, INSTANCE_A, 'view');
+    harness.passes[0]!.settle(transientFailure({ class: 'rateLimit', retryNotBeforeMs: NOW_MS + 10 }));
+    await initial.settled;
+    const blocked = harness.coordinator.request({ sourceInstanceIds: [INSTANCE_A, INSTANCE_B], trigger: 'manual', requireAllSources: true });
+    expect(blocked.disposition).toBe('blocked');
+    expect(blocked.startedSourceInstanceIds).toEqual([]);
+    expect(harness.passes).toHaveLength(1);
+    harness.advanceMs(10);
+    const resumed = harness.coordinator.request({ sourceInstanceIds: [INSTANCE_A, INSTANCE_B], trigger: 'manual', requireAllSources: true });
+    expect(resumed.startedSourceInstanceIds).toEqual([INSTANCE_A, INSTANCE_B]);
+    harness.passes[1]!.settle({ kind: 'completed' });
+    await resumed.settled;
+    harness.coordinator.dispose();
+});

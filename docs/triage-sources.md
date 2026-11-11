@@ -49,12 +49,38 @@ partial coverage retained. The aggregate still applies its shared matcher and
 fold. Sources without native text search may return their ordinary bounded
 page; their coverage evidence is not promoted to a complete remote search.
 
-Mounted list text, facet, order and Smart-policy changes project retained rows
+Mounted list text, facet, named order (`newest`, `oldest`, `smart`) and Smart-policy changes project retained rows
 locally without starting or cancelling provider reads. Partial coverage remains visible;
 explicit Load More continues the existing unfiltered source frontiers and
 applies the active lens to appended rows. Clearing text restores retained rows.
 Universal Search's provider search uses the existing GitHub client's
 resource-specific quota parking and adds no polling or retry.
+
+Explicit field sorting in 0.3 development uses the same live, saved and agent
+list lens: `sort: { field, direction }`. The source descriptor declares
+`sortFields` for unconditional support; a source with configuration-dependent
+support returns its `sortFields` from the existing `listScopeUnits` configured
+metadata projection. An explicit empty array means unavailable, and a failed
+configured projection offers no fields. The selected-source intersection owns
+which fields the UI offers, and the aggregate list Action refuses an unsupported
+selection before provider I/O. Selecting a field or changing its selected source set starts a fresh native
+acquisition. Named orders retain their existing retained-window behavior.
+
+For a field-sorted list, sources order their native pages before returning them.
+[`scanPass.ts`](../packages/plugins/triage/src/projection/scanPass.ts) owns the
+cross-source head merge and retains unshown rows with each native frontier in
+the existing list continuation. It compares the field and direction, then the
+stable entry id. A page stops when the next head is unknown; Load More resumes
+that frontier rather than re-sorting a partial client window. The mounted store
+preserves the admitted aggregate row sequence. Existing Pinned, attention and
+status bands (and board status columns) retain that field sequence inside each
+band. A source failure or an oversized
+continuation leaves coverage visibly incomplete rather than claiming exhaustion.
+
+GitHub configurations with all-repository security alerts offer no field sort:
+the repository directory cannot supply a globally ordered native alert page.
+Selected-repository configurations can merge their known native alert heads.
+Named newest/oldest/Smart orders keep their existing traversal.
 
 Mounted list body health follows the current view's source inventory and its
 Source, Type and Scope selections. `projection/sourceHealth.ts` partitions the
@@ -259,6 +285,12 @@ business inputs and provider-owned adjunct schemas private; only pure result
 construction moves upstream so adding a projected field also changes its
 allocation. The finite witness covers 56 rows, 32 lanes and their continuations,
 with explicit provider-fact examples rather than provider collection quotas.
+The 32-source value remains a catalog page and finite allocation witness; a
+field-sorted acquisition includes every selected source in one aggregate read.
+Selected membership, lane health and continuations have no competing count
+quota beneath the host response envelope. Buffered field-sort cursors receive
+a full scan-page share of the derived allocation rather than a scalar text
+field share; the same source schema and envelope calculation own both bounds.
 The browser-safe maximal-value derivation has one owner in
 [`maximumEncodedValue.ts`](../packages/triage-protocol/src/v1/maximumEncodedValue.ts);
 the existing testing subpath re-exports it. Retained configured-instance fields

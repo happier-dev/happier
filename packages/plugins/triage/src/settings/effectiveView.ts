@@ -1,3 +1,4 @@
+import type { TriageListSortV1 } from '@happier-dev/triage-protocol/v1';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 
 import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
@@ -43,6 +44,7 @@ export type CorpusEffectiveViewV1 = Readonly<{
     query: string;
     filters: SurfaceFilterSelectionV1;
     order: TriageListOrderV1;
+    sort?: TriageListSortV1;
     smartPolicy: CorpusSmartPolicyV1;
     /**
      * Sources this lens names that are no longer configured, in the order they
@@ -106,6 +108,7 @@ export function resolveTriageEffectiveView(input: Readonly<{
         query: selected.query,
         filters: selected.filters,
         order: selected.order,
+        ...(selected.sort === undefined ? {} : { sort: selected.sort }),
         smartPolicy: selected.smartPolicy,
         unavailableSources: collectUnavailableSources(selected.filters, input.configuredSources),
     };

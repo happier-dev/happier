@@ -14,6 +14,7 @@ import {
 } from '../corpus/fold/qualify.js';
 import type { TriageListLaneHealthV1, TriageListLaneV1 } from './listWindow.js';
 import { TriageListInvocationErrorV1Schema } from '../actions/listEntriesProtocol.js';
+import { runTriageFieldSortedScanPass } from './fieldSortScan.js';
 
 /**
  * One materialization pass over the configured source instances.
@@ -58,6 +59,7 @@ export type TriageScanLaneV1 = Readonly<{
     selectedKindIds?: readonly string[];
     completed?: TriageScanInputV1['completed'];
     query?: string;
+    sort?: TriageScanInputV1['sort'];
     /** The exact configured value, passed unchanged to every invocation. */
     configured: TriageConfiguredSourceInstanceV1;
     /**
@@ -179,6 +181,7 @@ function chargedAgainstLimit(result: Extract<TriageScanResultV1, { kind: 'page' 
 
 function scanInputFor(state: LaneState): TriageScanInputV1 {
     const completed = {
+        ...(state.lane.sort === undefined ? {} : { sort: state.lane.sort }),
         ...(state.lane.completed === undefined ? {} : { completed: state.lane.completed }),
         ...(state.lane.query === undefined ? {} : { query: state.lane.query }),
     };
@@ -187,7 +190,7 @@ function scanInputFor(state: LaneState): TriageScanInputV1 {
         : { v: 1, instance: state.lane.configured, ...completed, page: { kind: 'continuation', continuation: state.continuation } };
 }
 
-export async function runTriageScanPass(input: Readonly<{
+export type TriageScanPassInputV1 = Readonly<{
     lanes: readonly TriageScanLaneV1[];
     /** Positive per-page request chosen for this aggregate invocation. */
     pageLimit: number;
@@ -196,7 +199,16 @@ export async function runTriageScanPass(input: Readonly<{
     nowMs: () => number;
     logger?: Pick<LoggerService, 'warn'>;
     signal?: AbortSignal;
-}>): Promise<TriageScanPassResultV1> {
+}>;
+
+export async function runTriageScanPass(input: TriageScanPassInputV1): Promise<TriageScanPassResultV1> {
+    const sort = input.lanes[0]?.sort;
+    return sort === undefined
+        ? runRoundRobinScanPass(input)
+        : runTriageFieldSortedScanPass(input, sort, (page, onContractFailure) => runRoundRobinScanPass(page, true, onContractFailure));
+}
+
+async function runRoundRobinScanPass(input: TriageScanPassInputV1, singlePage = false, onContractFailure?: (sourceInstanceId: string) => void): Promise<TriageScanPassResultV1> {
     const pageLimit = Math.max(1, Math.trunc(input.pageLimit));
     const states: LaneState[] = input.lanes.map((lane) => {
         return {
@@ -222,8 +234,8 @@ export async function runTriageScanPass(input: Readonly<{
     const contractFailed = new Set<string>();
     const aborted = (): boolean => input.signal?.aborted ?? false;
     let ready = states.slice();
-    // Text search spends one source page per query. Further pages remain explicit
-    // Load More demand instead of silently draining a sparse remote result set.
+    // Text search and field merging read one source page at a time. Further
+    // pages remain explicit demand instead of silently draining a remote set.
     const searched: LaneState[] = [];
     const pending = new Map<LaneState, Promise<Readonly<{
         state: LaneState;
@@ -301,6 +313,7 @@ export async function runTriageScanPass(input: Readonly<{
             // page for a source whose accounting is not conforming, and
             // dropping the excess would lose rows silently.
             contractFailed.add(state.lane.sourceInstanceId);
+            onContractFailure?.(state.lane.sourceInstanceId);
             state.health = contractFailure('pageLimitExceeded');
             state.exhausted = false;
             continue;
@@ -330,6 +343,7 @@ export async function runTriageScanPass(input: Readonly<{
             // publish a healthy-looking lane for a source whose contract
             // defect the user would never see.
             contractFailed.add(state.lane.sourceInstanceId);
+            onContractFailure?.(state.lane.sourceInstanceId);
             state.health = contractFailure(violation);
             state.exhausted = false;
             continue;
@@ -388,7 +402,7 @@ export async function runTriageScanPass(input: Readonly<{
             continue;
         }
         state.continuation = result.continuation;
-        if (state.lane.query) searched.push(state);
+        if (singlePage || state.lane.query) searched.push(state);
         else ready.push(state);
     }
 

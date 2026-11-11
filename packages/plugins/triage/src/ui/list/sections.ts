@@ -171,7 +171,7 @@ export function planTriageListItemsV1(input: Readonly<{
    * display. They never join the window's own groups. A window row for the same entry wins.
    */
   readRows?: readonly TriageListRowV1[];
-  lens?: Pick<TriageListLensV1, 'query' | 'filters'>;
+  lens?: Pick<TriageListLensV1, 'query' | 'filters' | 'sort'>;
   locale?: string;
   /** The admitted source contribution's workflow subject for this kind, or `null` when none was declared. */
   workflowSubjectOf: (entryRef: TriageListRowV1['entryRef']) => TriageSourceWorkflowSubjectV1 | null;
@@ -258,7 +258,7 @@ export function planTriageListItemsV1(input: Readonly<{
       ...(input.tasks === undefined ? {} : { task: readTaskFacts(windowRow, input.tasks.capabilitiesOf?.(windowRow.entryRef)) }),
     }));
   }
-  if (input.tasks?.personalOrder !== undefined) {
+  if (input.lens?.sort === undefined && input.tasks?.personalOrder !== undefined) {
     const rank = new Map(input.tasks.personalOrder.map((id, index) => [id, index]));
     const groups = new Map<TriageListGroupIdV1, { slots: number[]; items: TriageListItemV1[] }>();
     for (const [index, item] of items.entries()) {

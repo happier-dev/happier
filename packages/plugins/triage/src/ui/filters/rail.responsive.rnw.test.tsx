@@ -142,7 +142,7 @@ async function executeAction(action: string, result: TriageListEntriesResultV1 =
 
 const mounted: PluginUiTestkit[] = [];
 
-async function mountShell(result: TriageListEntriesResultV1 = listResult()): Promise<PluginUiTestkit> {
+async function mountShell(result: TriageListEntriesResultV1 = listResult(), readInputs: unknown[] = []): Promise<PluginUiTestkit> {
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;
     await act(async () => {
@@ -160,7 +160,7 @@ async function mountShell(result: TriageListEntriesResultV1 = listResult()): Pro
             adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, overlays: true }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
-                executeAction: async ({ action }) => await executeAction(action, result),
+                executeAction: async ({ action, input }) => { if (action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1) readInputs.push(input); return await executeAction(action, result); },
                 replacePageLocation: ({ subPath }) => subPath,
             },
         });
@@ -356,4 +356,18 @@ describe('the PRs & Issues lens under the shell’s own measurement', () => {
         const buttons = await shell.queryAllByRole('button');
         expect(buttons.filter((button) => /^Remove (filter|State|Attention)/u.test(button.name ?? ''))).toEqual([]);
     });
+});
+
+it('keeps a capability-backed field sort in the source requests and the phone Order menu', async () => {
+ const result = listResult();
+ const inputs: unknown[] = [];
+ const shell = await mountShell(TriageListEntriesResultV1Schema.parse({ ...result,
+   configuredSources: result.configuredSources.map(source => ({ ...source, sortFields: ['created', 'updated'] })),
+ }), inputs);
+ await measureFillRegion(WIDE_WIDTH);
+ const oldest = await toolbarMenuItem(shell, 'Entry', 'menuitemradio', { name: 'Created: oldest first' });
+ await act(async () => { await shell.press(oldest); });
+ expect(inputs).toContainEqual(expect.objectContaining({ sort: { field: 'created', direction: 'asc' } }));
+ await measureFillRegion(COMPACT_WIDTH);
+ await expect(toolbarMenuItem(shell, 'More', 'menuitemradio', { name: 'Created: oldest first', state: { checked: true } })).resolves.toBeDefined();
 });

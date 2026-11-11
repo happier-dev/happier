@@ -45,6 +45,7 @@ function projectViews(views: readonly CorpusSavedViewV1[]): TriageReadSavedViews
         query: view.query,
         filters: view.filters,
         order: view.order,
+        ...(view.sort === undefined ? {} : { sort: view.sort }),
         smartPolicy: view.smartPolicy,
         view: view.view,
     }));
@@ -81,6 +82,7 @@ function commandFrom(input: TriageAdministerSavedViewInputV1): CorpusSavedViewCo
         query: input.query,
         filters: input.filters,
         order: input.order,
+        ...(input.sort === undefined ? {} : { sort: input.sort }),
         smartPolicy,
         ...(input.view === undefined ? {} : { view: input.view }),
     };

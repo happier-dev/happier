@@ -1,3 +1,5 @@
+import type { TriageListSortV1 } from '@happier-dev/triage-protocol/v1';
+import { TriageListSortV1Schema } from '@happier-dev/triage-protocol/v1';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { PLUGIN_ACCOUNT_STORAGE_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
@@ -90,6 +92,7 @@ export type CorpusSavedViewV1 = Readonly<{
     query: string;
     filters: SurfaceFilterSelectionV1;
     order: TriageListOrderV1;
+    sort?: TriageListSortV1;
     /** Retained across a non-Smart order switch, consumed only when `order === 'smart'`. */
     smartPolicy: CorpusSmartPolicyV1;
     view: TriageSavedViewPresentationV1;
@@ -145,6 +148,7 @@ export type CorpusSavedViewDraftV1 = Readonly<{
     query: string;
     filters: SurfaceFilterSelectionV1;
     order: TriageListOrderV1;
+    sort?: TriageListSortV1;
     smartPolicy: CorpusSmartPolicyV1;
     /** Absent from a writer that predates views; such a view presents as List. */
     view?: TriageSavedViewPresentationV1;
@@ -233,6 +237,7 @@ function readView(viewId: string, draft: Readonly<{
     query: unknown;
     filters: unknown;
     order: unknown;
+    sort?: unknown;
     smartPolicy: unknown;
     view?: unknown;
 }>): ViewOutcome {
@@ -244,6 +249,8 @@ function readView(viewId: string, draft: Readonly<{
     if (!query.success) return { ok: false, reason: 'query' };
     const order = readClosedValue(ORDERS)(draft.order);
     if (order === null) return { ok: false, reason: 'order' };
+    const sort = TriageListSortV1Schema.optional().safeParse(draft.sort);
+    if (!sort.success) return { ok: false, reason: 'sort' };
     const smartPolicy = parseCorpusSmartPolicy(draft.smartPolicy);
     if (smartPolicy === null) return { ok: false, reason: 'smartPolicy' };
     const filters = readFilters(draft.filters);
@@ -252,7 +259,7 @@ function readView(viewId: string, draft: Readonly<{
     if (view === null) return { ok: false, reason: 'view' };
     return {
         ok: true,
-        view: { viewId, label, query: query.data, filters: filters.filters, order, smartPolicy, view },
+        view: { viewId, label, query: query.data, filters: filters.filters, order, ...(sort.data === undefined ? {} : { sort: sort.data }), smartPolicy, view },
     };
 }
 
@@ -303,6 +310,7 @@ export function parseTriageSavedViews(raw: unknown): CorpusSavedViewsReadV1 {
             query: view.query,
             filters: view.filters,
             order: view.order,
+            ...(view.sort === undefined ? {} : { sort: view.sort }),
             smartPolicy: view.smartPolicy,
             ...(view.view === undefined ? {} : { view: view.view }),
         });
@@ -346,6 +354,7 @@ function toStoredValue(value: CorpusSavedViewsCatalogV1): JsonValue {
                 attention: [...view.filters.attention],
             },
             order: view.order,
+            ...(view.sort === undefined ? {} : { sort: view.sort }),
             smartPolicy: { v: 1, precedence: [...view.smartPolicy.precedence] },
             view: view.view,
         })),

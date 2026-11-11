@@ -297,6 +297,11 @@ export async function assembleTriageListPass(
             ? (sourceName === undefined ? undefined : projectTriageDisplayTextV1(sourceName))
             : projectTriageDisplayTextV1(sourceName === undefined || sourceName === connectionLabel
                 ? connectionLabel : `${sourceName} · ${connectionLabel}`);
+        const configuredScope = configuredScopes.get(row.configured.instance.sourceInstanceId);
+        // Source-owned configuration metadata can refine a static declaration.
+        // A failed projection cannot establish a configured capability.
+        const sortFields = configuredScope?.projection.kind === 'failed' ? undefined
+            : configuredScope?.projection.sortFields ?? contribution?.descriptor.sortFields;
         configuredSources.push({
             sourceInstanceId: row.configured.instance.sourceInstanceId,
             configurationRowId: configuration.rowId,
@@ -306,9 +311,8 @@ export async function assembleTriageListPass(
                 ? {}
                 : { displayLabel: displayLabel.value, ...(displayLabel.truncated ? { projectionTruncated: true as const } : {}) }),
             available,
-            ...(contribution?.descriptor.sortFields === undefined ? {} : { sortFields: contribution.descriptor.sortFields }),
-            ...(configuredScopes.has(row.configured.instance.sourceInstanceId)
-                ? { scope: configuredScopes.get(row.configured.instance.sourceInstanceId) } : {}),
+            ...(sortFields === undefined ? {} : { sortFields }),
+            ...(configuredScope === undefined ? {} : { scope: configuredScope }),
         });
         if (input.limit === 0 || !walkAdmits(input, row.configured.instance.sourceInstanceId)
             || selectedSortSourceIds !== undefined && !selectedSortSourceIds.has(row.configured.instance.sourceInstanceId)) continue;

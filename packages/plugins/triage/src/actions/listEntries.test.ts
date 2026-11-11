@@ -8,11 +8,12 @@ import {
     MAX_TRIAGE_SOURCE_INSTANCE_FIELD_UTF8_BYTES_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     type TriageScanResultV1,
+    type TriageListScopeUnitsResultV1,
 } from '@happier-dev/triage-protocol/v1';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
-import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
+import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1, TRIAGE_LIST_NO_FILTERS_V1 } from '../projection/listWindow.js';
 import { createTriageListWindowStore } from '../projection/listWindowStore.js';
 import { readTriageListFailureNotice, resolveTriageListShellState } from '../ui/shell/windowState.js';
 import {
@@ -344,6 +345,148 @@ const finishedWalk: TriageAdmittedOperationExecutorV1 = async () => ({
 });
 
 describe('the aggregate list coverage claim', () => {
+    it('carries source ordering across pages without activity re-ranking the source result', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        control.sourceInstances.seed(toCorpusStoredValue(configuredRow({ instanceTag: paddedInstanceTag('s'),
+            sourceInstanceId: INSTANCE_ID, configuredAtMs: 1 })));
+        const requests: import('@happier-dev/triage-protocol/v1').TriageScanInputV1[] = [];
+        const sort = { field: 'created', direction: 'asc' } as const;
+        const admitted = { ...ADMITTED_SOURCE, descriptor: { ...ADMITTED_SOURCE.descriptor,
+            sortFields: ['created'] as const } };
+        const deps = { sourceInstances: collections.sourceInstances, readAdmittedSources: async () => [admitted],
+            nowMs: () => 1000, executeScan: (async (_operation, input) => {
+                requests.push(input);
+                const initial = input.page.kind === 'initial';
+                return { ...(initial ? { kind: 'page' as const, evidence: { kind: 'partial' as const, reason: 'more-pages' },
+                    continuation: { v: 1 as const, token: 'next-created' } }
+                    : { kind: 'complete' as const, evidence: { kind: 'walkFinished' as const } }),
+                    observations: (initial ? [1, 2] : [3, 4]).map(id => ({
+                    kind: 'present' as const, localRef: { kindId: 'pull-request', collisionScope: 'repo', entryId: String(id) },
+                    locator: testkitLocator(), snapshot: testkitSnapshot({ createdAtMs: id }),
+                    sourceUpdatedAtMs: id, viewer: testkitViewer(),
+                })) };
+            }) satisfies TriageAdmittedOperationExecutorV1 };
+        const input: TriageListEntriesInputV1 = { v: 1,
+            sources: await selectTestkitConfiguredSources([INSTANCE_ID], collections.sourceInstances),
+            limit: 2, order: 'newest', sort };
+        const result = TriageListEntriesResultV1Schema.parse(await listTriageEntries(input, deps));
+        const next = TriageListEntriesResultV1Schema.parse(await listTriageEntries({ ...input, resume: result.window.continuations }, deps));
+        expect(requests).toHaveLength(2);
+        expect(requests.map(request => request.sort)).toEqual([sort, sort]);
+        expect(requests[1]?.page).toMatchObject({ kind: 'continuation', continuation: { token: 'next-created' } });
+        expect(result.configuredSources[0]?.sortFields).toEqual(['created']);
+        expect([...result.window.rows, ...next.window.rows].map(row => row.entryRef.entryId)).toEqual(['1', '2', '3', '4']);
+    });
+    it('does not query sources when the selected capability intersection excludes the requested field', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        control.sourceInstances.seed(toCorpusStoredValue(configuredRow({ instanceTag: paddedInstanceTag('u'),
+            sourceInstanceId: INSTANCE_ID, configuredAtMs: 1 })));
+        let queries = 0;
+        const result = await listTriageEntries({ v: 1,
+            sources: await selectTestkitConfiguredSources([INSTANCE_ID], collections.sourceInstances),
+            limit: 2, order: 'newest', sort: { field: 'due', direction: 'asc' } }, {
+            sourceInstances: collections.sourceInstances, readAdmittedSources: async () => [ADMITTED_SOURCE],
+            executeScan: async () => { queries += 1; return { kind: 'complete', observations: [], evidence: { kind: 'walkFinished' } }; }, nowMs: () => 1000,
+        });
+        expect(queries).toBe(0);
+        expect(result.window.rows).toEqual([]);
+        expect(result.window.lanes[0]?.health).toMatchObject({ kind: 'failed',
+            failure: { class: 'unsupportedContract', code: 'triage/sortUnsupported' } });
+    });
+    it.each([
+        { name: 'explicit absence', descriptorFields: ['created'], projection: { kind: 'page', status: 'complete', selection: { kind: 'all' }, units: [], sortFields: [] }, field: 'created', expectedFields: [], admitted: false },
+        { name: 'configured capability beyond the static descriptor', descriptorFields: ['updated'], projection: { kind: 'page', status: 'complete', selection: { kind: 'all' }, units: [], sortFields: ['created'] }, field: 'created', expectedFields: ['created'], admitted: true },
+        { name: 'static capability when successful metadata omits an override', descriptorFields: ['updated'], projection: { kind: 'page', status: 'complete', selection: { kind: 'all' }, units: [] }, field: 'updated', expectedFields: ['updated'], admitted: true },
+        { name: 'failed metadata', descriptorFields: ['created'], projection: { kind: 'failed', failure: { class: 'unsupportedContract', code: 'configuration-unreadable' } }, field: 'created', expectedFields: undefined, admitted: false },
+        { name: 'invalid metadata', descriptorFields: ['created'], projection: { kind: 'page', status: 'complete', selection: { kind: 'all' }, units: [], sortFields: ['foreign'] }, field: 'created', expectedFields: undefined, admitted: false },
+    ] as const)('uses configured scope metadata for sort admission: $name', async (testCase) => {
+        const { collections, control } = createTestkitCorpusCollections();
+        control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
+            instanceTag: paddedInstanceTag('a'), sourceInstanceId: INSTANCE_ID, configuredAtMs: 1,
+        })));
+        const admitted: TriageAdmittedSourceV1 = { ...ADMITTED_SOURCE,
+            descriptor: { ...ADMITTED_SOURCE.descriptor, sortFields: [...testCase.descriptorFields],
+                scopeUnit: { singularLabel: 'Project', pluralLabel: 'Projects' } },
+            operations: { ...ADMITTED_SOURCE.operations,
+                // The host owns admitted handles; this fixture replaces only that boundary.
+                listScopeUnits: {} as NonNullable<TriageAdmittedSourceV1['operations']['listScopeUnits']> },
+        };
+        let scans = 0;
+        const result = TriageListEntriesResultV1Schema.parse(await listTriageEntries({ v: 1,
+            sources: await selectTestkitConfiguredSources([INSTANCE_ID], collections.sourceInstances),
+            limit: 1, order: 'newest', sort: { field: testCase.field, direction: 'asc' },
+        }, {
+            sourceInstances: collections.sourceInstances, readAdmittedSources: async () => [admitted],
+            // The host transport can return malformed external metadata; the Action must parse it.
+            executeScopeUnits: async () => testCase.projection as unknown as TriageListScopeUnitsResultV1,
+            executeScan: async () => { scans += 1; return { kind: 'complete', evidence: { kind: 'walkFinished' }, observations: [{
+                kind: 'present', localRef: { kindId: 'pull-request', collisionScope: 'repo', entryId: 'configured-head' },
+                snapshot: testkitSnapshot({ createdAtMs: 10 }), sourceUpdatedAtMs: 20, locator: testkitLocator(), viewer: testkitViewer(),
+            }] }; }, nowMs: () => 1000,
+        }));
+        expect(result.configuredSources[0]?.sortFields).toEqual(testCase.expectedFields);
+        expect(scans).toBe(testCase.admitted ? 1 : 0);
+        expect(result.window.rows.map(row => row.entryRef.entryId)).toEqual(testCase.admitted ? ['configured-head'] : []);
+        if (!testCase.admitted) expect(result.window.lanes[0]?.health).toEqual({ kind: 'failed',
+            failure: { class: 'unsupportedContract', code: 'triage/sortUnsupported' } });
+    });
+
+    it.each(['selected', 'allConfigured'] as const)('merges every %s source beyond the metadata transport batch', async selection => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const ids = Array.from({ length: MAX_TRIAGE_LIST_SOURCE_BATCH_V1 + 1 }, (_, index) => numberedInstanceId(index));
+        ids.forEach((sourceInstanceId, index) => control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
+            instanceTag: paddedInstanceTag(`m${String(index).padStart(3, '0')}`), sourceInstanceId, configuredAtMs: index + 1,
+        }))));
+        const selected = await selectTestkitConfiguredSources(ids, collections.sourceInstances);
+        const { TriageListEntriesInputV1Schema } = await import('./listEntriesProtocol.js');
+        const input = TriageListEntriesInputV1Schema.parse({ v: 1,
+            sources: selection === 'selected' ? selected : { kind: 'allConfigured' }, limit: 2,
+            filters: { ...TRIAGE_LIST_NO_FILTERS_V1, sources: [{ source: SOURCE }] },
+            order: 'newest', sort: { field: 'created', direction: 'asc' } });
+        let queries = 0;
+        const result = TriageListEntriesResultV1Schema.parse(await listTriageEntries(input, {
+            sourceInstances: collections.sourceInstances,
+            readAdmittedSources: async () => [{ ...ADMITTED_SOURCE,
+                descriptor: { ...ADMITTED_SOURCE.descriptor, sortFields: ['created'] } }],
+            executeScan: async (_operation, request) => {
+                queries += 1;
+                const index = ids.indexOf(request.instance.instance.sourceInstanceId);
+                return { kind: 'complete', evidence: { kind: 'walkFinished' }, observations: [{
+                    kind: 'present', localRef: { kindId: 'pull-request', collisionScope: 'repo', entryId: String(index) },
+                    snapshot: testkitSnapshot({ createdAtMs: index === ids.length - 1 ? -1 : index }), locator: testkitLocator(), viewer: testkitViewer(),
+                }] };
+            }, nowMs: () => 1000,
+        }));
+        expect(result.window.rows.map(row => row.entryRef.entryId)).toEqual([String(ids.length - 1), '0']);
+        expect(queries).toBe(ids.length);
+        expect(result.configuredSources.filter(source => source.source.pluginId === SOURCE.pluginId)).toHaveLength(ids.length);
+        expect(result.window.lanes).toHaveLength(ids.length);
+        expect(result.window.continuations).toHaveLength(ids.length - 2);
+    });
+    it('checks sort capability beyond the first allConfigured metadata page before scanning any source', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const ids = Array.from({ length: MAX_TRIAGE_LIST_SOURCE_BATCH_V1 + 1 }, (_, index) => numberedInstanceId(index));
+        ids.forEach((sourceInstanceId, index) => control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
+            instanceTag: paddedInstanceTag(`n${String(index).padStart(3, '0')}`), sourceInstanceId, configuredAtMs: index + 1,
+            ...(index === ids.length - 1 ? { source: OTHER_SOURCE } : {}),
+        }))));
+        let queries = 0;
+        const result = await listTriageEntries({ v: 1, sources: { kind: 'allConfigured' }, limit: 2,
+            filters: { ...TRIAGE_LIST_NO_FILTERS_V1, sources: [{ source: SOURCE }, { source: OTHER_SOURCE }] },
+            order: 'newest', sort: { field: 'created', direction: 'asc' } }, {
+            sourceInstances: collections.sourceInstances,
+            readAdmittedSources: async () => [
+                { ...ADMITTED_SOURCE, descriptor: { ...ADMITTED_SOURCE.descriptor, sortFields: ['created'] } },
+                { ...ADMITTED_SOURCE, contributor: { ...ADMITTED_SOURCE.contributor, pluginId: OTHER_SOURCE.pluginId, contributionId: OTHER_SOURCE.localId } },
+            ],
+            executeScan: async () => { queries += 1; return { kind: 'complete', observations: [], evidence: { kind: 'walkFinished' } }; },
+            nowMs: () => 1000,
+        });
+        expect(queries).toBe(0);
+        expect(result.window.rows).toEqual([]);
+        expect(result.window.lanes).toHaveLength(ids.length);
+        expect(result.window.lanes.every(lane => lane.health.kind === 'failed' && lane.health.failure.code === 'triage/sortUnsupported')).toBe(true);
+    });
     it('reads only the exact configured rows for independently refreshed selected sources', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         const catalogSize = MAX_TRIAGE_LIST_SOURCE_BATCH_V1 + 3;

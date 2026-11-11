@@ -28,6 +28,7 @@ export function readTriageWindowLensV1(state: TriageSurfaceStateV1, nowMs = Date
   return Object.freeze({
     ...(state.filters.tasks === undefined ? {} : { tasks: { completedSinceMs: weekStart.getTime() } }),
     order: state.order,
+    ...(state.sort === undefined ? {} : { sort: state.sort }),
     smartPolicy: state.smartPolicy,
     // The settled query only. An IME-intermediate composition would rebuild the
     // window on half-typed text (`core/SURFACE.md` §6).

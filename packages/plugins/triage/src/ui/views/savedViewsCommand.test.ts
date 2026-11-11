@@ -115,3 +115,11 @@ describe('the surface’s saved-view commands', () => {
         }).kind).toBe('absent');
     });
 });
+
+it('preserves a source-owned field sort across save, rename and projection reads', () => {
+  const sort = { field: 'created', direction: 'asc' } as const;
+  const sorted = { ...STORED, sort };
+  expect(triageRenameSavedViewInputV1(sorted, 'Renamed', REVISION)).toMatchObject({ sort });
+  expect(triageUpdateSavedViewInputV1(sorted, { ...EDITED_LENS, sort, view: 'list' }, REVISION)).toMatchObject({ sort });
+  expect(readTriageSavedViewsProjectionV1({ availability: 'parsed', views: [sorted] }).value.views[0]).toMatchObject({ sort });
+});

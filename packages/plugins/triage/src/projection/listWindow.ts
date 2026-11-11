@@ -5,6 +5,7 @@ import {
     MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
     triageTaskStatusCategoryV1,
     type TriageEntryRefV1,
+    type TriageListSortV1,
     type TriageSourceFailureV1,
     type TriageSourceScanEvidenceV1,
     type TriageSourceEntrySnapshotV1,
@@ -274,6 +275,8 @@ export type TriageListLensV1 = Readonly<{
     /** The Tasks page supplies its calendar boundary; no source chooses a retention policy. */
     tasks?: Readonly<{ completedSinceMs: number }>;
     order: TriageListOrderV1;
+    /** Explicit source ordering is acquired before paging, never locally re-ranked. */
+    sort?: TriageListSortV1;
     /**
      * The bounded Smart precedence policy. It is carried on every lens, not
      * only a `smart` one, because a saved view retains it across a non-Smart
@@ -635,7 +638,9 @@ export function foldTriageListWindow(input: Readonly<{
     // Ordering has one owner, and it is not this assembler: `rankCorpusWindow`
     // is the sole comparator for every built-in order, so `smart` cannot drift
     // from the policy a saved view persisted.
-    const ordered = rankCorpusWindow(rows, input.lens.order, input.lens.smartPolicy);
+    const ordered = input.lens.sort === undefined
+        ? rankCorpusWindow(rows, input.lens.order, input.lens.smartPolicy)
+        : rows;
     // The lens's own bound, and nothing narrower. `MAX_TRIAGE_LIST_WINDOW_ROWS_V1`
     // is the bound of ONE Action RESULT, so it belongs to the wire owner that
     // pays for it (`actions/listEntriesProtocol.ts` declares it as the input's

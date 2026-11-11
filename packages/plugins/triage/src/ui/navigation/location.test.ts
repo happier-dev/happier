@@ -418,3 +418,13 @@ describe('PRs & Issues route owner', () => {
     )).resolves.toEqual({ kind: 'refused', reason: 'rejected' });
   });
 });
+
+it('round-trips the source-owned field sort through copied and settled routes', () => {
+  const sort = { field: 'created', direction: 'asc' } as const;
+  const route = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, sort, query: 'retain me' });
+  expect(parseTriageRouteSubPathV1(route)).toMatchObject({ sort, query: 'retain me' });
+  expect(parseTriageRouteSubPathV1('s,created,sideways/q,retain%20me')).toMatchObject({ query: 'retain me' });
+  expect(parseTriageRouteSubPathV1('s,created,sideways')).not.toHaveProperty('sort');
+  const sorted = { ...TRIAGE_SURFACE_INITIAL_STATE_V1, sort };
+  expect(applyTriageSettledSubPathV1({ candidate: sorted, previous: sorted, subPath: 'q,retain%20me', rowsByKey: new Map() }).sort).toBeUndefined();
+});
