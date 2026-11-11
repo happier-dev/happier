@@ -8,6 +8,11 @@ import { DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonPluginUiTar
 import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
+import { createHttpStatusError } from '@/api/client/httpStatusError';
+import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions';
+import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { MachineRpcEncryptionModeMismatchError } from '@/session/transport/rpc/machineRpc';
 import { markRpcRequestDisposition } from '@happier-dev/sync-client';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
@@ -49,6 +54,9 @@ it.each([
     { outcome: 'acknowledged', placement: 'selected' },
     { outcome: 'lostAck', placement: 'selected' },
     { outcome: 'notSent', placement: 'selected' },
+    { outcome: 'authorizationRefused', placement: 'selected' },
+    { outcome: 'modeMismatch', placement: 'selected' },
+    { outcome: 'unclassified', placement: 'selected' },
     { outcome: 'acknowledged', placement: 'session' },
     { outcome: 'acknowledged', placement: 'sessionLookup' },
 ] as const)('keeps an authored Account aggregate local and preserves its $placement Machine source outcome ($outcome)', async ({ outcome, placement }) => {
@@ -77,7 +85,15 @@ it.each([
             return DaemonPluginUiTargetedContributionsReadResponseSchema.parse({ status: 'sourceDeclarations',
                 pluginId, sourceDeclarations: [source] });
         }
-        if (outcome === 'notSent') throw markRpcRequestDisposition(new Error('Machine retired before emission'), 'notSent');
+        if (outcome === 'notSent') throw markRpcRequestDisposition(createRpcCallError({
+            error: 'Machine transport unavailable', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE }), 'notSent');
+        if (outcome === 'authorizationRefused') {
+            const refusal = projectHomeAuthorizationHttpFailure(403,
+                { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'test-signed-authorization' }, {});
+            throw markRpcRequestDisposition(createHttpStatusError(403, refusal.error, refusal.errorCode), 'notSent');
+        }
+        if (outcome === 'modeMismatch') throw markRpcRequestDisposition(new MachineRpcEncryptionModeMismatchError('selected-machine'), 'notSent');
+        if (outcome === 'unclassified') throw markRpcRequestDisposition(new Error('Unclassified preparation failure'), 'notSent');
         providerEffects++;
         if (outcome === 'lostAck') throw new Error('Machine acknowledgement lost after effect');
         return { ok: true, result: { key: 'provider', machine: true } };
@@ -97,6 +113,9 @@ it.each([
                 ...(placement === 'session' ? { defaultSessionMachineId: 'selected-machine' } : {}) });
         expect(result, JSON.stringify(result)).toMatchObject(outcome === 'notSent'
             ? { ok: false, errorCode: 'plugin_action_execution_origin_unavailable' }
+            : outcome === 'authorizationRefused' ? { ok: false, errorCode: 'action_forbidden' }
+            : outcome === 'modeMismatch' ? { ok: false, errorCode: 'machine_content_mode_mismatch' }
+            : outcome === 'unclassified' ? { ok: false, errorCode: 'plugin_action_execution_failed' }
             : outcome === 'lostAck' ? { ok: false, errorCode: 'plugin_action_outcome_unknown' }
             : { ok: true, result: { key: 'provider', machine: true } });
         expect(requests.length).toBeGreaterThanOrEqual(2);
@@ -115,6 +134,6 @@ it.each([
                 expect(input.invocation?.kind === 'clientPluginAction' && input.invocation.clientActionBinding.materializationRef).toBeUndefined();
             }
         }
-        expect(providerEffects).toBe(outcome === 'notSent' ? 0 : 1);
+        expect(providerEffects).toBe(['notSent', 'authorizationRefused', 'modeMismatch', 'unclassified'].includes(outcome) ? 0 : 1);
     } finally { restore(); await app.close(); }
 });
