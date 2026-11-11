@@ -4,10 +4,7 @@ import { MachineSetupRecipeInputs } from './MachineSetupRecipeInputs';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { MachinePresetItemV1, MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
-import {
-  listMachineSetupAdaptersV1,
-  type BuiltinNativeToolchainAdapterV1,
-} from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
+import type { BuiltinNativeToolchainAdapterV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -28,7 +25,7 @@ import type { AccountSettingsScope } from '@/sync/domains/settings/scope/account
 import { t } from '@/text';
 import type { ManagedReceiptFact } from './managedMachineDisplay';
 import { normalizeMachineSetup } from './normalizeMachineSetup';
-import { groupMachineSetupItems, machineSetupItemPresentation, moveMachineSetupItem, removeMachineSetupItem, renameMachineSetupApp,
+import { groupMachineSetupItems, machineSetupAdapters, machineSetupItemPresentation, moveMachineSetupItem, removeMachineSetupItem, renameMachineSetupApp,
   type MachineSetupItemKind } from './machineSetupItems';
 import { openMachineSetupAddItems } from './MachineSetupAddItems';
 import { StoreItemMark } from '@/components/store/catalog/StoreItemMark';
@@ -45,16 +42,6 @@ export { normalizeMachineSetup } from './normalizeMachineSetup';
 
 const NO_TOOLS = 'none';
 const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
-
-/** Every characterized global-install adapter, across the platforms the catalog declares. */
-function setupAdapters(): readonly BuiltinNativeToolchainAdapterV1[] {
-  const byId = new Map<string, BuiltinNativeToolchainAdapterV1>();
-  for (const platform of ['linux', 'darwin', 'win32'] as const) {
-    for (const adapter of listMachineSetupAdaptersV1(platform))
-      if (!byId.has(adapter.id)) byId.set(adapter.id, adapter);
-  }
-  return [...byId.values()];
-}
 
 const PLATFORM_NAMES: Readonly<
   Record<BuiltinNativeToolchainAdapterV1['platform'], string>
@@ -77,7 +64,7 @@ export const MachineSetupSection = React.memo(
     const projection = useAppShellPluginUiDeclarationProjection();
     const setup: MachineSetupV1 = props.setup ?? {};
     const catalog = useSavedSecretCatalog({ scope: props.scope });
-    const adapters = React.useMemo(setupAdapters, []);
+    const adapters = React.useMemo(machineSetupAdapters, []);
     const selectedAdapterId = setup.toolchain?.adapterId ?? NO_TOOLS;
     const selectedAdapter = adapters.find(
       (adapter) => adapter.id === selectedAdapterId,
@@ -461,7 +448,7 @@ export function describeMachineSetup(
 ): (ManagedReceiptFact & Readonly<{ value: string }>)[] {
   if (!setup) return [];
   const adapter = setup.toolchain
-    ? setupAdapters().find(
+    ? machineSetupAdapters().find(
         (candidate) => candidate.id === setup.toolchain!.adapterId,
       )
     : undefined;
