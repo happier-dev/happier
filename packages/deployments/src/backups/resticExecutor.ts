@@ -39,7 +39,9 @@ export type ResticRequestV1 = Readonly<{
     passwordFilePath: string;
     environmentVariableNames: ResticAccessV1['environmentVariableNames'];
     credentialFiles: ResticAccessV1['credentialFiles'];
-    repositoryMount?: Readonly<{ hostPath: string; containerPath: '/run/happier/backup/repository'; repositoryHostPath?: string }>;
+    repositoryMount?: Readonly<{ hostPath: string; containerPath: '/run/happier/backup/repository'; repositoryHostPath?: string;
+        /** Explicit init prepares the directory as the daemon, before the root helper creates repository files. */
+        initialize?: true }>;
 }>;
 
 function ownershipId(value: string): string {
@@ -63,7 +65,8 @@ export function buildResticRequestV1(input: Readonly<{
     const selector = ['--host', host, '--tag', `happier,${environmentTag}`];
     const repositoryMount = access.local
         ? { hostPath: access.local.mountPath ?? access.local.path, containerPath: '/run/happier/backup/repository' as const,
-            ...(access.local.mountPath !== undefined ? { repositoryHostPath: access.local.path } : {}) } : undefined;
+            ...(access.local.mountPath !== undefined ? { repositoryHostPath: access.local.path } : {}),
+            ...(command.kind === 'init' ? { initialize: true as const } : {}) } : undefined;
     const repository = access.local?.mountPath !== undefined ? access.repository : repositoryMount?.containerPath ?? access.repository;
     const argv = ['--repo', repository, ...(command.kind === 'dump' ? [] : ['--json'])];
     if (access.s3?.region !== undefined) argv.push('-o', `s3.region=${access.s3.region}`);

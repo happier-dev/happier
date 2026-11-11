@@ -24,7 +24,7 @@ function isAncestorSpelling(targetPath: string, parentPath: string): boolean {
     || suffix.startsWith('/') || suffix.startsWith('\\');
 }
 
-async function findPhysicalAncestor(targetPath: string): Promise<PhysicalAncestor | null> {
+export async function findPhysicalAncestor(targetPath: string): Promise<PhysicalAncestor | null> {
   let candidatePath = targetPath;
   while (true) {
     try {

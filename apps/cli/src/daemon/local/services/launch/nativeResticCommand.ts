@@ -1,6 +1,6 @@
-import { posix } from 'node:path';
+import { posix, relative, sep } from 'node:path';
 import { createHash } from 'node:crypto';
-import { access, realpath, stat } from 'node:fs/promises';
+import { access, mkdir, realpath, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { isIP } from 'node:net';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -20,6 +20,7 @@ import type { NativeComposeProjectRender } from './nativeComposeLifecycle';
 import { nativeSqliteCommand, type NativeSqliteOperation } from './nativeSqliteCommand';
 import { refuseNativeResticHostNetwork } from './nativeResticFailure';
 import { canonicalAbsolutePathsEqual, isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { findPhysicalAncestor } from '@/utils/path/physicalAncestorPath';
 
 export type NativeResticCommandInput = Readonly<{
     render: Pick<NativeComposeProjectRender, 'engine' | 'platform' | 'projectName'>; context: MachineNativeEffectContext;
@@ -81,12 +82,27 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
             return refuseNativeResticHostNetwork();
         }
         const mounts: string[] = [];
-        const repositoryPath = request?.repositoryMount ? await realpath(request.repositoryMount.hostPath) : undefined;
-        if (repositoryPath) {
-            if (!(await stat(repositoryPath)).isDirectory()) return refuse();
-            await access(repositoryPath, constants.R_OK | constants.W_OK);
-            mounts.push('--mount', ['type=bind', `source=${repositoryPath}`,
-                `target=${request!.repositoryMount!.containerPath}`].map(csv).join(','));
+        const repositoryMount = request?.repositoryMount;
+        let repositoryPath: string | undefined;
+        if (repositoryMount) {
+            if (repositoryMount.initialize) {
+                // The helper runs as root. Keep the full local directory chain
+                // accessible to the daemon's later mount and volume admission.
+                await mkdir(repositoryMount.repositoryHostPath ?? repositoryMount.hostPath, { recursive: true, mode: 0o700 });
+            }
+            const directory = await findPhysicalAncestor(repositoryMount.hostPath);
+            if (!directory || !(await stat(directory.physicalAncestor)).isDirectory()) return refuse();
+            await access(directory.physicalAncestor, constants.R_OK | constants.W_OK);
+            repositoryPath = `${directory.physicalAncestor}${directory.absentSuffix}`;
+            mounts.push('--mount', ['type=bind', `source=${directory.physicalAncestor}`,
+                `target=${repositoryMount.containerPath}`].map(csv).join(','));
+            if (directory.absentSuffix) {
+                // Read-only Test reports a missing repository without creating
+                // its directory. Explicit init has prepared the exact path above.
+                const suffix = relative(directory.physicalAncestor, repositoryPath).split(sep);
+                argv = [argv[0]!, posix.join(repositoryMount.containerPath, ...suffix,
+                    posix.relative(repositoryMount.containerPath, argv[1]!)), ...argv.slice(2)];
+            }
         }
         if (owner.targetVolume) mounts.push('--mount', ['type=volume', `source=${owner.targetVolume}`,
             `target=${RESTIC_VOLUME_STAGE_PATH_V1}`, 'volume-nocopy'].map(csv).join(','));

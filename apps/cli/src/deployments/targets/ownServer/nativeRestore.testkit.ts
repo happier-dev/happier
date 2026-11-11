@@ -113,6 +113,25 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
     let output;
     if (argv.includes('config')) output = JSON.stringify({version:2,id:'c'.repeat(64)});
     else if (argv.includes('init')) {
+        // The fixture's generated --mount uses these fixed CSV fields. Mirror
+        // restic 0.19.1 local.Create: only init creates the selected directory.
+        const mount = request.find(value => value.startsWith('type=bind,source=')
+            && value.endsWith(',target=/run/happier/backup/repository'));
+        if (mount) {
+            const source = mount.slice('type=bind,source='.length, -',target=/run/happier/backup/repository'.length);
+            const segments = path.posix.relative('/run/happier/backup/repository', repository).split('/').filter(Boolean);
+            let parent = source;
+            let firstCreated;
+            for (const segment of segments) {
+                parent = path.join(parent, segment);
+                if (!fs.existsSync(parent)) { firstCreated = parent; break; }
+            }
+            fs.mkdirSync(path.join(source, ...segments), {recursive:true, mode:0o700});
+            // The real container runs as root and creates private 0700 folders.
+            // This same-UID boundary substitutes 000 on a newly created parent
+            // to reproduce the daemon's EACCES without privileged test setup.
+            if (firstCreated) fs.chmodSync(firstCreated, 0o000);
+        }
         state.initializedRepositories = [...(state.initializedRepositories || []), repository];
         save(); output = JSON.stringify({message_type:'initialized',id:'c'.repeat(64)});
     }
