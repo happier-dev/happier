@@ -1,6 +1,7 @@
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import {
     readAgentStartupFailureCode,
+    readRequesterSessionRuntimeRefusalCode,
     readSessionPreparationFailureCode,
     type SessionRuntimeIssueV1,
 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -142,6 +143,8 @@ function resolveSessionStartupFailureCause(
     }
     const startup = readAgentStartupFailureCode(code);
     if (startup) return t(`session.startFailure.cause.${startup}`);
+    const requester = readRequesterSessionRuntimeRefusalCode(code);
+    if (requester) return t(`session.startFailure.cause.${requester}`);
     const preparation = readSessionPreparationFailureCode(code);
     if (!preparation) return null;
     if (preparation === 'agent_isolation_unavailable' || preparation === 'filesystem_identity_custody_unavailable') {

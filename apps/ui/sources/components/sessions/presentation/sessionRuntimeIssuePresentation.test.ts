@@ -2,6 +2,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import {
     AGENT_STARTUP_FAILURE_PREVIEWS,
+    REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS,
     SESSION_PREPARATION_FAILURE_PREVIEWS,
     type SessionRuntimeIssueV1,
 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -24,6 +25,7 @@ const CLOSED_CODES = [
     ...Object.keys(SESSION_PREPARATION_FAILURE_PREVIEWS),
     ...ProviderBrokerAdmissionFailureCodeV1Schema.options,
     ...Object.keys(AGENT_STARTUP_FAILURE_PREVIEWS),
+    ...Object.keys(REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS),
 ];
 
 function issue(overrides: Partial<SessionRuntimeIssueV1>): SessionRuntimeIssueV1 {
@@ -45,6 +47,26 @@ async function useLanguage(language: string): Promise<void> {
 }
 
 describe('closed startup-failure recovery copy', () => {
+    it.each(Object.keys(AGENT_STARTUP_FAILURE_PREVIEWS).filter(code =>
+        code.startsWith('plugin_exec_') || code.startsWith('native_adapter_'),
+    ))('localizes %s without exposing its diagnostic code', async code => {
+        for (const language of SUPPORTED_LANGUAGE_CODES) {
+            await useLanguage(language);
+            const message = presentSessionStartupFailureCause(code);
+            expect(message, `${language}:${code}`).toBeTruthy();
+            expect(message).not.toContain('session.startFailure.cause.');
+            expect(message).not.toContain(code);
+        }
+    });
+    it.each(Object.keys(REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS))('explains %s through Resume and retained Session status', async code => {
+        await useLanguage('en');
+        const message = presentSessionStartupFailureCause(code);
+        expect(message).toBeTruthy();
+        expect(message).not.toContain(code);
+        expect(resolveSessionSpawnNewResultFailureMessage({ type: 'error', code: 'spawn_failed', retryable: true,
+            launchError: { kind: 'launch_error', code, message: 'PRIVATE_CUSTODY_BODY' } })).toContain(message);
+        expect(presentSessionRuntimeIssue(issue({ code, sanitizedPreview: undefined })).message).toBe(message);
+    });
     it('explains a server transaction timeout without startup phase facts in every locale', async () => {
         const code = 'database_transaction_timeout';
         for (const unrelatedCode of ['provider_response_invalid', 'runtime_refusal']) {

@@ -27,6 +27,7 @@ import { SessionRequesterBootstrapRpcRequestV1Schema, openSessionRequesterBootst
     SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema, openSessionRequesterHandoffPreflightBootstrapRpcRequestV1,
     type SessionRequesterHandoffBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS, type RequesterSessionRuntimeRefusalCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { CurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
 import { admitRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { createMachineSessionDirectTargetTransport } from './sessionServerStartLifecycleAdapter';
@@ -66,18 +67,11 @@ type RequesterSessionRuntimeOwner = Readonly<{
     stopForHandoff?(sessionId: string, expectedSpawnNonce: string): Promise<'stopped' | 'already_inactive' | 'failed'>;
 }>;
 
-const requesterSessionRuntimeRefusals = {
-    requester_session_runtime_owner_unavailable: 'The requester Session runtime owner is unavailable.',
-    requester_machine_admission_unavailable: 'The requester Machine admission is unavailable.',
-    requester_session_custody_unavailable: 'The requester Session credential custody is unavailable.',
-    requester_session_bootstrap_mismatch: 'The recovered requester Session binding does not match this request.',
-    requester_session_bootstrap_not_current: 'The recovered requester Session authority is no longer current.',
-} as const;
 
 async function withRequesterSessionRuntime(input: unknown, context: RpcHandlerContext,
     sessionId: string, owner: RequesterSessionRuntimeOwner | undefined,
     handler: (input: unknown, context?: RpcHandlerContext) => Promise<unknown>,
-    refused: (reason: keyof typeof requesterSessionRuntimeRefusals) => unknown = () =>
+    refused: (reason: RequesterSessionRuntimeRefusalCode) => unknown = () =>
         ({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' })): Promise<unknown> {
     if (!owner) return refused('requester_session_runtime_owner_unavailable');
     if (!context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()) {
@@ -690,9 +684,9 @@ export function registerPrivateSpawnSessionRpcHandlers(params: Readonly<{
         const response = foreignResume && resumeContext ? await withRequesterSessionRuntime(admittedSpawnData, resumeContext,
             parsed.data.sessionId!, params.requesterSessionRuntime, params.spawnLifecycleHandler, reason => ({
                 type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                errorMessage: requesterSessionRuntimeRefusals[reason],
+                errorMessage: REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS[reason],
                 runtimeFailureReason: 'runner_authority_unavailable',
-                errorDetail: { kind: 'launch_error', code: reason, message: requesterSessionRuntimeRefusals[reason] },
+                errorDetail: { kind: 'launch_error', code: reason, message: REQUESTER_SESSION_RUNTIME_REFUSAL_PREVIEWS[reason] },
             }))
             : await params.spawnLifecycleHandler(admittedSpawnData, resumeContext);
         if (binding?.handoffContinuation && !launchAccepted && response && typeof response === 'object'
