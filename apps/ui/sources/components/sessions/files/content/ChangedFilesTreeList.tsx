@@ -165,6 +165,46 @@ export function resolveChangedFilesRowSource(input: {
     return input.snapshot?.entries ?? [];
 }
 
+/**
+ * Search candidate set: every row the surface knows, independent of expansion state —
+ * structural children of closed directories and loaded collapsed-directory expansions
+ * included. The visible tree (flattenTree) stays expansion-dependent; search must not be.
+ */
+function collectAllRows(
+    nodes: ChangedFilesOutlineNode[],
+    depth: number,
+    expansions: ReadonlyMap<string, { entries: readonly ScmWorkingEntry[]; hasMore: boolean }> | null,
+): FlattenedNode[] {
+    const out: FlattenedNode[] = [];
+    for (const node of nodes) {
+        if (node.kind === 'file') {
+            out.push({ ...node, depth });
+            continue;
+        }
+        const collapsed = (node as ChangedFilesOutlineNode & { kind: 'dir'; collapsedDirectory?: CollapsedDirectoryInfo }).collapsedDirectory;
+        out.push({ ...node, depth, ...(collapsed ? { collapsedDirectory: collapsed } : {}) });
+        out.push(...collectAllRows(node.children, depth + 1, expansions));
+        const collapsedEntryPath = collapsed?.entryPath;
+        if (collapsedEntryPath !== undefined && expansions) {
+            const expansion = expansions.get(collapsedEntryPath);
+            if (expansion) {
+                for (const entry of expansion.entries) {
+                    const file = entryToFileStatus(entry);
+                    const segments = file.fullPath.split('/');
+                    out.push({
+                        kind: 'file',
+                        name: segments[segments.length - 1] || file.fullPath,
+                        fullPath: file.fullPath,
+                        file,
+                        depth: depth + 1,
+                    });
+                }
+            }
+        }
+    }
+    return out;
+}
+
 export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps) => {
     const sourceEntries = resolveChangedFilesRowSource({
         entriesWindow: props.entriesWindow ?? null,
@@ -208,8 +248,8 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
     }, [props.onCollapseDirectory, props.onExpandDirectory]);
 
     const nodesToRender: FlattenedNode[] = React.useMemo(() => {
-        const flattened = flattenTree(tree, 0, expandedDirs, expansions);
         if (!filteredQuery) {
+            const flattened = flattenTree(tree, 0, expandedDirs, expansions);
             // A truncated entries window still has more top-level rows on the machine: surface
             // the continuation affordance at the end of the list.
             if (props.entriesWindow?.mode === 'window' && props.entriesWindow.truncated) {
@@ -217,11 +257,12 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
             }
             return flattened;
         }
-        // Search spans the full row set — collapsed directory rows and loaded expansion
-        // children included — so a directory or a file inside it is findable by name.
-        // Synthetic load-more rows carry no path and never match.
-        return flattened
+        // Search spans every row the surface knows regardless of expansion state (see
+        // collectAllRows); synthetic load-more rows carry no path and never match. Results
+        // render flat (depth 0) — the tree hierarchy is not visible in search mode.
+        return collectAllRows(tree, 0, expansions)
             .filter((node) => ('fullPath' in node ? node.fullPath.toLowerCase().includes(filteredQuery) : false))
+            .map((node) => ({ ...node, depth: 0 }))
             .sort((a, b) => (('fullPath' in a ? a.fullPath : '')).localeCompare(('fullPath' in b ? b.fullPath : ''), undefined, { sensitivity: 'base' }));
     }, [expandedDirs, expansions, filteredQuery, props.entriesWindow, tree]);
 

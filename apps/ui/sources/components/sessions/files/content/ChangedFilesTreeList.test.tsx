@@ -173,6 +173,26 @@ describe('ChangedFilesTreeList with the bounded entries window', () => {
         expect(screen.getTextContent()).toContain('nested-guide.ts');
     });
 
+    it('finds files inside closed structural directories by search query', async () => {
+        itemPropsByTestID.length = 0;
+        const snapshot = makeSnapshot([
+            makeSnapshotEntry('src/a.ts'),
+            makeSnapshotEntry('src/deep/b.ts'),
+            makeSnapshotEntry('top.ts'),
+        ]);
+        const entriesWindow = makeWindowState({
+            entries: [
+                makeSnapshotEntry('src/a.ts'),
+                makeSnapshotEntry('src/deep/b.ts'),
+                makeSnapshotEntry('top.ts'),
+            ],
+        });
+
+        // No expansions, no expandedDirs: src/ is closed in the visible tree.
+        const screen = await renderTreeList({ snapshot, entriesWindow, searchQuery: 'b.ts' });
+        expect(screen.getTextContent()).toContain('b.ts');
+    });
+
     it('renders a collapsed directory row as "D/" with its untracked file count and expands instead of opening', async () => {
         itemPropsByTestID.length = 0;
         const onOpenFile = vi.fn();
