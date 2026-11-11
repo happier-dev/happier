@@ -53,7 +53,7 @@ export async function resolveMemberRunnableAgentCliLaunch(params: Readonly<{
         HAPPIER_JS_RUNTIME_PATH: managedJavaScriptRuntimeBinPath(params.processEnv),
         HAPPIER_MANAGED_NODE_BIN: undefined, HAPPIER_NODE_PATH: undefined };
     params.memberLaunch.signal?.throwIfAborted();
-    const resolved = resolveAgentCliCommandForRuntime(params.runtimeSpec, { processEnv, sourcePolicy: 'managed_only' });
+    const resolved = resolveAgentCliCommandForRuntime(params.runtimeSpec, { processEnv, sourcePolicy: 'member' });
     if (!resolved) return refuse();
     let managedRuntime: string | undefined;
     if (agentCliPathRequiresJavaScriptRuntime(resolved.command)) {

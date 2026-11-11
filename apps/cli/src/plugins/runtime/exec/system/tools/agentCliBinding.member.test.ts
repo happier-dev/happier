@@ -86,6 +86,34 @@ it.skipIf(process.platform !== 'linux').each(['owner', 'managed', 'missing', 'ja
         });
     });
 
+it.skipIf(process.platform !== 'linux')('allows an installed vendor-recipe Agent for a member while ignoring owner overrides', async () => {
+    await withTempDir('member-vendor-agent-', async home => {
+        const runtimeSpec = getAgentCliRuntimeSpec('muse')!;
+        const vendorBin = join(home, '.local', 'bin', runtimeSpec.binaryName);
+        const ownerOverride = join(home, 'owner-private', runtimeSpec.binaryName);
+        await mkdir(dirname(vendorBin), { recursive: true });
+        await mkdir(dirname(ownerOverride), { recursive: true });
+        await writeFile(vendorBin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        await writeFile(ownerOverride, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+
+        const service = createAgentCliSystemToolService({
+            agentId: 'muse', runtimeSpec,
+            binding: { toolId: 'muse-cli' },
+            definition: { toolId: 'muse-cli', displayName: 'Muse', lookupNames: ['muse'] },
+            processEnv: {
+                PATH: '', HOME: home,
+                HAPPIER_MUSE_PATH: ownerOverride,
+                [FIRST_PARTY_INSTALL_HOME_ENV_KEY]: join(home, 'public-install'),
+            },
+            memberLaunch: {},
+            delegate: { async resolve() { throw new Error('No alternate resolution'); } },
+        });
+
+        await expect(service.resolve({ toolId: 'muse-cli', purpose: 'Start Muse' }))
+            .resolves.toMatchObject({ executablePath: vendorBin });
+    });
+});
+
 it.skipIf(process.platform !== 'linux')('returns a closed member refusal before Session commit', async () => {
     await withTempDir('member-agent-preflight-', async home => {
         const manifest = PluginManifestV2Schema.parse(PLUGIN_MANIFEST);

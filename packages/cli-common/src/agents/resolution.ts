@@ -40,8 +40,12 @@ export type AgentCliResolutionSource = 'override' | 'system' | 'managed';
  * persisted `AgentCliSourcePreference` value: a preference is configurable
  * through the environment, and the whole point of this policy is that the
  * environment cannot widen it.
+ *
+ * `member` is the isolated-member policy: it ignores endpoint path overrides,
+ * then accepts a runnable user/system install or the managed install. The
+ * native member launch boundary separately qualifies the selected executable.
  */
-export type AgentCliSourcePolicy = 'default' | 'managed_only';
+export type AgentCliSourcePolicy = 'default' | 'managed_only' | 'member';
 
 export type AgentCliCommandResolution = Readonly<{
   source: AgentCliResolutionSource;
@@ -490,6 +494,22 @@ export function resolveAgentCliCommandForRuntime(
   const processEnv = opts.processEnv ?? process.env;
 
   if (opts.sourcePolicy === 'managed_only') {
+    const managedCommand = resolveAgentCliManagedCommand(runtimeSpec, processEnv);
+    if (managedCommand && isAgentCliPathRunnable(managedCommand, processEnv, opts)) {
+      return { source: 'managed', command: managedCommand };
+    }
+    return null;
+  }
+
+  if (opts.sourcePolicy === 'member') {
+    // A member may use its own vendor/user install, but never an executable
+    // inherited from the endpoint daemon's PATH. Known user directories are
+    // resolved from the member launch environment below.
+    const memberProcessEnv = { ...processEnv, PATH: '' };
+    const systemCommand = resolveAgentCliSystemCommand(runtimeSpec, memberProcessEnv, opts);
+    if (systemCommand && isAgentCliPathRunnable(systemCommand, processEnv, opts)) {
+      return { source: 'system', command: systemCommand };
+    }
     const managedCommand = resolveAgentCliManagedCommand(runtimeSpec, processEnv);
     if (managedCommand && isAgentCliPathRunnable(managedCommand, processEnv, opts)) {
       return { source: 'managed', command: managedCommand };
