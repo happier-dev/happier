@@ -35,7 +35,7 @@ import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { isFilesystemActionId } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { readExternalActionBindingAuthority, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { ManagedMachineActionIdV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -364,9 +364,8 @@ export function createCliActionExecutor(
     const admission = context?.machineAdmission;
     const requesterAccount = authorization?.requesterAccountProjection;
     const requesterHttp = authorization?.requesterHttpProjection;
-    const admittedPrivateUiCustody = Boolean(authorization && 'authentication' in authorization.binding
-      && authorization.binding.authentication.kind === 'account'
-      && !authorization.binding.sessionActionOrigin && !authorization.binding.workflowActionOrigin
+    const admittedPrivateUiCustody = Boolean(authorization
+      && readExternalActionBindingAuthority(authorization.binding) === 'present_user'
       && surface === 'ui' && context?.authority === 'present_user' && context.actionCaller?.kind === 'host'
       && context.causalPermissionAuthority == null
       && requesterAccount && requesterHttp
@@ -392,7 +391,7 @@ export function createCliActionExecutor(
     const ordinaryAccountHostBinding = authorization && 'authentication' in authorization.binding
       && !authorization.binding.sessionActionOrigin
       && (surface === 'ui' || surface === 'voice' && context?.actionCaller?.kind === 'host'
-        && authorization.binding.authentication.kind === 'account')
+        && readExternalActionBindingAuthority(authorization.binding) === 'present_user')
       && context?.authority === 'present_user'
       && privateKey && params.serverId && params.serverIdentityId === authorization.binding.serverIdentityId
       && runtimeAccountId === authorization.binding.accountId
@@ -406,8 +405,8 @@ export function createCliActionExecutor(
     // root plus exact installed codec preserves the requester's direct click;
     // neither the custodian credential nor a raw UI label supplies that cause.
     let managedControllerUiBinding: typeof ordinaryAccountHostBinding = null;
-    if (authorization && 'authentication' in authorization.binding
-      && authorization.binding.authentication.kind === 'account'
+    if (authorization
+      && readExternalActionBindingAuthority(authorization.binding) === 'present_user'
       && isManagedControllerCodecActionV1(authorization.binding)
       && authorization.binding.accountId !== authorization.binding.custodianAccountId
       && runtimeAccountId === authorization.binding.custodianAccountId

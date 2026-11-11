@@ -56,8 +56,8 @@ import { verifyCurrentExternalActionPrincipal, verifyCurrentExternalActionPrinci
     readExternalActionSessionSpawnAdmission,
     readCurrentExternalActionHandoffBindingInTx, hasCurrentExternalActionSessionSource,
     isExternalActionAuthorizationBoundToEnvelope, projectExternalActionBoundPrincipal,
-    readExternalActionSessionProposalSurface, hasCurrentExternalActionWorkflowOriginInTx, readAdmittedDeploymentNativePrincipal,
-    readAdmittedTemplateExecutionPrincipal, verifyWorkflowExternalActionRequesterAuthorization,
+    readExternalActionSessionProposalSurface, hasCurrentExternalActionWorkflowOriginInTx,
+    verifyWorkflowExternalActionRequesterAuthorization,
     type WorkflowExternalActionAdmission } from '@/app/auth/externalActionExecutionAuthorization';
 import { ManagedMachineError, readManagedAdmissionState, readManagedEnrollmentAccountId, projectManagedMachine, requireCurrentManagedMachineInTx, readManagedMachineInTx, sameManagedInput, readManagedController, type StoredManagedMachine } from '@/app/machines/managed/managedRows';
 import { logUnexpectedRequestError } from '@/app/api/utils/logUnexpectedRequestError';
@@ -291,10 +291,6 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
     if (request.externalActionExecutionAuthorized === true && admitted
         && sameManagedInput(admitted, authorization.binding)
         && request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] === authorization.token) {
-        const captured = readAdmittedDeploymentNativePrincipal(admitted, request.authAuthority);
-        // Dispatch receives the public principal shape, without private verifier metadata.
-        const principal = captured && projectExternalActionBoundPrincipal(admitted, captured, request.authAuthority);
-        if (principal) return { principal, authorization };
     }
     const root = await auth.verifyExternalActionExecutionAuthorization(authorization.token);
     if (!root || root.serverIdentityId !== await getOrCreateServerIdentityId() || root.accountId !== request.userId
@@ -302,11 +298,6 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
         || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId, machineId: body.machineId, envelope: body.envelope })
         || request.externalActionExecutionAuthorized === true
             && request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] !== authorization.token) return null;
-    const retainedTemplate = readAdmittedTemplateExecutionPrincipal(root, request.authAuthority);
-    if (retainedTemplate) {
-        const principal = projectExternalActionBoundPrincipal(root, retainedTemplate, request.authAuthority);
-        return principal ? { principal, authorization } : null;
-    }
     // This front door has already authenticated this Account and checked login
     // eligibility. Re-enter the existing root through current rows, not another
     // provider HTTP request after the origin's source check.

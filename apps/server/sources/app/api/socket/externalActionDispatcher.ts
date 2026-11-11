@@ -27,8 +27,7 @@ import { verifyCurrentExternalActionPrincipal, verifyCurrentExternalActionPrinci
     hasCurrentExternalActionSessionSource, isExternalActionAuthorizationBoundToEnvelope,
     projectExternalActionBoundPrincipal, isOriginalAccountHandoffAction,
     readCurrentExternalActionHandoffBindingInTx,
-    resolveExternalActionExecutionMachineAdmissionInTx, readAdmittedDeploymentNativePrincipal,
-    readAdmittedTemplateExecutionPrincipal, type WorkflowExternalActionAdmission } from '@/app/auth/externalActionExecutionAuthorization';
+    resolveExternalActionExecutionMachineAdmissionInTx, type WorkflowExternalActionAdmission } from '@/app/auth/externalActionExecutionAuthorization';
 import { readMachineScopedSocketIdentity } from "@/app/machines/machineDaemonPresence";
 import { readCurrentCommittedSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
 import {
@@ -745,14 +744,11 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
 
         let executionAuthorization = request.executionAuthorization;
         let capturedMachineAdmission: SocketRpcMachineAdmissionContextV1 | undefined;
-        let admittedNative: ReturnType<typeof readAdmittedDeploymentNativePrincipal> = null;
         if (executionAuthorization) {
             // Dispatch is also an internal ingress: prove its supplied root token,
             // then retain native member admission without another permission evaluation.
             const root = await auth.verifyExternalActionExecutionAuthorization(executionAuthorization.token);
-            admittedNative = root && (readAdmittedDeploymentNativePrincipal(root, request.principal.authority)
-                ?? readAdmittedTemplateExecutionPrincipal(root, request.principal.authority));
-            const current = admittedNative ?? (root ? await verifyCurrentExternalActionPrincipalInTx(db, root) : null);
+            const current = root ? await verifyCurrentExternalActionPrincipalInTx(db, root) : null;
             const principal = root && current
                 ? projectExternalActionBoundPrincipal(root, current, request.principal.authority) : null;
             if (!root || !principal || root.serverIdentityId !== await getServerIdentityId()
@@ -982,7 +978,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             refusalBranch: 'execution_authorization_invalid', requestId: request.envelope.requestId, machineId });
 
         // No provider/login HTTP await follows these original-source checks.
-        if (!admittedNative && (request.executionAuthorization || currentAuthorization.binding.sessionActionOrigin)) {
+        if (request.executionAuthorization || currentAuthorization.binding.sessionActionOrigin) {
             const sourceCurrent = await runDispatchPhase('target_currentness', machineId, () => (
                 hasCurrentExternalActionSessionSource(currentAuthorization.binding, resolveSessionMachine)
             ), request.envelope.requestId);

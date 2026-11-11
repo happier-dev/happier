@@ -4,6 +4,7 @@ import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { ACTION_INVOKE_ACTION_ID_V1, type ActionId } from '../actionIds.js';
 import type { ActionExecutorContext } from './types.js';
 import { isPresentUserHostInvocation, isHomeAdmittedPresentUserHostInvocation, pluginActionInvokeConfirmationMismatchV1 } from '../invocationAuthority.js';
+import { readExternalActionBindingAuthority } from '../externalActionBindingAuthority.js';
 
 /** Both a witnessed Artifact decision and a native Confirm record the same reviewed parent. */
 export function recordPresentUserApprovalV1(args: Readonly<{
@@ -47,9 +48,8 @@ function confirmationMismatch(actionId: ActionId, input: unknown, context: Actio
   if (!context.runtimeAccountId || confirmation.accountId !== context.runtimeAccountId
     || binding && binding.accountId !== context.runtimeAccountId) return { field: 'account' };
   if (context.externalActionCredential || context.rpcSessionAuthorization
-    || binding && !('authentication' in binding && (binding.authentication.kind === 'account'
-        || binding.authentication.kind === 'terminal' && context.surface === 'cli')
-      && !binding.sessionActionOrigin && !binding.workflowActionOrigin
+    || binding && !((readExternalActionBindingAuthority(binding) === 'present_user'
+        || 'authentication' in binding && binding.authentication.kind === 'terminal' && context.surface === 'cli')
       && binding.requestId === context.actionRequestId
       && binding.actionId === actionId && sameStrictJsonValue(binding.target, context.externalActionTarget))
     || !context.actionRequestId || confirmation.requestId !== context.actionRequestId
@@ -74,8 +74,7 @@ export function admitAccountActionInvokeConfirmationV1(input: unknown, context: 
   pluginInputDigest: string | null): Readonly<{ admitted: true } | { admitted: false; mismatch: CurrentIntentMismatchV1 }> {
   const refused = (mismatch: CurrentIntentMismatchV1) => ({ admitted: false as const, mismatch });
   const binding = context.externalActionExecutionAuthorization?.binding;
-  if (!binding || !('authentication' in binding) || binding.authentication.kind !== 'account'
-    || binding.sessionActionOrigin || binding.sessionActionSource || binding.workflowActionOrigin
+  if (!binding || readExternalActionBindingAuthority(binding) !== 'present_user'
     || binding.serverIdentityId !== (context.serverIdentityId ?? context.serverId)) return refused({ field: 'binding' });
   const originMismatch = pluginActionInvokeConfirmationMismatchV1(context);
   const mismatch = context.presentUserConfirmation

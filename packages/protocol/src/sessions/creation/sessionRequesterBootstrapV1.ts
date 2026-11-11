@@ -15,6 +15,7 @@ import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionManagedCont
   type ExternalActionExecutionAuthorizationV1, type ExternalActionManagedAdmissionV1,
   type ExternalActionRequestEnvelope, type ExternalActionRequestEnvelopeV2 } from '../../actions/externalActionApi.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '../../actions/externalActionExecutionAuthorization.js';
+import { readExternalActionBindingAuthority } from '../../actions/externalActionBindingAuthority.js';
 import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 } from '../../machines/managed/enrollmentIdentityV1.js';
 import { ManagedEnrollmentInstallationV1Schema } from '../../machines/managed/actionsV1.js';
 import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
@@ -200,7 +201,7 @@ export function admitExternalActionRequesterInvocationAttributionV1(
 ): Readonly<{ ok: true; actionRequestAttributionV1?: ActionRequestAttributionV1 }> | Readonly<{ ok: false }> {
   const cause = invocation?.actionRequestAttributionV1;
   if (!cause) return { ok: true };
-  if (!principal || principal.authentication?.kind !== 'account' || principal.sessionActionOrigin || principal.workflowActionOrigin
+  if (!principal || readExternalActionBindingAuthority(principal) !== 'present_user'
     || caller?.kind !== 'host' || cause.requester && (cause.requester.accountId !== principal.accountId
       || cause.requester.serverId !== principal.serverIdentityId)) return { ok: false };
   return { ok: true, actionRequestAttributionV1: materializeActionRequestAttributionV1(cause) };
