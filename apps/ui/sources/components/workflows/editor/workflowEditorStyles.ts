@@ -810,8 +810,11 @@ const WIDE_GRID_STYLES = {
     laneJoinBend: workflowEditorStyles.laneJoinBend,
     heading: workflowEditorStyles.heading,
 };
-/** The same rows with the compact overrides layered on, key for key (the compiler checks every key). */
-const COMPACT_GRID_STYLES: { readonly [Key in keyof typeof WIDE_GRID_STYLES]: readonly [(typeof WIDE_GRID_STYLES)[Key], (typeof compactDocumentGrid)[Key]] } = {
+/**
+ * The same rows with the compact overrides layered on, key for key (the compiler checks every key). Each pair is a
+ * plain (mutable) tuple because React Native's `StyleProp` accepts arrays, not readonly ones.
+ */
+const COMPACT_GRID_STYLES: { readonly [Key in keyof typeof WIDE_GRID_STYLES]: [(typeof WIDE_GRID_STYLES)[Key], (typeof compactDocumentGrid)[Key]] } = {
     blockColumn: [workflowEditorStyles.blockColumn, compactDocumentGrid.blockColumn],
     blockGap: [workflowEditorStyles.blockGap, compactDocumentGrid.blockGap],
     listEnd: [workflowEditorStyles.listEnd, compactDocumentGrid.listEnd],
