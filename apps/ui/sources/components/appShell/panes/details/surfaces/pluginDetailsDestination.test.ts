@@ -27,6 +27,8 @@ import {
     type PluginUiSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
+import { readPluginSurfaceHostApiErrorPayload } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
+import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
 import { createPluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
@@ -1231,5 +1233,80 @@ describe('pluginDetailsDestination', () => {
         } finally {
             (Platform as { OS: string }).OS = previousPlatform;
         }
+    });
+});
+
+// Live 2026-11-11 (Account B, 1440): a message's Create task opened its draft as a Session details tab; when the draft
+// ended (Cancel or a successful Create) the plugin had no way to hand the tab back, so the pane kept a page that writes
+// a location it does not have. The Details owner closes the tab a one-shot mount settles, like its own close control.
+describe('a launched Details tab settling its mount', () => {
+    /** One physical mount's handlers, derived once as the controller does. */
+    const mountHandlers = (binding: BoundPluginSurfaceBinding | undefined, isCurrent: () => boolean) =>
+        binding?.createMountedHostApiHandlers?.({ isCurrent }).handlers;
+    const settleOn = (handlers: ReturnType<typeof mountHandlers>, payload: unknown) => handlers?.settleEphemeralInput?.({
+        version: 1, requestId: 'settle-1', method: 'settleEphemeralInput',
+        surface: createPluginSurfaceContextFixture(), payload: payload as never });
+    const settle = (binding: BoundPluginSurfaceBinding | undefined, isCurrent: () => boolean, payload: unknown) =>
+        settleOn(mountHandlers(binding, isCurrent), payload);
+
+    it('closes exactly its own tab once, and refuses a retired mount, an invalid settlement or a second one', async () => {
+        const closeTab = vi.fn();
+        const binding = bindPluginDetailsDestinationOpenSurface({ closeOwnTab: closeTab });
+
+        expect(await settle(binding, () => false, { kind: 'cancelled' })).toSatisfy(value => readPluginSurfaceHostApiErrorPayload(value) !== null);
+        expect(await settle(binding, () => true, { kind: 'unknown' })).toSatisfy(value => readPluginSurfaceHostApiErrorPayload(value) !== null);
+        expect(closeTab).not.toHaveBeenCalled();
+
+        const mounted = mountHandlers(binding, () => true);
+        expect(await settleOn(mounted, { kind: 'cancelled' })).toBeNull();
+        expect(closeTab).toHaveBeenCalledTimes(1);
+        expect(await settleOn(mounted, { kind: 'completed', input: null })).toSatisfy(value => readPluginSurfaceHostApiErrorPayload(value) !== null);
+        expect(closeTab).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the staged binding’s own mounted handlers beside the settlement', async () => {
+        const closeTab = vi.fn();
+        const notify = vi.fn(() => null);
+        const staged: BoundPluginSurfaceBinding = { createMountedHostApiHandlers: () => ({ handlers: { notify } }) };
+        const binding = bindPluginDetailsDestinationOpenSurface({ binding: staged, closeOwnTab: closeTab });
+        const handlers = binding?.createMountedHostApiHandlers?.({ isCurrent: () => true }).handlers;
+        expect(handlers?.notify).toBe(notify);
+        expect(await settle(binding, () => true, { kind: 'cancelled' })).toBeNull();
+        expect(closeTab).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes the delivered tab through its Details owner when the mounted surface settles', async () => {
+        const { placement, projection } = createDetailsTabProjection();
+        const closeTab = vi.fn();
+        const details: DetailsSurfaceRenderInputV1 = { ...createDetailsRenderInput(), callbacks: { closeTab } };
+        let stage: ReturnType<typeof usePluginDetailsDestinationLaunchStaging> | null = null;
+        function Launcher() { stage = usePluginDetailsDestinationLaunchStaging(); return null; }
+        function Destination() {
+            const renderer = createPluginDetailsDestinationSurfaceRenderer({ targetKind: 'session', projection,
+                mount: { machineId: 'machine-1', serverId: runtime.serverId, sessionId: 'session-1', platform: 'web',
+                    projectionPhase: 'current', projectionInteractionEnabled: true },
+                renderFallback: () => null });
+            return renderer.render(details) as React.ReactElement | null;
+        }
+        const view = (mounted: boolean) => React.createElement(PluginDetailsDestinationLaunchScope, null,
+            React.createElement(Launcher), mounted ? React.createElement(Destination) : null);
+        const screen = await renderScreen(view(false));
+        await act(async () => {
+            if (!stage) throw new Error('Expected scoped Details launcher');
+            expect(stage({ placement, targetKind: 'session', instanceKey: 'file-instance-1', input: { draftId: 'draft-1' } })).not.toBeNull();
+        });
+        await screen.update(view(true));
+        await act(async () => {});
+        // After delivery the same physical mount still holds the launch's settlement.
+        const host = screen.root.findByType(PluginSurfacePlacementHost);
+        expect(host.props.launchInput).toEqual({ draftId: 'draft-1' });
+        const handlers = (host.props.binding as BoundPluginSurfaceBinding | undefined)
+            ?.createMountedHostApiHandlers?.({ isCurrent: () => true }).handlers;
+        expect(await settleOn(handlers, { kind: 'cancelled' })).toBeNull();
+        expect(closeTab).toHaveBeenCalledExactlyOnceWith(details.tab.key);
+    });
+
+    it('offers no settlement to a tab that was not opened with a one-shot launch', () => {
+        expect(bindPluginDetailsDestinationOpenSurface({})).toBeUndefined();
     });
 });

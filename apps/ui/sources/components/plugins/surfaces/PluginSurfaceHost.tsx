@@ -203,6 +203,7 @@ import {
     type BoundPluginSurfaceMountedHostApiHandlersFactory,
     type BoundPluginSurfaceMountLifetime,
 } from './boundPluginSurfaceController';
+import { composeMountedHostApiHandlerFactories } from './composeMountedHostApiHandlers';
 import {
     createPluginSurfaceContext,
     getPluginSurfaceTargetAuthorityKey,
@@ -2946,9 +2947,14 @@ function PluginSurfaceHostMount(props: Readonly<(
     }, []);
     const mountedComposerBinding = React.useMemo<BoundPluginSurfaceBinding | undefined>(() => {
         if (!mountedComposerOwner || !mountedComposerTransactionApplier) return undefined;
+        const placementBinding = targetedBinding ? undefined : props.binding;
         return Object.freeze({
-            ...(targetedBinding ? {} : props.binding ?? {}),
-            createMountedHostApiHandlers: createMountedComposerHostApiHandlers,
+            ...(placementBinding ?? {}),
+            // The placement (e.g. a Details tab) and this Composer both own handlers on the one physical mount.
+            createMountedHostApiHandlers: composeMountedHostApiHandlerFactories(
+                placementBinding?.createMountedHostApiHandlers,
+                createMountedComposerHostApiHandlers,
+            ),
         });
     }, [createMountedComposerHostApiHandlers, mountedComposerOwner, mountedComposerTransactionApplier, props.binding, targetedBinding]);
     const controllerBinding = composerBinding

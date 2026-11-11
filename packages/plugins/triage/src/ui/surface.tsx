@@ -9,6 +9,7 @@ import { TriageActionEditorLaunchInputV1Schema } from '@happier-dev/triage-proto
 import { TriageResourceSurface } from './resourceSurface.js';
 import { readTriageResourceIntent } from './contributions.js';
 import { useTriageTaskDraftLaunch } from './taskDraftLaunch.js';
+import { TriageTaskDraftLaunchV1Schema } from '../actions/tasksProtocol.js';
 
 /**
  * The PRs & Issues app-page artifact entry.
@@ -80,10 +81,27 @@ function TriageListSurface(context: RenderContext): React.ReactElement {
   // A task draft opened over a Session (a message's Create task) lands in this Session details tab: the Tasks lens
   // with the draft as its open detail, through the same draft adoption as the Tasks page.
   const draft = useTriageTaskDraftLaunch(context.launchInput);
+  // That details instance exists only for its draft. When the draft ends (Cancel, or Create handing the task to its
+  // source), the mount is settled so the pane owner returns the pane to what it showed before, and the whole Tasks
+  // list never takes the draft's place. `cancelled` because the mount hands no input back to its opener.
+  const draftLaunched = React.useMemo(() => TriageTaskDraftLaunchV1Schema.safeParse(context.launchInput).success, [context.launchInput]);
+  const [draftEnded, setDraftEnded] = React.useState(false);
+  const draftClose = draft.status === 'ready' ? draft.shellProps.onCreateDraftClose : null;
+  const endDraft = React.useCallback(() => {
+    draftClose?.();
+    setDraftEnded(true);
+    void context.hostApi.settleEphemeralInput({ kind: 'cancelled' }, { signal: context.signal }).catch(() => {
+      // A host that cannot settle this mount keeps its own close control; nothing else is drawn here.
+    });
+  }, [context.hostApi, context.signal, draftClose]);
 
   if (resource !== null) return <TriageResourceSurface resource={resource} />;
-  if (draft.status === 'unavailable') return draft.notice;
-  if (draft.status === 'ready') return <TriageListShell tasksPage {...draft.shellProps} />;
+  if (draftLaunched) {
+    if (draftEnded) return <></>;
+    if (draft.status === 'unavailable') return draft.notice;
+    if (draft.status === 'ready') return <TriageListShell tasksPage {...draft.shellProps} onCreateDraftClose={endDraft} />;
+    return <></>;
+  }
 
   // Forward the host location and one-shot staged-open provenance alongside
   // any validated qualified entry input. Triage names no

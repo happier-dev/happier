@@ -5,12 +5,19 @@ import { HappierPressable, useHappierMaterialColorResolver, type HappierFocusabl
 import { resolveHappierFocusRingVisible, resolveHappierTabKeySelection } from '@happier-dev/plugin-ui/presentation';
 import {
     isPluginUiDestinationBindingAdmittedAtRuntimeV1,
+    PluginUiEphemeralInputSettlementV1Schema,
     PluginUiLaunchInputV1Schema,
     type PluginUiDestinationReferenceV1,
     type PluginUiInstanceKeyV1,
     type PluginUiLaunchInputV1,
     type PluginUiTargetKindV1,
 } from '@happier-dev/protocol/plugins/ui';
+import {
+    createPluginSurfaceHostApiError,
+    type PluginSurfaceHostApiMethodHandler,
+} from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
+import { composeMountedHostApiHandlerFactories } from '@/components/plugins/surfaces/composeMountedHostApiHandlers';
+import type { BoundPluginSurfaceMountedHostApiHandlersFactory } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
@@ -810,11 +817,37 @@ export function usePluginDetailsDestinationNavigationOwners(
 export function bindPluginDetailsDestinationOpenSurface(input: Readonly<{
     binding?: BoundPluginSurfaceBinding;
     openSurface?: PluginSurfaceOpenHandler;
+    /**
+     * A tab opened with a one-shot launch is that launch's mount: settling it hands the tab back to this Details
+     * owner, which closes it exactly as its own close control does (the pane returns to what it showed before).
+     */
+    closeOwnTab?: () => void;
 }>): BoundPluginSurfaceBinding | undefined {
-    if (!input.binding && !input.openSurface) return undefined;
+    if (!input.binding && !input.openSurface && !input.closeOwnTab) return undefined;
+    const closeOwnTab = input.closeOwnTab;
+    // Settling hands the tab back once per physical mount; any staged handlers stay installed beside it.
+    const settleOwnTab: BoundPluginSurfaceMountedHostApiHandlersFactory | undefined = closeOwnTab ? (mount) => {
+        let settled = false;
+        return Object.freeze({ handlers: Object.freeze({
+            settleEphemeralInput: (request: Parameters<PluginSurfaceHostApiMethodHandler>[0]) => {
+                if (!mount.isCurrent() || settled) {
+                    return createPluginSurfaceHostApiError('stale_surface', ['ephemeral_input_mount_retired']);
+                }
+                if (!PluginUiEphemeralInputSettlementV1Schema.safeParse(request.payload).success) {
+                    return createPluginSurfaceHostApiError('invalid_payload', ['ephemeral_input_settlement_invalid']);
+                }
+                settled = true;
+                closeOwnTab();
+                return null;
+            },
+        }) });
+    } : undefined;
+    const createMountedHostApiHandlers = composeMountedHostApiHandlerFactories(
+        input.binding?.createMountedHostApiHandlers, settleOwnTab);
     return Object.freeze({
         ...(input.binding ?? {}),
         ...(input.openSurface ? { openSurface: input.openSurface } : {}),
+        ...(createMountedHostApiHandlers ? { createMountedHostApiHandlers } : {}),
     });
 }
 
@@ -1300,6 +1333,16 @@ function PluginDetailsDestinationSurfaceMount(props: Readonly<{
         tabKey,
     });
     const launch = staged ?? (deliveredIsCurrent ? delivered : null);
+    // A tab opened with a one-shot launch may settle back to this owner; one stable binding per launch, so the
+    // mount's handlers (and its single settlement) survive re-renders.
+    const closeTab = props.details.callbacks.closeTab;
+    const launchBinding = launch?.binding;
+    const launched = launch?.input !== undefined;
+    const surfaceBinding = React.useMemo(() => bindPluginDetailsDestinationOpenSurface({
+        binding: launchBinding,
+        openSurface,
+        ...(launched && closeTab ? { closeOwnTab: () => closeTab(tabKey) } : {}),
+    }), [closeTab, launchBinding, launched, openSurface, tabKey]);
     const deviceType = useDeviceType();
     // Resolve current authority and the exact private handoff before granting
     // the File host's phone placement. A durable tab/input is not that custody.
@@ -1403,10 +1446,7 @@ function PluginDetailsDestinationSurfaceMount(props: Readonly<{
                 pluginUiProjection={props.projection}
                 projectionInteractionEnabled={props.mount.projectionPhase === 'current'
                     && props.mount.projectionInteractionEnabled === true}
-                binding={bindPluginDetailsDestinationOpenSurface({
-                    binding: launch?.binding,
-                    openSurface,
-                })}
+                binding={surfaceBinding}
                 launchInput={launch?.input}
                 mountInstanceKey={resource.instanceKey}
                 subPath={undefined}
