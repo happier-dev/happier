@@ -950,6 +950,14 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         expect(screen.tree.root.findAllByType(WarningActionBanner)
             .find((banner) => banner.props.testID === 'session.externalTranscript.loadIssue')?.props.title
         ).toBe('externalSessions.transcriptLoadFailedFrom');
+        // A Session-wide failure is a Session notice: it stands in the composer banner seat, never in the
+        // transcript body, with or without a timeline behind it (PATTERN-AUDIT-UI-1111 E, owner 2026-11-11).
+        const placed = screen.tree.root.findAllByType(WarningActionBanner)
+            .filter((banner) => banner.props.testID === 'session.externalTranscript.loadIssue');
+        expect(placed).toHaveLength(1);
+        let ancestor = placed[0]!.parent;
+        while (ancestor && ancestor.props?.testID !== 'session-notice-seat') ancestor = ancestor.parent;
+        expect(ancestor?.props?.testID).toBe('session-notice-seat');
 
         await screen.unmount();
     });

@@ -26,6 +26,14 @@ const RECONNECT = { reason: 'machineUnavailable', messageKey: 'walkthrough.gener
     nextAction: 'reconnectMachine', nextActionKey: 'walkthrough.generationFailure.reconnectMachine' } as const;
 
 describe('ScmDiffSummaryFailureNotice', () => {
+    it('stays in its pane as the shared inline notice, never a hard-edged strip (PATTERN-AUDIT-UI-1111 E)', async () => {
+        const { HappierBanner } = await import('@happier-dev/plugin-ui/presentation');
+        const screen = await renderScreen(<ScmDiffSummaryFailureNotice testID="proposal" failure={RECONNECT} />);
+        const banners = screen.tree.root.findAllByType(HappierBanner);
+        expect(banners).toHaveLength(1);
+        expect(banners[0]!.props.presentation ?? 'card').toBe('card');
+    });
+
     it('shows Choose model for a typed Start model refusal and opens the existing picker action', async () => {
         const onChooseModel = vi.fn();
         const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: false, errorCode: 'MODEL_UNAVAILABLE',

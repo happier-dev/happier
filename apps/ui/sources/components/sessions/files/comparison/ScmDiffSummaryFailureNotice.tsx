@@ -7,8 +7,8 @@ import { t } from '@/text';
 import { describeScmDiffSummaryFailure } from './ScmDiffSummaryStartOptions';
 
 /**
- * A refused or failed generation beside a reading or proposal that is already on screen: the shared banner's
- * strip, written from the same typed presentation the empty state uses ({@link describeScmDiffSummaryFailure}).
+ * A refused or failed generation beside a reading or proposal that is already on screen: local to its pane, so
+ * the shared inline notice (never a hard-edged strip, PATTERN-AUDIT-UI-1111 E), written from the same typed presentation the empty state uses ({@link describeScmDiffSummaryFailure}).
  * Native codes and reason strings remain diagnostic data; only typed presentation reaches this copy.
  */
 export function ScmDiffSummaryFailureNotice(props: Readonly<{
@@ -36,7 +36,7 @@ export function ScmDiffSummaryFailureNotice(props: Readonly<{
     const cause = props.lead && props.failure.reason === 'endedPartway' ? null : described.message;
     const description = [cause, described.nextStep].filter(Boolean).join(' ') || undefined;
     return (
-        <AttentionBanner presentation="strip" testID={`${props.testID}-notice-failed`} tone={failed ? 'danger' : 'warning'}
+        <AttentionBanner placement="inline" testID={`${props.testID}-notice-failed`} announce={failed ? 'alert' : 'status'} tone={failed ? 'danger' : 'warning'}
             title={props.lead ? (description ? `${props.lead} ·` : props.lead) : described.message} description={props.lead ? description : described.nextStep ?? undefined}
             secondaryAction={link}
             action={props.onRetry && props.failure.nextAction !== 'narrowChange' ? { testID: `${props.testID}-retry`, icon: 'arrows-clockwise', label: t('walkthrough.notice.tryAgain'), onPress: props.onRetry } : null} />

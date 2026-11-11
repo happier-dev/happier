@@ -479,7 +479,8 @@ export const WalkthroughView = React.memo(function WalkthroughView(
     notices.push(
       <AttentionBanner
         key="unknown"
-        presentation="strip"
+        placement="inline"
+        announce="status"
         testID="walkthrough-notice-unknown"
         tone="warning"
         iconName="question"
@@ -502,7 +503,8 @@ export const WalkthroughView = React.memo(function WalkthroughView(
     notices.push(
       <AttentionBanner
         key="ended"
-        presentation="strip"
+        placement="inline"
+        announce="status"
         testID="walkthrough-notice-ended"
         tone="neutral"
         iconName="chat-circle-dots"
@@ -539,7 +541,8 @@ export const WalkthroughView = React.memo(function WalkthroughView(
     notices.push(
       <AttentionBanner
         key="update"
-        presentation="strip"
+        placement="inline"
+        announce="status"
         testID="walkthrough-notice-update"
         tone="neutral"
         iconName="path"
@@ -598,7 +601,8 @@ export const WalkthroughView = React.memo(function WalkthroughView(
     notices.push(
       <AttentionBanner
         key="cancelled"
-        presentation="strip"
+        placement="inline"
+        announce="status"
         testID="walkthrough-notice-cancelled"
         tone="neutral"
         iconName="stop-circle"
@@ -610,7 +614,8 @@ export const WalkthroughView = React.memo(function WalkthroughView(
     notices.push(
       <AttentionBanner
         key="incomplete"
-        presentation="strip"
+        placement="inline"
+        announce="status"
         testID="walkthrough-notice-incomplete"
         tone="warning"
         title={t('walkthrough.notice.incomplete')}

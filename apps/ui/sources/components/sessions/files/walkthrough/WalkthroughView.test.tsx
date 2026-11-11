@@ -364,6 +364,9 @@ describe('an uncertain Start (the Machine may not have received it)', () => {
         const screen = await renderScreen(view(pending, { admission: 'outcomeUnknown', onCheckAdmission: vi.fn(), notify: <View testID="notify-offer" /> }));
         expect(screen.findByTestId('walkthrough-notice-unknown')).toBeTruthy();
         expect(texts(screen)).toContain('walkthrough.notice.unknownStart');
+        // A pane-local notice in the walkthrough: the shared inline notice, never a hard-edged strip (PATTERN-AUDIT-UI-1111 E).
+        const { HappierBanner } = await import('@happier-dev/plugin-ui/presentation');
+        expect(screen.tree.root.findAllByType(HappierBanner).map((banner) => banner.props.presentation ?? 'card')).not.toContain('strip');
         expect(texts(screen)).not.toContain('walkthrough.readingChanges');
         expect(texts(screen)).not.toContain('walkthrough.inventory.reading');
         expect(screen.findByTestId('notify-offer')).toBeNull();

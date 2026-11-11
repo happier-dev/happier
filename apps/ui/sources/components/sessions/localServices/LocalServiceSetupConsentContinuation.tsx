@@ -9,7 +9,9 @@ import { describeActionOperationStatusLabel, resolveActionOperationStatus } from
 import { useActionOperationStopControl } from '@/components/inbox/actionOperations/useActionOperationStopControl';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { Item } from '@/components/ui/lists/Item';
-import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Modal } from '@/modal';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
@@ -45,6 +47,7 @@ export function LocalServiceSetupConsentContinuation(props: Readonly<{
 function RetainedSetupContinuation(props: Parameters<typeof LocalServiceSetupConsentContinuation>[0] & Readonly<{
     workspace: NonNullable<LocalServiceSetupConsentReview['target']['workspace']>;
 }>): React.ReactElement | null {
+    const router = useRouter();
     const controller = useProjectScriptsController(props.workspace, NO_CHANGE, props.binding,
         { execute: props.runtimeActionExecute.actionExecute });
     const [operationId, setOperationId] = React.useState<string | null>(null);
@@ -104,11 +107,14 @@ function RetainedSetupContinuation(props: Parameters<typeof LocalServiceSetupCon
         if (settled.success) props.onComplete(settled.data.kind !== 'skippedForInvocation');
         else Modal.alert(t('common.error'), t('approvals.decisionError'));
     }, [controller.prepare, props.binding, props.onComplete, props.review.signal]);
-    if (controller.approvalId) return <AttentionBanner
+    // What waits on the person, with its one way in: the shared approval-pending notice the Service entry's own
+    // approvals use (PATTERN-AUDIT-UI-1111 E), not a local banner.
+    if (controller.approvalId) return <ActionApprovalPendingNotice
+        presentation="line"
         testID={`${props.testID}-setup-approval`}
-        tone="neutral"
-        title={t('approvals.title')}
-        description={t('approvals.status.open')}
+        message={t('approvals.waitingForYou')}
+        summary={controller.approvalSummary}
+        onOpenApproval={() => router.push(buildApprovalHref(controller.approvalId!, props.workspace.serverId))}
     />;
     if (!operation) return null;
     const review = operation.snapshot.setupReview;

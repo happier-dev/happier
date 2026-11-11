@@ -79,8 +79,11 @@ export const AttentionBanner = React.memo(function AttentionBanner(props: Readon
      */
     details?: readonly string[];
     accessibilityLiveRegion?: 'polite' | 'assertive';
-    /** A failure the reader must hear now (a refresh that failed over cached data) is an alert. */
-    announce?: 'alert';
+    /**
+     * A failure the reader must hear now (a refresh that failed over cached data) is an alert; a notice that appears
+     * in place within a pane (a walkthrough's uncertain start) is a polite status. Cards are silent by default.
+     */
+    announce?: 'alert' | 'status';
     /** The notice can be put away (an operation's failure the reader has seen): a quiet × at its end. */
     onDismiss?: () => void;
     presentation?: 'card' | 'strip';

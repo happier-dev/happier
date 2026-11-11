@@ -502,7 +502,7 @@ const SessionTranscriptContent = React.memo(function SessionTranscriptContent({
         pendingMessagesCount,
     });
     const transcriptLoadIssue = storage((state) => state.sessionTranscriptLoadIssues[sessionId] ?? null);
-    const { shouldRenderChatTimelineImmediately, retainedTranscriptVisible } = resolveTranscriptTimelinePresence({
+    const { shouldRenderChatTimelineImmediately } = resolveTranscriptTimelinePresence({
         committedMessagesCount, pendingMessagesCount, isLoaded, shouldRenderChatTimeline, shouldForceRenderTranscriptFooter,
         hasTranscriptLoadIssue: transcriptLoadIssue !== null,
     });
@@ -550,11 +550,7 @@ const SessionTranscriptContent = React.memo(function SessionTranscriptContent({
 
     return (
         <>
-            {/* Over retained rows the load issue is a composer-seat notice (SessionRetainedTranscriptLoadIssue); here it
-                is only the surface's own state, when there is no timeline to read. */}
-            {shouldRenderChatTimeline && !retainedTranscriptVisible ? (
-                <ExternalTranscriptLoadIssueBanner sessionId={sessionId} serverId={session.serverId ?? null} machineId={readSessionOwnerMetadataView(session)?.machineId ?? null} />
-            ) : null}
+            {/* A transcript-load issue is a Session notice (SessionTranscriptLoadIssueNotice in the composer seat). */}
             {/* Who is using the Session's shared window, at the top of the transcript on every device (lab computer HC). */}
             {shouldRenderChatTimeline ? <SessionComputerPresenceLine sessionId={sessionId} serverId={session.serverId ?? null} /> : null}
             {/* Phone: the viewer docks sticky at the top of the reading flow, the transcript beneath (63s3). */}
@@ -601,10 +597,11 @@ function resolveTranscriptTimelinePresence(input: Readonly<{
 }
 
 /**
- * A transcript refresh that failed over retained rows is a Session notice: it stands in the composer's banner seat
- * with the Session's other notices (owner 2026-11-11), not across the top of the transcript.
+ * A transcript that failed to load or refresh is a Session-wide notice: it stands in the composer's banner seat
+ * with the Session's other notices, its retry kept, whether or not a timeline is retained behind it
+ * (owner 2026-11-11; PATTERN-AUDIT-UI-1111 E). The transcript body never repeats it.
  */
-type SessionRetainedTranscriptLoadIssueProps = Readonly<{
+type SessionTranscriptLoadIssueNoticeProps = Readonly<{
     sessionId: string;
     session: Session;
     isEncryptedSessionLocked: boolean;
@@ -613,22 +610,24 @@ type SessionRetainedTranscriptLoadIssueProps = Readonly<{
     pendingMessagesCount: number;
 }>;
 
-const SessionRetainedTranscriptLoadIssue = React.memo(function SessionRetainedTranscriptLoadIssue(props: SessionRetainedTranscriptLoadIssueProps) {
+const SessionTranscriptLoadIssueNotice = React.memo(function SessionTranscriptLoadIssueNotice(props: SessionTranscriptLoadIssueNoticeProps) {
     // Only an issue mounts the transcript render-state read: the seat stays still on ordinary sequence updates.
     const hasTranscriptLoadIssue = storage((state) => state.sessionTranscriptLoadIssues[props.sessionId] != null);
-    return hasTranscriptLoadIssue ? <SessionRetainedTranscriptLoadIssueBanner {...props} /> : null;
+    return hasTranscriptLoadIssue ? <SessionTranscriptLoadIssueBody {...props} /> : null;
 });
 
-const SessionRetainedTranscriptLoadIssueBanner = React.memo(function SessionRetainedTranscriptLoadIssueBanner(props: SessionRetainedTranscriptLoadIssueProps) {
+const SessionTranscriptLoadIssueBody = React.memo(function SessionTranscriptLoadIssueBody(props: SessionTranscriptLoadIssueNoticeProps) {
     const { committedMessagesCount, isLoaded, shouldForceRenderTranscriptFooter, shouldRenderChatTimeline } = useSessionTranscriptRenderState(props);
     const { retainedTranscriptVisible } = resolveTranscriptTimelinePresence({
         committedMessagesCount, pendingMessagesCount: props.pendingMessagesCount, isLoaded, shouldRenderChatTimeline,
         shouldForceRenderTranscriptFooter, hasTranscriptLoadIssue: true,
     });
-    if (!retainedTranscriptVisible) return null;
+    // Whether rows are retained only chooses the words ("Showing the last known transcript" over rows, the failure
+    // itself with none); the notice stands in the seat either way.
     return (
         <ExternalTranscriptLoadIssueBanner sessionId={props.sessionId} serverId={props.session.serverId ?? null}
-            machineId={readSessionOwnerMetadataView(props.session)?.machineId ?? null} retainedTranscriptVisible />
+            machineId={readSessionOwnerMetadataView(props.session)?.machineId ?? null}
+            retainedTranscriptVisible={retainedTranscriptVisible} />
     );
 });
 
@@ -709,12 +708,7 @@ const ExternalTranscriptLoadIssueBanner = React.memo(function ExternalTranscript
                     disabled={retrying}
                 />
     );
-    if (retainedTranscriptVisible) return <ComposerAuxiliaryFrame>{banner}</ComposerAuxiliaryFrame>;
-    return (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
-            <View style={{ width: '100%', maxWidth: 560 }}>{banner}</View>
-        </View>
-    );
+    return <ComposerAuxiliaryFrame>{banner}</ComposerAuxiliaryFrame>;
 });
 
 const SessionTranscriptPlaceholder = React.memo(function SessionTranscriptPlaceholder({
@@ -793,9 +787,8 @@ const SessionTranscriptPlaceholder = React.memo(function SessionTranscriptPlaceh
         );
     }
 
-    if (transcriptLoadIssue) {
-        return <ExternalTranscriptLoadIssueBanner sessionId={sessionId} serverId={session.serverId ?? null} machineId={readSessionOwnerMetadataView(session)?.machineId ?? null} />;
-    }
+    // The failure is stated once, in the composer seat (SessionTranscriptLoadIssueNotice): the body stays clear.
+    if (transcriptLoadIssue) return null;
 
     // "No messages yet" is a settled fact only once queued input has been read too: a cold open reads
     // the queue after the committed transcript, and a queued-only Session was flashing empty first.
@@ -2510,7 +2503,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
       // issue over retained rows, the control/external-Agent banner, access, auth and a failed start.
       const sessionNotices = (
           <>
-              <SessionRetainedTranscriptLoadIssue sessionId={sessionId} session={session}
+              <SessionTranscriptLoadIssueNotice sessionId={sessionId} session={session}
                   isEncryptedSessionLocked={isEncryptedSessionLocked} isForkedSessionV1={isForkedSessionV1}
                   isLocallyAttached={isLocallyAttached} pendingMessagesCount={pendingMessages.length} />
               <SessionChatFooter
@@ -2584,7 +2577,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
                 scopeId={pane.scopeId} active={surfaceFocused && surfacePresented} />
             {/* The notices and the composer share one stack, spaced as the composer's own banners are. */}
             {/* With a composer, the notices join its card stack and share the column's room with the input. */}
-            <View>
+            <View testID="session-notice-seat">
                 {input ? null : sessionNotices}
                 <SessionComposerNoticesContext.Provider value={input ? sessionNotices : null}>
                     <FindComposerSlotHost composer={input} />

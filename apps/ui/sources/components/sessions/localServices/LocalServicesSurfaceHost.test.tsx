@@ -384,6 +384,8 @@ describe('LocalServicesSurfaceHost', () => {
         expect(prepareApprovalOutcome).toEqual({ artifactId: expect.any(String) });
         await flushHookEffects();
         expect(screen.findByTestId('service-setup-setup-approval')).toBeTruthy();
+        // The shared approval-pending notice, with its one way in (PATTERN-AUDIT-UI-1111 E), not a local banner.
+        expect(screen.findByTestId('service-setup-setup-approval.open')).toBeTruthy();
         await expect(decideApprovalAsInbox(serverId, prepareApprovalId!, 'reject')).resolves.toMatchObject({ ok: true });
         await waitForHomeGovernance(async () => {
           await flushHookEffects();
