@@ -116,6 +116,7 @@ pub fn run() {
             .manage(pet_overlay::DesktopPetOverlayState::default())
             .manage(system_tasks::SystemTasksState::default())
             .manage(shutdown::DesktopShutdownState::default())
+            .manage(desktop_notification::PendingNotificationSession::default())
             .manage(menu_bar::MenuBarState::default())
             .invoke_handler(tauri::generate_handler![
                 app_updates::desktop_fetch_update,
@@ -148,6 +149,7 @@ pub fn run() {
                 window_chrome::desktop_toggle_window_maximize,
                 window_chrome::desktop_close_window,
                 desktop_notification::desktop_show_clickable_notification,
+                desktop_notification::desktop_take_pending_notification_session,
                 window_chrome::desktop_show_main_window,
                 window_chrome::desktop_start_window_dragging,
                 shutdown::desktop_finish_shutdown

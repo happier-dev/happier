@@ -14,6 +14,22 @@ pub struct DesktopNotificationClickedPayload {
     pub session_id: Option<String>,
 }
 
+/// The session of the last clicked toast that the UI has not yet taken. A click can recreate the
+/// main window (menu-bar mode), whose page is not listening yet when the event fires; the UI asks
+/// for this on start-up instead.
+#[cfg(desktop)]
+#[derive(Default)]
+pub struct PendingNotificationSession(std::sync::Mutex<Option<String>>);
+
+/// Returns and clears the session id of a clicked toast the UI has not handled yet.
+#[cfg(desktop)]
+#[tauri::command]
+pub fn desktop_take_pending_notification_session(
+    state: tauri::State<'_, PendingNotificationSession>,
+) -> Option<String> {
+    state.0.lock().ok().and_then(|mut pending| pending.take())
+}
+
 /// Returns `true` when this platform showed the toast itself (Windows). Other platforms return
 /// `false` and the UI falls back to the notification plugin.
 #[cfg(desktop)]
@@ -40,6 +56,13 @@ pub fn desktop_show_clickable_notification(
             .title(&title)
             .text1(&body)
             .on_activated(move |_action| {
+                {
+                    // Cleared by the UI once it has handled the click.
+                    use tauri::Manager;
+                    if let Ok(mut pending) = handle.state::<PendingNotificationSession>().0.lock() {
+                        *pending = session_id.clone();
+                    }
+                }
                 crate::window_chrome::request_show_main_window(&handle);
                 if let Err(error) = handle.emit(
                     DESKTOP_NOTIFICATION_CLICKED_EVENT,
