@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildOpenCodeModelCatalogFromProviders } from './models.js';
+import type { AgentPreflightSessionControlsContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { OPENCODE_PREFLIGHT_SESSION_CONTROLS, buildOpenCodeModelCatalogFromProviders } from './models.js';
 
 describe('OpenCode native model normalization', () => {
   it('preserves empty and fully ineligible inventories without inventing models', () => {
@@ -39,4 +40,23 @@ describe('OpenCode native model normalization', () => {
       { id: 'openrouter/~anthropic/claude-opus-latest', name: 'Claude Opus Latest' },
     ]);
   });
+});
+
+
+it.each([
+  { purpose: 'meta-inference', service: { pluginId: 'happier.agent.muse', localId: 'muse-account' }, modelId: 'meta/muse-spark-1.3-contributor', key: 'META_API_KEY', provider: 'meta' },
+  { purpose: 'xai-api-key', service: { pluginId: 'happier.agent.grok', localId: 'xai' }, modelId: 'xai/grok-4', key: 'XAI_API_KEY', provider: 'xai' },
+])('prepares selected $provider catalog credentials with the explicit model', async row => {
+  const controls: AgentPreflightSessionControlsContributionV1 = OPENCODE_PREFLIGHT_SESSION_CONTROLS;
+  const prepare = controls.prepareLaunchEnvironment!;
+  // Connected-account custody is the boundary; native qualification and auth assembly stay real.
+  const prepared = await prepare({ environment: {}, modelId: row.modelId, signal: new AbortController().signal,
+    connectedAccounts: {
+      async getBinding(purpose) { return purpose === row.purpose ? { purpose, service: row.service,
+        account: { service: row.service, accountId: 'selected' }, target: { kind: 'account', displayName: 'Selected' } } : null; },
+      async materialize() { return { kind: 'environment', env: { [row.key]: 'fake-selected' } }; },
+      watch(_purpose, listener) { void listener({ kind: 'resync', authorityChanged: false }); return { dispose() {} }; },
+    } });
+  try { expect(JSON.parse(prepared.environment.OPENCODE_AUTH_CONTENT!)[row.provider]).toEqual({ type: 'api', key: 'fake-selected' }); }
+  finally { await prepared.dispose(); }
 });

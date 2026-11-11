@@ -91,8 +91,13 @@ export function buildOpenCodeModelCatalogFromProviders(
 }
 
 export const OPENCODE_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
-  prepareLaunchEnvironment: async ({ environment, connectedAccounts, signal }) => {
-    const prepared = await prepareOpenCodeQualifiedConnectedAccounts({ launchEnvironment: { values: environment, unset: [] } }, {
+  prepareLaunchEnvironment: async ({ environment, connectedAccounts, signal, modelId }) => {
+    const prepared = await prepareOpenCodeQualifiedConnectedAccounts({ launchEnvironment: { values: environment, unset: [] },
+      ...(modelId === undefined ? {} : { configuration: {
+        model: { value: modelId, updatedAtMs: 0 }, mode: { value: null, updatedAtMs: 0 },
+        permissionIntent: { value: null, updatedAtMs: 0 }, options: {},
+      } }),
+    }, {
       signal, services: { connectedAccounts },
     });
     return { environment: prepared.request.launchEnvironment?.values ?? environment,
