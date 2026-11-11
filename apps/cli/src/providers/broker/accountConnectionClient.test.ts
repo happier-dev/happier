@@ -26,6 +26,7 @@ describe('personal connection broker consumer', () => {
     ['endpoint_discovery_failed', undefined, 'unknown'],
     ['endpoint_discovery_failed', undefined, 'refresh'],
     ['endpoint_discovery_failed', 403, 'typed_http'],
+    ['endpoint_discovery_failed', 403, 'source_refusal'],
   ] as const)('logs the private %s branch (HTTP %s, %s) without disclosing broker material', async (reason, httpStatus, variant) => {
     const connectionId = ProviderConnectionIdSchema.parse('gateway-1');
     const application = { agentTargetKey: 'backend:claude:built_in', protocol: 'anthropic',
@@ -93,15 +94,18 @@ describe('personal connection broker consumer', () => {
           });
           return new Response(null, { status: httpStatus ?? 204,
             headers: { 'x-happier-provider-endpoint-path': httpStatus === 204 ? 'https://private.example/?token=do-not-log' : '/',
-              ...(variant === 'typed_http' ? { 'x-happier-provider-broker-error-code': 'resource_unavailable' } : {}) } });
+              ...(variant === 'typed_http' ? { 'x-happier-provider-broker-error-code': 'resource_unavailable' } : {}),
+              ...(variant === 'source_refusal' ? { 'x-happier-provider-broker-error-code': 'provider_endpoint_rate_limited' } : {}) } });
         },
       }).then(() => { throw new Error('Expected broker refusal'); }, (error: unknown) => error);
       // Tunnel exceptions retain their existing shape; diagnostics must not alter settlement.
-      if (reason !== 'tunnel_open_failed' && variant !== 'signature') expect(ProviderErrorV1Schema.parse(error).code).toBe('provider_endpoint_unavailable');
+      if (reason !== 'tunnel_open_failed' && variant !== 'signature') expect(ProviderErrorV1Schema.parse(error).code)
+        .toBe(variant === 'source_refusal' ? 'provider_endpoint_rate_limited' : 'provider_endpoint_unavailable');
       const records = warning.mock.calls.filter(([label]) => label === '[ProviderBroker] Account connection open refused');
       const diagnostic = {
         ...(reason === 'broker_open_refused' ? { admissionReasonCode: 'broker_unavailable' } : {}),
         ...(variant === 'refresh' || variant === 'typed_http' ? { admissionReasonCode: 'resource_unavailable' } : {}),
+        ...(variant === 'source_refusal' ? { admissionReasonCode: 'provider_endpoint_rate_limited' } : {}),
         reason, ...(httpStatus === undefined ? {} : { httpStatus }),
         ...(reason === 'endpoint_discovery_failed' ? { discoveryCause: variant === 'socket' ? 'socket_closed'
           : variant === 'timeout' ? 'timeout' : variant === 'abort' ? 'aborted' : variant === 'unknown' ? 'transport_error'

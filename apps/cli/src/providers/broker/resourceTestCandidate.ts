@@ -122,6 +122,14 @@ export async function resolveTeamCredentialResourceSourceCatalogs(input: Readonl
   });
 }
 
+/** Exact application consumers require one unambiguous source catalog. */
+export async function resolveTeamCredentialBrokerSourceCatalog(
+  input: Parameters<typeof resolveTeamCredentialResourceSourceCatalogs>[0],
+) {
+  const catalogs = await resolveTeamCredentialResourceSourceCatalogs(input);
+  return catalogs.length === 1 ? catalogs[0]! : null;
+}
+
 function buildRequest(input: Readonly<{
   requestId: string;
   teamId: string;

@@ -240,7 +240,7 @@ describe('external Provider broker dispatcher', () => {
         expect(diagnostics).toHaveBeenCalledWith({ module: 'provider-broker-carrier', stage: 'response_headers', code });
     });
 
-    it.each(['resource_changed', 'source_unavailable', 'model_not_allowed', 'connected_service_credential_reconnect_required', 'private-unknown'])('preserves only a closed application refusal: %s', async code => {
+    it.each(['resource_changed', 'source_unavailable', 'model_not_allowed', 'connected_service_credential_reconnect_required', 'provider_endpoint_rate_limited', 'provider_incompatible_with_agent', 'private-unknown'])('preserves only a closed application refusal: %s', async code => {
         const diagnostics = vi.spyOn(logger, 'warn').mockImplementation(() => {});
         const { result } = await dispatchWithUpstreamResponse(new TextEncoder().encode(
             `HTTP/1.1 403 Forbidden\r\nX-Happier-Provider-Broker-Error-Code: ${code}\r\n\r\nprivate body`,
@@ -250,6 +250,7 @@ describe('external Provider broker dispatcher', () => {
         if (code === 'private-unknown') expect(result).not.toHaveProperty('failureDetail.code');
         else expect(result).toHaveProperty('failureDetail.code', code);
         if (code === 'source_unavailable') expect(result).toHaveProperty('error', 'upstream_unavailable');
+        if (code.startsWith('provider_')) expect(result).toHaveProperty('error', 'upstream_unavailable');
         expect(JSON.stringify(result)).not.toContain('private');
         if (code === 'connected_service_credential_reconnect_required') expect(result).toHaveProperty('error', code);
         expect(diagnostics).toHaveBeenCalledWith({ module: 'provider-broker-carrier', stage: 'application_response',

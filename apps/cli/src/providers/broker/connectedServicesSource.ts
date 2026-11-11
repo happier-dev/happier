@@ -8,7 +8,7 @@ import {
 
 import { resolveManagedProviderPurposeBindingSnapshot } from '@/providers/managed/resolvePurposeBindingSnapshot';
 import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
-import { preserveConnectedAccountSourceHealthFailure } from '@/daemon/connectedServices/purposeBindings/sourceHealth';
+import { preserveBrokerSourceHealthFailure } from './sourceFailure';
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 import type { TeamCredentialBrokerSourceOpenInput, TeamCredentialBrokerSourceOpenFailureReason } from './teamCredentialBrokerSourceOwner';
 import { acquireBrokerSourceOperation } from './brokerSourceOperationAcquisition';
@@ -69,7 +69,7 @@ async function resolveConnectedServicesBrokerSelection(
     target,
     serviceRefs: [family.service],
     signal: request.signal,
-  }).catch(preserveConnectedAccountSourceHealthFailure);
+  }).catch(preserveBrokerSourceHealthFailure);
   if (!selection) return null;
   const sourceMember: TeamCredentialSourceMemberV1 = Object.freeze({
     kind: 'connected_account' as const,

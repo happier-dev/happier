@@ -27,6 +27,7 @@ import {
 } from '@/providers/spawn/credentials';
 import { resolveRuntimeProviderCredential } from '@/providers/spawn/runtimeCredential';
 import type { TeamCredentialBrokerSourceOpenInput } from './teamCredentialBrokerSourceOwner';
+import { preserveBrokerSourceHealthFailure } from './sourceFailure';
 import {
   isCpxBrokerApplication,
   providerConnectionBrokerSourceMember,
@@ -614,7 +615,7 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
               modelId: request.modelId,
               sourceRevision: request.sourceRevision,
               signal: request.signal,
-            }).catch(() => null);
+            }).catch(preserveBrokerSourceHealthFailure);
         })()
       : null;
       if ((request.operation.kind === 'session' || request.operation.kind === 'execution_run')
@@ -676,10 +677,11 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
           ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
           : {}),
       });
-      return resolved.ok && resolved.snapshot.activationOccurrenceId !== null
+      if (!resolved.ok) return preserveBrokerSourceHealthFailure(resolved.error);
+      return resolved.snapshot.activationOccurrenceId !== null
         ? { snapshot: resolved.snapshot, registry, dnsEvidenceByEndpointUrl, scopeKey: captured.scopeKey }
         : null;
-    }).catch(() => null);
+    }).catch(preserveBrokerSourceHealthFailure);
     if (!capture) return null;
     const expected = capture.snapshot;
     const requestCost = request.operation.kind === 'external_api_key' && expected.requestCostDeclared === true
@@ -709,11 +711,11 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
             return current?.scopeKey === capture.scopeKey ? current : null;
           },
         });
-        if (!materialized.ok) return null;
+        if (!materialized.ok) return preserveBrokerSourceHealthFailure(materialized.error);
         if (request.signal.aborted) { materialized.lease.close(); return null; }
         return materialized.lease;
-      } catch {
-        return null;
+      } catch (error) {
+        return preserveBrokerSourceHealthFailure(error);
       }
     };
     const projection = await input.openCpxProviderConnection({
@@ -730,7 +732,7 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
           }
         : {}),
       acquireRequestCredential,
-    }).catch(() => null);
+    }).catch(preserveBrokerSourceHealthFailure);
     if (!projection) return null;
     if (request.signal.aborted || !projection.isCurrent()) {
       if (!request.signal.aborted && !projection.isCurrent()) {

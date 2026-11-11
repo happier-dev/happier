@@ -2,7 +2,7 @@ import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributio
 import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import type { ProviderBrokerApplicationBindingV1, ProviderBrokerConsumerV1, ProviderConnectionId } from '@happier-dev/protocol';
 import { ProviderBrokerAccountOpenResponseV2Schema, type ProviderBrokerAdmissionFailureCodeV1, type ProviderBrokerAccountOpenRequestV2, type ProviderBrokerAccountOpenResponseV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
-import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import { normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol/providers/safety/url';
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 import type { ManagedProviderEndpointAccessProjection } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
@@ -17,9 +17,8 @@ type BrokerOpenFailureReason = 'broker_open_refused' | 'binding_invalid' | 'tunn
 
 type AccountConnectionProviderBrokerFailureDiagnostic = ProviderBrokerEndpointDiscoveryFailure & Readonly<{
   reason: BrokerOpenFailureReason | 'native_runtime_absent';
-  admissionReasonCode?: ProviderBrokerAdmissionFailureCodeV1;
 }>;
-// Same-process diagnostic custody. The outer Provider error is unchanged;
+// Same-process diagnostic custody. The outer error preserves Provider codes;
 // Home's closed reason can project into the existing runner failure cause.
 // No raw exception or signed authority crosses that boundary.
 const failureDiagnostics = new WeakMap<object, AccountConnectionProviderBrokerFailureDiagnostic>();
@@ -71,7 +70,12 @@ export async function openAccountConnectionProviderBrokerAccess(input: Parameter
   }>): Promise<BrokerTunnel>;
   fetchImpl?: typeof fetch;
 }>): Promise<AccountConnectionProviderBrokerAccess> {
-  const unavailable = () => createProviderErrorV1('provider_endpoint_unavailable', { connectionId: input.connectionId, machineId: input.targetMachineId });
+  const unavailable = (cause?: unknown) => {
+    const code = ProviderErrorCodeV1Schema.safeParse(cause !== null && typeof cause === 'object' && 'code' in cause ? cause.code : undefined);
+    return createProviderErrorV1(code.success ? code.data : 'provider_endpoint_unavailable', {
+      connectionId: input.connectionId, machineId: input.targetMachineId,
+    });
+  };
   let failedReason: BrokerOpenFailureReason = 'consumer_binding_invalid';
   let admissionReasonCode: ProviderBrokerAdmissionFailureCodeV1 | undefined;
   const discovery = createProviderBrokerEndpointDiscovery();
@@ -126,7 +130,7 @@ export async function openAccountConnectionProviderBrokerAccess(input: Parameter
         // Discovery's Team-shaped internal exception is not an Account public
         // error. Its closed Home reason remains in the shared private context.
         input.signal.throwIfAborted();
-        throw unavailable();
+        throw unavailable(error);
       }
       // Classify the carrier's closed signature/binding failures, without
       // inspecting native messages or changing its verification decision.
@@ -168,7 +172,7 @@ export async function openAccountConnectionProviderBrokerAccess(input: Parameter
       try { await cleanup(); } finally {
         input.signal.throwIfAborted();
         if (error instanceof CredentialRequestRedirectError) throw error;
-        throw unavailable();
+        throw unavailable(error);
       }
     }
     const readHttpBinding = async (signal?: AbortSignal) => {

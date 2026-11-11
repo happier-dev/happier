@@ -5,6 +5,7 @@ import type { RuntimeProviderModelManagementServices } from '@/providers/modelMa
 import type { ProviderBrokerExternalRequestPolicySnapshot } from './providerBrokerRequestHandler';
 import { teamCredentialBrokerResourceAcceptsMachine } from './teamCredentialBrokerSourceOwner';
 import { resolveTeamCredentialResourceSourceCatalogs } from './resourceTestCandidate';
+import { preserveBrokerSourceHealthFailure } from './sourceFailure';
 import { createTeamCredentialExternalModelCatalog, type TeamCredentialModelCatalogResolver } from './teamCredentialModelCatalog';
 import { classifyTeamCredentialRequestRouteV1, evaluateTeamCredentialRequestPolicyV1 } from './requestPolicyV1';
 
@@ -28,7 +29,7 @@ export async function resolveTeamCredentialExternalRequestPolicy(input: Readonly
     machineId: input.machineId, teamId: resource.teamId, resourceId: resource.id,
     expectedResourceRevision: resource.revision, source: resource.source,
     readSourceModelCatalogs: input.readSourceModelCatalogs, signal,
-  }).catch(() => []);
+  }).catch(preserveBrokerSourceHealthFailure) ?? [];
   if (input.request.method === 'GET' && input.request.pathAndQuery === '/v1/models') {
     const catalog = createTeamCredentialExternalModelCatalog(catalogs);
     return catalog ? { kind: 'model_catalog', resourceRevision: resource.revision, policy: resource.requestPolicy,

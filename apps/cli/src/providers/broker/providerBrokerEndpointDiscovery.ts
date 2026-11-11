@@ -1,11 +1,12 @@
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
 import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { logger } from '@/ui/logger';
-import { ProviderBrokerAdmissionFailureCodeV1Schema, type ProviderBrokerAdmissionFailureCodeV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { ProviderBrokerMachineCarrierTunnel } from '@/daemon/peer/iroh/providerBrokerMachineCarrierTunnelOpen';
 import type { MachineCarrierFailureDiagnostic } from '@/daemon/peer/iroh/machineCarrier';
 
 import { readProviderBrokerEndpointUrl } from './providerBrokerPrivateProtocol';
+import type { TeamCredentialBrokerApplicationFailureCodeV1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 
 type EndpointDiscoveryFailureCause = 'aborted' | 'timeout' | 'connection_reset' | 'connection_refused'
   | 'socket_closed' | 'http_response' | 'invalid_metadata' | 'transport_error' | 'broker_refresh_refused';
@@ -13,7 +14,7 @@ type EndpointDiscoveryFailureCause = 'aborted' | 'timeout' | 'connection_reset' 
 export type ProviderBrokerEndpointDiscoveryFailure = Readonly<{
   httpStatus?: number;
   discoveryCause?: EndpointDiscoveryFailureCause;
-  admissionReasonCode?: ProviderBrokerAdmissionFailureCodeV1;
+  admissionReasonCode?: TeamCredentialBrokerApplicationFailureCodeV1;
 }> & Partial<MachineCarrierFailureDiagnostic>;
 
 function endpointDiscoveryFailureCause(error: unknown, signal: AbortSignal, httpStatus?: number): EndpointDiscoveryFailureCause {
@@ -45,7 +46,7 @@ function endpointDiscoveryFailureCause(error: unknown, signal: AbortSignal, http
 export function createProviderBrokerEndpointDiscovery() {
   let httpStatus: number | undefined;
   let discoveryCause: EndpointDiscoveryFailureCause | undefined;
-  let admissionReasonCode: ProviderBrokerAdmissionFailureCodeV1 | undefined;
+  let admissionReasonCode: TeamCredentialBrokerApplicationFailureCodeV1 | undefined;
   let readTransportFailure: ProviderBrokerMachineCarrierTunnel['readFailureDiagnostic'];
   let transportFailure: MachineCarrierFailureDiagnostic | undefined;
   let refreshOutcome: 'not_requested' | 'pending' | 'accepted' | 'refused' | 'failed' = 'not_requested';

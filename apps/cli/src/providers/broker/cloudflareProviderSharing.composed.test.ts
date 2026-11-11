@@ -235,8 +235,10 @@ describe('Cloudflare Provider source shared through the existing Team broker', (
     expect(routed.modelCatalog.resolveCanonicalModelId('claude-sonnet')).toBe('claude-sonnet');
     expect(sourceReads).toBe(2);
     fixture.update(current => ProviderSettingsV1Schema.parse({ ...current, accountGrants: [] }));
-    expect(await resolve(request)).not.toMatchObject({ kind: 'application' });
-    expect(await resolve({ method: 'GET', pathAndQuery: '/v1/models' })).toBeNull();
+    await expect(resolve(request)).rejects.toMatchObject({ failure: { reasonCode: 'provider_connection_disabled' } });
+    await expect(resolve({ method: 'GET', pathAndQuery: '/v1/models' })).rejects.toMatchObject({
+      failure: { reasonCode: 'provider_connection_disabled' },
+    });
     expect(fixture.probeRequests()).toBe(0);
   });
   it('uses the route source for resource Test even when the broker has no registered Agent', async () => {

@@ -2,10 +2,11 @@ import type { ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-ser
 import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol/providers/safety/url';
 import type { ProviderCredentialTransportV1, ProviderWireProtocol } from '@happier-dev/protocol';
+import { TeamCredentialBrokerApplicationFailureCodeV1Schema, type TeamCredentialBrokerApplicationFailureCodeV1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
 import { logger } from '@/ui/logger';
-import { ProviderBrokerAdmissionFailureCodeV1Schema, type ProviderBrokerAdmissionFailureCodeV1,
+import {
   PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER, PROVIDER_BROKER_ENDPOINT_PATH_HEADER,
 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 export { PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER, PROVIDER_BROKER_ENDPOINT_PATH_HEADER,
@@ -44,15 +45,15 @@ export async function readProviderBrokerEndpointUrl(input: Readonly<{
   headers: Readonly<Record<string, string>>;
   signal: AbortSignal;
   fetchImpl?: typeof fetch;
-  onRefusal?: (code: ProviderBrokerAdmissionFailureCodeV1) => void;
+  onRefusal?: (code: TeamCredentialBrokerApplicationFailureCodeV1) => void;
 }>): Promise<string> {
   const response = await fetchWithCredentialRedirectRefusal(new URL(PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH, input.localOrigin).href, {
     method: 'GET', headers: input.headers, signal: input.signal,
   }, input.fetchImpl, new Set([MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]));
   const declaredPath = response.headers.get(PROVIDER_BROKER_ENDPOINT_PATH_HEADER);
   if (response.status !== 204 || declaredPath === null) {
-    const brokerReason = ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(
-      response.headers.get(PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER));
+    const code = response.headers.get(PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER);
+    const brokerReason = TeamCredentialBrokerApplicationFailureCodeV1Schema.safeParse(code);
     if (response.status !== 204 && brokerReason.success) input.onRefusal?.(brokerReason.data);
     logger.warnLocalFile('[ProviderBroker] Endpoint metadata refused', {
       httpStatus: response.status, hasEndpointPath: declaredPath !== null,

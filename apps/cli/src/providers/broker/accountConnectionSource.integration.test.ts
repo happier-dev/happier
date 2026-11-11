@@ -16,7 +16,7 @@ import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/a
 import { createAccountConnectionBrokerSourceOpen } from './accountConnectionSource';
 import { projectProviderBrokerApplication } from './applicationProjection';
 
-it('acquires the real own-source gateway but refuses unauthorized or foreign projection authority', async () => {
+it.each(['own gateway', 'catalog refusal'] as const)('personal source projection: %s', async scenario => {
   const directory = await mkdtemp(join(tmpdir(), 'happier-account-source-'));
   const fixture = createSharedGatewayRegistryTestkit({ directory,
     resolveAccountTarget: async (target, signal) => {
@@ -42,6 +42,9 @@ it('acquires the real own-source gateway but refuses unauthorized or foreign pro
     if (resolved.status !== 'resolved' || resolved.record.deployment.kind !== 'managedLocal') throw new Error('Expected managed source');
     const settings = ProviderSettingsV1Schema.parse({ ...initial, machineGrants: [{ v: 1, connectionId, machineId: 'machine',
       connectionSecurityFingerprint: resolved.record.connectionSecurityFingerprint, endpointSetFingerprint: resolved.record.endpointSetFingerprint, confirmedAt: 1 }] });
+    const enabled = resolveProviderConnectionForMachine({ connectionId, machineId: 'machine', providerSettings: settings,
+      registry, dnsEvidenceByEndpointUrl: new Map() });
+    expect(enabled).toMatchObject({ status: 'resolved', record: { authorization: { authorized: true } } });
     const application = projectProviderBrokerApplication({ connection: resolved.record,
       agentTargetKey: 'agent:happier.agent.claude/claude', protocol: 'openai-responses' });
     if (!application) throw new Error('Expected declared own-source application');
@@ -58,7 +61,8 @@ it('acquires the real own-source gateway but refuses unauthorized or foreign pro
       target: { custodianAccountId: 'account', machineId: 'machine', endpointId: 'b'.repeat(64) },
       consumer: { kind: 'execution_run', executionRunId: 'run-positive' }, executionRunOccurrenceId: 'occurrence-positive', application },
       signature: { alg: 'Ed25519', keyId: 'key', valueBase64Url: Buffer.alloc(64).toString('base64url') } };
-    let projectionKind: 'own' | 'unauthorized' | 'foreign' = 'own';
+    let projectionKind: 'own' | 'unauthorized' | 'foreign' | 'failed' = 'own';
+    let projectionReads = 0;
     let consumerAdmissions = 0;
     let consumerAdmitted = true;
     const custody = createManagedProviderExplicitStartCustody({ machineId: 'machine', happyHomeDir: fixture.happyHomeDir, controller: fixture.controller });
@@ -71,7 +75,8 @@ it('acquires the real own-source gateway but refuses unauthorized or foreign pro
       admitConsumer: async () => { consumerAdmissions++; return consumerAdmitted; },
       // Genuine Machine RPC response boundary; private source, purpose and
       // operation admission plus OS gateway supervision execute for real.
-      projectModels: async () => DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'success', agentTargetKey: application.agentTargetKey,
+      projectModels: async () => { projectionReads++; return projectionKind === 'failed' ? { status: 'error', error: createProviderErrorV1('provider_endpoint_rate_limited') }
+        : DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'success', agentTargetKey: application.agentTargetKey,
         groups: [{ connectionId, providerName: 'Gateway', connectionName: 'Gateway', connectionRole: 'default', connectionDisplayNameMode: 'automatic',
           connectionRevision: 1, sourceAuthority: { provider: { identity: projectionKind === 'foreign'
             ? { pluginId: 'acme.foreign', localId: 'gateway' } : fixture.identity, definitionRevision: 1 },
@@ -83,9 +88,17 @@ it('acquires the real own-source gateway but refuses unauthorized or foreign pro
             descriptor: { id: 'example', name: 'Example' }, application, sources: { manual: false, static: true, probe: false }, confidence: 'verified_static',
             compatibility: { result: { status: 'verified', selectedProtocol: application.protocol,
               evidence: { sourceUrls: ['https://example.test'], verifiedAt: '2026-10-09' } }, compatibilityFingerprint: 'compatibility:v1:fixture', confirmed: false },
-            endpointHealth: 'not_checked', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible' }] }] }) });
+            endpointHealth: 'not_checked', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible' }] }] }); } });
     const signal = new AbortController().signal;
+    if (scenario === 'catalog refusal') {
+      projectionKind = 'failed';
+      await expect(open({ authority, signal })).rejects.toMatchObject({ failure: { reasonCode: 'provider_endpoint_rate_limited' } });
+      expect(projectionReads).toBe(1);
+      expect(consumerAdmissions).toBe(0);
+      return;
+    }
     const positive = await open({ authority, signal });
+    expect(projectionReads, 'own source must reach the Machine model projection boundary').toBe(1);
     expect(positive).not.toBeNull();
     if (!positive) throw new Error('Expected real acquired gateway');
     accesses.push(positive);

@@ -186,6 +186,26 @@ function resourceSource(settings = accountSettings(), activeRegistry = registry)
 }
 
 describe('Provider Connection Team broker source', () => {
+  it('preserves the source secret refusal instead of returning an absent broker source', async () => {
+    const settings = accountSettings();
+    const source = resourceSource(settings);
+    const open = createProviderConnectionBrokerSourceOpen({ machineId: 'machine-a',
+      readResource: async () => ({ teamId: 'team-a', source, enabled: true, revision: 2,
+        brokerPlacement: { kind: 'machine', machineId: 'machine-a' } }),
+      withRegistry: async read => read(registry),
+      getAccountSettingsSnapshot: () => ({ ...settings, savedSecretResources: [] }),
+      collectDnsEvidence: async () => dnsEvidenceByEndpointUrl,
+      openCpxProviderConnection: async () => { throw new Error('Missing secret must not start a gateway'); },
+    });
+    await expect(open({ source, resourceId: 'resource-a', resourceRevision: 2, brokerMachineId: 'machine-a',
+      operation: { kind: 'resource_test', actorAccountId: 'member', requestId: 'request' },
+      application: { agentTargetKey: 'agent:happier.agent.codex/codex',
+        implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+        endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' },
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ failure: { reasonCode: 'provider_secret_missing' } });
+  });
+
   it.each(['ready', 'temporarily_unavailable'] as const)('honors admitted Saved Secret availability %s despite retained ready resource bytes', (savedSecretCatalogState) => {
     const settings = accountSettings();
     const resolved = resolveProviderConnectionBrokerSource({
@@ -509,7 +529,7 @@ describe('Provider Connection Team broker source', () => {
       headers: {},
       body: new TextEncoder().encode('{"model":"gateway-model"}'),
       signal: controller.signal,
-    })).resolves.toMatchObject({ status: 403 });
+    })).rejects.toMatchObject({ failure: { ok: false, reasonCode: 'provider_connection_disabled' } });
     // The next credential acquisition refuses a withdrawn source grant.
     // Home request admission owns resource/member withdrawal and retirement.
     expect(credentialValues).toEqual(['Bearer source-secret', 'Bearer source-secret']);

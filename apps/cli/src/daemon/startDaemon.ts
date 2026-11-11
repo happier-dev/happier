@@ -313,8 +313,10 @@ import {
   teamCredentialBrokerResourceAcceptsMachine,
 } from '@/providers/broker/teamCredentialBrokerSourceOwner';
 import { isSameTeamCredentialBrokerApplication } from '@/providers/broker/teamCredentialModelCatalog';
+import { resolveTeamCredentialBrokerRequestPolicy } from '@/providers/broker/requestPolicySnapshot';
+import { preserveBrokerSourceHealthFailure } from '@/providers/broker/sourceFailure';
 import {
-  resolveTeamCredentialResourceSourceCatalogs,
+  resolveTeamCredentialBrokerSourceCatalog,
 } from '@/providers/broker/resourceTestCandidate';
 import {
   createProviderConnectionBrokerSourceOpen,
@@ -3566,7 +3568,7 @@ export async function startDaemon(
                   const producer = providerOperationsProducer;
                   const source = input.resource.source;
                   if (!producer || !source) return null;
-                  const catalogs = await resolveTeamCredentialResourceSourceCatalogs({
+                  return await resolveTeamCredentialBrokerSourceCatalog({
                     machineId: registeredMachineId,
                     teamId: input.resource.teamId,
                     resourceId: input.resource.id,
@@ -3576,7 +3578,6 @@ export async function startDaemon(
                     readSourceModelCatalogs: (request, signal) => producer.machineServices.readSourceModelCatalogs(request, signal),
                     signal: input.signal,
                   });
-                  return catalogs.length === 1 ? catalogs[0]! : null;
                 };
                 const brokerManagedProviderCustody = createManagedProviderExplicitStartCustody({
                   machineId: registeredMachineId,
@@ -3720,35 +3721,15 @@ export async function startDaemon(
                         await resolveEligibility(request, currentnessSignal),
                     });
                   },
-                  resolveRequestPolicy: async ({ authority, request }) => {
-                    const signal = request.signal ?? new AbortController().signal;
-                    const resource = await readResource(authority.resourceId, signal);
-                    if (
-                      !teamCredentialBrokerResourceAcceptsMachine(resource, registeredMachineId)
-                      || resource.teamId !== authority.teamId
-                    ) return null;
-                    const catalog = await resolveCatalog({
-                      resource,
-                      application: authority.application,
-                      signal,
-                    }).catch(() => null);
-                    return catalog
-                      ? {
-                          resourceRevision: resource.revision,
-                          sourceRevision: catalog.sourceRevision,
-                          application: authority.application,
-                          policy: resource.requestPolicy,
-                          source: resource.source,
-                          modelCatalog: {
-                            models: catalog.rows.map((row) => ({
-                              id: row.descriptor.id,
-                              ...(row.descriptor.name === undefined ? {} : { name: row.descriptor.name }),
-                            })),
-                            resolveCanonicalModelId: catalog.resolveCanonicalModelId,
-                          },
-                        }
-                      : null;
-                  },
+                  resolveRequestPolicy: async ({ authority, request }) => await resolveTeamCredentialBrokerRequestPolicy({
+                    machineId: registeredMachineId, authority, readResource,
+                    signal: request.signal ?? new AbortController().signal,
+                    readSourceModelCatalogs: async (input, signal) => {
+                      const producer = providerOperationsProducer;
+                      if (!producer) throw new Error('provider_source_projection_unavailable');
+                      return await producer.machineServices.readSourceModelCatalogs(input, signal);
+                    },
+                  }),
                   admitRequest: async (request) => await api.admitTeamCredentialProviderBrokerRequest({
                     v: 1,
                     authority: request.authority,
@@ -3819,7 +3800,7 @@ export async function startDaemon(
                       resource,
                       application: binding.application,
                       signal,
-                    }).catch(() => null);
+                    }).catch(preserveBrokerSourceHealthFailure);
                     return catalog
                       ? {
                           resourceRevision: resource.revision,

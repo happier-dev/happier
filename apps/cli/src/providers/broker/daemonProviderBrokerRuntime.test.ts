@@ -26,6 +26,8 @@ import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/prot
 import { PROVIDER_BROKER_PRIVATE_CLOSE_PATH, PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH,
   PROVIDER_BROKER_MODEL_ID_HEADER, PROVIDER_BROKER_ENDPOINT_PATH_HEADER } from './providerBrokerPrivateProtocol';
 import { createBrokerProviderRegistry } from './providerBroker.testkit';
+import { resolveTeamCredentialBrokerRequestPolicy } from './requestPolicySnapshot';
+import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import {
   computeTeamCredentialSourceMemberKeyV1,
   TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_HTTP_PATH_V1,
@@ -1650,7 +1652,7 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
     createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
   };
 
-  async function startRetainedTarget(personal = false) {
+  async function startRetainedTarget(personal = false, personalCatalogError?: ProviderErrorV1) {
     type Consumer = SignedProviderBrokerRouteGrantV1['payload']['consumer'];
     const diagnostics = vi.spyOn(logger, 'warnLocalFile');
     closeTasks.push(async () => { diagnostics.mockRestore(); });
@@ -1799,7 +1801,8 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
           homeReads.push(key);
           return consumers.get(key) === true;
         },
-        projectModels: async () => DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'success', agentTargetKey: application.agentTargetKey,
+        projectModels: async () => personalCatalogError ? { status: 'error', error: personalCatalogError }
+          : DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'success', agentTargetKey: application.agentTargetKey,
           groups: [{ connectionId, providerName: 'Gateway', connectionName: 'Gateway', connectionRole: 'default',
             connectionDisplayNameMode: 'automatic', connectionRevision: 1,
             sourceAuthority: { provider: { identity: application.implementationIdentity, definitionRevision: 1 },
@@ -1877,14 +1880,14 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
       return { v: 1 as const, kind: 'provider_broker' as const, authority: signed };
     };
     const admitStream = async (consumer: Consumer = authority.payload.consumer, expired = false) => await startBrokerAdmission(runtime, 150, streamHandshake(consumer, expired))();
-    const infer = async (consumer: Consumer = authority.payload.consumer) => {
+    const infer = async (consumer: Consumer = authority.payload.consumer, expectedResponse = 'HTTP/1.1 200') => {
       const key = operationKey(consumer);
       if (!consumers.has(key)) consumers.set(key, true);
       const target = await admitStream(consumer);
       expect(target.statusCode).toBe(204);
       const response = await rawRequestThroughApplicationTarget({ ...target, method: 'POST', path: '/v1/responses',
         body: JSON.stringify({ model: 'gpt-5', input: 'hello' }) });
-      expect(response, JSON.stringify(diagnostics.mock.calls) + String(personalOpenFailure)).toContain('HTTP/1.1 200');
+      expect(response, JSON.stringify(diagnostics.mock.calls) + String(personalOpenFailure)).toContain(expectedResponse);
       return target;
     };
     const openInferenceStream = async () => {
@@ -2274,11 +2277,15 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
       providerRequest?: ManagedProviderEndpointHttpAccess['request'];
       /** The custodian's connected account currently needs a reconnect. */
       sourceReconnectRequired?: () => boolean;
+      catalogError?: ProviderErrorV1;
+      sourceError?: ProviderErrorV1;
+      sourceCatalogError?: ProviderErrorV1;
       /** A Connected Pool source; the selector reads the Pool's current member. */
       pool?: Readonly<{ source: typeof connectedPoolSource; currentMember: () => string }>;
     }> = {},
   ) {
     const brokerSource = options.pool?.source ?? source;
+    const unused = (): never => { throw new Error('Refused source reached an effect boundary'); };
     // The Home's current resource revision, read by the daemon's request
     // policy and source-currentness owners exactly as production does.
     const resourceRevision = options.resourceRevision ?? (() => 7);
@@ -2324,7 +2331,16 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
       revalidateRetainedClaims: vi.fn(async () => 0),
       retireAll: vi.fn(async () => 0),
     });
-    const resolveBindingIntentSelection = vi.fn(async ({ purpose, target }) => {
+    const resolveBindingIntentSelection = options.sourceError
+      ? createConnectedAccountPurposeBindingOwner({
+        store: { read: async () => ({ v: 1, bindings: [] }), update: unused, subscribe: () => ({ dispose() {} }) },
+        // Account metadata is read across the custodian's Home boundary;
+        // binding resolution and the broker's error adapters remain real.
+        resolveTarget: async () => { throw options.sourceError; },
+        selectTarget: unused, materializeAccount: unused, projectTargetAccounts: unused,
+        assertTargetAccountMaterializable: unused,
+      }).resolveBindingIntentSelection
+      : vi.fn(async ({ purpose, target }) => {
       if (options.sourceReconnectRequired?.()) throw new ConnectedAccountSourceReconnectRequiredError();
       const account = options.pool && target.kind === 'group'
         ? { service: options.pool.source.target.service, accountId: options.pool.currentMember() }
@@ -2339,7 +2355,11 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
       machineId: 'broker-machine',
       resolveTrustRoots: () => homeTrustRoots,
       nowMs: () => 150,
-      resolveRequestPolicy: async () => ({
+      resolveRequestPolicy: options.catalogError ? async ({ authority, request }) => await resolveTeamCredentialBrokerRequestPolicy({
+        authority, machineId: 'broker-machine', signal: request.signal ?? new AbortController().signal,
+        readResource: async () => ({ ...brokerResource, source: brokerSource, revision: 2 }),
+        readSourceModelCatalogs: async () => ({ status: 'error', error: options.catalogError! }),
+      }) : async () => ({
         resourceRevision: resourceRevision(),
         sourceRevision: 'source-revision-7',
         application: authority.payload.application,
@@ -2367,6 +2387,7 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
           readResource: async () => ({ ...brokerResource, source: brokerSource, revision: resourceRevision() }),
           resolveBindingIntentSelection,
           custody,
+          ...(options.sourceCatalogError ? { readModelProjection: async () => ({ status: 'error' as const, error: options.sourceCatalogError! }) } : {}),
         }),
         openProviderConnectionSource: async () => null,
       }),
@@ -2456,6 +2477,59 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
     expect(target.order).toEqual(['home-admission']);
     expect(target.custody.acquire).not.toHaveBeenCalled();
   });
+
+  it('preserves a typed pool member selection refusal before admission or source effects', async () => {
+    const target = await startTarget(async request => admittedFor(request), {
+      sourceError: createProviderErrorV1('provider_endpoint_rate_limited'),
+      pool: { source: connectedPoolSource, currentMember: () => 'source-account' },
+    });
+    expect(await target.infer()).toContain('provider_endpoint_rate_limited');
+    expect(target.order).toEqual([]);
+    expect(target.upstreamHits()).toBe(0);
+  });
+
+  it('preserves the personal source catalog refusal through the actual Account request handler', async () => {
+    const target = await startRetainedTarget(true, createProviderErrorV1('provider_endpoint_rate_limited'));
+    await target.infer(undefined, 'provider_endpoint_rate_limited');
+    expect(target.homeReads).toHaveLength(0);
+    expect(target.child()).toBeUndefined();
+  });
+
+  it('relays the underlying account usage_limit response unchanged with one admission', async () => {
+    const target = await startTarget(async request => ({ ...admittedFor(request), source: connectedPoolSource }), {
+      providerRequest: async () => ({ ok: false, status: 429, statusText: 'Too Many Requests',
+        headers: { 'content-type': 'application/json' },
+        body: new Response(JSON.stringify({ error: { code: 'usage_limit', message: 'Usage limit reached' } })).body }),
+      pool: { source: connectedPoolSource, currentMember: () => 'source-account' },
+    });
+    const response = await target.infer();
+    expect(response).toContain('HTTP/1.1 429');
+    expect(response).toContain('"code":"usage_limit"');
+    expect(target.order).toEqual(['home-admission', 'source-custody']);
+  });
+
+  it('preserves the admitted source catalog refusal without materializing or repeating admission', async () => {
+    const target = await startTarget(async request => ({ ...admittedFor(request), source: connectedPoolSource }), {
+      sourceCatalogError: createProviderErrorV1('provider_endpoint_rate_limited'),
+      pool: { source: connectedPoolSource, currentMember: () => 'source-account' },
+    });
+    expect(await target.infer()).toContain('provider_endpoint_rate_limited');
+    expect(target.order).toEqual(['home-admission']);
+    expect(target.upstreamHits()).toBe(0);
+  });
+
+  it.each(['provider_incompatible_with_agent', 'provider_endpoint_rate_limited'] as const)(
+    'preserves the custodian catalog refusal %s for a different Account using its shared pool', async code => {
+      const target = await startTarget(async request => admittedFor(request), {
+        catalogError: createProviderErrorV1(code),
+        pool: { source: connectedPoolSource, currentMember: () => 'source-account' },
+      });
+      const response = await target.infer();
+      expect(response).toContain(code);
+      expect(response).not.toContain('resource_unavailable');
+      expect(target.order).toEqual([]);
+      expect(target.upstreamHits()).toBe(0);
+    });
 
   it('refuses a request with the custodian source reconnect code before asking the Home', async () => {
     // The Home's per-request admission does not re-read source sign-in

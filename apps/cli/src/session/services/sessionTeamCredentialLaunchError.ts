@@ -1,10 +1,10 @@
-import { ProviderBrokerAdmissionFailureCodeV1Schema, type ProviderBrokerAdmissionFailureCodeV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
-import { ProviderErrorCodeV1Schema, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
+import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { TeamCredentialBrokerApplicationFailureCodeV1Schema, type TeamCredentialBrokerApplicationFailureCodeV1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import { ConnectedServiceUxDiagnosticCodeV1Schema, type ConnectedServiceUxDiagnosticCodeV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { readSessionPreparationFailureCode, type SessionPreparationFailureCode, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { isActionOutcomeUnknownErrorCodeV1, UNEXPECTED_ACTION_FAILURE_CODES_V1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-export type TeamCredentialLaunchFailureCode = ProviderBrokerAdmissionFailureCodeV1 | ProviderErrorCodeV1
+export type TeamCredentialLaunchFailureCode = TeamCredentialBrokerApplicationFailureCodeV1
   | ConnectedServiceUxDiagnosticCodeV1 | SessionPreparationFailureCode;
 
 /** Owner-local diagnostic locations; never launch options or provider content. */
@@ -15,9 +15,7 @@ export type TeamCredentialLaunchFailurePhase = 'binding' | 'agent_requirements' 
 function readCode(value: unknown): TeamCredentialLaunchFailureCode | null {
   if (typeof value !== 'string') return null;
   if (isActionOutcomeUnknownErrorCodeV1(value)) return UNEXPECTED_ACTION_FAILURE_CODES_V1[1];
-  const provider = ProviderErrorCodeV1Schema.safeParse(value);
-  if (provider.success) return provider.data;
-  const broker = ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(value);
+  const broker = TeamCredentialBrokerApplicationFailureCodeV1Schema.safeParse(value);
   if (broker.success) return broker.data;
   const connected = ConnectedServiceUxDiagnosticCodeV1Schema.safeParse(value);
   return connected.success ? connected.data : readSessionPreparationFailureCode(value);

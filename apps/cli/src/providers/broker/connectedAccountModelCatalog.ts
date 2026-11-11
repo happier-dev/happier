@@ -4,6 +4,7 @@ import type { RuntimeProviderModelManagementServices } from '@/providers/modelMa
 import type { ManagedProviderSourceModelCatalog } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import type { TeamCredentialBrokerSourceOpenInput } from './teamCredentialBrokerSourceOwner';
 import { isSameTeamCredentialBrokerApplication } from './teamCredentialModelCatalog';
+import { preserveBrokerSourceHealthFailure } from './sourceFailure';
 
 export type ReadConnectedAccountBrokerModelProjection = RuntimeProviderModelManagementServices['readSourceModelCatalogs'];
 
@@ -21,7 +22,7 @@ export async function readConnectedAccountBrokerModelCatalog(input: Readonly<{
     refreshPolicy: 'current_only',
   }, input.signal);
   input.signal.throwIfAborted();
-  if (admitted.status !== 'success') return null;
+  if (admitted.status !== 'success') return preserveBrokerSourceHealthFailure(admitted.error);
   const rows = admitted.catalogs.filter(catalog => isSameTeamCredentialBrokerApplication(catalog.application, request.application))
     .flatMap(catalog => catalog.rows
       .map(row => ({ row, sourceRevision: catalog.sourceRevision })));

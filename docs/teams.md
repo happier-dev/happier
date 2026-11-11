@@ -143,7 +143,12 @@ Account remembered choice; an explicit native or Account model selection clears
 the Team source before applying the new selection.
 
 Team and Account broker consumers share the endpoint-discovery owner described
-in [Providers](providers.md). In development source, the recipient revalidates
+in [Providers](providers.md). Development source preserves the custodian's closed
+Provider refusal code through catalog policy, source selection and endpoint
+discovery; it does not substitute `resource_unavailable` for a known source
+failure. Native upstream usage-limit responses retain their original status and
+body. Source Account identifiers and private error context stay with the custodian.
+In development source, the recipient revalidates
 the Team catalog, its own compatibility consent and the first fresh Home grant
 before acquiring the native connection. The carrier rechecks that grant after
 dial, sends endpoint discovery as its first stream, then revalidates before

@@ -4,6 +4,7 @@ import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../../connect/connectedSe
 
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { ProviderPublicHeadersV1Schema } from '../../providers/publicHeadersSchema.js';
+import { ProviderErrorCodeV1Schema } from '../../providers/errors.js';
 import { ProviderBrokerAdmissionFailureCodeV1Schema, ProviderBrokerSourceApplicationBindingV1Schema, ProviderBrokerRequestFactsV1Schema } from '../../providers/brokerRouteGrantV1.js';
 import {
   ProviderBrokerExternalApiKeyRelayBindingV1Schema,
@@ -318,6 +319,7 @@ export type TeamCredentialExternalProviderErrorCodeV1 = z.infer<typeof TeamCrede
  * Public external API classification remains separate from this exact diagnostic. */
 export const TeamCredentialBrokerApplicationFailureCodeV1Schema = lazyZodSchema(() => z.union([
   ProviderBrokerAdmissionFailureCodeV1Schema,
+  ProviderErrorCodeV1Schema,
   z.enum([
     'source_invalid', 'source_unavailable',
     'request_malformed', 'route_not_allowed', 'model_not_allowed',

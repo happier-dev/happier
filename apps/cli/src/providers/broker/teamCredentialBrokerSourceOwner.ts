@@ -12,7 +12,8 @@ import type {
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 import { ProviderBrokerApplicationFailureError } from './providerBrokerApplicationFailure';
 import { logger } from '@/ui/logger';
-import { isConnectedAccountSourceReconnectRequiredError, preserveConnectedAccountSourceHealthFailure } from '@/daemon/connectedServices/purposeBindings/sourceHealth';
+import { isConnectedAccountSourceReconnectRequiredError } from '@/daemon/connectedServices/purposeBindings/sourceHealth';
+import { preserveBrokerSourceHealthFailure } from './sourceFailure';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
 type ConnectedServicesSource = Extract<
@@ -282,7 +283,7 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
             source: source.data,
             application,
             signal,
-          }).catch(preserveConnectedAccountSourceHealthFailure);
+          }).catch(preserveBrokerSourceHealthFailure);
       return member ? { sourceMemberKey: computeTeamCredentialSourceMemberKeyV1(member), sourceMember: member } : null;
     },
     async retireOperation({ operation, application }) {
@@ -365,6 +366,7 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
       } catch (error) {
         if (isConnectedAccountSourceReconnectRequiredError(error)) return Object.freeze({ ok: false as const,
           reasonCode: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired });
+        preserveBrokerSourceHealthFailure(error);
         logger.warnLocalFile('[provider-broker-source]', { stage: 'source_open', code: 'exception' });
         return Object.freeze({
           ok: false as const,

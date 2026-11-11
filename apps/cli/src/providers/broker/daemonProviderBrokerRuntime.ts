@@ -294,7 +294,7 @@ export function createPrivateProviderBrokerStreamLifetime(input: Readonly<{
                 input.revalidateOperationAuthorization!(expectedResourceRevision, signal),
             } : {}),
             signal: lifetimeController.signal,
-          }).catch(() => null);
+          }).catch(preserveBrokerSourceHealthFailure);
 
           // A changed purpose-binding equality key makes the incumbent
           // managed-service owner retire A and reject that first B join. Drop
@@ -323,7 +323,7 @@ export function createPrivateProviderBrokerStreamLifetime(input: Readonly<{
                   input.revalidateOperationAuthorization!(expectedResourceRevision, signal),
               } : {}),
               signal: lifetimeController.signal,
-            }).catch(() => null);
+            }).catch(preserveBrokerSourceHealthFailure);
           }
           if (retired || !acquired?.ok || !acquired.projection.isCurrent()) {
             // The source owner decides semantic retirement. A stale or closed
@@ -367,7 +367,7 @@ export function createPrivateProviderBrokerStreamLifetime(input: Readonly<{
               input.revalidateOperationAuthorization!(expectedResourceRevision, signal),
           } : {}),
           signal: lifetimeController.signal,
-        }).catch(() => null);
+        }).catch(preserveBrokerSourceHealthFailure);
       }
       const acquired = await projectionPromise;
       if (retired || !acquired?.ok || !acquired.projection.isCurrent()) {

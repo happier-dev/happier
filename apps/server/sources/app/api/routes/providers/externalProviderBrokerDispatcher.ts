@@ -26,6 +26,7 @@ import { admitTeamCredentialBrokerMachineForResourceInTx } from '@/app/teams/cre
 import { authorizeTeamCredentialResourceTestActorInTx } from '@/app/teams/credentials/resourceTest';
 import { logger } from '@/utils/logging/log';
 import { TeamCredentialBrokerApplicationFailureCodeV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
+import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 
 function send(transport: ReturnType<PeerTcpTunnelRelayTransportFactory>, envelope: PeerTcpTunnelRelayEnvelope) {
     transport.send(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, envelope);
@@ -70,6 +71,9 @@ export function mapProviderBrokerApplicationFailure(
     }
     if (statusCode === 403 && code === 'cost_limit_unavailable') return { error: 'cost_limit_unavailable' };
     if (statusCode === 403 && code === 'connected_service_credential_reconnect_required') return { error: code };
+    // Exact source codes remain in failureDetail; the external API keeps its
+    // established public vocabulary without mislabelling a source failure as policy.
+    if (statusCode === 403 && ProviderErrorCodeV1Schema.safeParse(code).success) return { error: 'upstream_unavailable' };
     if (statusCode === 403 && (code === 'source_unavailable' || code === 'source_invalid')) return { error: 'upstream_unavailable' };
     if (statusCode === 403 && (code === 'resource_changed' || code === 'resource_unavailable'
         || code === 'operation_not_current' || code === 'session_not_active')) return { error: 'resource_unavailable' };

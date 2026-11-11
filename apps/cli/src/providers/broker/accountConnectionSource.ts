@@ -12,6 +12,7 @@ import type { ManagedProviderExplicitStartCustody } from '@/providers/connection
 import type { ProviderConnectionRegistryReader } from './providerConnectionSource';
 import { createAccountConnectionModelProjectionRequest, projectProviderBrokerApplication } from './applicationProjection';
 import { acquireBrokerSourceOperation } from './brokerSourceOperationAcquisition';
+import { preserveBrokerSourceHealthFailure } from './sourceFailure';
 import type { ProviderBrokerAccountConnectionAccess } from './daemonProviderBrokerRuntime';
 
 /** An ended consumer releases only the custody already named by its signed
@@ -114,7 +115,8 @@ export function createAccountConnectionManagedConsumerSourceOpen(input: AccountC
       application: payload.application, refreshPolicy: 'current_only',
       connectionId: payload.source.connectionId, expectedConnectionSecurityFingerprint: source.securityFingerprint,
     }));
-    if (projection.status !== 'success' || projection.agentTargetKey !== payload.application.agentTargetKey
+    if (projection.status === 'error') return preserveBrokerSourceHealthFailure(projection.error);
+    if (projection.agentTargetKey !== payload.application.agentTargetKey
       || !projection.groups.some(group => group.connectionId === payload.source.connectionId
       && group.authorization.authorized
       && group.sourceAuthority?.connectionSecurityFingerprint === source.securityFingerprint

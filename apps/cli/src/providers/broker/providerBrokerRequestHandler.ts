@@ -396,7 +396,8 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
                     return response ? { ok: true, response } : { ok: false, reasonCode: 'resource_unavailable' };
                 }
                 return await requestProviderAccess(access, sanitized);
-            } catch {
+            } catch (error) {
+                if (error instanceof ProviderBrokerApplicationFailureError) return error.failure;
                 return { ok: false, reasonCode: 'broker_unavailable' };
             }
         }
