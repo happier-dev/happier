@@ -73,6 +73,19 @@ describe('createVoiceMachineError', () => {
             expect(resolveVoiceMachineErrorKind(reason, 'provider_error')).toBe('execution_machine_unavailable');
         },
     );
+    it('surfaces an unknown daemon Start acknowledgement as a recoverable service outage', () => {
+        const failure = classifyVoiceMachineError(Object.assign(new Error('private acknowledgement detail'), {
+            code: 'VOICE_AGENT_START_OUTCOME_UNKNOWN',
+        }), { kind: 'provider_error' });
+        expect(failure).toMatchObject({
+            kind: 'service_temporarily_unavailable',
+            reason: 'VOICE_AGENT_START_OUTCOME_UNKNOWN',
+            recoveryAction: 'retry',
+            presentation: 'error',
+        });
+        expect(resolveVoiceMachineErrorKind('VOICE_AGENT_START_OUTCOME_UNKNOWN', 'provider_error'))
+            .toBe('service_temporarily_unavailable');
+    });
     it('projects an installed-client setup refusal through the existing visible setup policy', () => {
         const error = Object.assign(new Error('voice_text_segmentation_unavailable'), { code: 'provider_setup_required' });
         expect(classifyVoiceMachineError(error)).toMatchObject({

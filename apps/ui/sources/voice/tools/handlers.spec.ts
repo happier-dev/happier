@@ -2448,6 +2448,34 @@ describe('voice tool handlers', () => {
     expect(daemonRpc).not.toHaveBeenCalled();
   });
 
+  it('does not answer a pending user action from another Session when Voice context is admitted to the current Session', async () => {
+    state.settings.actionsSettingsV1 = {
+      v: 1,
+      actions: {},
+      approvalWaivedSurfaces: { 'session.user_action.answer': ['voice'] },
+    };
+    state.sessions.s1.agentState.requests = {};
+    state.sessions.s2.agentState.requests = {
+      req_other_session: { id: 'req_other_session', tool: 'AskUserQuestion', kind: 'user_action' },
+    };
+
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+
+    const result = JSON.parse(await (tools as any).answerUserActionRequest({
+      answers: [{ question: 'Continue?', values: ['Yes'] }],
+      currentSessionOnly: false,
+    }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: 'request_not_in_current_session',
+      sessionId: 's1',
+      sessionIds: ['s2'],
+    });
+    expect(daemonRpc).not.toHaveBeenCalled();
+  });
+
   it('forces a session refresh before failing a user-action response when the known session state is stale', async () => {
     state.sessions.s1.agentState.requests = {};
     seedMessages('s1', []);

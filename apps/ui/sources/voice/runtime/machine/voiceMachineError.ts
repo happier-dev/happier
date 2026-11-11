@@ -83,6 +83,7 @@ export function resolveVoiceMachineErrorKind(reason: string, preferredKind?: Voi
         || reason === 'voice_agent_selection_unavailable') return 'provider_setup_required';
     if (readVoiceProviderCredentialRemediationCode({ code: reason })) return 'provider_auth_invalid';
     if (reason === 'VOICE_AGENT_TARGET_MACHINE_UNOBSERVED') return 'service_temporarily_unavailable';
+    if (reason === 'VOICE_AGENT_START_OUTCOME_UNKNOWN') return 'service_temporarily_unavailable';
     if (reason === 'VOICE_AGENT_TARGET_MACHINE_OFFLINE'
         || reason === 'VOICE_CONVERSATION_TARGET_MISSING'
         || reason === 'VOICE_AGENT_TARGET_MACHINE_KEY_UNAVAILABLE'

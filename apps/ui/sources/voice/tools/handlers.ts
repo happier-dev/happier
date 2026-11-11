@@ -260,7 +260,7 @@ export function createVoiceToolHandlers(
     resolvedSessionId: string,
     kind: AgentRequestKind,
     explicitRequestId: unknown,
-    opts?: Readonly<{ explicitSessionIdProvided?: boolean; allowCrossSessionFallback?: boolean }>,
+    opts?: Readonly<{ explicitSessionIdProvided?: boolean }>,
   ): Promise<
     | { ok: true; sessionId: string; requestId: string }
     | { ok: false; errorCode: string; payload?: Record<string, unknown> }
@@ -314,31 +314,11 @@ export function createVoiceToolHandlers(
       return selected;
     }
 
-    if (opts?.allowCrossSessionFallback === false) {
-      return {
-        ok: false,
-        errorCode: 'request_not_in_current_session',
-        payload: { sessionIds: Array.from(new Set(matches.map((entry) => entry.sessionId))) },
-      };
-    }
-
-    const uniqueSessionIds = Array.from(new Set(matches.map((entry) => entry.sessionId)));
-    if (uniqueSessionIds.length !== 1) {
-      return {
-        ok: false,
-        errorCode: kind === 'user_action' ? 'multiple_user_action_requests' : 'multiple_permission_requests',
-        payload: { sessionIds: uniqueSessionIds, requestIds: matches.map((entry) => entry.requestId) },
-      };
-    }
-
-    const fallbackSessionId = uniqueSessionIds[0]!;
-    const fallbackSession = sessions?.[fallbackSessionId] ?? null;
-    const fallbackSelected = selectPendingRequestId(fallbackSessionId, fallbackSession, kind, explicitRequestId);
-    if (!fallbackSelected.ok) {
-      return fallbackSelected;
-    }
-
-    return { ok: true, sessionId: fallbackSessionId, requestId: fallbackSelected.requestId };
+    return {
+      ok: false,
+      errorCode: 'request_not_in_current_session',
+      payload: { sessionIds: Array.from(new Set(matches.map((entry) => entry.sessionId))) },
+    };
   };
 
   const actionExecute = createFrontDoorActionExecute(undefined, {
@@ -496,22 +476,18 @@ export function createVoiceToolHandlers(
     parameters: unknown,
     context?: VoiceToolInvocationContext,
   ): Promise<string> => {
-    const rawParameters = asPlainObject(parameters ?? {});
     const spec = getActionSpec('session.user_action.answer');
     const parsed = spec.inputSchema.safeParse(parameters ?? {});
     if (!parsed.success) return jsonError('invalid_parameters', 'invalid_parameters');
 
     const data = asPlainObject(parsed.data);
     if (!data) return jsonError('invalid_parameters', 'invalid_parameters');
-    const allowCrossSessionFallback = rawParameters?.currentSessionOnly === true ? false : true;
-
     const sessionIdParam = typeof data.sessionId === 'string' ? data.sessionId : null;
     const explicitSessionIdProvided = Boolean(normalizeId(sessionIdParam));
     const resolved = await resolveSessionIdOrError(sessionIdParam);
     if (!resolved.ok) return jsonError('session_not_selected', resolved.error);
     const selected = await resolvePendingRequestSession(resolved.sessionId, 'user_action', data.requestId, {
       explicitSessionIdProvided,
-      allowCrossSessionFallback,
     });
     if (!selected.ok) {
       return jsonError(selected.errorCode, selected.errorCode, { sessionId: resolved.sessionId, ...(selected.payload ?? {}) });
