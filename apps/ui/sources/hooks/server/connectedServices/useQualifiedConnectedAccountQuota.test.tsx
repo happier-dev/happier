@@ -299,7 +299,7 @@ describe('useQualifiedConnectedAccountQuota', () => {
         });
         boundary.control.mockResolvedValue({ status: 'unavailable', code: 'connected_account_v4_operation_unsupported' });
         await act(async () => { await hook.getCurrent().refresh(); });
-        expect(hook.getCurrent().supported).toBe(true);
+        expect(hook.getCurrent().supported).toBe(false);
         expect(boundary.refresh).not.toHaveBeenCalled();
     });
 

@@ -73,6 +73,7 @@ export const OPENCODE_PLUGIN = definePlugin({
         envKeys: [
           ...OPENCODE_PROVIDER_OWNED_ENV_KEYS,
           'XDG_CONFIG_HOME',
+          'XDG_DATA_HOME',
           OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV,
           'OPENCODE_PERMISSION',
           'OPENCODE_DISABLE_PRUNE',

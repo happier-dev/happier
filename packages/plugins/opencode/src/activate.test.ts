@@ -86,6 +86,10 @@ describe('activate', () => {
         },
         continuity: { verifyResumeReachable: expect.any(Function) },
       });
+      // The host admits native-home use from this process declaration.
+      expect(PLUGIN_MANIFEST.hostAccess?.required?.flatMap(request =>
+        request.capability === 'process' ? request.scope.envKeys ?? [] : [],
+      )).toContain(activation.registration('agents', 'opencode')?.connectedAccountLaunch?.stateSharingDescriptor?.nativeHome?.environmentKey);
       const verify = activation.registration('agents', 'opencode')?.connectedAccountLaunch?.continuity?.verifyResumeReachable;
       expect(verify).toBeTypeOf('function');
       const requests: string[] = [];

@@ -18,7 +18,6 @@ export const geminiConnectedServiceStateSharingDescriptor = Object.freeze({
     ],
     sharedStatePrivacyRiskAcknowledgementRequired: true,
     symlinkUnavailableDegradePolicy: 'block_continuity',
-    unavailableReason: 'not_implemented',
   },
   authIsolation: {
     mode: 'process_env',

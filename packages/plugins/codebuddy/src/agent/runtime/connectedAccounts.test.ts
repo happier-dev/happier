@@ -57,6 +57,12 @@ describe('CodeBuddy account continuity', () => {
     const adapter = CODEBUDDY_CONNECTED_ACCOUNT_LAUNCH.continuity.runtimeAuthAdapter;
     expect(adapter.canHotApply()).toMatchObject({ status: 'unsupported', recovery: 'restart_resume', applied: false });
     expect(await adapter.verifyActiveAccount()).toMatchObject({ status: 'unavailable', retryable: false });
-    expect(await CODEBUDDY_CONNECTED_ACCOUNT_LAUNCH.continuity.verifyResumeReachable()).toMatchObject({ ok: false });
+    expect(await CODEBUDDY_CONNECTED_ACCOUNT_LAUNCH.continuity.verifyResumeReachable({
+      vendorResumeId: null,
+      sessionFiles: {
+        verifyDeclaredPaths: async () => ({ found: false }),
+        findDeclaredCandidate: async () => ({ found: false }),
+      },
+    })).toEqual({ ok: false, reason: 'vendor_resume_id_missing' });
   });
 });
