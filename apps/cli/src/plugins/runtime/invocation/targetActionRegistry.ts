@@ -564,7 +564,6 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                             signal,
                             isCurrent: indexed.isCurrent,
                             ...(invocation.approvalContext ? { approvalContext: invocation.approvalContext } : {}),
-                    ...(invocation.requesterAccount ? { requesterAccount: invocation.requesterAccount } : {}),
                         });
                         if (admission?.status === 'admitted') {
                             admittedPurposeTarget = admission.connectedAccountPurposeTarget;
@@ -664,6 +663,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         ? { externalActionContext: invocation.externalActionContext }
                         : {}),
                     ...(invocation.approvalContext ? { approvalContext: invocation.approvalContext } : {}),
+                    ...(invocation.requesterAccount ? { requesterAccount: invocation.requesterAccount } : {}),
                     actionInput: input,
                     ...(invocation.selectedActionInputCarrier
                         ? { selectedActionInputCarrier: invocation.selectedActionInputCarrier }
