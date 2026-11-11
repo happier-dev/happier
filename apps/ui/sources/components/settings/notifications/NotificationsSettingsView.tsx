@@ -16,7 +16,9 @@ import { useApplyLocalSettings, useApplySettings } from '@/sync/store/settingsWr
 import { t } from '@/text';
 import { sync } from '@/sync/sync';
 import { isTauriDesktop } from '@/utils/platform/tauri';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { runPushNotificationPermissionPriming } from '@/activity/notifications/permission/pushNotificationPermissionPriming';
+import { requestWebLocalNotificationPermission } from '@/activity/notifications/channels/sendWebLocalNotification';
 
 import {
     DEFAULT_NOTIFICATIONS_SETTINGS_V1,
@@ -397,7 +399,17 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
                     rightElement={(
                         <Switch
                             value={localSettings.localNotificationsEnabled !== false}
-                            onValueChange={(value) => setLocalSetting({ localNotificationsEnabled: Boolean(value) })}
+                            onValueChange={(value) => {
+                                const enabled = Boolean(value);
+                                setLocalSetting({ localNotificationsEnabled: enabled });
+                                // Browsers only show their permission prompt for a user gesture. The
+                                // desktop app requests permission from its own diagnostics row.
+                                if (enabled && !isDesktopNotificationsSupported) {
+                                    fireAndForget(requestWebLocalNotificationPermission(), {
+                                        tag: 'NotificationsSettingsView.requestWebLocalNotificationPermission',
+                                    });
+                                }
+                            }}
                         />
                     )}
                     showChevron={false}
