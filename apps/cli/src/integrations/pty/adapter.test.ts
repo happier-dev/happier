@@ -73,6 +73,77 @@ function createFakeProviderWithProcess(factory: () => FakePtyProcess) {
 }
 
 describe('createVirtualTerminalScreen', () => {
+  it('overwrites stale footer cells when Claude redraws a Japanese composer', () => {
+    const screen = createVirtualTerminalScreen({ cols: 40, rows: 24 });
+    const prompt = 'これでいくわないす\nほで書類の保存場所わかるか？\n今回の元動画との馴染ませる方法をのこしといてくれへんかmdで';
+
+    // Reduced from Claude Code 2.1.319's real 40-column PTY output: the
+    // Japanese row overwrites the footer before an absolute-column erase.
+    screen.write('\u001b[2;21H◐ medium · /effort');
+    screen.write(`\u001b[H❯ これでいくわないす\r\n  ほで書類の保存場所わかるか？\u001b[32G\u001b[K\r\n  今回の元動画との馴染ませる方法をのこ\r\n  しといてくれへんかmdで\r\n${'─'.repeat(40)}`);
+
+    expect(screen.capture().text).not.toContain('medium');
+    expect(createClaudePromptSubmitVerificationPolicy().isPromptStagedBeforeSubmit?.({
+      promptText: prompt,
+      screenText: screen.capture().text,
+    })).toBe(true);
+  });
+
+  it('wraps wide characters by terminal columns and keeps combining marks on their base', () => {
+    const screen = createVirtualTerminalScreen({ cols: 5, rows: 3 });
+    screen.write('abc界e');
+    screen.write('\u0301');
+    expect(screen.capture()).toEqual({ text: 'abc界\né', cursor: { x: 1, y: 1 } });
+
+    screen.write('\u001b[Habcd界');
+    expect(screen.capture()).toEqual({ text: 'abcd\n界', cursor: { x: 2, y: 1 } });
+  });
+
+  it('clears both cells of a wide character when overwriting or erasing either half', () => {
+    const screen = createVirtualTerminalScreen({ cols: 8, rows: 3 });
+    screen.write('a界b\r\u001b[3GX');
+    expect(screen.capture().text).toBe('a Xb');
+    screen.write('\r界b\r\u001b[1K');
+    expect(screen.capture().text).toBe('  bb');
+    screen.write('\r界\r\u001b[2G\u001b[K');
+    expect(screen.capture().text).toBe('');
+  });
+
+  it('removes a wide character cut in half by a resize', () => {
+    const screen = createVirtualTerminalScreen({ cols: 5, rows: 3 });
+    screen.write('abc界');
+    screen.resize(4, 3);
+    expect(screen.capture().text).toBe('abc');
+  });
+
+  it('keeps an emoji modifier on its base across writes and cursor overwrites', () => {
+    const screen = createVirtualTerminalScreen({ cols: 5, rows: 3 });
+    screen.write('👍\u0301');
+    screen.write('🏽XYZ');
+    expect(screen.capture()).toEqual({ text: '👍́🏽XYZ', cursor: { x: 5, y: 0 } });
+
+    screen.write('\u001b[3GX');
+    expect(screen.capture().text).toBe('👍́🏽XYZ');
+  });
+
+  it('gives a standalone emoji modifier its own two cells', () => {
+    const screen = createVirtualTerminalScreen({ cols: 5, rows: 3 });
+    screen.write('a🏽X');
+    expect(screen.capture()).toEqual({ text: 'a🏽X', cursor: { x: 4, y: 0 } });
+  });
+
+  it.each([
+    ['❤', '\ufe0f', '❤️'],
+    ['1', '\ufe0f\u20e3', '1️⃣'],
+  ])('updates cell width when %s gains an emoji presentation', (base, marks, glyph) => {
+    const screen = createVirtualTerminalScreen({ cols: 5, rows: 3 });
+    screen.write(base);
+    screen.write(`${marks}XYZ`);
+    expect(screen.capture()).toEqual({ text: `${glyph}XYZ`, cursor: { x: 5, y: 0 } });
+    screen.write('\u001b[3GX');
+    expect(screen.capture().text).toBe(`${glyph}XYZ`);
+  });
+
   it('tracks clear-screen and cursor-position terminal writes', () => {
     const screen = createVirtualTerminalScreen({ cols: 20, rows: 4 });
 
