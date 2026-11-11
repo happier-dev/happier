@@ -2,7 +2,7 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { AppShellActionOutputSchemas, projectInboxReadItemV1, readNoticeInboxAccountIdV1,
   dismissAccountNoticeArtifactV1 } from '@happier-dev/protocol/actions/appShellActionFamily';
 import { inboxNoticeFocusKeyV1, normalizeAccountNoticeArtifactV1, projectAccountNoticeInboxItemV1,
-  projectOpenUsageNoticeHeaderV1, readOwnedNoticeArtifactV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+  projectOpenUsageNoticeHeaderV1, readOwnedNoticeArtifactAdmissionV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { clientActionUnavailable } from '@happier-dev/protocol/actions/clientDispatchV1';
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
@@ -58,10 +58,11 @@ export function createCliInboxReadAction(params: Readonly<{
       const opened = await params.store.readBodies(selected, context.signal);
       if (!await current()) return { ok: false, errorCode: 'credential_scope_retired', error: 'credential_scope_retired' };
       for (const artifact of opened) {
-        const notice = readOwnedNoticeArtifactV1(artifact, params.accountId);
-        if (!notice) { noticeCoverage = 'partial'; continue; }
+        const admission = readOwnedNoticeArtifactAdmissionV1(artifact, params.accountId);
+        if (admission.kind === 'retired') continue;
+        if (admission.kind === 'unreadable') { noticeCoverage = 'partial'; continue; }
         // The Inbox deep link asks the app's existing detail registry to open the owning page.
-        const header = normalizeAccountNoticeArtifactV1(notice);
+        const header = normalizeAccountNoticeArtifactV1(admission.notice);
         const focus = inboxNoticeFocusKeyV1(params.serverId, artifact.artifactId);
         const item = projectAccountNoticeInboxItemV1({ artifactId: artifact.artifactId, serverId: params.serverId,
           createdAt: artifact.createdAt, header,

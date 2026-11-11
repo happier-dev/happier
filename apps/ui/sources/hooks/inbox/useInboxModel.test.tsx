@@ -2058,9 +2058,10 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         expect(model?.items).toEqual([expect.objectContaining({ producer: 'live', source: {
             kind: 'workflow_run', id: 'run-held', serverId: appliedSnapshot().serverId, displayName: expect.any(String),
         } })]);
-        // An unreadable historical notice cannot hide current rows from another owner.
-        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'partial',
-            isLoading: false, refreshFailed: true, items: [expect.objectContaining({
+        // A positively retired notice settles admission without presenting or deleting its row.
+        expect(model!.artifactSource.phase).toBe('current');
+        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'ready',
+            isLoading: false, refreshFailed: false, items: [expect.objectContaining({
                 source: expect.objectContaining({ kind: 'workflow_run', id: 'run-held' }),
             })] } });
         expect(await readInbox('different-account')).toMatchObject({ ok: true, result: { status: 'unavailable' } });

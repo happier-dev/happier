@@ -3,11 +3,12 @@ import { ApprovalRequestStatusSchema, ApprovalRequestV2StatusSchema } from '@hap
 import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { ACCOUNT_NOTICE_ARTIFACT_KIND_V1, USAGE_NOTICE_ARTIFACT_KIND_V1,
     AccountNoticeArtifactHeaderV1Schema, UsageNoticeArtifactHeaderV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
-import { projectOpenUsageNoticeHeaderV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { normalizeAccountNoticeArtifactV1, projectOpenUsageNoticeHeaderV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import type { OwnedNoticeArtifactAdmissionV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 
 import { isOpenApprovalInboxArtifact, readOpenApprovalInboxEntry, listOpenApprovalInboxArtifactHydrationRequests,
     readListedOpenApproval, type ListedOpenApproval, type OpenApprovalInboxEntry } from './approvalArtifactAdmission';
-import { readAccountNoticeArtifactHeader, isOpenAccountNotice, isUnreadAccountNotice,
+import { readAccountNoticeArtifactAdmission, isOpenAccountNotice, isUnreadAccountNotice,
     type AccountNoticeArtifact, type OpenUsageNoticeArtifact } from './usageNoticeArtifacts';
 import type { DecryptedArtifact } from './artifactTypes';
 import { deleteInboxTree, getInboxTree, inboxTreeArray, inboxTreeSize, setInboxTree, type InboxTree } from './inboxArtifactTree';
@@ -48,10 +49,11 @@ export function readInboxArtifactEntry(artifact: DecryptedArtifact): InboxArtifa
     // The authenticated owner is a grouping key, not the active Account. The
     // source selects its own Account below, so switching scope cannot reuse a
     // notice admitted for a different owner.
-    const header = readAccountNoticeArtifactHeader(artifact, artifact.ownerAccountId);
+    const noticeAdmission = readAccountNoticeArtifactAdmission(artifact, artifact.ownerAccountId);
+    const header = noticeAdmission.kind === 'presented' ? normalizeAccountNoticeArtifactV1(noticeAdmission.notice) : null;
     const notice = header ? { artifact, header } : null;
     const usageHeader = header ? projectOpenUsageNoticeHeaderV1(header) : null;
-    const complete = isInboxArtifactBodyAdmissionComplete([artifact], artifact.ownerAccountId);
+    const complete = isInboxArtifactAdmissionComplete(artifact, artifact.ownerAccountId, noticeAdmission);
     if (complete && !openApproval && !notice) return null; // Settled receipts have no Inbox consumer.
     const indexedOpenApproval = !openApproval && isIndexedOpenApproval(artifact);
     return { artifact, openApproval, noticeFamily: typeof kind === 'string' && noticeKinds.includes(kind),
@@ -227,13 +229,17 @@ export function listInboxArtifactBodyHydrationRequests(artifacts: readonly Decry
 
 /** Membership alone cannot certify a count while a countable header lacks strict body admission. */
 export function isInboxArtifactBodyAdmissionComplete(artifacts: readonly DecryptedArtifact[], accountId: string | null | undefined): boolean {
-    for (const artifact of artifacts) {
-        if (artifact.draft) continue;
+    return artifacts.every(artifact => isInboxArtifactAdmissionComplete(artifact, accountId));
+}
+
+function isInboxArtifactAdmissionComplete(artifact: DecryptedArtifact, accountId: string | null | undefined,
+    noticeAdmission?: OwnedNoticeArtifactAdmissionV1): boolean {
+        if (artifact.draft) return true;
         const kind = artifact.header?.kind ?? artifact.kindHint;
         // A newly admitted opaque legacy row may be an Inbox family even after
         // an earlier exact selection completed. Known other kinds stay excluded.
         if (!artifact.isDecrypted && typeof kind !== 'string') return false;
-        if (typeof kind !== 'string' || !INBOX_ARTIFACT_KINDS.includes(kind)) continue;
+        if (typeof kind !== 'string' || !INBOX_ARTIFACT_KINDS.includes(kind)) return true;
         if (!artifact.isDecrypted || !artifact.header || artifact.header.kind !== kind) return false;
         if (approvalKinds.includes(kind)) {
             const status = kind === APPROVAL_ARTIFACT_KINDS_V1.targetAction ? TargetActionApprovalRequestV1Schema.shape.status
@@ -244,12 +250,12 @@ export function isInboxArtifactBodyAdmissionComplete(artifacts: readonly Decrypt
             // A known foreign/shared/public notice is not this Account's Inbox. Missing authority is unknown.
             if ((artifact.ownerAccountId !== undefined && artifact.ownerAccountId !== accountId)
                 || (artifact.access !== undefined && artifact.access !== 'owner')
-                || (artifact.publicAudience !== undefined && artifact.publicAudience !== 'none')) continue;
+                || (artifact.publicAudience !== undefined && artifact.publicAudience !== 'none')) return true;
             const status = kind === ACCOUNT_NOTICE_ARTIFACT_KIND_V1 ? AccountNoticeArtifactHeaderV1Schema.shape.status
                 : UsageNoticeArtifactHeaderV1Schema.shape.status;
             if (!status.safeParse(artifact.header.status).success
-                || (artifact.header.status === 'open' && !readAccountNoticeArtifactHeader(artifact, accountId))) return false;
+                || (artifact.header.status === 'open'
+                    && (noticeAdmission ?? readAccountNoticeArtifactAdmission(artifact, accountId)).kind === 'unreadable')) return false;
         }
-    }
     return true;
 }

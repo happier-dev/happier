@@ -266,16 +266,47 @@ export function readUsageNoticeArtifactV1(input: Readonly<{ header: unknown; bod
   } catch { return null; }
 }
 
+export type OwnedNoticeArtifactAdmissionV1 =
+  | Readonly<{ kind: 'presented'; notice: AccountNoticeArtifactHeaderV1 | UsageNoticeArtifactHeaderV1 }>
+  | Readonly<{ kind: 'retired' }>
+  | Readonly<{ kind: 'unreadable' }>;
+
+// Only identify the closed source; do not restore its former Follow payload or routing contract.
+const RetiredNoticeContentSchema = lazyZodSchema(() => z.object({
+  v: z.literal(1), type: AccountNoticeItemTypeV1Schema, resolved: z.boolean(),
+  source: z.strictObject({ kind: z.literal('host'), topic: z.literal('follow_update') }),
+  notice: z.looseObject({ topic: z.literal('follow_update') }),
+}));
+const RetiredNoticeHeaderSchema = lazyZodSchema(() => z.extend(RetiredNoticeContentSchema, {
+  kind: z.literal(ACCOUNT_NOTICE_ARTIFACT_KIND_V1), title: z.string().check(z.minLength(1)),
+  status: AccountNoticeArtifactHeaderV1Schema.shape.status,
+}));
+
 /** Authenticated Artifact facts, never a notice-supplied Account or audience. */
-export function readOwnedNoticeArtifactV1(artifact: Readonly<{
+export function readOwnedNoticeArtifactAdmissionV1(artifact: Readonly<{
   artifactId?: string; id?: string;
   ownerAccountId?: string; access?: string; publicAudience?: string; header?: unknown; body?: unknown;
-}>, accountId: string | null | undefined): AccountNoticeArtifactHeaderV1 | UsageNoticeArtifactHeaderV1 | null {
-  if (!accountId || artifact.ownerAccountId !== accountId || artifact.access !== 'owner' || artifact.publicAudience !== 'none') return null;
+}>, accountId: string | null | undefined): OwnedNoticeArtifactAdmissionV1 {
+  if (!accountId || artifact.ownerAccountId !== accountId || artifact.access !== 'owner' || artifact.publicAudience !== 'none') return { kind: 'unreadable' };
   const content = { header: artifact.header, body: artifact.body };
   const notice = readAccountNoticeArtifactV1(content) ?? readUsageNoticeArtifactV1(content);
-  return notice?.kind === ACCOUNT_NOTICE_ARTIFACT_KIND_V1 && notice.recoveryChoices?.some(choice =>
-    choice.actionId === 'inbox.notice.dismiss' && choice.input.artifactId !== (artifact.artifactId ?? artifact.id)) ? null : notice;
+  if (notice) return notice.kind === ACCOUNT_NOTICE_ARTIFACT_KIND_V1 && notice.recoveryChoices?.some(choice =>
+    choice.actionId === 'inbox.notice.dismiss' && choice.input.artifactId !== (artifact.artifactId ?? artifact.id))
+    ? { kind: 'unreadable' } : { kind: 'presented', notice };
+  if (typeof content.body === 'string') try {
+    const header = RetiredNoticeHeaderSchema.safeParse(content.header);
+    const body = RetiredNoticeContentSchema.safeParse(JSON.parse(content.body));
+    if (header.success && body.success
+      && sameStrictJsonValue(RetiredNoticeContentSchema.parse(header.data), body.data)) return { kind: 'retired' };
+  } catch { /* Unparseable content remains incomplete, including bodies claiming a retired source. */ }
+  return { kind: 'unreadable' };
+}
+
+/** Detail and mutation consumers only receive presentable current notices. */
+export function readOwnedNoticeArtifactV1(artifact: Parameters<typeof readOwnedNoticeArtifactAdmissionV1>[0],
+  accountId: string | null | undefined): AccountNoticeArtifactHeaderV1 | UsageNoticeArtifactHeaderV1 | null {
+  const result = readOwnedNoticeArtifactAdmissionV1(artifact, accountId);
+  return result.kind === 'presented' ? result.notice : null;
 }
 
 /** Retained usage notices enter the same Inbox row model without rewriting storage. */

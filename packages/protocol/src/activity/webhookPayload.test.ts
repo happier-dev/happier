@@ -4,13 +4,31 @@ import { ActivityWebhookPayloadV1Schema, buildActivityWebhookPayload, MachineVit
   buildGuardStopWarningPushDataV1, GuardStopWarningPushDataV1Schema, readGuardStopWarningPushActionV1,
   isGuardStopWarningCurrentV1 } from './webhookPayload.js';
 import { readUsageNoticeArtifactV1, readAccountNoticeArtifactV1, readAccountNoticeArtifactHeaderV1, AccountNoticeArtifactHeaderV1Schema,
-  AccountNoticePushDataV1Schema, projectAccountNoticeInboxItemV1 } from './usageNoticeArtifactV1.js';
+  AccountNoticePushDataV1Schema, projectAccountNoticeInboxItemV1,
+  readOwnedNoticeArtifactAdmissionV1, readOwnedNoticeArtifactV1 } from './usageNoticeArtifactV1.js';
 import { MachineServiceIdentityV1Schema } from '../local/services/serviceIdentityV1.js';
 import { MachineServiceRowV1Schema } from '../actions/specs/machine/services.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { buildSessionStopHoldV1, resolveSessionAutoResumeAdmissionV1 } from '../sessions/metadata/sessionExplicitStopV1.js';
 
 describe('private Account notices', () => {
+  it('settles only positively identified private retired sources without admitting them as current notices', () => {
+    const content = { v: 1, type: 'update', resolved: false, source: { kind: 'host', topic: 'follow_update' },
+      notice: { topic: 'follow_update', follow: { original: { source: { kind: 'workflow_run', runId: 'held' }, revision: 1 },
+        event: { kind: 'update_posted' } } } };
+    const header = { ...content, kind: 'account_notice.v1', title: 'Run updated', status: 'open' };
+    const artifact = { ownerAccountId: 'owner', access: 'owner', publicAudience: 'none', header, body: JSON.stringify(content) };
+    expect(readOwnedNoticeArtifactAdmissionV1(artifact, 'owner')).toEqual({ kind: 'retired' });
+    expect(readOwnedNoticeArtifactV1(artifact, 'owner')).toBeNull();
+    for (const body of [undefined, '{', '{}', JSON.stringify({ ...content, resolved: true }),
+      JSON.stringify({ ...content, source: { kind: 'host', topic: 'unknown' } })]) {
+      expect(readOwnedNoticeArtifactAdmissionV1({ ...artifact, body }, 'owner')).toEqual({ kind: 'unreadable' });
+    }
+    expect(readOwnedNoticeArtifactAdmissionV1(artifact, 'foreign')).toEqual({ kind: 'unreadable' });
+    expect(readOwnedNoticeArtifactAdmissionV1({ ...artifact, publicAudience: 'retained' }, 'owner')).toEqual({ kind: 'unreadable' });
+    expect(readOwnedNoticeArtifactAdmissionV1({ ...artifact, header: { ...header,
+      source: { kind: 'host', topic: 'unknown' } } }, 'owner')).toEqual({ kind: 'unreadable' });
+  });
   it('round-trips adopted Machine service C1 operands from the canonical list/detail facts', () => {
     const row = MachineServiceRowV1Schema.parse({ authority: 'machine', serviceId: 'watch-a', name: 'Ingress',
       watchId: 'watch-a', watchRevision: 'watch-revision-a', lifecyclePurpose: 'infrastructure',

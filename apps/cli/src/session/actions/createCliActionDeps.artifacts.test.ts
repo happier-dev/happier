@@ -164,6 +164,21 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
     expect(await executor.execute('inbox.get', {}, context)).toMatchObject({ ok: true, result: { items: [],
       coverage: { sources: expect.arrayContaining([{ source: 'notices', status: 'partial', reason: 'content_unavailable' }]) } } });
     row.publicAudience = 'none';
+    // Retired development notice copies are settled reads, without becoming executable notices.
+    const retiredContent = { v: 1, type: 'update', resolved: false, source: { kind: 'host', topic: 'follow_update' },
+      notice: { topic: 'follow_update', follow: { original: { source: { kind: 'workflow_run', runId: 'held' }, revision: 1 },
+        event: { kind: 'update_posted' } } } };
+    const currentHeader = row.header;
+    const currentBody = row.body;
+    row.header = encodePlainArtifactStoredContent({ ...retiredContent, kind: 'account_notice.v1', title: 'Retired', status: 'open' });
+    row.body = encodePlainArtifactStoredContent({ body: JSON.stringify(retiredContent) });
+    expect(await executor.execute('inbox.get', {}, context)).toMatchObject({ ok: true, result: { items: [],
+      coverage: { sources: expect.arrayContaining([{ source: 'notices', status: 'complete' }]) } } });
+    row.body = encodePlainArtifactStoredContent({ body: '{}' });
+    expect(await executor.execute('inbox.get', {}, context)).toMatchObject({ ok: true, result: { items: [],
+      coverage: { sources: expect.arrayContaining([{ source: 'notices', status: 'partial', reason: 'content_unavailable' }]) } } });
+    row.header = currentHeader;
+    row.body = currentBody;
     expect(await executor.execute('artifact.list', { kind: 'account_notice.v1' }, context)).toMatchObject({ ok: true, result: { items: [] } });
     expect(await executor.execute('artifact.get', { artifactId }, context)).toMatchObject({ ok: true, result: { artifact: { artifactId, header } } });
     expect(await executor.execute('inbox.get', {}, { ...context, expectedAccountId: 'foreign' }))

@@ -1,9 +1,10 @@
 import {
-    readOwnedNoticeArtifactV1,
+    readOwnedNoticeArtifactAdmissionV1,
     normalizeAccountNoticeArtifactV1,
     projectOpenUsageNoticeHeaderV1,
     type UsageNoticeArtifactHeaderV1,
     type AccountNoticeArtifactHeaderV1,
+    type OwnedNoticeArtifactAdmissionV1,
 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import type { DecryptedArtifact } from './artifactTypes';
 import type { InboxExpectedHealthOperationV1 } from '@happier-dev/protocol/actions/appShellActionFamily';
@@ -22,9 +23,15 @@ export function readAccountNoticeArtifactHeader(
     artifact: Parameters<typeof readOpenUsageNoticeArtifactHeader>[0],
     accountId: string | null | undefined,
 ): AccountNoticeArtifactHeaderV1 | null {
-    if (!artifact.isDecrypted || artifact.draft === true) return null;
-    const notice = readOwnedNoticeArtifactV1({ ...artifact, header: artifact.rawHeader ?? artifact.header }, accountId);
-    return notice ? normalizeAccountNoticeArtifactV1(notice) : null;
+    const result = readAccountNoticeArtifactAdmission(artifact, accountId);
+    return result.kind === 'presented' ? normalizeAccountNoticeArtifactV1(result.notice) : null;
+}
+
+export function readAccountNoticeArtifactAdmission(
+    artifact: Parameters<typeof readOpenUsageNoticeArtifactHeader>[0], accountId: string | null | undefined,
+): OwnedNoticeArtifactAdmissionV1 {
+    if (!artifact.isDecrypted || artifact.draft === true) return { kind: 'unreadable' };
+    return readOwnedNoticeArtifactAdmissionV1({ ...artifact, header: artifact.rawHeader ?? artifact.header }, accountId);
 }
 
 export function isOpenAccountNotice(header: AccountNoticeArtifactHeaderV1): boolean {
