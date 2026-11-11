@@ -57,7 +57,7 @@ import type { projectSessionSpawnFailure } from '@/session/creation/projectSessi
 import type { dispatchRequesterSessionSpawnNewRpc, readMachineRpcRequestDisposition } from '@/session/transport/rpc/machineRpc';
 import type { resolveLiveDaemonControlTargetForServer } from '@/daemon/multiDaemon';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, isMachineRpcTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { type RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
 import type { AccountRoleOverridesReadV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
@@ -117,6 +117,22 @@ export function createCliSpawnActionDeps(
 function hasPossiblyAcceptedSpawnNonce(error: unknown): boolean {
   const details = readRecord(readRecord(error).details);
   return typeof details.spawnNonce === 'string' && details.spawnNonce.trim().length > 0;
+}
+
+function readSessionCreationTargetRpcCause(error: unknown): Readonly<{
+  code: string;
+  message: string;
+  rpcErrorCode?: typeof MACHINE_RPC_TIMEOUT_ERROR_CODE | typeof RPC_ERROR_CODES.OUTCOME_UNKNOWN | typeof RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE;
+}> | null {
+  const code = isMachineRpcTimeoutError(error) ? MACHINE_RPC_TIMEOUT_ERROR_CODE : readRpcErrorCode(error);
+  if (!code) return null;
+  const rpcErrorCode = code === MACHINE_RPC_TIMEOUT_ERROR_CODE || code === RPC_ERROR_CODES.OUTCOME_UNKNOWN
+    || code === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE ? code : undefined;
+  const message = rpcErrorCode === MACHINE_RPC_TIMEOUT_ERROR_CODE ? 'Target Machine RPC timed out.'
+    : rpcErrorCode === RPC_ERROR_CODES.OUTCOME_UNKNOWN ? 'Target Machine RPC outcome is unknown.'
+      : rpcErrorCode === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE ? 'Target Machine transport is unavailable.'
+        : 'Session target preparation was refused.';
+  return rpcErrorCode ? { code, message, rpcErrorCode } : { code, message };
 }
 
 /**
@@ -255,11 +271,16 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         import('@/session/transport/rpc/machineRpc'), import('./projectSessionSpawnFailure'),
       ]);
       const targetRefusal = error instanceof MachineRpcTargetNotCurrentError ? error : null;
+      const targetRpcCause = readSessionCreationTargetRpcCause(error);
       return {
         ok: false,
         result: projectSessionSpawnFailure({
-          errorCode: targetRefusal?.code ?? 'SPAWN_FAILED',
-          errorMessage: targetRefusal?.reason ?? 'Session target preparation failed',
+          errorCode: targetRefusal?.code ?? targetRpcCause?.code ?? 'SPAWN_FAILED',
+          errorMessage: targetRefusal?.reason ?? targetRpcCause?.message ?? 'Session target preparation failed',
+          ...(targetRpcCause ? { errorDetail: {
+            kind: 'launch_error', code: targetRpcCause.code, message: targetRpcCause.message,
+            ...(targetRpcCause.rpcErrorCode ? { rpcErrorCode: targetRpcCause.rpcErrorCode } : {}),
+          } } : {}),
         }),
       };
     }
