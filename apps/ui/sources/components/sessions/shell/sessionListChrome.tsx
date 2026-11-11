@@ -61,7 +61,7 @@ import { useSessionSectionMenu } from '@/components/sessions/organization/useSes
 import { useSessionSectionDraftController } from '@/components/sessions/organization/useSessionSectionDraft';
 import { resolveSessionSectionDisplayTitle } from '@/sync/domains/session/organization/sections';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE, useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_COLLECTION_LIST_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import type { SessionListProjectHeaderMachineDetail } from './sessionListProjectHeaderViewModels';
 
 
@@ -515,7 +515,7 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
                 accessibilityIgnoresInvertColors
             />
         </View>
-    ) : <Icon name="folder" size={13} color={theme.colors.text.tertiary} />;
+    ) : <Icon name="folder" size={HAPPIER_COLLECTION_LIST_METRICS.groupLabelMarkGlyph} color={theme.colors.text.tertiary} />;
     const markWithColor = colorDotPaint ? (
         <View style={styles.groupHeaderMarkFrame}>
             {mark}
@@ -665,7 +665,7 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
     const { theme } = useUnistyles();
     const markSpec = props.headerKind ? SECTION_HEADER_MARKS[props.headerKind] : undefined;
     const mark = markSpec ? (
-        <Icon name={markSpec.icon} size={13}
+        <Icon name={markSpec.icon} size={HAPPIER_COLLECTION_LIST_METRICS.groupLabelMarkGlyph}
             color={markSpec.attention ? theme.colors.state.warning.foreground : theme.colors.text.tertiary} />
     ) : undefined;
     const label = (
@@ -796,7 +796,7 @@ export const SessionSectionHeader = React.memo(function SessionSectionHeader(pro
                 count={props.memberCount}
                 first={props.first}
                 rollup={<WorkStatusRollup rollup={props.item.rollup} testID={`${headerTestId}:rollup`} />}
-                mark={<Icon name={sectionIcon} size={13} color={theme.colors.text.tertiary} />}
+                mark={<Icon name={sectionIcon} size={HAPPIER_COLLECTION_LIST_METRICS.groupLabelMarkGlyph} color={theme.colors.text.tertiary} />}
                 disclosure={{
                     expanded: !props.collapsed,
                     onToggle: props.onToggleCollapse,

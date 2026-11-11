@@ -154,6 +154,24 @@ describe('IconButton', () => {
         expect(hoveredSurface.backgroundColor).toBeTruthy();
     });
 
+    it('shows a toggle that is on through its selection, keeping its chrome glyph in the resting ink until engaged', async () => {
+        const { ChromeGlyph } = await import('@/components/ui/icons/chromeGlyphInk');
+        const screen = await renderScreen(
+            <IconButton testID="toggle" accessibilityLabel="Split" variant="plain" size={28} selected
+                icon={<ChromeGlyph name="square-split-horizontal" size={20} />} onPress={() => {}} />,
+        );
+        const glyphInk = () => screen.findAll(node => node.props.name === 'square-split-horizontal' && typeof node.props.color === 'string')[0]!.props;
+        const resting = glyphInk();
+        // On: the selected square says so; the glyph stays as quiet as every other chrome glyph at rest.
+        expect(resting.style).toEqual(expect.objectContaining({ opacity: expect.any(Number) }));
+        expect(flattenStyle(screen.findByTestId('toggle-surface')?.props.style).backgroundColor).toBeTruthy();
+        await act(async () => {
+            screen.findByTestId('toggle')?.props.onHoverIn?.({ nativeEvent: { pointerType: 'mouse' } });
+        });
+        // Hovered, it comes up to the full ink.
+        expect(glyphInk().color).not.toBe(resting.color);
+    });
+
     it('keeps the outlined border and its resting fill on the visible surface', async () => {
         const screen = await renderScreen(
             <IconButton testID="icon-btn" iconName="copy" accessibilityLabel="Copy address" onPress={() => {}} />,

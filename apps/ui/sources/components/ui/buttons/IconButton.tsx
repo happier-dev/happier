@@ -372,8 +372,9 @@ export function IconButton(props: Readonly<{
                         importantForAccessibility="no-hide-descendants"
                         style={styles.iconWrap}
                     >
-                        {/* A chrome glyph (`useChromeGlyphInk`) comes up to full ink while its control is engaged. */}
-                        <ChromeGlyphEmphasisContext.Provider value={state.hovered || state.pressed || state.focused || state.selected}>
+                        {/* A chrome glyph (`useChromeGlyphInk`) comes up to full ink while its control is engaged. A toggle
+                            that is on says so with its selection, not with a glyph left bright (owner, 2026-11-11). */}
+                        <ChromeGlyphEmphasisContext.Provider value={state.hovered || state.pressed || state.focused}>
                         {state.busy ? (
                             <ActivitySpinner
                                 testID={props.testID ? `${props.testID}-spinner` : undefined}

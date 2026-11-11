@@ -25,8 +25,6 @@ export type AppShellTail = Readonly<{
   /** Where a rail with nothing standing on it keeps its More: the title strip's trailing controls. */
   railMoreHost: HTMLElement | null;
   containerWidthPx: number | null;
-  /** A joined panel's tab is the rail's first action: the page squares its top trailing corner into it. */
-  joinTrailingTopCorner: (joined: boolean) => void;
 }>;
 
 export const AppShellTailContext = React.createContext<AppShellTail | null>(

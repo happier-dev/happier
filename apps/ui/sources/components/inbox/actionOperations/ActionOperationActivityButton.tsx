@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
+import { ChromeGlyph } from '@/components/ui/icons/chromeGlyphInk';
 import { AppRailBadge } from '@/components/navigation/shell/appRail/AppRailBadge';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
@@ -30,7 +31,6 @@ export type ActionOperationActivityButtonViewProps = Readonly<{
     onDismissOperation?: (operation: ActionOperationProjection) => void;
     onMarkVisibleTerminalSeen: () => void;
     onClearRecent?: () => void;
-    tintColor?: string;
     buttonSize?: number;
     iconSize?: number;
     /** The gap this control's row leaves to its neighbour: its hit area reaches half of it sideways. */
@@ -53,7 +53,6 @@ type ActionOperationActivityButtonChromeProps = Readonly<{
     hasAttention: boolean;
     renderDetails: (placement: ActionOperationActivityPopoverPlacement) => React.ReactNode;
     onOpen: () => void;
-    tintColor?: string;
     buttonSize?: number;
     iconSize?: number;
     interactiveTargetGapPx?: number;
@@ -63,7 +62,6 @@ type ActionOperationActivityButtonChromeProps = Readonly<{
 const ActionOperationActivityButtonChrome = React.memo(function ActionOperationActivityButtonChrome(
     props: ActionOperationActivityButtonChromeProps,
 ) {
-    const { theme } = useUnistyles();
     const anchorRef = React.useRef<View>(null);
     const [open, setOpen] = React.useState(false);
     const [webAnchorRect, setWebAnchorRect] = React.useState<Readonly<{
@@ -76,7 +74,6 @@ const ActionOperationActivityButtonChrome = React.memo(function ActionOperationA
     const handleRequestClose = React.useCallback(() => setOpen(false), []);
     if (!visible) return null;
 
-    const tintColor = props.tintColor ?? theme.colors.chrome.header.foreground;
     return (
         <View ref={anchorRef} collapsable={false} style={styles.anchor}>
             <IconButton
@@ -112,7 +109,8 @@ const ActionOperationActivityButtonChrome = React.memo(function ActionOperationA
                 }}
                 icon={(
                     <View style={styles.glyph}>
-                        <Icon name="pulse" size={props.iconSize ?? ICON_SIZE.md} color={tintColor} />
+                        {/* The chrome glyph ink: quiet at rest whatever its badge says, up while engaged. */}
+                        <ChromeGlyph name="pulse" size={props.iconSize ?? ICON_SIZE.md} />
                         {/* A glyph on the chrome canvas takes the rail's badge: a neutral count, or an attention dot. */}
                         {props.activeCount > 0 ? (
                             <AppRailBadge testID="action-operation-activity-count" glyphSizePx={props.iconSize ?? ICON_SIZE.md}
@@ -216,7 +214,6 @@ export const ActionOperationActivityButtonView = React.memo(function ActionOpera
             hasAttention={props.hasAttention}
             renderDetails={renderDetails}
             onOpen={props.onMarkVisibleTerminalSeen}
-            tintColor={props.tintColor}
             buttonSize={props.buttonSize}
             iconSize={props.iconSize}
             interactiveTargetGapPx={props.interactiveTargetGapPx}
@@ -249,7 +246,6 @@ const ActionOperationActivityDetails = React.memo(function ActionOperationActivi
 
 export const ActionOperationActivityButton = React.memo(function ActionOperationActivityButton(props: Readonly<{
     preferredSessionAddress?: SessionAddress | null;
-    tintColor?: string;
     buttonSize?: number;
     iconSize?: number;
     interactiveTargetGapPx?: number;
@@ -268,7 +264,6 @@ export const ActionOperationActivityButton = React.memo(function ActionOperation
             {...summary}
             renderDetails={renderDetails}
             onOpen={markVisibleTerminalSeen}
-            tintColor={props.tintColor}
             buttonSize={props.buttonSize}
             iconSize={props.iconSize}
             interactiveTargetGapPx={props.interactiveTargetGapPx}

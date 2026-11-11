@@ -555,28 +555,15 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
             ? 'folded'
             : true;
     const railOnCanvas = railTail !== null;
-    const panelAttached = railOnCanvas && rightOpen && rightPresentation === 'docked';
-    const panelJoinsPage = railOnCanvas && canvasTail === null;
-    const [panelTabAtTop, setPanelTabAtTop] = React.useState(false);
-    // A joined panel's tab at the rail's top continues the page sheet's top edge: the frame squares that corner.
-    const joinTrailingTopCorner = railTail?.joinTrailingTopCorner;
-    const pageJoinsTopTab = panelJoinsPage && panelAttached && panelTabAtTop;
-    React.useLayoutEffect(() => {
-        if (!joinTrailingTopCorner) return;
-        joinTrailingTopCorner(pageJoinsTopTab);
-        return () => joinTrailingTopCorner(false);
-    }, [joinTrailingTopCorner, pageJoinsTopTab]);
     const railContext = React.useMemo(() => ({
         visible: showActionRail,
         mirrored,
         onCanvas: railOnCanvas,
-        panelAttached,
-        onPanelTabAtTop: setPanelTabAtTop,
         onVacantChange: setRailVacant,
         vacantMoreHost: railVacant && destinationFocused ? railTail?.railMoreHost ?? null : null,
         contentWidthPx: containerWidthPx,
         rightPaneHiddenByDetails,
-    }), [showActionRail, mirrored, railOnCanvas, panelAttached, containerWidthPx, rightPaneHiddenByDetails, railVacant, destinationFocused, railTail?.railMoreHost]);
+    }), [showActionRail, mirrored, railOnCanvas, containerWidthPx, rightPaneHiddenByDetails, railVacant, destinationFocused, railTail?.railMoreHost]);
     const detailsAvailable = resolvePaneLayout({ ...paneLayoutInput, rightOpen: true, detailsOpen: true }).details === 'docked';
     const layoutContext = React.useMemo<AppPaneScopeLayoutState>(() => ({
         arrangement, mainHidden, mainDrawerOpen, effectiveDetailsOpen: detailsOpen,
@@ -677,7 +664,6 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                 rightOverlayFocusReturnRef={props.rightOverlayFocusReturnRef}
                 detailsOverlayFocusReturnRef={props.detailsOverlayFocusReturnRef}
                 rightTail={rightTail}
-                rightJoinsTopTab={panelAttached && panelTabAtTop}
                 rightDivider={railTail?.divider ?? 'line'}
                 bottomOverlayFocusReturnRef={props.bottomOverlayFocusReturnRef}
             />
@@ -687,8 +673,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                     ref={railColumnRef}
                     testID="pane-action-rail-column"
                     onLayout={reportRailRect}
-                    // With its panel open the rail stands above the page's seam: the page never casts onto the tab.
-                    style={[styles.railColumn, panelAttached ? styles.railColumnAttached : null, railVacant ? styles.railColumnVacant : null]}
+                    style={[styles.railColumn, railVacant ? styles.railColumnVacant : null]}
                 >
                     {/* On the canvas the rail paints nothing of its own: it coats the canvas around its panel's tab
                         (R11-1/R11-2). Inside a page (native, Editor first, a split pane) the rail and its side column are
@@ -764,7 +749,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 0,
         alignSelf: 'stretch',
     },
-    railColumnAttached: { zIndex: 3 },
     railColumnVacant: { display: 'none' },
     railSurface: { flex: 1, minHeight: 0 },
 }));

@@ -325,9 +325,15 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
   the design, not a touch-target number.
 - **Shell grid.** On the desktop, every column's title (a sidebar, a list column) and the page title sit
   on one title row: the centre of the pane band, level with the rail's first icon. A column title's
-  top margin equals its left margin. Each column's text edge (title, row glyphs) continues up to
-  the title strip, where the first control's glyph stands on it. Owners: `resolveHappierTitleRowInsetPx`
-  and the rail and strip metrics; no screen adds its own offset (owner, 2026-11-10).
+  top margin equals its left margin. A column title's capitals start on the line of the rail's first
+  icon's top; the row's glyphs stay centred (owner, 2026-11-11). A column's own rows (pinned views,
+  its destinations) stand under its title, never above it, and the first group after them keeps the
+  same group pause as every other group. A group label's mark and title are as big as its rows' and
+  its mark stands on their icon column. A pane band's title (a Session's) keeps the row, and its facts line
+  hangs beneath it. Each column's text edge (title, row glyphs) continues up to
+  the title strip, where the first control's glyph stands on it. Owners: `resolveHappierTitleRowInsetPx`,
+  `resolveHappierTitleRowTitleLiftPx` and the rail and strip metrics; no screen adds its own offset
+  (owner, 2026-11-10).
 - Align icons optically, not only mathematically; asymmetric symbols often need correction.
 - Keep icons and labels visually balanced and baseline-aligned.
 - Avoid creating every grouping as a rounded card. Use proximity, whitespace, headings, dividers, background regions, and elevation according to meaning.
@@ -400,9 +406,9 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
   floating surface that coat everywhere, on web and native: what lies under a light menu or Share card is ink (a black
   button, text, field edges), and through the hair its blur reads as a grey ghost on white glass
   (2026-10-31, intake #44; native, NATIVE-SWEEP M3 2026-11-10). Dark floating glass keeps its coats.
-  A native panel coat is the role's own surface paint, never the ink; native Liquid Glass takes that
-  paint as a translucent tint, never an opaque one, so what lies behind still shows. Native glass has no
-  backdrop tone, so a dark menu or bar paints no hair coat over it: clear glass with its rim (owner, 2026-11-10).
+  A native panel coat is the role's own surface paint, never the ink. Native Liquid Glass stays untinted,
+  as in 0.2 (a tint darkens it, an opaque one makes it a flat disc), and native glass has no backdrop tone,
+  so a dark menu or bar paints no hair coat over it: clear glass with its rim (owner, 2026-11-10).
   Custom glass values, Solid and Reduce Transparency apply to both roles unchanged. On glass with a picture or the live desktop behind it, faint (secondary) ink takes a
   stronger step, primary ink at 70%, so it holds about 3:1 over a bright sky; ordinary pages and
   unbacked glass keep the theme's secondary ink.
@@ -414,6 +420,10 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
 - Do not stack multiple light translucent surfaces until hierarchy and contrast collapse.
 - Larger or higher surfaces may use stronger separation than small controls.
 - Pair modal tasks with appropriate focus treatment; do not dim the world for parallel, non-blocking work.
+- **One scrim behind popovers and sheets (0.2's).** Where a popover, sheet or dialog sets the page back, it is a
+  light frost of the page under a very light dim (the theme's scrim ink at 8%), never a flat dark overlay; Reduce
+  Transparency, Blur Off and devices without a native blur keep the light dim alone (owner, 2026-11-10).
+  `FloatingScrim` is its one owner.
 - Material transitions should feel like the surface arrives and departs, not like arbitrary opacity toggles.
 - **One material recipe.** A surface is drawn by its role, not by hand: an ink border, one raised
   edge and a very low elevation (a hair of grounding, about 5% on light for controls) sized by how far

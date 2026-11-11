@@ -19,7 +19,7 @@ import { classifyAccountActorLabelV1 } from '@happier-dev/protocol/account/accou
 import { Item } from '@/components/ui/lists/Item';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
-import { resolveHappierCollectionListRowPadding } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_COLLECTION_ROW_METRICS, resolveHappierCollectionListRowPadding } from '@happier-dev/plugin-ui/presentation';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { ITEM_SUBTITLE_TEXT_METRICS, ITEM_TITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { Text } from '@/components/ui/text/Text';
@@ -31,6 +31,11 @@ import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 
 /** The protocol supplies at most three recent authors. */
 const AUTHOR_AVATAR_PX = 20;
+/**
+ * A column row's leading mark: the shared compact row's identity slot, as a Sessions row's, so a glyph stands on the
+ * section label's edge and the title on the column's one text edge (owner, 2026-11-11).
+ */
+const COLUMN_MARK_PX = HAPPIER_COLLECTION_ROW_METRICS.identity.compact.slotSize;
 
 const styles = StyleSheet.create((theme) => ({
     title: {
@@ -303,13 +308,14 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
             {...(column ? {
                 pressableStyle: selected ? [collectionListStyles.row, collectionListStyles.rowSelectedOnPlane] : collectionListStyles.row,
                 style: resolveHappierCollectionListRowPadding(0),
+                iconBoxSize: COLUMN_MARK_PX,
             } : {})}
             density="compact"
             showChevron={false}
             showDivider={false}
             {...(column ? { leftElement: <AvatarStack
                 testID={`session-discussion-row-recent-authors-${discussion.id}`}
-                size={AUTHOR_AVATAR_PX}
+                size={COLUMN_MARK_PX}
                 slot
                 entries={glyph ? [{ key: 'glyph', avatar: false, testID: `session-discussion-row-glyph-${discussion.id}`,
                     content: <Icon name={glyph} size={ICON_SIZE.sm} color={theme.colors.text.secondary} /> }]
@@ -318,7 +324,7 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
                     return {
                         key: accountId,
                         testID: `session-discussion-row-recent-author-${discussion.id}-${accountId}`,
-                        content: <Avatar id={avatar.id} imageUrl={avatar.imageUrl} size={AUTHOR_AVATAR_PX} />,
+                        content: <Avatar id={avatar.id} imageUrl={avatar.imageUrl} size={COLUMN_MARK_PX} />,
                     };
                 })}
             /> } : {
@@ -368,9 +374,9 @@ export function DiscussionRowSkeleton(props: Readonly<{ index: number; column?: 
             <Item
                 rowRole="item"
                 mode="info" density="compact" showChevron={false} showDivider={false}
-                {...(props.column ? { pressableStyle: collectionListStyles.row, style: resolveHappierCollectionListRowPadding(0), leftElement: <AvatarStack size={AUTHOR_AVATAR_PX} slot entries={[{
+                {...(props.column ? { pressableStyle: collectionListStyles.row, style: resolveHappierCollectionListRowPadding(0), iconBoxSize: COLUMN_MARK_PX, leftElement: <AvatarStack size={COLUMN_MARK_PX} slot entries={[{
                     key: 'author', avatar: false,
-                    content: <HappierSkeletonBlock color={color} width={AUTHOR_AVATAR_PX} height={AUTHOR_AVATAR_PX} radius={AUTHOR_AVATAR_PX / 2} reducedMotion={reducedMotion} />,
+                    content: <HappierSkeletonBlock color={color} width={COLUMN_MARK_PX} height={COLUMN_MARK_PX} radius={COLUMN_MARK_PX / 2} reducedMotion={reducedMotion} />,
                 }]} /> } : {
                     // The row's face slot, where its one author arrives.
                     icon: <HappierSkeletonBlock color={color} width={AUTHOR_AVATAR_PX} height={AUTHOR_AVATAR_PX} radius={AUTHOR_AVATAR_PX / 2} reducedMotion={reducedMotion} />,

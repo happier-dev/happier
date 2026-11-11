@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { CompactAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { SPLIT_CANVAS_DIVIDER_SIZE_PX } from '@/components/appShell/splitCanvas/components/SplitCanvasDivider';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { ChromeGlyph } from '@/components/ui/icons/chromeGlyphInk';
 import { DETAILS_TAB_STRIP_METRICS as M } from '@/components/appShell/panes/details/header/detailsTabHeaderMetrics';
 import { DOCUMENT_TAB_BAR_METRICS as B } from '@/components/ui/navigation/DocumentTabStrip';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
@@ -117,8 +118,8 @@ function WorkspaceSplitButton(props: Readonly<{ workspace: WorkspaceNavigationCo
             testID="workspace-split-right"
             variant="plain"
             size={28}
-            iconSize={M.actionGlyphPx}
-            iconName="square-split-horizontal"
+            // The strip's glyph ink, as the tabs' + and caret beside it.
+            icon={<ChromeGlyph name="square-split-horizontal" size={M.actionGlyphPx} />}
             // Half the strip's gap to All tabs before it; the segment's end padding after it.
             interactiveTargetEdgesPx={SPLIT_EDGES_PX}
             accessibilityLabel={t('workspaceBar.splitRight')}

@@ -430,7 +430,7 @@ export {
   type HappierPageBackPlacement,
   type HappierCollectionRailWidth,
 } from './layout/pageMetrics.js';
-export { HappierShellTitleRowContext, resolveHappierTitleRowInsetPx } from './layout/shellTitleRow.js';
+export { HAPPIER_SHELL_TITLE_ROW_GLYPH_PX, HappierShellTitleRowContext, resolveHappierTitleRowInsetPx, resolveHappierTitleRowTitleLiftPx } from './layout/shellTitleRow.js';
 export {
   HAPPIER_VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX,
   resolveHappierViewportClass,

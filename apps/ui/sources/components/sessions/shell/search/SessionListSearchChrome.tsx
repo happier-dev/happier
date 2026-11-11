@@ -255,7 +255,7 @@ export const SessionListSearchChrome = React.memo(function SessionListSearchChro
                 testID="session-list-search-primary-controls"
                 style={[styles.searchChromeControlsRow, props.presentation === 'runs' ? styles.searchChromeSummaryRow : null, navRow ? PHONE_TAB_TITLE_ROW_STYLE : null]}
             >
-                <View testID="session-list-title-slot" style={styles.searchChromeTitleSlot} onLayout={handleTitleSlotLayout}>
+                <View testID="session-list-title-slot" style={[styles.searchChromeTitleSlot, styles.searchChromeTitleSlotOnRow]} onLayout={handleTitleSlotLayout}>
                     {/* Beside its controls the title says how wide its whole name is. */}
                     <CollectionTitleNaturalWidthContext.Provider value={handleTitleNaturalWidth}>
                     {spaceChrome ? (

@@ -212,7 +212,7 @@ const PaneArrangementToggle = React.memo(function PaneArrangementToggle() {
             selected={editorFirst}
             tooltip={shortcut ? `${label} · ${shortcut}` : label}
             tooltipPlacement="bottom"
-            icon={<ChromeGlyph name="square-split-horizontal" size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX} active={editorFirst} />}
+            icon={<ChromeGlyph name="square-split-horizontal" size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX} />}
             onPress={toggle}
         />
     );

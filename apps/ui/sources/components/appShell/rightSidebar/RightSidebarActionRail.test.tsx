@@ -13,12 +13,6 @@ import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { storage } from '@/sync/domains/state/storage';
 import type { AppRailBadgeSignal } from '@/components/navigation/shell/appRail/AppRailBadge';
 import type { CustomModalShowConfig } from '@/modal';
-import { GlassSurface } from '@/components/ui/glass/GlassSurface';
-import { glassPresetMaterials } from '@/components/ui/glass/glassMaterial';
-import { resolveGlassPresentationVariables } from '@/components/ui/glass/glassDocumentPresentation';
-import { GlassRuntimeEnvironmentProvider } from '@/components/ui/glass/glassRuntimeEnvironment';
-import { GlassMaterialSettingsProvider } from '@/components/ui/glass/useGlassMaterialSettings';
-import { lightTheme } from '@/theme';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -285,90 +279,23 @@ describe('RightSidebarActionRail', () => {
         expect(preventDefault).toHaveBeenCalled();
         expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({ props: expect.objectContaining({ surfaceId: 'sessionRail' }) }));
     });
-    it('joins the active action to its open canvas panel as a tab, and keeps the edge marker everywhere else', async () => {
+    it('selects the open action as the app rail does, standing on one canvas coat with no tab or edge marker', async () => {
         const actions = [
             { id: 'info', label: 'Info', icon: 'info' as const, active: true, onPress: () => {} },
             { id: 'files', label: 'Files', icon: 'folder' as const, active: false, onPress: () => {} },
         ];
-        const rail = (panelAttached: boolean) => <PaneActionRailContext.Provider value={{ visible: true, contentWidthPx: 1200, onCanvas: true, panelAttached }}>
-            <RightSidebarActionRail surfaceId="sessionRail" testIDPrefix="rail" actions={actions} />
-        </PaneActionRailContext.Provider>;
-        const screen = await renderScreen(rail(true));
-        // The open panel and its action read as one object: the cell takes the panel's sheet, no marker.
-        expect(screen.findByTestId('rail:info:tab')).not.toBeNull();
-        expect(screen.findByTestId('rail:info:marker')).toBeNull();
-        expect(screen.findByTestId('rail:files:tab')).toBeNull();
-        // With the panel closed (or in the page sheet) the active action keeps its edge marker.
-        await screen.update(rail(false));
-        expect(screen.findByTestId('rail:info:tab')).toBeNull();
-        expect(screen.findByTestId('rail:info:marker')).not.toBeNull();
-    });
-
-    it('stands on the canvas the left rail stands on, and leaves that canvas out where its open panel tab is (R11-1/R11-2)', async () => {
-        const actions = [
-            { id: 'info', label: 'Info', icon: 'info' as const, active: true, onPress: () => {} },
-            { id: 'files', label: 'Files', icon: 'folder' as const, active: false, onPress: () => {} },
-        ];
-        const rail = (panelAttached: boolean) => <PaneActionRailContext.Provider value={{ visible: true, contentWidthPx: 1200, onCanvas: true, panelAttached }}>
-            <RightSidebarActionRail surfaceId="sessionRail" testIDPrefix="rail" actions={actions} />
-        </PaneActionRailContext.Provider>;
-        const coats = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAll(node => typeof node.props.testID === 'string'
-            && node.props.testID.startsWith('rail:canvas') && node.props.surfaceGroup !== undefined);
-        const screen = await renderScreen(rail(false));
-        // Panel closed: one canvas coat, the left rail's (chrome) plane, under the whole rail.
-        expect(coats(screen).map(node => [node.props.testID, node.props.surfaceGroup, node.props.plane])).toEqual([['rail:canvas', 'chrome', true]]);
-        // Panel open: the canvas is coated around the tab and its fillets only, so the tab lies on what the panel lies on.
-        await screen.update(rail(true));
-        const open = coats(screen);
-        expect(open.map(node => node.props.testID)).not.toContain('rail:canvas');
-        expect(open.length).toBeGreaterThan(1);
-        expect(new Set(open.map(node => `${node.props.surfaceGroup}:${node.props.plane}`))).toEqual(new Set(['chrome:true']));
-        const tab = screen.findByTestId('rail:info:tab')!;
-        expect(tab.findAll(node => node.props.testID === 'rail:canvas:beside')).not.toHaveLength(0);
-    });
-
-    it('paints the open panel\'s sheet under the desktop window\'s live material, never a cleared coat over the bare window (R6)', async () => {
-        // The desktop app: Auto glass over live native material. The session page's opaque coat contains the rail in
-        // React, but the rail and its panel stand in the shell's tail, beside that coat, so nothing of it lies behind them.
-        const environment = { desktopWindow: true, nativeWindowMaterialLive: true };
-        const settings = { glassSurfaceMaterials: glassPresetMaterials('auto') };
-        const actions = [{ id: 'info', label: 'Info', icon: 'info' as const, active: true, onPress: () => {} }];
-        const screen = await renderScreen(<GlassRuntimeEnvironmentProvider value={environment}>
-            <GlassMaterialSettingsProvider value={settings}>
-                <GlassSurface plane surfaceGroup="content" finishRole={null} atmosphereCoat="opaque">
-                    <PaneActionRailContext.Provider value={{ visible: true, contentWidthPx: 1200, onCanvas: true, panelAttached: true }}>
-                        <RightSidebarActionRail surfaceId="sessionRail" testIDPrefix="rail" actions={actions} />
-                    </PaneActionRailContext.Provider>
-                </GlassSurface>
-            </GlassMaterialSettingsProvider>
-        </GlassRuntimeEnvironmentProvider>);
-        const variables = resolveGlassPresentationVariables(settings, environment);
-        const alphaOf = (color: string) => {
-            const variable = color.match(/var\((--happier-glass-[a-z-]+?-opacity)\b/);
-            return variable ? parseFloat(variables[variable[1]!] ?? '100%') / 100 : 1;
-        };
-        const sheet = screen.findByTestId('rail:info:tab:sheet')!;
-        const paints = sheet.findAll(node => typeof node.type === 'string').map(node => Object.assign({}, ...[node.props.style].flat(Infinity).filter(Boolean)).backgroundColor)
-            .filter((color): color is string => typeof color === 'string' && color !== 'transparent');
-        // The panel's sheet is opaque surface.base (the docked panels paint it), so the tab is exactly that: no window shows through.
-        expect(1 - paints.reduce((clear, color) => clear * (1 - alphaOf(color)), 1)).toBe(1);
-        expect(paints).toContain(lightTheme.colors.surface.base);
-    });
-
-    it('coats the canvas outside the tab\'s rounded trailing corners, which only the bare desktop window would show (R6)', async () => {
-        const actions = [{ id: 'info', label: 'Info', icon: 'info' as const, active: true, onPress: () => {} }];
-        const screen = await renderScreen(<PaneActionRailContext.Provider value={{ visible: true, contentWidthPx: 1200, onCanvas: true, panelAttached: true }}>
+        const screen = await renderScreen(<PaneActionRailContext.Provider value={{ visible: true, contentWidthPx: 1200, onCanvas: true }}>
             <RightSidebarActionRail surfaceId="sessionRail" testIDPrefix="rail" actions={actions} />
         </PaneActionRailContext.Provider>);
-        const tab = screen.findByTestId('rail:info:tab')!;
-        // The tab rounds its trailing corners; the pixels outside each curve are canvas, not the window behind the app.
-        for (const [corner, at] of [['tr', '0% 100%'], ['br', '0% 0%']] as const) {
-            const coat = tab.find(node => node.props.testID === `rail:canvas:tab-${corner}`);
-            const style = Object.assign({}, ...[coat.props.style].flat(Infinity).filter(Boolean)) as Record<string, unknown>;
-            expect(style.maskImage, corner).toContain(`circle at ${at}`);
-            expect(coat.findAll(node => node.props.surfaceGroup === 'chrome' && node.props.plane === true), corner).not.toHaveLength(0);
-        }
-        expect(tab.findAll(node => node.props.testID === 'rail:canvas:tab-tl' || node.props.testID === 'rail:canvas:tab-bl')).toHaveLength(0);
+        // The app rail's selection: the translucent square drawn on the open action's surface, and on no other.
+        const selectedOf = (id: string) => Boolean(Object.assign({}, ...[screen.findByTestId(`rail:${id}-surface`)!.props.style]
+            .flat(Infinity).filter(Boolean)).backgroundColor);
+        expect([selectedOf('info'), selectedOf('files')]).toEqual([true, false]);
+        // No shape joins the open panel's sheet (a glass-on-glass join seams) and no 0.2 edge line.
+        expect(screen.findAll(node => typeof node.props.testID === 'string' && /^rail:info:(tab|marker)/.test(node.props.testID))).toHaveLength(0);
+        const coats = screen.findAll(node => typeof node.props.testID === 'string'
+            && node.props.testID.startsWith('rail:canvas') && node.props.surfaceGroup !== undefined);
+        expect(coats.map(node => [node.props.testID, node.props.surfaceGroup, node.props.plane])).toEqual([['rail:canvas', 'chrome', true]]);
     });
 
     it('separates the code, session and machine groups with one hairline each, keeping the given order', async () => {

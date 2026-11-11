@@ -25,7 +25,6 @@ import {
 } from './discussionComposerDocument';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import type { SessionDiscussionDraftMutationAttempt } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
-import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { SessionDraftMutateRequestV2Schema, SessionDraftMutateResponseV2Schema, type SessionDraftRecordV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 
@@ -39,6 +38,8 @@ import {
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { activateStorageAccountScope } from '@/dev/testkit/runtime/storageRuntime';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createExistingSessionComposerDocumentOwner } from '@/components/sessions/composer/existingSessionComposerDocumentOwner';
 import { registerSessionComposerPresentationTarget } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { getSessionDraftSnapshot, readSessionDiscussionSelectionSourceFromDraft, writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
@@ -113,21 +114,9 @@ const readParticipants = vi.hoisted(() => vi.fn());
 const transcriptProps = vi.hoisted(() => ({
   current: null as null | Record<string, unknown>,
 }));
+const repositoryLoadOlder = vi.hoisted(() => vi.fn());
 const observeVisibleMessageSeqs = vi.hoisted(() => vi.fn());
 const updateVisibleReadEligibility = vi.hoisted(() => vi.fn());
-const exactHomeBinding = vi.hoisted<{ current: ServerCredentialAccountScopeBinding }>(() => ({
-  current: {
-    serverId: 'server-a',
-    accountId: 'viewer',
-    scope: { serverId: 'server-a', accountId: 'viewer' },
-    revision: 1,
-    isCurrent: (): boolean => true,
-    onRetire: () => ({ dispose: () => undefined }),
-  },
-}));
-const exactHomeBindings = vi.hoisted(() => ({
-  current: new Map<string, typeof exactHomeBinding.current>(),
-}));
 const draftState = vi.hoisted(() => ({
   title: '',
   text: '',
@@ -166,7 +155,7 @@ const draftState = vi.hoisted(() => ({
       passage: draftState.passage ?? options?.passage,
     }),
   captureSubmittedCurrentness: vi.fn(() => ({
-    scope: { serverId: 'server-a', accountId: 'viewer' },
+    scope: { serverId: 'srv_discussion_selection_a', accountId: 'viewer' },
     address: { kind: 'newDiscussion' },
     currentness: { address: { kind: 'newDiscussion' }, mutationIds: {} },
   })),
@@ -181,7 +170,7 @@ const activity = vi.hoisted(() => ({
 }));
 function openedMessage(
   message: Omit<DiscussionOpenedMessageV1, 'messageRef'>,
-  serverId = 'server-a',
+  serverId = 'srv_discussion_selection_a',
 ): DiscussionOpenedMessageV1 {
   if (message.content === null)
     throw new Error('The committed fixture requires opened content');
@@ -339,10 +328,6 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 vi.mock('@/hooks/session/useSessionCollaborationAvailability', () => ({
   useSessionCollaborationAvailabilityState: () => 'available',
 }));
-vi.mock('@/sync/domains/scope/useServerCredentialAccountScopes', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/sync/domains/scope/useServerCredentialAccountScopes')>()),
-  useServerCredentialAccountScopeBindings: () => exactHomeBindings.current,
-}));
 vi.mock('@/hooks/session/useSessionAgentActivity', () => ({
   useSessionAgentActivityRoster: () => activity,
 }));
@@ -350,9 +335,11 @@ vi.mock('@/sync/ops/discussions/useDiscussionRepositorySnapshot', () => ({
   useDiscussionRepositorySnapshot: () => snapshot,
 }));
 vi.mock('@/sync/ops/discussions/discussionRepositoryRegistry', () => ({
-  getDiscussionRepository: (options: Record<string, unknown>) => {
+  getDiscussionRepository: (options: Parameters<typeof actualDiscussionRepositoryRegistry.getDiscussionRepository>[0]) => {
     repositoryOptions.current = options;
     return {
+      // Keep new repository decisions real instead of hand-copying internal predicates.
+      ...actualDiscussionRepositoryRegistry.getDiscussionRepository(options),
       scope: options.scope,
       mount: () => () => undefined,
       subscribe: () => () => undefined,
@@ -381,7 +368,7 @@ vi.mock('@/sync/ops/discussions/discussionRepositoryRegistry', () => ({
       restore: repositoryRestore,
       retry: repositoryRetry,
       acknowledgeObservedSuccess: vi.fn(),
-      loadOlderMessages: vi.fn(),
+      loadOlderMessages: repositoryLoadOlder,
     };
   },
 }));
@@ -492,12 +479,17 @@ vi.mock('@/hooks/session/useSessionExecutionRunLaunchability', async (importOrig
     launchUnavailableReason: launchability.current ? null : 'notEnabled',
     executionRunsBackends: {},
     executionRunsSupported: launchability.current,
-    sessionServerId: 'server-a',
+    sessionServerId: 'srv_discussion_selection_a',
   }),
 }));
 
-import { DiscussionDetailsView } from '@/components/discussions/DiscussionDetailsView';
+// Credential authority stays real; these fixtures replace Home HTTP, native storage and sockets.
+const selectionHomes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(selectionHomes);
+installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
+const actualDiscussionRepositoryRegistry = await vi.importActual<typeof import('@/sync/ops/discussions/discussionRepositoryRegistry')>('@/sync/ops/discussions/discussionRepositoryRegistry');
+const { DiscussionDetailsView } = await import('@/components/discussions/DiscussionDetailsView');
 let activeScope: Awaited<
   ReturnType<typeof activateStorageAccountScope>
 > | null = null;
@@ -505,10 +497,12 @@ const draftHomeCleanup: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
   setScreenSharingPrivacyActive(false);
   await standardCleanup();
+  actualDiscussionRepositoryRegistry.clearDiscussionRepositoryRegistryForTests();
   for (const dispose of draftHomeCleanup.splice(0).reverse()) await dispose();
   (await import('@/sync/api/capabilities/serverFeaturesClient')).resetServerFeaturesClientForTests();
   activeScope?.dispose();
   activeScope = null;
+  await selectionHomes.reset();
 });
 
 
@@ -596,10 +590,6 @@ async function prepareSelectionDraftHome(serverUrl = 'https://discussion-draft.t
   await storage.getState().activateSettingsScope(scope);
   storage.getState().clearSessionLocalStateScope();
   storage.getState().activateSessionLocalStateScope(scope);
-  const lifetime = (await import('@/sync/domains/scope/activeServerAccountScope')).captureActiveServerAccountScopeLifetime();
-  if (!lifetime) throw new Error('Signed Discussion Home must have an Account lifetime');
-  exactHomeBinding.current = { ...lifetime, serverId, accountId: scope.accountId, revision: 1 };
-  exactHomeBindings.current = new Map([[serverId, exactHomeBinding.current]]);
   session = createSessionFixture({ id: sessionId, serverId });
   shellSession.current = session;
   storage.setState({ sessions: { [sessionId]: session }, sessionListRowsByServerId: { [serverId]: { [sessionId]: session } } });
@@ -631,8 +621,14 @@ async function prepareSelectionDraftHome(serverUrl = 'https://discussion-draft.t
 describe('DiscussionDetailsView selection', () => {
   beforeEach(async () => {
     installBrowserClipboardBoundary(async value => { await clipboard(value); });
+    installHomeGovernanceBoundaries(selectionHomes);
+    // Saved Homes retain independent credential authority even when another Home is focused.
+    await selectionHomes.addHome({ name: 'Other Discussion Home', serverUrl: 'https://discussion-selection-b.test',
+      serverIdentityId: 'srv_discussion_selection_b', accountId: 'viewer-b', currentAccount: true, active: false });
+    await selectionHomes.addHome({ name: 'Discussion Home', serverUrl: 'https://discussion-selection-a.test',
+      serverIdentityId: 'srv_discussion_selection_a', accountId: 'viewer', currentAccount: true });
     activeScope = await activateStorageAccountScope(
-      { serverId: 'server-a', accountId: 'viewer' },
+      { serverId: 'srv_discussion_selection_a', accountId: 'viewer' },
       getStorage(),
     );
     const state = getStorage().getState();
@@ -684,7 +680,7 @@ describe('DiscussionDetailsView selection', () => {
     launchability.current = true;
     shellSession.current = createSessionFixture({
       id: 'session-a',
-      serverId: 'server-a',
+      serverId: 'srv_discussion_selection_a',
     });
     repositoryRename.mockClear();
     repositoryArchive.mockClear();
@@ -693,17 +689,6 @@ describe('DiscussionDetailsView selection', () => {
     dropdownProps.byKey.clear();
     composerProps.current = null;
     repositoryOptions.current = null;
-    const lifetime = (await import('@/sync/domains/scope/activeServerAccountScope')).captureActiveServerAccountScopeLifetime();
-    if (!lifetime) throw new Error('Discussion fixture Account lifetime is unavailable');
-    exactHomeBinding.current = {
-      ...lifetime,
-      serverId: 'server-a',
-      accountId: 'viewer',
-      revision: 1,
-    };
-    exactHomeBindings.current = new Map([
-      [exactHomeBinding.current.serverId, exactHomeBinding.current],
-    ]);
     draftState.title = '';
     draftState.text = '';
     draftState.mentions = [];
@@ -760,14 +745,14 @@ describe('DiscussionDetailsView selection', () => {
         };
         const target = {
           kind: 'discussion' as const,
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         };
         let workspace = createWorkspaceState({
           id: 'discussion-tab',
           target: {
             kind: 'discussions',
-            params: { discussionId: 'discussion-a', serverId: 'server-a' },
+            params: { discussionId: 'discussion-a', serverId: 'srv_discussion_selection_a' },
           },
           pinned: false,
           preview: false,
@@ -785,7 +770,7 @@ describe('DiscussionDetailsView selection', () => {
         const navigation = createWorkspaceNavigationAdapter({
           getState: () => workspace,
           getCatalog: () => catalog,
-          getScope: () => ({ serverId: 'server-a', accountId: 'viewer' }),
+          getScope: () => ({ serverId: 'srv_discussion_selection_a', accountId: 'viewer' }),
           dispatch: (action) => {
             workspace = reduceWorkspaceState(workspace, action);
           },
@@ -849,13 +834,13 @@ describe('DiscussionDetailsView selection', () => {
         expect(readOpen()).toBeUndefined();
         const source = createSessionFixture({
           id: 'session-a',
-          serverId: 'server-a',
+          serverId: 'srv_discussion_selection_a',
           metadata: { name: 'Release review', path: '/project', host: 'host' },
         });
         await act(async () => {
           getStorage().setState({
             sessionListRowsByServerId: {
-              'server-a': {
+              'srv_discussion_selection_a': {
                 'session-a': buildSessionListRenderableFromSession(source),
               },
             },
@@ -872,14 +857,14 @@ describe('DiscussionDetailsView selection', () => {
         expect(opened.pathname).toBe(
           '/session/session-a/message/server%3Acommitted%2Fanswer',
         );
-        expect(opened.searchParams.get('serverId')).toBe('server-a');
+        expect(opened.searchParams.get('serverId')).toBe('srv_discussion_selection_a');
         const activeTab =
           workspace.tabs[
             workspace.groups[workspace.focusedGroupId].activeTabId
           ];
         expect(activeTab.target.params).toMatchObject({
           id: 'session-a',
-          serverId: 'server-a',
+          serverId: 'srv_discussion_selection_a',
           messageId: 'server:committed/answer',
         });
         const retainedOpen = readOpen()!;
@@ -887,7 +872,7 @@ describe('DiscussionDetailsView selection', () => {
         await act(async () => {
           getStorage().setState({
             sessionListRowsByServerId: {
-              'server-a': {
+              'srv_discussion_selection_a': {
                 'session-a': buildSessionListRenderableFromSession({
                   ...source,
                   metadata: null,
@@ -907,11 +892,11 @@ describe('DiscussionDetailsView selection', () => {
         await act(async () => {
           getStorage().setState({
             sessionListRowsByServerId: {
-              'server-b': {
+              'srv_discussion_selection_b': {
                 'session-a': buildSessionListRenderableFromSession(
                   createSessionFixture({
                     id: 'session-a',
-                    serverId: 'server-b',
+                    serverId: 'srv_discussion_selection_b',
                     metadata: {
                       name: 'Other Home secret',
                       path: '/other',
@@ -933,17 +918,23 @@ describe('DiscussionDetailsView selection', () => {
         await act(async () => {
           getStorage().setState({
             sessionListRowsByServerId: {
-              'server-a': {
+              'srv_discussion_selection_a': {
                 'session-a': buildSessionListRenderableFromSession(source),
               },
             },
           });
         });
-        // Retiring the captured Account cannot turn a retained header callback into a new Account's navigation.
-        activeScope?.dispose();
-        activeScope = null;
+        // Retire actual credential authority; changing the focused Home does not retire an exact Home binding.
+        const openBeforeCredentialWithdrawal = readOpen()!;
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         await act(async () => {
-          readOpen()!();
+          await TokenStorage.removeCredentialsForServerUrl('https://discussion-selection-a.test', {
+            serverId: 'srv_discussion_selection_a',
+          });
+        });
+        expect(readOpen()).toBeUndefined();
+        await act(async () => {
+          openBeforeCredentialWithdrawal();
         });
         expect(committedHrefs).toEqual([]);
       } finally {
@@ -973,7 +964,7 @@ describe('DiscussionDetailsView selection', () => {
         <DiscussionDetailsView
           target={{
             kind: 'discussion',
-            address: { serverId: 'server-a' },
+            address: { serverId: 'srv_discussion_selection_a' },
             discussionId: 'discussion-a',
           }}
           active
@@ -999,13 +990,13 @@ describe('DiscussionDetailsView selection', () => {
   it.each([
     [
       'a new conversation',
-      { kind: 'new' as const, address: { serverId: 'server-a' } },
+      { kind: 'new' as const, address: { serverId: 'srv_discussion_selection_a' } },
     ],
     [
       'an existing conversation',
       {
         kind: 'discussion' as const,
-        address: { serverId: 'server-a' },
+        address: { serverId: 'srv_discussion_selection_a' },
         discussionId: 'discussion-a',
       },
     ],
@@ -1021,7 +1012,7 @@ describe('DiscussionDetailsView selection', () => {
 
   it('keeps a new Home Discussion usable when an optional source Session refuses input', async () => {
     draftState.text = 'Private draft I am still writing';
-    const target = { kind: 'new' as const, address: { serverId: 'server-a' } };
+    const target = { kind: 'new' as const, address: { serverId: 'srv_discussion_selection_a' } };
     const screen = await renderScreen(
       <DiscussionDetailsView target={target} active />,
     );
@@ -1030,7 +1021,7 @@ describe('DiscussionDetailsView selection', () => {
     // Known refusal from the exact Session's own access projection.
     shellSession.current = createSessionFixture({
       id: 'session-a',
-      serverId: 'server-a',
+      serverId: 'srv_discussion_selection_a',
       accessLevel: 'view',
     });
     await screen.update(<DiscussionDetailsView target={target} active />);
@@ -1047,7 +1038,7 @@ describe('DiscussionDetailsView selection', () => {
 
     shellSession.current = createSessionFixture({
       id: 'session-a',
-      serverId: 'server-a',
+      serverId: 'srv_discussion_selection_a',
       accessLevel: 'edit',
     });
     await screen.update(<DiscussionDetailsView target={target} active />);
@@ -1061,7 +1052,7 @@ describe('DiscussionDetailsView selection', () => {
     shellSession.current = null;
     const screen = await renderScreen(
       <DiscussionDetailsView
-        target={{ kind: 'new', address: { serverId: 'server-a' } }}
+        target={{ kind: 'new', address: { serverId: 'srv_discussion_selection_a' } }}
         active
       />,
     );
@@ -1082,7 +1073,7 @@ describe('DiscussionDetailsView selection', () => {
     };
     const target = {
       kind: 'discussion' as const,
-      address: { serverId: 'server-a' },
+      address: { serverId: 'srv_discussion_selection_a' },
       discussionId: 'discussion-a',
     };
     try {
@@ -1115,14 +1106,14 @@ describe('DiscussionDetailsView selection', () => {
 
   it('shows the captured Doc passage in the real Doc-origin new Discussion draft', async () => {
     draftState.passage = captureDocPassageV1({
-      ref: { kind: 'doc', artifactId: 'runbook', serverId: 'server-a' },
+      ref: { kind: 'doc', artifactId: 'runbook', serverId: 'srv_discussion_selection_a' },
       revision: { headerVersion: 2, bodyVersion: 4 },
       source: 'Repeated passage. Selected passage.',
       range: { start: 18, end: 35 },
     });
     const screen = await renderScreen(
       <DiscussionDetailsView
-        target={{ kind: 'new', address: { serverId: 'server-a' } }}
+        target={{ kind: 'new', address: { serverId: 'srv_discussion_selection_a' } }}
         active
       />,
     );
@@ -1140,7 +1131,7 @@ describe('DiscussionDetailsView selection', () => {
 
   it('shows the passage a thread is being re-attached to above its composer and lets the person drop it', async () => {
     draftState.passage = captureDocPassageV1({
-      ref: { kind: 'doc', artifactId: 'runbook', serverId: 'server-a' },
+      ref: { kind: 'doc', artifactId: 'runbook', serverId: 'srv_discussion_selection_a' },
       revision: { headerVersion: 2, bodyVersion: 5 },
       source: 'A reworded passage.',
       range: { start: 0, end: 19 },
@@ -1150,7 +1141,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -1169,7 +1160,7 @@ describe('DiscussionDetailsView selection', () => {
     const ref = {
       kind: 'doc' as const,
       artifactId: 'runbook',
-      serverId: 'server-a',
+      serverId: 'srv_discussion_selection_a',
     };
     const passage = captureDocPassageV1({
       ref,
@@ -1203,7 +1194,7 @@ describe('DiscussionDetailsView selection', () => {
         <DiscussionDetailsView
           target={{
             kind: 'discussion',
-            address: { serverId: 'server-a' },
+            address: { serverId: 'srv_discussion_selection_a' },
             discussionId: 'discussion-a',
           }}
           active
@@ -1307,15 +1298,6 @@ describe('DiscussionDetailsView selection', () => {
       docEditProposalDispositionV1: acceptedDecision.docEditProposalDispositionV1,
     }, serverId);
     snapshot.threads['discussion-a'].messages = [accepted];
-    exactHomeBinding.current = {
-      serverId,
-      accountId: 'viewer',
-      scope: { serverId, accountId: 'viewer' },
-      revision: 1,
-      isCurrent: () => true,
-      onRetire: () => ({ dispose: () => undefined }),
-    };
-    exactHomeBindings.current = new Map([[serverId, exactHomeBinding.current]]);
     getStorage().getState().deleteArtifact('runbook');
     expect(getStorage().getState().artifacts.runbook).toBeUndefined();
     try {
@@ -1360,7 +1342,7 @@ describe('DiscussionDetailsView selection', () => {
       const messages = snapshot.threads['discussion-a'].messages;
       const original = messages[0]!;
       const passage = captureDocPassageV1({
-        ref: { kind: 'doc', artifactId: 'runbook', serverId: 'server-a' },
+        ref: { kind: 'doc', artifactId: 'runbook', serverId: 'srv_discussion_selection_a' },
         revision: { headerVersion: 2, bodyVersion: 4 },
         source: 'The original passage.',
         range: { start: 0, end: 21 },
@@ -1392,7 +1374,7 @@ describe('DiscussionDetailsView selection', () => {
           <DiscussionDetailsView
             target={{
               kind: 'discussion',
-              address: { serverId: 'server-a' },
+              address: { serverId: 'srv_discussion_selection_a' },
               discussionId: 'discussion-a',
             }}
             active
@@ -1411,7 +1393,7 @@ describe('DiscussionDetailsView selection', () => {
   it('retains selected messages when its optional Session anchor disappears', async () => {
     const target = {
       kind: 'discussion' as const,
-      address: { serverId: 'server-a' },
+      address: { serverId: 'srv_discussion_selection_a' },
       discussionId: 'discussion-a',
     };
     const screen = await renderScreen(
@@ -1428,12 +1410,36 @@ describe('DiscussionDetailsView selection', () => {
     expect(pane.closeDetails).not.toHaveBeenCalled();
   });
 
+  it('starts a thread with more history on the transcript\'s shared Load older continuation', async () => {
+    const thread = snapshot.threads['discussion-a'] as { hasMoreOlder: boolean };
+    thread.hasMoreOlder = true;
+    try {
+      await renderScreen(
+        <DiscussionDetailsView
+          target={{
+            kind: 'discussion',
+            address: { serverId: 'srv_discussion_selection_a' },
+            discussionId: 'discussion-a',
+          }}
+          active
+        />,
+      );
+      // The thread's visual top (the list header on the desktop's oldest-first list) is its first item.
+      const top = await renderScreen(<>{transcriptProps.current?.header as React.ReactNode}</>);
+      expect(top.findByTestId('transcript.olderLoad.continue')).toBeTruthy();
+      await top.pressByTestIdAsync('transcript.olderLoad.continue.action');
+      expect(repositoryLoadOlder).toHaveBeenCalledWith('discussion-a');
+    } finally {
+      thread.hasMoreOlder = false;
+    }
+  });
+
   it('exposes the conversation title as the details heading', async () => {
     const screen = await renderScreen(
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -1463,7 +1469,7 @@ describe('DiscussionDetailsView selection', () => {
         <DiscussionDetailsView
           target={{
             kind: 'discussion',
-            address: { serverId: 'server-a' },
+            address: { serverId: 'srv_discussion_selection_a' },
             discussionId: 'discussion-a',
           }}
           active
@@ -1551,7 +1557,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -1575,7 +1581,7 @@ describe('DiscussionDetailsView selection', () => {
     expect(
       screen.findByTestId('session-discussion-rename-input')?.props.value,
     ).toBe('Still editing');
-    expect(screen.getTextContent()).toContain('Delivery unknown');
+    expect(screen.getTextContent()).toContain('Please try again');
     expect(screen.getTextContent()).not.toContain(
       'Conversations could not be loaded.',
     );
@@ -1599,23 +1605,14 @@ describe('DiscussionDetailsView selection', () => {
   });
 
   it('binds details repository lifetime to the exact Session Home rather than the active Home', async () => {
-    exactHomeBinding.current = {
-      serverId: 'server-b',
-      accountId: 'viewer-b',
-      scope: { serverId: 'server-b', accountId: 'viewer-b' },
-      revision: 4,
-      isCurrent: () => true,
-      onRetire: () => ({ dispose: () => undefined }),
-    };
-    exactHomeBindings.current = new Map([
-      [exactHomeBinding.current.serverId, exactHomeBinding.current],
-    ]);
-
+    const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
+    const exactHome = await resolveServerCredentialAccountScope('srv_discussion_selection_b');
+    if (exactHome.kind !== 'bound') throw new Error('The saved Discussion Home must have real credentials');
     await renderScreen(
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-b' },
+          address: { serverId: 'srv_discussion_selection_b' },
           discussionId: 'discussion-a',
         }}
         active
@@ -1624,18 +1621,24 @@ describe('DiscussionDetailsView selection', () => {
 
     expect(repositoryOptions.current).toEqual(
       expect.objectContaining({
-        scope: { serverId: 'server-b', accountId: 'viewer-b' },
-        address: { serverId: 'server-b' },
-        accountLifetime: exactHomeBinding.current,
+        scope: { serverId: 'srv_discussion_selection_b', accountId: 'viewer-b' },
+        address: { serverId: 'srv_discussion_selection_b' },
+        accountLifetime: expect.objectContaining({
+          scope: { serverId: 'srv_discussion_selection_b', accountId: 'viewer-b' },
+          credentialKey: exactHome.credentialKey,
+          isCurrent: expect.any(Function),
+          onRetire: expect.any(Function),
+        }),
       }),
     );
+    expect((repositoryOptions.current?.accountLifetime as { isCurrent(): boolean }).isCurrent()).toBe(true);
   });
 
   it('creates with an optional title derived from the first nonempty message line', async () => {
     draftState.text = '\n  Release status  \nPlease review';
     const screen = await renderScreen(
       <DiscussionDetailsView
-        target={{ kind: 'new', address: { serverId: 'server-a' } }}
+        target={{ kind: 'new', address: { serverId: 'srv_discussion_selection_a' } }}
         active
       />,
     );
@@ -1657,7 +1660,7 @@ describe('DiscussionDetailsView selection', () => {
     draftState.mentions = [{ start: 0, end: 5, accountId: 'account-a' }];
     const screen = await renderScreen(
       <DiscussionDetailsView
-        target={{ kind: 'new', address: { serverId: 'server-a' } }}
+        target={{ kind: 'new', address: { serverId: 'srv_discussion_selection_a' } }}
         active
       />,
     );
@@ -1697,7 +1700,7 @@ describe('DiscussionDetailsView selection', () => {
           runId: 'run-linked',
           launchOrigin: {
             kind: 'discussion',
-            serverId: 'server-a',
+            serverId: 'srv_discussion_selection_a',
             discussionId: 'discussion-a',
             messageIds: ['message-a'],
           },
@@ -1734,7 +1737,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -1763,7 +1766,7 @@ describe('DiscussionDetailsView selection', () => {
           runId: 'run-linked',
           launchOrigin: {
             kind: 'discussion',
-            serverId: 'server-a',
+            serverId: 'srv_discussion_selection_a',
             discussionId: 'discussion-a',
             messageIds: ['message-a'],
           },
@@ -1800,7 +1803,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -1832,7 +1835,7 @@ describe('DiscussionDetailsView selection', () => {
           initialInstructions: '**Session participant · Via Agent:**\n\nAgent result',
           source: expect.objectContaining({
             kind: 'discussion',
-            serverId: 'server-a',
+            serverId: 'srv_discussion_selection_a',
             discussionId: 'discussion-a',
             messageIds: ['message-agent'],
           }),
@@ -1847,7 +1850,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -1891,7 +1894,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -1916,7 +1919,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -1960,7 +1963,7 @@ describe('DiscussionDetailsView selection', () => {
           initialInstructions: '**Alice:**\n\nCheck this@Bob',
           source: expect.objectContaining({
             kind: 'discussion',
-            serverId: 'server-a',
+            serverId: 'srv_discussion_selection_a',
             discussionId: 'discussion-a',
             messageIds: ['message-a'],
             draftCorrelationId: expect.any(String),
@@ -1976,7 +1979,7 @@ describe('DiscussionDetailsView selection', () => {
     // Account owner speaking.
     const titled = createSessionFixture({
       id: 'session-a',
-      serverId: 'server-a',
+      serverId: 'srv_discussion_selection_a',
     });
     getStorage().setState({
       sessions: {
@@ -1990,7 +1993,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -2006,8 +2009,8 @@ describe('DiscussionDetailsView selection', () => {
     ).toBe('Via Agent');
 
     await act(async () => {
-      getStorage().getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { 'server-a': ['private'] } });
-      getStorage().getState().setSessionTagAssignmentsOptimistic('server-a', titled.id, ['private']);
+      getStorage().getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { 'srv_discussion_selection_a': ['private'] } });
+      getStorage().getState().setSessionTagAssignmentsOptimistic('srv_discussion_selection_a', titled.id, ['private']);
       setScreenSharingPrivacyActive(true);
     });
     expect(screen.findByTestId('session-discussion-message-actor-message-agent')?.props.children).toBe('Session participant');
@@ -2055,7 +2058,7 @@ describe('DiscussionDetailsView selection', () => {
         sessionId: 'session-a',
         runId: 'run-w',
         replyReturn: {
-          serverId: 'server-a',
+          serverId: 'srv_discussion_selection_a',
           requestLocalId: 'request-w',
           outcome: 'answer',
           workflow: round,
@@ -2086,7 +2089,7 @@ describe('DiscussionDetailsView selection', () => {
         <DiscussionDetailsView
           target={{
             kind: 'discussion',
-            address: { serverId: 'server-a' },
+            address: { serverId: 'srv_discussion_selection_a' },
             discussionId: 'discussion-a',
           }}
           active
@@ -2147,7 +2150,7 @@ describe('DiscussionDetailsView selection', () => {
         <DiscussionDetailsView
           target={{
             kind: 'discussion',
-            address: { serverId: 'server-a' },
+            address: { serverId: 'srv_discussion_selection_a' },
             discussionId: 'discussion-a',
           }}
           active
@@ -2212,7 +2215,7 @@ describe('DiscussionDetailsView selection', () => {
     );
     const participant = createSessionFixture({
       id: 'private-participant-session',
-      serverId: 'server-b',
+      serverId: 'srv_discussion_selection_b',
     });
     const namedParticipant = {
       ...participant,
@@ -2224,7 +2227,7 @@ describe('DiscussionDetailsView selection', () => {
         <DiscussionDetailsView
           target={{
             kind: 'discussion',
-            address: { serverId: 'server-a' },
+            address: { serverId: 'srv_discussion_selection_a' },
             discussionId: 'discussion-a',
           }}
           active
@@ -2261,8 +2264,8 @@ describe('DiscussionDetailsView selection', () => {
           sessions: {
             [participant.id]: namedParticipant,
           },
-          sessionListRowsByServerId: { 'server-a': {
-            [participant.id]: buildSessionListRenderableFromSession({ ...namedParticipant, serverId: 'server-a',
+          sessionListRowsByServerId: { 'srv_discussion_selection_a': {
+            [participant.id]: buildSessionListRenderableFromSession({ ...namedParticipant, serverId: 'srv_discussion_selection_a',
               metadata: { ...namedParticipant.metadata!, name: undefined, path: '/same-folder',
                 summary: { text: 'Review agent', updatedAt: 1 } } }),
           } },
@@ -2278,8 +2281,8 @@ describe('DiscussionDetailsView selection', () => {
           ),
       ).toBe(true);
       await act(async () => {
-        getStorage().getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { 'server-a': ['private'] } });
-        getStorage().getState().setSessionTagAssignmentsOptimistic('server-a', participant.id, ['private']);
+        getStorage().getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { 'srv_discussion_selection_a': ['private'] } });
+        getStorage().getState().setSessionTagAssignmentsOptimistic('srv_discussion_selection_a', participant.id, ['private']);
         setScreenSharingPrivacyActive(true);
       });
       expect(screen.findAllByType(MarkdownView).find(node => node.props.testID === 'session-discussion-message-content-message-session-mention')!
@@ -2375,7 +2378,7 @@ describe('DiscussionDetailsView selection', () => {
         <DiscussionDetailsView
           target={{
             kind: 'discussion',
-            address: { serverId: 'server-a' },
+            address: { serverId: 'srv_discussion_selection_a' },
             discussionId: 'discussion-a',
           }}
           active
@@ -2412,7 +2415,7 @@ describe('DiscussionDetailsView selection', () => {
         <DiscussionDetailsView
           target={{
             kind: 'discussion',
-            address: { serverId: 'server-a' },
+            address: { serverId: 'srv_discussion_selection_a' },
             discussionId: 'discussion-a',
           }}
           active
@@ -2456,7 +2459,7 @@ describe('DiscussionDetailsView selection', () => {
         <DiscussionDetailsView
           target={{
             kind: 'discussion',
-            address: { serverId: 'server-a' },
+            address: { serverId: 'srv_discussion_selection_a' },
             discussionId: 'discussion-a',
           }}
           active
@@ -2552,7 +2555,7 @@ describe('DiscussionDetailsView selection', () => {
     // The viewer's own signed-in profile, scoped to the exact Home the conversation lives on.
     const current = getStorage().getState().profile;
     getStorage().setState({
-      profileScope: { serverId: 'server-a', accountId: 'viewer' },
+      profileScope: { serverId: 'srv_discussion_selection_a', accountId: 'viewer' },
       profile: {
         ...current!,
         name: 'Maya Chen',
@@ -2570,7 +2573,7 @@ describe('DiscussionDetailsView selection', () => {
       content: { v: 1, parts: [{ t: 'text', text: 'Checklist reviewed' }] },
       mentionedAccountIds: [],
       draftSubmission: {
-        scope: { serverId: 'server-a', accountId: 'viewer' },
+        scope: { serverId: 'srv_discussion_selection_a', accountId: 'viewer' },
         address: { kind: 'discussion', discussionId: 'discussion-a' },
         currentness: { v: 1, fields: {} },
       },
@@ -2579,7 +2582,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -2601,7 +2604,7 @@ describe('DiscussionDetailsView selection', () => {
       content: { v: 1, parts: [{ t: 'text', text: 'Uncertain message' }] },
       mentionedAccountIds: [],
       draftSubmission: {
-        scope: { serverId: 'server-a', accountId: 'viewer' },
+        scope: { serverId: 'srv_discussion_selection_a', accountId: 'viewer' },
         address: { kind: 'discussion', discussionId: 'discussion-a' },
         currentness: { v: 1, fields: {} },
       },
@@ -2610,7 +2613,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -2652,7 +2655,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -2698,7 +2701,7 @@ describe('DiscussionDetailsView selection', () => {
     });
     const session = createSessionFixture({
       id: 'review-session',
-      serverId: 'server-a',
+      serverId: 'srv_discussion_selection_a',
     });
     getStorage().setState({
       sessions: {
@@ -2713,7 +2716,7 @@ describe('DiscussionDetailsView selection', () => {
         <DiscussionDetailsView
           target={{
             kind: 'discussion',
-            address: { serverId: 'server-a' },
+            address: { serverId: 'srv_discussion_selection_a' },
             discussionId: 'discussion-a',
           }}
           active
@@ -2744,7 +2747,7 @@ describe('DiscussionDetailsView selection', () => {
         run!.props.onLinkPress({ url: 'happier-ref:session:review-session' });
       });
       expect(routerPush).toHaveBeenCalledWith(
-        '/session/review-session?serverId=server-a',
+        '/session/review-session?serverId=srv_discussion_selection_a',
       );
       await selectMessage(screen, 'message-a');
       await press(screen, 'transcript-selection-copy');
@@ -2762,7 +2765,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -2787,7 +2790,7 @@ describe('DiscussionDetailsView selection', () => {
         <DiscussionDetailsView
           target={{
             kind: 'discussion',
-            address: { serverId: 'server-a' },
+            address: { serverId: 'srv_discussion_selection_a' },
             discussionId: 'discussion-a',
           }}
           active
@@ -2824,7 +2827,7 @@ describe('DiscussionDetailsView selection', () => {
           <DiscussionDetailsView
             target={{
               kind: 'discussion',
-              address: { serverId: 'server-a' },
+              address: { serverId: 'srv_discussion_selection_a' },
               discussionId: 'discussion-a',
             }}
             active
@@ -2861,7 +2864,7 @@ describe('DiscussionDetailsView selection', () => {
       try {
         const screen = await renderScreen(
           <DiscussionDetailsView
-            target={{ kind: 'discussion', address: { serverId: 'server-a' }, discussionId: 'discussion-a' }}
+            target={{ kind: 'discussion', address: { serverId: 'srv_discussion_selection_a' }, discussionId: 'discussion-a' }}
             active
           />,
         );
@@ -2900,7 +2903,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -2928,7 +2931,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -2963,7 +2966,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -2985,7 +2988,7 @@ describe('DiscussionDetailsView selection', () => {
       content: { v: 1, parts: [{ t: 'text', text: 'Optimistic' }] },
       mentionedAccountIds: [],
       draftSubmission: {
-        scope: { serverId: 'server-a', accountId: 'viewer' },
+        scope: { serverId: 'srv_discussion_selection_a', accountId: 'viewer' },
         address: { kind: 'discussion', discussionId: 'discussion-a' },
         currentness: {
           address: { kind: 'discussion', discussionId: 'discussion-a' },
@@ -2997,7 +3000,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -3034,7 +3037,7 @@ describe('DiscussionDetailsView selection', () => {
     snapshot.threads['discussion-a'].summary.lastReadSeq = 0;
     const target = {
       kind: 'discussion' as const,
-      address: { serverId: 'server-a' },
+      address: { serverId: 'srv_discussion_selection_a' },
       discussionId: 'discussion-a',
     };
     const screen = await renderScreen(
@@ -3063,7 +3066,7 @@ describe('DiscussionDetailsView selection', () => {
         <DiscussionDetailsView
           target={{
             kind: 'discussion',
-            address: { serverId: 'server-a' },
+            address: { serverId: 'srv_discussion_selection_a' },
             discussionId: 'discussion-a',
           }}
           active
@@ -3095,7 +3098,7 @@ describe('DiscussionDetailsView selection', () => {
         <DiscussionDetailsView
           target={{
             kind: 'discussion',
-            address: { serverId: 'server-a' },
+            address: { serverId: 'srv_discussion_selection_a' },
             discussionId: 'discussion-a',
           }}
           active
@@ -3116,7 +3119,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -3141,7 +3144,7 @@ describe('DiscussionDetailsView selection', () => {
       content: { v: 1, parts: [{ t: 'text', text: 'Refused message' }] },
       mentionedAccountIds: [],
       draftSubmission: {
-        scope: { serverId: 'server-a', accountId: 'viewer' },
+        scope: { serverId: 'srv_discussion_selection_a', accountId: 'viewer' },
         address: { kind: 'discussion', discussionId: 'discussion-a' },
         currentness: {
           address: { kind: 'discussion', discussionId: 'discussion-a' },
@@ -3158,7 +3161,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -3186,7 +3189,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -3212,7 +3215,7 @@ describe('DiscussionDetailsView selection', () => {
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId: 'srv_discussion_selection_a' },
           discussionId: 'discussion-a',
         }}
         active
@@ -3253,7 +3256,7 @@ describe('DiscussionDetailsView selection', () => {
       },
       mentionedAccountIds: [],
       draftSubmission: {
-        scope: { serverId: 'server-a', accountId: 'viewer' },
+        scope: { serverId: 'srv_discussion_selection_a', accountId: 'viewer' },
         address: { kind: 'newDiscussion' },
         currentness: { address: { kind: 'newDiscussion' }, mutationIds: {} },
       },
@@ -3261,7 +3264,7 @@ describe('DiscussionDetailsView selection', () => {
     draftState.text = 'Refused opener';
     const screen = await renderScreen(
       <DiscussionDetailsView
-        target={{ kind: 'new', address: { serverId: 'server-a' } }}
+        target={{ kind: 'new', address: { serverId: 'srv_discussion_selection_a' } }}
         active
       />,
     );
@@ -3292,7 +3295,7 @@ describe('DiscussionDetailsView selection', () => {
     deviceType.current = 'phone';
     const screen = await renderScreen(
       <DiscussionDetailsView
-        target={{ kind: 'discussion', address: { serverId: 'server-a' }, discussionId: 'discussion-a' }}
+        target={{ kind: 'discussion', address: { serverId: 'srv_discussion_selection_a' }, discussionId: 'discussion-a' }}
         active
       />,
     );
@@ -3302,7 +3305,7 @@ describe('DiscussionDetailsView selection', () => {
     expect(pane.openDetailsTab).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'executionRunLauncher',
       resource: expect.objectContaining({ kind: 'executionRunLauncher', mode: 'conversation',
-        source: { kind: 'discussion', serverId: 'server-a', discussionId: 'discussion-a',
+        source: { kind: 'discussion', serverId: 'srv_discussion_selection_a', discussionId: 'discussion-a',
           messageIds: ['message-a'], draftCorrelationId: expect.any(String) },
       }),
     }), { intent: 'preview', start: true });

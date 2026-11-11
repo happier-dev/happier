@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { DiscussionOpenedSummaryV1 } from '@happier-dev/protocol/discussions/actions';
+import { HAPPIER_COLLECTION_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { describe, expect, it } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
@@ -38,7 +39,7 @@ function discussionFixture(): DiscussionOpenedSummaryV1 {
 }
 
 describe('DiscussionRow presentation', () => {
-    it('gives a glyph, one face and two faces the one leading slot, so every title in the column starts on one edge', async () => {
+    it('gives a glyph, one face and two faces the Session rows\' leading slot, so every title in the column starts on their edge', async () => {
         const base = discussionFixture();
         const actor = (accountId: string) => ({ ...base.latestMessage.accountActor!, accountId });
         const rows: readonly DiscussionOpenedSummaryV1[] = [
@@ -54,7 +55,8 @@ describe('DiscussionRow presentation', () => {
                 .reduce((width: unknown, style: { width?: unknown }) => style.width ?? width, undefined));
             await screen.unmount();
         }
-        expect(widths).toEqual([20, 20, 20]);
+        const slot = HAPPIER_COLLECTION_ROW_METRICS.identity.compact.slotSize;
+        expect(widths).toEqual([slot, slot, slot]);
     });
 
     it('caps the unread badge while announcing the complete count', async () => {

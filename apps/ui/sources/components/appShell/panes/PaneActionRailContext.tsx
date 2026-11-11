@@ -11,13 +11,6 @@ export const PaneActionRailContext = React.createContext<Readonly<{
     mirrored?: boolean;
     /** The rail stands on the shell's canvas beside the page sheet (every right-panel placement on the web shell, R11-1). */
     onCanvas?: boolean;
-    /** On the canvas with the side panel docked open beside the rail: its active action is that panel's tab. */
-    panelAttached?: boolean;
-    /**
-     * The rail reports when the attached panel's tab is its first action: that tab continues the top edge of
-     * the panel's sheet (its own, or the page it joins), so that sheet squares its top trailing corner into it.
-     */
-    onPanelTabAtTop?: (atTop: boolean) => void;
     /** The rail has nothing standing on it: where a home for its More exists, its host gives its column back to the page. */
     onVacantChange?: (vacant: boolean) => void;
     /** The focused page's home for a vacant rail's More; absent, the rail keeps its column and its More. */

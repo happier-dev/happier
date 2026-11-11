@@ -42,6 +42,8 @@ import { TranscriptSelectionToolbar, type TranscriptSelectionToolbarAction, type
 import { createWebDomScrollObservation } from '@/components/sessions/transcript/viewport/driver/webDomObservation';
 import { PaneHeaderScrollScope } from '@/components/appShell/panes/paneHeaderScroll';
 import { TranscriptListShell, type TranscriptListShellRef } from '@/components/sessions/transcript/viewport/shell/TranscriptListShell';
+import { OlderLoadContinuationBanner } from '@/components/sessions/transcript/OlderLoadContinuationOverlay';
+import { TRANSCRIPT_TOP_GUTTER_PX } from '@/components/sessions/transcript/_constants';
 import { resolveTranscriptListShellEdgeSlots } from '@/components/sessions/transcript/viewport/shell/transcriptListShellEdgeSlots';
 import type { TranscriptListShellFrame } from '@/components/sessions/transcript/viewport/shell/transcriptListShellCapabilities';
 import { resolveConversationTranscriptListShellFrame } from '@/components/sessions/transcript/viewport/shell/transcriptListShellCapabilities';
@@ -76,7 +78,8 @@ import { DiscussionPatternCapturePanel, type DiscussionPatternCaptureMessage } f
 import type { DiscussionParticipantRefV1 } from '@happier-dev/protocol/discussions/references';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { SaveMemoryDecisionSheet, seedMemoryDecisionFromMessage } from '@/components/memory/SaveMemoryDecisionSheet';
+import { SaveMemoryDecisionSheet } from '@/components/memory/SaveMemoryDecisionSheet';
+import { seedMemoryDecisionFromMessage } from '@/components/memory/memoryDecisionSeed';
 import { DiscussionMessageMenu, type DiscussionMessageMenuItemId } from './DiscussionMessageMenu';
 import { DiscussionCheckInBanner } from './DiscussionCheckInBanner';
 import { DiscussionReplySendToSession } from './DiscussionReplySendToSession';
@@ -174,6 +177,10 @@ const styles = StyleSheet.create((theme) => ({
     headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },
     headerMeta: {  flexShrink: 1, color: theme.colors.text.secondary, ...Typography.variant('body') },
     messages: { flex: 1, minHeight: 0 },
+    // The list's edge slot lays its content in a row; the thread's lines stand in a full-width column on its centre.
+    threadEdge: { width: '100%' },
+    // The thread's first item stands the transcript's top gutter clear of the header band, as a Session's does.
+    threadFirst: { paddingTop: TRANSCRIPT_TOP_GUTTER_PX },
     // A thread that could not be read has no list to host its state: it sits in the middle of the column, header and composer kept.
     readFailure: { flex: 1, justifyContent: 'center' },
     // A speaker mark stands on its own in the avatar's square (identity marks take no tile).
@@ -1399,13 +1406,16 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
                     // On a phone the list runs newest-first: the edge-slot owner puts the composer's clearance
                     // at the visual bottom and Load older at the top, as a Session's transcript does.
                     {...transcriptEdgeSlotProps(frame,
-                        thread.hasMoreOlder || managedRuns.phase === 'failed' ? <>{thread.hasMoreOlder ? <HappierPressable style={styles.retry} accessibilityRole="button" accessibilityLabel={t('session.collaboration.discussion.loadOlder')} onPress={() => void repository.loadOlderMessages(props.target.discussionId)}><Text style={styles.retryText}>{t('session.collaboration.discussion.loadOlder')}</Text></HappierPressable> : null}
+                        thread.hasMoreOlder || managedRuns.phase === 'failed' ? <View style={styles.threadEdge}>{thread.hasMoreOlder ? <View style={[styles.stateLine, threadColumn, styles.threadFirst]}>
+                            {/* The thread's first item, on its column: the transcript's one Load older continuation. */}
+                            <OlderLoadContinuationBanner onContinue={() => void repository.loadOlderMessages(props.target.discussionId)} />
+                        </View> : null}
                         {managedRuns.phase === 'failed' ? <View style={threadColumn}><SurfaceStateCard
                             testID="session-discussion-workflow-runs-state" size="line" kind="unavailable"
                             title={t('workflows.destination.history.loadFailedTitle')}
                             reason={t('workflows.destination.history.loadFailedBody')}
                             action={{ label: t('session.collaboration.discussion.retry'), onPress: managedRuns.retry }}
-                        /></View> : null}</> : null,
+                        /></View> : null}</View> : null,
                     // While the messages are still on their way the header and composer stay and the thread shows
                     // its loading rows (lab T2-ST "Loading"), never an empty claim it hasn't checked.
                         <>{waitingApprovalCard}{items.length === 0 ? thread.status === 'loading'
@@ -1612,7 +1622,6 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
     const selectRevealed = shouldShowTranscriptRowActions({
         platformOS: Platform.OS,
         isRowHovered: hover.isHovered,
-        isActionHovered: false,
         coarsePrimaryPointer: useCoarsePrimaryPointer(),
         selectionModeActive: selection.isSelectionMode,
     });

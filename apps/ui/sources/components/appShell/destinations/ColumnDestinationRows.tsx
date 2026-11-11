@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { useDestinationPathname } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { Platform, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -38,6 +39,9 @@ const stylesheet = StyleSheet.create(() => ({
     // plane the column paints (`appShellColumnSurface`), so the column reads as one surface.
     column: {
         marginTop: -(Platform.select(ITEM_GROUP_HEADER_NO_TITLE_PADDING_TOP_PX) ?? 0) + 8,
+        // The column's own rows are a group: the list's first group label after them keeps its air under the
+        // header and gains this, so it stands the same group pause below them as every other group (owner 11-11).
+        marginBottom: HAPPIER_COLLECTION_LIST_METRICS.groupLabelPaddingTop - HAPPIER_COLLECTION_LIST_METRICS.groupLabelFirstPaddingTop,
     },
 }));
 

@@ -16,6 +16,7 @@ import { ESCAPE_LAYER_PRIORITIES } from '@/keyboard/escape';
 import { t } from '@/text';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+import { resolvePaneSurfaceMaterial } from './paneSurfaceMaterial';
 import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
 import { RetainedPanelSurface } from './RetainedPanelSurface';
 import { DEFAULT_DETAILS_MIN_PX, DEFAULT_RIGHT_MIN_PX, DEFAULT_SESSION_MIN_PX, DEFAULT_SESSION_WIDTH_PX } from './paneBreakpoints';
@@ -109,8 +110,6 @@ export type MultiPaneHostProps = Readonly<{
      * screen. The column keeps one mounted instance whichever place it stands in.
      */
     rightTail?: Readonly<{ host: HTMLElement | null; hidden: boolean }>;
-    /** On the canvas, the rail's tab for this panel is its first action and continues the panel's top edge. */
-    rightJoinsTopTab?: boolean;
     /** How the docked right panel, joined to the page, is divided from it (R11-3); a hairline by default. */
     rightDivider?: AppShellPanelDivider;
 }>;
@@ -481,7 +480,6 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     mirrored={mirrored}
                     onCanvas={side && rightOnCanvas}
                     divider={props.rightDivider ?? 'line'}
-                    joinsTopTab={side && rightOnCanvas && props.rightJoinsTopTab === true}
                     presentation={inMain ? (mainVisible ? 'main' : 'hidden') : side ? layout.right : 'hidden'}
                     modalActive={side && rightModalActive}
                     progress={inMain && props.rightSurfaces !== undefined ? settledMainProgress : rightPresence.progress}
@@ -539,7 +537,6 @@ function MaybeTailSlot(props: Readonly<{
     return <AppShellTailSlot host={props.host} hidden={props.tail?.hidden}>{props.children}</AppShellTailSlot>;
 }
 
-const JOINED_TOP_CORNER = ['tr'] as const;
 /** The header's shade depth (`PaneHeaderShade`), turned on its side: the joined panel casts its own softer shade this far. */
 const JOINED_PANEL_SHADE_PX = 14;
 
@@ -571,7 +568,7 @@ const CANVAS_PANEL_SHEET_STYLE = {
  * width as it opens, closes and resizes): the gap strip, the inset strip and the cutouts outside the
  * sheet's corners, each coated once with the navigation plane and never behind the sheet itself.
  */
-const CanvasPanelBacking = React.memo(function CanvasPanelBacking(props: Readonly<{ joinsTopTab: boolean }>) {
+const CanvasPanelBacking = React.memo(function CanvasPanelBacking() {
     const coat = useAppShellCanvasCoat();
     return <>
         <AppShellMaterialPlane pointerEvents="none" testID="multi-pane-canvas-gap" group={coat.group} color={coat.color} translucentColor={coat.translucentColor}
@@ -579,7 +576,7 @@ const CanvasPanelBacking = React.memo(function CanvasPanelBacking(props: Readonl
         <AppShellMaterialPlane pointerEvents="none" testID="multi-pane-canvas-inset" group={coat.group} color={coat.color} translucentColor={coat.translucentColor}
             style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: APP_SHELL_SHEET_INSET_PX }} />
         <AppShellSheetCorners testIDPrefix="multi-pane-canvas-corner" leading={coat} trailing={coat}
-            inset={{ bottom: APP_SHELL_SHEET_INSET_PX }} omit={props.joinsTopTab ? JOINED_TOP_CORNER : undefined} />
+            inset={{ bottom: APP_SHELL_SHEET_INSET_PX }} />
     </>;
 });
 
@@ -591,8 +588,6 @@ function PaneColumn(props: Readonly<{
      * rounded corners and no hairline (owner F3).
      */
     onCanvas?: boolean;
-    /** Its top trailing corner continues into the rail's first-action tab, so it is square. */
-    joinsTopTab?: boolean;
     /** Joined to the page (not on the canvas): its edge against the page is a hairline, or the shade beside it draws it. */
     divider?: AppShellPanelDivider;
     flexible?: boolean;
@@ -768,17 +763,16 @@ function PaneColumn(props: Readonly<{
                         style={{ flex: 1, minHeight: 0, minWidth: 0 }}
                     >
                         {/* Docked and in the column the pane is page; over the page it is a sheet that floats (DESIGN.md →
-                            "Flat edge in flow; the rim only for what floats"): the floating paint, finish and rim. It keeps the
-                            content material, so a transcript read in it stays as legible as in the column (lab FB1). */}
-                        {props.onCanvas ? <CanvasPanelBacking joinsTopTab={props.joinsTopTab === true} /> : null}
+                            "Flat edge in flow; the rim only for what floats"): the floating paint, finish and rim, in the
+                            floating panel material dialogs and large anchored panels use, whose heavy coat keeps a
+                            transcript in it legible over the page (owner 2026-11-11 desktop #12: the overlay was opaque). */}
+                        {props.onCanvas ? <CanvasPanelBacking /> : null}
                         {/* A canvas panel stands beside the page coat; a joined panel inherits it. Both use the
                             existing content material, including the user's chosen opacity and blur. */}
-                        <GlassSurface surfaceGroup="content"
-                            solidColor={overlay ? theme.colors.edge.floatingFill : theme.colors.surface.base}
+                        <GlassSurface {...resolvePaneSurfaceMaterial(overlay, theme.colors)}
                             finishRole={overlay ? 'floating' : null} nested={inMain || (docked && !props.onCanvas)} style={{
                             flex: 1, minHeight: 0, minWidth: 0,
                             ...(props.onCanvas ? CANVAS_PANEL_SHEET_STYLE : null),
-                            ...(props.onCanvas && props.joinsTopTab ? { borderTopRightRadius: 0 } : null),
                             ...(overlay ? (props.mirrored
                                 ? { borderTopRightRadius: PANE_OVERLAY_CORNER_RADIUS_PX, borderBottomRightRadius: PANE_OVERLAY_CORNER_RADIUS_PX }
                                 : { borderTopLeftRadius: PANE_OVERLAY_CORNER_RADIUS_PX, borderBottomLeftRadius: PANE_OVERLAY_CORNER_RADIUS_PX }) : null),

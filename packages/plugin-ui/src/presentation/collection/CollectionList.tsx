@@ -3,7 +3,7 @@ import { Platform, View, type ViewStyle } from 'react-native';
 
 import { useHappierPageSection } from '../layout/PageSection.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
-import { resolveHappierTitleRowInsetPx } from '../layout/shellTitleRow.js';
+import { resolveHappierTitleRowInsetPx, resolveHappierTitleRowTitleLiftPx } from '../layout/shellTitleRow.js';
 import { HAPPIER_MENU_ROW_METRICS } from '../interaction/Menu.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { useHappierPrecisePointer } from '../interaction/precisePointer.js';
@@ -256,6 +256,11 @@ export const HAPPIER_COLLECTION_LIST_METRICS = Object.freeze({
    * the rail's first icon and the page title, so the title's top margin matches its left one (`contentInset`).
    */
   headerPaddingTop: resolveHappierTitleRowInsetPx(COLUMN_TITLE_ROW_HEIGHT_PX),
+  /**
+   * How far the title (and its count and chevron) rises on that row, so its capitals start on the line of the
+   * rail's first icon. A phone column has no rail beside it.
+   */
+  titleLift: PHONE_COLUMN ? 0 : resolveHappierTitleRowTitleLiftPx(collectionTextStep('heading').fontSize),
   /** Header → search field, and the field → the first row. */
   headerGap: 4,
   /**
@@ -270,6 +275,11 @@ export const HAPPIER_COLLECTION_LIST_METRICS = Object.freeze({
   groupLabelPaddingBottom: 0,
   /** A label directly under the header needs less air. */
   groupLabelFirstPaddingTop: 4,
+  /**
+   * A group label's mark glyph: in a column the rows' own glyph size, so the mark fills its box on the rows' icon
+   * column and reads as big as theirs (owner, 2026-11-11: My work's Needs you).
+   */
+  groupLabelMarkGlyph: PHONE_COLUMN ? 13 : 16,
   /** The box an identity mark sits in, so names align whatever the mark's shape. */
   markSize: 28,
   troubleDotSize: 6,
@@ -296,8 +306,9 @@ export const HAPPIER_COLLECTION_LIST_TEXT: Readonly<Record<HappierCollectionList
   count: collectionTextStep('body'),
   // The line under the title (whose list, who sees it): the quiet body step.
   subtitle: collectionTextStep('body'),
-  // A navigation column's group label is quiet (lab `clflat` `.ls-h`): medium, so the rows under it lead.
-  groupTitle: collectionTextStep('meta', 'medium'),
+  // A navigation column's group label is quiet by weight and ink (lab `clflat` `.ls-h`), at its rows' size: a
+  // smaller label read as a stray caption (owner, 2026-11-11). A phone column keeps its step.
+  groupTitle: PHONE_COLUMN ? collectionTextStep('meta', 'medium') : collectionTextStep('body', 'medium'),
   // On a phone a list is the whole screen, so its group labels are section labels (phone-system lab D4): the
   // heading role, as a Settings section title. Hosts select it with the touch-compact row decision.
   groupTitleTouch: collectionTextStep('heading'),
@@ -448,7 +459,7 @@ const headerStyle: ViewStyle = {
 const headerActionStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center' };
 // The search toggle and the header action are one trailing cluster, so the magnifier never floats mid-row.
 const headerTrailingStyle: ViewStyle = { flexDirection: 'row', alignItems: 'center', gap: M.headerActionGap, flexShrink: 0 };
-const headingStyle: ViewStyle = { flexDirection: 'row', alignItems: 'baseline', gap: 8, flexShrink: 1 };
+const headingStyle: ViewStyle = { flexDirection: 'row', alignItems: 'baseline', gap: 8, flexShrink: 1, ...(M.titleLift > 0 ? { transform: [{ translateY: -M.titleLift }] } : null) };
 // With a control beside it the heading takes the row's free width, so its measured width is the title's room.
 const headingWithAccessoryStyle: ViewStyle = { flexGrow: 1, flexBasis: 0, minWidth: 0 };
 const titleAccessoryStyle: ViewStyle = { marginLeft: 8 };

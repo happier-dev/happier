@@ -1,6 +1,4 @@
-import { HAPPIER_COLLECTION_LIST_METRICS, resolveHappierTitleRowInsetPx } from '@happier-dev/plugin-ui/presentation';
-
-import { ICON_SIZE } from '@/components/ui/icons/Icon';
+import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_SHELL_TITLE_ROW_GLYPH_PX, resolveHappierTitleRowInsetPx } from '@happier-dev/plugin-ui/presentation';
 
 import {
     DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX,
@@ -11,8 +9,11 @@ import {
  * Geometry of the app rail (lab `xrail-R1`, measured: rail 56 wide, items 36 centred on x 28).
  */
 export const APP_RAIL_WIDTH_PX = 56;
-/** Every rail glyph's size, in the same 36 box: destinations, More, Usage, Machines, Updates, Settings. */
-export const APP_RAIL_ICON_GLYPH_SIZE_PX = ICON_SIZE.md;
+/**
+ * Every rail glyph's size, in the same 36 box: destinations, More, Usage, Machines, Updates, Settings. It is the title
+ * row's glyph, whose ink top the column titles start on.
+ */
+export const APP_RAIL_ICON_GLYPH_SIZE_PX = HAPPIER_SHELL_TITLE_ROW_GLYPH_PX;
 /** The visible square of a rail icon button. */
 export const APP_RAIL_ITEM_SIZE_PX = 36;
 /** One rail row: the button plus the gap to the next. The plugin group's overflow counts in these. */

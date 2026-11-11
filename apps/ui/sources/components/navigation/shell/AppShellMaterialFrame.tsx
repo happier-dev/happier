@@ -127,7 +127,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         overflow: 'hidden',
     },
     /** A joined right panel's first-action tab continues the page's top edge (R11-2): that corner is square. */
-    contentSheetJoinedTop: { borderTopRightRadius: 0 },
     /**
      * The seam shadow. An inert overlay tracing the page sheet's exact footprint (same corners,
      * transparent fill) whose only job is to cast the sheet's lift onto the navigation plane beside it.
@@ -162,7 +161,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-const JOINED_TOP_TRAILING_CORNER = ['tr'] as const;
 
 /** The page sheet stands above the bottom inset strip in its column. */
 const SHEET_CORNER_INSET = { bottom: CONTENT_SHEET_WINDOW_INSET_PX } as const;
@@ -243,7 +241,6 @@ export function AppShellMaterialFrame(props: Readonly<{
     // hidden, the canvas) on the leading side, the canvas the rail and the window inset stand on at the trailing side.
     const columnCoat = React.useMemo<AppShellPlaneCoat>(() => ({ group: 'sidebar', color: appShellColumnPlaneColor(theme.colors), translucentColor: theme.colors.surface.selected }), [theme.colors]);
     const chromeCoat = useAppShellCanvasCoat();
-    const [trailingTopJoined, setTrailingTopJoined] = React.useState(false);
     const tail = React.useMemo<AppShellTail>(() => ({
         placement,
         divider,
@@ -252,9 +249,7 @@ export function AppShellMaterialFrame(props: Readonly<{
         railHost: webChrome ? railHost : null,
         railMoreHost: webChrome ? titleMoreHost : null,
         containerWidthPx: webChrome ? containerWidthPx : null,
-        joinTrailingTopCorner: setTrailingTopJoined,
     }), [containerWidthPx, divider, placement, railHost, rightHost, titleMoreHost, webChrome]);
-    const sheetTopTrailingSquare = webChrome && trailingTopJoined;
     const reducedMotion = useReducedMotionPreference();
     // Released past a bound, the edge springs back to the width it kept instead of snapping; while the
     // pointer holds it, it follows 1:1. Reduced motion: it is placed at once.
@@ -301,7 +296,7 @@ export function AppShellMaterialFrame(props: Readonly<{
             }}>
                 <View key="sheet-column" style={[styles.sheetColumn, props.showChrome && styles.sheetColumnInset]}>
                     {props.showChrome ? <AppShellMaterialPlane group="chrome" color={theme.colors.background.canvas} translucentColor={theme.colors.surface.selected} pointerEvents="none" style={styles.bottomChrome} /> : null}
-                    <View key="sheet" testID={APP_SHELL_CONTENT_SHEET_TEST_ID} ref={contentSheet} onLayout={onSheetLayout} style={[styles.content, props.showChrome && styles.contentSheet, sheetTopTrailingSquare && styles.contentSheetJoinedTop]}>
+                    <View key="sheet" testID={APP_SHELL_CONTENT_SHEET_TEST_ID} ref={contentSheet} onLayout={onSheetLayout} style={[styles.content, props.showChrome && styles.contentSheet]}>
                         <AppShellMaterialPlane key="route-content" group="content" color={theme.colors.surface.base} translucentColor={theme.colors.surface.selected} style={[styles.content, styles.contentPlane]}>
                             <AppShellTailContext.Provider value={tail}>
                                 <AppShellContentPaneContext.Provider value={contentPane}>
@@ -314,10 +309,9 @@ export function AppShellMaterialFrame(props: Readonly<{
                         </AppShellMaterialPlane>
                     </View>
                     {props.showChrome ? <AppShellSheetCorners testIDPrefix="app-shell-sheet-corner" inset={SHEET_CORNER_INSET}
-                        leading={props.column ? columnCoat : chromeCoat} trailing={chromeCoat}
-                        omit={sheetTopTrailingSquare ? JOINED_TOP_TRAILING_CORNER : undefined} /> : null}
+                        leading={props.column ? columnCoat : chromeCoat} trailing={chromeCoat} /> : null}
                     {Platform.OS === 'web' && props.showChrome ? <View pointerEvents="none"
-                        style={[styles.contentSheetSeamShadow, styles.contentSheetSeamShadowBoth, sheetTopTrailingSquare && styles.contentSheetJoinedTop]} /> : null}
+                        style={[styles.contentSheetSeamShadow, styles.contentSheetSeamShadowBoth]} /> : null}
                 </View>
                 {/* The tail paints nothing itself: a canvas panel is its own sheet with its own coats (no canvas
                     behind its translucent page coat), the rail coats the canvas around its tab, and the window inset its strip. */}
