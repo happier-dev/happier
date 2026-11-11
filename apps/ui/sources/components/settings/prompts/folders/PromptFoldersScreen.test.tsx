@@ -15,6 +15,11 @@ import { installPromptLibrarySettingsCommonModuleMocks } from '../promptLibraryS
 const confirm = vi.hoisted(() => vi.fn(async () => true));
 const prompt = vi.hoisted(() => vi.fn(async (): Promise<string | null> => null));
 const alert = vi.hoisted(() => vi.fn());
+const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ router: navigation }).module;
+});
 installPromptLibrarySettingsCommonModuleMocks({
     // Platform presentation is replaced; catalog/store/Actions remain real.
     storage: importOriginal => importOriginal(),
@@ -84,6 +89,17 @@ async function openRowMenu(screen: Screen, key: string) {
 }
 
 describe('Prompt folders: the Artifacts folder tree filtered to prompts, through real catalog and Action owners', () => {
+    it('opens all Artifact kinds by replacing the current destination', async () => {
+        await setup();
+        const { PromptFoldersScreen } = await import('./PromptFoldersScreen');
+        const screen = await renderScreen(<PromptFoldersScreen />);
+        navigation.push.mockClear();
+        navigation.replace.mockClear();
+        await screen.pressByTestIdAsync('promptFolders.allKinds');
+        expect(navigation.replace).toHaveBeenCalledWith('/artifacts');
+        expect(navigation.push).not.toHaveBeenCalled();
+    });
+
     it('lists prompts under their personal folders and leaves other kinds to Artifacts', async () => {
         await setup();
         const { PromptFoldersScreen } = await import('./PromptFoldersScreen');

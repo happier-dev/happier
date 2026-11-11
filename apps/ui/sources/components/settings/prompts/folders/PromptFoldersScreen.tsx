@@ -71,7 +71,7 @@ export const PromptFoldersScreen = React.memo(function PromptFoldersScreen() {
             testID="promptFolders.allKinds"
             icon={<Icon name="files" />}
             title={t('artifacts.browser.folders.showAllKinds')}
-            onPress={() => router.push('/artifacts' as never)}
+            onPress={() => router.replace('/artifacts' as never)}
           />
         </ItemGroup>
       </ItemList>
