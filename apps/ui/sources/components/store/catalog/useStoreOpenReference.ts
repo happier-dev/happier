@@ -12,6 +12,7 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { useOpenStoreListing } from '../StoreListing';
+import { useOpenNewApp } from '@/components/projects/starters/newAppPresentation';
 
 /** Declaration navigation uses the existing domain route owners, independent of a displayed title. */
 export function resolveStoreContributionRoute(reference: Extract<MarketplaceCatalogReferenceV1, { type: 'providerContribution' | 'agentContribution' }>): string | null {
@@ -37,6 +38,7 @@ export function useStoreOpenReference(): (
   const openAgent = useOpenAgentBrowse();
   // The one listing opener: beside the page where a pane fits, pushed as its own page on a phone (S40 §4.2).
   const openStore = useOpenStoreListing();
+  const openNewApp = useOpenNewApp();
   return React.useCallback(
     (reference) => {
       const go = (href: string, tag: string) => {
@@ -59,6 +61,9 @@ export function useStoreOpenReference(): (
         ...(reference.version ? { version: reference.version } : {}),
       };
       switch (reference.kind) {
+        case 'starter':
+          openNewApp(reference.itemId);
+          return;
         case 'mcpServer':
           openMcp({
             modeKey: 'catalog',
@@ -79,6 +84,6 @@ export function useStoreOpenReference(): (
           openStore(reference);
       }
     },
-    [openAgent, openMcp, openSkill, openStore, router],
+    [openAgent, openMcp, openSkill, openStore, openNewApp, router],
   );
 }

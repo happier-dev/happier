@@ -163,6 +163,11 @@ function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: bool
           showEmptyState={readWebStoreExtensionId(state.query) === null} />
         : <Directory kind={props.kind} rows={[]} groups={[]} list={{ loading: false, hasNextPage: false }} query={state.query} sourceTitle={null}
           showEmptyState={readWebStoreExtensionId(state.query) === null} />}</>);
+    case 'starter':
+      if (state.lists.starter) return frame(<RegistryDirectory kind="starter" addLabel={t('capabilities.store.startProject')} list={{ ...state.lists.starter, curation: props.curation,
+          sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.starter.sourceFailures],
+          items: state.lists.starter.items.filter(item => visible.has(item)) }} query={state.query} browsing={browsing} onSeeSource={setSourceId} />);
+      break;
     case 'app':
       if (state.lists.app) return frame(<RegistryDirectory kind="app" list={{ ...state.lists.app, curation: props.curation,
           sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.app.sourceFailures],
@@ -291,6 +296,7 @@ export function kindCopy(kind: StoreDirectoryKind | 'plugin' | 'software' | 'bot
     switch (kind) {
         case 'bot': return { title: t('bots.title'), description: t('botTemplates.storeDescription'), search: t('botTemplates.storeSearch') };
         case 'app': return { title: t('capabilities.store.kinds.app.title'), description: t('capabilities.store.kinds.app.description'), search: t('capabilities.store.kinds.app.search') };
+        case 'starter': return { title: t('capabilities.store.kinds.starter.title'), description: t('capabilities.store.kinds.starter.description'), search: t('capabilities.store.kinds.starter.search') };
         case 'browserExtension': return { title: t('capabilities.store.kinds.browserExtension.title'), description: t('capabilities.store.kinds.browserExtension.description'), search: t('capabilities.store.kinds.browserExtension.search') };
         case 'software': return { title: t('capabilities.store.kinds.software.title'), description: t('capabilities.store.softwarePage.description'), search: t('capabilities.store.softwarePage.search') };
         case 'mcpServer': return { title: t('capabilities.store.kinds.mcpServer.title'), description: t('capabilities.store.kinds.mcpServer.description'), search: t('capabilities.store.kinds.mcpServer.search') };
@@ -508,7 +514,9 @@ export function useSourceTitle(): (sourceId: string) => string {
 
 function RegistryDirectory(
   props: Readonly<{
-    kind: 'app' | 'browserExtension' | 'mcpServer' | 'skill';
+    kind: 'app' | 'starter' | 'browserExtension' | 'mcpServer' | 'skill';
+    /** The row + verb when it is not Add (Starters: Start a project). */
+    addLabel?: string;
     list: RegistryList;
     query: string;
     browsing: boolean;
@@ -528,6 +536,7 @@ function RegistryDirectory(
   return (
     <Directory
       kind={props.kind}
+      {...(props.addLabel ? { addLabel: props.addLabel } : {})}
       rows={preview.rows}
       groups={groups}
       list={preview.list}
@@ -735,7 +744,9 @@ export function useProviderRows(items: StoreKindList<'provider'>['items'], prese
           key: `provider|${item.contributionKey}`,
           title: item.definition.name,
           // Every Store row says what it is under its name; a Provider says its kind (the Providers settings' words).
-          description: t(`settingsProviders.kind.${item.definition.kind}`),
+          // The Store spans Machines: a local Provider runs on the person's Machines, not "this machine".
+          description: item.definition.kind === 'local' ? t('capabilities.store.providerRunsOnMachines')
+            : t(`settingsProviders.kind.${item.definition.kind}`),
           group: 'provider',
           added: isAdded(item.contributionKey),
           open: () => openReference({ type: 'providerContribution', contributionKey: item.contributionKey }),

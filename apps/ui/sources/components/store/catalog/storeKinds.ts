@@ -55,6 +55,9 @@ type RegistryList = ReturnType<typeof useRegistryItems>;
 function useAppList(input: StoreListInput, demand: StoreDemand): RegistryList {
     return useRegistryItems({ kind: 'app', query: input.query, sourceIds: input.sourceIds }, demand.presented);
 }
+function useStarterList(input: StoreListInput, demand: StoreDemand): RegistryList {
+    return useRegistryItems({ kind: 'starter', query: input.query, sourceIds: input.sourceIds }, demand.presented);
+}
 function useBrowserExtensionList(input: StoreListInput, demand: StoreDemand): RegistryList {
     return useRegistryItems({ kind: 'browserExtension', query: input.query, sourceIds: input.sourceIds }, demand.presented);
 }
@@ -146,6 +149,7 @@ function pluginSummary(item: PluginMarketplaceCatalogEntry): StoreItemSummary<Pl
 /** Closed host UI adapters. Each kind is mounted by a static leaf; never iterate this map to call hooks. */
 export const storeKinds = {
     app: { ...APP_STORE_KIND, summary: registrySummary, useList: useAppList, useInstalled: useInstalledApps },
+    starter: { summary: registrySummary, useList: useStarterList, useInstalled: undefined },
     browserExtension: { summary: registrySummary, useList: useBrowserExtensionList, useInstalled: useInstalledBrowserExtensions },
     mcpServer: { summary: registrySummary, useList: useMcpList, useInstalled: useInstalledMcpServers },
     skill: { summary: registrySummary, useList: useSkillList, useInstalled: useInstalledSkills },

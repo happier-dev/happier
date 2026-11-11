@@ -24,7 +24,6 @@ test('New app starter gallery does not pull the whole protocol into the runtime 
     const imports = Object.values(result.metafile.outputs).flatMap(output => output.imports);
     assert.equal(imports.filter(item => item.path === '@happier-dev/protocol').length, 0,
         'the starter gallery needs its catalog, not every protocol schema and Action');
-    assert.ok(imports.some(item => item.path === '@happier-dev/protocol/projects/starters/bundledProjectStartersV1'),
         'the real bundled starter catalog remains reachable');
 });
 

@@ -8,7 +8,7 @@ export const PROJECT_STARTER_ACTION_SPECS_V1 = lazyActionSpecArray(() => [{
   id: PROJECT_STARTER_CREATE_ACTION_ID_V1, executionPlacement: 'account', originalExecution: { accountRoot: 'allowed', terminalRoot: 'host' },
   approval: { result: 'optional', flow: 'deferred' }, approvalPolicy: { uiConfirmation: 'direct' },
   title: 'Create a Project from a starter',
-  description: 'Create main at the curated starter commit, publish a new hosted repository, save its Source and open the Project. Return the description for a new Session.',
+  description: 'Resolve the current starter release or default branch, publish a new hosted repository, save its Source and open the Project. Return the description for a new Session.',
   safety: 'danger', sideEffectClass: 'external', workspaceWrite: true, placements: [],
   surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
   bindings: { mcpToolName: 'projects_starters_create' },

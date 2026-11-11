@@ -32,6 +32,7 @@ export type StoreTranslation = Readonly<{
     provider: KindCopy;
     plugin: KindCopy;
     software: Pick<KindCopy, 'title'>;
+    starter: KindCopy;
   }>;
   kindWord: Readonly<{
     app: string;
@@ -42,7 +43,12 @@ export type StoreTranslation = Readonly<{
     provider: string;
     plugin: string;
     software: string;
+    starter: string;
   }>;
+  /** A starter row's action: it opens New app with that template. */
+  startProject: string;
+  /** A Provider that runs on the person's own Machines, as the Store (which spans Machines) says it. */
+  providerRunsOnMachines: string;
   picksTitle: string;
   picksDescription: string;
   fromSource: (params: Source) => string;
@@ -173,6 +179,7 @@ const en: StoreTranslation = {
       search: 'Search plugins',
     },
     software: { title: 'Software' },
+    starter: { title: 'Starters', description: 'Start a project from a maintained repository template.', search: 'Search starters' },
   },
   kindWord: {
     app: storeAppTranslations.en.word,
@@ -183,10 +190,13 @@ const en: StoreTranslation = {
     provider: 'Provider',
     plugin: 'Plugin',
     software: 'Software',
+    starter: 'Starter',
   },
   setupFamilyTitle: 'Setup',
   checksFamilyTitle: 'Checks',
-  kindSentenceNames: { setup: 'setup', configuredCheck: 'checks', app: 'apps', browserExtension: 'browser extensions', mcpServer: 'MCP servers', skill: 'skills', agent: 'agents', provider: 'providers', plugin: 'plugins', software: 'software', watchedService: 'watched services' },
+  kindSentenceNames: { setup: 'setup', configuredCheck: 'checks', app: 'apps', browserExtension: 'browser extensions', mcpServer: 'MCP servers', skill: 'skills', agent: 'agents', provider: 'providers', plugin: 'plugins', starter: 'starters', software: 'software', watchedService: 'watched services' },
+  startProject: 'Start a project',
+  providerRunsOnMachines: 'Runs on your Machines',
   picksTitle: 'Happier picks',
   picksDescription: 'Checked and kept up to date by Happier.',
   fromSource: ({ source }) => `From ${source}`,
@@ -273,7 +283,7 @@ const en: StoreTranslation = {
 const ca: StoreTranslation = {
   setupFamilyTitle: 'Configuració',
   checksFamilyTitle: 'Comprovacions',
-  kindSentenceNames: { setup: 'configuració', configuredCheck: 'comprovacions', app: 'aplicacions', browserExtension: 'extensions del navegador', mcpServer: 'servidors MCP', skill: 'habilitats', agent: 'agents', provider: 'proveïdors', plugin: 'connectors', software: 'programari', watchedService: 'serveis supervisats' },
+  kindSentenceNames: { setup: 'configuració', configuredCheck: 'comprovacions', app: 'aplicacions', browserExtension: 'extensions del navegador', mcpServer: 'servidors MCP', skill: 'habilitats', agent: 'agents', provider: 'proveïdors', plugin: 'connectors', starter: 'plantilles', software: 'programari', watchedService: 'serveis supervisats' },
   allProjects: "Tots els projectes",
   browseStore: "Explora la botiga",
   suggestionsTitle: "Suggeriments per a aquest projecte",
@@ -282,6 +292,7 @@ const ca: StoreTranslation = {
     app: storeAppTranslations.ca,
     browserExtension: storeBrowserExtensionTranslations.ca,
     software: { title: 'Programari' },
+    starter: { title: 'Plantilles', description: 'Comença un projecte a partir d’una plantilla de repositori mantinguda.', search: 'Cerca plantilles' },
     mcpServer: {
       title: 'Servidors MCP',
       description:
@@ -319,10 +330,13 @@ const ca: StoreTranslation = {
     mcpServer: 'Servidor MCP',
     skill: 'Habilitat',
     software: 'Programari',
+    starter: 'Plantilla',
     agent: 'Agent',
     provider: 'Proveïdor',
     plugin: 'Connector',
   },
+  startProject: 'Comença un projecte',
+  providerRunsOnMachines: 'S’executa a les teves màquines',
   picksTitle: 'Selecció de Happier',
   picksDescription: 'Revisats i mantinguts al dia per Happier.',
   fromSource: ({ source }) => `De ${source}`,
@@ -410,7 +424,7 @@ const ca: StoreTranslation = {
 const de: StoreTranslation = {
   setupFamilyTitle: 'Einrichtung',
   checksFamilyTitle: 'Prüfungen',
-  kindSentenceNames: { setup: 'Einrichtung', configuredCheck: 'Prüfungen', app: 'Apps', browserExtension: 'Browser-Erweiterungen', mcpServer: 'MCP-Server', skill: 'Skills', agent: 'Agenten', provider: 'Anbieter', plugin: 'Plugins', software: 'Software', watchedService: 'überwachte Dienste' },
+  kindSentenceNames: { setup: 'Einrichtung', configuredCheck: 'Prüfungen', app: 'Apps', browserExtension: 'Browser-Erweiterungen', mcpServer: 'MCP-Server', skill: 'Skills', agent: 'Agenten', provider: 'Anbieter', plugin: 'Plugins', starter: 'Vorlagen', software: 'Software', watchedService: 'überwachte Dienste' },
   allProjects: "Alle Projekte",
   browseStore: "Store durchsuchen",
   suggestionsTitle: "Für dieses Projekt empfohlen",
@@ -419,6 +433,7 @@ const de: StoreTranslation = {
     app: storeAppTranslations.de,
     browserExtension: storeBrowserExtensionTranslations.de,
     software: { title: 'Software' },
+    starter: { title: 'Vorlagen', description: 'Starte ein Projekt aus einer gepflegten Repository-Vorlage.', search: 'Vorlagen durchsuchen' },
     mcpServer: {
       title: 'MCP-Server',
       description:
@@ -455,11 +470,14 @@ const de: StoreTranslation = {
     browserExtension: storeBrowserExtensionTranslations.de.word,
     mcpServer: 'MCP-Server',
     software: 'Software',
+    starter: 'Vorlage',
     skill: 'Skill',
     agent: 'Agent',
     provider: 'Anbieter',
     plugin: 'Plugin',
   },
+  startProject: 'Projekt starten',
+  providerRunsOnMachines: 'Läuft auf deinen Rechnern',
   picksTitle: 'Happier-Auswahl',
   picksDescription: 'Von Happier geprüft und aktuell gehalten.',
   fromSource: ({ source }) => `Aus ${source}`,
@@ -546,7 +564,7 @@ const de: StoreTranslation = {
 const es: StoreTranslation = {
   setupFamilyTitle: 'Configuración',
   checksFamilyTitle: 'Comprobaciones',
-  kindSentenceNames: { setup: 'configuración', configuredCheck: 'comprobaciones', app: 'aplicaciones', browserExtension: 'extensiones del navegador', mcpServer: 'servidores MCP', skill: 'habilidades', agent: 'agentes', provider: 'proveedores', plugin: 'complementos', software: 'software', watchedService: 'servicios supervisados' },
+  kindSentenceNames: { setup: 'configuración', configuredCheck: 'comprobaciones', app: 'aplicaciones', browserExtension: 'extensiones del navegador', mcpServer: 'servidores MCP', skill: 'habilidades', agent: 'agentes', provider: 'proveedores', plugin: 'complementos', starter: 'plantillas', software: 'software', watchedService: 'servicios supervisados' },
   allProjects: "Todos los proyectos",
   browseStore: "Explorar la tienda",
   suggestionsTitle: "Sugerencias para este proyecto",
@@ -555,6 +573,7 @@ const es: StoreTranslation = {
     app: storeAppTranslations.es,
     browserExtension: storeBrowserExtensionTranslations.es,
     software: { title: 'Software' },
+    starter: { title: 'Plantillas', description: 'Empieza un proyecto desde una plantilla de repositorio mantenida.', search: 'Buscar plantillas' },
     mcpServer: {
       title: 'Servidores MCP',
       description:
@@ -592,10 +611,13 @@ const es: StoreTranslation = {
     mcpServer: 'Servidor MCP',
     skill: 'Habilidad',
     software: 'Software',
+    starter: 'Plantilla',
     agent: 'Agente',
     provider: 'Proveedor',
     plugin: 'Plugin',
   },
+  startProject: 'Empezar un proyecto',
+  providerRunsOnMachines: 'Se ejecuta en tus máquinas',
   picksTitle: 'Selección de Happier',
   picksDescription: 'Revisados y mantenidos al día por Happier.',
   fromSource: ({ source }) => `De ${source}`,
@@ -682,7 +704,7 @@ const es: StoreTranslation = {
 const fr: StoreTranslation = {
   setupFamilyTitle: 'Configuration',
   checksFamilyTitle: 'Vérifications',
-  kindSentenceNames: { setup: 'configuration', configuredCheck: 'vérifications', app: 'applications', browserExtension: 'extensions du navigateur', mcpServer: 'serveurs MCP', skill: 'compétences', agent: 'agents', provider: 'fournisseurs', plugin: 'extensions', software: 'logiciels', watchedService: 'services surveillés' },
+  kindSentenceNames: { setup: 'configuration', configuredCheck: 'vérifications', app: 'applications', browserExtension: 'extensions du navigateur', mcpServer: 'serveurs MCP', skill: 'compétences', agent: 'agents', provider: 'fournisseurs', plugin: 'extensions', starter: 'modèles de départ', software: 'logiciels', watchedService: 'services surveillés' },
   allProjects: "Tous les projets",
   browseStore: "Parcourir le Store",
   suggestionsTitle: "Suggestions pour ce projet",
@@ -691,6 +713,7 @@ const fr: StoreTranslation = {
     app: storeAppTranslations.fr,
     browserExtension: storeBrowserExtensionTranslations.fr,
     software: { title: 'Logiciels' },
+    starter: { title: 'Modèles de départ', description: 'Démarrez un projet à partir d’un modèle de dépôt maintenu.', search: 'Rechercher des modèles' },
     mcpServer: {
       title: 'Serveurs MCP',
       description:
@@ -727,11 +750,14 @@ const fr: StoreTranslation = {
     browserExtension: storeBrowserExtensionTranslations.fr.word,
     mcpServer: 'Serveur MCP',
     software: 'Logiciel',
+    starter: 'Modèle',
     skill: 'Compétence',
     agent: 'Agent',
     provider: 'Fournisseur',
     plugin: 'Plugin',
   },
+  startProject: 'Démarrer un projet',
+  providerRunsOnMachines: 'S’exécute sur vos machines',
   picksTitle: 'Sélection Happier',
   picksDescription: 'Vérifiés et tenus à jour par Happier.',
   fromSource: ({ source }) => `De ${source}`,
@@ -819,7 +845,7 @@ const fr: StoreTranslation = {
 const it: StoreTranslation = {
   setupFamilyTitle: 'Configurazione',
   checksFamilyTitle: 'Controlli',
-  kindSentenceNames: { setup: 'configurazione', configuredCheck: 'controlli', app: 'app', browserExtension: 'estensioni del browser', mcpServer: 'server MCP', skill: 'skill', agent: 'agenti', provider: 'fornitori', plugin: 'plugin', software: 'software', watchedService: 'servizi monitorati' },
+  kindSentenceNames: { setup: 'configurazione', configuredCheck: 'controlli', app: 'app', browserExtension: 'estensioni del browser', mcpServer: 'server MCP', skill: 'skill', agent: 'agenti', provider: 'fornitori', plugin: 'plugin', starter: 'modelli', software: 'software', watchedService: 'servizi monitorati' },
   allProjects: "Tutti i progetti",
   browseStore: "Esplora lo Store",
   suggestionsTitle: "Suggerimenti per questo progetto",
@@ -828,6 +854,7 @@ const it: StoreTranslation = {
     app: storeAppTranslations.it,
     browserExtension: storeBrowserExtensionTranslations.it,
     software: { title: 'Software' },
+    starter: { title: 'Modelli', description: 'Avvia un progetto da un modello di repository mantenuto.', search: 'Cerca modelli' },
     mcpServer: {
       title: 'Server MCP',
       description:
@@ -864,11 +891,14 @@ const it: StoreTranslation = {
     browserExtension: storeBrowserExtensionTranslations.it.word,
     mcpServer: 'Server MCP',
     software: 'Software',
+    starter: 'Modello',
     skill: 'Skill',
     agent: 'Agente',
     provider: 'Provider',
     plugin: 'Plugin',
   },
+  startProject: 'Avvia un progetto',
+  providerRunsOnMachines: 'Funziona sulle tue macchine',
   picksTitle: 'Scelti da Happier',
   picksDescription: 'Verificati e tenuti aggiornati da Happier.',
   fromSource: ({ source }) => `Da ${source}`,
@@ -955,7 +985,7 @@ const it: StoreTranslation = {
 const ja: StoreTranslation = {
   setupFamilyTitle: 'セットアップ',
   checksFamilyTitle: 'チェック',
-  kindSentenceNames: { setup: 'セットアップ', configuredCheck: 'チェック', app: 'アプリ', browserExtension: 'ブラウザー拡張機能', mcpServer: 'MCP サーバー', skill: 'スキル', agent: 'エージェント', provider: 'プロバイダー', plugin: 'プラグイン', software: 'ソフトウェア', watchedService: '監視対象サービス' },
+  kindSentenceNames: { setup: 'セットアップ', configuredCheck: 'チェック', app: 'アプリ', browserExtension: 'ブラウザー拡張機能', mcpServer: 'MCP サーバー', skill: 'スキル', agent: 'エージェント', provider: 'プロバイダー', plugin: 'プラグイン', starter: 'スターター', software: 'ソフトウェア', watchedService: '監視対象サービス' },
   allProjects: "すべてのプロジェクト",
   browseStore: "ストアを見る",
   suggestionsTitle: "このプロジェクトへのおすすめ",
@@ -964,6 +994,7 @@ const ja: StoreTranslation = {
     app: storeAppTranslations.ja,
     browserExtension: storeBrowserExtensionTranslations.ja,
     software: { title: 'ソフトウェア' },
+    starter: { title: 'スターター', description: '管理されているリポジトリテンプレートからプロジェクトを始めます。', search: 'スターターを検索' },
     mcpServer: {
       title: 'MCP サーバー',
       description:
@@ -999,11 +1030,14 @@ const ja: StoreTranslation = {
     browserExtension: storeBrowserExtensionTranslations.ja.word,
     mcpServer: 'MCP サーバー',
     software: 'ソフトウェア',
+    starter: 'スターター',
     skill: 'スキル',
     agent: 'エージェント',
     provider: 'プロバイダー',
     plugin: 'プラグイン',
   },
+  startProject: 'プロジェクトを始める',
+  providerRunsOnMachines: 'あなたのマシンで動作',
   picksTitle: 'Happier のおすすめ',
   picksDescription: 'Happier が確認し、最新に保っています。',
   fromSource: ({ source }) => `${source} から`,
@@ -1090,7 +1124,7 @@ const ja: StoreTranslation = {
 const pl: StoreTranslation = {
   setupFamilyTitle: 'Konfiguracja',
   checksFamilyTitle: 'Sprawdzenia',
-  kindSentenceNames: { setup: 'konfiguracja', configuredCheck: 'sprawdzenia', app: 'aplikacje', browserExtension: 'rozszerzenia przeglądarki', mcpServer: 'serwery MCP', skill: 'umiejętności', agent: 'agenci', provider: 'dostawcy', plugin: 'wtyczki', software: 'oprogramowanie', watchedService: 'monitorowane usługi' },
+  kindSentenceNames: { setup: 'konfiguracja', configuredCheck: 'sprawdzenia', app: 'aplikacje', browserExtension: 'rozszerzenia przeglądarki', mcpServer: 'serwery MCP', skill: 'umiejętności', agent: 'agenci', provider: 'dostawcy', plugin: 'wtyczki', starter: 'szablony', software: 'oprogramowanie', watchedService: 'monitorowane usługi' },
   allProjects: "Wszystkie projekty",
   browseStore: "Przeglądaj sklep",
   suggestionsTitle: "Propozycje dla tego projektu",
@@ -1099,6 +1133,7 @@ const pl: StoreTranslation = {
     app: storeAppTranslations.pl,
     browserExtension: storeBrowserExtensionTranslations.pl,
     software: { title: 'Oprogramowanie' },
+    starter: { title: 'Szablony', description: 'Zacznij projekt od utrzymywanego szablonu repozytorium.', search: 'Szukaj szablonów' },
     mcpServer: {
       title: 'Serwery MCP',
       description:
@@ -1135,11 +1170,14 @@ const pl: StoreTranslation = {
     browserExtension: storeBrowserExtensionTranslations.pl.word,
     mcpServer: 'Serwer MCP',
     software: 'Oprogramowanie',
+    starter: 'Szablon',
     skill: 'Umiejętność',
     agent: 'Agent',
     provider: 'Dostawca',
     plugin: 'Wtyczka',
   },
+  startProject: 'Zacznij projekt',
+  providerRunsOnMachines: 'Działa na Twoich maszynach',
   picksTitle: 'Wybór Happier',
   picksDescription: 'Sprawdzone i aktualizowane przez Happier.',
   fromSource: ({ source }) => `Z ${source}`,
@@ -1226,7 +1264,7 @@ const pl: StoreTranslation = {
 const pt: StoreTranslation = {
   setupFamilyTitle: 'Configuração',
   checksFamilyTitle: 'Verificações',
-  kindSentenceNames: { setup: 'configuração', configuredCheck: 'verificações', app: 'aplicativos', browserExtension: 'extensões do navegador', mcpServer: 'servidores MCP', skill: 'skills', agent: 'agentes', provider: 'provedores', plugin: 'plugins', software: 'software', watchedService: 'serviços monitorados' },
+  kindSentenceNames: { setup: 'configuração', configuredCheck: 'verificações', app: 'aplicativos', browserExtension: 'extensões do navegador', mcpServer: 'servidores MCP', skill: 'skills', agent: 'agentes', provider: 'provedores', plugin: 'plugins', starter: 'modelos', software: 'software', watchedService: 'serviços monitorados' },
   allProjects: "Todos os projetos",
   browseStore: "Explorar a loja",
   suggestionsTitle: "Sugestões para este projeto",
@@ -1235,6 +1273,7 @@ const pt: StoreTranslation = {
     app: storeAppTranslations.pt,
     browserExtension: storeBrowserExtensionTranslations.pt,
     software: { title: 'Software' },
+    starter: { title: 'Modelos', description: 'Comece um projeto a partir de um modelo de repositório mantido.', search: 'Buscar modelos' },
     mcpServer: {
       title: 'Servidores MCP',
       description:
@@ -1272,10 +1311,13 @@ const pt: StoreTranslation = {
     mcpServer: 'Servidor MCP',
     skill: 'Habilidade',
     software: 'Software',
+    starter: 'Modelo',
     agent: 'Agente',
     provider: 'Provedor',
     plugin: 'Plugin',
   },
+  startProject: 'Começar um projeto',
+  providerRunsOnMachines: 'Roda nas suas máquinas',
   picksTitle: 'Escolhas do Happier',
   picksDescription: 'Verificados e mantidos em dia pelo Happier.',
   fromSource: ({ source }) => `De ${source}`,
@@ -1363,7 +1405,7 @@ const pt: StoreTranslation = {
 const ru: StoreTranslation = {
   setupFamilyTitle: 'Настройка',
   checksFamilyTitle: 'Проверки',
-  kindSentenceNames: { setup: 'настройка', configuredCheck: 'проверки', app: 'приложения', browserExtension: 'расширения браузера', mcpServer: 'MCP-серверы', skill: 'навыки', agent: 'агенты', provider: 'поставщики', plugin: 'плагины', software: 'программное обеспечение', watchedService: 'отслеживаемые службы' },
+  kindSentenceNames: { setup: 'настройка', configuredCheck: 'проверки', app: 'приложения', browserExtension: 'расширения браузера', mcpServer: 'MCP-серверы', skill: 'навыки', agent: 'агенты', provider: 'поставщики', plugin: 'плагины', starter: 'шаблоны', software: 'программное обеспечение', watchedService: 'отслеживаемые службы' },
   allProjects: "Все проекты",
   browseStore: "Открыть магазин",
   suggestionsTitle: "Рекомендации для этого проекта",
@@ -1372,6 +1414,7 @@ const ru: StoreTranslation = {
     app: storeAppTranslations.ru,
     browserExtension: storeBrowserExtensionTranslations.ru,
     software: { title: 'Программы' },
+    starter: { title: 'Шаблоны', description: 'Начните проект с поддерживаемого шаблона репозитория.', search: 'Искать шаблоны' },
     mcpServer: {
       title: 'MCP-серверы',
       description:
@@ -1408,11 +1451,14 @@ const ru: StoreTranslation = {
     browserExtension: storeBrowserExtensionTranslations.ru.word,
     mcpServer: 'MCP-сервер',
     software: 'Программа',
+    starter: 'Шаблон',
     skill: 'Навык',
     agent: 'Агент',
     provider: 'Провайдер',
     plugin: 'Плагин',
   },
+  startProject: 'Начать проект',
+  providerRunsOnMachines: 'Работает на ваших машинах',
   picksTitle: 'Выбор Happier',
   picksDescription: 'Проверено и обновляется Happier.',
   fromSource: ({ source }) => `Из ${source}`,
@@ -1499,7 +1545,7 @@ const ru: StoreTranslation = {
 const zhHans: StoreTranslation = {
   setupFamilyTitle: '设置',
   checksFamilyTitle: '检查',
-  kindSentenceNames: { setup: '设置', configuredCheck: '检查', app: '应用', browserExtension: '浏览器扩展', mcpServer: 'MCP 服务器', skill: '技能', agent: '代理', provider: '提供方', plugin: '插件', software: '软件', watchedService: '受监控服务' },
+  kindSentenceNames: { setup: '设置', configuredCheck: '检查', app: '应用', browserExtension: '浏览器扩展', mcpServer: 'MCP 服务器', skill: '技能', agent: '代理', provider: '提供方', plugin: '插件', starter: '入门模板', software: '软件', watchedService: '受监控服务' },
   allProjects: "所有项目",
   browseStore: "浏览商店",
   suggestionsTitle: "为此项目推荐",
@@ -1508,6 +1554,7 @@ const zhHans: StoreTranslation = {
     app: storeAppTranslations.zhHans,
     browserExtension: storeBrowserExtensionTranslations.zhHans,
     software: { title: '软件' },
+    starter: { title: '入门模板', description: '从维护中的仓库模板开始一个项目。', search: '搜索入门模板' },
     mcpServer: {
       title: 'MCP 服务器',
       description:
@@ -1542,11 +1589,14 @@ const zhHans: StoreTranslation = {
     browserExtension: storeBrowserExtensionTranslations.zhHans.word,
     mcpServer: 'MCP 服务器',
     software: '软件',
+    starter: '入门模板',
     skill: '技能',
     agent: '智能体',
     provider: '提供方',
     plugin: '插件',
   },
+  startProject: '开始一个项目',
+  providerRunsOnMachines: '在你的机器上运行',
   picksTitle: 'Happier 精选',
   picksDescription: '由 Happier 检查并保持更新。',
   fromSource: ({ source }) => `来自 ${source}`,
@@ -1633,7 +1683,7 @@ const zhHans: StoreTranslation = {
 const zhHant: StoreTranslation = {
   setupFamilyTitle: '設定',
   checksFamilyTitle: '檢查',
-  kindSentenceNames: { setup: '設定', configuredCheck: '檢查', app: '應用程式', browserExtension: '瀏覽器擴充功能', mcpServer: 'MCP 伺服器', skill: '技能', agent: '代理', provider: '提供者', plugin: '外掛', software: '軟體', watchedService: '受監控服務' },
+  kindSentenceNames: { setup: '設定', configuredCheck: '檢查', app: '應用程式', browserExtension: '瀏覽器擴充功能', mcpServer: 'MCP 伺服器', skill: '技能', agent: '代理', provider: '提供者', plugin: '外掛', starter: '入門範本', software: '軟體', watchedService: '受監控服務' },
   allProjects: "所有專案",
   browseStore: "瀏覽商店",
   suggestionsTitle: "為此專案推薦",
@@ -1642,6 +1692,7 @@ const zhHant: StoreTranslation = {
     app: storeAppTranslations.zhHant,
     browserExtension: storeBrowserExtensionTranslations.zhHant,
     software: { title: '軟體' },
+    starter: { title: '入門範本', description: '從維護中的儲存庫範本開始一個專案。', search: '搜尋入門範本' },
     mcpServer: {
       title: 'MCP 伺服器',
       description:
@@ -1676,11 +1727,14 @@ const zhHant: StoreTranslation = {
     browserExtension: storeBrowserExtensionTranslations.zhHant.word,
     mcpServer: 'MCP 伺服器',
     software: '軟體',
+    starter: '入門範本',
     skill: '技能',
     agent: '代理',
     provider: '提供者',
     plugin: '外掛',
   },
+  startProject: '開始一個專案',
+  providerRunsOnMachines: '在你的機器上執行',
   picksTitle: 'Happier 精選',
   picksDescription: '由 Happier 檢查並保持更新。',
   fromSource: ({ source }) => `來自 ${source}`,

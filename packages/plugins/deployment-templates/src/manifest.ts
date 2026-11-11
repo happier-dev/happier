@@ -14,6 +14,12 @@ export const plugin = definePlugin({
       kinds: ['app'],
       packageContent: { path: 'resources/registry/apps.json' },
     },
+    starters: {
+      title: 'Project starters',
+      format: 'happier-catalog',
+      kinds: ['starter'],
+      packageContent: { path: 'resources/registry/starters.json' },
+    },
   },
 });
 

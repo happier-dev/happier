@@ -25,7 +25,7 @@ export function createPluginRegistrySourceDescriptorV1(input: Readonly<{
   const { id: localId, ...definition } = input.definition;
   if ('packageContent' in definition) {
     if (!input.pluginVersion || !input.occurrenceId) throw new Error('Packaged registry source requires a current plugin version and occurrence');
-    return { ...definition, kinds: ['app'], id: buildQualifiedPluginContributionKey(createPluginContributionIdentity({ pluginId: input.pluginId, localId })),
+    return { ...definition, kinds: [...definition.kinds], id: buildQualifiedPluginContributionKey(createPluginContributionIdentity({ pluginId: input.pluginId, localId })),
       packageContent: { ...definition.packageContent, pluginId: input.pluginId, pluginVersion: input.pluginVersion, occurrenceId: input.occurrenceId },
       enabled: true, addedAt: 0, removable: false,
       origin: { kind: 'plugin', pluginId: input.pluginId, localId, suppliers: [...new Set(input.suppliers)] } };

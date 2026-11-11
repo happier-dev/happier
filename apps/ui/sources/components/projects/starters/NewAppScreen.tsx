@@ -1,9 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Image } from 'expo-image';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { getBundledProjectStartersV1 } from '@happier-dev/protocol/projects/starters/bundledProjectStartersV1';
-import type { ProjectStarterV1 } from '@happier-dev/protocol/projects/starters/projectStarterV1';
+import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
+import { useRegistryItems } from '@/registries/useRegistryItems';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -57,15 +56,10 @@ import {
   readStarterCreateOutcome,
   type StarterCreateOutcome,
 } from './newAppDraft';
-import { PROJECT_STARTER_PREVIEW_ASSETS } from './projectStarterPreviewAssets';
 import { projectCheckoutParentPath } from '../activation/projectOpenChoices';
 
 type Step = 'start' | 'describe' | 'create';
 const STEPS: readonly Step[] = ['start', 'describe', 'create'];
-/** Starter artwork is drawn 640 × 360; the tile shows its upper band (lab s1 preview strip). */
-const STARTER_PREVIEW_ASPECT_RATIO = 3.2;
-/** expo-image is not a Unistyles host, so its frame is a plain style. */
-const PREVIEW_FILL = { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 } as const;
 
 /** The Action each control uses (lab s1 NOTES "actions"). */
 const CREATE_ACTION = 'projects.starters.create' as const;
@@ -90,6 +84,7 @@ export type NewAppScreenProps = Partial<
   Pick<CustomModalInjectedProps, 'onClose' | 'setChrome'>
 > &
   Readonly<{
+    starterId?: string | null;
     /** The ways to bring code you already have; offered when the entry that opened New app has them. */
     onClone?: (() => void) | null;
   }>;
@@ -126,11 +121,12 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     [knownMachines, presenceNowMs, reachabilityRevision, scope],
   );
   const thisComputerMachineId = useThisComputerMachineId();
-  const starters = getBundledProjectStartersV1();
+  const starterCatalog = useRegistryItems({ kind: 'starter' }, true);
+  const starters = starterCatalog.items;
 
   const [step, setStep] = React.useState<Step>('start');
   const [starterId, setStarterId] = React.useState<string | null>(
-    starters.length === 1 ? starters[0]!.id : null,
+    props.starterId ?? (starters.length === 1 ? starters[0]!.itemId : null),
   );
   const [description, setDescription] = React.useState('');
   const [name, setName] = React.useState('');
@@ -143,7 +139,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const [intentKeyFor] = React.useState(() => createStarterIntentKeys(randomUUID));
 
   const starter =
-    starters.find((candidate) => candidate.id === starterId) ?? null;
+    starters.find((candidate) => candidate.itemId === starterId) ?? null;
   const machineNames = React.useMemo(
     () => resolveMachineDisplayNames(machines),
     [machines],
@@ -618,7 +614,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
                   {...headerProps}
                   testID="newApp.details"
                   title={t('newApp.details')}
-                  detail={starter.technologyLabels.join(' · ')}
+                  detail={starter.appMetadata?.tags?.join(' · ') ?? ''}
                 />
               )}
             >
@@ -626,19 +622,19 @@ export const NewAppScreen = React.memo(function NewAppScreen(
                 <Item
                   mode="info"
                   title={t('newApp.detailStarter')}
-                  detail={t(starter.titleKey as never)}
+                  detail={starter.title}
                   showChevron={false}
                 />
                 <Item
                   mode="info"
                   title={t('newApp.detailBuiltWith')}
-                  detail={starter.technologyLabels.join(' · ')}
+                  detail={starter.appMetadata?.tags?.join(' · ') ?? ''}
                   showChevron={false}
                 />
                 <Item
                   mode="info"
                   title={t('newApp.detailRevision')}
-                  detail={starter.repository.ref.slice(0, 7)}
+                  detail={starter.version ?? 'current'}
                   showChevron={false}
                 />
                 <Item
@@ -749,20 +745,11 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   );
 });
 
-function starterTile(starter: ProjectStarterV1) {
-  const preview = PROJECT_STARTER_PREVIEW_ASSETS[starter.previewAssetKey];
+function starterTile(starter: RegistryCatalogItemSummary) {
   return {
-    id: starter.id,
-    title: t(starter.titleKey as never),
-    subtitle: t(starter.summaryKey as never),
-    preview: preview ? (
-      <Image
-        source={preview}
-        style={PREVIEW_FILL}
-        contentFit="cover"
-        accessibilityIgnoresInvertColors
-      />
-    ) : undefined,
+    id: starter.itemId,
+    title: starter.title,
+    subtitle: starter.description,
   };
 }
 

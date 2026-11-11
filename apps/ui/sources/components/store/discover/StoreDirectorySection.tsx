@@ -32,6 +32,7 @@ export function storeKindWord(kind: StoreDiscoverKind): string {
         case 'provider': return t('capabilities.store.kindWord.provider');
         case 'plugin': return t('capabilities.store.kindWord.plugin');
         case 'software': return t('capabilities.store.kinds.software.title');
+        case 'starter': return t('capabilities.store.kindWord.starter');
     }
 }
 

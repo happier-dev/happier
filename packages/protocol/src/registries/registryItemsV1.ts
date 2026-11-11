@@ -1,3 +1,4 @@
+import { RegistryAppMappingV1Schema } from './registryAppMappingV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { RegistryFormatV1Schema, RegistryKindV1Schema } from './registrySourcesV1.js';
@@ -8,6 +9,7 @@ import { registryPluginListingSummaryV1 } from './formats/registryPluginListingV
 import { RegistrySkillContentRefV1Schema, RegistryContentRefV1Schema, RegistryRemoteContentRefV1Schema, RegistryPackageContentRefV1Schema, RegistryContentDigestRefV1Schema } from './registryContentRefV1.js';
 import { DeploymentTemplateV1Schema } from '../plugins/contributions/deploymentTemplates.js';
 import { RegistryBrowserExtensionV1Schema } from './registryBrowserExtensionV1.js';
+import { RegistryStarterV1Schema } from './registryStarterV1.js';
 export { RegistryGitTreeRefV1Schema, WellKnownSkillRefV1Schema, RegistrySkillContentRefV1Schema,
   RegistryContentRefV1Schema, RegistryItemPointerV1Schema } from './registryContentRefV1.js';
 export type { WellKnownSkillRefV1, RegistrySkillContentRefV1, RegistryContentRefV1, RegistryItemPointerV1 } from './registryContentRefV1.js';
@@ -62,6 +64,8 @@ export const RegistryItemSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   sourceId: z.string().check(z.minLength(1)), kind: RegistryKindV1Schema, itemId: z.string(), title: z.string().check(z.minLength(1)),
   description: z.optional(z.string()), version: z.optional(z.string().check(z.minLength(1))), iconUrl: z.optional(z.string()),
   iconDarkUrl: z.optional(z.string()),
+  /** The format declares its icons single-colour (`currentColor`): hosts draw them in theme ink. */
+  iconMonochrome: z.optional(z.literal(true)),
   publisher: z.optional(z.strictObject({ name: z.string().check(z.minLength(1)), verification: z.optional(z.enum(['github-account', 'domain', 'registry-checked', 'happier-reviewed'])) })),
   updatedAt: z.optional(z.number()), installs: z.optional(z.number().check(z.nonnegative())), license: z.optional(z.string()),
   links: z.optional(z.strictObject({ repository: z.optional(z.string()), website: z.optional(z.string()) })),
@@ -128,13 +132,14 @@ export const RegistryItemPayloadV1Schema = lazyZodSchema(() => z.discriminatedUn
   z.discriminatedUnion('state', [
     z.strictObject({ kind: z.literal('app'), state: z.literal('ready'), app: DeploymentTemplateV1Schema, ref: RegistryContentRefV1Schema }),
     z.strictObject({ kind: z.literal('app'), state: z.literal('needs_review'), ref: RegistryContentRefV1Schema,
-      diagnostics: z.array(RegistryAppFieldDiagnosticV1Schema).check(z.minLength(1)) }),
+      diagnostics: z.array(RegistryAppFieldDiagnosticV1Schema).check(z.minLength(1)), reviewSource: z.optional(RegistryAppMappingV1Schema) }),
   ]),
   z.strictObject({ kind: z.literal('skill'), skill: RegistrySkillSourceV1Schema }),
   z.strictObject({ kind: z.literal('mcpServer'), server: McpRegistryServerV1Schema }),
   z.strictObject({ kind: z.literal('agent'), agent: AcpRegistryAgentV1Schema }),
   z.strictObject({ kind: z.literal('browserExtension'), extension: RegistryBrowserExtensionV1Schema,
     ref: RegistryContentDigestRefV1Schema }),
+  z.strictObject({ kind: z.literal('starter'), starter: RegistryStarterV1Schema, ref: RegistryContentRefV1Schema }),
   z.strictObject({ kind: z.literal('plugin'), listing: MarketplaceIndexEntryV1Schema,
     source: MarketplaceIndexSourceSnapshotV1Schema.shape.source }),
 ]));
@@ -148,6 +153,9 @@ export const RegistryItemV1Schema = lazyZodSchema(() => z.strictObject({
       : item.payload.ref.kind === 'version' ? item.payload.ref.version
       : item.payload.ref.kind === 'packageContent' ? item.payload.ref.pluginVersion : item.payload.ref.digest
     : item.payload.kind === 'browserExtension' ? item.payload.ref.digest
+    : item.payload.kind === 'starter' ? item.payload.ref.kind === 'gitTree' ? item.payload.ref.commit
+      : item.payload.ref.kind === 'version' ? item.payload.ref.version
+      : item.payload.ref.kind === 'packageContent' ? item.payload.ref.pluginVersion : item.payload.ref.digest
     : item.payload.kind === 'agent' ? item.payload.agent.version
       : item.payload.kind === 'mcpServer' ? item.payload.server.version : item.payload.listing.distribution.version;
   if (item.summary.kind !== item.payload.kind || item.summary.version !== version

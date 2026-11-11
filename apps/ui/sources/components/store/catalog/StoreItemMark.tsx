@@ -33,6 +33,7 @@ export const STORE_KIND_GLYPHS: Readonly<Record<StoreKind | 'bot', IconName>> =
     provider: 'cube',
     plugin: 'squares-four',
     software: 'desktop',
+    starter: 'folder-plus',
     bot: BOTS_GLYPH,
   };
 

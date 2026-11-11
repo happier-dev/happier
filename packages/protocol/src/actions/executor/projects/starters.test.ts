@@ -2,10 +2,15 @@ import { ApprovalRequestSchema, type ApprovalRequest } from '../../../approvals/
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '../../actionExecutor.js';
 import { getActionSpec } from '../../actionSpecs.js';
+import { RegistryStarterV1Schema } from '../../../registries/registryStarterV1.js';
 
 const input = { serverId: 'home', machineId: 'machine', requestKey: 'starter-1', starterId: 'static-website',
   description: '\nBuild a bakery website.\nKeep this first message unchanged.\n', destinationParentPath: '/projects', destinationDirectoryName: 'bakery',
   repository: { owner: 'alice', name: 'bakery' } };
+const starter = RegistryStarterV1Schema.parse({ repository: 'https://github.com/mdn/beginner-html-site-styled', title: 'Static website', description: 'A small HTML and CSS website starter.', tags: ['website'], buildGoal: 'Build a website.' });
+const registryActionExecute = ({ actionId }: { actionId: string }) => Promise.resolve(actionId === 'registries.items.list'
+  ? { pages: [{ sourceId: 'builtin:starters', status: { state: 'ok', fetchedAt: 1 }, items: [{ sourceId: 'builtin:starters', kind: 'starter' as const, itemId: 'static-website', title: starter.title, description: starter.description, version: '1' }], total: 1, nextCursor: null }] }
+  : { item: { summary: { sourceId: 'builtin:starters', kind: 'starter' as const, itemId: 'static-website', title: starter.title, description: starter.description, version: '1' }, payload: { kind: 'starter' as const, starter, ref: { kind: 'content' as const, digest: `sha256:${'a'.repeat(64)}` } }, fetchedAt: 1 } });
 
 describe('starter creation public Action', () => {
   it('admits the reviewed operands and defaults to a private repository', () => {
@@ -15,7 +20,7 @@ describe('starter creation public Action', () => {
     expect(spec.approvalPolicy?.uiConfirmation).toBe('direct');
   });
   it('refuses an unknown starter before any host effects', async () => {
-    const result = await createActionExecutor({}).execute('projects.starters.create', { ...input, starterId: 'missing' },
+    const result = await createActionExecutor({ registryActionExecute: () => Promise.resolve({ pages: [] }) }).execute('projects.starters.create', { ...input, starterId: 'missing' },
       { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'failed', code: 'starter_unavailable' } });
   });
@@ -23,6 +28,8 @@ describe('starter creation public Action', () => {
 
 // These ports cross into the target daemon and Home HTTP service. The Action
 // normalization, admission, child execution and result projection remain real.
+// Actual non-repository discovery and starter-to-clone composition are covered by
+// CLI scmRpc.hostingRepositoryPublish.integration.test.ts using the real owner.
 it.each([{ surface: 'ui', sourceFailure: false, publishFailure: false }, { surface: 'cli', sourceFailure: false, publishFailure: false },
   { surface: 'ui', sourceFailure: true, publishFailure: false }, { surface: 'ui', sourceFailure: false, publishFailure: true }] as const)(
   'preserves reviewed effects on $surface (Source refusal: $sourceFailure, publish refusal: $publishFailure)', async ({ surface, sourceFailure, publishFailure }) => {
@@ -34,6 +41,7 @@ it.each([{ surface: 'ui', sourceFailure: false, publishFailure: false }, { surfa
   const hostedRepository = { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
     nameWithOwner: 'alice/bakery', visibility: 'private', webUrl: 'https://github.com/alice/bakery', cloneUrl: 'https://github.com/alice/bakery.git' };
   const executor = createActionExecutor({
+    registryActionExecute,
     approvalsCreate: async ({ request: value }) => { approvals++; request = ApprovalRequestSchema.parse(value); return { artifactId: 'approval' }; },
     approvalsGet: async () => request,
     approvalsUpdate: async ({ request: value }) => { request = ApprovalRequestSchema.parse(value); return { ok: true }; },
@@ -41,11 +49,11 @@ it.each([{ surface: 'ui', sourceFailure: false, publishFailure: false }, { surfa
     scmActionExecute: async args => {
       calls.push({ actionId: args.actionId, input: args.input, context: args.context });
       if (args.actionId === 'scm.hostingRepository.describePublishTargets') return { success: true,
-        auth: { state: 'authenticated', profileKind: 'connected_account' }, defaultRepositoryName: 'bakery', targets: [] };
+        auth: { state: 'authenticated', profileKind: 'connected_account' }, defaultRepositoryName: 'projects', targets: [] };
       if (args.actionId === 'scm.repository.clone') return { success: true, destinationPath: '/projects/bakery',
         cloneProtocol: 'https', cloneUrl: 'https://github.com/mdn/beginner-html-site-styled.git', repository: {
           provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
-          nameWithOwner: 'mdn/beginner-html-site-styled', webUrl: 'https://github.com/mdn/beginner-html-site-styled', visibility: 'public' } };
+          nameWithOwner: 'mdn/beginner-html-site-styled', webUrl: 'https://github.com/mdn/beginner-html-site-styled', visibility: 'public' }, snapshot: { branch: { headOid: '6c7a360ddb4a0d75be06044bf8a914f260ff10c7' } } };
       return publishFailure ? { success: false, errorCode: 'COMMAND_FAILED', error: 'Push failed', repository: hostedRepository }
         : { success: true, pushed: true, remote: { name: 'origin' }, repository: hostedRepository };
     },
@@ -78,8 +86,7 @@ it.each([{ surface: 'ui', sourceFailure: false, publishFailure: false }, { surfa
       sessionHandoff: { initialMessage: input.description, directory: '/projects/bakery' } } });
     expect(approvals).toBe(0);
   }
-  expect(calls.find(call => call.actionId === 'scm.repository.clone')?.input).toMatchObject({
-    initialCheckout: { branch: 'main', commit: '6c7a360ddb4a0d75be06044bf8a914f260ff10c7' } });
+  expect(calls.find(call => call.actionId === 'scm.repository.clone')?.input).not.toHaveProperty('initialCheckout');
   expect(calls.find(call => call.actionId === 'scm.repository.clone')?.context).toMatchObject({
     externalActionTarget: { kind: 'machine', machineId: input.machineId } });
   expect(calls.find(call => call.actionId === 'scm.hostingRepository.publish')?.input).toMatchObject({
@@ -88,6 +95,7 @@ it.each([{ surface: 'ui', sourceFailure: false, publishFailure: false }, { surfa
 
 it('refuses disconnected SCM before workspace or repository mutation with the existing connect recovery', async () => {
   const executor = createActionExecutor({
+    registryActionExecute,
     scmActionExecute: async () => ({ success: true, auth: { state: 'authentication_required', profileKind: 'no_auth',
       remediation: { kind: 'auth_required', action: 'connect_github' } }, defaultRepositoryName: 'bakery', targets: [] }),
     projectsOpen: async () => { throw new Error('must not mutate a workspace'); },

@@ -14,10 +14,10 @@ const LazyNewAppScreen = retryableLazy(async () => {
   return { default: module.NewAppScreen };
 });
 
-function NewAppDialog(props: CustomModalInjectedProps & Readonly<{ onClone?: (() => void) | null }>) {
+function NewAppDialog(props: CustomModalInjectedProps & Readonly<{ onClone?: (() => void) | null; starterId?: string | null }>) {
   return (
     <React.Suspense fallback={<View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><ActivitySpinner /></View>}>
-      <LazyNewAppScreen onClose={props.onClose} setChrome={props.setChrome} onClone={props.onClone} />
+      <LazyNewAppScreen onClose={props.onClose} setChrome={props.setChrome} onClone={props.onClone} starterId={props.starterId} />
     </React.Suspense>
   );
 }
@@ -26,17 +26,17 @@ function NewAppDialog(props: CustomModalInjectedProps & Readonly<{ onClone?: (()
  * Every New app entrance goes through here (Plan 60 §5.1): a dialog over the current page on a
  * computer (lab s1 panel), the pushed `/projects/new-app` page on a phone.
  */
-export function useOpenNewApp(onClone?: (() => void) | null): () => void {
+export function useOpenNewApp(onClone?: (() => void) | null): (starterId?: string | null) => void {
   const router = useRouter();
   const phone = useDeviceType() === 'phone';
   return React.useCallback(() => {
     if (phone) {
-      router.push('/projects/new-app' as never);
+      router.push({ pathname: '/projects/new-app', params: starterId ? { starterId } : {} } as never);
       return;
     }
     Modal.show({
       component: NewAppDialog,
-      props: { onClone: onClone ?? null },
+      props: { onClone: onClone ?? null, starterId: starterId ?? null },
       // The draft is the person's writing: a stray click outside never throws it away.
       closeOnBackdrop: false,
       chrome: {

@@ -1281,15 +1281,17 @@ status command is noninteractive. These fields never select an Agent parser or
 transfer process, environment, filesystem, or credential custody to plugin code.
 
 For a separated Machine member in 0.3 development, launch preparation at
-`agentCliBinding.ts` selects the Agent's managed runtime from the agent-readable
-install home and qualifies it for the member's native UID. The retained launch
-keeps that exact executable and JavaScript runtime, where required. An
-owner-private system installation cannot substitute for it. If no runnable
-managed runtime is available, launch returns `agent_cli_not_runnable`, names the
-Agent and asks the Machine owner to install its managed runtime. The RunAs shim
-executes the prepared launch without selecting a different Agent binary or
-falling back to the daemon identity. Machine inventory describes its own probe
-identity; an owner-visible installed binary alone does not prove member readiness.
+`agentCliBinding.ts` resolves the Agent through the canonical member policy:
+endpoint path overrides and inherited `PATH` are ignored, while a member's
+declared user install or the managed install is accepted. The selected
+executable and JavaScript runtime, where required, are then qualified for the
+member's native UID and retained for launch. An owner-private binary or
+configuration cannot substitute for it. If no runnable install is available,
+launch returns `agent_cli_not_runnable`, names the Agent and asks the Machine
+owner to install it. The RunAs shim executes the prepared launch without
+selecting a different Agent binary or falling back to the daemon identity.
+Machine inventory describes its own probe identity; an owner-visible installed
+binary alone does not prove member readiness.
 
 In 0.3 development source, `cli.commandPolicy` also carries the closed
 `daemonAutostartDefault: 'preferLocalTui'` declaration. The same manifest
@@ -3030,3 +3032,4 @@ Root `AGENTS.md` "Agent and Provider architecture" points here.
 Agents are executable coding backends such as Claude Code and Codex. Providers are model sources such as OpenRouter, DeepSeek, Ollama, and LM Studio. Do not use one term for the other. Read `docs/providers.md` when changing these domains.
 
 - Generic host code must not branch on Agent or Provider ids when a typed contribution, catalog hook, registry result, or Agent provider-binding adapter can own the variation.
+Project starters are registry items (`kind: starter`) and use the same source and Store discovery path as other registry kinds. Their repository metadata is resolved at project creation time by SCM; starter catalog entries do not decide a commit independently.

@@ -46,6 +46,7 @@ function storeKindTitle(kind: ComposedKind): string {
         case 'agent': return t('capabilities.store.kinds.agent.title');
         case 'provider': return t('capabilities.store.kinds.provider.title');
         case 'plugin': return t('capabilities.store.kinds.plugin.title');
+        case 'starter': return t('capabilities.store.kinds.starter.title');
     }
 }
 

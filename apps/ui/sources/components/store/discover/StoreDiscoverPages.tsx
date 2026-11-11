@@ -162,6 +162,8 @@ function kindPlural(kind: ComposedKind): string {
       return t('capabilities.store.kinds.plugin.title');
     case 'software':
       return t('capabilities.store.kinds.software.title');
+    case 'starter':
+      return t('capabilities.store.kinds.starter.title');
   }
 }
 function kindPurpose(kind: ComposedKind): string {
@@ -181,6 +183,8 @@ function kindPurpose(kind: ComposedKind): string {
       return t('capabilities.store.kinds.plugin.description');
     case 'software':
       return t('capabilities.store.softwarePage.description');
+    case 'starter':
+      return t('capabilities.store.kinds.starter.description');
   }
 }
 

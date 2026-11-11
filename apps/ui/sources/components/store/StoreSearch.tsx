@@ -5,7 +5,7 @@ import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { useRegistrySources } from '@/registries/useRegistrySources';
 import type { RegistryCuration } from '@/registries/useRegistrySuggestions';
 import { useStoreDirectoryState } from '@/components/settings/plugins/model/usePluginsOpenItem';
-import { StoreAppKind, StoreBrowserExtensionKind, StoreMcpKind, StoreSkillKind, StoreAgentKind, StoreProviderKind, StorePluginKind, StoreSoftwareKind,
+import { StoreAppKind, StoreStarterKind, StoreBrowserExtensionKind, StoreMcpKind, StoreSkillKind, StoreAgentKind, StoreProviderKind, StorePluginKind, StoreSoftwareKind,
     type StoreKindList } from './StoreKindScreen';
 import { storeKinds, STORE_KIND_ORDER, type StoreDemand, type StoreKind, type StoreListInput } from './catalog/storeKinds';
 import { storeColumnAdapter, storeDemandMatches, storeRowFacts, type StoreColumnField, type StoreSearchRow } from './catalog/storeColumnAdapter';
@@ -98,8 +98,11 @@ function StoreSearchScope(props: StoreSearchProps): React.ReactNode {
         ? <StoreMcpKind input={input} demand={props.demand}>{list => skill({ ...lists, mcpServer: list })}</StoreMcpKind> : skill(lists);
     const browserExtension = (lists: StoreSearchLists) => kinds.includes('browserExtension')
         ? <StoreBrowserExtensionKind input={input} demand={props.demand}>{list => mcp({ ...lists, browserExtension: list })}</StoreBrowserExtensionKind> : mcp(lists);
-    return kinds.includes('app')
-        ? <StoreAppKind input={input} demand={props.demand}>{list => browserExtension({ app: list })}</StoreAppKind> : browserExtension({});
+    const starter = (lists: StoreSearchLists) => kinds.includes('starter')
+        ? <StoreStarterKind input={input} demand={props.demand}>{list => app({ ...lists, starter: list })}</StoreStarterKind> : app(lists);
+    const app = (lists: StoreSearchLists) => kinds.includes('app')
+        ? <StoreAppKind input={input} demand={props.demand}>{list => browserExtension({ ...lists, app: list })}</StoreAppKind> : browserExtension(lists);
+    return starter({});
 }
 
 function StoreSearchResults(props: Omit<StoreSearchProps, 'draft'> & Readonly<{
@@ -111,6 +114,7 @@ function StoreSearchResults(props: Omit<StoreSearchProps, 'draft'> & Readonly<{
 }>): React.ReactNode {
     const { lists } = props;
     const rows = React.useMemo<readonly StoreSearchRow[]>(() => [
+        ...(lists.starter?.items.map(item => ({ kind: 'starter' as const, summary: storeKinds.starter.summary(item) })) ?? []),
         ...(lists.app?.items.map(item => ({ kind: 'app' as const, summary: storeKinds.app.summary(item) })) ?? []),
         ...(lists.browserExtension?.items.map(item => ({ kind: 'browserExtension' as const, summary: storeKinds.browserExtension.summary(item) })) ?? []),
         ...(lists.mcpServer?.items.map(item => ({ kind: 'mcpServer' as const, summary: storeKinds.mcpServer.summary(item) })) ?? []),
@@ -120,7 +124,7 @@ function StoreSearchResults(props: Omit<StoreSearchProps, 'draft'> & Readonly<{
         ...(lists.plugin?.items.map(item => ({ kind: 'plugin' as const, summary: storeKinds.plugin.summary(item) })) ?? []),
         ...(lists.software?.items.map(item => ({ kind: 'software' as const, summary: storeKinds.software.summary(item) })) ?? []),
     ].map(row => ({ ...row, key: JSON.stringify([row.kind, row.summary.key]) })),
-    [lists.app?.items, lists.browserExtension?.items, lists.mcpServer?.items, lists.skill?.items, lists.agent?.items, lists.provider?.items, lists.plugin?.items, lists.software?.items]);
+    [lists.starter?.items, lists.app?.items, lists.browserExtension?.items, lists.mcpServer?.items, lists.skill?.items, lists.agent?.items, lists.provider?.items, lists.plugin?.items, lists.software?.items]);
     const curation = props.curation ?? EMPTY_CURATION;
     const facts = React.useMemo(() => storeRowFacts(rows, curation, props.curationComplete === true),
         [rows, curation, props.curationComplete]);

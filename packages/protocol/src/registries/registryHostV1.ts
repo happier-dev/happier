@@ -8,7 +8,8 @@ import { composeCatalogRegistryAdapterV1 } from './formats/composeCatalog.js';
 import type { RegistryDetectedSourceV1,RegistryFetchContextV1,RegistryHttpV1,RegistryFormatAdapterV1 } from './formats/registryFormatAdapterV1.js';
 import { HAPPIER_PICKS_SOURCE_ID,deriveRegistrySourceIdV1,normalizeRegistrySourceUrlV1,resolveLegacyRegistrySourceRefV1,readBuiltInRegistryAppTemplateHintsV1,type RegistrySourceV1,type RegistrySourceDescriptorV1,type RegistryRemoteSourceDescriptorV1 } from './registrySourcesV1.js';
 import { DeploymentTemplateV1Schema } from '../plugins/contributions/deploymentTemplates.js';
-import { readRegistryPackageAppCatalogV1 } from './registryPackageContentV1.js';
+import { readRegistryPackageAppCatalogV1, readRegistryPackageStarterCatalogV1 } from './registryPackageContentV1.js';
+import { listHappierStarterCatalogV1, readHappierStarterCatalogItemV1 } from './formats/happierStarterCatalog.js';
 import { listHappierAppCatalogV1, readHappierAppCatalogItemV1 } from './formats/happierAppCatalog.js';
 import { RegistryFetchErrorV1, type RegistryListPageV1 } from './registryListV1.js';
 import { RegistryItemV1Schema,type RegistryItemPointerV1,type RegistrySkillSourceV1,type RegistryItemV1,type RegistrySkillItemV1,type RegistrySkillContentRefV1 } from './registryItemsV1.js';
@@ -145,11 +146,16 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
   const direct=async(request:Extract<RegistryFetchRequestV1,{sourceId:string}>,source:RegistrySourceDescriptorV1, operationCtx: RegistryFetchContextV1):Promise<RegistryFetchResponseV1>=>{
     if ('packageContent' in source) {
       if (request.op === 'files') throw new RegistryFetchErrorV1({state:'invalid_source'});
-      if (request.kind !== 'app') throw new RegistryFetchErrorV1({state:'invalid_source'});
+      if (request.kind !== 'app' && request.kind !== 'starter') throw new RegistryFetchErrorV1({state:'invalid_source'});
+      if (request.kind === 'starter') {
+        const { catalog, fetchedAt } = await readRegistryPackageStarterCatalogV1(operationCtx, source);
+        if (request.op === 'list') return { op: 'list', page: listHappierStarterCatalogV1({ sourceId: source.id, catalog, fetchedAt, query: request.query }) };
+        return { op: 'read', item: readHappierStarterCatalogItemV1({ sourceId: source.id, catalog, fetchedAt, itemId: request.itemId, packageContent: source.packageContent }) };
+      }
       const {catalog,fetchedAt}=await readRegistryPackageAppCatalogV1(operationCtx,source);
       if(request.op==='list') return {op:'list',page:listHappierAppCatalogV1({sourceId:source.id,catalog,fetchedAt,query:request.query})};
       return {op:'read',item:readHappierAppCatalogItemV1({sourceId:source.id,catalog,fetchedAt,
-        itemId:request.itemId,version:request.version,packageContent:source.packageContent})};
+        itemId:request.itemId,version:request.version,packageContent:source.packageContent,appMappingCorrection:request.appMappingCorrection})};
     }
     const adapter=adapterFor(source);
     if(!source.kinds.includes(request.kind)) throw new RegistryFetchErrorV1({state:'invalid_source'});
@@ -165,7 +171,8 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
             RegistryItemV1Schema.parse(await targetAdapter.read({ ...operationCtx, appTemplateHints }, target)), appTemplateHints);
           // Only the selected catalog pointer reaches its target's transport.
           const response = RegistryFetchResponseV1Schema.parse(await viaDaemon({ op: 'read', sourceId: source.id,
-            kind: request.kind, itemId: request.itemId, ...(request.version === undefined ? {} : { version: request.version }) }));
+            kind: request.kind, itemId: request.itemId, ...(request.version === undefined ? {} : { version: request.version }),
+            ...('appMappingCorrection' in request && request.appMappingCorrection ? { appMappingCorrection: request.appMappingCorrection } : {}) }));
           if (response.op !== 'read') throw new RegistryFetchErrorV1(response.op === 'error' && response.status.state !== 'ok'
             ? response.status : { state: 'invalid_source' });
           return response.item;

@@ -13,6 +13,9 @@ type KindProps<Kind extends StoreKind> = Readonly<{
 export function StoreAppKind(props: KindProps<'app'>): React.ReactNode {
     return props.children(storeKinds.app.useList(props.input, props.demand));
 }
+export function StoreStarterKind(props: KindProps<'starter'>): React.ReactNode {
+    return props.children(storeKinds.starter.useList(props.input, props.demand));
+}
 export function StoreBrowserExtensionKind(props: KindProps<'browserExtension'>): React.ReactNode {
     return props.children(storeKinds.browserExtension.useList(props.input, props.demand));
 }
@@ -39,6 +42,7 @@ type StoreKindScreenProps = { [Kind in StoreKind]: KindProps<Kind> & Readonly<{ 
 export function StoreKindScreen(props: StoreKindScreenProps): React.ReactNode {
     switch (props.kind) {
         case 'app': return <StoreAppKind {...props} />;
+        case 'starter': return <StoreStarterKind {...props} />;
         case 'browserExtension': return <StoreBrowserExtensionKind {...props} />;
         case 'mcpServer': return <StoreMcpKind {...props} />;
         case 'skill': return <StoreSkillKind {...props} />;

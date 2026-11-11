@@ -9856,7 +9856,6 @@ export {
 export * from './reviews/reviewPublicationEvidence.js';
 export * from './projects/openProjectV1.js';
 export * from './projects/starters/projectStarterV1.js';
-export * from './projects/starters/bundledProjectStartersV1.js';
 export * from './projects/openProjectDraftV1.js';
 export {
   GlassSurfaceMaterialSchema,

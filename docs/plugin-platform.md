@@ -5537,6 +5537,18 @@ references reproduces the V20 document exactly, so validation is unchanged;
 V20→V21 is an identity migration. Root properties, `$ref` targets and
 subschemas holding a `$ref` stay inline.
 
+### Plugin Collection tables
+
+The Account Collection query owner accepts both `asc` and `desc` keyset order.
+The `order: 'asc'` restriction in `collectionsV1.ts` belongs only to relation
+mutation restrictions; it does not limit ordinary UI queries. A plugin UI table
+declares the index for each sortable `CollectionField` with `collectionIndex`,
+then uses `createPluginCollectionTableQuery` from
+`@happier-dev/plugin-ui/data`. That connector maps the Collection sort
+direction to the SDK query, resets the cursor when the field or direction
+changes, and appends later pages with the returned cursor. The table remains a
+consumer of this one query owner; it does not sort a loaded page locally.
+
 Constructing a dormant Account storage binding does not prepare retained rows.
 A real Collection operation promotes its provisional declaration refusal through
 the same Account Data claim owner; concurrent operations share its preparation.
@@ -8271,6 +8283,46 @@ tracks keep the dense bar, and scatter points draw a small ring, each reaching
 only half the gap to its neighbours; focus, arrow keys, the readout and the
 values list remain the exact-value alternative.
 
+### Cursor native conversation stores (0.3 development)
+
+This section covers the Cursor plugin's External Sessions reader. Cursor's on-disk formats are undocumented and change between versions. The facts below come from Cursor CLI `2026.11.05-86047df`, captured on 2026-11-11.
+
+Cursor has two conversation stores, and the plugin labels each row with its source (`linkData.cursorSource`):
+
+- **CLI (`cli`), built.**
+  - Location: each chat has its own SQLite `store.db`. Interactive chats live under `~/.cursor/chats/<md5 of workspace path>/<chatId>/` and ACP sessions under `~/.cursor/acp-sessions/<sessionId>/`.
+  - `meta` table: key `0` holds hex-encoded JSON with `agentId`, `name` (the title), `createdAt`, `latestRootBlobId` and `subagentInfo`. A store with `subagentInfo` is a subagent of `rootParentAgentId`, so it is not listed as its own row.
+  - `blobs` table: content-addressed by SHA-256. The root blob is a protobuf whose repeated field 1 lists the message blob ids in order. Each message blob is AI-SDK-style JSON `{role, content}`.
+  - Rows produced: user and assistant text become transcript rows, and tool calls and results become events. System prompts and reasoning are skipped.
+  - An unrecognised store still appears as a row. Opening it fails with the shared `format_unsupported` failure and token `cursor_cli_store_format_unsupported`; the host answers `agent_format_unsupported`.
+  - Stores are opened read-only through `@happier-dev/plugin-sdk/fs` `openSqliteDatabaseSync`, never `immutable`, because uncheckpointed commits live in `store.db-wal`. Like any SQLite reader, it takes WAL read marks and creates empty `-wal`/`-shm` files when they are absent. Bun's SQLite also rejects URI filenames.
+  - Follow watches `store.db` and `store.db-wal`. readAfter settles unchanged stores from file identity alone; a changed message-id prefix reports `source_replaced`.
+  - Content search does not yet cover these stores (`contentCoverage: partial`).
+  - The CLI has no machine-readable listing or export. `agent ls` is a TTY-only interface. One run without a TTY created a `meta.json` in all 24 chat directories of a workspace.
+- **App (`app`), built as its own source `cursorApp`.** Its facts come from Cursor app 3.27.22 on macOS, captured on 2026-11-11 as structure only. The format is undocumented and version-sensitive.
+  - **Location:** one global SQLite `User/globalStorage/state.vscdb` under Electron's `appData`. That is `~/Library/Application Support/Cursor` on macOS, `$XDG_CONFIG_HOME/Cursor` (default `~/.config/Cursor`) on Linux, and `%APPDATA%\Cursor` on Windows. The source's optional `dataDir` overrides it.
+  - **Size:** the file can be several GB; the captured one was 5.9 GB. Every read is a point lookup or key-range read on the unique key index of `cursorDiskKV`, so the reader never scans the table and never reads the whole file.
+  - **Listing:** the `composerHeaders` table (`composerId` PK, `createdAt`, `recency`, `isSubagent`, `isArchived`, `value` JSON) is the conversation index.
+    - The title is `value.name`. `updatedAtMs` is `recency`; `lastUpdatedAt` is mostly null.
+    - cwd is `value.workspaceIdentifier.uri.fsPath`. A multi-root (`configPath`) workspace has no single cwd, so cwd is omitted.
+    - A subagent row (`isSubagent`, `value.subagentInfo.parentComposerId`) is a `subagent` thread, listed only with `includeThreads`.
+    - A conversation whose `composerData:<id>` has no visible messages is not a row. Its message count is cached in the host's `candidateIndexState`, keyed by a fingerprint of the header row, so unchanged rows never re-read their conversation.
+  - **Transcript:** `composerData:<id>`'s `fullConversationHeadersOnly` orders the visible messages. Each message is the `bubbleId:<id>:<bubbleId>` JSON row; type 1 is user and type 2 is assistant.
+    - Only the needed fields are extracted with `json_extract`, then mapped to the AI-SDK message shape and decoded by the same decoder as the CLI store.
+    - Thinking-only, empty and app-simulated bubbles are skipped.
+    - Bubble rows that are not in the header list are not part of the visible chat.
+    - `composerData.conversationState` (protobuf, with refs into `agentKv:blob:<sha256>`) is the compacted model context, not the chat, so it is not read.
+  - **Follow:** Follow watches `state.vscdb` and its `-wal`. readAfter settles from file identity alone when nothing was written.
+    - Otherwise it re-reads one `composerData` row and returns only the new bubbles.
+    - A bubble listed in `generatingBubbleIds`, and everything after it, waits until the app finishes writing it.
+    - A changed bubble-id prefix (edit or revert) reports `source_replaced`. A write elsewhere in the app reports `already_current`.
+  - **Unrecognised store:** a store without `composerHeaders` or `cursorDiskKV`, or with unreadable conversation JSON, fails with `format_unsupported` and token `cursor_app_store_format_unsupported` instead of an empty list. A missing `state.vscdb` (no Cursor app) lists nothing.
+  - **No content search:** content search does not cover the app store.
+  - **No resume:** an app conversation id is not a Cursor CLI/ACP session id, so the CLI cannot resume it.
+    - Cursor declares no takeover contribution and `writerSafety: 'unsupported'`, so the footer never offers a resume or takeover.
+    - Continuing it means a new session seeded by the existing replay owner: Import (materialize, which reads this source's `pageTranscript`/`readAfterTranscript`), then Fork → Replay.
+    - A one-step "Continue in a new session" footer action is not built. It needs a host/UI decision about when takeover is unavailable, and it is not Cursor-specific.
+
 ### External Session JSONL read progress (0.3 development)
 
 The shared SDK file-store scanners preserve source byte boundaries. When the
@@ -8430,7 +8482,14 @@ Transcript refreshes reuse that same demanded inventory instead of reopening
 unrelated rollout heads. Without a dirty-file hint they still revalidate native
 file versions. Memory ingestion receives the same physical observation lifetime
 from its accounting demand; retiring the demand releases its facts. Calls without
-observation demand use fresh discovery.
+observation demand use fresh discovery. A root-family inventory reads rollout heads
+only from the root's start through the family's latest write, widened by the
+filename time-zone window: Codex creates a subagent rollout while an earlier family
+member is still being written, and resume appends to the thread's existing rollout.
+Rollouts named for the root and `<thread>_<rollout>` revert rollouts are always read,
+and each member found widens the window. Dated `sessions/YYYY/MM/DD` directories that end
+before that window are not listed. A resumable preparation scan and non-UUIDv7 ids
+still read every head.
 Source-wide file consumers share the existing directory attachments for content
 delivery; exact-file observation remains for paths outside those admitted trees.
 
@@ -12130,3 +12189,6 @@ through plugin-specific Actions or setting subscriptions. See
 [public author guide](../apps/docs/content/docs/plugins/agent-runtimes/index.mdx#idle-compaction-unreleased-03).
 This is an unreleased development contract; a declaration alone does not prove a
 loaded native operation or provider cache lifetime.
+### Project starter registry items
+
+Plugins may contribute a `starter` registry source alongside app sources. A starter names an HTTPS forge repository, an optional repository subpath, human-facing title and description, tags, an optional preview image, and a build goal. It deliberately carries no commit pin: project creation resolves the repository's current release or default branch through the SCM owner and records the resolved checkout commit on the created Project.

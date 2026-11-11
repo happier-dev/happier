@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "starters": [
+    { "itemId": "static-website", "starter": { "repository": "https://github.com/mdn/beginner-html-site-styled", "title": "Static website", "description": "A small HTML and CSS website starter.", "tags": ["website", "static", "html", "css"], "buildGoal": "Build a responsive website from this HTML and CSS example. Replace the sample content with original content and use HTTPS for external resources." } },
+    { "itemId": "nextjs-hello-world", "starter": { "repository": "https://github.com/vercel/next.js", "path": "examples/hello-world", "title": "Next.js hello world", "description": "A minimal Next.js application starter.", "tags": ["website", "fullstack", "nextjs", "react"], "buildGoal": "Build a production-ready Next.js application from this minimal example, replacing its sample content with the requested product." } },
+    { "itemId": "vite-react", "starter": { "repository": "https://github.com/vitejs/vite", "path": "packages/create-vite/template-react", "title": "Vite React", "description": "A minimal React app powered by Vite.", "tags": ["website", "react", "vite"], "buildGoal": "Build a fast React website from this Vite template and replace the starter screen with the requested product." } },
+    { "itemId": "expo-blank", "starter": { "repository": "https://github.com/expo/expo-template-default", "title": "Expo blank", "description": "A blank Expo mobile app starter.", "tags": ["mobile", "expo", "react-native"], "buildGoal": "Build a cross-platform mobile app from this blank Expo template, replacing the placeholder screen with the requested product." } },
+    { "itemId": "astro-blog", "starter": { "repository": "https://github.com/withastro/astro", "path": "examples/blog", "title": "Astro blog", "description": "A content-focused Astro starter.", "tags": ["website", "astro", "content"], "buildGoal": "Build an Astro website from this starter and replace its sample posts and branding with the requested product." } }
+  ]
+}

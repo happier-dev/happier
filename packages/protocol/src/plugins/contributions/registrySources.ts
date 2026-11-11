@@ -27,7 +27,7 @@ const PluginRemoteRegistrySourceContributionV1Schema = lazyZodSchema(() => z.str
 export const PluginRegistrySourceContributionV1Schema = lazyZodSchema(() => z.union([
   PluginRemoteRegistrySourceContributionV1Schema,
   z.strictObject({ id: asProtocolZod(PluginContributionLocalIdSchema), title: z.string().check(z.minLength(1)),
-    format: z.literal('happier-catalog'), kinds: z.array(z.literal('app')).check(z.minLength(1), z.maxLength(1)),
+    format: z.literal('happier-catalog'), kinds: z.array(z.union([z.literal('app'), z.literal('starter')])).check(z.minLength(1), z.maxLength(1)),
     packageContent: z.strictObject({ path: RegistryPackageContentPathV1Schema }) }),
 ]));
 
