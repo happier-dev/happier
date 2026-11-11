@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { ROOT_STACK_ANCHOR } from '@/components/navigation/root/rootStackAnchor';
+import { UNIVERSAL_SEARCH_ROUTE } from '@/components/appShell/search/universalSearchRoutePresentation';
 
 /**
  * Canonical owner of "which route is a surface anchored to".
  *
- * Overlay routes (`/new`, the external/direct browse sheets, the zen modals, and their sub-routes)
+ * Overlay routes (`/new`, the external/direct browse sheets, the zen modals, native Search, and their sub-routes)
  * are presented *over* the current screen rather than replacing it: on web expo-router's modal stack
  * filters them out of the state handed to the stack view and renders them as a scaled drawer
  * overlay, so the previous screen stays mounted **and visible**; on native they are
@@ -23,6 +24,8 @@ const OVERLAY_ROUTE_PATHNAMES: readonly string[] = [
     '/direct/browse',
     '/zen/new',
     '/zen/view',
+    // Native Search is a `transparentModal` over the page it opened from (the web hands it to its modal).
+    UNIVERSAL_SEARCH_ROUTE,
 ];
 
 export function normalizeSurfaceRoutePathname(pathname: string | null | undefined): string {

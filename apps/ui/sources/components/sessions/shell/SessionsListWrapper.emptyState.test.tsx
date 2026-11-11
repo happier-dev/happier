@@ -431,6 +431,21 @@ describe('SessionsListWrapper (empty state)', () => {
         await screen.unmount();
     });
 
+    it('keeps My work painted under the transparent Search route (owner 2026-11-10)', async () => {
+        // Native Search is a transparent overlay: blurred under it, the root list blanked and came back as
+        // skeletons, while Projects behind the same Search stayed on screen.
+        const { UNIVERSAL_SEARCH_ROUTE } = await import('@/components/appShell/search/universalSearchRoutePresentation');
+        sessionListState.data = [{ type: 'session', session: { id: 'session-1' } }];
+        const screen = await renderScreen(<SessionsListWrapper pathname="/" />);
+        focusState.focused = false;
+        routeState.pathname = UNIVERSAL_SEARCH_ROUTE;
+        await screen.update(<SessionsListWrapper pathname="/" />);
+        const list = screen.findByType('SessionsListView' as any);
+        expect(list.props.paneState.summary.sessionCount).toBe(1);
+        expect(list.props.surfaceOwnership).toMatchObject({ visible: true, interactive: false, dataActive: false });
+        await screen.unmount();
+    });
+
     it('retains the last active phone root list while unsubscribing after focus loss', async () => {
         sessionListState.data = [{ type: 'session', session: { id: 'session-1' } }];
 
