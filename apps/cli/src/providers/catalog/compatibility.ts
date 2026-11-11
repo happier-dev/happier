@@ -28,10 +28,16 @@ export function resolveProviderModelCompatibility(input: Readonly<{
     compatibilityOverrides: facts.compatibilityOverrides,
     adapterVersion: input.adapterVersion,
   });
+  const declaredManagedModel = input.record.deployment.kind === 'managedLocal'
+    && 'staticModels' in facts.catalog
+    && facts.catalog.staticModels.some(model => model.id === input.model.id);
+  const declarationSatisfiesEvidence = declaredManagedModel
+    && compatibility.result.status === 'experimental'
+    && compatibility.result.reasons.every(reason => reason === 'compatibility_evidence_missing');
   return Object.freeze({
     ...compatibility,
     confirmed: compatibility.result.status === 'experimental'
-      ? input.teamCredentialResource !== undefined || hasProviderExperimentalConfirmation({
+      ? declarationSatisfiesEvidence || input.teamCredentialResource !== undefined || hasProviderExperimentalConfirmation({
           providerSettings: input.providerSettings,
           connectionId: input.record.connectionId,
           agentTargetKey: input.agentTargetKey,

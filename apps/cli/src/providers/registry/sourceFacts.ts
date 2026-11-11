@@ -14,6 +14,24 @@ export type ResolvedProviderSourceFacts = Readonly<{
   contributionKey: string | null;
 }>;
 
+/** Bound family declarations supply cold model facts until the Gateway observes membership. */
+export function resolveProviderSourceCatalog(record: ResolvedProviderConnectionRecord): ResolvedProviderSourceFacts['catalog'] {
+  const catalog = record.source.kind === 'contribution' ? record.source.definition.catalog : record.source.template.catalog;
+  if (record.deployment.kind !== 'managedLocal') return catalog;
+  const purposes = new Set(record.deployment.purposeBindingIntents.bindings.map(binding => binding.purpose.purpose));
+  const familyModels = record.deployment.managedRuntime.connectedAccounts
+    .filter(family => purposes.has(family.purpose))
+    .flatMap(family => family.staticModels ?? []);
+  if (familyModels.length === 0) return catalog;
+  const staticModels = [...new Map([
+    ...familyModels, ...('staticModels' in catalog ? catalog.staticModels : []),
+  ].map(model => [model.id, model])).values()];
+  return 'probes' in catalog
+    ? { ...catalog, source: 'static+probe', staticModels,
+        membershipPolicy: catalog.source === 'probe' ? 'probe-authoritative' : catalog.membershipPolicy }
+    : { ...catalog, source: 'static', staticModels };
+}
+
 /** One normalized, non-secret source-fact projection shared by spawn and catalog compatibility. */
 export function resolveProviderSourceFacts(record: ResolvedProviderConnectionRecord): ResolvedProviderSourceFacts {
   const source = record.source;
@@ -31,9 +49,7 @@ export function resolveProviderSourceFacts(record: ResolvedProviderConnectionRec
         && source.definition.managedRuntime?.credentialRequired === true
         ? { ...credential, required: true }
         : credential,
-      catalog: source.kind === 'contribution'
-        ? source.definition.catalog
-        : source.template.catalog,
+      catalog: resolveProviderSourceCatalog(record),
       compatibilityOverrides: source.kind === 'contribution'
         ? source.definition.compatibilityOverrides
         : undefined,
@@ -54,7 +70,7 @@ export function resolveProviderSourceFacts(record: ResolvedProviderConnectionRec
   return {
     endpointTemplates,
     credential,
-    catalog: source.kind === 'contribution' ? source.definition.catalog : source.template.catalog,
+    catalog: resolveProviderSourceCatalog(record),
     compatibilityOverrides: source.kind === 'contribution' ? source.definition.compatibilityOverrides : undefined,
     contributionKey: source.kind === 'contribution' ? source.contributionKey : null,
   };
