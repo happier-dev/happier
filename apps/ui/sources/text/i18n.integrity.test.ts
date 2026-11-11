@@ -2203,3 +2203,100 @@ describe('i18n integrity', () => {
         expect(missing).toEqual([]);
     });
 });
+
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
+
+
+const ROUTED_LITERAL_TRANSLATION_KEYS = new Set([
+    // Store owner — TH routes common.working.
+    "apps/ui/sources/components/store/StoreAppPreparation.tsx:common.working",
+    // Workflow test owner — TH routes the stale cancellation assertion.
+    "apps/ui/sources/components/workflows/run/workflowRunDetailPresentation.test.ts:errors.actionCanceled",
+    // MACH-MEMBER-PROJECTION — TH routes cancellation presenter and test.
+    "apps/ui/sources/sync/ops/actions/resolveActionExecutionFailureMessage.test.ts:errors.actionCanceled",
+    "apps/ui/sources/sync/ops/actions/resolveActionExecutionFailureMessage.ts:errors.actionCanceled",
+    // Plugin owners — explicit English fallback keys; TH routes locale coverage.
+    "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionEmpty",
+    "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionIncomplete",
+    "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionLoad",
+    "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionLoadMore",
+    "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionReload",
+    "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionRetry",
+    "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionUnavailable",
+    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.alertDestination",
+    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.connectionsInvalid",
+    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.connectionsUnavailable",
+    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.destinationEmpty",
+    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.destinationInvalid",
+    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.destinationNeedsConnection",
+    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.destinationReopen",
+    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.destinationRetry",
+    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.destinationUnavailable",
+    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.loadingConnections",
+    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.useChannel",
+    "packages/plugins/channels/src/ui/renderSurface.tsx:plugins.channels.page.noteDiscussionReplies",
+    "packages/plugins/channels/src/ui/renderSurface.tsx:plugins.channels.surface.bindingDiscussionDelivery",
+    "packages/plugins/channels/src/ui/renderSurface.tsx:plugins.channels.surface.bindingTargetDiscussion",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.addDestination",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.both",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.changeDestination",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.default",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.failure",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.off",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.phases",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.recovery",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.removeDestination",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.saved",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.selectionUnavailable",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.test",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.testOff",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.testPaused",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.testSent",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.testUnavailable",
+    "packages/plugins/machine-services/src/ui/SavedHealthAlertControls.ts:machineServices.healthSetup.alerts.turnOff",
+]);
+
+it('resolves literal translation call-site keys to English leaves', () => {
+    const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
+    const files: string[] = [];
+    function collect(dir: string): void {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+            const file = join(dir, entry.name);
+            if (entry.isDirectory()) collect(file);
+            else if (/\.[cm]?[jt]sx?$/.test(file)) files.push(file);
+        }
+    }
+    collect(join(repo, 'apps/ui/sources'));
+    for (const plugin of readdirSync(join(repo, 'packages/plugins'), { withFileTypes: true })) {
+        if (!plugin.isDirectory()) continue;
+        const src = join(repo, 'packages/plugins', plugin.name, 'src');
+        try {
+            if (readdirSync(src).includes('ui')) collect(join(src, 'ui'));
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+    }
+    const english = new Set(flattenTranslationLeaves(en).map(({ key }) => key));
+    for (const key of Object.keys(BUNDLED_PLUGIN_TRANSLATIONS.en)) english.add(key);
+    const missing = new Set<string>();
+    for (const file of files.sort()) {
+        const text = readFileSync(file, 'utf8');
+        if (!/\bt\s*\(/.test(text)) continue;
+        const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+        function visit(node: ts.Node): void {
+            if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 't'
+                && node.arguments[0] && ts.isStringLiteral(node.arguments[0])) {
+                const key = node.arguments[0].text;
+                if (!english.has(key)) missing.add(`${relative(repo, file).split('\\').join('/')}:${key}`);
+            }
+            ts.forEachChild(node, visit);
+        }
+        visit(source);
+    }
+    // Equality also rejects stale exceptions after their owner fixes/removes a call.
+    expect([...missing].sort()).toEqual([...ROUTED_LITERAL_TRANSLATION_KEYS].sort());
+});
