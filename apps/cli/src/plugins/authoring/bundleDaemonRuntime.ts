@@ -947,7 +947,10 @@ export async function stagePluginDaemonRuntime(
       outdir: stagedRoot,
       absWorkingDir: buildWorkingDirectory,
       bundle: true,
-      preserveSymlinks: true,
+      // First-party aliases own logical workspace identities. Ordinary author
+      // packages follow their installed closure: pnpm places dependencies beside
+      // each physical package, outside its public node_modules symlink.
+      preserveSymlinks: canonicalWorkspaceImportResolver !== undefined,
       format: 'esm',
       banner: { js: BUNDLED_PLUGIN_DAEMON_ESM_REQUIRE_BANNER },
       inject: [BUNDLED_PLUGIN_DAEMON_REQUIRE_INJECTION],

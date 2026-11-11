@@ -1497,11 +1497,11 @@ describe('bundlePluginDaemonRuntime', () => {
     }
   });
 
-  it('allows scoped subpath exports and transitive package closure in symlinked package layouts', async ({ skip }) => {
+  it('allows scoped subpath exports and transitive package closure in pnpm sibling layouts', async ({ skip }) => {
     const parentRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-pack-bundle-scoped-'));
     const sourceRoot = join(parentRoot, 'plugin');
-    const dependencyRoot = join(parentRoot, 'store', 'scoped');
-    const transitiveRoot = join(parentRoot, 'store', 'transitive');
+    const dependencyRoot = join(parentRoot, 'store', 'package', 'node_modules', '@fixture', 'scoped');
+    const transitiveRoot = join(parentRoot, 'store', 'package', 'node_modules', 'fixture-transitive');
     const stagedRoot = join(parentRoot, 'staged');
     await mkdir(join(sourceRoot, 'node_modules', '@fixture'), { recursive: true });
     await mkdir(join(dependencyRoot, 'node_modules'), { recursive: true });
@@ -1541,11 +1541,9 @@ describe('bundlePluginDaemonRuntime', () => {
           join(sourceRoot, 'node_modules', '@fixture', 'scoped'),
           process.platform === 'win32' ? 'junction' : 'dir',
         );
-        await symlink(
-          transitiveRoot,
-          join(dependencyRoot, 'node_modules', 'fixture-transitive'),
-          process.platform === 'win32' ? 'junction' : 'dir',
-        );
+        // pnpm places transitive dependencies beside the physical package,
+        // rather than beneath its public node_modules symlink.
+
       } catch (error) {
         const code = (error as NodeJS.ErrnoException | null)?.code;
         if (code === 'EPERM' || code === 'EACCES' || code === 'ENOTSUP' || code === 'ENOSYS') {
