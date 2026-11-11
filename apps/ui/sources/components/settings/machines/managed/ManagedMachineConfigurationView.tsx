@@ -273,7 +273,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         setAccountSetup(setup);
         try {
             const result = await presentConnectSheet({ service: selected?.service ?? (services?.length === 1 ? services[0] : undefined),
-                purpose, account: selected ?? undefined, purposeRequest: setup.request, anchor,
+                purpose, account: selected ?? undefined, purposeRequest: setup.request, anchor, intent: 'link',
                 ...(selection ? { targetSelection: { ...selection, resolveExecutionTarget: () => {
                     const target = selection.resolveExecutionTarget() ?? null;
                     return resolveConnectedAccountPurposeSetupHandoff(setup, { ...purposeHandoff.current,

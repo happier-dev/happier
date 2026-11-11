@@ -478,6 +478,7 @@ const ValueRefInlineRow = React.memo(function ValueRefInlineRow(
   const pickSecret = (thenType: RowType, anchor?: PopoverAnchor) => {
     void presentConnectSheet({
       service: { kind: 'key', suggestedName: name.trim() || undefined },
+      intent: 'link',
       anchor,
       ...(props.scope === undefined ? {} : { scope: props.scope }),
       ...(props.valueRef.t === 'savedSecret' ? { current: props.valueRef.secretId } : {}),

@@ -414,7 +414,7 @@ describe('managed provisioner credential purposes', () => {
         const screen = await renderAccountScreen(<></>);
         let result: ReturnType<typeof presentConnectSheet> | undefined;
         await act(async () => {
-            result = presentConnectSheet({ purpose: cloudPurpose, purposeRequest: {
+            result = presentConnectSheet({ intent: 'link', purpose: cloudPurpose, purposeRequest: {
                 scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
                 machineId: controller.machineId, purpose: cloudPurpose,
             } });
@@ -456,7 +456,7 @@ describe('managed provisioner credential purposes', () => {
             : <ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)}
                 initialController={controller} initialConnectPurpose={cloudPurpose.purpose} />;
         const screen = await renderAccountScreen(page);
-        if (surface === 'setup') await act(async () => { void presentConnectSheet({ purposeRequest: {
+        if (surface === 'setup') await act(async () => { void presentConnectSheet({ intent: 'link', purposeRequest: {
             scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
             machineId: controller.machineId, purpose: cloudPurpose }, purpose: cloudPurpose }); });
         const chooser = `connected-account-purpose:${buildQualifiedPluginContributionKey(cloud.service)}`;

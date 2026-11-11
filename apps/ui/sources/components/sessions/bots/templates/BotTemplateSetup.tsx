@@ -70,7 +70,7 @@ export function BotTemplateConnectionsSetup(props: ConnectionProps) {
                         : selected?.action === 'skip' ? need.skipConsequence : t(need.requirement === 'required' ? 'botTemplateRecipient.required' : 'botTemplateRecipient.optional')}
                     disabled={!service} onPress={() => {
                         if (!service) return;
-                        void presentConnectSheet({ scope: props.scope, service }).then(result => {
+                        void presentConnectSheet({ scope: props.scope, service, intent: 'link' }).then(result => {
                             if (result.kind !== 'dismissed') setAccount(need.key, { action: 'connect', binding: {
                                 source: 'connected', selection: 'profile', profileId: result.account.accountId,
                             } });
@@ -88,7 +88,7 @@ export function BotTemplateConnectionsSetup(props: ConnectionProps) {
                     const value = inputs[input.key];
                     return input.secret ? <Item key={input.key} testID={`bot-template-mcp-${need.key}-${input.key}`}
                         title={input.label} subtitle={value ? t('botTemplateRecipient.keySelected') : input.purpose}
-                        onPress={() => { void presentConnectSheet({ scope: props.scope, service: { kind: 'key', suggestedName: input.label },
+                        onPress={() => { void presentConnectSheet({ scope: props.scope, intent: 'link', service: { kind: 'key', suggestedName: input.label },
                             ...(value?.t === 'savedSecret' ? { current: value.secretId } : {}) }).then(result => {
                             if (result.kind !== 'dismissed') bindMcpInput(need.key, input.key, { t: 'savedSecret', secretId: result.secretRef });
                         }); }} /> : <Item key={input.key} title={input.label} subtitle={input.purpose} showChevron={false} accessoryLayout="adaptive"

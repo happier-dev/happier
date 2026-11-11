@@ -882,11 +882,11 @@ describe('ConnectedAccountSetupController real ownership', () => {
         }
         await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:token')).not.toBeNull());
         await vi.waitFor(() => expect(screen.findAllByTestId('connected-account-manual:token:choose')
-            .find(node => typeof node.props.title === 'string')?.props.disabled, screen.getTextContent()).toBe(false));
+            .find(node => typeof node.props.accessibilityLabel === 'string')?.props.disabled, screen.getTextContent()).toBe(false));
         await screen.pressByTestIdAsync('connected-account-manual:token:choose');
-        await vi.waitFor(() => expect(screen.findAllByTestId(`saved-secret:${ref}`)
+        await vi.waitFor(() => expect(screen.findAllByTestId(`saved-secret-picker:saved:${ref}`)
             .find(node => typeof node.props.title === 'string')?.props.disabled, screen.getTextContent()).toBe(false));
-        await screen.pressByTestIdAsync(`saved-secret:${ref}`);
+        await screen.pressByTestIdAsync(`saved-secret-picker:saved:${ref}`);
         await screen.pressByTestIdAsync('connected-account-manual:submit');
         if (path === 'Account-direct save') {
             await vi.waitFor(() => expect(onConnected).toHaveBeenCalledOnce());

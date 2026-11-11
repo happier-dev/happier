@@ -464,7 +464,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         const bindings = storedConnection ? query.catalog?.secretBindingsByConnectionId[storedConnection.id] : undefined;
         const current = scope === 'account' ? bindings?.account?.[credentialSlotId]
             : targetMachineId ? bindings?.byMachineId?.[targetMachineId]?.[credentialSlotId] : undefined;
-        void presentConnectSheet({ anchor: resolvePressTriggerAnchor(event), service: { kind: 'key', keyKind: 'apiKey' }, scope: accountLifetime.scope, ...(connectionContributionKey ? { bindingTarget: { kind: 'provider', contributionKey: connectionContributionKey, slot: credentialSlotId } } : {}), ...(current ? { current } : {}) }).then(result => {
+        void presentConnectSheet({ anchor: resolvePressTriggerAnchor(event), service: { kind: 'key', keyKind: 'apiKey' }, intent: 'link', scope: accountLifetime.scope, ...(connectionContributionKey ? { bindingTarget: { kind: 'provider', contributionKey: connectionContributionKey, slot: credentialSlotId } } : {}), ...(current ? { current } : {}) }).then(result => {
             if (result.kind === 'dismissed' || !accountLifetime.isCurrent()) return;
             invalidateProbe();
             void mutation.run({
@@ -876,7 +876,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const gatewayRuntime = gatewayRuntimeConnection?.runtime.gateway;
     const connectGatewayService = React.useCallback((serviceKey: string, anchor?: PopoverAnchor) => {
         const service = parseQualifiedPluginContributionKey(serviceKey) ?? undefined;
-        fireAndForget(presentConnectSheet({ scope: addressedScope, service, ...(anchor ? { anchor } : {}) }), {
+        fireAndForget(presentConnectSheet({ scope: addressedScope, service, intent: 'link', ...(anchor ? { anchor } : {}) }), {
             tag: 'ProviderConnectionDetailScreen.connectGatewayService',
         });
     }, [addressedScope]);

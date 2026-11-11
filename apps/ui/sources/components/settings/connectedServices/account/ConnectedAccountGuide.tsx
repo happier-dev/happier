@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { CopyIconButton } from '@/components/ui/copy/CopyIconButton';
@@ -9,6 +9,30 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
+
+/**
+ * The first step's destination: the phrase it marks with brackets ("Create a key in [Cursor Dashboard → API Keys].")
+ * is the link, so translations keep the phrase where their word order puts it. Without a mark the sentence stays plain.
+ */
+export function splitConsoleStep(step: string): Readonly<{ before: string; label: string; after: string }> | null {
+    const match = /^([^[]*)\[([^\]]+)\](.*)$/s.exec(step);
+    return match ? { before: match[1]!, label: match[2]!, after: match[3]! } : null;
+}
+
+/** The step that opens the console: only the destination is the link, inline, with the leaving-the-app glyph. */
+function ConsoleStep(props: Readonly<{ step: string; wholeLine: boolean; linkLabel: string; onOpen: () => void }>) {
+    const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const marked = props.wholeLine ? null : splitConsoleStep(props.step);
+    const link = (label: string) => (
+        <Text testID="connected-account-manual:open-console" accessibilityRole="link" style={styles.link} onPress={props.onOpen}>
+            {label}{'\u00a0'}<Icon name="arrow-square-out" size={12} color={theme.colors.text.secondary} />
+        </Text>
+    );
+    if (props.wholeLine) return <Text style={styles.stepText}>{link(props.step)}</Text>;
+    if (marked) return <Text style={styles.stepText}>{marked.before}{link(marked.label)}{marked.after}</Text>;
+    return <Text style={styles.stepText}>{props.step}{' '}{link(props.linkLabel)}</Text>;
+}
 
 /** The copy value's field is read-only; the field owner still takes a change handler. */
 const READ_ONLY = () => {};
@@ -41,11 +65,9 @@ export function ConnectedAccountGuide(props: Readonly<{ guide: ConnectedAccountG
                     <View key={index} style={styles.step} testID={`connected-account-manual:step:${index}`}>
                         {steps.length > 1 ? <Text style={styles.stepNumber}>{index + 1}</Text> : null}
                         {index === 0 ? (
-                            <Pressable testID="connected-account-manual:open-console" accessibilityRole="link" style={styles.stepLink}
-                                onPress={() => openExternalUrl(guide.consoleUrl)}>
-                                {/* Inline, so it stays with the sentence's last word when the sentence wraps. */}
-                                <Text style={styles.link}>{step}{' '}<Icon name="arrow-square-out" size={12} color={theme.colors.text.secondary} /></Text>
-                            </Pressable>
+                            <ConsoleStep step={step} wholeLine={steps.length === 0 || step === guide.createKeyTitle}
+                                linkLabel={guide.createKeyTitle ?? t('connectedServicesSettings.keyOpenConsole')}
+                                onOpen={() => openExternalUrl(guide.consoleUrl)} />
                         ) : <Text style={styles.stepText}>{step}</Text>}
                     </View>
                 ))}
@@ -85,10 +107,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     guide: { gap: theme.space.s16, paddingBottom: theme.space.s12 },
     steps: { gap: theme.space.s4 },
     step: { flexDirection: 'row', gap: theme.space.s8 },
-    stepNumber: { ...Typography.variant('meta'), color: theme.colors.text.tertiary, minWidth: theme.space.s12, fontVariant: ['tabular-nums'] },
-    stepText: { ...Typography.variant('meta'), color: theme.colors.text.secondary, flex: 1, minWidth: 0 },
-    stepLink: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, flexShrink: 1 },
-    link: { ...Typography.variant('meta'), color: theme.colors.text.primary, textDecorationLine: 'underline', flexShrink: 1 },
+    // Steps read at the sheet's body size, like the rows under them (owner 2026-11-11).
+    stepNumber: { ...Typography.variant('body'), color: theme.colors.text.tertiary, minWidth: theme.space.s12, fontVariant: ['tabular-nums'] },
+    stepText: { ...Typography.variant('body'), color: theme.colors.text.secondary, flex: 1, minWidth: 0 },
+    link: { color: theme.colors.text.primary, textDecorationLine: 'underline' },
     permissions: { gap: theme.space.s6 },
     permissionsTitle: { ...Typography.variant('meta', 'medium'), color: theme.colors.text.primary },
     permissionGlyph: { minWidth: theme.space.s12, paddingTop: theme.space.s2 },

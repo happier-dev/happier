@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { usePageListInsets } from '@/components/ui/lists/listPresentation';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
@@ -17,9 +18,13 @@ export function ConnectedAccountFormSection(props: Readonly<{
     description?: string;
     children: React.ReactNode;
 }>): React.ReactElement {
-    if (!props.embedded) {
+    // In a contained flow (the Connect sheet) the form is the flow's own bare section: its rows bleed by their
+    // padding, so labels keep the column's edge with the steps above and the footer below.
+    const contained = usePageListInsets() === 'contained';
+    if (!props.embedded || contained) {
         return (
-            <ItemGroup title={props.title} description={props.description}>
+            <ItemGroup title={props.title} description={props.description} surface={contained ? 'none' : undefined}
+                {...(contained && !props.title && !props.description ? { header: 'none' as const } : {})}>
                 {props.children}
             </ItemGroup>
         );

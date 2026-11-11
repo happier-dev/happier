@@ -20,6 +20,7 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { SchemaFieldControl } from '@/components/settings/schemaFields/SchemaFieldControl';
 import { buildActionRowAccessibilityLabel } from '@/components/ui/lists/actionRowAccessibility';
 import { Item } from '@/components/ui/lists/Item';
+import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { t } from '@/text';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { resolveProjectedLocalizedText } from '@/components/plugins/surfaces/resolvePluginDisplayString';
@@ -40,9 +41,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     billing: { paddingHorizontal: theme.space.s16, paddingTop: theme.space.s8 },
     accessories: { flexDirection: 'row', alignItems: 'center' },
     note: {  ...Typography.variant('meta'),  color: theme.colors.text.secondary },
-    panelActions: {
-        paddingTop: theme.space.s16,
-    },
+    // The content row already spaces the footer from the rows above it.
+    panelActions: {},
     actions: {
         alignItems: 'flex-end',
         paddingHorizontal: theme.space.s16,
@@ -282,7 +282,8 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
                     subtitleLines={0}
                     mode="info"
                     showChevron={false}
-                    accessoryLayout={multiline || guided || props.embedded ? 'stacked' : 'adaptive'}
+                    // Label and helper on the left, the field on the right; a narrow row stacks it (owner 2026-11-11).
+                    accessoryLayout={multiline ? 'stacked' : 'adaptive'}
                     rightElement={guidedKey ? (
                         <View style={styles.field}>
                             {fieldControl(field)}
@@ -324,7 +325,7 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
         >
             {/* A guided key opens with how to create it (lab crGuide A): the declared steps, then its console. Then
                 one card of field rows (lab `s2svc:key`), an optional name and the billing fact; no stepper. */}
-            {guided ? <ConnectedAccountGuide guide={guided} /> : null}
+            {guided ? <SectionContentRow showDivider={false}><ConnectedAccountGuide guide={guided} /></SectionContentRow> : null}
             {/* One order on every key sheet: the secret, the settings it needs, the optional name, then what is folded. */}
             {basicFields.map(renderFieldRow)}
             {props.configuration ? configuration.basicContent : null}
@@ -335,7 +336,7 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
                     subtitleLines={0}
                     mode="info"
                     showChevron={false}
-                    accessoryLayout="stacked"
+                    accessoryLayout="adaptive"
                     showDivider={false}
                     rightElement={<FieldTextInput testID="connected-account-manual:name"
                         value={displayName} onChangeText={setDisplayName} accessibilityLabel={t('connectedServicesSettings.keyName')}
@@ -355,7 +356,7 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
             ) : null}
             {guided?.billingNote ? <Text style={[styles.note, styles.billing]}>{guided.billingNote}</Text> : null}
             {props.onCancel ? (
-                <View style={styles.panelActions}>
+                <SectionContentRow showDivider={false}><View style={styles.panelActions}>
                     <ConnectedServiceSetupFlowActions
                         onCancel={props.onCancel}
                         primary={{
@@ -366,7 +367,7 @@ function ConnectedAccountManualFormBody(props: ConnectedAccountManualFormProps) 
                             onPress: () => void submit(),
                         }}
                     />
-                </View>
+                </View></SectionContentRow>
             ) : (
                 <View style={styles.actions}>
                     <RoundButton

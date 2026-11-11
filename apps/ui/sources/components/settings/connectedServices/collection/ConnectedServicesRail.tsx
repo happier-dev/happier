@@ -690,7 +690,7 @@ function NewSecretPopoverTrigger(props: Readonly<{
     const anchorRef = React.useRef<View>(null);
     const { onCreated } = props;
     const open = React.useCallback(() => {
-        fireAndForget(presentConnectSheet({ service: { kind: 'key' }, anchor: { kind: 'view', ref: anchorRef } }).then((result) => {
+        fireAndForget(presentConnectSheet({ service: { kind: 'key' }, intent: 'add', anchor: { kind: 'view', ref: anchorRef } }).then((result) => {
             if (result.kind !== 'dismissed') onCreated(result.secretRef);
         }), { tag: 'ConnectedServicesRail.newSecret' });
     }, [onCreated]);
@@ -778,7 +778,7 @@ export const ConnectedServicesRail = React.memo(function ConnectedServicesRail()
 
     // Stable while the menu's facts are, so the phone's navigation bar is not re-published per render.
     const onConnect = React.useCallback((anchor?: PopoverAnchor) => {
-        fireAndForget(presentConnectSheet({ scope, ...(anchor ? { anchor } : {}) }).then(result => {
+        fireAndForget(presentConnectSheet({ scope, intent: 'add', ...(anchor ? { anchor } : {}) }).then(result => {
             if (result.kind !== 'dismissed') onConnected(result.account, result);
         }), { tag: 'ConnectedServicesRail.connect' });
     }, [onConnected, scope]);

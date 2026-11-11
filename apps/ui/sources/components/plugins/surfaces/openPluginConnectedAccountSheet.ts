@@ -13,7 +13,7 @@ export async function openPluginConnectedAccountSheet(input: Readonly<{
 }>) {
     const { request, scope, machineId, serverId, anchor } = input;
     const result = await presentConnectSheet({
-        scope, anchor,
+        scope, anchor, intent: 'link',
         ...(machineId && serverId ? { initialMachineTarget: {
             serverIdentityId: captureServerProfileScopeResolver()(serverId), machineId,
         } } : {}),

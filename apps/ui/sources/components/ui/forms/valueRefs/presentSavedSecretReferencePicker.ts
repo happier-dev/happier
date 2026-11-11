@@ -1,15 +1,23 @@
 import { SharedSavedSecretReferenceSelectionV1Schema, type SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 import { Modal } from '@/modal';
+import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
+import type { PopoverAnchor } from '@/components/ui/popover/_types';
+import { t } from '@/text';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { SavedSecretPickerModal } from './SavedSecretPickerModal';
 
-/** The incumbent Saved Secret picker returns only a current exact reference or cancellation. */
+/**
+ * The one saved-secret picker: an anchored glass sheet at the control that opened it (a bottom sheet on phones),
+ * search and rows. It returns only a current exact reference or cancellation.
+ */
 export function presentSavedSecretReferencePicker(input: Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime;
     selected?: unknown;
     signal: AbortSignal;
     isCurrent: () => boolean;
+    /** The control that opened it; without one the sheet centres. */
+    anchor?: PopoverAnchor;
 }>): Promise<SharedSavedSecretReferenceSelectionV1 | null> {
     if (input.signal.aborted || !input.accountLifetime.isCurrent() || !input.isCurrent()) return Promise.resolve(null);
     return new Promise(resolve => {
@@ -43,6 +51,15 @@ export function presentSavedSecretReferencePicker(input: Readonly<{
                         if (parsed.success) finish(parsed.data);
                     },
                 },
+            },
+            chrome: {
+                ...createAnchoredSheetChrome({
+                    title: t('connectedServicesSettings.manualUseSavedSecret'),
+                    testID: 'saved-secret-picker-sheet',
+                    anchor: input.anchor,
+                }),
+                // The list scrolls under its search inside the sheet's bound.
+                bodyScroll: 'none',
             },
             onRequestClose: cancel,
             onHostUnmount: cancel,

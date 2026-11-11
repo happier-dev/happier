@@ -507,7 +507,7 @@ export function ConfiguredWidgetRefusal(props: Readonly<{
         label: t('connectedServicesSettings.connect'),
         onPress: (event?: unknown) => {
             const request = repair.connection!;
-            void presentConnectSheet({ purposeRequest: request, purpose: request.purpose, scope: request.scope,
+            void presentConnectSheet({ intent: 'link', purposeRequest: request, purpose: request.purpose, scope: request.scope,
                 purposeSettlement: 'resourceDefault', anchor: resolvePressTriggerAnchor(event) });
         },
         testID: `${props.testID}-connect`,

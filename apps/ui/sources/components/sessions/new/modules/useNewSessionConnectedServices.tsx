@@ -483,7 +483,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
       if (!service) return;
       fireAndForget((async () => {
         const { presentConnectSheet } = await import('@/components/settings/connectedServices/setup/ConnectedServiceSetupModal');
-        const result = await presentConnectSheet({ scope: purposeScope, service,
+        const result = await presentConnectSheet({ scope: purposeScope, service, intent: 'link',
           ...(action.kind === 'reconnect' ? { intent: 'reconnect' as const,
             account: { service, accountId: action.profileId } } : {}),
         });

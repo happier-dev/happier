@@ -247,11 +247,11 @@ export const ConnectedServicesAddMenu = React.memo(
         onSelect={(id, selection) => {
           const choice = choices.find((candidate) => candidate.key === id);
           if (choice?.kind === 'account') {
-            fireAndForget(presentConnectSheet({ scope, service: choice.service, ...(selection?.anchor ? { anchor: selection.anchor } : {}) }).then((result) => {
+            fireAndForget(presentConnectSheet({ scope, service: choice.service, intent: 'add', ...(selection?.anchor ? { anchor: selection.anchor } : {}) }).then((result) => {
               if (result.kind !== 'dismissed') props.onConnected?.(result.account, result);
             }), { tag: 'ConnectedServicesAddMenu.connect' });
           } else if (choice?.kind === 'key') {
-            fireAndForget(presentConnectSheet({ scope, service: choice.service, bindingTarget: choice.bindingTarget,
+            fireAndForget(presentConnectSheet({ scope, service: choice.service, intent: 'add', bindingTarget: choice.bindingTarget,
               ...(selection?.anchor ? { anchor: selection.anchor } : {}) }), { tag: 'ConnectedServicesAddMenu.key' });
           } else if (choice?.href) onOpen(choice.href);
         }}

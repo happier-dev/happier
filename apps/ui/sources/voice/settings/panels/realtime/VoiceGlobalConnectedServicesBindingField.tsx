@@ -128,7 +128,7 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
     if (!service) return;
     const binding = valueRef.current[serviceKey] ?? valueRef.current[serviceId];
     void presentConnectSheet({
-      scope: openRef.current?.scope ?? null, service, intent: 'add', anchor,
+      scope: openRef.current?.scope ?? null, service, intent: 'link', anchor,
       ...(binding?.source === 'connected' && binding.profileId
         ? { account: { service, accountId: binding.profileId } } : {}),
     }).then(result => {

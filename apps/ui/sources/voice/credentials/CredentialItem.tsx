@@ -257,6 +257,7 @@ export const VoiceCredentialItem = React.memo(function VoiceCredentialItem(props
           scope: expectedSettingsScope,
           anchor,
           service: { kind: 'key', keyKind: 'apiKey', suggestedName: props.title },
+          intent: 'link',
           bindingTarget: { kind: 'voice', contribution, slot: props.credentialSlotId },
           ...(expectedSecretId ? { current: expectedSecretId } : {}),
         });

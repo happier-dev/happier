@@ -152,6 +152,7 @@ export const ExecutionRunSecretReferenceOverlayField = React.memo((props: Readon
         const current = normalizeSecretReference(selectedSecretIds[name]) ?? normalizeSecretReference(props.defaultBindings?.[name]);
         const request: ConnectSheetKeyRequest = {
             service: { kind: 'key', suggestedName: name },
+            intent: 'link',
             scope: props.accountScope,
             ...(current ? { current } : {}),
             anchor,

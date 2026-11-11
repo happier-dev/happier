@@ -137,6 +137,7 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
         // A fresh open after repair re-resolves the form's options on its admitted target.
         close();
         void presentConnectSheet({
+            intent: 'link',
             ...(props.pickerContext?.machineId && props.pickerContext.serverId ? {
                 initialMachineTarget: {
                     serverIdentityId: captureServerProfileScopeResolver()(props.pickerContext.serverId),

@@ -985,7 +985,8 @@ describe('useNewSessionConnectedServices', () => {
             const select = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
             expect(select?.props).toMatchObject({ request: { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' } } });
             const selectProps = select?.props as import('@/components/settings/connectedServices/setup/ConnectedServiceSetupModal').ConnectSheetContentProps;
-            expect('intent' in selectProps.request).toBe(false);
+            // Choosing an account for a new session links one, so the sheet offers what exists (owner 2026-11-11, 04).
+            expect('intent' in selectProps.request && selectProps.request.intent).toBe('link');
             await act(async () => { selectProps.onResult({ kind: 'selected', account: {
                 service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'work' } }); });
             expect(setOption).toHaveBeenCalledWith(CONNECTED_SERVICES_BINDINGS_KEY, expect.objectContaining({

@@ -1,27 +1,20 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SavedSecretCreateEditor } from '@/components/secrets/SavedSecretCreateEditor';
-import { sharedSecretProvenanceSegments } from '@/components/secrets/savedSecretRowCopy';
+import { SavedSecretChoiceList } from '@/components/secrets/SavedSecretChoiceList';
 import type { SavedSecretCatalogProjection } from '@/components/secrets/useSavedSecretCatalog';
 import { ConnectedAccountGuide, type ConnectedAccountGuideContent } from '../account/ConnectedAccountGuide';
 import {
   RoundButton,
   RoundButtonSizeScope,
 } from '@/components/ui/buttons/RoundButton';
-import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { COLLECTION_LIST_SEARCH_THRESHOLD } from '@/components/ui/lists/collection/CollectionList';
-import { SelectableRow } from '@/components/ui/lists/SelectableRow';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
-import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { t } from '@/text';
 
@@ -58,14 +51,12 @@ export function ConnectKeySheetBody(
     onCancel: () => void;
   }>,
 ) {
-  const { theme } = useUnistyles();
   const router = useRouter();
   const linkable = props.linkableEntries;
   const hasSaved = linkable.length > 0;
   const [chosenMode, setChosenMode] = React.useState<KeyMode | null>(null);
   const mode: KeyMode = !hasSaved ? 'new' : (chosenMode ?? props.initialMode);
   const [chosenRef, setChosenRef] = React.useState<string | null>(null);
-  const [query, setQuery] = React.useState('');
   const selectedRef =
     chosenRef ??
     (linkable.some((entry) => entry.ref === props.preselected)
@@ -73,27 +64,9 @@ export function ConnectKeySheetBody(
       : null);
   const selected = linkable.find((entry) => entry.ref === selectedRef) ?? null;
 
-  // The kind only tells rows apart when they differ; a list of API keys does not say "API key" on every row.
-  const kindsDiffer = React.useMemo(
-    () => new Set(linkable.map((entry) => entry.kind ?? null)).size > 1,
-    [linkable],
-  );
   const sameTarget = React.useMemo(
     () => new Set(props.sameTargetRefs ?? []),
     [props.sameTargetRefs],
-  );
-  const searchable =
-    query.length > 0 || linkable.length >= COLLECTION_LIST_SEARCH_THRESHOLD;
-  const needle = searchable ? query.trim().toLocaleLowerCase() : '';
-  const shown = React.useMemo(
-    () =>
-      needle
-        ? linkable.filter((entry) =>
-            [entry.name, entry.owner ? formatAccountDisplayName(entry.owner) : null]
-              .some((text) => text?.toLocaleLowerCase().includes(needle)),
-          )
-        : linkable,
-    [linkable, needle],
   );
 
   const scopeKey = props.scope
@@ -135,13 +108,13 @@ export function ConnectKeySheetBody(
     );
   }
 
-  const reasonFor = (entry: SavedSecretCatalogEntryV1): string | null => {
-    if (props.currentRef && entry.ref === props.currentRef)
-      return t('connectedServicesSetup.keyInUseHere');
-    if (sameTarget.has(entry.ref))
-      return t('connectedServicesSetup.keyUsedElsewhereForThis');
-    return null;
-  };
+  // Why a row leads: in use here, or used elsewhere for the same thing; the order stays the presenter's.
+  const rows = linkable.map((entry) => ({
+    entry,
+    note: props.currentRef && entry.ref === props.currentRef
+      ? t('connectedServicesSetup.keyInUseHere')
+      : sameTarget.has(entry.ref) ? t('connectedServicesSetup.keyUsedElsewhereForThis') : null,
+  }));
 
   return (
     <View style={styles.body} testID="connect-key-sheet">
@@ -183,91 +156,12 @@ export function ConnectKeySheetBody(
         </ScrollView>
       ) : (
         <>
-          {searchable ? (
-            <CompactSearchField
-              value={query}
-              onChangeText={setQuery}
-              placeholder={t('connectedServicesSetup.keySearch')}
-              testID="connect-key-sheet:search"
-            />
-          ) : null}
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={styles.keys}
-            keyboardShouldPersistTaps="handled"
-            accessibilityRole="radiogroup"
-            testID="connect-key-sheet:saved"
-          >
-            {shown.length === 0 ? (
-              <SurfaceStateCard
-                testID="connect-key-sheet:no-matches"
-                kind="empty"
-                size="line"
-                title={t('common.noMatches')}
-              />
-            ) : null}
-            {shown.map((entry) => {
-              const isSelected = entry.ref === selectedRef;
-              const ownerName =
-                entry.relationship === 'recipient' && entry.owner
-                  ? formatAccountDisplayName(entry.owner)
-                  : null;
-              const kind =
-                kindsDiffer && entry.kind
-                  ? t(`secrets.catalog.kinds.${entry.kind}`)
-                  : null;
-              const facts = [
-                reasonFor(entry),
-                kind,
-                ...sharedSecretProvenanceSegments(entry),
-              ].filter((fact): fact is string => Boolean(fact));
-              return (
-                <SelectableRow
-                  key={entry.ref}
-                  testID={`connect-key-sheet:saved:${entry.ref}`}
-                  presentation="menu"
-                  accessibilityRole="radio"
-                  accessibilityChecked={isSelected}
-                  left={
-                    <Icon
-                      name="key"
-                      size={ICON_SIZE.sm}
-                      color={theme.colors.text.secondary}
-                    />
-                  }
-                  title={entry.name}
-                  subtitle={facts.length > 0 ? facts.join(' · ') : undefined}
-                  right={
-                    ownerName || isSelected ? (
-                      <View style={styles.trailing}>
-                        {ownerName ? (
-                          <Text style={styles.approves} numberOfLines={1}>
-                            {t('connectedServicesSetup.keyOwnerApprovesFirst', {
-                              owner: ownerName,
-                            })}
-                          </Text>
-                        ) : null}
-                        {/* The chosen key carries the menus' check; a slot keeps every row's text edge. */}
-                        <View style={styles.mark}>
-                          {isSelected ? (
-                            <Icon
-                              testID={`connect-key-sheet:selected:${entry.ref}`}
-                              name="check"
-                              size={ICON_SIZE.sm}
-                              color={theme.colors.text.primary}
-                            />
-                          ) : null}
-                        </View>
-                      </View>
-                    ) : (
-                      <View style={styles.mark} />
-                    )
-                  }
-                  onPress={() => setChosenRef(entry.ref)}
-                />
-              );
-            })}
-          </ScrollView>
+          <SavedSecretChoiceList
+            rows={rows}
+            selectedRef={selectedRef}
+            onChoose={setChosenRef}
+            testIDPrefix="connect-key-sheet"
+          />
           <RoundButtonSizeScope size="normal" presentation="uniform">
             <View style={styles.actions}>
               <RoundButton
@@ -313,23 +207,6 @@ const styles = StyleSheet.create((theme) => ({
     flexGrow: 0,
     flexShrink: 1,
     minHeight: 0,
-  },
-  keys: {
-    gap: theme.space.s2,
-    marginHorizontal: -theme.space.s8,
-  },
-  trailing: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.s8,
-  },
-  mark: {
-    width: ICON_SIZE.sm,
-    alignItems: 'center',
-  },
-  approves: {
-    ...Typography.variant('meta'),
-    color: theme.colors.text.secondary,
   },
   actions: {
     flexDirection: 'row',

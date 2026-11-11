@@ -58,10 +58,10 @@ describe('value ref saved secrets live updates', () => {
         await refreshSavedSecretCatalog(home!.scope, { includeMaterial: false });
         const { presentConnectSheet } = await import('@/components/settings/connectedServices/setup/ConnectedServiceSetupModal');
         const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
-        const result = presentConnectSheet({ service: { kind: 'key' } });
+        const result = presentConnectSheet({ service: { kind: 'key' }, intent: 'link' });
         const presentation = modalShowSpy.mock.calls.at(-1)?.[0];
         if (!presentation?.component) throw new Error('Expected the composed Connect sheet');
-        expect(presentation.props.request).toEqual({ service: { kind: 'key' }, scope: home!.scope });
+        expect(presentation.props.request).toEqual({ service: { kind: 'key' }, intent: 'link', scope: home!.scope });
         const screen = await renderScreen(React.createElement(InjectedAuthProvider, { credentials: home!.credentials,
             children: React.createElement(presentation.component, { ...presentation.props, onClose: presentation.onRequestClose }) }));
         await vi.waitFor(() => expect(screen.findByTestId('saved-secret-create-value')).not.toBeNull());
@@ -88,7 +88,7 @@ describe('value ref saved secrets live updates', () => {
         home!.request.mockClear();
         await refreshSavedSecretCatalog(home!.scope, { includeMaterial: false });
         const hook = await renderHook(() => useConnectKeySheetModel({ scope: home!.scope,
-            service: { kind: 'key' }, current: unavailable.entry.ref }));
+            service: { kind: 'key' }, intent: 'link', current: unavailable.entry.ref }));
         await vi.waitFor(() => expect(hook.getCurrent().loading).toBe(false));
         expect(hook.getCurrent().initialMode).toBe('new');
         expect(hook.getCurrent().preselected).toBeNull();
@@ -122,19 +122,46 @@ describe('value ref saved secrets live updates', () => {
         expect(onSubmit).toHaveBeenCalledWith({ key: 'X-Wilson-On-Behalf-Of', valueRef: initialValueRef });
     });
 
-    it('SavedSecretPickerModal reflects resources added after the modal opens on an Account change', async () => {
-        const onSelectId = vi.fn();
+    // The one saved-secret picker (owner 2026-11-11, OWNER-1357-CONNECT 03): rows from the live catalog, by reference.
+    it('SavedSecretPickerModal lists secrets added while it is open and settles the exact reference without material', async () => {
+        const onSelect = vi.fn();
+        const onClose = vi.fn();
+        home!.request.mockClear();
         const screen = await renderScreen(React.createElement(SavedSecretPickerModal, {
-            onClose: vi.fn(), selectedId: null, onSelectId, scope: home!.scope,
+            onClose, scope: home!.scope, referenceSelection: { selected: null, onSelect },
         }));
-        expect(screen.findByTestId('saved-secret:empty')).not.toBeNull();
         const { entry } = await home!.addOwnerResource();
-        await act(async () => { publishHomeAccountChange(home!.scope.serverId); });
-        await vi.waitFor(() => expect(namedRow(screen, `saved-secret:${entry.ref}`)?.props.disabled).toBe(false));
-        expect(screen.findByTestId('saved-secret:empty')).toBeNull();
-        await screen.pressByTestIdAsync(`saved-secret:${entry.ref}`);
-        expect(onSelectId).toHaveBeenCalledWith(entry.ref);
+        await act(async () => {
+            publishHomeAccountChange(home!.scope.serverId);
+            await refreshSavedSecretCatalog(home!.scope, { includeMaterial: false });
+        });
+        await vi.waitFor(() => expect(namedRow(screen, `saved-secret-picker:saved:${entry.ref}`)?.props.disabled).toBe(false));
+        expect(screen.findByTestId('saved-secret-add')).toBeNull();
+        await screen.pressByTestIdAsync(`saved-secret-picker:saved:${entry.ref}`);
+        expect(onSelect).toHaveBeenCalledWith({ ref: entry.ref, resourceRevision: entry.revision });
+        expect(onClose).toHaveBeenCalledOnce();
         expect(home!.settingsWrites).toEqual([]);
+        expect(home!.request.mock.calls.some(([input]) => new URL(String(input)).pathname.endsWith('/materials'))).toBe(false);
+    });
+
+    it('SavedSecretPickerModal keeps a secret it cannot use listed with its status, not choosable', async () => {
+        const unavailable = await home!.addOwnerResource();
+        const index = home!.resources.findIndex(row => 'resourceId' in row && row.entry.ref === unavailable.entry.ref);
+        const resource = home!.resources[index];
+        if (!resource || !('resourceId' in resource)) throw new Error('Expected the key resource');
+        home!.resources[index] = { ...resource, entry: { ...resource.entry,
+            materialStatus: 'access_removed', capabilities: { use: false, rename: false, rotate: false, manageAccess: false, delete: false } } };
+        await refreshSavedSecretCatalog(home!.scope, { includeMaterial: false });
+        const onSelect = vi.fn();
+        const screen = await renderScreen(React.createElement(SavedSecretPickerModal, {
+            onClose: vi.fn(), scope: home!.scope, referenceSelection: { selected: null, onSelect },
+        }));
+        await vi.waitFor(() => expect(namedRow(screen, `saved-secret-picker:saved:${unavailable.entry.ref}`)).toBeTruthy());
+        const row = namedRow(screen, `saved-secret-picker:saved:${unavailable.entry.ref}`);
+        expect(row?.props.disabled).toBe(true);
+        expect(row?.props.onPress).toBeUndefined();
+        expect(row?.props.subtitle).toBeTruthy();
+        expect(onSelect).not.toHaveBeenCalled();
     });
 
     it('ValueRefEditorModal resolves saved-secret names from its live scoped catalog', async () => {

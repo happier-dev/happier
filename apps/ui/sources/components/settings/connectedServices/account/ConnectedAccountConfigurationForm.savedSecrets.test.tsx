@@ -171,10 +171,10 @@ describe('ConnectedAccountConfigurationForm Saved Secrets', () => {
         /></React.Profiler></ModalProvider>);
         const screen = await renderScreen(form(fields));
         await screen.pressByTestIdAsync('connected-account-manual:token:choose');
-        await vi.waitFor(() => expect(screen.findAllByTestId(`saved-secret:${privateRef}`)
+        await vi.waitFor(() => expect(screen.findAllByTestId(`saved-secret-picker:saved:${privateRef}`)
             .find(node => typeof node.props.title === 'string')?.props.disabled).toBe(false));
         commits = 0;
-        await screen.pressByTestIdAsync(`saved-secret:${privateRef}`);
+        await screen.pressByTestIdAsync(`saved-secret-picker:saved:${privateRef}`);
         const settledCommits = commits;
         await act(async () => {});
         expect(commits).toBe(settledCommits);
@@ -244,9 +244,9 @@ describe('ConnectedAccountConfigurationForm Saved Secrets', () => {
         /></ModalProvider>, { wrapper: React.StrictMode });
         const pick = async (ref: string) => {
             await screen.pressByTestIdAsync('connected-account-configuration:token:choose');
-            await vi.waitFor(() => expect(screen.findAllByTestId(`saved-secret:${ref}`)
+            await vi.waitFor(() => expect(screen.findAllByTestId(`saved-secret-picker:saved:${ref}`)
                 .find(node => typeof node.props.title === 'string')?.props.disabled).toBe(false));
-            await screen.pressByTestIdAsync(`saved-secret:${ref}`);
+            await screen.pressByTestIdAsync(`saved-secret-picker:saved:${ref}`);
         };
         expect(screen.findHostByTestId('connected-account-configuration:token')).toBeNull();
         await pick(privateRef);
@@ -258,7 +258,7 @@ describe('ConnectedAccountConfigurationForm Saved Secrets', () => {
         await pick(readyEntry.ref);
         await vi.waitFor(() => expect(screen.tree.find(node =>
             node.props.testID === 'connected-account-configuration:token:choose'
-            && typeof node.props.title === 'string').props.detail).toBe('Team key'));
+            && typeof node.props.accessibilityLabel === 'string').props.accessibilityLabel).toContain('Team key'));
         expect(onSubmit).toHaveBeenCalledTimes(1);
         await screen.pressByTestIdAsync('connected-account-configuration:token:choose');
         const config = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];

@@ -200,13 +200,13 @@ function ConnectAccountSheetLeaf(
       })
     : [];
 
-  // A repair names its account and runs its sign-in; adding offers the accounts already here first.
+  // A repair names its account and runs its sign-in; linking offers the accounts already here first, adding only the form.
   const repair = target.kind === 'reconnect';
   const canPick =
     !repair &&
     (purposeRequest
       ? purposeChoosers.length + purposeReconnectRows.length > 0
-      : target.kind !== 'catalog' && model.savedAccounts.length > 0);
+      : target.kind !== 'catalog' && model.offerSaved);
   const [chosenMode, setChosenMode] = React.useState<SheetMode | null>(null);
   const mode: SheetMode = canPick ? (chosenMode ?? model.initialMode) : 'new';
   const [chosenAccountId, setChosenAccountId] = React.useState<string | null>(

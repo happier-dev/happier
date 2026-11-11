@@ -29,6 +29,7 @@ export function useRegistryTokenPicker() {
     }>) => {
       void presentConnectSheet({
         service: { kind: 'key', keyKind: 'token' },
+        intent: 'link',
         anchor: props.anchor,
         ...(props.selectedId ? { current: props.selectedId } : {}),
       }).then(result => {

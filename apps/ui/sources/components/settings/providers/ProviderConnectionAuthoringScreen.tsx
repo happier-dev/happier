@@ -495,7 +495,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
 
     const pickSecret = React.useCallback((event?: unknown) => {
         if (!accountStillCurrent() || !selectedTargetServerMatchesActiveAccount) return;
-        void presentConnectSheet({ anchor: resolvePressTriggerAnchor(event), service: { kind: 'key', keyKind: 'apiKey', suggestedName: contributionDisplayName?.trim() || contribution?.name || draft.name.trim() || t('settingsProviders.authoring.apiKey') }, scope: addressedScope, ...(props.contributionKey ? { bindingTarget: { kind: 'provider', contributionKey: props.contributionKey, slot: 'apiKey' } } : {}), ...(secretId ? { current: secretId } : {}) }).then(result => {
+        void presentConnectSheet({ anchor: resolvePressTriggerAnchor(event), intent: 'link', service: { kind: 'key', keyKind: 'apiKey', suggestedName: contributionDisplayName?.trim() || contribution?.name || draft.name.trim() || t('settingsProviders.authoring.apiKey') }, scope: addressedScope, ...(props.contributionKey ? { bindingTarget: { kind: 'provider', contributionKey: props.contributionKey, slot: 'apiKey' } } : {}), ...(secretId ? { current: secretId } : {}) }).then(result => {
             if (result.kind !== 'dismissed' && accountStillCurrent()) setSecretId(result.secretRef);
         });
     }, [accountStillCurrent, addressedScope, contribution?.name, contributionDisplayName, draft.name, props.contributionKey, secretId, selectedTargetServerMatchesActiveAccount]);

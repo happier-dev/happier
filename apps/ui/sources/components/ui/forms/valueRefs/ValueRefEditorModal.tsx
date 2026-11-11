@@ -125,6 +125,7 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
     const pickSecret = React.useCallback((event?: unknown, anchor?: PopoverAnchor) => {
         void presentConnectSheet({
             service: { kind: 'key', suggestedName: normalizedKey || undefined },
+            intent: 'link',
             anchor: anchor ?? resolvePressTriggerAnchor(event),
             ...(props.scope === undefined ? {} : { scope: props.scope }),
             ...(secretId ? { current: secretId } : {}),

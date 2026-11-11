@@ -35,6 +35,7 @@ export function ConnectedServiceConnectRoute() {
         let active = true;
         void presentConnectSheet({
             scope: lifetime?.scope ?? null,
+            intent: 'link',
             ...(service ? { service } : {}),
             ...(service && params.accountId ? { account: { service, accountId: params.accountId }, intent: 'reconnect' as const } : {}),
             ...(purposeRequest ? { purposeRequest, purpose: purposeRequest.purpose, purposeSettlement: 'resourceDefault' as const } : {}),

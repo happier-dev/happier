@@ -554,7 +554,7 @@ function PluginSettingAccountSecretField(props: Readonly<{
 
     const bindExistingSecret = React.useCallback((event?: unknown) => {
         if (!revision || loading || saving || writePending || !props.enabled || !accountScopeIsCurrent()) return;
-        void presentConnectSheet({ anchor: resolvePressTriggerAnchor(event), service: { kind: 'key', suggestedName: props.field.title }, scope: props.accountLifetime?.scope ?? null, bindingTarget: { kind: 'plugin', pluginId: props.pluginId, localId: props.field.key } }).then(result => {
+        void presentConnectSheet({ anchor: resolvePressTriggerAnchor(event), intent: 'link', service: { kind: 'key', suggestedName: props.field.title }, scope: props.accountLifetime?.scope ?? null, bindingTarget: { kind: 'plugin', pluginId: props.pluginId, localId: props.field.key } }).then(result => {
             if (result.kind !== 'dismissed') commit({ kind: 'bind', savedSecretId: result.secretRef });
         });
     }, [accountScopeIsCurrent, commit, loading, props.accountLifetime, props.enabled, props.field.key, props.field.title, props.pluginId, revision, saving, writePending]);

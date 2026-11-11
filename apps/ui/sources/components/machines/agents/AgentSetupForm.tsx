@@ -113,6 +113,7 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
                     fireAndForget(presentConnectSheet({
                         scope: execution.binding?.scope ?? null,
                         service,
+                        intent: 'link',
                         initialMachineTarget: {
                             serverIdentityId: captureServerProfileScopeResolver()(props.serverId),
                             machineId: props.machineId,

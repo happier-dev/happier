@@ -563,7 +563,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
 
     const openConnectSheet = React.useCallback((serviceId: string, accountId?: string | null, anchor?: PopoverAnchor) => {
         const service = parseQualifiedPluginContributionKey(serviceId) ?? undefined;
-        return presentConnectSheet({ scope: binding?.scope ?? null, service, ...(anchor ? { anchor } : {}),
+        return presentConnectSheet({ scope: binding?.scope ?? null, service, intent: 'link', ...(anchor ? { anchor } : {}),
             ...(service && accountId ? { intent: 'reconnect', account: { service, accountId } } : {}) });
     }, [binding]);
 

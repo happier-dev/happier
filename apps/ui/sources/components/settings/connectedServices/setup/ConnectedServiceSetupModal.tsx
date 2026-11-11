@@ -27,7 +27,12 @@ export type ConnectSheetAccountRequest = Readonly<{
     service?: PluginContributionIdentityV1;
     purpose?: QualifiedConnectedAccountPurposeV1;
     account?: QualifiedConnectedAccountRef;
-    intent?: 'add' | 'reconnect';
+    /**
+     * Why the caller opens the sheet, decided by its entry point: `add` (Credentials' and a service's "+") offers
+     * only the new-account form; `link` (a setting, Agent or binding that needs a credential) offers existing
+     * accounts first; `reconnect` signs `account` in again.
+     */
+    intent: 'add' | 'link' | 'reconnect';
     anchor?: PopoverAnchor;
     purposeRequest?: ConnectedAccountPurposeSetupRequest;
     /** Resource consumers keep their existing purpose-default writer; inline callers own the returned account. */
@@ -37,6 +42,8 @@ export type ConnectSheetAccountRequest = Readonly<{
 }>;
 export type ConnectSheetKeyRequest = Readonly<{
     service: Readonly<{ kind: 'key'; suggestedName?: string; keyKind?: 'apiKey' | 'token' | 'password' | 'other' }>;
+    /** `add` makes a new key (Credentials' "+"); `link` binds one to something and offers the saved keys too. */
+    intent: 'add' | 'link';
     scope?: AccountSettingsScope | null;
     current?: string;
     bindingTarget?: ConnectSheetKeyBindingTarget;

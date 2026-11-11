@@ -24,9 +24,9 @@ describe('Connect sheet opening choice', () => {
         expect(isConnectSheetNpmRegistryRequest(request)).toBe(true);
     });
     it('opens Saved for the same service and prefers the caller’s current account', () => {
-        expect(resolveConnectSheetOpening({ service, account: current }, { accounts: [first, current].map(ref => ({ ref, status: 'connected' as const })) }))
+        expect(resolveConnectSheetOpening({ intent: 'link', service, account: current }, { accounts: [first, current].map(ref => ({ ref, status: 'connected' as const })) }))
             .toMatchObject({ initialMode: 'saved', preselected: current });
-        expect(resolveConnectSheetOpening({ service }, { accounts: [first, current].map(ref => ({ ref, status: 'connected' as const })) }))
+        expect(resolveConnectSheetOpening({ intent: 'link', service }, { accounts: [first, current].map(ref => ({ ref, status: 'connected' as const })) }))
             .toMatchObject({ initialMode: 'saved', preselected: first });
     });
 
@@ -34,26 +34,26 @@ describe('Connect sheet opening choice', () => {
         const signedOut = { ref: first, status: 'needs_reauth' as const };
         const usable = { ref: current, status: 'refreshing' as const };
         const inventory = { accounts: [signedOut, usable] };
-        expect(resolveConnectSheetOpening({ service }, inventory))
+        expect(resolveConnectSheetOpening({ intent: 'link', service }, inventory))
             .toMatchObject({ initialMode: 'saved', preselected: usable.ref });
-        expect(resolveConnectSheetOpening({ service, account: signedOut.ref }, inventory))
+        expect(resolveConnectSheetOpening({ intent: 'link', service, account: signedOut.ref }, inventory))
             .toMatchObject({ initialMode: 'saved', preselected: usable.ref });
-        expect(resolveConnectSheetOpening({ service }, { accounts: [signedOut] }))
+        expect(resolveConnectSheetOpening({ intent: 'link', service }, { accounts: [signedOut] }))
             .toMatchObject({ initialMode: 'new', preselected: null });
     });
 
     it('matches declared purpose services without choosing an unrelated service for the generic catalog', () => {
         const accounts = [{ service: otherService, accountId: 'forge' }, first].map(ref => ({ ref, status: 'connected' as const }));
-        expect(resolveConnectSheetOpening({ purpose: { consumer: service, purpose: 'model-access' } }, { accounts, services: [service] }))
+        expect(resolveConnectSheetOpening({ intent: 'link', purpose: { consumer: service, purpose: 'model-access' } }, { accounts, services: [service] }))
             .toMatchObject({ initialMode: 'saved', preselected: first });
-        expect(resolveConnectSheetOpening({}, { accounts }))
+        expect(resolveConnectSheetOpening({ intent: 'link' }, { accounts }))
             .toMatchObject({ initialMode: 'new', preselected: null });
     });
 
     it('prefers the key already bound to this target elsewhere over a generic matching type', () => {
         const keys = [{ ref: 'generic-api-key', kind: 'apiKey' as const },
             { ref: 'deepseek-elsewhere', kind: 'other' as const }, { ref: 'current-link', kind: 'apiKey' as const }];
-        const request = { service: { kind: 'key' as const, keyKind: 'apiKey' as const } };
+        const request = { service: { kind: 'key' as const, keyKind: 'apiKey' as const }, intent: 'link' as const };
         const inventory = { keys, sameTargetRefs: ['deepseek-elsewhere'] };
         expect(resolveConnectSheetOpening(request, inventory)).toMatchObject({ initialMode: 'saved', preselected: 'deepseek-elsewhere' });
         expect(resolveConnectSheetOpening({ ...request, current: 'current-link' }, inventory))
@@ -61,16 +61,16 @@ describe('Connect sheet opening choice', () => {
     });
 
     it('opens New when the Account has no matching credential', () => {
-        expect(resolveConnectSheetOpening({ service }, { accounts: [{ ref: { service: otherService, accountId: 'forge' } }] }))
+        expect(resolveConnectSheetOpening({ intent: 'link', service }, { accounts: [{ ref: { service: otherService, accountId: 'forge' } }] }))
             .toMatchObject({ initialMode: 'new', preselected: null });
-        expect(resolveConnectSheetOpening({ service: { kind: 'key', keyKind: 'apiKey' } }, { keys: [] }))
+        expect(resolveConnectSheetOpening({ intent: 'link', service: { kind: 'key', keyKind: 'apiKey' } }, { keys: [] }))
             .toMatchObject({ initialMode: 'new', preselected: null });
     });
 
     it('opens requested keys on Saved without guessing which unrelated key to use', () => {
         const keys = [{ ref: 'unrelated-password', kind: 'password' as const },
             { ref: 'first-api-key', kind: 'apiKey' as const }, { ref: 'linked-api-key', kind: 'apiKey' as const }];
-        const request = { service: { kind: 'key' as const, keyKind: 'apiKey' as const } };
+        const request = { service: { kind: 'key' as const, keyKind: 'apiKey' as const }, intent: 'link' as const };
         expect(resolveConnectSheetOpening(request, { keys: keys.slice(0, 1) }))
             .toMatchObject({ initialMode: 'new', preselected: null });
         expect(resolveConnectSheetOpening(request, { keys }))
@@ -78,12 +78,23 @@ describe('Connect sheet opening choice', () => {
         expect(resolveConnectSheetOpening({ ...request, current: 'linked-api-key' }, { keys }))
             .toMatchObject({ initialMode: 'saved', preselected: 'linked-api-key' });
     });
-    it('opens Credentials explicit add intent on New while matching accounts remain available', () => {
+    // Owner 2026-11-11 (OWNER-1357-CONNECT 04): adding offers only the new-account form; linking offers what exists.
+    it('offers existing accounts and keys only when linking, never when adding', () => {
         const inventory = { accounts: [{ ref: current, status: 'connected' as const }] };
         expect(resolveConnectSheetOpening({ service, intent: 'add' }, inventory))
-            .toMatchObject({ initialMode: 'new', preselected: null });
-        expect(resolveConnectSheetOpening({ service }, inventory))
-            .toMatchObject({ initialMode: 'saved', preselected: current });
+            .toEqual({ initialMode: 'new', preselected: null, offerSaved: false });
+        expect(resolveConnectSheetOpening({ service, intent: 'link' }, inventory))
+            .toMatchObject({ initialMode: 'saved', preselected: current, offerSaved: true });
+        const keys = [{ ref: 'saved-key', kind: 'apiKey' as const }];
+        expect(resolveConnectSheetOpening({ service: { kind: 'key' }, intent: 'add' }, { keys }))
+            .toEqual({ initialMode: 'new', preselected: null, offerSaved: false, savedKeys: [] });
+        expect(resolveConnectSheetOpening({ service: { kind: 'key' }, intent: 'link' }, { keys }))
+            .toMatchObject({ initialMode: 'saved', offerSaved: true, savedKeys: keys });
+    });
+
+    it('offers an existing but signed-out account to link, without preselecting it', () => {
+        expect(resolveConnectSheetOpening({ service, intent: 'link' }, { accounts: [{ ref: first, status: 'needs_reauth' as const }] }))
+            .toEqual({ initialMode: 'new', preselected: null, offerSaved: true });
     });
 
     it('returns the ranked eligible key list without filtering out demonstrated current or same-target links', () => {
@@ -94,13 +105,13 @@ describe('Connect sheet opening choice', () => {
             { ref: 'current-link', kind: 'token' as const },
             { ref: 'another-api-key', kind: 'apiKey' as const },
         ];
-        expect(resolveConnectSheetOpening({ service: { kind: 'key', keyKind: 'apiKey' }, current: 'current-link' },
-            { keys, sameTargetRefs: ['same-target'] })).toEqual({ initialMode: 'saved', preselected: 'current-link',
+        expect(resolveConnectSheetOpening({ intent: 'link', service: { kind: 'key', keyKind: 'apiKey' }, current: 'current-link' },
+            { keys, sameTargetRefs: ['same-target'] })).toEqual({ initialMode: 'saved', preselected: 'current-link', offerSaved: true,
                 savedKeys: [keys[3], keys[2], keys[1], keys[4]] });
-        expect(resolveConnectSheetOpening({ service: { kind: 'key' } }, { keys: keys.slice(0, 1) }))
-            .toEqual({ initialMode: 'saved', preselected: null, savedKeys: keys.slice(0, 1) });
-        expect(resolveConnectSheetOpening({ service: { kind: 'key', keyKind: 'apiKey' } }, { keys: keys.slice(0, 1) }))
-            .toEqual({ initialMode: 'new', preselected: null, savedKeys: [] });
+        expect(resolveConnectSheetOpening({ intent: 'link', service: { kind: 'key' } }, { keys: keys.slice(0, 1) }))
+            .toEqual({ initialMode: 'saved', preselected: null, offerSaved: true, savedKeys: keys.slice(0, 1) });
+        expect(resolveConnectSheetOpening({ intent: 'link', service: { kind: 'key', keyKind: 'apiKey' } }, { keys: keys.slice(0, 1) }))
+            .toEqual({ initialMode: 'new', preselected: null, offerSaved: false, savedKeys: [] });
     });
 
 });

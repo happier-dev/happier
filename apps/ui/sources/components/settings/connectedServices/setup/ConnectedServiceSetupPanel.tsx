@@ -14,6 +14,7 @@ import { Text } from '@/components/ui/text/Text';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { Typography } from '@/constants/Typography';
 import { MachineAdministrationTargetSelector, type MachineAdministrationTargetSelectorProps } from '@/components/settings/machines/MachineAdministrationTargetSelector';
@@ -388,7 +389,10 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
 
     // Only a catalog with nothing else on it shows its one group bare, without a disclosure to open.
     const soleGroup = agentItems.length === 0 && groups.length === 1;
-    const body = direct && selected ? renderFlow(selected) : (
+    // A sheet's sign-in form takes the configuration rows' anatomy (label and helper beside a bordered field), as on a page.
+    const body = direct && selected ? (props.chrome === 'sheet'
+        ? <ListPresentationProvider value="page" pageInsets="contained">{renderFlow(selected)}</ListPresentationProvider>
+        : renderFlow(selected)) : (
         <>
             {!selectedGroup && agentItems.length > 0 ? (
                 <View style={styles.section}>

@@ -24,7 +24,7 @@ export const setupFidelityCopy = {
     keyReveal: 'Show key',
     keyHide: 'Hide key',
     keyClear: 'Clear key',
-    manualUseSavedSecret: 'Use a saved Secret',
+    manualUseSavedSecret: 'Use a saved secret',
     methodBrowser: 'With a browser',
     methodCode: 'With a code',
     methodToken: 'With a setup token',

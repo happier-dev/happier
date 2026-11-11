@@ -29,7 +29,7 @@ describe('ProviderErrorItems', () => {
             const screen = await renderScreen(<ProviderErrorItems presentation={presentation}
                 error={{ v: 1, code: 'provider_secret_missing', retryable: false, action: 'add_secret' }}
                 configureSecret={(event?: unknown) => {
-                    void presentConnectSheet({ service: { kind: 'key' }, anchor: resolvePressTriggerAnchor(event) });
+                    void presentConnectSheet({ service: { kind: 'key' }, intent: 'link', anchor: resolvePressTriggerAnchor(event) });
                 }} />);
             const trigger = { measureInWindow: (_callback: unknown) => undefined };
             const button = recovery(screen);

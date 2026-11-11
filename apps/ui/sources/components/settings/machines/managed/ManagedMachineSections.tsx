@@ -835,7 +835,7 @@ export function ManagedMachineSections(props: SectionProps) {
                     // Native failure currently names no account; only a sole launch credential identifies the repair target.
                     const account = machine.launch.credentials?.length === 1 ? machine.launch.credentials[0].account : undefined;
                     const anchor = resolvePressTriggerAnchor(event);
-                    fireAndForget(presentConnectSheet({ scope: props.binding?.scope ?? null, service: account?.service, ...(anchor ? { anchor } : {}),
+                    fireAndForget(presentConnectSheet({ scope: props.binding?.scope ?? null, service: account?.service, intent: 'link', ...(anchor ? { anchor } : {}),
                         ...(account ? { intent: 'reconnect', account } : {}) }),
                         { tag: 'ManagedMachineSections.reconnect' });
                 },

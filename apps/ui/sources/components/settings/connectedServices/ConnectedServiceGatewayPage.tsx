@@ -75,7 +75,7 @@ export function ConnectedServiceGatewayPage(props: GatewayPageProps = {}) {
             }}
             onConnectService={(serviceKey, anchor) => {
                 const service = parseQualifiedPluginContributionKey(serviceKey) ?? undefined;
-                fireAndForget(presentConnectSheet({ scope, service, ...(anchor ? { anchor } : {}) }), { tag: 'ConnectedServiceGatewayPage.connect' });
+                fireAndForget(presentConnectSheet({ scope, service, intent: 'link', ...(anchor ? { anchor } : {}) }), { tag: 'ConnectedServiceGatewayPage.connect' });
             }}
             placement={deployment.gatewayPlacement ?? undefined}
             machines={machines.map(row => ({ machineId: row.target.machineId, displayName: row.displayName, online: row.online }))}

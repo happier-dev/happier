@@ -23,7 +23,7 @@ afterEach(async () => { vi.clearAllMocks(); await standardCleanup(); });
 
 describe('presentConnectSheet result lifecycle', () => {
     it.each(['connected', 'selected'] as const)('closes and returns the %s account without navigation', async kind => {
-        const result = presentConnectSheet({ service, account });
+        const result = presentConnectSheet({ service, account, intent: 'link' });
         const modal = vi.mocked(Modal.show).mock.calls.at(-1)![0];
         modal.props?.onResult({ kind, account });
         await expect(result).resolves.toEqual({ kind, account });
@@ -34,20 +34,20 @@ describe('presentConnectSheet result lifecycle', () => {
     });
 
     it.each(['onRequestClose', 'onHostUnmount'] as const)('settles dismissal through %s', async close => {
-        const result = presentConnectSheet({ service });
+        const result = presentConnectSheet({ service, intent: 'link' });
         vi.mocked(Modal.show).mock.calls.at(-1)![0][close]?.();
         await expect(result).resolves.toEqual({ kind: 'dismissed' });
     });
 
     it('returns the canonical key reference without copying key material', async () => {
-        const result = presentConnectSheet({ service: { kind: 'key', suggestedName: 'Inference key' } });
+        const result = presentConnectSheet({ service: { kind: 'key', suggestedName: 'Inference key' }, intent: 'link' });
         vi.mocked(Modal.show).mock.calls.at(-1)![0].props?.onResult({ kind: 'selected', secretRef: 'shared:inference' });
         await expect(result).resolves.toEqual({ kind: 'selected', secretRef: 'shared:inference' });
     });
 
     it('uses the Share presentation owner for anchored desktop and phone sheet chrome', () => {
         const anchor = { kind: 'rect' as const, rect: { left: 100, top: 200, height: 30 } };
-        const result = presentConnectSheet({ service, anchor });
+        const result = presentConnectSheet({ service, anchor, intent: 'link' });
         const connect = vi.mocked(Modal.show).mock.calls.at(-1)![0];
         function Body() { return React.createElement('Body'); }
         presentShareSheet({ component: Body, props: {}, title: 'Share', testID: 'share', anchor });
@@ -130,7 +130,7 @@ it('keeps the invoking Machine over the remembered target with zero RPC until a 
             descriptors: [{ id: scopedService.localId, serviceId: 'counted-login', pluginId: scopedService.pluginId, title: 'Counted login',
                 provenance: 'external', sourceKind: 'installed', authentication, capabilities: [],
                 availability: { state: 'available', reason: 'resolved' }, diagnostics: [] }] }, lifetime);
-        const result = presentConnectSheet({ scope, service: scopedService, initialMachineTarget: target });
+        const result = presentConnectSheet({ scope, service: scopedService, initialMachineTarget: target, intent: 'link' });
         const modal = vi.mocked(Modal.show).mock.calls.at(-1)![0];
         if (!modal.component) throw new Error('Expected the composed Connect body');
         screen = await renderScreen(<InjectedAuthProvider credentials={null}>{React.createElement(modal.component,

@@ -98,7 +98,7 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
 
     const openSheet = React.useCallback((target: ConnectedServiceSetupTarget, anchor?: PopoverAnchor) => {
         const service = target.kind === 'catalog' ? undefined : parseQualifiedPluginContributionKey(target.serviceKey) ?? undefined;
-        fireAndForget(presentConnectSheet({ scope, service, ...(anchor ? { anchor } : {}), ...(props.targetSelection ? { targetSelection: props.targetSelection } : {}), ...(target.kind === 'reconnect' && service
+        fireAndForget(presentConnectSheet({ scope, service, intent: 'add', ...(anchor ? { anchor } : {}), ...(props.targetSelection ? { targetSelection: props.targetSelection } : {}), ...(target.kind === 'reconnect' && service
             ? { intent: 'reconnect', account: { service, accountId: target.accountId } } : {}) }).then(result => {
             if (result.kind !== 'dismissed') onConnected(result.account, buildQualifiedPluginContributionKey(result.account.service), result);
         }), { tag: 'ConnectedServicesConnectMore.connect' });

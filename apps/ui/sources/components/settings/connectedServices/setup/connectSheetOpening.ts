@@ -8,6 +8,8 @@ type SavedKey = Readonly<{ ref: string; kind?: 'apiKey' | 'token' | 'password' |
 
 export type ConnectSheetOpening<Key extends SavedKey = SavedKey> = Readonly<{
     initialMode: 'new' | 'saved';
+    /** Whether the sheet offers existing accounts or keys at all: only when the caller links one (owner 04). */
+    offerSaved: boolean;
     preselected: QualifiedConnectedAccountRef | string | null;
     savedKeys?: readonly Key[];
 }>;
@@ -32,18 +34,22 @@ export function resolveConnectSheetOpening<Key extends SavedKey>(request: Connec
         const sameTargetRefs = new Set(inventory.sameTargetRefs ?? []);
         const rank = (key: Key) => key.ref === request.current ? 0 : sameTargetRefs.has(key.ref) ? 1 : 2;
         // A demonstrated link is stronger evidence of purpose than optional kind metadata.
-        const savedKeys = (inventory.keys ?? []).filter(key => !request.service.keyKind
+        // Adding makes a new key; only a caller linking one to something chooses among the saved ones.
+        const savedKeys = request.intent === 'add' ? [] : (inventory.keys ?? []).filter(key => !request.service.keyKind
             || key.kind === request.service.keyKind || rank(key) < 2).sort((a, b) => rank(a) - rank(b));
         const matching = savedKeys.find(key => rank(key) < 2);
-        return { initialMode: savedKeys.length > 0 ? 'saved' : 'new', preselected: matching?.ref ?? null, savedKeys };
+        return { initialMode: savedKeys.length > 0 ? 'saved' : 'new', preselected: matching?.ref ?? null,
+            offerSaved: savedKeys.length > 0, savedKeys };
     }
     const services = request.service ? [request.service] : inventory.services;
     const accounts = (inventory.accounts ?? []).filter(account => services?.some(service =>
         service.pluginId === account.ref.service.pluginId && service.localId === account.ref.service.localId));
+    // Adding offers only the new-account form; linking and reconnecting offer the accounts that exist.
+    if (request.intent === 'add') return { initialMode: 'new', preselected: null, offerSaved: false };
     const usable = accounts.filter(account => isConnectedServiceCredentialHealthStatusUsable(account.status));
-    const matching = request.intent === 'add' ? undefined
-        : usable.find(account => request.account && sameQualifiedConnectedAccountRef(account.ref, request.account)) ?? usable[0];
-    return matching ? { initialMode: 'saved', preselected: matching.ref } : { initialMode: 'new', preselected: null };
+    const matching = usable.find(account => request.account && sameQualifiedConnectedAccountRef(account.ref, request.account)) ?? usable[0];
+    const offerSaved = accounts.length > 0;
+    return matching ? { initialMode: 'saved', preselected: matching.ref, offerSaved } : { initialMode: 'new', preselected: null, offerSaved };
 }
 
 /**

@@ -99,7 +99,7 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
             await Modal.alert(t('errors.daemonUnavailableTitle'), t('errors.daemonUnavailableBody'));
             return;
         }
-        const result = await presentConnectSheet({ scope: activeAccountScope, service: entry.service, ...(anchor ? { anchor } : {}) });
+        const result = await presentConnectSheet({ scope: activeAccountScope, service: entry.service, intent: 'link', ...(anchor ? { anchor } : {}) });
         if (result.kind !== 'dismissed') setSettled(result);
     }, [activeAccountScope, index.transport]);
 

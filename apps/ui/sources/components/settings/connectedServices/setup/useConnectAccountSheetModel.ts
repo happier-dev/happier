@@ -63,7 +63,7 @@ export function useConnectAccountSheetModel(request: ConnectSheetAccountRequest,
         if (request.purposeRequest) purposeSetup.onConnected(account, facts);
         else onResult({ kind: 'connected', account, ...facts });
     };
-    return { initialMode: opening.initialMode, preselected: typeof opening.preselected === 'object' ? opening.preselected : null,
+    return { initialMode: opening.initialMode, offerSaved: opening.offerSaved, preselected: typeof opening.preselected === 'object' ? opening.preselected : null,
         savedAccounts, catalog, target, setTarget, onSelected, onConnected, close, purposeSetup, machineRequired, machineAvailability, targetSelection, onMachineRequirementChange,
         loading: purposeSetup.loading,
         unavailableReason: request.scope !== undefined && !areServerAccountScopesEqual(request.scope, viewer)

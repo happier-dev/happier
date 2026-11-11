@@ -70,10 +70,12 @@ import type { PopoverAnchor } from '@/components/ui/popover/_types';
  * set-up blocks, no rail). Accounts, pools and usage are Account-level; only adding and signing in run
  * on a machine.
  */
-type CredentialsConnectRequest = Pick<ConnectSheetAccountRequest, 'service' | 'account'>;
+type CredentialsConnectRequest = Pick<ConnectSheetAccountRequest, 'service' | 'account' | 'intent'>;
+/** The released `?add=1` ingress: a service page opened to add an account. */
+type CredentialsAddRequest = Pick<ConnectSheetAccountRequest, 'service' | 'account'>;
 
 export const ConnectedServicesSettingsView = React.memo(function ConnectedServicesSettingsView({ connectRequest }: Readonly<{
-  connectRequest?: CredentialsConnectRequest;
+  connectRequest?: CredentialsAddRequest;
 }> = {}) {
   const presented = useLayoutPresentationActive();
   const [setupOpen, setSetupOpen] = React.useState(false);
@@ -87,7 +89,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
 
 const ConnectedServicesSettingsBody = React.memo(function ConnectedServicesSettingsBody({ setupOpen, onSetupOpenChange: setSetupOpen, connectRequest }: Readonly<{
   setupOpen: boolean;
-  connectRequest?: CredentialsConnectRequest;
+  connectRequest?: CredentialsAddRequest;
   onSetupOpenChange: (open: boolean) => void;
 }>) {
   const router = useRouter();
@@ -124,8 +126,10 @@ const ConnectedServicesSettingsBody = React.memo(function ConnectedServicesSetti
     const service = requestedPluginId && requestedLocalId
       ? { pluginId: requestedPluginId, localId: requestedLocalId }
       : parseQualifiedPluginContributionKey(serviceParam);
-    if (service) return { service, ...(requestedAccountId ? { account: { service, accountId: requestedAccountId } } : {}) };
-    return connectParam && !serviceParam ? {} : null;
+    // `?add=1` adds an account; a legacy `?connect=` link comes from a surface that needs one and offers what exists.
+    if (service) return { service, intent: requestedPluginId ? 'add' : 'link', ...(requestedAccountId ? { account: { service, accountId: requestedAccountId } } : {}) };
+    // A bare `?connect` opens Credentials' catalog to add one.
+    return connectParam && !serviceParam ? { intent: 'add' } : null;
   }, [connectParam, requestedAccountId, requestedLocalId, requestedPluginId, serviceParam]);
   const [settled, setSettled] = React.useState<(ConnectedAccountSetupCompletion & Readonly<{ serviceKey: string }>) | null>(null);
   const settleAccount = React.useCallback((account: QualifiedConnectedAccountRef, facts?: ConnectedAccountSetupFacts) => {
