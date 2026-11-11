@@ -97,6 +97,19 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
         if (directoryGroup.ok) expect(directoryGroup.value.capabilities.updateMetadata).toBe(false);
     });
 
+    it("refuses a Machine default until every Team member has shared Use access", async () => {
+        const { owner, teamId } = await ownedTeam();
+        const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
+        await db.teamMembership.create({ data: { teamId, accountId: member.id, role: "member" } });
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, metadata: "{}" } });
+        const defaults = { team: { placement: { kind: "machine" as const,
+            target: { serverId: "server-a", machineId: machine.id } } }, groups: {} };
+        expect(await inTx(tx => setTeamPolicyInTx(tx, { actorAccountId: owner.id, teamId, managedDefaults: defaults })))
+            .toEqual({ ok: false, error: "invalid_team_input" });
+        await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId, accessLevel: "view", createdByAccountId: owner.id } });
+        expect((await inTx(tx => setTeamPolicyInTx(tx, { actorAccountId: owner.id, teamId, managedDefaults: defaults }))).ok).toBe(true);
+    });
+
     it("refuses member writes and foreign or archived Group targets without changing defaults", async () => {
         const { owner, teamId } = await ownedTeam();
         const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });

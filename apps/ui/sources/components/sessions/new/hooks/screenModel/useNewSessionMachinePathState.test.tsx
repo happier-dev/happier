@@ -110,6 +110,21 @@ function renderMachinePathState(initialProps: HookParams) {
 }
 
 describe('useNewSessionMachinePathState', () => {
+    it('falls back to the member choice when a managed Machine default is not in the member inventory', async () => {
+        const props: HookParams = {
+            machines: toMachines({ id: 'member-machine' }), recentMachinePaths: [],
+            machineIdParam: undefined, pathParam: undefined,
+            managedDefaults: { teamDefaults: { team: {
+                placement: { kind: 'machine', target: { serverId: 'server-a', machineId: 'admin-only-machine' } },
+            }, groups: {} } },
+        };
+        const hook = await renderMachinePathState(props);
+        try {
+            expect(hook.getCurrent().selectedMachineId).toBe('member-machine');
+            expect(hook.getCurrent().managedPlacementPreset).toBeNull();
+        } finally { await hook.unmount(); }
+    });
+
     it.each(['asleep', 'starting'] as const)('defers separated-folder preflight for an admitted %s Machine until it is online', async wakeState => {
         const home = await network.addHome('https://server-a', 'account-a', { serverIdentityId: `wake-folder-${wakeState}` });
         const { resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');

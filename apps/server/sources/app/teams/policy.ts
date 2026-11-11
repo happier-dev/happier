@@ -1,7 +1,7 @@
 import { normalizeTeamAuthenticationPolicyV1, type TeamAuthenticationPolicyV1, type TeamRestrictedAuthenticationPolicyV1, TeamAuthenticationPolicyV1Schema } from '@happier-dev/protocol/auth/entry';
 import { type TeamAuthenticationPolicyComparisonBasisV1, type TeamAuthenticationPolicyUnavailableDetailsV1 } from '@happier-dev/protocol/teams';
 import type { TeamCapabilitiesV1 } from "@happier-dev/protocol/teams";
-import { readManagedDefaultsV1, type ManagedDefaultsV1, type ManagedSessionDefaultsV1 } from "@happier-dev/protocol/teams";
+import { readManagedDefaultsV1, type ManagedDefaultsV1, type ManagedSessionDefaultsV1, type ManagedSessionPlacementV1 } from "@happier-dev/protocol/teams";
 import type { TeamSummaryV1 } from '@happier-dev/protocol/teams/projections';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -11,7 +11,9 @@ import { acquireTeamMutationAccountAdmissionInTx } from "./memberships/sessionAc
 import { isServerFeatureEnabledForHome } from "@/app/features/catalog/serverFeatureGate";
 import { getActivePrismaRuntime } from "@/storage/prisma";
 import {
+    AccountStatus,
     TeamRole,
+    TeamMembershipStatus,
     type SessionHistoryAccess,
     type TeamAdmissionMode,
     type TeamExternalSharingPolicy,
@@ -32,6 +34,7 @@ import { applyTeamSessionAuthenticationContextEffectsInTx } from "./memberships/
 import { resolveTeamAdmissionModeApplicabilityInTx } from "./identity/teamAdmissionModeApplicability";
 import { authorizeTeamGroupDefaultsInTx } from "./groups/groupService";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
+import { resolveEffectiveMachineAccessForMachinesInTx } from "@/app/machines/machineAccess";
 
 /**
  * Team policy and managed Session defaults, with named downstream consumers.
@@ -115,6 +118,38 @@ type TeamPolicyPatch = Pick<SetTeamPolicyInput,
     | "managedDefaults"
     | "managedGroupDefaults"
 >;
+
+/** Managed Machine defaults are prospective, but their target must be usable by
+ * every member receiving the layer. This is the same Machine access owner used
+ * by Session admission, so Action/MCP writes cannot bypass the picker rule. */
+async function managedPlacementAudienceInTx(tx: Tx, teamId: string, placement: ManagedSessionPlacementV1 | undefined,
+    groupId?: string): Promise<boolean> {
+    if (!placement || placement.kind !== "machine") return true;
+    const memberships = groupId
+        ? await tx.teamGroupMembership.findMany({
+            where: { teamGroupId: groupId, teamMembership: { status: TeamMembershipStatus.active,
+                account: { status: AccountStatus.active } } },
+            select: { teamMembership: { select: { accountId: true } } },
+        })
+        : await tx.teamMembership.findMany({
+            where: { teamId, status: TeamMembershipStatus.active, account: { status: AccountStatus.active } },
+            select: { accountId: true },
+        });
+    const accountIds = memberships.map(member => "teamMembership" in member ? member.teamMembership.accountId : member.accountId);
+    if (accountIds.length === 0) return true;
+    const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, {
+        machineIds: [placement.target.machineId], accountIds,
+    });
+    return accountIds.every(accountId => access.get(placement.target.machineId)?.get(accountId) !== null);
+}
+
+async function managedDefaultsAreMemberUsableInTx(tx: Tx, teamId: string, defaults: ManagedDefaultsV1): Promise<boolean> {
+    if (!await managedPlacementAudienceInTx(tx, teamId, defaults.team.placement)) return false;
+    for (const [groupId, groupDefaults] of Object.entries(defaults.groups)) {
+        if (!await managedPlacementAudienceInTx(tx, teamId, groupDefaults.placement, groupId)) return false;
+    }
+    return true;
+}
 
 /** Every changed field is authorized before any field is written. */
 export function authorizeTeamPolicyPatch(
@@ -222,6 +257,10 @@ export async function setTeamPolicyInTx(tx: Tx, input: SetTeamPolicyInput): Prom
                 stored.defaults?.groups[group.id], managedDefaults.groups[group.id],
             )) return { ok: false, error: "group_archived" };
         }
+    }
+    if (managedDefaults !== undefined && managedDefaults !== null
+        && !await managedDefaultsAreMemberUsableInTx(tx, input.teamId, managedDefaults)) {
+        return { ok: false, error: "invalid_team_input" };
     }
 
     if (input.admissionMode !== undefined) {
