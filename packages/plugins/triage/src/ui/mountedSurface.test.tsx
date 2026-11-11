@@ -980,6 +980,9 @@ describe('the mounted PRs & Issues surface', () => {
         const readsBeforeDelete = catalogReads();
         await act(async () => { expect(await select(viewId)).toEqual({ status: 'unavailable' }); });
         expect(catalogReads() - readsBeforeDelete).toBe(1);
+        // The one authoritative projection update retires its missing selection;
+        // no second explicit clear from the surface or agent is needed.
+        expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))?.selectedViewId).toBeNull();
         const readsBeforeClear = catalogReads();
         await act(async () => { expect(await select(null)).toEqual({ status: 'applied' }); });
         expect(catalogReads()).toBe(readsBeforeClear);
