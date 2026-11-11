@@ -11,7 +11,8 @@ import { buildMachineDisplayRenderableFromMachine } from '@/sync/domains/machine
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import * as machineDisplayNames from '@/utils/sessions/machineDisplayNames';
-import { captureMachinePresenceObservation, clearMachineRequestReachabilityForTest, recordMachineRequestFailed, withdrawMachinePresenceForScope } from '@/sync/domains/machines/reachability/machineReachability';
+import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, withdrawMachinePresenceForScope } from '@/sync/domains/machines/reachability/machineReachability';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -45,6 +46,15 @@ describe('AccountDetailUsageSectionView', () => {
         expect(screen.findByTestId('account-detail-usage:refresh')?.props.disabled).toBe(true);
     });
 
+    it('says when provider credits keep a spent account usable', async () => {
+        const screen = await renderScreen(<ItemList><AccountDetailUsageSectionView
+            facts={{ ...FACTS, creditsOnly: true }} signedOut={false} now={2_000}
+        /></ItemList>);
+        expect(screen.findByTestId('account-detail-usage:credits-only')).toBeTruthy();
+        const plain = await renderScreen(<ItemList><AccountDetailUsageSectionView facts={FACTS} signedOut={false} now={2_000} /></ItemList>);
+        expect(plain.findByTestId('account-detail-usage:credits-only')).toBeNull();
+    });
+
     it('shows the quota failure reason beside retained usage and offers retry', async () => {
         const retry = vi.fn();
         const error = 'Couldn’t refresh usage. Try again after 12:30.';
@@ -59,12 +69,13 @@ describe('AccountDetailUsageSectionView', () => {
         expect(retry).toHaveBeenCalledOnce();
     });
 
-    it('explains that observation-only usage appears after a Session without showing an error', async () => {
-        const screen = await renderScreen(<AccountDetailUsageSectionView
-            facts={{ ...FACTS, meters: [], fetchedAt: 0, usageState: 'not_loaded', refresh: vi.fn() }}
+    it.each([0, null, 1_000])('explains observation-only usage without dating a missing sample (%s)', async (fetchedAt) => {
+        const screen = await renderScreen(<ItemList><AccountDetailUsageSectionView
+            facts={{ ...FACTS, meters: [], fetchedAt, usageState: 'not_loaded', refresh: vi.fn() }}
             signedOut={false} now={2_000}
-        />);
+        /></ItemList>);
         expect(screen.getTextContent()).toContain('Usage appears after a Session reports it.');
+        expect(screen.findByTestId('account-detail-usage:as-of')).toBeNull();
         expect(screen.findByTestId('account-detail-usage:error')).toBeNull();
     });
 
@@ -254,20 +265,27 @@ describe('projectAccountDetailMachines', () => {
             await screen?.unmount(); names.mockRestore(); fetches.mockRestore(); storage.setState(previous);
         }
     });
-    it('omits a presence dot for unknown machines while preserving a genuine offline dot', async () => {
+    it('omits a presence dot for cold machines while retaining known online and offline dots across socket withdrawal', async () => {
         const scope = { serverId: 'home-a', accountId: 'detail-account' };
         const now = Date.now();
-        const machines = [createMachineFixture({ id: 'unknown', activeAt: now }), createMachineFixture({ id: 'offline', active: false, activeAt: 0 })];
+        const machines = [
+            createMachineFixture({ id: 'unknown', activeAt: now }),
+            createMachineFixture({ id: 'offline', active: false, activeAt: 0 }),
+            createMachineFixture({ id: 'online', activeAt: now }),
+        ];
+        // A retained display is cold until the activity owner receives a live presence answer.
+        buildMachineDisplayRenderableFromMachine(machines[0]!);
+        publishMachineActivity(machines[2]!, machines[2]!, []);
         withdrawMachinePresenceForScope(scope);
-        captureMachinePresenceObservation(scope)(['offline']);
         try {
             const rows = projectAccountDetailMachines(machines, now, scope);
             expect(rows.find(row => row.id === 'unknown')).toMatchObject({ online: false, status: 'unknown' });
+            expect(rows.find(row => row.id === 'online')).toMatchObject({ online: true, status: 'online' });
             const screen = await renderScreen(<AccountDetailWorksOnSectionView machines={rows} />);
             // P8 detail composition keeps Works on collapsed until the user opens its machine list.
             await screen.pressByTestIdAsync('account-detail-works-on:row');
             expect(screen.root.findAll(node => node.props.accessibilityLabel === 'Offline' && typeof node.type === 'string')).toHaveLength(1);
-            expect(screen.root.findAll(node => node.props.accessibilityLabel === 'Online' && typeof node.type === 'string')).toHaveLength(0);
+            expect(screen.root.findAll(node => node.props.accessibilityLabel === 'Online' && typeof node.type === 'string')).toHaveLength(1);
         } finally { clearMachineRequestReachabilityForTest(); }
     });
     it('retains unavailable inventory while showing executable supply first', () => {

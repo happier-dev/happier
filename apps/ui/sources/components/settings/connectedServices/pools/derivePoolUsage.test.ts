@@ -27,6 +27,23 @@ const fiveHour = (pct: number | null, resetsIn: number) => meter('5h', '5-hour',
 const weekly = (pct: number | null, resetsIn: number) => meter('wk', 'Weekly', pct, resetsIn, { windowDurationMs: 7 * 24 * 60 * MIN });
 
 describe('projectPoolUsage', () => {
+    it.each([0, NOW])('does not date or stale a member whose usage has not been observed (timestamp %s)', (fetchedAt) => {
+        const summary = projectPoolUsage({ now: NOW, members: [{
+            accountId: 'unobserved', enabled: true, credentialStatus: 'connected', failed: true,
+            snapshot: { meters: [], fetchedAt, staleAfterMs: MIN, state: 'not_loaded' },
+        }] });
+        expect(summary.freshness).toEqual({ asOf: null, isStale: false, notAnswering: false, staleMemberIds: [] });
+    });
+
+    it('dates an observed empty snapshot without inventing reported capacity', () => {
+        const summary = projectPoolUsage({ now: NOW, members: [{
+            accountId: 'observed-empty', enabled: true, credentialStatus: 'connected',
+            snapshot: { meters: [], fetchedAt: NOW, staleAfterMs: MIN, state: 'loaded_empty' },
+        }] });
+        expect(summary.freshness).toEqual({ asOf: NOW, isStale: false, notAnswering: false, staleMemberIds: [] });
+        expect(summary.usage.room).toEqual({ withRoom: 0, total: 1, reporting: 0, unreported: 1 });
+    });
+
     it('keeps reported member amounts behind the selected pool limits without inventing comparable capacity', () => {
         const spend = meter('spend', 'Today', null, null, { unit: 'usd', used: 4.2, currency: 'USD' });
         const snapshot = { meters: [weekly(75, MIN), spend], fetchedAt: NOW, staleAfterMs: MIN };
@@ -230,5 +247,24 @@ describe('resolvePoolManualSwitchSuggestion', () => {
 
     it('nothing when no other member is on', () => {
         expect(resolvePoolManualSwitchSuggestion({ activeAccountId: 'work', members: members.map((m) => (m.accountId === 'work' ? m : { ...m, enabled: false })), memberByAccountId: room })).toBeNull();
+    });
+});
+
+describe('provider credits in pool usage', () => {
+    const credits = (balance: number) => meter('credits', 'Credits', null, null, {
+        unit: 'credits', remaining: balance, utilizationPct: null, isExhausted: balance <= 0,
+    });
+    const member = (accountId: string, meters: ConnectedServiceQuotaMeterV1[]) => ({
+        accountId, enabled: true, credentialStatus: 'connected', meters,
+    });
+
+    it('keeps a spent member with credits usable instead of waiting, and a spent member without credits waiting', () => {
+        const usage = derivePoolUsage({
+            members: [member('credits', [weekly(0, 60 * MIN), credits(16_845)]), member('spent', [weekly(0, 60 * MIN), credits(0)])],
+            now: NOW,
+        });
+        expect(usage.memberByAccountId.credits).toMatchObject({ room: 'room', creditsOnly: true, health: 'attention' });
+        expect(usage.memberByAccountId.spent).toMatchObject({ room: 'waiting', creditsOnly: false, health: 'error' });
+        expect(usage.room.withRoom).toBe(1);
     });
 });

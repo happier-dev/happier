@@ -1,3 +1,4 @@
+import { presentConnectedServiceQuotaFreshness } from '@/sync/domains/connectedServices/presentConnectedServiceQuotaFreshness';
 import * as React from 'react';
 import { readBuiltInLegacyConnectedServiceIdForQualifiedService } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -400,8 +401,7 @@ function useQualifiedFacts(account: QualifiedConnectedAccountRef, billedPerUse: 
         usage,
         ...subscriptionFacts,
         recoveryCredits: snapshot?.recoveryCredits ?? null,
-        fetchedAt: snapshot?.fetchedAt ?? null,
-        staleSince: snapshot && now - snapshot.fetchedAt > snapshot.staleAfterMs ? snapshot.fetchedAt : null,
+        ...presentConnectedServiceQuotaFreshness(snapshot, now),
         refreshing: quota.refreshing,
         refresh: quota.supported === false ? null : retry,
     };
@@ -433,8 +433,7 @@ function useLegacyFacts(serviceId: ConnectedServiceId, profileId: string, billed
         planLabel: snapshot?.planLabel ?? null,
         subscription: null,
         recoveryCredits: snapshot?.recoveryCredits ?? null,
-        fetchedAt: snapshot?.fetchedAt ?? null,
-        staleSince: snapshot && now - snapshot.fetchedAt > snapshot.staleAfterMs ? snapshot.fetchedAt : null,
+        ...presentConnectedServiceQuotaFreshness(snapshot, now),
         refreshing: key ? quota.refreshingByKey[key] ?? false : false,
         refresh: key && quota.refreshableKeys.includes(key) ? retry : null,
     };

@@ -1,3 +1,4 @@
+import { presentConnectedServiceQuotaFreshness } from '@/sync/domains/connectedServices/presentConnectedServiceQuotaFreshness';
 import type {
     ConnectedServiceQuotaMeterV1,
     ConnectedServiceQuotaSnapshotV1,
@@ -12,7 +13,7 @@ import { deriveAccountHealth, type AccountHealth } from '@/sync/domains/connecte
 import { parseDisplayableCredentialHealthStatus } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 import { projectConnectedServiceQuotaSnapshotForLimitSelection } from '@/sync/domains/connectedServices/projectConnectedServiceQuotaSnapshotForLimitSelection';
 
-export type PoolQuotaSnapshot = Pick<ConnectedServiceQuotaSnapshotV1, 'meters' | 'fetchedAt' | 'staleAfterMs'>;
+export type PoolQuotaSnapshot = Pick<ConnectedServiceQuotaSnapshotV1, 'meters' | 'fetchedAt' | 'staleAfterMs' | 'state'>;
 export type PoolUsageFreshness = Readonly<{
     asOf: number | null;
     isStale: boolean;
@@ -32,12 +33,13 @@ export function projectPoolUsage(input: Readonly<{
     const staleMemberIds: string[] = [];
     const members = input.members.map((member) => {
         const snapshot = projectConnectedServiceQuotaSnapshotForLimitSelection(member.snapshot, input.quotaLimitSelection);
-        const isStale = snapshot !== null && input.now > snapshot.fetchedAt + snapshot.staleAfterMs;
+        const { fetchedAt, staleSince } = presentConnectedServiceQuotaFreshness(snapshot, input.now);
+        const isStale = staleSince !== null;
         if (member.enabled) {
             failed ||= member.failed === true;
-            if (snapshot) {
+            if (fetchedAt !== null) {
                 readingCount += 1;
-                asOf = asOf === null ? snapshot.fetchedAt : Math.min(asOf, snapshot.fetchedAt);
+                asOf = asOf === null ? fetchedAt : Math.min(asOf, fetchedAt);
                 if (isStale) staleMemberIds.push(member.accountId);
             }
         }

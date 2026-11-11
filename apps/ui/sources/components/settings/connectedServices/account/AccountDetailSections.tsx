@@ -1,3 +1,4 @@
+import { presentConnectedServiceQuotaFreshness } from '@/sync/domains/connectedServices/presentConnectedServiceQuotaFreshness';
 import * as React from 'react';
 import { Pressable, View, type LayoutChangeEvent } from 'react-native';
 import { readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentation/pageMetrics';
@@ -95,19 +96,20 @@ export const AccountDetailUsageSectionView = React.memo(function AccountDetailUs
     const styles = stylesheet;
     const { facts } = props;
     const testID = props.testID ?? 'account-detail-usage';
+    const { fetchedAt } = presentConnectedServiceQuotaFreshness({ state: facts.usageState, fetchedAt: facts.fetchedAt }, props.now);
     // Signed out says one thing: the page's signed-out state and Sign in. A refresh failure from before it is stale.
     const failure = props.signedOut ? null : facts.error;
-    const action = !props.signedOut && (facts.refresh || facts.fetchedAt !== null) ? (
-        <UsageRefreshAction testID={testID} fetchedAt={facts.fetchedAt}
+    const action = !props.signedOut && (facts.refresh || fetchedAt !== null) ? (
+        <UsageRefreshAction testID={testID} fetchedAt={fetchedAt}
             refresh={props.compact ? null : facts.refresh} refreshing={facts.refreshing} />
     ) : undefined;
     return (
         <ItemGroup title={t('settings.usage')} action={action} headerStyle={{ alignItems: 'center' }}>
-            {props.signedOut && facts.fetchedAt !== null ? (
+            {props.signedOut && fetchedAt !== null ? (
                 <SectionContentRow>
                     <SurfaceFreshnessLine
                         testID={`${testID}:stale`}
-                        reason={t('connectedServicesSettings.detailUsageSignedOutAt', { time: formatAsOfTime(facts.fetchedAt, props.now) })}
+                        reason={t('connectedServicesSettings.detailUsageSignedOutAt', { time: formatAsOfTime(fetchedAt, props.now) })}
                     />
                 </SectionContentRow>
             ) : null}
