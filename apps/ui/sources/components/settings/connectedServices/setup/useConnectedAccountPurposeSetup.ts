@@ -131,6 +131,7 @@ export function useConnectedAccountPurposeSetup(input: Readonly<{
         declaration?.serviceRefs.some(service => service.pluginId === entry.service.pluginId && service.localId === entry.service.localId));
     const unavailableReason = !request ? null
         : profile?.id !== request.scope.accountId ? 'profile_account_mismatch' as const
+        : machineRuntime.phase === 'establishing' ? null
         : !declaration ? 'purpose_unavailable' as const
         : declaration.consumerKind === 'machineProvisioner' && !input.onSelected ? 'purpose_requires_selection' as const
         : null;

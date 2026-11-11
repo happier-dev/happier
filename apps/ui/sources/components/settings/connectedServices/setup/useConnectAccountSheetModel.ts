@@ -61,6 +61,7 @@ export function useConnectAccountSheetModel(request: ConnectSheetAccountRequest,
     };
     return { initialMode: opening.initialMode, preselected: typeof opening.preselected === 'object' ? opening.preselected : null,
         savedAccounts, catalog, target, setTarget, onSelected, onConnected, close, purposeSetup, machineRequired, machineAvailability, targetSelection, onMachineRequirementChange,
+        loading: purposeSetup.loading,
         unavailableReason: request.scope !== undefined && !areServerAccountScopesEqual(request.scope, viewer)
             ? 'account_scope_mismatch' as const : purposeSetup.unavailableReason };
 }

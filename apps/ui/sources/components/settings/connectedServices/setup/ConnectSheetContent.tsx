@@ -279,6 +279,18 @@ function ConnectAccountSheetLeaf(
     actions: machineChip,
   });
 
+  if (!model.unavailableReason && model.loading) {
+    return (
+      <View style={styles.frame}>
+        <SurfaceStateCard
+          testID="connect-sheet:loading"
+          size="line"
+          kind="loading"
+          title={t('common.loading')}
+        />
+      </View>
+    );
+  }
   if (model.unavailableReason) {
     return (
       <View style={styles.frame}>
