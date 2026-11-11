@@ -636,7 +636,23 @@ export async function searchWorkspaceFiles(
         throwIfWorkspaceFileSearchAccountRetired(accountLifetime);
         if (!response.ok) throw new WorkspaceFileSearchUnavailableError(response.errorCode, 'details' in response ? response.details : undefined);
         const items = buildFileItemsFromPaths(response.paths);
-        return project(input.resultType ? items.filter((item) => item.fileType === input.resultType) : items, response.truncated);
+        const searchableItems = input.resultType ? items.filter((item) => item.fileType === input.resultType) : items;
+        // The daemon bounds the transport page; the shared matcher owns the
+        // stable relevance order consumed by every filename picker.
+        const query = input.query.trim();
+        const rankedItems = query
+            ? rankFileSearchResults(
+                createWorkspaceFileSearchIndex(searchableItems).search(query),
+                query,
+                limit + 1,
+            )
+            : searchableItems;
+        if (!query) return project(rankedItems, response.truncated);
+        const rankedPaths = new Set(rankedItems.map((item) => item.fullPath));
+        return project([
+            ...rankedItems,
+            ...searchableItems.filter((item) => !rankedPaths.has(item.fullPath)),
+        ], response.truncated);
     }
     const partition = getOrCreateWorkspaceCachePartition(accountLifetime);
     // Fails closed on a scope that names no workspace, exactly as the empty-key guard this

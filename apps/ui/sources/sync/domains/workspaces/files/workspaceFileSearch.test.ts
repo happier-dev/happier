@@ -144,6 +144,23 @@ describe('workspaceFileSearch', () => {
         expect(page.corpusTruncated).toBe(false);
     });
 
+    it('orders glob results by the canonical filename relevance ranker', async () => {
+        machineRipgrepMock.mockResolvedValue({ ok: true, paths: [
+            'src/other/happier-guide.ts',
+            'happier.ts',
+            'src/happier/index.ts',
+        ], truncated: false });
+        const { searchWorkspaceFiles } = await import('./workspaceFileSearch');
+        const page = await searchWorkspaceFiles({
+            scope: SCOPE_A, query: 'happier', mode: 'glob', resultType: 'file', includeCoverage: true,
+        });
+        expect(page.items.map(item => item.fullPath)).toEqual([
+            'happier.ts',
+            'src/other/happier-guide.ts',
+            'src/happier/index.ts',
+        ]);
+    });
+
     it('retains the admitted index when a partial-corpus query discovers no new paths', async () => {
         const lifetime = createAccountLifetimeFixture('account-a');
         machineRipgrepMock.mockResolvedValueOnce({ ok: true, paths: Array.from({ length: 5_000 }, (_, index) => `src/file-${index}.ts`), truncated: true })

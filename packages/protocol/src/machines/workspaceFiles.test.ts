@@ -5,11 +5,18 @@ import {
   DaemonWorkspaceFileReplaceApplyResponseSchema,
   DaemonWorkspaceFileReplacePreviewResponseSchema,
   DaemonWorkspaceFileSearchResponseSchema,
+  WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES,
   WORKSPACE_FILE_LIST_MAX_RESPONSE_UTF8_BYTES,
   WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES,
 } from './workspaceFiles.js';
+import { EXTERNAL_ACTION_RESULT_MAX_SERIALIZED_BYTES } from '../actions/externalActionLimits.js';
 
 describe('workspace file response budgets', () => {
+  it('keeps machine file replies within the successful Action result carrier', () => {
+    expect(WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES).toBeLessThanOrEqual(EXTERNAL_ACTION_RESULT_MAX_SERIALIZED_BYTES);
+    expect(WORKSPACE_FILE_LIST_MAX_RESPONSE_UTF8_BYTES).toBe(WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES);
+  });
+
   it('admits a 20 MB response supported by the current socket transport', () => {
     const response = { ok: true, files: [{ path: 'large.txt', matches: [
       { line: 1, column16: 1, length16: 1, text: 'a'.repeat(20_000_000), before: [], after: [] },
@@ -27,7 +34,7 @@ describe('workspace file response budgets', () => {
     expect(DaemonWorkspaceFileListResponseSchema.safeParse(response).success).toBe(false);
   });
 
-  it('admits a file corpus beyond 5000 rows and the unrelated tunnel frame budget', () => {
+  it('admits a file corpus beyond 5000 rows within the Action result budget', () => {
     const paths = Array.from({ length: 6000 }, (_, index) => `src/${index}-${'component'.repeat(8)}.ts`);
     expect(DaemonWorkspaceFileListRequestSchema.safeParse({ rootPath: '/repo', limit: paths.length }).success).toBe(true);
     expect(DaemonWorkspaceFileListResponseSchema.safeParse({ ok: true, paths, truncated: false }).success).toBe(true);

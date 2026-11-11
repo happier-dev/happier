@@ -58,6 +58,15 @@ export const EXTERNAL_ACTION_ENCRYPTED_REQUEST_PLAINTEXT_MAX_BYTES_V2 =
 const maximumV1ResponseSkeletonBytes = measureJsonUtf8Bytes({
   v: 1, actionId: maximumBindingId, requestId: maximumRequestId, execution: null,
 });
+const maximumV1ResponseResultFixedBytes = measureJsonUtf8Bytes({
+  v: 1, actionId: maximumBindingId, requestId: maximumRequestId,
+  execution: { ok: true, result: null },
+}) - jsonNullBytes;
+
+/** Maximum serialized JSON bytes available to one successful Action result value. */
+export const EXTERNAL_ACTION_RESULT_MAX_SERIALIZED_BYTES =
+  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES - maximumV1ResponseResultFixedBytes;
+
 const maximumEncryptedResponseSkeletonBytes = measureJsonUtf8Bytes({
   v: 2, direction: 'response', serverIdentityId: maximumServerIdentityId,
   accountId: maximumBindingId, credentialId: maximumCredentialId,
