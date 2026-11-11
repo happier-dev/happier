@@ -416,7 +416,7 @@ setBrowserRecordingRoutesProvider?: (
               ownerAccountId: params.machineId,
               source: browserContextSource,
               resolveInputControl: resolveBrowserInputControl,
-              // Recheck the live feature and active Session profile. The capture source
+              // Recheck the live feature and active bound profile. The capture source
               // supplies privacy facts to the shared Protocol export decision.
               resolveGate: (view) => {
                 const profile =
@@ -426,11 +426,9 @@ setBrowserRecordingRoutesProvider?: (
                 return {
                   featureEnabled:
                     browserDaemonFeatureGate.isEnabled('browser.context'),
-                  // Privacy intent is Session ownership, not storage retention.
-                  policyAllowed:
-                    profile?.owner.kind === 'session' &&
-                    profile.owner.id === view.browserSessionId &&
-                    profile.lifecycleState === 'active',
+                  // Profile access is admitted by the control broker; persistent
+                  // profiles are valid context sources for their admitted Session.
+                  policyAllowed: profile?.lifecycleState === 'active',
                   runtimeAvailable: Boolean(
                     browserSidecarControlAdapterResult.contextCapture?.resolvePageHandle(
                       view,
