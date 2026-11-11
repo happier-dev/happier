@@ -22,6 +22,7 @@ export function useRestartFollowSetting(confirmedEnabled: boolean) {
         const mutation = { desired: enabled, completion: Promise.resolve() };
         active.current = mutation;
         mutation.completion = (async () => {
+            let failed = false;
             try {
                 let attempted = enabled;
                 for (;;) {
@@ -34,13 +35,13 @@ export function useRestartFollowSetting(confirmedEnabled: boolean) {
                     attempted = mutation.desired;
                 }
             } catch {
-                if (write.isCurrent(EXTERNAL_SESSIONS_SETTINGS.settings.keepFollowingAfterRestart)) {
-                    await Modal.alertAsync(t('common.error'), t('externalSessions.settingsRestoreUpdateFailed'));
-                }
+                failed = write.isCurrent(EXTERNAL_SESSIONS_SETTINGS.settings.keepFollowingAfterRestart);
             } finally {
                 active.current = null;
                 setDesired(null);
             }
+            // The switch already shows the saved value when the alert says the change failed.
+            if (failed) await Modal.alertAsync(t('common.error'), t('externalSessions.settingsRestoreUpdateFailed'));
         })();
         return mutation.completion;
     }, [write]);

@@ -110,6 +110,14 @@ describe('ConnectedServicesRailView (lab csvc C1 rail)', () => {
         expect(groups()).toContain(t('settingsProvidersCollection.gateway.railGroup'));
     });
 
+    it('names the typed Saved Secret catalog failure the Secrets page names', async () => {
+        const screen = await render({ secrets: { state: 'failed', onRetry: vi.fn(), entries: [],
+            errorCause: { kind: 'forbidden', retryable: false, code: 'forbidden' } } });
+        expect(screen.findByTestId('connected-services-rail:secrets-failed')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(t('errors.permissionDenied'));
+        expect(screen.getTextContent()).not.toContain(t('secretsSettings.staleTitle'));
+    });
+
     it('counts matching accounts once in the filter footer and held status choices', async () => {
         // Popover placement reads the browser window, a platform boundary.
         vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });

@@ -1094,6 +1094,30 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         await screen.unmount();
     });
 
+    it('shows the confirmed restart-follow value while its failure alert is open', async () => {
+        effectBoundary.sessions = [];
+        effectBoundary.settings = { v: 1, keepPassivelyFollowingAfterRestart: false };
+        rejectSettingsWrite = true;
+        const alertOpen = createDeferred<void>();
+        modalMock.spies.alertAsync.mockClear();
+        modalMock.spies.alertAsync.mockImplementationOnce(() => alertOpen.promise);
+        const { ExternalSessionsSettingsView } = await import('./ExternalSessionsSettingsView');
+        const screen = await renderSettingsView(<ExternalSessionsSettingsView />);
+        const toggle = () => screen.findRow('settings-external-sessions-restore-item')?.props.rightElement as
+            React.ReactElement<{ value: boolean; onValueChange: (enabled: boolean) => void }>;
+
+        await act(async () => { toggle().props.onValueChange(true); });
+        await waitForHomeGovernance(() => expect(modalMock.spies.alertAsync).toHaveBeenCalledWith(
+            'common.error',
+            'externalSessions.settingsRestoreUpdateFailed',
+        ));
+        // The alert says the change failed, so the switch behind it already shows what is saved.
+        await waitForHomeGovernance(() => expect(toggle().props.value).toBe(false));
+
+        await act(async () => { alertOpen.resolve(); });
+        await screen.unmount();
+    });
+
     it('hides the follow control when the current projection no longer declares the linked source', async () => {
         effectBoundary.sessions = [createExternalSession({
             id: 'undeclared-source',

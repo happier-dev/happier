@@ -132,6 +132,8 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
         return failure.success ? failure.data.remedy ?? nativeFailure : nativeFailure;
     }
     if (code === 'invalid_setting_value' || code === 'account_settings_mutation_invalid') return t('settings.writeValueRefused');
+    // A Settings write sets a value, so repeating it after no answer is safe.
+    if (code === 'account_settings_mutation_outcome_unknown') return t('errors.tryAgain');
     if (code === 'setting_not_bound' || code === 'action_account_scope_changed'
         || code === 'account_settings_mutation_conflict') return t('settings.writeContextChanged');
     if (code === 'version_mismatch' || code === 'version-mismatch') return t('artifacts.browser.conflict.title');

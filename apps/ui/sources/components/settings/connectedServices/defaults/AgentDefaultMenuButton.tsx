@@ -90,6 +90,7 @@ export const AgentDefaultMenuButton = React.memo(function AgentDefaultMenuButton
             variant="selectable"
             rowKind="item"
             showCategoryTitles={false}
+            matchTriggerWidth={false}
             placement="bottom"
             popoverAnchorAlign="end"
             trigger={({ toggle }) => props.presentation === 'icon' ? (

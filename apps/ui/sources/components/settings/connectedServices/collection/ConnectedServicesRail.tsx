@@ -74,6 +74,8 @@ import { useCredentialsSecrets } from '../index/CredentialsSecretsGroup';
 import { savedSecretOwnedRowSummary, sharedSecretProvenanceSegments, sharedSecretRowStatus, sharedSecretStatusLabel } from '@/components/secrets/savedSecretRowCopy';
 import type { CredentialsSecretsState } from '../index/credentialsSecretsState';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 /** The rail offers search once it no longer fits at a glance. */
 const SEARCH_THRESHOLD = 6;
@@ -113,7 +115,8 @@ export type ConnectedServicesRailViewProps = Readonly<{
     /** A service row's "+": add another account of that service (its draft beside the rail). */
     onAddAccount?: (sheet: ConnectedServicesIndexSheet, anchor?: PopoverAnchor) => void;
     /** Owned and granted Saved Secrets (Q2: a service's key appears only under its service). */
-    secrets?: Readonly<{ entries: readonly SavedSecretCatalogEntryV1[]; state: CredentialsSecretsState; onRetry: () => void }>;
+    secrets?: Readonly<{ entries: readonly SavedSecretCatalogEntryV1[]; state: CredentialsSecretsState; onRetry: () => void;
+        errorCause?: ScopedSnapshotError | null }>;
     onOpenSecret?: (ref: string) => void;
     /** "+" on Secrets: the create form in a popover under it (owner 10-31); it renders its trigger. */
     renderNewSecret?: ((renderTrigger: (onPress: () => void) => React.ReactElement) => React.ReactNode) | null;
@@ -550,7 +553,7 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
                         testID="connected-services-rail:secrets-failed"
                         kind="warning"
                         size="line"
-                        title={t('secretsSettings.staleTitle')}
+                        title={resolveActionExecutionErrorMessage(secrets.errorCause, t('secretsSettings.staleTitle'), { safeToRetry: true })}
                         action={{ label: t('common.retry'), onPress: secrets.onRetry }}
                     />
                 </View>
@@ -765,9 +768,9 @@ export const ConnectedServicesRail = React.memo(function ConnectedServicesRail()
     const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
     const newPoolServices = React.useMemo(() => selectNewPoolServices(indexModel), [indexModel]);
     // Saved Secrets, folded into Credentials: the overview's own reading and state (names and access only).
-    const { entries: secretEntries, state: secretsState, retry: retrySecrets } = useCredentialsSecrets();
-    const secrets = React.useMemo(() => ({ entries: secretEntries, state: secretsState, onRetry: retrySecrets }),
-        [secretEntries, retrySecrets, secretsState]);
+    const { entries: secretEntries, state: secretsState, retry: retrySecrets, errorCause: secretsErrorCause } = useCredentialsSecrets();
+    const secrets = React.useMemo(() => ({ entries: secretEntries, state: secretsState, onRetry: retrySecrets, errorCause: secretsErrorCause }),
+        [secretEntries, retrySecrets, secretsState, secretsErrorCause]);
 
     const open = React.useCallback((href: Parameters<typeof router.push>[0] | null, tag: string) => {
         if (!href) return;

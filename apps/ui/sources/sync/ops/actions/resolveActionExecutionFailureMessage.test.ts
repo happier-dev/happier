@@ -64,6 +64,12 @@ describe('Action failure presentation', () => {
         expect(resolveActionExecutionErrorMessage({ code: 'outcome_unknown' }, 'Fallback', { safeToRetry: true }))
             .toBe(t('errors.tryAgain'));
     });
+    it('asks for another try when an Account Settings write gets no answer, never the engine text', () => {
+        const unsettled = { ok: false, errorCode: 'account_settings_mutation_outcome_unknown',
+            error: 'Account Settings mutation did not settle: outcomeUnknown' };
+        expect(resolveActionExecutionErrorMessage(unsettled, 'Fallback')).toBe(t('errors.tryAgain'));
+        expect(resolveActionExecutionFailureMessage(unsettled, 'Fallback')).toBe(t('errors.tryAgain'));
+    });
     it('names a typed busy-server refusal through thrown and returned adapters', () => {
         const refused = { ok: false, errorCode: 'database_transaction_conflict_exhausted', error: 'private transport detail' };
         for (const result of [refused, { ok: true, result: refused }, { ok: true, result: { results: [refused] } }]) {
