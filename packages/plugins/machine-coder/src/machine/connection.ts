@@ -42,9 +42,9 @@ export const CODER_PORTABLE_ACCOUNT_RUNTIME: ConnectedAccountPortableRuntime = {
   authentication: { modes: { token: { kind: 'manual', async complete(input, context) {
     try {
       const selected = connection(context.configuration.values, input.fields.token);
-      const username = await probe(selected, context);
+      // Private deployments may reject browser origins; authenticate on the controller at use.
       await context.attemptCredentials.set('token', selected.token);
-      return { status: 'connected', displayName: username, scopes: [],
+      return { status: 'connected', displayName: selected.endpoint, scopes: [],
         ...(context.attempt.kind === 'reconnect' ? { accountId: context.attempt.account.accountId } : {}) };
     } catch {
       return { status: 'rejected', diagnostic: { code: 'credential_unavailable', severity: 'error',

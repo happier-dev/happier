@@ -87,17 +87,22 @@ describe('Coder public authoring entry and portable authentication', () => {
     expect(materializations).toBe(1);
     expect(h.paths).toHaveLength(3);
   });
-  it.each([200, 401])('portable token completion validates selected deployment before storing the token (%s)', async status => {
-    const h = await deployment(status); const stored: string[] = [];
-    const context = { signal: new AbortController().signal, configuration: { values: { endpoint: h.endpoint } },
-      services: { http: h.http }, attempt: { kind: 'connect' }, attemptCredentials: { set: async (_key: string, value: string) => { stored.push(value); } },
+  it.each(['root', 'nested'] as const)('portable token completion validates local configuration and stages without browser HTTP (%s)', async endpointKind => {
+    const h = await deployment(); const stored: string[] = []; let browserRequests = 0;
+    // A browser HttpService transport failure is the genuine CORS boundary.
+    // Account connection must not depend on reaching a private deployment here.
+    const context = { signal: new AbortController().signal,
+      configuration: { values: { endpoint: h.endpoint + (endpointKind === 'nested' ? '/workspace' : '') } },
+      services: { http: { request: async () => { browserRequests++; throw new TypeError('Failed to fetch'); } } },
+      attempt: { kind: 'connect' }, attemptCredentials: { set: async (_key: string, value: string) => { stored.push(value); } },
     } as unknown as ConnectedAccountPortableAuthenticationContext;
     const mode = CODER_PORTABLE_ACCOUNT_RUNTIME.authentication.modes.token;
     if (!mode || mode.kind !== 'manual') throw new Error('Missing token authentication');
     const result = await mode.complete({ fields: { token: 'private-token' } }, context);
-    expect(result.status).toBe(status === 200 ? 'connected' : 'rejected');
-    expect(stored).toEqual(status === 200 ? ['private-token'] : []);
-    expect(h.paths).toEqual(['/api/v2/users/me']);
+    expect(result.status).toBe(endpointKind === 'root' ? 'connected' : 'rejected');
+    expect(stored).toEqual(endpointKind === 'root' ? ['private-token'] : []);
+    expect(browserRequests).toBe(0);
+    expect(h.paths).toEqual([]);
     expect(JSON.stringify(result)).not.toContain('private-token');
   });
 });
