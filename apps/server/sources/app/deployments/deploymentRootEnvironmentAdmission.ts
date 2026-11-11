@@ -2,6 +2,8 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import {
   isDeploymentBackupConfigureNativeAdmissionV1,
   isDeploymentEnvironmentUpdateNativeAdmissionV1,
+  isDeploymentPreparationActionIdV1,
+  isDeploymentReadAdmissionActionIdV1,
   type ExternalActionExecutionAuthorizationBindingV1,
 } from '@happier-dev/protocol/actions/externalActionApi';
 import {
@@ -23,7 +25,9 @@ import {
 import {
   readDeploymentReadAuthorizationInTx,
   readDeploymentTargetAuthorizationInTx,
+  readRegistryAppUpdateAuthorizationInTx,
 } from './deploymentReadAuthorization';
+import { isDeploymentPreparationAuthorizedInTx, readDeploymentLinkAdmissionInTx } from './deploymentPreparationAuthorization';
 
 export type DeploymentRootEnvironmentAdmission =
   | Readonly<{ ok: true; source?: Readonly<{ id: string; revision: number }> }>
@@ -172,40 +176,81 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
     : { ok: true };
 }
 
+export type DeploymentRootBindingAdmission =
+  | Readonly<{
+      ok: true;
+      deploymentLinkAdmission?: NonNullable<ExternalActionExecutionAuthorizationBindingV1['deploymentLinkAdmission']>;
+    }>
+  | Readonly<{ ok: false }>;
+
 /**
- * A person-presented root re-enters the same Environment admission its mint ran:
- * native roots through the native owner above, read roots through the read
- * admission owner. Roots without an Environment admission pass unchanged.
+ * The one admission of a parsed root binding's deployment facts: Link,
+ * preparation, registry update and read. Mint runs it once and records the
+ * Link admission it produces; a person-presented relay runs the same function
+ * again, so it re-decides exactly what mint decided.
+ */
+export async function admitDeploymentRootBindingInTx(
+  tx: Tx,
+  binding: ExternalActionExecutionAuthorizationBindingV1,
+  input: Readonly<{
+    /** The Link Environment mint derived from input, or the relay's recorded one. */
+    linkEnvironmentId?: string;
+    /** Installed Workflow children were narrowed against their signed parent. */
+    workflowAdmitted: boolean;
+    authenticationEvidence: readonly AuthTokenAuthenticationEvidenceV1[] | undefined;
+    linkAuthenticationEvidence: readonly AuthTokenAuthenticationEvidenceV1[] | undefined;
+  }>,
+): Promise<DeploymentRootBindingAdmission> {
+  const authentication = {
+    authenticationAuthority: 'account_automation' as const,
+    ...(input.authenticationEvidence ? { authenticationEvidence: input.authenticationEvidence } : {}),
+  };
+  let deploymentLinkAdmission: NonNullable<ExternalActionExecutionAuthorizationBindingV1['deploymentLinkAdmission']> | undefined;
+  if (binding.actionId === 'deployments.targets.link') {
+    if (!input.linkEnvironmentId) return { ok: false };
+    const admitted = await readDeploymentLinkAdmissionInTx(tx, binding, input.linkEnvironmentId, {
+      authenticationAuthority: 'account_automation',
+      authenticationEvidence: input.linkAuthenticationEvidence,
+    });
+    if (!admitted) return { ok: false };
+    deploymentLinkAdmission = admitted;
+  }
+  if (!input.workflowAdmitted
+    && (isDeploymentPreparationActionIdV1(binding.actionId) || binding.deploymentPreparationAdmission !== undefined)
+    && (!binding.deploymentPreparationAdmission
+      || !await isDeploymentPreparationAuthorizedInTx(tx, binding, binding.deploymentPreparationAdmission, authentication))) {
+    return { ok: false };
+  }
+  if (binding.registryAppUpdateAdmission && !await readRegistryAppUpdateAuthorizationInTx(tx, binding, authentication)) {
+    return { ok: false };
+  }
+  if (isDeploymentReadAdmissionActionIdV1(binding.actionId)
+    && (!binding.deploymentReadAdmission
+      || !await readDeploymentReadAuthorizationInTx(tx, binding, binding.deploymentReadAdmission, authentication))) {
+    return { ok: false };
+  }
+  return deploymentLinkAdmission ? { ok: true, deploymentLinkAdmission } : { ok: true };
+}
+
+/**
+ * A person-presented root re-enters the same admission its mint ran: the native
+ * Environment owner above, then the binding admission owner. Daemon-signed
+ * relays and signed child calls of admitted work do not repeat it.
  */
 export async function hasCurrentDeploymentRootEnvironmentAdmissionInTx(
   tx: Tx,
   root: ExternalActionExecutionAuthorizationBindingV1,
   nativeAdmission: DeploymentNativeAdmissionV1 | undefined,
-  authenticationEvidence:
-    | readonly AuthTokenAuthenticationEvidenceV1[]
-    | undefined,
+  authenticationEvidence: readonly AuthTokenAuthenticationEvidenceV1[] | undefined,
 ): Promise<boolean> {
-  if (
-    nativeAdmission &&
-    !(
-      await admitDeploymentNativeRootEnvironmentInTx(
-        tx,
-        root,
-        nativeAdmission,
-        authenticationEvidence,
-      )
-    ).ok
-  )
-    return false;
-  if (
-    root.deploymentReadAdmission &&
-    !(await readDeploymentReadAuthorizationInTx(
-      tx,
-      root,
-      root.deploymentReadAdmission,
-      { authenticationAuthority: 'account_automation', authenticationEvidence },
-    ))
-  )
-    return false;
-  return true;
+  if (nativeAdmission
+    && !(await admitDeploymentNativeRootEnvironmentInTx(tx, root, nativeAdmission, authenticationEvidence)).ok) return false;
+  const recordedLink = root.deploymentLinkAdmission;
+  const admitted = await admitDeploymentRootBindingInTx(tx, root, {
+    ...(recordedLink ? { linkEnvironmentId: recordedLink.environmentId } : {}),
+    workflowAdmitted: root.workflowActionOrigin !== undefined,
+    authenticationEvidence,
+    linkAuthenticationEvidence: authenticationEvidence,
+  });
+  return admitted.ok && admitted.deploymentLinkAdmission?.environmentId === recordedLink?.environmentId;
 }

@@ -6,7 +6,7 @@ import { AUTH_TOKEN_AUTHENTICATION_EVIDENCE_MAX_ITEMS, AuthTokenProvenanceSchema
 import { PasswordCredentialMutationDigestV1Schema } from '@happier-dev/protocol/auth/passwordMutationChallenge';
 import { parseAccountApiTokenBearerV1, AccountApiTokenCreateEncryptionV1Schema, AccountApiTokenEncryptionAccessV1Schema, type AccountApiTokenCreateEncryptionV1, type AccountApiTokenEncryptionAccessV1, type AccountApiTokenEncryptionAccessResponseV1, type ParsedAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { ApiTokenGrantV1Schema, StoredApiTokenGrantV1Schema, API_TOKEN_FULL_GRANT_V1, evaluateApiTokenGrantV1, isApiTokenGrantWithinV1, type ApiTokenGrantDenialReasonV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import { isDeploymentReadAdmissionActionIdV1, isDeploymentPreparationActionIdV1, projectDeploymentNativeAdmissionV1,
+import { projectDeploymentNativeAdmissionV1,
     isDeploymentDomainNativeAdmissionV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1,
     createDeploymentCandidatePublicationV1, projectExternalActionDeploymentMetadataEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentDomainChildActionIdV1, isDeploymentChildRootActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
@@ -699,19 +699,28 @@ class AuthModule {
         let supplied = parsedBinding.data;
         // Link's private input names the Environment; only Home derives its owner.
         if (input.deploymentLinkAdmission) throw new ApiTokenOperationError('credential_scope_denied');
+        let linkEnvironmentId: string | undefined;
         if (supplied.actionId === 'deployments.targets.link') {
-            const { readDeploymentLinkAdmissionInTx } = await import('@/app/deployments/deploymentPreparationAuthorization');
             const { projectExternalActionDeploymentLinkEnvironmentIdV1 } = await import('@happier-dev/protocol/actions/externalActionApi');
-            const linkEnvironmentId = context.input === undefined ? context.deploymentLinkEnvironmentId
+            linkEnvironmentId = context.input === undefined ? context.deploymentLinkEnvironmentId
                 : projectExternalActionDeploymentLinkEnvironmentIdV1(supplied.actionId, context.input);
             if (!linkEnvironmentId || context.deploymentLinkEnvironmentId !== undefined
                 && context.deploymentLinkEnvironmentId !== linkEnvironmentId) throw new ApiTokenOperationError('credential_scope_denied');
-            const deploymentLinkAdmission = await readDeploymentLinkAdmissionInTx(db, supplied, linkEnvironmentId, {
-                authenticationAuthority: 'account_automation', authenticationEvidence: 'authentication' in supplied
-                    ? supplied.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence,
-            });
-            if (!deploymentLinkAdmission) throw new ApiTokenOperationError('credential_scope_denied');
-            supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...supplied, deploymentLinkAdmission });
+        }
+        // Link, preparation, registry and read admission have one owner, which a
+        // person-presented relay of this root runs again.
+        const { admitDeploymentRootBindingInTx } = await import('@/app/deployments/deploymentRootEnvironmentAdmission');
+        const bindingAdmission = await admitDeploymentRootBindingInTx(db, supplied, {
+            ...(linkEnvironmentId ? { linkEnvironmentId } : {}),
+            workflowAdmitted: context.workflowAdmission !== undefined,
+            authenticationEvidence: 'authentication' in supplied ? supplied.authentication.evidence : undefined,
+            linkAuthenticationEvidence: 'authentication' in supplied
+                ? supplied.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence,
+        });
+        if (!bindingAdmission.ok) throw new ApiTokenOperationError('credential_scope_denied');
+        if (bindingAdmission.deploymentLinkAdmission) {
+            supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...supplied,
+                deploymentLinkAdmission: bindingAdmission.deploymentLinkAdmission });
         }
         const workspaceSyncRequest = context.workspaceSyncAdmission ?? projectWorkspaceSyncAdmissionInputV1(input.actionId, context.input);
         // Callers cannot supply Home-produced facts, including when no source was selected.
@@ -723,32 +732,6 @@ class AuthModule {
             if (!workspaceSyncAdmission) throw new ApiTokenOperationError('credential_scope_denied');
             supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...supplied, workspaceSyncAdmission });
         };
-        // Installed child scope was narrowed against its signed parent by the
-        // Workflow admission owner; later minting must not admit that work again.
-        if (!context.workflowAdmission
-            && (isDeploymentPreparationActionIdV1(supplied.actionId) || supplied.deploymentPreparationAdmission !== undefined)) {
-            const { isDeploymentPreparationAuthorizedInTx } = await import('@/app/deployments/deploymentPreparationAuthorization');
-            if (!supplied.deploymentPreparationAdmission || !await isDeploymentPreparationAuthorizedInTx(db, supplied,
-                supplied.deploymentPreparationAdmission, { authenticationAuthority: 'account_automation',
-                    ...('authentication' in supplied ? { authenticationEvidence: supplied.authentication.evidence } : {}) })) {
-                throw new ApiTokenOperationError('credential_scope_denied');
-            }
-        }
-        if (supplied.registryAppUpdateAdmission) {
-            const { readRegistryAppUpdateAuthorizationInTx } = await import('@/app/deployments/deploymentReadAuthorization');
-            if (!await readRegistryAppUpdateAuthorizationInTx(db, supplied, { authenticationAuthority: 'account_automation',
-                ...('authentication' in supplied ? { authenticationEvidence: supplied.authentication.evidence } : {}) })) {
-                throw new ApiTokenOperationError('credential_scope_denied');
-            }
-        }
-        if (isDeploymentReadAdmissionActionIdV1(supplied.actionId)) {
-            const { readDeploymentReadAuthorizationInTx } = await import('@/app/deployments/deploymentReadAuthorization');
-            if (!supplied.deploymentReadAdmission || !await readDeploymentReadAuthorizationInTx(db, supplied,
-                supplied.deploymentReadAdmission, { authenticationAuthority: 'account_automation',
-                    ...('authentication' in supplied ? { authenticationEvidence: supplied.authentication.evidence } : {}) })) {
-                throw new ApiTokenOperationError('credential_scope_denied');
-            }
-        }
         if ('authentication' in supplied) {
             const { isOriginalTerminalExecutionAction, hasCurrentOriginalSessionActionTargetInTx, hasCurrentExternalActionSessionSource,
                 verifyCurrentExternalActionPrincipalInTx, readExternalActionBindingAuthority } = await import('./externalActionExecutionAuthorization');

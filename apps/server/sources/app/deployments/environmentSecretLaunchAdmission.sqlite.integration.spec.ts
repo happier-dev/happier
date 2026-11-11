@@ -34,6 +34,7 @@ import { computeExternalActionRequestEnvelopeDigestV1, encodeExternalActionResol
     EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
     EXTERNAL_ACTION_RESOLVED_TARGET_HEADER } from '@happier-dev/protocol/actions';
 import { projectDeploymentReadAdmissionV1, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectRegistryAppUpdateAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createDeploymentEnvironmentInTx, setDeploymentEnvironmentBindingsInTx, updateDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import { linkDeploymentTargetInTx } from './deploymentTargetLinkService';
 import { createDeploymentInTx } from './deploymentService';
@@ -354,6 +355,48 @@ describe('private installed Environment secret launch transport', () => {
             expect(retried.json()).toMatchObject({ error: 'credential_scope_denied' });
         }, { authentication: 'real' });
     });
+
+    // Mint's binding admission (registry, preparation) runs again on each person-presented relay.
+    it.each(['registries.updates.check', 'deployments.publish.prepare'] as const)(
+        'refuses a person-presented %s root after its member left the Source Team', async actionId => {
+            const f = await admittedTeamDelivery();
+            const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
+            const source = await db.projectSource.findUniqueOrThrow({ where: { id: row.projectSourceId } });
+            await db.machine.update({ where: { id: f.payload.machineId }, data: { accountId: f.owner.id, active: true,
+                operationProtocolCapabilitiesRevision: 1,
+                operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
+            const target = { kind: 'machine' as const, machineId: f.payload.machineId };
+            const input = actionId === 'registries.updates.check'
+                ? { kind: 'app', environments: [{ environmentId: row.id, expectedRevision: row.revision }] }
+                : { serverId, projectSourceId: source.id, sourceRevision: source.revision,
+                    machineId: f.payload.machineId, installationId: f.payload.installationId };
+            const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+            const root = await auth.mintExternalActionExecutionAuthorization({ accountId: f.owner.id,
+                serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.owner.tokenEpoch },
+                actionId, machineId: target.machineId, target, requestId: envelope.requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                ...(actionId === 'registries.updates.check'
+                    ? { registryAppUpdateAdmission: projectRegistryAppUpdateAdmissionV1(actionId, input) }
+                    : { deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input) }) }, { input });
+            const forwarded: unknown[] = [];
+            const forwardRpc = (async (request: unknown) => {
+                forwarded.push(request);
+                return { ok: false, error: 'daemon_boundary', errorCode: 'daemon_boundary' };
+            }) as unknown as ExternalActionForwardRpcCall;
+            const token = await auth.createToken(f.owner.id, undefined, { kind: 'account', authority: 'present_user' });
+            await withAuthenticatedTestApp(app => registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({
+                io: { to: () => ({ emit: () => undefined }) } as unknown as Server, forwardRpc }) }), async app => {
+                const execute = () => app.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+                    headers: { authorization: `Bearer ${token}` },
+                    payload: { v: 1, machineId: target.machineId, envelope, executionAuthorization: root } });
+                const started = await execute();
+                expect(forwarded, started.body).toHaveLength(1);
+                await db.teamMembership.deleteMany({ where: { teamId: f.team.id, accountId: f.owner.id } });
+                const retried = await execute();
+                expect(forwarded, retried.body).toHaveLength(1);
+                expect(retried.json()).toMatchObject({ error: 'credential_scope_denied' });
+            }, { authentication: 'real' });
+        });
 
     it.each(['plain', 'e2ee'] as const)('admits a %s manager binding save before a runtime target is linked', async mode => {
         const accountKeys = nacl.box.keyPair();
