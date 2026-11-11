@@ -3413,6 +3413,8 @@
 | `./ui` | `PluginUiActionControlPresentationV1` | type | any |
 | `./ui` | `PluginUiActionControlRequestV1` | type | any |
 | `./ui` | `PluginUiActionExecutionOptions` | type | any |
+| `./ui` | `PluginUiActionFailurePresentationV1` | type | any |
+| `./ui` | `PluginUiActionFailureV1` | type | any |
 | `./ui` | `PluginUiActionInputFor` | type | any |
 | `./ui` | `PluginUiActionReference` | type | any |
 | `./ui` | `PluginUiActionResultFor` | type | any |
@@ -3543,6 +3545,7 @@
 | `./ui` | `matchEntityFilterTimeV1` | value | any |
 | `./ui` | `normalizePluginUiSubPathV1` | value | any |
 | `./ui` | `pluginUiTargetedContributionOperationKey` | value | any |
+| `./ui` | `presentActionFailure` | value | any |
 | `./ui` | `readPluginDeclarativeDataFieldV1` | value | any |
 | `./ui` | `readPluginDeclarativeDataRowsV1` | value | any |
 | `./ui` | `selectTargetedContribution` | value | any |

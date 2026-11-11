@@ -500,7 +500,11 @@ export type OpenConnectedAccountsRequest =
 /** The selected account reference, dismissal, or no result from an older host. */
 export type OpenConnectedAccountsResult = import('@happier-dev/protocol/plugins/ui/client').PluginUiOpenConnectedAccountsResultV1;
 
+export type { PluginUiActionFailureV1, PluginUiActionFailurePresentationV1 } from '@happier-dev/protocol/plugins/ui/client';
+
 export interface PluginUiHostApi {
+    /** Host-localized Action failure. Check version().methods before calling an older host. */
+    presentActionFailure?(failure: import('@happier-dev/protocol/plugins/ui/client').PluginUiActionFailureV1, options?: PluginCancellationOptions): Promise<import('@happier-dev/protocol/plugins/ui/client').PluginUiActionFailurePresentationV1>;
     /** Register a host-rendered control. Only its physical host gesture prepares an invocation. */
     actionControl(
         control: Readonly<{ action: PluginReference; presentation: PluginUiActionControlPresentation }>,

@@ -29,6 +29,7 @@ export const PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1 = `^${PLUGIN_UI_HOST_API_VER
  * adding a method must explicitly choose its generation.
  */
 const HOST_METHOD_INTRODUCTION_VERSION = Object.freeze({
+  presentActionFailure: '1.1.0',
   context: '1.0.0',
   publishCurrentUiContext: '1.0.0',
   watchContext: '1.0.0',

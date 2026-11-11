@@ -233,7 +233,7 @@ describe('createPluginSurfaceHostApi', () => {
             handlers: { writeClipboard: async () => ({ copied: true }) },
         });
 
-        expect(hostApi.installedMethods).toEqual(['context', 'writeClipboard']);
+        expect(hostApi.installedMethods).toEqual(['presentActionFailure', 'context', 'writeClipboard']);
         await expect(hostApi.handleRequest(request('writeClipboard'))).resolves.toEqual({ copied: true });
     });
 
@@ -251,8 +251,8 @@ describe('createPluginSurfaceHostApi', () => {
             },
         });
 
-        expect(hostApi.installedMethods).toEqual(['context']);
-        expect(hostApi.admissionMethods).toEqual(['context', 'readResource']);
+        expect(hostApi.installedMethods).toEqual(['presentActionFailure', 'context']);
+        expect(hostApi.admissionMethods).toEqual(['presentActionFailure', 'context', 'readResource']);
         methodReads.length = 0;
         expect(hostApi.handleRequest(request('context'))).toMatchObject({ pluginId: surfaceContext.pluginId });
         expect(methodReads).toEqual(['context']);

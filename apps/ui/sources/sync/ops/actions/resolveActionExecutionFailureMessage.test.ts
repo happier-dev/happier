@@ -7,6 +7,19 @@ import { t } from '@/text';
 import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage, resolveActionExecutionFailureTitle } from './resolveActionExecutionFailureMessage';
 
 describe('Action failure presentation', () => {
+    it('names the Account Voice feature repair', () => {
+        expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: 'feature_policy_disabled', details: { recovery: 'enable_voice_agent' } }, 'fallback')).toBe(t('settingsVoice.pages.conversations.agentFeatureRequired', { feature: t('settingsFeatures.expVoiceAgent') }));
+    });
+    it('keeps authored plugin reason and retry recovery across returned and thrown failures', () => {
+        const failure = { ok: false, code: 'provider_unavailable', message: 'Provider is offline', remediation: { kind: 'retry' } };
+        const expected = `Provider is offline ${t('errors.tryAgain')}`;
+        expect(resolveActionExecutionFailureMessage(failure, 'fallback')).toBe(expected);
+        expect(resolveActionExecutionErrorMessage(new PluginError({ code: 'provider_unavailable', message: failure.message, remediation: { kind: 'retry' } }), 'fallback')).toBe(expected);
+    });
+    it('keeps the Docker sign-in instruction without interpreting its text', () => {
+        expect(resolveActionExecutionFailureMessage({ ok: false, code: 'credential_unavailable', message: 'Sign in to Docker: run sbx login' }, 'fallback')).toBe('Sign in to Docker: run sbx login');
+        expect(resolveActionExecutionFailureMessage({ ok: false, code: 'credential_unavailable' }, 'fallback')).toBe(t('startFailure.cause.credential_unavailable'));
+    });
     it.each(['mode_none', 'not_preauthorized'])('names the administrator prerequisite for %s without treating it as transport failure', code => {
         expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: code, error: code }, 'Could not read the network'))
             .toBe(t('machineDetailPage.security.reasons.needsAdminToCheck'));
@@ -33,6 +46,8 @@ describe('Action failure presentation', () => {
         ['plugin_action_input_schema_invalid', 'common.requestFailed'],
         ['plugin_action_unavailable', 'ui.pluginUi.actionUnavailable'],
         ['approval_required', 'notifications.activity.permissionFallbackBody'],
+        ['preset_limit_reached', 'machinePresets.limitWaits'],
+        ['pool_no_available_machine', 'machinePresets.poolNoMachine'],
     ] as const)('presents plugin refusal %s through thrown errors and Action envelopes', (code, key) => {
         expect(resolveActionExecutionErrorMessage(new PluginError({ code }), 'Save failed')).toBe(t(key));
         expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: code, error: code }, 'Save failed')).toBe(t(key));
@@ -186,6 +201,15 @@ describe('Action failure presentation', () => {
             .toBe(t('widgetAdd.refusals.inputsInvalid'));
     });
 
+    it('retains ordinary Action failure and successful-result behavior', () => {
+        expect(resolveActionExecutionErrorMessage(new Error('Private transport detail'), 'Fallback'))
+            .toBe('Fallback');
+        expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: 'other_failure', error: 'Details' }, 'Fallback'))
+            .toBe('Details');
+        expect(resolveActionExecutionFailureMessage({ ok: true, result: { results: [{ ok: true }] } }, 'Fallback'))
+            .toBeNull();
+    });
+
     it('keeps presentation-owned typed UI refusals specific through the shared Action-failure copy owner', () => {
         for (const [errorCode, key] of [
             ['file_save_failed', 'files.fileWriteFailed'],
@@ -198,20 +222,5 @@ describe('Action failure presentation', () => {
             expect(resolveActionExecutionFailureMessage({ ok: false, errorCode }, 'Operation failed')).toBe(t(key));
             expect(resolveActionExecutionErrorMessage({ code: errorCode }, 'Operation failed')).toBe(t(key));
         }
-    });
-
-    it.each([
-        ['preset_limit_reached', 'machinePresets.limitWaits'],
-        ['pool_no_available_machine', 'machinePresets.poolNoMachine'],
-    ] as const)('presents machine allocation refusal %s through both Action adapters', (code, key) => {
-        expect(resolveActionExecutionErrorMessage({ code }, 'Start failed')).toBe(t(key));
-        expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: code, error: code }, 'Start failed')).toBe(t(key));
-    });
-
-    it('retains ordinary Action failure and successful-result behavior', () => {
-        expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: 'other_failure', error: 'Details' }, 'Fallback'))
-            .toBe('Details');
-        expect(resolveActionExecutionFailureMessage({ ok: true, result: { results: [{ ok: true }] } }, 'Fallback'))
-            .toBeNull();
     });
 });

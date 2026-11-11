@@ -12225,7 +12225,7 @@ Plugins may contribute a `starter` registry source alongside app sources. A star
 ## Plugin UI Action failure presentation (unreleased 0.3)
 
 Native and hosted-web plugin UIs share `hostApi.presentActionFailure(failure)`.
-The closed input is the existing Action failure envelope (`errorCode`, `error`,
+The closed input projects the Action failure envelope (`errorCode`, optional `error`,
 optional `failureCause`, `details` and `requestId`). The host delegates to
 `resolveActionExecutionFailureMessage`; it does not maintain another code map.
 The result carries `reason`, `nextStep` and `technicalDetails` lines compatible

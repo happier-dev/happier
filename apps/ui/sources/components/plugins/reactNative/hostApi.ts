@@ -1,3 +1,4 @@
+import { PluginUiPresentActionFailureRequestV1Schema, PluginUiActionFailurePresentationV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import {
     PluginUiSetPageNavigationRequestV1Schema,
     PluginUiActionControlRequestV1Schema,
@@ -136,6 +137,7 @@ type PluginReactNativeHostRequestTransport = Readonly<{
         method: PluginUiHostApiRequestMethodV1,
         payload?: PluginUiJsonValueV1,
         options?: PluginSurfaceHostApiRequestOptions,
+        onIssued?: (requestId: string) => void,
     ) => Promise<PluginUiJsonValueV1 | undefined>;
     watchResource: (
         payload: PluginUiResourceSubscriptionRequestV1,
@@ -290,6 +292,7 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
         rawMethod: PluginUiHostApiRequestMethodV1,
         payload?: PluginUiJsonValueV1,
         options?: PluginSurfaceHostApiRequestOptions,
+        onIssued?: (requestId: string) => void,
     ): Promise<PluginUiJsonValueV1 | undefined> {
         const parsedMethod = PluginUiHostApiRequestMethodV1Schema.safeParse(rawMethod);
         if (!parsedMethod.success) {
@@ -308,6 +311,7 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
             method,
             ...(payload !== undefined ? { payload } : {}),
         });
+        onIssued?.(envelope.requestId);
 
         const settlement = settlePluginSurfaceHostApiRequest(
             envelope,
@@ -950,6 +954,12 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
     // Mount/artifact/target identity stays in the admitted surface envelope;
     // embedding it here can exceed the daemon's existing subscription-id bound.
     const apiShape: PluginUiHostApi = {
+        presentActionFailure: async (failure, options) => {
+            assertActive(options?.signal);
+            assertInstalled('presentActionFailure');
+            const payload = PluginUiPresentActionFailureRequestV1Schema.parse(failure);
+            return PluginUiActionFailurePresentationV1Schema.parse(await transport.request('presentActionFailure', payload, options));
+        },
         actionControl: async (control, controller, options) => {
             assertActive(options?.signal);
             assertInstalled('actionControl');
@@ -1080,9 +1090,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                         : {}),
                 }
                 : undefined;
-            const result = requestOptions
-                ? await transport.request('executeAction', actionRequest.data, requestOptions)
-                : await transport.request('executeAction', actionRequest.data);
+            const result = await transport.request('executeAction', actionRequest.data, requestOptions, options?.onIssued);
             // The host response is the canonical settlement. Once an outward
             // effect succeeds, later local retirement must not hide that known
             // result and encourage a blind retry.

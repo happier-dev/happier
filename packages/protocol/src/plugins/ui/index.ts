@@ -1,3 +1,4 @@
+export * from './actionFailurePresentation.js';
 export * from './artifactArchive.js';
 export * from './artifactIntegrity.js';
 export * from './composer.js';

@@ -1435,7 +1435,7 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         const version = adapter.api.version();
         expect(version).toMatchObject({
             apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
-            methods: ['context', 'watchContext', 'selectActionInput'],
+            methods: ['presentActionFailure', 'context', 'watchContext', 'selectActionInput'],
         });
         // The RN direct consumer observes the one Protocol-owned semantic version.
         expect(version.apiVersion).toBe(PLUGIN_UI_HOST_API_VERSION_V1);
@@ -1928,15 +1928,14 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
     });
 
     it('advertises only what the mounted host installs', () => {
-        // A handlerless mount serves exactly the two methods answered from its
-        // own validated surface snapshot — `context` (the read) and
-        // `watchContext` (the push producer, UI-D03) — and advertises nothing
-        // else. A constant full-vocabulary advertisement, or any hand-written
+        // A handlerless mount serves local failure presentation plus the two
+        // methods answered from its validated snapshot: `context` (the read)
+        // and `watchContext` (the push producer, UI-D03). A constant full-vocabulary advertisement, or any hand-written
         // list, fails here.
         expect(createAdapterOverHost({}).api.version()).toEqual({
             apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
             wireVersion: 1,
-            methods: ['context', 'watchContext'],
+            methods: ['presentActionFailure', 'context', 'watchContext'],
         });
 
         // Negative control against "advertise everything the adapter can call":
@@ -1944,7 +1943,7 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         // that method, in canonical order.
         expect(createAdapterOverHost({
             executeAction: async () => ({ accepted: true }),
-        }).api.version().methods).toEqual(['context', 'watchContext', 'executeAction']);
+        }).api.version().methods).toEqual(['presentActionFailure', 'context', 'watchContext', 'executeAction']);
     });
 
     it('derives the advertised set from the canonical vocabulary, not a local list', () => {
@@ -2490,7 +2489,7 @@ describe('canonical React Native context subscriptions (UI-D03)', () => {
     });
 
     it('advertises watchContext exactly when the mount owns a surface fact', () => {
-        expect(createAdapter().api.version().methods).toEqual(['context', 'watchContext']);
+        expect(createAdapter().api.version().methods).toEqual(['presentActionFailure', 'context', 'watchContext']);
         // Negative control: an invalid surface snapshot installs nothing at all,
         // so the transport must not advertise a subscription it cannot serve.
         const invalid = createPluginSurfaceHostApi({

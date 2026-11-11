@@ -1,3 +1,6 @@
+import { ActionExecuteFailureSchema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { t } from '@/text';
 import type {
     PluginHostedWebBridgeEnvelopeV1,
     PluginHostedWebBridgeHostMessageEnvelopeV1,
@@ -934,5 +937,42 @@ describe('outward-effect settlement across the React Native and hosted-web carri
 
         settleLaunch?.();
         await expect(launch).resolves.toMatchObject({ kind: 'ack' });
+    });
+});
+
+
+describe('Action failure presentation through plugin UI carriers', () => {
+    it.each(['native', 'hosted'] as const)('%s returns the host presenter and disclosure fields', async kind => {
+        const mount = createMount({});
+        const carrier = await createAuthorCarrier(mount, kind);
+        try {
+            expect(carrier.api.version().methods).toContain('presentActionFailure');
+            const failure = ActionExecuteFailureSchema.parse({ ok: false as const, errorCode: 'mode_none', error: 'mode_none', requestId: 'failed-action-1',
+                details: { reasonCode: 'administrator_required', token: 'private-token' },
+                failureCause: projectActionFailureCauseV1(Object.assign(new Error('private provider text'), { code: 'not_preauthorized', status: 403 }), 'dispatch') });
+            const presentation = await carrier.api.presentActionFailure!(failure);
+            expect(presentation.reason).toBe(resolveActionExecutionFailureMessage(failure, t('common.requestFailed')));
+            expect(presentation.nextStep).toBeNull();
+            expect(presentation.technicalDetails).toEqual(expect.arrayContaining([
+                expect.objectContaining({ key: 'code', value: 'mode_none' }),
+                expect.objectContaining({ key: 'requestId', value: 'failed-action-1' }),
+                expect.objectContaining({ key: 'reasonCode', value: 'administrator_required' }),
+                expect.objectContaining({ key: 'causeCode', value: 'not_preauthorized' }),
+                expect.objectContaining({ key: 'httpStatus', value: '403' }),
+            ]));
+            expect(JSON.stringify(presentation)).not.toContain('private-token');
+            const unknown = { ok: false as const, errorCode: 'future_failure' };
+            expect((await carrier.api.presentActionFailure!(unknown)).reason)
+                .toBe(t('common.requestFailed'));
+            expect((await carrier.api.presentActionFailure!(unknown)).reason)
+                .toBe(resolveActionExecutionFailureMessage(unknown, t('common.requestFailed')));
+        } finally { carrier.dispose(); mount.host.dispose?.(); }
+    });
+    it('uses producer message and correlation on an older host without sending the new method', async () => {
+        const failure = { ok: false as const, errorCode: 'future_failure', error: 'Producer reason', requestId: 'old-host-request' };
+        const { presentActionFailure } = await import('../../../../../../packages/plugin-sdk/src/ui/actionFailurePresentation');
+        const presentation = await presentActionFailure({ version: () => ({ apiVersion: '1.0.0', wireVersion: 1, methods: [] }), presentActionFailure: async () => { throw new Error('Older host must not receive the method'); } }, failure);
+        expect(presentation.reason).toBe(failure.error);
+        expect(presentation.technicalDetails.map(line => line.value)).toEqual([failure.errorCode, failure.requestId]);
     });
 });

@@ -474,3 +474,23 @@ symbol-level index for that artifact. It is not an authoring tutorial and does
 not make the currently private package publicly available. Start with the
 [quickstart](/plugins/quickstart), then use the route map above for explicit
 types and the relevant concept guide for lifecycle and product behavior.
+
+## Present Action failures (0.3 development source)
+
+Use the host's localized failure copy from native or hosted-web plugin UI:
+
+```ts
+import { presentActionFailure } from '@happier-dev/plugin-sdk/ui';
+
+const presented = await presentActionFailure(hostApi, failure);
+// Render presented.reason, optional presented.nextStep, and the
+// presented.technicalDetails lines in TechnicalDetailsDisclosure.
+```
+
+Pass the failed Action result unchanged: `ok: false`, `errorCode`, `error`,
+and its optional `failureCause`, `details` and `requestId`. A code-only failure may omit `error`; unknown codes then use the app presenter’s generic fallback. The helper checks
+`hostApi.version().methods` for `presentActionFailure`. On older hosts it
+shows the producer message with Code and Request ID. Hosts with the method use
+the app presenter and its safe technical details. The current presenter combines
+reason and recovery in `reason`; `nextStep` is null. Do not add plugin-local
+error-code translations.

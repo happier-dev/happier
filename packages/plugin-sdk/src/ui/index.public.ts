@@ -1,3 +1,5 @@
+export { presentActionFailure } from './actionFailurePresentation.js';
+export type { PluginUiActionFailureV1, PluginUiActionFailurePresentationV1 } from './hostApi.js';
 export { formatUsageDurationCompact } from '../usage.js';
 export type { PluginUiPageNavigationV1, PluginUiPageNavigationItemV1, PluginUiPageNavigationProjectionV1 } from './publicContract.js';
 export {

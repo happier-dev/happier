@@ -1,3 +1,5 @@
+import { PluginUiPresentActionFailureRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import {
     PLUGIN_UI_HOST_METHODS_V1,
     PluginUiHostMethodV1Schema,
@@ -305,7 +307,7 @@ export function resolveInstalledPluginSurfaceHostMethods(
     handlers: PluginSurfaceHostApiHandlers,
 ): readonly PluginUiHostMethodV1[] {
     return Object.freeze(PLUGIN_UI_HOST_METHODS_V1.filter(
-        (method) => method === 'context' || handlers[method] !== undefined,
+        (method) => method === 'context' || method === 'presentActionFailure' || handlers[method] !== undefined,
     ));
 }
 
@@ -346,7 +348,9 @@ export function createPluginSurfaceHostApi(
             installedMethods.includes(method) || input.admissionMethods?.includes(method),
         ));
     };
-    const isMethodAvailable = input.isMethodAvailable;
+    const isMethodAvailable = input.isMethodAvailable
+        ? (method: PluginUiHostMethodV1) => method === 'presentActionFailure' || input.isMethodAvailable!(method)
+        : undefined;
     let disposed = false;
     const connectionSettlement = createPluginConnectionSettlement();
     const waitForConnectionSettlement: NonNullable<PluginSurfaceHostApiV1['waitForConnectionSettlement']> = (error, request, options) => {
@@ -407,7 +411,7 @@ export function createPluginSurfaceHostApi(
         // A request admits only its addressed method. Enumerating the full
         // live set repeats currentness and unrelated method admissions;
         // negotiation getters still read that complete set independently.
-        if (releasedMethod.success && ((releasedMethod.data !== 'context' && handlers[releasedMethod.data] === undefined)
+        if (releasedMethod.success && ((releasedMethod.data !== 'context' && releasedMethod.data !== 'presentActionFailure' && handlers[releasedMethod.data] === undefined)
             || (isMethodAvailable !== undefined && !isMethodAvailable(releasedMethod.data)))) {
             // Structural absence and transient narrowing are different facts.
             // Keep the method admitted while its connection is pending; a
@@ -423,6 +427,10 @@ export function createPluginSurfaceHostApi(
                 );
         }
         if (request.method === 'context') return surfaceContext;
+        if (request.method === 'presentActionFailure') {
+            const parsed = PluginUiPresentActionFailureRequestV1Schema.safeParse(request.payload);
+            return parsed.success ? presentActionExecutionFailure(parsed.data) : createPluginSurfaceHostApiError('invalid_payload');
+        }
 
         const handler = handlers[request.method];
         const invoke = handler ?? input.fallback;

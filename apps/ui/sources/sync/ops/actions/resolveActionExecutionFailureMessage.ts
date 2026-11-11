@@ -1,3 +1,8 @@
+import type { PluginUiActionFailureV1, PluginUiActionFailurePresentationV1 } from '@happier-dev/protocol/plugins/ui/client';
+import { readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
+import { isPluginError } from '@happier-dev/protocol/plugins/errors';
+import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
+import { PluginDiagnosticRemediationV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import { isActionTurnedOffErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/api';
 import { MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
@@ -131,10 +136,10 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     if (code === 'artifact_not_found' || code === 'not_found') return t('artifacts.notFound');
     if (typeof code === 'string' && code.startsWith('project_account_')) return t('widgetAdd.refusals.areaUnavailable');
     if (code === 'server_unreachable' || code === 'home_unreachable') return t('settingsPlugins.targetSelection.unreachableThisHome');
-    if (code === 'preset_limit_reached') return t('machinePresets.limitWaits');
-    if (code === 'pool_no_available_machine') return t('machinePresets.poolNoMachine');
     if (code === 'plugin_action_input_schema_invalid') return t('common.requestFailed');
     if (code === 'plugin_action_unavailable') return t('ui.pluginUi.actionUnavailable');
+    if (code === 'preset_limit_reached') return t('machinePresets.limitWaits');
+    if (code === 'pool_no_available_machine') return t('machinePresets.poolNoMachine');
     if (code === 'approval_required') return options?.notAppliedMessage ?? t('notifications.activity.permissionFallbackBody');
     if (code === 'approval_canceled' || code === 'plugin_action_current_intent_rejected') {
         return options?.notAppliedMessage ?? t('errors.actionCanceled');
@@ -146,6 +151,15 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     if (widgetRefusal) return widgetRefusal;
     const sessionInputLabel = getSessionInputFailureLabelKey({ code });
     if (sessionInputLabel) return t(sessionInputLabel);
+    if (code === 'feature_policy_disabled') return t('settingsVoice.pages.conversations.agentFeatureRequired', { feature: t('settingsFeatures.expVoiceAgent') });
+    const message = (!(value instanceof Error) || isPluginError(value)) && typeof record.message === 'string'
+        ? record.message.trim() : '';
+    const reason = message || (code === 'credential_unavailable' ? t('startFailure.cause.credential_unavailable') : '');
+    if (reason) {
+        const remediation = isPluginError(value) ? readPluginActionFailureAuthorPayload(value.data).remediation
+            : PluginDiagnosticRemediationV1Schema.safeParse(record.remediation).data;
+        return remediation?.kind === 'retry' ? `${reason} ${t('errors.tryAgain')}` : reason;
+    }
     const error = typeof record.error === 'string' ? record.error.trim() : '';
     if (error.length > 0) return error;
     const errorMessage = typeof record.errorMessage === 'string' ? record.errorMessage.trim() : '';
@@ -191,4 +205,24 @@ export function resolveActionExecutionFailureMessage(
     if (!asRecord(result)) return fallbackMessage;
     const failure = readFailureRecord(result);
     return failure ? readFailureMessage(failure, options) ?? fallbackMessage : null;
+}
+
+
+/** The existing combined reason/recovery copy, with the disclosure's safe reference fields. */
+export function presentActionExecutionFailure(failure: PluginUiActionFailureV1): PluginUiActionFailurePresentationV1 {
+    const technicalDetails = [
+        { key: 'code', label: t('workflows.run.technical.failureCode'), value: failure.errorCode },
+        ...(failure.requestId ? [{ key: 'requestId', label: t('browserDiagnostics.host.devtools.fields.requestId'), value: failure.requestId }] : []),
+        ...(failure.effectAttempted === undefined ? [] : [{ key: 'effectAttempted', label: t('approvals.failureTechnicalLabels.effectAttempted'), value: String(failure.effectAttempted) }]),
+        ...Object.entries(readSafeFailureDetails(failure.details)).map(([key, value]) => ({ key, label: key, value: String(value) })),
+        ...(failure.failureCause ? [
+            { key: 'causePhase', label: t('approvals.failureTechnicalLabels.causePhase'), value: failure.failureCause.phase },
+            { key: 'errorClass', label: t('approvals.failureTechnicalLabels.errorClass'), value: failure.failureCause.errorClass },
+            ...(failure.failureCause.errorCode ? [{ key: 'causeCode', label: t('approvals.failureTechnicalLabels.causeCode'), value: failure.failureCause.errorCode }] : []),
+            ...(failure.failureCause.httpStatus != null ? [{ key: 'httpStatus', label: t('approvals.failureTechnicalLabels.httpStatus'), value: String(failure.failureCause.httpStatus) }] : []),
+        ] : []),
+    ];
+    return { reason: resolveActionExecutionFailureMessage(failure, t('common.requestFailed')) ?? t('common.requestFailed'),
+        // The presenter currently owns one combined message; never infer a second instruction from code.
+        nextStep: null, technicalDetails };
 }
