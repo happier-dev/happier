@@ -32,6 +32,17 @@ describe('managed Session defaults', () => {
       .toMatchObject({ value: 'read-only', source: 'explicit' });
   });
 
+  it('preserves explicit Automatic while a locked policy can still select a model', () => {
+    const model = { v: 1 as const, updatedAt: 1,
+      ref: { agentTargetKey: key, providerConnectionId: null, modelId: 'managed-model' } };
+    const input = { agentTargetKey: key, explicitChoices: { modelByAgentTargetKey: { [key]: null } },
+      teamDefaults: { team: { modelByAgentTargetKey: { [key]: model } }, groups: {} } };
+    expect(resolveManagedSessionDefaults(input).model).toMatchObject({ value: null, source: 'explicit', lock: null });
+    expect(resolveManagedSessionDefaults({ ...input,
+      policyDefaults: { values: { modelByAgentTargetKey: { [key]: model } }, locked: true, organization: 'Example' },
+    }).model).toMatchObject({ value: model, source: 'policy', lock: { organization: 'Example' } });
+  });
+
   it('lets a locked policy override the member default', () => {
     const result = resolveManagedSessionDefaults({ agentTargetKey: key, memberDefaults: mode('read-only'),
       policyDefaults: { values: mode('yolo'), locked: true, organization: 'Example' } });

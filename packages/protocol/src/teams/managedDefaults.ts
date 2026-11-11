@@ -54,6 +54,11 @@ export const ManagedSessionDefaultsV1Schema = lazyZodSchema(() => z.strictObject
 })));
 export type ManagedSessionDefaultsV1 = z.infer<typeof ManagedSessionDefaultsV1Schema>;
 
+/** Request-only choices can explicitly retain the Agent's Automatic model. */
+export type ManagedSessionExplicitChoicesV1 = Readonly<Omit<ManagedSessionDefaultsV1, 'modelByAgentTargetKey'> & {
+  modelByAgentTargetKey?: Readonly<Record<string, SessionModelSelectionV1 | SessionModelSelectionV2 | null>>;
+}>;
+
 export const ManagedDefaultsV1Schema = lazyZodSchema(() => z.strictObject({
   team: ManagedSessionDefaultsV1Schema,
   groups: z.record(z.string().check(z.minLength(1)), ManagedSessionDefaultsV1Schema),
@@ -85,13 +90,13 @@ export type ManagedDefaultDecision<T> = Readonly<{
 export type ResolvedManagedSessionDefaults = Readonly<{
   placement: ManagedDefaultDecision<ManagedSessionPlacementV1>;
   permissionMode: ManagedDefaultDecision<AgentPermissionIntentV1>;
-  model: ManagedDefaultDecision<SessionModelSelectionV1 | SessionModelSelectionV2>;
+  model: ManagedDefaultDecision<SessionModelSelectionV1 | SessionModelSelectionV2 | null>;
   connectedServices: readonly ManagedDefaultDecision<ManagedConnectedServiceDefaultV1>[];
 }>;
 
 export type ManagedSessionDefaultsLayerV1 = Readonly<{
   source: 'explicit' | 'member' | 'group' | 'team' | 'home' | 'policy';
-  defaults: ManagedSessionDefaultsV1 | null;
+  defaults: ManagedSessionExplicitChoicesV1 | null;
 }>;
 
 export type ManagedSessionDefaultsLayerProjectionV1 = Readonly<{
@@ -103,7 +108,7 @@ export type ManagedSessionDefaultsLayerProjectionV1 = Readonly<{
 export function projectManagedSessionDefaultsLayers(
   input: ManagedSessionDefaultsContext & Readonly<{
     agentTargetKey: string;
-    explicitChoices?: ManagedSessionDefaultsV1;
+    explicitChoices?: ManagedSessionExplicitChoicesV1;
   }>,
 ): ManagedSessionDefaultsLayerProjectionV1 {
   const groups = (input.groupIds ?? []).flatMap(id => input.teamDefaults?.groups[id] ? [input.teamDefaults.groups[id]] : []);
@@ -124,11 +129,11 @@ export function projectManagedSessionDefaultsLayers(
 
 /** One decision per field/purpose. Defaults express intent and never confer resource access. */
 export function resolveManagedSessionDefaults(input: ManagedSessionDefaultsContext & Readonly<{
-  agentTargetKey: string; explicitChoices?: ManagedSessionDefaultsV1;
+  agentTargetKey: string; explicitChoices?: ManagedSessionExplicitChoicesV1;
 }>): ResolvedManagedSessionDefaults {
   const projection = projectManagedSessionDefaultsLayers(input);
   const groups = projection.layers.filter(layer => layer.source === 'group').flatMap(layer => layer.defaults ? [layer.defaults] : []);
-  function decide<T>(read: (defaults: ManagedSessionDefaultsV1) => T | undefined,
+  function decide<T>(read: (defaults: ManagedSessionExplicitChoicesV1) => T | undefined,
     equal: (left: T, right: T) => boolean = sameStrictJsonValue): ManagedDefaultDecision<T> {
     const groupValues = groups.flatMap(group => { const value = read(group); return value === undefined ? [] : [value]; });
     const first = groupValues[0];
@@ -140,21 +145,21 @@ export function resolveManagedSessionDefaults(input: ManagedSessionDefaultsConte
       lock: { organization: policy.organization, ...(policy.supportUrl ? { supportUrl: policy.supportUrl } : {}) },
     };
     const candidates = [
-      ['explicit', input.explicitChoices && read(input.explicitChoices)],
-      ['member', input.memberDefaults && read(input.memberDefaults)],
+      ['explicit', input.explicitChoices ? read(input.explicitChoices) : undefined],
+      ['member', input.memberDefaults ? read(input.memberDefaults) : undefined],
       ['group', groupConflict ? undefined : first],
-      ['team', input.teamDefaults && read(input.teamDefaults.team)],
-      ['home', input.homeDefaults && read(input.homeDefaults)],
+      ['team', input.teamDefaults ? read(input.teamDefaults.team) : undefined],
+      ['home', input.homeDefaults ? read(input.homeDefaults) : undefined],
       ['policy', policyValue],
     ] as const;
-    for (const [source, value] of candidates) if (value !== undefined && value !== null) return { value, source, lock: null, groupConflict };
+    for (const [source, value] of candidates) if (value !== undefined) return { value, source, lock: null, groupConflict };
     return { value: undefined, source: 'none', lock: null, groupConflict };
   }
   const targetKey = input.agentTargetKey;
   const purposeKey = (value: z.infer<typeof ManagedConnectedServiceDefaultV1Schema>) =>
     qualifiedPurposeKey(value.purpose);
   const purposeKeys = new Set(projection.purposeKeys);
-  const modelIdentity = (model: SessionModelSelectionV1 | SessionModelSelectionV2) => model.v === 1
+  const modelIdentity = (model: SessionModelSelectionV1 | SessionModelSelectionV2 | null) => model === null ? null : model.v === 1
     ? model.ref
     : projectSessionModelSelectionV2ToV1(model)?.ref ?? model.ref;
   return {
