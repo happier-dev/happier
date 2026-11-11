@@ -34,7 +34,7 @@ export function UsageFootprintWidget(props: UsageBodyProps) {
   }
   const tokens = footprint.coverage.accountedTokens.total;
   const accountedTokens = formatTokenCount(tokens);
-  const exact = tokens.total === null ? null : formatHappierDataValue(tokens.total, getPreferredLanguage());
+  const exact = tokens === null ? null : formatHappierDataValue(tokens, getPreferredLanguage());
   return (
     <UsageFootprintBody theme={chartTheme} testID={props.testID} accountedTokens={accountedTokens}
       accountedTokensDatum={exact === null || accountedTokens.includes(exact) ? undefined : { label: t('usage.board.howYouWork.footprintAccounted'),
