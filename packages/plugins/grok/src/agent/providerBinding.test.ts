@@ -3,6 +3,8 @@ import type { AgentProviderBindingAdapter, AgentProviderBindingMaterializeInput 
 import { describe, expect, it } from 'vitest';
 
 import { PLUGIN_MANIFEST, activate } from '../manifest.js';
+import { buildGrokAcpRuntimeDefinition } from './acp/definition.js';
+import { GROK_PREFLIGHT_SESSION_CONTROLS } from './preflight/models.js';
 
 function input(adapter: AgentProviderBindingAdapter, credential: 'apiKey' | 'none' = 'apiKey'): AgentProviderBindingMaterializeInput {
   const transport = { id: 'grok-runtime-key', protocols: ['openai-chat'], uses: ['runtime'],
@@ -24,11 +26,32 @@ describe('registered Grok Provider binding', () => {
       const result = await adapter.materialize(input(adapter));
       expect(result.kind).toBe('spawnEnv');
       const env = Object.fromEntries(result.env.map(row => [row.name, row.value]));
-      expect(env.HAPPIER_GROK_PROVIDER_API_KEY).toBe('fixture-secret');
+      expect(env.XAI_API_KEY).toBe('fixture-secret');
       expect(env.GROK_CONFIG).not.toContain('fixture-secret');
       expect(JSON.parse(env.GROK_CONFIG!)).toEqual({ model: { 'custom-grok': {
-        model: 'custom-grok', base_url: 'https://provider.example/v1', env_key: 'HAPPIER_GROK_PROVIDER_API_KEY',
+        model: 'custom-grok', base_url: 'https://provider.example/v1', env_key: 'XAI_API_KEY',
       } } });
+    } finally { await activation.dispose(); }
+  });
+
+  it.each([
+    { advertisedMethodIds: ['xai.api_key'] },
+    { advertisedMethodIds: ['cached_token', 'xai.api_key'] },
+  ])('selects Provider API-key auth through runtime and preflight with $advertisedMethodIds', async ({ advertisedMethodIds }) => {
+    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const adapter = activation.registration('agents', 'grok')?.providerBinding;
+      if (!adapter) throw new Error('Grok must register its Provider binding adapter');
+      const result = await adapter.materialize(input(adapter));
+      const environment = Object.fromEntries(result.env.flatMap(row => typeof row.value === 'string' ? [[row.name, row.value]] : []));
+      const initializeMetadata = { defaultAuthMethodId: 'cached_token' };
+      const expected = { methodId: 'xai.api_key', metadata: { headless: true } };
+      expect(buildGrokAcpRuntimeDefinition(environment).auth?.selectMethod?.({ advertisedMethodIds, initializeMetadata })).toEqual(expected);
+      expect(GROK_PREFLIGHT_SESSION_CONTROLS.catalogs.selectAuthentication({
+        initializeResult: { authMethods: advertisedMethodIds.map(id => ({ id })), _meta: initializeMetadata },
+        probe: { accountSettings: null, environment: {},
+          nonblankEnvironment: Object.fromEntries(Object.entries(environment).map(([name, value]) => [name, Boolean(value.trim())])) },
+      })).toEqual(expected);
     } finally { await activation.dispose(); }
   });
 

@@ -1,10 +1,9 @@
 import type { AgentProviderBindingAdapter, AgentProviderBindingMaterializeInput } from '@happier-dev/plugin-sdk/agents/runtime';
 
-export const GROK_PROVIDER_SECRET_ENV_KEY = 'HAPPIER_GROK_PROVIDER_API_KEY';
+export const GROK_PROVIDER_SECRET_ENV_KEY = 'XAI_API_KEY';
 export const GROK_PROVIDER_OWNED_ENV_KEYS = Object.freeze([
   'GROK_CONFIG',
   GROK_PROVIDER_SECRET_ENV_KEY,
-  'XAI_API_KEY',
 ] as const);
 
 function validateCredential(input: AgentProviderBindingMaterializeInput): string {
