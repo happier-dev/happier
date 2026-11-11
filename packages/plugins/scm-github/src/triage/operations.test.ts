@@ -41,6 +41,7 @@ import { listGithubChangedFiles } from './detailOperations.js';
 import { encodeGithubTriageConfiguration } from './configuration.js';
 import {
   getGithubTriageEntry,
+  listGithubTriageScopeUnits,
   openGithubTriageClient,
   prepareGithubTriageReviewWorkspace,
   scanGithubTriageSource,
@@ -86,7 +87,7 @@ describe('registered GitHub REST → Triage source contract', () => {
         code: 'connected_service_credential_reconnect_required', retryable: false,
       });
     });
-    const context = { ...stub.context, invocationId: 'happier-request-1', services: {
+    const context = { ...stub.context, requestId: 'happier-request-1', services: {
       ...stub.context.services,
       connectedAccounts: { ...stub.context.services.connectedAccounts, materializeListedAccount },
     } };
@@ -295,6 +296,141 @@ describe('registered GitHub REST → Triage source contract', () => {
       expect(transport.materializeCount()).toBe(1);
     } finally { await plugin.dispose(); }
   });
+  it.each([{ field: 'updated', direction: 'asc' }, { field: 'updated', direction: 'desc' },
+    { field: 'created', direction: 'asc' }, { field: 'created', direction: 'desc' }] as const)(
+    'orders enabled alert family heads with forge rows by $field $direction across source pages', async (sort) => {
+      const instance = configuredInstance({ scope: 'repository' });
+      const enabled = { ...instance, configuration: { v: 1 as const, token: JSON.stringify({ v: 1,
+        selection: { kind: 'selected', unitIds: [REPOSITORY_KEY] }, alerts: { dependabot: true, codeScanning: true } }) } };
+      const transport = createStubGithubTransport({ respond: request => {
+        const url = new URL(request.url);
+        if (url.pathname === '/graphql') return githubChecksBatchResponse(request);
+        if (url.pathname === '/search/issues') {
+          const values = url.searchParams.get('q')?.includes('review-requested:@me') ? [3, 6] : [];
+          return { status: 200, body: githubSearchResponse({ items: (sort.direction === 'asc' ? values : values.slice().reverse()).map(value => ({
+            ...GITHUB_SEARCH_ISSUE_ITEM, number: 100 - value,
+            [sort.field === 'updated' ? 'updated_at' : 'created_at']: new Date(value * 1000).toISOString(),
+          })) }) };
+        }
+        if (!url.pathname.endsWith('/alerts')) return undefined;
+        expect(url.searchParams.get('sort')).toBe(sort.field);
+        expect(url.searchParams.get('direction')).toBe(sort.direction);
+        const values = url.pathname.endsWith('/dependabot/alerts') ? [1, 4, 7, 10] : [2, 5, 8, 9];
+        const ordered = sort.direction === 'asc' ? values : values.slice().reverse();
+        const offset = Number(url.searchParams.get('after') ?? '0');
+        const size = Number(url.searchParams.get('per_page'));
+        expect(size).toBe(2);
+        const next = new URL(url); next.searchParams.set('after', String(offset + size));
+        return { status: 200, ...(offset + size < ordered.length ? { headers: { link: `<${next}>; rel="next"` } } : {}),
+          body: ordered.slice(offset, offset + size).map(value => ({ number: 100 - value, state: 'open',
+            created_at: new Date(value * 1000).toISOString(), updated_at: new Date(value * 1000).toISOString(),
+            security_advisory: { summary: `Alert ${value}`, severity: 'high' }, rule: { description: `Alert ${value}`, severity: 'error' },
+          })) };
+      } });
+      const first = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ v: 1, instance: enabled,
+        sort, page: { kind: 'initial', limit: 14 } }, transport.context));
+      expect(first.kind).toBe('page');
+      if (first.kind !== 'page') throw new Error('Native heads remain');
+      const firstValues = first.observations.map(row => row.kind === 'present' ? Number(row.localRef.entryId) : null);
+      expect(firstValues).toEqual(sort.direction === 'asc' ? [99, 98, 97, 96] : [90, 91, 92]);
+      const beforeReplay = transport.requests.length;
+      expect(await scanGithubTriageSource({ v: 1, instance: enabled,
+        sort: { ...sort, direction: sort.direction === 'asc' ? 'desc' : 'asc' },
+        page: { kind: 'continuation', continuation: first.continuation } }, transport.context)).toMatchObject({ kind: 'failed' });
+      expect(transport.requests).toHaveLength(beforeReplay);
+      const second = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ v: 1, instance: enabled,
+        sort, page: { kind: 'continuation', continuation: first.continuation } }, transport.context));
+      expect(second.kind).toBe('complete');
+      if (second.kind === 'failed') throw new Error(second.failure.code);
+      const values = [...firstValues, ...second.observations.map(row => row.kind === 'present' ? Number(row.localRef.entryId) : null)];
+      expect(values).toEqual(sort.direction === 'asc' ? [99, 98, 97, 96, 95, 94, 93, 92, 91, 90]
+        : [90, 91, 92, 93, 94, 95, 96, 97, 98, 99]);
+      expect(transport.requests.filter(request => new URL(request.url).pathname.endsWith('/alerts'))).toHaveLength(4);
+      expect(transport.requests.filter(request => new URL(request.url).pathname === '/search/issues')).toHaveLength(5);
+    });
+
+  it.each([{ dependabot: true, codeScanning: false }, { dependabot: false, codeScanning: true }])(
+    'refuses field ordering for all-repository alert configurations before materializing credentials: %j', async (alerts) => {
+      const instance = configuredInstance({ scope: 'account' });
+      const enabled = { ...instance, configuration: { v: 1 as const, token: JSON.stringify({ v: 1,
+        selection: { kind: 'all' }, alerts }) } };
+      const transport = createStubGithubTransport({ respond: () => ({ status: 200, body: githubSearchResponse({ items: [] }) }) });
+      const result = await scanGithubTriageSource({ v: 1, instance: enabled, sort: { field: 'updated', direction: 'asc' },
+        page: { kind: 'initial', limit: 14 } }, transport.context);
+      expect(result).toMatchObject({ kind: 'failed', failure: { class: 'unsupportedContract', code: 'unsupported-sort' } });
+      expect(transport.materializeCount()).toBe(0);
+      expect(transport.requests).toHaveLength(0);
+    });
+
+  it.each([
+    { selection: { kind: 'all' as const }, alerts: { dependabot: true, codeScanning: true }, fields: [] },
+    { selection: { kind: 'all' as const }, alerts: { dependabot: false, codeScanning: false }, fields: ['updated', 'created'] },
+    { selection: { kind: 'selected' as const, unitIds: [REPOSITORY_KEY] }, alerts: { dependabot: true, codeScanning: true }, fields: ['updated', 'created'] },
+  ])('projects configuration-owned field sort capability without provider reads: %j', async ({ selection, alerts, fields }) => {
+    const instance = configuredInstance({ scope: 'account' });
+    const transport = createStubGithubTransport({ respond: () => undefined });
+    const result = await listGithubTriageScopeUnits({ v: 1, mode: 'configured', draft: {
+      v: 1, binding: instance.binding, localInstanceKey: instance.localInstanceKey, keyStability: 'locatorDerived',
+      configuration: { v: 1, token: JSON.stringify({ v: 1, selection, alerts }) }, locator: { v: 1, displayLabel: 'Account' },
+    } }, transport.context);
+    expect(result).toMatchObject({ kind: 'page', status: 'complete', sortFields: fields });
+    expect(transport.materializeCount()).toBe(0);
+    expect(transport.requests).toHaveLength(0);
+  });
+
+  it('orders equal timestamp heads by stable entry id across alert families', async () => {
+    const instance = configuredInstance({ scope: 'repository' });
+    const enabled = { ...instance, configuration: { v: 1 as const, token: JSON.stringify({ v: 1,
+      selection: { kind: 'selected', unitIds: [REPOSITORY_KEY] }, alerts: { dependabot: true, codeScanning: true } }) } };
+    const transport = createStubGithubTransport({ respond: request => {
+      const url = new URL(request.url);
+      if (url.pathname === '/search/issues') return { status: 200, body: githubSearchResponse({ items: [] }) };
+      if (!url.pathname.endsWith('/alerts')) return undefined;
+      return { status: 200, body: [{ number: url.pathname.endsWith('/dependabot/alerts') ? 2 : 9, state: 'open',
+        created_at: new Date(1000).toISOString(), updated_at: new Date(1000).toISOString(),
+        security_advisory: { summary: 'Finding', severity: 'high' }, rule: { description: 'Finding', severity: 'error' } }] };
+    } });
+    const result = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ v: 1, instance: enabled,
+      sort: { field: 'updated', direction: 'desc' }, page: { kind: 'initial', limit: 14 } }, transport.context));
+    expect(result.kind).toBe('complete');
+    if (result.kind === 'failed') throw new Error(result.failure.code);
+    expect(result.observations.map(row => row.kind === 'present' && row.localRef.entryId)).toEqual(['2', '9']);
+  });
+
+  it('merges selected repository alert heads before returning any later repository row', async () => {
+    const instance = configuredInstance({ scope: 'repository' });
+    const secondKey = `${GITHUB_FIXTURE_OWNER}/second-repository`.toLowerCase();
+    const enabled = { ...instance, configuration: { v: 1 as const, token: JSON.stringify({ v: 1,
+      selection: { kind: 'selected', unitIds: [REPOSITORY_KEY, secondKey] }, alerts: { dependabot: true, codeScanning: false } }) } };
+    const transport = createStubGithubTransport({ respond: request => {
+      const url = new URL(request.url);
+      if (url.pathname === '/search/issues') return { status: 200, body: githubSearchResponse({ items: [] }) };
+      if (url.pathname === `/repos/${secondKey}`) return { status: 200, body: { id: 100, full_name: secondKey } };
+      if (!url.pathname.endsWith('/dependabot/alerts')) return undefined;
+      expect(url.searchParams.get('per_page')).toBe('1');
+      const values = url.pathname.includes(secondKey) ? [1, 4] : [3, 6];
+      const offset = Number(url.searchParams.get('after') ?? '0');
+      const next = new URL(url); next.searchParams.set('after', '1');
+      return { status: 200, ...(offset === 0 ? { headers: { link: `<${next}>; rel="next"` } } : {}),
+        body: [{ number: 100 - values[offset]!, state: 'open', created_at: new Date(values[offset]! * 1000).toISOString(),
+          updated_at: new Date(values[offset]! * 1000).toISOString(), security_advisory: { summary: 'Finding', severity: 'high' } }] };
+    } });
+    const input = { v: 1, instance: enabled, sort: { field: 'updated', direction: 'asc' } } as const;
+    const first = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ ...input,
+      page: { kind: 'initial', limit: 12 } }, transport.context));
+    expect(first.kind).toBe('page');
+    if (first.kind !== 'page') throw new Error('Repository alert heads remain');
+    expect(first.observations.map(row => row.kind === 'present' && row.localRef.entryId)).toEqual(['99']);
+    const second = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ ...input,
+      page: { kind: 'continuation', continuation: first.continuation } }, transport.context));
+    expect(second.kind).toBe('complete');
+    if (second.kind === 'failed') throw new Error(second.failure.code);
+    expect(second.observations.map(row => row.kind === 'present' && row.localRef.entryId)).toEqual(['97', '96', '94']);
+    expect(transport.requests.filter(request => new URL(request.url).pathname.endsWith('/alerts'))).toHaveLength(4);
+    expect(transport.requests.filter(request => new URL(request.url).pathname === '/search/issues')).toHaveLength(5);
+    expect(transport.requests.some(request => new URL(request.url).pathname === '/user/repos')).toBe(false);
+  });
+
   it('cancels a hidden native scope before issuing its alert request', async () => {
     const controller = new AbortController();
     const instance = configuredInstance({ scope: 'repository' });
@@ -312,7 +448,7 @@ describe('registered GitHub REST → Triage source contract', () => {
       page: { kind: 'continuation', continuation: first.continuation } }, transport.context)).rejects.toMatchObject({ name: 'AbortError' });
     expect(transport.requests.some(request => new URL(request.url).pathname.endsWith('/alerts'))).toBe(false);
   });
-  it('names both denied native families without claiming a complete empty scope', async () => {
+  it.each([undefined, { field: 'updated', direction: 'asc' } as const])('names both denied native families without claiming a complete empty scope with sort=%j', async (sort) => {
     const instance = configuredInstance({ scope: 'repository' });
     const enabled = { ...instance, configuration: { v: 1 as const, token: JSON.stringify({ v: 1,
       selection: { kind: 'selected', unitIds: [REPOSITORY_KEY] }, alerts: { dependabot: true, codeScanning: true } }) } };
@@ -322,9 +458,9 @@ describe('registered GitHub REST → Triage source contract', () => {
         : path.endsWith('/alerts') ? { status: 403, headers: { 'x-accepted-github-permissions': 'vulnerability_alerts=read',
           'X-GitHub-Request-Id': 'A89C:E6813:2EE25D2:4481C49:6AEB94CC' }, body: { message: 'Resource not accessible' } } : undefined;
     } });
-    let current = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ v: 1, instance: enabled,
+    let current = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ v: 1, instance: enabled, ...(sort === undefined ? {} : { sort }),
       page: { kind: 'initial', limit: 64 } }, transport.context));
-    while (current.kind === 'page') current = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ v: 1, instance: enabled,
+    while (current.kind === 'page') current = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ v: 1, instance: enabled, ...(sort === undefined ? {} : { sort }),
       page: { kind: 'continuation', continuation: current.continuation } }, transport.context));
     expect(current).toMatchObject({ kind: 'complete', observations: [], evidence: { kind: 'partial' } });
     if (current.kind !== 'complete' || current.evidence.kind !== 'partial') throw new Error('Partial coverage');
@@ -558,7 +694,7 @@ describe('registered GitHub REST → Triage source contract', () => {
         v: 1, binding: instance.binding, localInstanceKey: instance.localInstanceKey, keyStability: 'locatorDerived',
         configuration: { v: 1, token: JSON.stringify({ v: 1, selection, units }) }, locator: { v: 1, displayLabel: 'Account' },
       } }, { surface: 'agent', sessionId: 'source-selection-session' });
-      expect(result).toEqual({ kind: 'page', status: 'complete', selection, units });
+      expect(result).toEqual({ kind: 'page', status: 'complete', selection, units, sortFields: ['updated', 'created'] });
       expect(transport.materializeCount()).toBe(0);
       expect(transport.requests).toEqual([]);
     } finally { await plugin.dispose(); }

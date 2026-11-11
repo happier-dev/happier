@@ -1,4 +1,3 @@
-import { GITHUB_TRIAGE_SORT_FIELDS_V1 } from './scan/query.js';
 import { githubDetailTabDeclaration } from '../ui/detail/tabDeclarations.js';
 import {
   TriageSourceDescriptorV1Schema,
@@ -190,7 +189,6 @@ export const GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1: TriageSourceDescriptorV1 =
   // name another plugin's page.
   settingsPageId: GITHUB_TRIAGE_SETTINGS_PAGE_ID_V1,
   displayName: 'GitHub',
-  sortFields: GITHUB_TRIAGE_SORT_FIELDS_V1,
   scopeUnit: { singularLabel: 'Repository', pluralLabel: 'Repositories' },
   kinds: Object.freeze([
     Object.freeze({

@@ -35,6 +35,7 @@ import { GITHUB_PLUGIN_ID, GITHUB_API_ORIGIN } from '../observations/githubProvi
 
 import {
   decodeGithubTriageConfiguration,
+  readGithubTriageSortFields,
   GITHUB_TRIAGE_DEPLOYMENT_BASE_URL_V1,
   type GithubTriageConfigurationV1,
 } from './configuration.js';
@@ -200,6 +201,7 @@ export async function listGithubTriageScopeUnits(input: unknown, context: Github
   if (!resolved.ok) return { kind: 'failed', failure: resolved.failure };
   const { selection, units = [] } = resolved.configuration;
   if (mode === 'configured') return { kind: 'page', status: 'complete', selection,
+    sortFields: readGithubTriageSortFields(resolved.configuration),
     units: selection.kind === 'all' ? [] : selection.unitIds.map((id) => units.find((unit) => unit.id === id)
       ?? { id, label: id }) };
   const query = parsed.data.query?.trim() ?? '';
@@ -486,6 +488,9 @@ export async function scanGithubTriageSource(
   if (!resolved.ok) {
     return Object.freeze({ kind: 'failed' as const, failure: resolved.failure });
   }
+  if (scanInput.sort !== undefined && !readGithubTriageSortFields(resolved.configuration).includes(scanInput.sort.field)) {
+    return { kind: 'failed', failure: { class: 'unsupportedContract', code: 'unsupported-sort' } };
+  }
   const opened = await openClient(scanInput.instance, context);
   if (!opened.ok) {
     return Object.freeze({ kind: 'failed' as const, failure: opened.failure });
@@ -511,6 +516,7 @@ export async function scanGithubTriageSource(
   };
   const result = await scanGithubForgeWithAlerts({ instance: scanInput.instance, configuration: resolved.configuration,
     page: scanInput.page, client: opened.client, repositories, now, signal: context.signal, scanForge,
+    ...(scanInput.sort === undefined ? {} : { sort: scanInput.sort }),
     ...(scanInput.query?.trim() ? { query: scanInput.query.trim() } : {}),
     ...(scanInput.completed?.kindIds.includes('issue') ? { completedSinceMs: scanInput.completed.sinceMs } : {}) });
   return result.kind === 'page' ? settleGithubTriageScanPage(result.observations, result.evidence, result.continuation.token) : result;

@@ -1,8 +1,10 @@
+import { GITHUB_TRIAGE_SORT_FIELDS_V1 } from './scan/query.js';
 import {
   MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
   TriageSourceScopeSelectionV1Schema,
   TriageSourceScopeUnitV1Schema,
   type TriageSourceScopeSelectionV1,
+  type TriageListSortV1,
   type TriageSourceScopeUnitV1,
   type TriageSourceInstanceDraftV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -45,6 +47,13 @@ const NO_ALERTS: GithubTriageAlertFamiliesV1 = Object.freeze({ dependabot: false
 
 export function readGithubTriageAlertFamilies(configuration: GithubTriageConfigurationV1): GithubTriageAlertFamiliesV1 {
   return configuration.alerts ?? NO_ALERTS;
+}
+
+/** All-repository alert heads cannot be ordered by the repository directory. */
+export function readGithubTriageSortFields(configuration: GithubTriageConfigurationV1): readonly TriageListSortV1['field'][] {
+  const alerts = readGithubTriageAlertFamilies(configuration);
+  return configuration.selection.kind === 'all' && (alerts.dependabot || alerts.codeScanning)
+    ? [] : GITHUB_TRIAGE_SORT_FIELDS_V1;
 }
 
 /** Extra fields stay inside the shared Settings draft and its one Save/Cancel. */
