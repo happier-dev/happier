@@ -52,7 +52,7 @@ export const VoiceOrb = React.memo(function VoiceOrb(props: Readonly<{
     const onOpenSection = props.onOpenSection;
     const [focused, setFocused] = React.useState(false);
     const { translateX, hostWidth } = props;
-    const readAloud = resolveVoicePresenceReadAloud(voice, props.readAloud);
+    const readAloud = resolveVoicePresenceReadAloud(voice, props.readAloud, { includeLiveCall: true });
     const readingOnly = readAloud !== null && !voice.live;
     const showOptions = voice.live || Boolean(voice.ended) || readAloud !== null;
     const width = resolveVoiceOrbContainerWidth(Platform.OS, showOptions);

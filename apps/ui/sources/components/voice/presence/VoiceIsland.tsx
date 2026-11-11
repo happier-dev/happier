@@ -41,7 +41,7 @@ export const VoiceIsland = React.memo(function VoiceIsland(props: Readonly<{
 }>): React.ReactElement {
     const styles = stylesheet;
     const { voice, readAloud } = props;
-    const reading = resolveVoicePresenceReadAloud(voice, readAloud);
+    const reading = resolveVoicePresenceReadAloud(voice, readAloud, { includeLiveCall: true });
     const height = props.phone ? VOICE_ISLAND_PHONE.height : VOICE_ISLAND_DESKTOP.height;
     const markSize = props.phone ? VOICE_ISLAND_PHONE.mark : VOICE_ISLAND_DESKTOP.mark;
     const testID = props.testID ?? 'voice-island';

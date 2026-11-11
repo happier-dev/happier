@@ -57,7 +57,7 @@ export const VoiceTopBarPresence = React.memo(function VoiceTopBarPresence(props
     const testID = props.testID ?? 'voice-top-bar';
     const shortcutLabel = useKeyboardShortcutLabel('voice.toggle');
     if (voice.availability === 'unavailable') return null;
-    const reading = resolveVoicePresenceReadAloud(voice, readAloud);
+    const reading = resolveVoicePresenceReadAloud(voice, readAloud, { includeLiveCall: true });
     if (reading && !voice.live) {
         return (
             <VoiceTopBarAnatomy testID={`${testID}-read-aloud`}
@@ -97,7 +97,7 @@ const VoiceTopBarPill = React.memo(function VoiceTopBarPill(props: Readonly<{
 }>) {
     const styles = stylesheet;
     const { voice } = props;
-    const reading = resolveVoicePresenceReadAloud(voice, props.readAloud);
+    const reading = resolveVoicePresenceReadAloud(voice, props.readAloud, { includeLiveCall: true });
     const anchorRef = React.useRef<View | null>(null);
     const [open, setOpen] = React.useState(false);
     React.useLayoutEffect(() => registerVoiceGlancePresentation((expanded) => {

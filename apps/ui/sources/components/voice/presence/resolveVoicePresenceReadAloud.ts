@@ -1,12 +1,14 @@
 import type { VoiceAttemptControlProjection } from '../attempt/useVoiceAttemptControl';
 import type { VoiceReadAloud } from './VoiceReadAloud';
 
-/** Active reading is projected once; live calls keep their controls and show the phase in them. */
+/** Active reading is projected once; callers choose whether a live call keeps its controls. */
 export function resolveVoicePresenceReadAloud(
     voice: Pick<VoiceAttemptControlProjection, 'live' | 'canDismissFailedAttempt'>,
     readAloud: VoiceReadAloud | undefined,
+    options: Readonly<{ includeLiveCall?: boolean }> = {},
 ): VoiceReadAloud | null {
-    // Containers decide whether the phase replaces a retained result or joins a live call.
-    void voice;
+    // Plugins retain their established standalone read-aloud surface by default. Core presence
+    // containers opt into a live call's Reading label while retaining End/Mute/Stop controls.
+    if (options.includeLiveCall !== true && voice.live && voice.canDismissFailedAttempt !== true) return null;
     return readAloud && readAloud.phase !== 'idle' ? readAloud : null;
 }
