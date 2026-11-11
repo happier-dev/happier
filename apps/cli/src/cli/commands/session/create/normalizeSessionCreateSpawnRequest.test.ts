@@ -312,11 +312,12 @@ describe('normalizeSessionCreateSpawnRequest', () => {
       readAgentDefinitions: () => ({
         definitions: [],
         unavailableAgentPluginsByBackendId: {
-          pi: { pluginId: 'happier.agent.pi', code: 'plugin_account_execution_unavailable' },
+          pi: { pluginId: 'happier.agent.pi', code: 'plugin_account_execution_unavailable', unavailableCause: { phase: 'plugins.account_census', errorClass: 'AxiosError', errorCode: 'ECONNRESET', httpStatus: null } },
         },
       }),
     }))).rejects.toMatchObject({
       details: { reason: 'plugin_account_execution_unavailable' },
+      failureCause: { phase: 'plugins.account_census', errorCode: 'ECONNRESET' },
     });
   });
 

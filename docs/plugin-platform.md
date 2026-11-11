@@ -198,6 +198,10 @@ Account-feed reconnect uses that same refresh. Healthy reads and ordinary
 unchanged live pages do not trigger census requests. Admission compares the full
 bundled enablement result and republishes only changed plugins. Session creation
 preserves the catalog's typed refusal while Account execution is unavailable.
+New Session, CLI creation and runner bootstrap refusals carry the original
+Account census cause through Action settlement, including a typed usage-limit
+cause when supplied by the census producer. Pool usage alone does not classify
+a failed Account census.
 
 In 0.3 development, bundled plugin locators exclude disabled plugins before loading their manifests. Before the daemon has an active registry, the synchronous built-in snapshot reads the persisted Machine intent once through the admitted registry reader; it excludes disabled declarations and their UI artifact indexes. Runtime admission still combines Account and Machine intent. Exact selections retain their enabled entries; an enabled dependent keeps healthy sibling contributions while admission prunes references to unavailable plugins. The daemon constructs its Workflow runtime at the existing `isWorkflowRuntimeEnabled` reconciliation boundary: disabled startup performs no Workflow assignment reads, and later enablement uses the next lifecycle recovery or claim boundary.
 

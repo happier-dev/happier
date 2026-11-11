@@ -1,3 +1,4 @@
+import { createPluginEnablementUnavailableError } from '@/plugins/projection/registry/builtIn/enablement';
 import { randomBytes } from 'node:crypto';
 
 import { PluginAgentContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
@@ -102,11 +103,9 @@ export async function resolveRunnerAgentSessionDescriptorForLease(
     const enablement = pluginId ? lease.registry.contributes.pluginEnablementById?.[pluginId] : undefined;
     if (pluginId && (unavailable || enablement?.enabled === false)) {
       const code = unavailable?.code ?? enablement?.unavailableCode ?? 'plugin_disabled';
-      throw Object.assign(new Error(code === 'plugin_disabled'
+      throw createPluginEnablementUnavailableError(unavailable ?? enablement!, code === 'plugin_disabled'
         ? 'This Agent plugin is disabled. Re-enable it in Plugins to resume this Session.'
-        : 'Account plugin execution is unavailable.'), {
-        code,
-      });
+        : 'Account plugin execution is unavailable.');
     }
     if (isConfigured) return null;
     throw new Error(

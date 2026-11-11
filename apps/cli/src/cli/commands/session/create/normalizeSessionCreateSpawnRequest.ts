@@ -1,3 +1,4 @@
+import { createPluginEnablementUnavailableError } from '@/plugins/projection/registry/builtIn/enablement';
 import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
 import { getProfileDefaultBackendTarget } from '@happier-dev/protocol/profiles/profileCompatibility';
 import { assertProfileCompatibleWithBackendTarget, resolveAccountProfileForSessionStart } from '@/settings/profiles/resolveProfileForAgent';
@@ -32,7 +33,7 @@ type SpawnAgentDefinition = Readonly<{
 
 type SpawnAgentCatalog = Readonly<{
   definitions: Iterable<SpawnAgentDefinition>;
-  unavailableAgentPluginsByBackendId?: Readonly<Record<string, Pick<UnavailableAgentPlugin, 'pluginId' | 'code'>>>;
+  unavailableAgentPluginsByBackendId?: Readonly<Record<string, Pick<UnavailableAgentPlugin, 'pluginId' | 'code' | 'unavailableCode' | 'unavailableCause'>>>;
 }>;
 
 type SpawnAgentDefinitions = Iterable<SpawnAgentDefinition> | SpawnAgentCatalog;
@@ -220,12 +221,11 @@ async function resolveAgentTarget(
           && (requestedTarget?.kind !== 'agent' || entry.pluginId === requestedTarget.identity.pluginId))
       : undefined;
     if (unavailable) {
-      invalidSessionCreateArgument(
+      throw Object.assign(createPluginEnablementUnavailableError(unavailable,
         unavailable.code === 'plugin_disabled'
-          ? 'This Agent plugin is disabled. Re-enable it in Plugins before starting a Session.'
-          : 'Account plugin execution is unavailable.',
-        { reason: unavailable.code },
-      );
+          ? 'Invalid session create argument: This Agent plugin is disabled. Re-enable it in Plugins before starting a Session.'
+          : 'Invalid session create argument: Account plugin execution is unavailable.'),
+        { details: { reason: unavailable.code } });
     }
     invalidSessionCreateArgument('--backend does not identify an executable Agent.');
   }

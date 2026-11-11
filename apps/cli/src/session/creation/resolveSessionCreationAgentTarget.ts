@@ -1,3 +1,4 @@
+import { createPluginEnablementUnavailableError } from '@/plugins/projection/registry/builtIn/enablement';
 import type { AgentExecutionTargetV1, BackendTargetRefV2 } from '@happier-dev/protocol';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 
@@ -35,8 +36,7 @@ export function resolveSessionCreationAgentTarget(
   if (!agentContribution) {
     const enablement = catalog.pluginEnablementById?.[selectedTarget.data.identity.pluginId];
     if (enablement?.enabled === false) {
-      const code = enablement.unavailableCode ?? 'plugin_disabled';
-      throw Object.assign(new Error(code), { code });
+      throw createPluginEnablementUnavailableError(enablement);
     }
     return null;
   }

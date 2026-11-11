@@ -4,6 +4,9 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
+import { prepareRunnerAgentSessionBootstrapForLease } from '@/daemon/spawn/prepareAgentRuntimeSessionBridge';
 import { logger } from '@/ui/logger';
 import { projectPluginCatalogEntrySnapshot } from '@/plugins/projection/introspection/catalogSnapshot';
 import { projectBundledPluginCatalogEntries } from '@/plugins/projection/catalog/installed';
@@ -94,10 +97,16 @@ describe('bundled admission Account boundary', () => {
         }
     });
 
-    it('settles unavailable Account intent without enabling contributions or failing the host', async () => {
+    it.each([
+        { status: 503, code: 'database_connection_unavailable', ingress: 'creation' },
+        { status: 429, code: 'usage_limit_exceeded', ingress: 'creation' },
+        { status: 503, code: 'database_connection_unavailable', ingress: 'runner' },
+        { status: 429, code: 'usage_limit_exceeded', ingress: 'runner' },
+    ])(
+      'carries $code through $ingress admission to the Action failure', async ({ status, code, ingress }) => {
         const app = fastify();
         app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async (_request, reply) => (
-            reply.code(503).send({ error: 'unavailable', errorCode: 'database_connection_unavailable',
+            reply.code(status).send({ error: 'unavailable', errorCode: code,
                 requestId: 'census-read-503' })
         ));
         await app.ready();
@@ -110,12 +119,28 @@ describe('bundled admission Account boundary', () => {
                 } });
             expect(facts['happier.agent.pi']).toMatchObject({ enabled: false, machineEnabled: true,
                 unavailableCode: 'plugin_account_census_failed',
-                unavailableCause: { phase: 'plugins.account_census', errorClass: 'AxiosError', errorCode: 'database_connection_unavailable', httpStatus: 503 },
+                unavailableCause: { phase: 'plugins.account_census', errorClass: 'AxiosError', errorCode: code, httpStatus: status },
                 unavailableRequestId: 'census-read-503' });
             expect(facts['happier.agent.pi']?.accountEnabled).toBeUndefined();
             const registry = getResolvedContributionRegistry({ pluginEnablementById: facts });
             expect(registry.agents).toEqual([]);
             expect(registry.unavailableAgentPluginsByBackendId?.pi?.code).toBe('plugin_account_census_failed');
+            const expected = { errorCode: 'plugin_account_census_failed', failureCause: {
+                phase: 'plugins.account_census', errorClass: 'AxiosError', errorCode: code, httpStatus: status,
+            } };
+            if (ingress === 'creation') {
+                let failure: unknown;
+                try {
+                    resolveSessionCreationAgentTarget({ kind: 'agent', identity: { pluginId: 'happier.agent.pi', localId: 'pi' } }, registry);
+                } catch (error) { failure = error; }
+                expect(normalizeActionExecutorThrownError(failure)).toMatchObject(expected);
+            } else {
+                // The runner bootstrap consumes the same admitted facts when reopening a Session.
+                const lease = { registry: { contributes: registry } } as Parameters<typeof prepareRunnerAgentSessionBootstrapForLease>[0]['lease'];
+                await expect(prepareRunnerAgentSessionBootstrapForLease({ target: { kind: 'backend', backendId: 'pi', sourceKind: 'built_in' }, lease })
+                    .catch(error => normalizeActionExecutorThrownError(error))).resolves.toMatchObject(expected);
+            }
+
         } finally {
             restore();
             await app.close();

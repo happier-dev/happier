@@ -1,4 +1,4 @@
-import type { ResolvedPluginEnablement } from '../types';
+import type { ResolvedPluginEnablement, UnavailableAgentPlugin } from '../types';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -28,4 +28,16 @@ export function resolveBundledPluginEnablement(params: Readonly<{
             } : {}),
         })];
     })));
+}
+
+/** Session entry points carry the admission owner's cause to Action settlement. */
+export function createPluginEnablementUnavailableError(
+    fact: Pick<ResolvedPluginEnablement, 'unavailableCode' | 'unavailableCause'> & Readonly<{ code?: UnavailableAgentPlugin['code'] }>,
+    message?: string,
+): Error & Readonly<{ code: UnavailableAgentPlugin['code']; failureCause?: ActionFailureCauseV1 }> {
+    const code = fact.unavailableCode ?? fact.code ?? 'plugin_disabled';
+    return Object.assign(new Error(message ?? code), {
+        code,
+        ...(fact.unavailableCause ? { failureCause: fact.unavailableCause } : {}),
+    });
 }
