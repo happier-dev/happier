@@ -1,5 +1,6 @@
 /** @moduleRealm any */
 import { PluginError } from '../errors.js';
+import { mergeAbortSignals } from '../http/service.js';
 import type { TargetedContributionPointRef, TargetedContributionObservation, TargetedContributionSnapshot, TargetedContributionsService } from './contracts.js';
 import type { PluginCancellationOptions } from './contracts.js';
 import type { AdmittedTargetedContributionSnapshot } from './targetedContributionTypes.js';
@@ -177,14 +178,6 @@ function assertTargetCurrent(
     if (binding.signal.aborted || !binding.isCurrent()) throw staleGeneration();
 }
 
-function composeSignals(
-    targetSignal: AbortSignal,
-    operationSignal: AbortSignal | undefined,
-): AbortSignal {
-    if (!operationSignal || operationSignal === targetSignal) return targetSignal;
-    return AbortSignal.any([targetSignal, operationSignal]);
-}
-
 async function withCancellation<T>(
     operation: Promise<T>,
     signal: AbortSignal | undefined,
@@ -291,7 +284,11 @@ export function createTargetedContributionsService<TContribution = unknown>(
                             assertTargetCurrent(binding);
                             if (options?.signal?.aborted) throw operationAborted();
                             readCount += 1;
-                            const signal = composeSignals(binding.signal, options?.signal);
+                            const merged = mergeAbortSignals([
+                                binding.signal,
+                                options?.signal === binding.signal ? undefined : options?.signal,
+                            ]);
+                            const signal = merged.signal;
                             try {
                                 let snapshot: TargetedContributionSnapshot<TContribution>;
                                 try {
@@ -316,6 +313,7 @@ export function createTargetedContributionsService<TContribution = unknown>(
                                 if (options?.signal?.aborted) throw operationAborted();
                                 return snapshot as unknown as TargetedContributionSnapshot<TObservedContribution>;
                             } finally {
+                                merged.dispose();
                                 readCount -= 1;
                                 scheduleInvalidation();
                             }

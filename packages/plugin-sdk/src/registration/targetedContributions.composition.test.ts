@@ -516,6 +516,25 @@ describe('portable targeted contribution admission', () => {
         expect(declarations.map(row => row.sourceCustody)).toEqual(original);
     });
 
+    it('reads admitted contributions on native runtimes without AbortSignal.any', async () => {
+        // React Native's AbortSignal lacks this optional platform API.
+        const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+        Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
+        const service = createManifestTargetedContributionsService({
+            readCurrentDeclarations: () => rows(),
+            subscribeToCatalogChanges: () => () => {},
+        }).bind({ pluginId: target.manifest.id, signal: new AbortController().signal, isCurrent: () => true });
+        const observation = service.observeForSelf(target.contributionPoints.sources, { onInvalidated() {} });
+        try {
+            const snapshot = await observation.readCurrent({ signal: new AbortController().signal });
+            expect(snapshot.contributions.map(entry => entry.contributor.pluginId)).toEqual([source.manifest.id]);
+        } finally {
+            observation.dispose();
+            if (descriptor) Object.defineProperty(AbortSignal, 'any', descriptor);
+            else Reflect.deleteProperty(AbortSignal, 'any');
+        }
+    });
+
     it('releases an in-flight host declaration read when its observation read is cancelled', async () => {
         const cancellation = new AbortController();
         let startRead!: () => void;
