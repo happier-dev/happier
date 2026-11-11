@@ -165,7 +165,7 @@ export function useUsagePopoverData(): Readonly<{
         () => Object.values(quota.usageRecordIdsByKey).filter((id): id is NonNullable<typeof id> => id !== null),
         [quota.usageRecordIdsByKey],
     );
-    const usageRecords = useProviderAccountUsageSnapshots(recordIds);
+    const usageRecords = useProviderAccountUsageSnapshots(recordIds, { loading: true });
     const accounts = React.useMemo(() => {
         const byKey: Record<string, UsagePopoverAccountFacts> = {};
         for (const summary of quota.summaries) {

@@ -182,7 +182,14 @@ function createUsageRowObserver(input: Readonly<{
 
 export function useProviderAccountUsageSnapshots(
     recordIds: ReadonlyArray<string>,
-    options: Readonly<{ fetchPolicy?: ProviderAccountUsageSnapshotsFetchPolicy }> = {},
+    options: Readonly<{
+        fetchPolicy?: ProviderAccountUsageSnapshotsFetchPolicy;
+        /**
+         * Whether this reader presents in-flight revalidation (`loadingByRecordId`). Only such readers
+         * render for a loading flip; every other reader renders only for a usage, error or row change.
+         */
+        loading?: boolean;
+    }> = {},
 ): ProviderAccountUsageSnapshotsResult {
     const presented = useLayoutPresentationActive();
     const auth = useAuth();
@@ -203,10 +210,22 @@ export function useProviderAccountUsageSnapshots(
     activeCredentialScopeRef.current = credentialScope;
     const recordIdsSignature = React.useMemo(() => buildRecordIdsSignature(recordIds), [recordIds]);
     const normalizedRecordIds = React.useMemo(() => normalizeProviderAccountUsageRecordIds(recordIds), [recordIdsSignature]);
+    const presentsLoading = options.loading === true;
+    // Select presentation facts, not cache rows: a row object also changes for scheduling
+    // (`nextFetchAtMs`) and in-flight activity that this reader may not present.
     const selectEntries = useShallow((state: ProviderAccountUsageCacheState) => {
         const entries = state.entriesByCredentialScope[credentialScope];
-        const selected: Record<string, ProviderAccountUsageCacheEntry | undefined> = {};
-        for (const recordId of normalizedRecordIds) selected[recordId] = entries?.[recordId];
+        const selected: Record<string, unknown> = {};
+        // Equal data ages into a different presentation at its deadline; the owner publishes then.
+        const nowMs = Date.now();
+        for (const recordId of normalizedRecordIds) {
+            const entry = entries?.[recordId];
+            selected[`${recordId}\u0000snapshot`] = entry?.snapshot ?? null;
+            selected[`${recordId}\u0000state`] = resolveProviderAccountUsageSnapshotState({
+                snapshot: entry?.snapshot ?? null, loading: entry?.loading ?? false, hadError: entry?.hadError ?? false, nowMs,
+            });
+            if (presentsLoading) selected[`${recordId}\u0000loading`] = entry?.loading ?? false;
+        }
         return selected;
     });
     const readSelectedEntries = () => selectEntries(getProviderAccountUsageCacheState());
@@ -250,20 +269,15 @@ export function useProviderAccountUsageSnapshots(
             } satisfies ProviderAccountUsageSnapshotsResult;
         }
 
-        const nowMs = Date.now();
         const snapshotsByRecordId: Record<string, ProviderAccountUsageSnapshotV1 | null> = {};
         const loadingByRecordId: Record<string, boolean> = {};
         const stateByRecordId: Record<string, ProviderAccountUsageStateV1> = {};
         for (const recordId of normalizedRecordIds) {
-            const cached = cacheByRecordId[recordId];
-            snapshotsByRecordId[recordId] = cached?.snapshot ?? null;
-            loadingByRecordId[recordId] = cached?.loading ?? false;
-            stateByRecordId[recordId] = resolveProviderAccountUsageSnapshotState({
-                snapshot: cached?.snapshot ?? null,
-                loading: cached?.loading ?? false,
-                hadError: cached?.hadError ?? false,
-                nowMs,
-            });
+            const snapshot = (cacheByRecordId[`${recordId}\u0000snapshot`] ?? null) as ProviderAccountUsageSnapshotV1 | null;
+            const loading = cacheByRecordId[`${recordId}\u0000loading`] === true;
+            snapshotsByRecordId[recordId] = snapshot;
+            loadingByRecordId[recordId] = loading;
+            stateByRecordId[recordId] = cacheByRecordId[`${recordId}\u0000state`] as ProviderAccountUsageStateV1;
         }
 
         return {

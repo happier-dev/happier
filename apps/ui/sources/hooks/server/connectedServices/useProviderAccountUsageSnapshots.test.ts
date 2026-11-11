@@ -227,6 +227,43 @@ describe('useProviderAccountUsageSnapshots', () => {
         expect(boundary.usageRead).not.toHaveBeenCalled();
     });
 
+    it('keeps a reader still across a revalidation that only flips loading and re-stamps the observation', async () => {
+        const snapshot = makeUsageSnapshot();
+        const counter = createRenderCommitCounter();
+        const hook = await renderHook(() => {
+            useRenderCommitCounter(counter);
+            return useProviderAccountUsageSnapshots([snapshot.recordId], { fetchPolicy: 'cache_only' });
+        }, { wrapper: Wrapper });
+        const scope = buildProviderAccountUsageScopeKey({ ...getActiveServerSnapshot(),
+            credentialScope: resolveAuthCredentialsScopeKey(boundary.account.credentials) });
+        const entry = (value: typeof snapshot, loading: boolean) => ({ snapshot: value, loading, hadError: false,
+            nextFetchAtMs: Number.POSITIVE_INFINITY });
+        await act(async () => updateProviderAccountUsageCacheEntries(scope, entries => ({ ...entries, [snapshot.recordId]: entry(snapshot, false) })));
+        await flushHookEffects({ cycles: 4, turns: 4 });
+        const before = hook.getCurrent();
+        counter.reset();
+        // A revalidation of the retained row: loading on, then the same usage re-observed later.
+        await act(async () => updateProviderAccountUsageCacheEntries(scope, entries => ({ ...entries, [snapshot.recordId]: entry(snapshot, true) })));
+        await act(async () => updateProviderAccountUsageCacheEntries(scope, entries => ({ ...entries,
+            [snapshot.recordId]: entry({ ...snapshot, observedAtMs: snapshot.observedAtMs + 60_000 }, false) })));
+        expect(counter.read(), 'equal usage republished to a reader that does not show loading').toEqual({ renders: 0, commits: 0 });
+        expect(hook.getCurrent()).toBe(before);
+        // A real change still reaches it.
+        const fresh = { ...snapshot, meters: [{ ...snapshot.meters[0]!, used: 51 }] };
+        await act(async () => updateProviderAccountUsageCacheEntries(scope, entries => ({ ...entries, [snapshot.recordId]: entry(fresh, false) })));
+        expect(hook.getCurrent().snapshotsByRecordId[snapshot.recordId]).toEqual(fresh);
+    });
+
+    it('shows a retained row loading to a reader that presents loading', async () => {
+        const snapshot = makeUsageSnapshot();
+        const hook = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId], { fetchPolicy: 'cache_only', loading: true }), { wrapper: Wrapper });
+        const scope = buildProviderAccountUsageScopeKey({ ...getActiveServerSnapshot(),
+            credentialScope: resolveAuthCredentialsScopeKey(boundary.account.credentials) });
+        await act(async () => updateProviderAccountUsageCacheEntries(scope, entries => ({ ...entries,
+            [snapshot.recordId]: { snapshot, loading: true, hadError: false, nextFetchAtMs: Number.POSITIVE_INFINITY } })));
+        expect(hook.getCurrent().loadingByRecordId[snapshot.recordId]).toBe(true);
+    });
+
     it('parks background readers and immediately refreshes retained data on foreground return', async () => {
         vi.useFakeTimers(); runtime.active = false;
         const snapshot = makeUsageSnapshot();
@@ -259,7 +296,7 @@ describe('useProviderAccountUsageSnapshots', () => {
             .some(entries => entries[snapshot.recordId]?.snapshot?.recordId === snapshot.recordId)).toBe(true);
         let finish!: (response: Response) => void;
         boundary.usageRead.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
-        const reopen = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId]), { wrapper: Wrapper });
+        const reopen = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId], { loading: true }), { wrapper: Wrapper });
         const sibling = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId]), { wrapper: Wrapper });
         await flushHookEffects({ cycles: 8, turns: 8 });
         expect(reopen.getCurrent().snapshotsByRecordId[snapshot.recordId]).toEqual(snapshot);
@@ -279,7 +316,7 @@ describe('useProviderAccountUsageSnapshots', () => {
     it('settles cancelled refresh activity across close and reopen without publishing its late response', async () => {
         const snapshot = makeUsageSnapshot();
         boundary.usageRead.mockImplementation(async () => Response.json(quotaTestProviderUsageResponse(snapshot)));
-        const first = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId]), { wrapper: Wrapper });
+        const first = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId], { loading: true }), { wrapper: Wrapper });
         await flushHookEffects({ cycles: 8, turns: 8 });
         let finishOld!: (response: Response) => void;
         boundary.usageRead.mockImplementationOnce(() => new Promise<Response>(resolve => { finishOld = resolve; }));
@@ -287,12 +324,12 @@ describe('useProviderAccountUsageSnapshots', () => {
         await flushHookEffects({ cycles: 8, turns: 8 });
         expect(first.getCurrent().loadingByRecordId[snapshot.recordId]).toBe(true);
         await first.unmount();
-        const cached = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId], { fetchPolicy: 'cache_only' }), { wrapper: Wrapper });
+        const cached = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId], { fetchPolicy: 'cache_only', loading: true }), { wrapper: Wrapper });
         expect(cached.getCurrent().snapshotsByRecordId[snapshot.recordId]).toEqual(snapshot);
         expect(cached.getCurrent().loadingByRecordId[snapshot.recordId]).toBe(false);
         let finishNew!: (response: Response) => void;
         boundary.usageRead.mockImplementationOnce(() => new Promise<Response>(resolve => { finishNew = resolve; }));
-        const reopened = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId]), { wrapper: Wrapper });
+        const reopened = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId], { loading: true }), { wrapper: Wrapper });
         await flushHookEffects({ cycles: 8, turns: 8 });
         expect(boundary.usageRead).toHaveBeenCalledTimes(3);
         const retired = { ...snapshot, meters: [{ ...snapshot.meters[0]!, used: 90 }] };
@@ -441,7 +478,7 @@ describe('useProviderAccountUsageSnapshots', () => {
             ? Response.json(quotaTestProviderUsageResponse(fast)) : new Promise<Response>(resolve => {
                 finishSlow = () => resolve(Response.json(quotaTestProviderUsageResponse(slow)));
             }));
-        const hook = await renderHook(() => useProviderAccountUsageSnapshots([fast.recordId, slow.recordId]), { wrapper: Wrapper });
+        const hook = await renderHook(() => useProviderAccountUsageSnapshots([fast.recordId, slow.recordId], { loading: true }), { wrapper: Wrapper });
         await flushHookEffects({ cycles: 8, turns: 8 });
         expect(hook.getCurrent().snapshotsByRecordId[fast.recordId]).toEqual(fast);
         expect(hook.getCurrent().loadingByRecordId[slow.recordId]).toBe(true);

@@ -7,6 +7,12 @@ import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNaviga
 import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture, createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture, createReadyMachineAgentInventoryFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { flushHookEffects } from '@/dev/testkit';
+import { quotaTestProviderUsageSnapshot, quotaTestProviderUsageResponse } from '@/hooks/server/connectedServices/qualifiedConnectedAccountQuotaTestHarness';
+import { writeProviderAccountUsageRecordIdToMetadata } from '@happier-dev/protocol/sessions/metadata/providerAccountUsageRefsV1';
+import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
@@ -120,13 +126,15 @@ const pendingComposerProjections = new Map<string, ReturnType<typeof createDefer
 // The Home HTTP boundary acknowledges real draft writes; controller/repository logic stays real.
 const draftRecords = new Map<string, SessionDraftRecordV2>();
 let heldDraftWrite: ReturnType<typeof createDeferred<void>> | null = null;
+let heldDraftRead: ReturnType<typeof createDeferred<void>> | null = null;
 let draftWritesStarted = 0;
 let syncDraftCase = false;
 let pendingEditCase = false;
+let providerUsageRead: (() => Promise<Response>) | null = null;
 beforeEach(({ task }) => {
-  draftRecords.clear(); heldDraftWrite = null; draftWritesStarted = 0;
+  draftRecords.clear(); heldDraftWrite = null; heldDraftRead = null; draftWritesStarted = 0; providerUsageRead = null;
   // Only the new cases extend their external Home contracts; preserve existing local-draft fixtures.
-  syncDraftCase = task.name.includes('first draft-status');
+  syncDraftCase = task.name.includes('first draft-status') || task.name.includes('before its draft read lands');
   pendingEditCase = task.name.includes('real queued submission');
 });
 const runtime = installSessionPaneRuntimeTestHarness({
@@ -168,9 +176,11 @@ const runtime = installSessionPaneRuntimeTestHarness({
   },
   request: async (url, init) => {
     const path = new URL(String(url)).pathname;
+    if (path === '/v4/connect/qualified/provider-account-usage/record' && providerUsageRead) return providerUsageRead();
     if (/^\/v[12]\/account\/session-drafts\//.test(path)) {
-      if (path.endsWith('/list')) return Response.json({ items: [...draftRecords.values()] });
+      if (path.endsWith('/list')) { await heldDraftRead?.promise; return Response.json({ items: [...draftRecords.values()] }); }
       if (path.endsWith('/read')) {
+        await heldDraftRead?.promise;
         const request = SessionDraftReadRequestV2Schema.parse(JSON.parse(String(init?.body)));
         const record = draftRecords.get(JSON.stringify(request.address));
         return Response.json(record ? { status: 'present', record } : { status: 'absent' });
@@ -384,6 +394,54 @@ describe('SessionView composer typing', () => {
     }
   });
 
+  it('adds no controller renders when a Session open revalidates equal provider readings', async () => {
+    const base = quotaTestProviderUsageSnapshot();
+    const recordKey = { ...base.recordKey, providerId: 'codex' };
+    const snapshot = { ...base, providerId: 'codex', recordKey, recordId: buildProviderAccountUsageRecordId(recordKey) };
+    storage.getState().applySettingsLocal({ featureToggles: { connectedServices: true, 'connectedServices.quotas': true } });
+    publishSessionOwnerMetadata(metadata => writeProviderAccountUsageRecordIdToMetadata(metadata, {
+      recordId: snapshot.recordId, updatedAtMs: snapshot.observedAtMs,
+    }));
+    const reads = vi.fn(async () => Response.json(quotaTestProviderUsageResponse(snapshot)));
+    providerUsageRead = reads;
+    const first = await renderScreen();
+    await flushHookEffects({ cycles: 12, turns: 12 });
+    expect(reads).toHaveBeenCalledTimes(1);
+    await first.unmount();
+    const held = createDeferred<Response>();
+    reads.mockImplementationOnce(() => held.promise);
+    const screen = await renderScreen();
+    try {
+      await flushHookEffects({ cycles: 12, turns: 12 });
+      expect(reads).toHaveBeenCalledTimes(2);
+      const beforeAnswer = shellRenders.mock.calls.length;
+      await renderer.act(async () => held.resolve(Response.json(quotaTestProviderUsageResponse({
+        ...snapshot, observedAtMs: snapshot.observedAtMs + 1,
+      }))));
+      await flushHookEffects({ cycles: 12, turns: 12 });
+      expect(shellRenders.mock.calls.length - beforeAnswer, 'equal revalidation after Session open').toBe(0);
+      const beforeWake = shellRenders.mock.calls.length;
+      reads.mockImplementationOnce(async () => Response.json(quotaTestProviderUsageResponse({
+        ...snapshot, observedAtMs: snapshot.observedAtMs + 2,
+      })));
+      await renderer.act(async () => publishHomeAccountChange(runtime.serverId,
+        [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
+      await flushHookEffects({ cycles: 12, turns: 12 });
+      expect(reads).toHaveBeenCalledTimes(3);
+      expect(shellRenders.mock.calls.length - beforeWake, 'loading and observation stamps are not controller facts').toBe(0);
+      // A real reading must still reach the controller through the same HTTP producer.
+      const beforeChange = shellRenders.mock.calls.length;
+      reads.mockImplementationOnce(async () => Response.json(quotaTestProviderUsageResponse({
+        ...snapshot, meters: [{ ...snapshot.meters[0]!, used: 51, remainingPct: 49 }],
+      })));
+      await renderer.act(async () => publishHomeAccountChange(runtime.serverId,
+        [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }));
+      await flushHookEffects({ cycles: 12, turns: 12 });
+      expect(reads).toHaveBeenCalledTimes(4);
+      expect(shellRenders.mock.calls.length - beforeChange).toBeGreaterThan(0);
+    } finally { await screen.unmount(); }
+  });
+
   it('keeps the composer controller still when an Account update only advances the profile timestamp', async () => {
     const screen = await renderScreen();
     try {
@@ -395,6 +453,51 @@ describe('SessionView composer typing', () => {
         });
       }
       expect(shellRenders.mock.calls.length - rendersBefore).toBe(0);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it('mounts the Session body before its draft read lands, then mounts the composer once it does', async () => {
+    heldDraftRead = createDeferred<void>();
+    // The Account's whole draft collection has not finished hydrating (a cold open).
+    const draftsReadyBefore = storage.getState().isSessionDraftsReady;
+    storage.setState({ isSessionDraftsReady: false });
+    const element = <SessionView id="s1" routeServerId={runtime.serverId} surfaceFocusedOverride surfaceVisibleOverride
+      headerAccessory={React.createElement('SessionHeaderAccessoryMark', { label: 'body' })} />;
+    const screen = await renderCanonicalScreen(element, { wrapper: runtime.Wrapper });
+    const headerShown = () => screen.tree.findAll(node => node.type === 'SessionHeaderAccessoryMark').length;
+    const composerShown = () => screen.tree.findAllByType(SessionComposerAgentInput).length;
+    try {
+      await renderer.act(async () => { await new Promise(resolve => setTimeout(resolve, 1000)); });
+      expect(headerShown(), 'the Session body is mounted while its draft read is still pending').toBe(1);
+      expect(composerShown(), 'the editor waits for its own draft').toBe(0);
+      await renderer.act(async () => { heldDraftRead!.resolve(); });
+      await vi.waitFor(() => expect(composerShown()).toBe(1));
+    } finally {
+      heldDraftRead?.resolve();
+      await screen.unmount();
+      storage.setState({ isSessionDraftsReady: draftsReadyBefore });
+    }
+  });
+
+  it('keeps the composer controller still when only the Session header changes, and shows the new header', async () => {
+    // Every composer controller run publishes a new composer model to the slot's renderer.
+    const publishedComposers = new Set<SessionComposerModel>();
+    const renderComposer: SessionComposerRenderer = composer => { publishedComposers.add(composer); return composer.content; };
+    const withHeader = (label: string) => <SessionView id="s1" routeServerId={runtime.serverId} surfaceFocusedOverride surfaceVisibleOverride
+      renderComposer={renderComposer} headerAccessory={React.createElement('SessionHeaderAccessoryMark', { label })} />;
+    const screen = await renderCanonicalScreen(withHeader('first'), { wrapper: runtime.Wrapper });
+    const headerLabels = () => screen.tree.findAll(node => node.type === 'SessionHeaderAccessoryMark').map(node => node.props.label);
+    try {
+      await renderer.act(async () => { await new Promise(resolve => setTimeout(resolve, 1500)); });
+      expect(headerLabels()).toEqual(['first']);
+      const publishedBefore = publishedComposers.size;
+      for (const label of ['second', 'third']) {
+        await screen.update(withHeader(label));
+        expect(headerLabels(), 'the header shows its own current content').toEqual([label]);
+      }
+      expect(publishedComposers.size - publishedBefore, 'a header-only change re-ran the composer controller').toBe(0);
     } finally {
       await screen.unmount();
     }
