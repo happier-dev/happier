@@ -179,7 +179,10 @@ async function openMuseConversation<SessionId extends string | undefined>(
   let catalogSource: MuseCatalog | undefined;
   let catalogSessionId: string | undefined;
   const msp: MuseMsp = await openMuseMsp({ exec: context.services.exec,
-    launch: { executable: { kind: 'systemTool', id: 'muse-cli' }, cwd: request.cwd, env: request.launchEnvironment?.values },
+    // Muse 1.4.15 withholds selected MCP servers in an untrusted stdio host.
+    // Trust is process-local; native tool approvals still use the selected profile.
+    launch: { executable: { kind: 'systemTool', id: 'muse-cli' }, cwd: request.cwd, env: request.launchEnvironment?.values,
+      ...(selectedMcp.length ? { args: ['--trust-workspace'] } : {}) },
     signal: context.signal, nativeLaunch: scopeServices.nativeLaunch,
     initialize: { capabilities: { experimentalApi: true,
       ...(selectedMcp.length ? { requestedCapabilities: ['sessionMcp'] } : {}) } },

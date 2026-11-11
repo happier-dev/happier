@@ -95,6 +95,7 @@ export type MuseMspProcessAudit = Readonly<{
     viewPages: readonly Readonly<{ sessionId: string | null; cursor: string | null }>[];
     sessionReads: readonly Readonly<{ sessionId: string | null; excludeItems: boolean | null }>[];
     cwd: string;
+    args: readonly string[];
     autoUpdate?: string;
     selectedHome?: string;
     receiptCount: number;
@@ -213,7 +214,7 @@ function writeAudit() {
     const path = process.env.MUSE_TEST_AUDIT_PATH;
     const fs = require('node:fs');
     fs.writeFileSync(path + '.tmp', JSON.stringify({ initializeCount, initializedCount, methods: requests,
-        commandCount: commands.length, commandTargets, turnInputs, modelSelections, modelListSessionIds, viewPages, sessionReads, earlyTurnCount, readinessState, cwd: process.cwd(),
+        commandCount: commands.length, commandTargets, turnInputs, modelSelections, modelListSessionIds, viewPages, sessionReads, earlyTurnCount, readinessState, cwd: process.cwd(), args: process.argv.slice(1),
         autoUpdate: process.env.MUSE_NO_AUTO_UPDATE, selectedHome: process.env.MUSE_TEST_SELECTED_HOME,
         nativeResponseCount: receipts.length,
         ...(decisionPlayback?.inspect() ?? { receiptCount: receipts.length, decisionCount: 0, released: false, decisionAckPending: false }) }));

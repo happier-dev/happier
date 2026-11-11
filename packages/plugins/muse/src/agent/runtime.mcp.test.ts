@@ -68,6 +68,9 @@ async function assertSelectedMcp(strictMode: boolean) {
     events.expectExactlyOneTerminalEvent({ turnId: 'mcp-turn' });
     await fixture.closeSession();
     const audit = await fixture.readAudit();
+    // Muse 1.4.15 withholds even session-configured servers unless the stdio
+    // host trusts the workspace. Approval mode alone does not start them.
+    expect(audit.args).toContain('--trust-workspace');
     expect(audit).toMatchObject({ initializeCount: 1, initializedCount: 1 });
     expect(audit.methods.filter(method => method === 'session/start')).toHaveLength(1);
     expect(audit.methods.filter(method => method === 'turn/start')).toHaveLength(1);

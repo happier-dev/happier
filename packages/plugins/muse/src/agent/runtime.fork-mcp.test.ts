@@ -35,6 +35,8 @@ it.each(['released', 'failed'] as const)('configures a fork only after its nativ
       kind: 'provider-session-id', providerSessionId: recording.rows[8].message.result.session.sessionId,
     })]));
     await fixture.closeSession();
-    expect((await fixture.readAudit()).methods).toEqual(['initialize', 'initialized', 'session/fork', 'session/leave', 'session/resume']);
+    const audit = await fixture.readAudit();
+    expect(audit.args).toContain('--trust-workspace');
+    expect(audit.methods).toEqual(['initialize', 'initialized', 'session/fork', 'session/leave', 'session/resume']);
   } finally { events.dispose(); await fixture.dispose(); }
 });
