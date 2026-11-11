@@ -3,6 +3,7 @@ import type { DeploymentEnvironmentTabV1 } from '@happier-dev/deployments';
 import { DeploymentPartialProgress } from './DeploymentPartialProgress';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentEnvironmentCopyChoicesV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentCopyV1';
+import type { DeploymentEnvironmentDeployerPrincipalV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentDeployerV1';
 import type { EnvironmentSecretBindingV1, EnvironmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -40,16 +41,19 @@ import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRe
 import { deploymentActionRefusalRemedy, deploymentDefinitionLabel } from './deploymentPresentation';
 
 import type { createDeploymentActions } from './deploymentActions';
+import { DeploymentDeployerFields } from './DeploymentDeployerFields';
 import { renderDeploymentCreationDefaultsRows } from './DeploymentCreationDefaultsRows';
 import { useDeployHostReadiness } from './EnvironmentMachineChoice';
-import { MachineSetupPlanReview } from '@/components/settings/machines/managed/MachineSetupPlanReview';
+import { MachineSetupPlanReview, describeMachineSetupReviewUnavailable } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { useDeploymentPlatformTargets } from './DeploymentPlatformTargetSheet';
+import { DeploymentPlatformTargetEditor, useDeploymentPlatformTargets } from './DeploymentPlatformTargetSheet';
+import { buildPlatformTargetLinkInput } from './platformTargetLink';
+import type { DeploymentTargetLinkProviderContentV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { readDeploymentPlatformTargets } from './platformTargetLink';
 import {
   DeploymentRetentionChoice,
@@ -58,6 +62,7 @@ import {
 } from './DeploymentRetentionChoice';
 import {
   readDeploymentActionError,
+  readDeploymentActionResult,
   deploymentPartialRecoveryTab,
   type DeploymentActionOutcome,
 } from './deploymentActionOutcome';
@@ -83,13 +88,12 @@ export const DeploymentEnvironmentDraft = React.memo(
       lifetime: ServerAccountScopeLifetime | null;
       sourceId: string;
       phone: boolean;
-      actions: Pick<Actions, 'prepareCreate'> | null;
+      actions: Pick<Actions, 'prepareCreate' | 'inspectPlatformTarget' | 'link'> | null;
       copyFrom?: DeploymentEnvironmentDetailV1 | null;
       /** A door that names what it starts from (Store → Apps): a stored definition, in any Project. */
       definitionKind?: 'compose' | 'image' | null;
       onApprovalRequested: (artifactId: string) => void;
-      /** `platformTargetKey`: the new Environment runs on this platform, so its link sheet opens on it next. */
-      onSaved: (environmentId: string, next?: Readonly<{ platformTargetKey?: string; tab?: DeploymentEnvironmentTabV1 }>) => void;
+      onSaved: (environmentId: string, next?: Readonly<{ tab?: DeploymentEnvironmentTabV1 }>) => void;
       /** Whether this viewer can link a platform; without it the draft offers machines only. */
       platformAvailable?: boolean;
       onDiscard: () => void;
@@ -111,18 +115,25 @@ export const DeploymentEnvironmentDraft = React.memo(
     const [copyChoices, setCopyChoices] = React.useState(() => props.copyFrom ? initialCopyChoices(props.copyFrom) : null);
     const [machineId, setMachineId] = React.useState<string | null>(null);
     const router = useRouter();
-    // Create takes a machine as its first target; a platform is linked on the new Environment right after.
+    // Provider choices are prepared in the existing platform editor; Create links that exact result.
     const platforms = useDeploymentPlatformTargets(props.platformAvailable === true ? props.lifetime : null);
     const platformTargets = platforms.state.status === 'ready' ? platforms.state.targets : NO_PLATFORM_TARGETS;
     const [targetKey, setTargetKey] = React.useState<string>(MACHINE_TILE);
     const platformTarget = props.platformAvailable === true ? platformTargets.find((target) => target.key === targetKey) ?? null : null;
     const onPlatform = platformTarget !== null;
+    const [platformProvider, setPlatformProvider] = React.useState<DeploymentTargetLinkProviderContentV1 | null>(null);
     const [composePath, setComposePath] = React.useState(DEFAULT_COMPOSE_PATH);
     const [composeDocument, setComposeDocument] = React.useState('');
     const [imageName, setImageName] = React.useState('');
     const [imagePort, setImagePort] = React.useState('');
     const [ref, setRef] = React.useState<string | null>(null);
     const [production, setProduction] = React.useState(props.copyFrom?.environment.protection === 'production');
+    const [deployerMode, setDeployerMode] = React.useState<DeploymentEnvironmentDetailV1['environment']['deployerMode']>(
+      props.copyFrom?.environment.deployerMode ?? 'managers',
+    );
+    const [deployerPrincipals, setDeployerPrincipals] = React.useState<readonly DeploymentEnvironmentDeployerPrincipalV1[]>(
+      props.copyFrom?.environment.deployerPrincipals ?? [],
+    );
     const [saving, setSaving] = React.useState(false);
     const [prepared, setPrepared] = React.useState<PreparedCreate | null>(null);
     const [refusal, setRefusal] =
@@ -153,6 +164,9 @@ export const DeploymentEnvironmentDraft = React.memo(
       machines.find(answers) ??
       null;
     const branch = ref ?? source?.defaultRef ?? null;
+    const platformEnvironment = React.useMemo(() => ({ projectSourceId: props.sourceId,
+      ...(chosen ? { controllerMachineId: chosen.id } : {}) }), [props.sourceId, chosen?.id]);
+    React.useEffect(() => setPlatformProvider(null), [platformTarget?.key, chosen?.id, source?.revision]);
     // A repository-free Project has only stored definitions; a door may also ask for one in any Project.
     const definitionKind = props.definitionKind ?? (source !== null && source.repository === undefined ? 'compose' : null);
     const storedDefinition = definitionKind !== null;
@@ -184,7 +198,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     };
     const valid =
       name.trim().length > 0 &&
-      chosen !== null &&
+      chosen !== null && (!onPlatform || platformProvider !== null) &&
       (props.copyFrom !== undefined && props.copyFrom !== null || (definitionKind === 'image'
         ? imageName.trim().length > 0 && imagePortValid
         : storedDefinition
@@ -198,7 +212,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     // A prepared run carries the exact operands it was prepared from; any edit makes it stale.
     React.useEffect(() => {
       setPrepared(null);
-    }, [name, chosen?.id, branch, composePath, composeDocument, imageName, imagePort, storedDefinition, production, retention, onPlatform, copyChoices]);
+    }, [name, chosen?.id, branch, composePath, composeDocument, imageName, imagePort, storedDefinition, production, deployerMode, deployerPrincipals, retention, onPlatform, copyChoices, platformProvider]);
     const machineName = (machineId: string) => {
       const machine = (allMachines ?? []).find((entry) => entry.id === machineId);
       return machine ? getMachineDisplayName(machine, allMachines ?? []) : t('approvals.machineNotKnown');
@@ -214,6 +228,7 @@ export const DeploymentEnvironmentDraft = React.memo(
       if (!valid || !actions || !chosen?.installationId || saving) return;
       setSaving(true);
       setRefusal(null);
+      let createdEnvironment: Readonly<{ environmentId: string; revision: number }> | null = null;
       try {
         if (!prepared) {
           const next = await actions.prepareCreate({
@@ -231,10 +246,8 @@ export const DeploymentEnvironmentDraft = React.memo(
             } }),
             protection: production ? 'production' : 'nonProduction',
             purpose: 'standard',
-            deployerMode: props.copyFrom?.environment.deployerMode ?? 'managers',
-            ...(props.copyFrom?.environment.deployerPrincipals === undefined ? {} : {
-              deployerPrincipals: props.copyFrom.environment.deployerPrincipals,
-            }),
+            deployerMode,
+            deployerPrincipals: [...deployerPrincipals],
             // A platform Environment still deploys from a Machine: the chosen one is its controller.
             ...(onPlatform ? { controllerMachineId: chosen.id } : {
               firstTargetLink: { machines: [{ machineId: chosen.id, installationId: chosen.installationId }] },
@@ -249,12 +262,27 @@ export const DeploymentEnvironmentDraft = React.memo(
           setRefusal({ kind: 'refused', reason: 'other', code: created.error });
           return;
         }
-        onSaved(created.environmentId, platformTarget ? { platformTargetKey: platformTarget.key } : undefined);
+        createdEnvironment = created;
+        if (platformTarget && platformProvider) {
+          const linked = await actions.link(buildPlatformTargetLinkInput({ target: platformTarget,
+            environment: { id: created.environmentId, revision: created.revision }, provider: platformProvider }), { confirmed: true });
+          if (!linked.ok) {
+            const outcome = readDeploymentActionResult(linked);
+            if (outcome.kind === 'refused') setRefusal({ ...outcome, progress: { kind: 'partial',
+              environmentId: created.environmentId, revision: created.revision, phase: 'target', savedSecrets: [], errorCode: outcome.code } });
+            return;
+          }
+        }
+        onSaved(created.environmentId);
       } catch (error) {
         const outcome = readDeploymentActionError(error);
-        if (outcome.kind === 'approval')
+        if (outcome.kind === 'approval') {
+          if (createdEnvironment) onSaved(createdEnvironment.environmentId, { tab: 'settings' });
           onApprovalRequested(outcome.artifactId);
-        setRefusal(outcome);
+        }
+        setRefusal(createdEnvironment && outcome.kind === 'refused' ? { ...outcome, progress: { kind: 'partial',
+          environmentId: createdEnvironment.environmentId, revision: createdEnvironment.revision,
+          phase: 'target', savedSecrets: [], errorCode: outcome.code } } : outcome);
       } finally {
         setSaving(false);
       }
@@ -378,9 +406,7 @@ export const DeploymentEnvironmentDraft = React.memo(
             title={t('projects.deployments.whereTitle')}
             {...(!props.platformAvailable
               ? { description: t('projects.deployments.whereDescription') }
-              : platformTarget
-                ? { description: t('projects.deployments.platformLink.platformLater') }
-                : {})}
+              : {})}
           >
             {props.platformAvailable ? (
               <SelectionTiles<string>
@@ -430,6 +456,13 @@ export const DeploymentEnvironmentDraft = React.memo(
               />
             )}
           </ItemGroup>
+          {platformTarget && props.lifetime && actions ? (
+            <DeploymentPlatformTargetEditor key={`${platformTarget.key}:${chosen?.id ?? ''}:${source?.revision ?? ''}`}
+              name={name} environment={platformEnvironment} ownerAccountId={props.lifetime.scope.accountId}
+              lifetime={props.lifetime} actions={{ inspectPlatformTarget: actions.inspectPlatformTarget, link: actions.link }}
+              initialTargetKey={platformTarget.key} onPrepared={setPlatformProvider}
+              onApproval={onApprovalRequested} onClose={props.onDiscard} />
+          ) : null}
           {!onPlatform && chosen && host.readiness === 'needsSetup' && host.prepared?.ok ? <>
             <AttentionBanner
               testID="project-deployments.draft.hostSetup"
@@ -438,7 +471,8 @@ export const DeploymentEnvironmentDraft = React.memo(
               description={t('projects.deployments.platformLink.hostSetupBody')}
               {...(hostApply.error ? { details: [hostApply.error] } : {})}
               action={{ label: t('projects.deployments.platformLink.hostSetupAction', { machine: machineName(chosen.id) }),
-                onPress: () => { void applyHostSetup(); }, loading: hostApply.pending, disabled: hostApply.pending,
+                onPress: () => { void applyHostSetup(); }, loading: hostApply.pending,
+                disabled: hostApply.pending || describeMachineSetupReviewUnavailable(host.prepared, machineName) !== undefined,
                 display: 'secondary', testID: 'project-deployments.draft.hostSetup.apply' }}
             />
             <MachineSetupPlanReview testID="project-deployments.draft.hostSetup.review" prepared={host.prepared}
@@ -560,10 +594,14 @@ export const DeploymentEnvironmentDraft = React.memo(
             </ItemGroup>
           ) : null}
           <ItemGroup
-            title={t('projects.deployments.whoTitle')}
-            description={props.copyFrom ? undefined
-              : `${t('projects.deployments.whoManagers')} · ${t('projects.deployments.whoDescription')}`}
+            title={t('projects.deployments.whoMayDeploy')}
+            description={t('projects.deployments.whoMayDeployDescription')}
           >
+            <DeploymentDeployerFields mode={deployerMode} principals={deployerPrincipals}
+              scope={props.lifetime?.scope ?? null} lifetime={props.lifetime} source={source} editable disabled={saving}
+              onModeChange={setDeployerMode} onChangePrincipals={setDeployerPrincipals} />
+          </ItemGroup>
+          <ItemGroup>
             <Item
               testID="project-deployments.draft.production"
               title={t('projects.deployments.production')}

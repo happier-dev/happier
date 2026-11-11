@@ -226,13 +226,15 @@ function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
   const footer = React.useMemo(
     () => (
       <MachineSetupReviewFooter
+        prepared={prepared}
+        nameOf={nameOf}
         onCancel={onClose}
         cancelTestID="store.software.review.cancel"
         {...(waiting || !prepared ? {} : { primary: { label, testID: props.intent === 'remove' ? 'store.software.review.remove' : 'store.software.review.install', loading: pending,
           disabled: pending || replanning, onPress: () => { void install(); } } })}
       />
     ),
-    [install, label, onClose, pending, prepared, props.intent, replanning, waiting],
+    [install, label, nameOf, onClose, pending, prepared, props.intent, replanning, waiting],
   );
   const chrome = React.useMemo(
     () => ({

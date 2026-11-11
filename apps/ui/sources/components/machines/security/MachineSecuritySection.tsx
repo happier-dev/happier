@@ -16,6 +16,7 @@ import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
+import { describeActionExecutionPrerequisite } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { UpdateRow } from '@/components/updates/UpdateRow';
 import type { UpdateItem } from '@/updates/items/updateItem';
 import { useUpdatesContentModel } from '@/updates/useUpdatesContentModel';
@@ -657,6 +658,9 @@ function UpdatesReviewCard(
     default: {
       const approval = review.kind === 'review' ? null : review.approval;
       const packages = review.kind === 'preparing' ? [] : review.packages;
+      const prerequisite = review.kind === 'review'
+        ? describeActionExecutionPrerequisite(review.setupReview?.administratorUnavailable?.reasonCode)
+        : null;
       return (
         <>
         <ItemGroup
@@ -667,7 +671,7 @@ function UpdatesReviewCard(
               : `${s}.reviewTitleAll`,
             { machine },
           )}
-          description={t(`${s}.reviewDescription`)}
+          description={prerequisite?.message ?? t(`${s}.reviewDescription`)}
         >
           {review.kind === 'preparing' ? (
             <Item
@@ -704,7 +708,8 @@ function UpdatesReviewCard(
               testID="machine-security-apply"
               size="small"
               title={t(`${s}.installCount`, { count: packages.length })}
-              disabled={review.kind !== 'review'}
+              disabled={review.kind !== 'review' || prerequisite !== null}
+              {...(prerequisite ? { accessibilityHint: prerequisite.message } : {})}
               loading={review.kind === 'applying' && approval === null}
               onPress={props.controls.onApply}
             />

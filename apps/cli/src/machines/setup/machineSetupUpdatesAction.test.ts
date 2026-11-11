@@ -9,6 +9,19 @@ import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketH
 import { createMachineSetupUpdatesAction } from './machineSetupUpdatesAction';
 
 describe('reviewed Machine OS update Action', () => {
+  it('reports the receiving None prerequisite for the separate system-update Plan without starting native work', async () => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', adminAccessMode: 'none' });
+    const reviewed = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: MachineSetupPlanInputV1Schema.parse({ homeId: 'srv_home', machineId: fixture.machine.id,
+        mode: 'effects', updates: { scope: 'security' } }), context: fixture.context('machines.setup.plan'),
+    }));
+    expect(reviewed.review).toMatchObject({ administratorRequired: true, administratorUnavailable: { reasonCode: 'mode_none' } });
+    expect(reviewed.updates?.plan?.steps.length).toBeGreaterThan(0);
+    expect(fixture.rootLaunches).toEqual([]);
+    expect((await fixture.readInstalled()).effects).toEqual([]);
+    expect(fixture.metadataWrites).toEqual([]);
+  });
+
   it('applies exact reviewed packages in the existing elevated setup task with one admission and one settlement refresh', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
     const input = MachineSetupPlanInputV1Schema.parse({ homeId: 'srv_home', machineId: fixture.machine.id,
@@ -17,6 +30,7 @@ describe('reviewed Machine OS update Action', () => {
       input, context: fixture.context('machines.setup.plan'),
     }));
     if (!reviewed.updates?.plan) throw new Error('Missing reviewed update plan');
+    expect(reviewed.review?.administratorUnavailable).toBeUndefined();
     const desired = fixture.machine.metadata?.setup;
     const nativeAdmissions = vi.spyOn(machineNativeEffectAdmission, 'run');
     let desiredReads = 0, currentnessReads = 0;

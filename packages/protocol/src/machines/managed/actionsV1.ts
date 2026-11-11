@@ -148,6 +148,8 @@ export type MachineSetupSessionRefreshV1 = z.infer<typeof MachineSetupSessionRef
 export const MachineSetupPlanReviewV1Schema = lazyZodSchema(() => z.strictObject({
   target: z.strictObject({ homeId: id(), machineId: id() }),
   administratorRequired: z.nullable(z.boolean()),
+  /** The receiving Plan's known prerequisite; presentation only, never an Apply operand. */
+  administratorUnavailable: z.optional(z.strictObject({ reasonCode: z.literal('mode_none') })),
   downtime: z.enum(['none', 'possible', 'unknown']),
   requiresSessionRefresh: z.optional(MachineSetupSessionRefreshV1Schema),
   apps: z.optional(z.array(z.strictObject({ sourceIndex: revision(), itemIndex: revision(),

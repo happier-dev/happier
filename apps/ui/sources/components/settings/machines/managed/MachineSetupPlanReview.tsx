@@ -31,6 +31,7 @@ import {
 } from './machineSetupReviewChanges';
 import { MachineSetupChangeGroupRow } from './MachineSetupChangeGroupRow';
 import { describeManagedOperationDiagnostic } from './managedNativeFailurePresentation';
+import { describeActionExecutionPrerequisite } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 export type MachineSetupPreparedReview = Extract<
   MachineSetupPreparedApply,
@@ -68,6 +69,7 @@ export function MachineSetupPlanReview(
     (machineId) => {
       const review = factsOf(machineId)?.review;
       if (!review) return 'unreported';
+      if (review.administratorUnavailable) return review.administratorUnavailable.reasonCode;
       return review.administratorRequired === true
         ? 'needed'
         : review.administratorRequired === false
@@ -299,9 +301,9 @@ export function MachineSetupPlanReview(
           testID={`${props.testID}.administrator`}
           title={t('machinePresets.setup.review.administrator')}
           subtitle={answerLines(administrator, (key) =>
-            key === 'needed'
+            describeActionExecutionPrerequisite(key)?.message ?? (key === 'needed'
               ? t('machinePresets.setup.review.adminNeeded')
-              : t('machinePresets.setup.review.adminNotNeeded'),
+              : t('machinePresets.setup.review.adminNotNeeded')),
           )}
           subtitleLines={0}
           mode="info"
@@ -393,12 +395,27 @@ export function describeMachineSetupPlanFailure(failure: ActionExecuteFailure, n
     ? `${nameOf(target.machineId)} · ${diagnostic}` : diagnostic;
 }
 
+/** Every setup Apply surface presents the receiving Plan's prerequisite without inspecting Machine policy. */
+export function describeMachineSetupReviewUnavailable(
+  prepared: Pick<MachineSetupPreparedReview, 'facts'> | null | undefined,
+  nameOf: (machineId: string) => string,
+): string | undefined {
+  const reasons = prepared?.facts.flatMap(fact => {
+    const unavailable = fact.review?.administratorUnavailable;
+    const prerequisite = unavailable && describeActionExecutionPrerequisite(unavailable.reasonCode);
+    return prerequisite ? [`${nameOf(fact.machineId)} · ${prerequisite.message}`] : [];
+  });
+  return reasons?.length ? reasons.join('\n') : undefined;
+}
+
 /**
  * The review's closing row, shared by every setup review (Store Install on…, Set up from a preset):
  * who approves on the left, Cancel and the one primary action on the right (lab `setup/review`).
  */
 export function MachineSetupReviewFooter(
   props: Readonly<{
+    prepared?: Pick<MachineSetupPreparedReview, 'facts'> | null;
+    nameOf?: (machineId: string) => string;
     onCancel: () => void;
     cancelTestID: string;
     /** The secondary control's name; Cancel by default (a review one step in says Back). */
@@ -418,10 +435,12 @@ export function MachineSetupReviewFooter(
   }>,
 ) {
   const { theme } = useUnistyles();
-  const reason = props.primary?.disabled ? props.primary.disabledReason : undefined;
+  const prerequisite = props.prepared && props.nameOf ? describeMachineSetupReviewUnavailable(props.prepared, props.nameOf) : undefined;
+  const reason = prerequisite ?? (props.primary?.disabled ? props.primary.disabledReason : undefined);
   return (
     <View style={footerStyles.footer}>
-      {reason === undefined && props.note === null ? null : (
+      {/* The setup's Administrator row already explains this prerequisite; keep it as the button's hint too. */}
+      {prerequisite !== undefined || reason === undefined && props.note === null ? null : (
         <View style={footerStyles.note}>
           <Icon
             name={reason === undefined ? 'shield-check' : 'info'}
@@ -450,7 +469,7 @@ export function MachineSetupReviewFooter(
             size="normal"
             title={props.primary.label}
             loading={props.primary.loading}
-            disabled={props.primary.disabled}
+            disabled={props.primary.disabled || prerequisite !== undefined}
             {...(reason === undefined ? {} : { accessibilityHint: reason })}
             onPress={props.primary.onPress}
           />

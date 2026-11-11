@@ -3,7 +3,8 @@ import type { ActionExecuteResult, ActionExecutorDeps } from '@happier-dev/proto
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { MachineSetupResolveResultV1Schema, MachineSetupReportInputV1Schema, MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupNativeSshHostKeyV1 } from '@happier-dev/protocol/machines/setup/backupReceiverV1';
-import type { MachineSetupApplyTargetV1, MachineSetupRemoveInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { MachineSetupApplyTargetV1, MachineSetupRemoveInputV1, MachineSetupPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -85,6 +86,14 @@ export function createMachineSetupPlanAction(params: Readonly<{
   return async ({ input, context, signal }: Parameters<NonNullable<ActionExecutorDeps['machineSetupPlan']>>[0]
     & Readonly<{ context: RpcActionExecutorContext }>) => {
     const fail = (code: string) => ({ ok: false as const, errorCode: code, error: code });
+    const withAdministratorPrerequisite = async (plan: MachineSetupPlanResultV1 | ActionExecuteFailure): Promise<MachineSetupPlanResultV1 | ActionExecuteFailure> => {
+      if ('errorCode' in plan || plan.review?.administratorRequired !== true) return plan;
+      // The same captured policy consumed by elevation owns None. Ask remains
+      // usable with attendance; a review never prompts or probes sudo itself.
+      const access = params.apiMachine.captureMachineAdminAccess?.();
+      if (!access || (await access.readPolicy()).mode !== 'none') return plan;
+      return { ...plan, review: { ...plan.review, administratorUnavailable: { reasonCode: 'mode_none' } } };
+    };
     if ('targets' in input) return fail('target_mismatch');
     if ((signal ?? context.signal)?.aborted) return fail('cancelled');
     if (input.machineId !== params.machineId || input.homeId !== params.homeId) return fail('target_mismatch');
@@ -124,13 +133,13 @@ export function createMachineSetupPlanAction(params: Readonly<{
           ? await prepareMachineSetupUpdatesPlanV1({ machineId: params.machineId, scope: input.updates.scope, ...options })
           : { observation: await params.apiMachine.refreshMachineSetupUpdates(options) };
         if (input.mode === 'effects') await params.apiMachine.publishMachineSetupUpdates(updates.observation);
-        return { desiredRevision: current.policy.revision, sources: current.policy.sources,
+        return withAdministratorPrerequisite({ desiredRevision: current.policy.revision, sources: current.policy.sources,
           exclusions: current.policy.exclusions, support: [], updates,
           ...(input.mode === 'effects' ? { review: { target: { homeId: input.homeId, machineId: input.machineId },
             administratorRequired: 'plan' in updates && updates.plan ? machineSetupPlansRequireAdministratorV1([updates.plan]) : null,
             downtime: 'plan' in updates && updates.plan ? updates.plan.steps.length ? 'possible' as const : 'none' as const : 'unknown' as const,
           } } : {}),
-        };
+        });
       } catch (error) {
         const code = (signal ?? context.signal)?.aborted ? 'cancelled'
           : error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
@@ -160,9 +169,9 @@ export function createMachineSetupPlanAction(params: Readonly<{
         installationId: params.installation.installationId, entries: result.recipePlans });
       if (backupReceivers.length) result = { ...result, backupReceivers };
     }
-    return prepareMachineSetupApps(input, result, { ...context, ...(signal ? { signal } : {}) }, {
+    return withAdministratorPrerequisite(await prepareMachineSetupApps(input, result, { ...context, ...(signal ? { signal } : {}) }, {
       ...params.appPreparation, ...(params.installation ? { installationId: params.installation.installationId } : {}),
-    });
+    }));
   };
 }
 

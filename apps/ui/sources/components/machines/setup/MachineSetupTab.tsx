@@ -652,6 +652,8 @@ function MachineSetupReviewInPlace(
       <ItemGroup surface="none">
         <BareSectionContent>
           <MachineSetupReviewFooter
+            prepared={review.prepared}
+            nameOf={nameOf}
             onCancel={setup.cancelReview}
             cancelTestID="machine-setup-review-cancel"
             primary={

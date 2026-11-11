@@ -8,15 +8,19 @@ import { createMachineSetupPlanAction } from './machineSetupAction';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { MachineSetupNativeCommand, MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
+import { getMachineAdminAccessV1, type MachineAdminAccessV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 
-async function authoredPlan(recipe: unknown, runNative: (command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult>) {
+async function authoredPlan(recipe: unknown, runNative: (command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult>,
+  readPolicy?: () => Promise<MachineAdminAccessV1>) {
   const pluginId = 'com.example.recipe-expansion';
   const runtime = await createAuthoredAdmittedPluginRuntimeFixture({ coldStart: true, plugins: [{ files: {}, manifest: {
     schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Recipe expansion', runtime: { apiVersion: 1 },
     contributes: { machineRecipes: [recipe] },
   } }] });
   const actionOptions = { homeId: 'home', machineId: 'guest', runNative,
-    apiMachine: { getMachineSetupDesiredSnapshot: () => getMachineSetupDesiredV1({
+    apiMachine: { ...(readPolicy ? { captureMachineAdminAccess: () => ({ readPolicy,
+      observe: async () => { throw new Error('No target facts are requested by this recipe'); } }) } : {}),
+      getMachineSetupDesiredSnapshot: () => getMachineSetupDesiredV1({
       read: async () => ({ status: 'ready', metadata: { setup: createEmptyMachineSetupDesiredV1() }, metadataVersion: 0 }),
       compareAndSwap: async () => { throw new Error('Plan cannot publish desired setup'); },
     }) },
@@ -35,11 +39,46 @@ async function authoredPlan(recipe: unknown, runNative: (command: MachineSetupNa
 }
 
 describe('Machine recipe expansion through the receiving Plan Action', () => {
+  it('reports unavailable administrator access before Apply and clears it on a fresh Ask review', async () => {
+    let mode: 'none' | 'ask' = 'none';
+    let policyReads = 0;
+    const fixture = await authoredPlan({ id: 'configured', revision: '1', title: 'Administrative setup',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false }, steps: [
+        { id: 'native', kind: 'command', executable: 'fixture-apply', args: [],
+          check: { executable: 'fixture-check', args: [], unsatisfiedExitCodes: [1] } },
+      ],
+    }, async () => ({ code: 1, stdout: '', stderr: '' }), async () => {
+      const result = await getMachineAdminAccessV1({
+        read: async () => {
+          policyReads++;
+          return { status: 'ready', metadataVersion: 0, metadata: {
+            adminAccess: mode === 'none' ? { version: 1, mode } : { version: 1, mode, administratorUsername: 'operator' },
+          } };
+        },
+        compareAndSwap: async () => { throw new Error('Review cannot change administrator access'); },
+      });
+      if (result.status !== 'ready') throw new Error('The fixture administrator policy must be readable');
+      return result.policy;
+    });
+    try {
+      const blocked = await fixture.execute({}, 'effects');
+      expect(blocked).toMatchObject({ ok: true, result: { review: {
+        administratorRequired: true, administratorUnavailable: { reasonCode: 'mode_none' },
+      } } });
+      expect(policyReads).toBe(1);
+      mode = 'ask';
+      const ready = await fixture.execute({}, 'effects');
+      expect(ready).toMatchObject({ ok: true, result: { review: { administratorRequired: true } } });
+      expect(ready).not.toHaveProperty('result.review.administratorUnavailable');
+      await fixture.execute({});
+      expect(policyReads).toBe(2);
+    } finally { await fixture.dispose(); }
+  });
   it.each([
     { affects: 'dockerEngine', downtime: 'possible' },
     { affects: { services: ['environment/database'] }, downtime: 'possible' },
     { affects: 'none', downtime: 'unknown' },
-  ])('keeps unsupported native effects explicit while reviewing their declared impact ($downtime)', async ({ affects, downtime }) => {
+  ])('keeps unimplemented native checks unavailable while reviewing their declared impact ($downtime)', async ({ affects, downtime }) => {
     const fixture = await authoredPlan({ id: 'configured', revision: '1', title: 'Declared impact',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false }, steps: [
         { id: 'native', kind: 'command', executable: 'fixture-apply', args: [], affects,
@@ -48,7 +87,7 @@ describe('Machine recipe expansion through the receiving Plan Action', () => {
     }, async () => { throw new Error('Unsupported declaration must not probe or run'); });
     try {
       expect(await fixture.execute({}, 'effects')).toMatchObject({ ok: true, result: {
-        support: [{ sourceIndex: 0, itemIndex: 0, status: 'unsupported' }],
+        support: [{ sourceIndex: 0, itemIndex: 0, status: 'unavailable' }],
         review: { target: { homeId: 'home', machineId: 'guest' }, administratorRequired: true, downtime },
       } });
     } finally { await fixture.dispose(); }
@@ -209,7 +248,7 @@ describe('Machine recipe expansion through the receiving Plan Action', () => {
     } finally { await fixture.dispose(); }
   });
 
-  it('selects package-first and explicit-unavailable fallback branches and demands no package facts when already working', async () => {
+  it('keeps incomplete APT indexes on the primary branch and demands no package facts when already working', async () => {
     let mode: 'working' | 'available' | 'installed' | 'none' | 'empty' | 'managerMissing' | 'denied' = 'working';
     const calls: MachineSetupNativeCommand[] = [];
     const whenPrimary = [{ checkId: 'working', status: ['drifted'] }, { checkId: 'package', status: ['satisfied', 'drifted'] }];
@@ -248,8 +287,9 @@ describe('Machine recipe expansion through the receiving Plan Action', () => {
       expect(calls.map(command => command.executable)).toEqual(['fixture-ready']);
       for (const selectedMode of ['available', 'installed', 'none', 'empty', 'managerMissing', 'denied'] as const) {
         mode = selectedMode;
-        const selected = mode === 'none' ? [{ id: 'fallback-register' }]
-          : mode === 'managerMissing' || mode === 'denied' ? [] : [{ id: 'primary-package' }, { id: 'primary-register' }];
+        // Candidate:(none), like an empty read-only index, is unresolved until
+        // Apply refreshes it; it is not proof that the package is unavailable.
+        const selected = mode === 'managerMissing' || mode === 'denied' ? [] : [{ id: 'primary-package' }, { id: 'primary-register' }];
         expect(await fixture.execute({})).toMatchObject({ ok: true, result: {
           support: [{ status: mode === 'managerMissing' ? 'unsupported' : mode === 'denied' ? 'unavailable' : 'drifted',
             ...(mode === 'denied' ? { reason: 'needs_admin_to_check' } : {}) }],

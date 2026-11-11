@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineActionOutputSchemasV1, type MachineSetupPlanReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
@@ -38,6 +38,7 @@ export type MachineUpdatesReview =
       scope: MachineUpdatesScope;
       plan: MachineSetupEffectPlanV1;
       packages: readonly MachineUpdatePackage[];
+      setupReview?: MachineSetupPlanReviewV1;
     }>
   /** The Machine found nothing to install for this scope when it planned. */
   | Readonly<{ kind: 'nothing'; scope: MachineUpdatesScope }>
@@ -153,10 +154,11 @@ export function useMachineUpdatesReview(
       const parsed = ManagedMachineActionOutputSchemasV1[
         'machines.setup.plan'
       ].safeParse(result.result);
-      const updates =
+      const planned =
         parsed.success && 'updates' in parsed.data
-          ? parsed.data.updates
+          ? parsed.data
           : undefined;
+      const updates = planned?.updates;
       if (!updates) {
         setReview({
           kind: 'failed',
@@ -170,7 +172,7 @@ export function useMachineUpdatesReview(
       const packages = plan ? readMachineUpdatePackages(plan) : [];
       setReview(
         plan && packages.length > 0
-          ? { kind: 'review', scope, plan, packages }
+          ? { kind: 'review', scope, plan, packages, ...(planned?.review ? { setupReview: planned.review } : {}) }
           : { kind: 'nothing', scope },
       );
     },

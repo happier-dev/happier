@@ -48,6 +48,38 @@ const row = (screen: Screen, testID: string) =>
   )[0]?.props as { title: string; subtitle?: string; detail?: string } | undefined;
 
 describe('MachineSetupPlanReview', () => {
+  it('shows the Plan administrator prerequisite and disables Apply in its shared review footer', async () => {
+    const { MachineSetupReviewFooter } = await import('./MachineSetupPlanReview');
+    const { MachineSetupPlanReviewV1Schema } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+    const { describeActionExecutionPrerequisite } = await import('@/sync/ops/actions/resolveActionExecutionFailureMessage');
+    const review = MachineSetupPlanReviewV1Schema.parse({ target: { homeId: 'home', machineId: 'vps' }, administratorRequired: true,
+      administratorUnavailable: { reasonCode: 'mode_none' }, downtime: 'none' });
+    const prepared: MachineSetupPreparedReview = { ok: true,
+      input: { homeId: 'home', machineId: 'shop', targets: [target('shop'), target('vps')] },
+      facts: [{ homeId: 'home', machineId: 'shop', support: [], review: {
+        target: { homeId: 'home', machineId: 'shop' }, administratorRequired: false, downtime: 'none',
+      } }, { homeId: 'home', machineId: 'vps', support: [], review }] };
+    const onApply = vi.fn();
+    const screen = await renderScreen(<>
+      <MachineSetupPlanReview testID="review" prepared={prepared} nameOf={id => names[id] ?? id} />
+      <MachineSetupReviewFooter prepared={prepared} nameOf={id => names[id] ?? id}
+        onCancel={() => {}} cancelTestID="cancel" primary={{ testID: 'apply', label: 'Apply', onPress: onApply }} />
+    </>);
+    const prerequisite = describeActionExecutionPrerequisite('mode_none')!.message;
+    expect(row(screen, 'review.administrator')?.subtitle).toContain(prerequisite);
+    const button = screen.tree.findAll(node => node.props?.testID === 'apply' && typeof node.props.title === 'string')[0];
+    expect(button?.props.disabled).toBe(true);
+    expect(button?.props.accessibilityHint).toContain(prerequisite);
+    expect(screen.getTextContent()).toContain('vps-1');
+    await screen.unmount();
+    const permitted = { ...prepared, facts: prepared.facts.map(fact => ({ ...fact,
+      review: fact.review ? { target: fact.review.target, administratorRequired: fact.review.administratorRequired, downtime: fact.review.downtime } : undefined,
+    })) };
+    const ready = await renderScreen(<MachineSetupReviewFooter prepared={permitted} nameOf={id => names[id] ?? id}
+      onCancel={() => {}} cancelTestID="cancel" primary={{ testID: 'apply', label: 'Apply', onPress: onApply }} />);
+    expect(ready.tree.findAll(node => node.props?.testID === 'apply' && typeof node.props.title === 'string')[0]?.props.disabled).toBe(false);
+    await ready.unmount();
+  });
   it('shows the exact reviewed recipe script and its check in the shared approval surface', async () => {
     const { MachineSetupApplyInputV1Schema } = await import('@happier-dev/protocol/machines/managed/actionsV1');
     const body = '#!/bin/bash\nprintf "%s" "$HOME"\n';
