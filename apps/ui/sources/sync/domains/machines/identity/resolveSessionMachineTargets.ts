@@ -1,6 +1,6 @@
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { readMachineActivity, readMachinePresenceAnswer } from '@/sync/domains/machines/machineActivity';
 
 import { normalizeKnownProjectMachineId } from '@/sync/runtime/orchestration/projectManager';
 import { findMachineInCollection, type MachineCollection } from './machineCollection';
@@ -103,7 +103,9 @@ export function resolveSessionRpcTarget(input: Readonly<{
     if (!machine) return null;
     if (machine.revokedAt && machine.revokedAt > 0) return null;
     if ('replacedByMachineId' in machine && machine.replacedByMachineId) return null;
-    if (!readMachineActivity(machine).active) return null;
+    // An unanswered inventory bit is not an offline answer. Keep the exact
+    // Session target so its first RPC can establish reachability.
+    if (readMachinePresenceAnswer(machine) !== false && !readMachineActivity(machine).active) return null;
 
     return displayTarget;
 }

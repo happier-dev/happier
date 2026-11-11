@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { linkMachineActivity, publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 
 import {
     resolveMachineControlTargetForSessionFromState,
@@ -22,6 +22,22 @@ function activeMachine(id: string, host: string) {
 }
 
 describe('resolveMachineTargetForSessionFromState', () => {
+    it('retains a cold Machine RPC target until presence answers, without treating it as online', () => {
+        const machine = createMachineFixture({ id: 'cold-machine', active: false });
+        linkMachineActivity(machine, { ...machine });
+        const session = createSessionFixture({ id: 'cold-session', active: true,
+            metadata: { machineId: machine.id, path: '/workspace', host: 'cold.local' } });
+        const state = { sessions: { [session.id]: session }, machines: { [machine.id]: machine } };
+        const target = { machineId: machine.id, basePath: '/workspace' };
+        expect(resolveMachineTargetForSessionFromState(state, session.id)).toEqual(target);
+        expect(resolveMachineControlTargetForSessionFromState(state, session.id)).toMatchObject(target);
+        publishMachineActivity(machine, { active: false, activeAt: machine.activeAt }, []);
+        expect(resolveMachineTargetForSessionFromState(state, session.id)).toBeNull();
+        expect(resolveMachineControlTargetForSessionFromState(state, session.id)).toBeNull();
+        publishMachineActivity(machine, { active: true, activeAt: machine.activeAt + 1 }, []);
+        expect(resolveMachineTargetForSessionFromState(state, session.id)).toEqual(target);
+    });
+
     it('retains the canonical workspace Machine target for an offline Session', () => {
         const session = createSessionFixture({ id: 'offline-bound-session', active: true, metadata: {
             path: '', host: '',
