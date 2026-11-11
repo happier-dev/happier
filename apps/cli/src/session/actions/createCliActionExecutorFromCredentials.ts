@@ -1939,6 +1939,14 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         if (!parsedActionId.success) return { context: originalContext,
           invocation: createOneShotPatInvocation(async () => actionFailure('unsupported')) };
         const signal = combineInvocationSignals(invocationSignal, context?.signal);
+        const executeApprovalAction = async (...args: Parameters<ReturnType<typeof createCliActionExecutor>['execute']>) => {
+          // A fresh deciding-person invocation owns its Account custody. Bootstrap
+          // before the lazy executor captures it, as ordinary CLI execution does.
+          if (!params.actionsSettingsProvider && !args[2]?.externalActionExecutionAuthorization) {
+            await ensureCliActionPolicySettings(credentials, resolveActionServerApiUrl());
+          }
+          return (await resolveExecutor(credentials)).execute(...args);
+        };
         let target = context?.externalActionTarget
           ?? (params.machineId ? { kind: 'machine' as const, machineId: params.machineId } : undefined)
           ?? (liveResultMachineId ? { kind: 'machine' as const, machineId: liveResultMachineId } : undefined)
@@ -2028,7 +2036,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                     target: requesterTarget, accountId, homeId: context.serverIdentityId,
                     token: credentials.token, serverHttpBaseUrl: resolveActionServerApiUrl(),
                     onApprovalRequested: params.onApprovalRequested,
-                    execute: async (actionId, input, actionContext) => (await resolveExecutor(credentials)).execute(actionId, input, actionContext),
+                    execute: executeApprovalAction,
                     context: signal ? { ...context, signal } : context, run })
                   : await run(signal);
                 if (requester) return requester;
@@ -2056,12 +2064,12 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           const result = spec.approvalInputCustody === 'live_only' && spec.approvalResultCustody === 'live_only'
             && params.onApprovalRequested
             ? await executeLiveCliApprovalRequest({ onApprovalRequested: params.onApprovalRequested,
-              execute: async (actionId, input, actionContext) => (await resolveExecutor(credentials)).execute(actionId, input, actionContext),
+              execute: executeApprovalAction,
               context: signal ? { ...context, signal } : context, run })
             : await run(signal);
           return await consumeDeferredCliApprovalResult(result, { onApprovalRequested: params.onApprovalRequested,
             token: credentials.token, serverHttpBaseUrl: resolveActionServerApiUrl(),
-            execute: async (actionId, input, actionContext) => (await resolveExecutor(credentials)).execute(actionId, input, actionContext),
+            execute: executeApprovalAction,
             context: signal ? { ...context, signal } : context });
         }) };
       }
