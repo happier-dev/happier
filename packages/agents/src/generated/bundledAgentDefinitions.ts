@@ -3506,7 +3506,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     },
     "id": "muse",
     "resume": {
-      "vendorResume": "unsupported"
+      "vendorResume": "supported"
     },
     "runtimeInput": {
       "inFlightSteerSupported": true,
@@ -3518,22 +3518,22 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "manual": true
       },
       "sessionFork": {
-        "conversation": "unsupported",
-        "fromMessage": "unsupported"
+        "conversation": "supported",
+        "fromMessage": "supported"
       },
       "sessionListing": "unsupported",
       "sessionRollback": {
         "conversation": "unsupported"
       },
-      "usageReporting": "unsupported"
+      "usageReporting": "supported"
     },
     "sessionStorage": {
       "direct": true,
       "persisted": true
     },
     "tools": {
-      "delivery": "unsupported",
-      "support": "unsupported"
+      "delivery": "native_mcp",
+      "support": "supported"
     }
   },
   "id": "muse",
@@ -3563,7 +3563,13 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "OPENAI_API_KEY",
         "ANTHROPIC_OAUTH_TOKEN",
         "ANTHROPIC_API_KEY",
-        "GEMINI_API_KEY"
+        "GEMINI_API_KEY",
+        "KIMI_API_KEY",
+        "XAI_OAUTH_TOKEN",
+        "XAI_API_KEY",
+        "MUSE_CODE_CREDENTIAL",
+        "META_API_KEY",
+        "COPILOT_GITHUB_TOKEN"
       ],
       "loginLaunches": [],
       "machineLoginKey": "oh-my-pi",
@@ -3632,7 +3638,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "openai",
         "claude-subscription",
         "anthropic",
-        "gemini-account"
+        "gemini-account",
+        "kimi-code",
+        "xai",
+        "muse-account",
+        "github-account"
       ]
     },
     "detectKey": "omp",
@@ -3749,10 +3759,15 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "cloudConnect": null,
     "connectedServices": {
       "supportedServiceIds": [
-        "claude-subscription",
-        "openai-codex",
-        "openai",
-        "anthropic"
+        "happier.agent.claude/claude-subscription",
+        "happier.agent.codex/openai-codex",
+        "happier.voice.openai/openai",
+        "happier.agent.claude/anthropic",
+        "happier.agent.kimi/kimi-code",
+        "happier.agent.grok/xai",
+        "happier.agent.muse/muse-account",
+        "happier.agent.gemini/gemini-account",
+        "happier.scm.forge.github/github-account"
       ]
     },
     "detectKey": "opencode",
@@ -3968,9 +3983,18 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "environmentVariables": [
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
+        "KIMI_API_KEY",
+        "KIMI_CODE_BASE_URL",
+        "XAI_API_KEY",
+        "META_API_KEY",
         "GEMINI_API_KEY",
-        "OPENROUTER_API_KEY",
-        "KIMI_API_KEY"
+        "GOOGLE_API_KEY",
+        "GOOGLE_GENAI_USE_VERTEXAI",
+        "GOOGLE_CLOUD_PROJECT",
+        "GOOGLE_CLOUD_LOCATION",
+        "COPILOT_GITHUB_TOKEN",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "OPENROUTER_API_KEY"
       ],
       "loginLaunches": [],
       "support": "status_only"
@@ -4027,7 +4051,12 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "claude-subscription",
         "openai-codex",
         "openai",
-        "anthropic"
+        "anthropic",
+        "kimi-code",
+        "xai",
+        "muse-account",
+        "gemini-account",
+        "github-account"
       ]
     },
     "detectKey": "pi",
