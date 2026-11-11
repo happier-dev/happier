@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { ActionIdSchema } from './actionIds.js';
 import { getActionSpec } from './actionSpecs.js';
-import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 
@@ -64,7 +63,8 @@ describe('answering-client external links', () => {
     let settings = ActionsSettingsV1Schema.parse({ v: 1 });
     const opened: string[] = [];
     const deps = {
-      isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+      // 02102e614e1 / a4a360ea3cc: own-UI Ask uses the native presenter.
+      presentUserActionConfirmation: async () => false,
       isApprovalExecutionOriginCurrent: async () => true,
       approvalsCreate: async () => ({ artifactId: 'link-policy' }),
       approvalsUpdate: async () => ({ ok: true as const }),
@@ -72,19 +72,27 @@ describe('answering-client external links', () => {
         request: { ...request, status: 'rejected' as const, decision: { kind: 'reject' as const, decidedAtMs: Date.now() } } }),
       externalUrlOpen: async ({ url }) => { opened.push(url); return { status: 'opened' as const }; },
     } satisfies Partial<ActionExecutorDeps>;
-    const executor = createActionExecutor(deps);
+    const executor = createActionExecutor(deps, { confirmUiDefault: true });
     const context = { actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'account',
       defaultSessionMachineId: 'client', actionRequestId: 'link-policy' } as const;
     const agent = { ...context, surface, authority: 'account_automation' } as const;
     const person = { ...context, surface: 'ui', authority: 'present_user' } as const;
     const input = { url: 'https://example.test/docs' };
-    expect(await executor.execute(id, input, agent)).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+    expect(await executor.execute(id, input, { ...agent, actionsSettings: settings })).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
     expect(opened).toEqual([]);
     settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [id]: [surface] } });
-    expect(await executor.execute(id, input, agent)).toEqual({ ok: true, result: { status: 'opened' } });
-    expect(await executor.execute(id, input, person)).toEqual({ ok: true, result: { status: 'opened' } });
+    expect(await executor.execute(id, input, { ...agent, actionsSettings: settings })).toEqual({ ok: true, result: { status: 'opened' } });
+    expect(await executor.execute(id, input, { ...person, actionsSettings: settings })).toEqual({ ok: true, result: { status: 'opened' } });
+    // A saved Require overrides a waiver on the actual automation surface.
+    settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [id]: [surface] },
+      actions: { [id]: { approvalRequiredSurfaces: [surface] } } });
+    expect(await executor.execute(id, input, { ...agent, actionsSettings: settings })).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
     settings = ActionsSettingsV1Schema.parse({ v: 1, actions: { [id]: { approvalRequiredSurfaces: ['ui'] } } });
-    expect(await executor.execute(id, input, person)).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+    expect(await executor.execute(id, input, { ...person, actionsSettings: settings })).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+    const unmounted = createActionExecutor({ ...deps, presentUserActionConfirmation: undefined });
+    expect(await unmounted.execute(id, input, { ...person, actionsSettings: settings })).toMatchObject({
+      ok: false, errorCode: 'action_interactive_review_required',
+    });
     expect(opened).toEqual([input.url, input.url]);
   });
   it('admits only HTTP(S) links and keeps transient URL values out of observations and approval storage', () => {
@@ -120,7 +128,7 @@ describe('answering-client external links', () => {
     expect(effects).toEqual([input]);
   });
 
-  it('retains an OAuth URL only in live custody while awaiting a policy decision', async () => {
+  it('retains an OAuth URL only in live custody while awaiting an automation policy decision', async () => {
     const id = ActionIdSchema.parse('links.openExternal');
     const persisted: ApprovalRequest[] = [];
     const observations: unknown[] = [];
@@ -143,8 +151,9 @@ describe('answering-client external links', () => {
       externalUrlOpen: async ({ url }) => { opened.push(url); return { status: 'opened' as const }; },
     } satisfies Partial<ActionExecutorDeps>;
     const url = 'https://provider.test/authorize?state=oauth-private-sentinel#oauth-private-fragment';
-    const invocation = createActionExecutor(deps as ActionExecutorDeps).execute(id, { url }, {
-      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+    // 02102e614e1: Artifact waits belong to automation, not a person's direct UI press.
+    const invocation = createActionExecutor(deps).execute(id, { url }, {
+      surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
       serverId: 'home', runtimeAccountId: 'account', actionRequestId: 'link-request', defaultSessionMachineId: 'link-origin',
     });
     await pending;
