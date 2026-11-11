@@ -109,6 +109,29 @@ describe('ModalProvider', () => {
         expect(observed.at(-1)).toBe(true);
     });
 
+    // Owner 2026-11-11 (New bot 01): Bots → New bot hides the Bots sheet and focuses the docked draft at once. The
+    // sheet stayed in the stack for its exit (seconds on a busy JS thread), so the composer took the keyboard
+    // while still "suppressed" and sat behind it. A modal that is leaving no longer owns the keyboard.
+    it('stops suppressing the keyboard lift as soon as the modal is hidden, while its exit still plays', async () => {
+        vi.useFakeTimers();
+        const { ModalProvider, useOptionalModal } = await import('./ModalProvider');
+        const { Modal } = await import('./ModalManager');
+        const observed: Array<boolean | undefined> = [];
+        function SuppressionProbe() {
+            observed.push(useOptionalModal()?.isKeyboardLiftSuppressedByModal);
+            return React.createElement('SuppressionProbe');
+        }
+        await renderScreen(React.createElement(ModalProvider, {
+            children: React.createElement(SuppressionProbe),
+        }));
+        let id = '';
+        act(() => { id = Modal.show({ component: DummyModalA }); });
+        expect(observed.at(-1)).toBe(true);
+
+        act(() => { Modal.hide(id); });
+        expect(observed.at(-1)).toBe(false);
+    });
+
     it('keeps earlier custom modals mounted when stacking', async () => {
         const { ModalProvider } = await import('./ModalProvider');
         const { Modal } = await import('./ModalManager');

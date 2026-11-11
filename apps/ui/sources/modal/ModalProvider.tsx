@@ -263,8 +263,10 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
     }, []);
 
     const contextValue: ModalContextValue = {
-        // Derived here rather than at each consumer so "a modal owns the keyboard" has one owner.
-        isKeyboardLiftSuppressedByModal: state.modals.length > 0,
+        // Derived here rather than at each consumer so "a modal owns the keyboard" has one owner. Only a modal that
+        // is showing owns it: one that is leaving stays in the stack for its exit (seconds on a busy JS thread), and
+        // a composer focused meanwhile (Bots → New bot) sat behind the keyboard until it was removed.
+        isKeyboardLiftSuppressedByModal: state.modals.some((modal) => modal.visible),
         state,
         showModal,
         hideModal,
