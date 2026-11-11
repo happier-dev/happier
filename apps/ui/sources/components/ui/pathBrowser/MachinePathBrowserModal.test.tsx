@@ -29,6 +29,7 @@ import {
     PATH_BROWSER_CONFIRM_TEST_ID,
     PATH_BROWSER_CREATE_FOLDER_TEST_ID,
     PATH_BROWSER_MODAL_TEST_ID,
+    PATH_BROWSER_ROOT_ERROR_TEST_ID,
 } from './pathBrowserTestIds';
 import { flushHookEffects, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { CustomModalChromeConfig, CustomModalInjectedProps } from '@/modal/types';
@@ -753,6 +754,29 @@ describe('MachinePathBrowserModal', () => {
         expect(screen.findByTestId(`${getPathBrowserRowTestId('/')}-folder-error`)).toBeNull();
     });
 
+    it('names one failure once: a failed root listing owns the error, its expanded folder repeats nothing', async () => {
+        listMachineFileBrowserRootsMock.mockResolvedValue({ ok: false, error: 'boom' } as never);
+        listMachineFileBrowserDirectoryEntriesMock.mockResolvedValue({ ok: false, error: 'boom' });
+        // The initial path paints its chain at once, so the failed listing has rows under it, as on a real Machine.
+        const screen = await renderInModalChrome(<MachinePathBrowserModal machineId="machine-1" initialPath="/Users/leeroy"
+            selectionMode="directory" onResolve={vi.fn()} onClose={vi.fn()} />);
+
+        await waitForTestId(screen, `${PATH_BROWSER_ROOT_ERROR_TEST_ID}-action`);
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        const text = screen.getTextContent();
+        expect(text.split('files.pane.rootErrorTitleUnnamed')).toHaveLength(2);
+        expect(text).not.toContain('files.repositoryFolderLoadFailed');
+        expect(screen.findByTestId(`${getPathBrowserRowTestId('/')}-folder-error`)).toBeNull();
+        // An unclassified cause adds no sentence of its own: "Operation failed" says nothing.
+        expect(text).not.toContain('errors.operationFailed');
+
+        listMachineFileBrowserRootsMock.mockResolvedValue({ ok: true, roots: [{ id: '/', label: '/', path: '/' }] } as never);
+        listMachineFileBrowserDirectoryEntriesMock.mockImplementation(defaultDirectoryEntries);
+        await screen.pressByTestIdAsync(`${PATH_BROWSER_ROOT_ERROR_TEST_ID}-action`);
+        expect(await waitForTestId(screen, getPathBrowserRowTestId('/Users'))).not.toBeNull();
+        expect(screen.getTextContent()).not.toContain('files.pane.rootErrorTitleUnnamed');
+    });
+
     it('uses tree arrow disclosure without selecting or picking the focused folder', async () => {
         const onPickPath = vi.fn();
         const screen = await renderScreen(<MachinePathBrowserView machineId="machine-1" variant="popover"
@@ -1181,15 +1205,19 @@ describe('MachinePathBrowserModal', () => {
                     initialPath="/Users/leeroy"
                     variant="modal"
                     interaction="confirm"
-                    setChrome={(next: unknown) => { chrome = next as { subtitle?: unknown }; }}
+                    setChrome={(next: unknown) => { chrome = next as { subtitle?: unknown; actions?: unknown }; }}
                     onPickPath={vi.fn()}
                     onRequestClose={vi.fn()}
                 />);
         for (let index = 0; index < 8; index += 1) await flushHookEffects({ cycles: 1, turns: 1 });
-        // The confirm footer carries the selection, so the title band does not repeat it: it names the Machine.
+        // The confirm footer carries the selection, so the title band does not repeat it: it names the Machine,
+        // on the title's own row beside the folder action, taking no line of its own.
         const { MachinePathBrowserMachineChip } = await import('./MachinePathBrowserMachineChip');
-        const subtitle = (chrome as { subtitle?: unknown } | null)?.subtitle;
-        expect(React.isValidElement(subtitle) && subtitle.type).toBe(MachinePathBrowserMachineChip);
+        const band = chrome as { subtitle?: unknown; actions?: unknown } | null;
+        expect(band?.subtitle).toBeUndefined();
+        const actions = React.isValidElement<{ children?: React.ReactNode }>(band?.actions)
+            ? React.Children.toArray(band.actions.props.children) : [];
+        expect(actions.map(child => React.isValidElement(child) ? child.type : null)).toContain(MachinePathBrowserMachineChip);
     });
 
     it('shows the initial path chain while the root listing is still pending', async () => {

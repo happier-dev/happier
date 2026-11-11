@@ -36,7 +36,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { FilesystemBrowserToolbarChrome, type FilesystemBrowserToolbarAction } from '@/components/ui/filesystemBrowser/FilesystemBrowserToolbarChrome';
 
-import { PATH_BROWSER_CONFIRM_TEST_ID, PATH_BROWSER_CREATE_FOLDER_TEST_ID, PATH_BROWSER_MODAL_TEST_ID } from './pathBrowserTestIds';
+import { PATH_BROWSER_CONFIRM_TEST_ID, PATH_BROWSER_CREATE_FOLDER_TEST_ID, PATH_BROWSER_MODAL_TEST_ID, PATH_BROWSER_ROOT_ERROR_TEST_ID } from './pathBrowserTestIds';
 import { MachinePathBrowserListRow } from './MachinePathBrowserListRow';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -909,7 +909,12 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
 
     const chromeActions = React.useMemo(() => {
         if (!useCardChrome) return null;
+        // Where the folder lives is the first fact: the Machine being browsed sits on the title's row, at its
+        // trailing end beside the folder action, so it takes no line of its own (the shared header moves both
+        // beneath the title on a phone).
         return (
+            <>
+            <MachinePathBrowserMachineChip serverId={props.serverId} machineId={props.machineId} onChange={props.onMachineChange} />
             <HappierPressable
                 testID={PATH_BROWSER_CREATE_FOLDER_TEST_ID}
                 onPress={() => invokeBrowserCommand('createFolder')}
@@ -923,8 +928,9 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             >
                 <Icon name="folder" size={16} color={theme.colors.chrome.header.foreground} />
             </HappierPressable>
+            </>
         );
-    }, [invokeBrowserCommand, canCreateFolder, isCreatingFolder, selectedDirectoryPath, styles.headerActionButton, theme.colors.chrome.header.foreground, useCardChrome]);
+    }, [invokeBrowserCommand, canCreateFolder, isCreatingFolder, props.machineId, props.onMachineChange, props.serverId, selectedDirectoryPath, styles.headerActionButton, theme.colors.chrome.header.foreground, useCardChrome]);
 
     const chromeFooter = React.useMemo(() => {
         if (!useCardChrome || interaction !== 'confirm') return null;
@@ -954,14 +960,10 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     ]);
 
     const chromeSetter = useCardChrome ? props.setChrome : undefined;
-    // Where the folder lives is the first fact: the header names the Machine being browsed.
-    const machineChip = React.useMemo(() => (useCardChrome
-        ? <MachinePathBrowserMachineChip serverId={props.serverId} machineId={props.machineId} onChange={props.onMachineChange} />
-        : null), [props.machineId, props.onMachineChange, props.serverId, useCardChrome]);
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,
         title: props.title ?? t('newSession.pathPicker.enterPathTitle'),
-        subtitle: headerSelectedPathLabel ?? machineChip ?? undefined,
+        subtitle: headerSelectedPathLabel ?? undefined,
         testID: PATH_BROWSER_MODAL_TEST_ID,
         actions: chromeActions,
         footer: chromeFooter,
@@ -972,7 +974,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             size: 'lg' as const,
             viewportMargin: { horizontal: 12, vertical: 12 } as const,
         },
-    }), [chromeActions, chromeFooter, headerSelectedPathLabel, machineChip, props.title]);
+    }), [chromeActions, chromeFooter, headerSelectedPathLabel, props.title]);
 
     useModalCardChrome(chromeSetter, chrome);
 
@@ -1104,6 +1106,8 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 <FilesystemBrowser
                     nodes={nodes}
                     treeRole
+                    errorTestID={PATH_BROWSER_ROOT_ERROR_TEST_ID}
+                    listHeaderTestID={PATH_BROWSER_ROOT_ERROR_TEST_ID}
                     rootLoading={deepSearchEnabled ? deepSearchLoading : rootLoading}
                     rootError={deepSearchEnabled ? deepSearch.error?.errorCode ?? null : rootError}
                     rootErrorReason={deepSearchEnabled ? deepSearchError : undefined}

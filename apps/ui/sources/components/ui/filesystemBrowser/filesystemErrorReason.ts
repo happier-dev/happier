@@ -10,9 +10,10 @@ export function isFilesystemErrorRetryable(error: string | null | undefined): bo
 
 /**
  * The one sentence a filesystem listing failure gives as its cause, for the tree's root state and for a
- * folder inside it. The raw error stays on the diagnostic channel; it is never the sentence.
+ * folder inside it. The raw error stays on the diagnostic channel; it is never the sentence. A cause the
+ * app cannot name adds no sentence ("Operation failed" says nothing): the title stands alone over Details.
  */
-export function resolveFilesystemErrorReason(error: string | null | undefined): string {
+export function resolveFilesystemErrorReason(error: string | null | undefined): string | undefined {
     if (error === RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE || error === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) return t('errors.daemonUnavailableBody');
     if (error === 'EACCES' || error === 'EPERM' || error === RPC_ERROR_CODES.FORBIDDEN) return t('errors.permissionDenied');
     if (error === MACHINE_RPC_TIMEOUT_ERROR_CODE) return t('errors.connectionTimeout');
@@ -23,5 +24,5 @@ export function resolveFilesystemErrorReason(error: string | null | undefined): 
     if (error === 'ENOENT') return t('errors.fileNotFound');
     // The Machine's Happier does not serve this Action yet (an older daemon): updating it is the recovery.
     if (error === 'unsupported_action') return t('errors.machineActionUnsupported');
-    return t('errors.operationFailed');
+    return undefined;
 }

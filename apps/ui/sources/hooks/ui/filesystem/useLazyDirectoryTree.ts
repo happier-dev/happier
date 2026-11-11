@@ -379,6 +379,12 @@ export function useLazyDirectoryTree<LoadContext = undefined>(input: {
 
     const retryRoot = React.useCallback(async (context?: LoadContext) => {
         setRootError(null);
+        // A failed root speaks for every folder that failed with it, so its one retry clears them all:
+        // once the root answers, the expanded folders load again.
+        if (directoryErrorsRef.current.size > 0) {
+            directoryErrorsRef.current = new Map();
+            setDirectoryErrors(directoryErrorsRef.current);
+        }
         await loadDirectory(rootDirectoryPath, { forceReload: true, context });
     }, [loadDirectory, rootDirectoryPath]);
 
@@ -424,9 +430,10 @@ export function useLazyDirectoryTree<LoadContext = undefined>(input: {
             expandedDirectories,
             loadingDirectories,
             directoryErrors,
+            rootFailed: rootError != null,
             visited: new Set<string>(),
         });
-    }, [directoryEntriesByPath, directoryErrors, directoryTruncationByPath, enabled, input.retainNodesWhenDisabled, expandedDirectories, loadingDirectories, rootDirectoryPath, scopeKey]);
+    }, [directoryEntriesByPath, directoryErrors, directoryTruncationByPath, enabled, input.retainNodesWhenDisabled, expandedDirectories, loadingDirectories, rootDirectoryPath, rootError, scopeKey]);
 
     const nodes = React.useMemo(() => {
         const reusedNodes = reuseLazyDirectoryTreeNodes(flattenedNodes, previousNodesRef.current);

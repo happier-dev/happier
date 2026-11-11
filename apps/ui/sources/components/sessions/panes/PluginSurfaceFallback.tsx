@@ -7,6 +7,7 @@ import { CollectionLoadingRows } from '@happier-dev/plugin-ui/components';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { PluginSurfacePageHeaderContext } from '@/components/plugins/shared/pluginSurfaceInteractionAvailability';
 import { PageFrame } from '@/components/ui/layout/PageFrame';
+import { usePageSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import {
     SurfaceStateCard,
     type SurfaceStateAction,
@@ -106,6 +107,8 @@ export function PluginSurfaceFallback(props: Readonly<{
     // state (`PluginSurfaceInteractionBoundary`). Mounted content resets this to null.
     const pageIdentity = React.useContext(PluginSurfacePageHeaderContext);
     const pageHeader = pageIdentity?.header;
+    // A page route that loaded nothing is a page-level state: it takes the page step (and its failed scene).
+    const pageStateSize = usePageSurfaceStateSize();
     const card = presentation.card;
     if (!card) {
         throw new Error('plugin_surface_unavailable_presentation_missing_card');
@@ -131,6 +134,7 @@ export function PluginSurfaceFallback(props: Readonly<{
         <SurfaceStateCard
             testID={props.testID}
             kind={card.kind}
+            size={pageHeader ? pageStateSize : undefined}
             title={card.title}
             titleContent={props.renderText?.('title', card.title)}
             reason={props.reason ?? card.reason}

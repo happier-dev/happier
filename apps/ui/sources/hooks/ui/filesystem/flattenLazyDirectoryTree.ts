@@ -8,6 +8,8 @@ export function flattenLazyDirectoryTree(input: {
     expandedDirectories: Set<string>;
     loadingDirectories: Set<string>;
     directoryErrors: Map<string, string>;
+    /** While the root's own listing has failed, that one error speaks for the tree: a folder that failed for the same cause adds no second row. */
+    rootFailed?: boolean;
     visited: Set<string>;
 }): LazyDirectoryTreeNode[] {
     if (input.visited.has(input.directoryPath)) return [];
@@ -38,6 +40,7 @@ export function flattenLazyDirectoryTree(input: {
 
         if (entry.type === 'directory' && isExpanded) {
             if (dirErrorMessage) {
+                if (input.rootFailed) continue;
                 out.push({
                     path: entry.path,
                     name: '',
@@ -60,6 +63,7 @@ export function flattenLazyDirectoryTree(input: {
                     expandedDirectories: input.expandedDirectories,
                     loadingDirectories: input.loadingDirectories,
                     directoryErrors: input.directoryErrors,
+                    rootFailed: input.rootFailed,
                     visited: input.visited,
                 })
             );

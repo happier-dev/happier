@@ -135,7 +135,7 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
                     reason={resolveFilesystemErrorReason(errorNode.errorMessage)}
                     diagnosticCode={errorNode.errorMessage ?? null}
                     action={props.onRetryError && isFilesystemErrorRetryable(errorNode.errorMessage)
-                        ? { label: t('surfaceState.tryAgain'), onPress: () => props.onRetryError!(errorNode) }
+                        ? { label: t('common.retry'), onPress: () => props.onRetryError!(errorNode) }
                         : undefined}
                 />
             </View>

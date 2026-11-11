@@ -1,4 +1,4 @@
-import { HAPPIER_STATE_LINE_METRICS, HAPPIER_STATE_SIZE_METRICS, HappierDisclosureToggle, HappierSurfaceState, HappierSurfaceStateLiveLine, resolveHappierStateFailureGlyph, resolveHappierSurfaceStateQuiet, type HappierSceneInput, type HappierStateSize, type HappierSurfaceStateAction, type HappierSurfaceStateBindings, type HappierSurfaceStateKind, type HappierSurfaceStateLive } from '@happier-dev/plugin-ui/presentation';
+import { defineHappierScene, HAPPIER_STATE_LINE_METRICS, HAPPIER_STATE_SIZE_METRICS, HappierDisclosureToggle, HappierSurfaceState, HappierSurfaceStateLiveLine, resolveHappierStateFailureGlyph, resolveHappierSurfaceStateQuiet, type HappierSceneInput, type HappierStateSize, type HappierSurfaceStateAction, type HappierSurfaceStateBindings, type HappierSurfaceStateKind, type HappierSurfaceStateLive } from '@happier-dev/plugin-ui/presentation';
 import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import * as React from 'react';
 import { Platform } from 'react-native';
@@ -29,7 +29,12 @@ export type SurfaceStateSize = HappierStateSize | 'line';
 export type SurfaceStateAccessibilitySemantics = 'status' | 'alert';
 
 /** A state replacing its container's facts, as distinct from a supplemental notice beside them. */
-export const SurfaceStateContentContext = React.createContext<((key: symbol, empty: boolean | null) => void) | null>(null);
+/**
+ * What a state that replaces its body tells the frame around it: whether it is an empty state, whether it is one line
+ * (the whole body is that line, so the frame sizes to it), and whether it is still loading (the room stays held).
+ */
+export type SurfaceStateContentReport = Readonly<{ empty: boolean; line: boolean; loading: boolean }>;
+export const SurfaceStateContentContext = React.createContext<((key: symbol, report: SurfaceStateContentReport | null) => void) | null>(null);
 
 export type SurfaceStateAction = HappierSurfaceStateAction;
 
@@ -39,12 +44,23 @@ const DEFAULT_ICONS: Partial<Record<SurfaceStateKind, IconName>> = {
     warning: 'warning-circle',
 };
 
-/** In a line the glyph is the only tint: a failure shows the warning mark in rose (failed), a warning in amber (needs you). */
+/**
+ * In a line only a warning tints its glyph (amber: needs you). A failure keeps its mark in the line's ink, as a
+ * card keeps its glyph calm: the words carry the trouble, so a list of folders never reads as a row of alarms.
+ */
 const LINE_ICONS: Partial<Record<SurfaceStateKind, IconName | null>> = {
     empty: null,
     success: 'check-circle',
     warning: 'warning',
 };
+
+/**
+ * The one scene a failure draws when it fills a sized surface (a page, a pane, a details area, a widget) and
+ * its caller names none: the Daybreak ridge at dusk with the planet in its failed state, so a surface that
+ * failed reads like its empty state. A local failure (a line among rows, an inline note, an unsized card)
+ * keeps its glyph.
+ */
+const SURFACE_FAILURE_SCENE = defineHappierScene({ name: 'happier.surfaceFailed', horizon: 'ridge', moment: 'dusk', planet: 'failed' });
 
 /**
  * A wait becomes worth narrating after this long: a first read that answers quickly never shows the
@@ -174,13 +190,14 @@ export function SurfaceStateCard(props: Readonly<{
     const { theme } = useUnistyles();
     const reportContent = React.useContext(SurfaceStateContentContext);
     const [contentKey] = React.useState(() => Symbol('surface-state'));
-    React.useEffect(() => {
-        if (!props.replacesContent || !reportContent) return;
-        reportContent(contentKey, props.kind === 'empty' && props.body === undefined);
-        return () => reportContent(contentKey, null);
-    }, [contentKey, props.replacesContent, props.kind, props.body, reportContent]);
     const containerSize = useSurfaceStateCardSize();
     const size = props.size ?? containerSize;
+    const reportedEmpty = props.kind === 'empty' && props.body === undefined;
+    React.useEffect(() => {
+        if (!props.replacesContent || !reportContent) return;
+        reportContent(contentKey, { empty: reportedEmpty, line: size === 'line', loading: props.kind === 'loading' });
+        return () => reportContent(contentKey, null);
+    }, [contentKey, props.replacesContent, props.kind, reportedEmpty, size, reportContent]);
     const failureGlyph = resolveHappierStateFailureGlyph(props.kind, size === 'line');
     const kindIconName = failureGlyph ? resolvePluginUiIconName(failureGlyph) : undefined;
     const animationEnabled = props.animationEnabled !== false;
@@ -221,7 +238,7 @@ export function SurfaceStateCard(props: Readonly<{
     if (size === 'line') {
         const lineIconName = props.iconName ?? kindIconName ?? LINE_ICONS[props.kind];
         const lineTint = props.kind === 'error'
-            ? theme.colors.state.danger.foreground
+            ? theme.colors.text.secondary
             : props.kind === 'warning'
                 ? theme.colors.state.warning.foreground
                 : theme.colors.text.tertiary;
@@ -248,6 +265,8 @@ export function SurfaceStateCard(props: Readonly<{
     }
 
     const metrics = size ? HAPPIER_STATE_SIZE_METRICS[size] : null;
+    const scene = props.scene ?? (metrics && props.layout !== 'inline' && (props.kind === 'error' || props.kind === 'unavailable')
+        ? SURFACE_FAILURE_SCENE : undefined);
     const glyphSize = props.layout === 'inline' ? HAPPIER_STATE_LINE_METRICS.glyphPx : metrics?.glyphPx ?? 32;
     // Every kind shares the empty-state anatomy. The glyph stays calm in the secondary colour; the
     // title carries the trouble, so a failure is never a red "!" on a muted card.
@@ -295,7 +314,7 @@ export function SurfaceStateCard(props: Readonly<{
                 size={metrics ? tile.size : undefined}
                 quietTitle={tile.quietTitle}
                 icon={tile.glyph}
-                scene={props.scene}
+                scene={scene}
                 animationEnabled={props.animationEnabled}
                 title={props.title}
                 titleContent={props.titleContent}

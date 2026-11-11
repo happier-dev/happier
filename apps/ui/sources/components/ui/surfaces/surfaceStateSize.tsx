@@ -1,6 +1,8 @@
 import type { HappierStateSize } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 
+import { useDeviceType } from '@/utils/platform/responsive';
+
 /** A container's state step: one of the sized compositions, or `line` for a narrow column. */
 export type SurfaceStateContainerSize = HappierStateSize | 'line';
 
@@ -51,4 +53,12 @@ export function useSurfaceStateSize(): HappierStateSize | undefined {
 /** The step a `SurfaceStateCard` takes from its container, including a line column. */
 export function useSurfaceStateCardSize(): SurfaceStateContainerSize | undefined {
     return React.useContext(SurfaceStateSizeContext);
+}
+
+/**
+ * The step of a state that replaces a whole page (a page route that loaded nothing): `page`, or `phone` on a
+ * phone. A page-level failure at this step draws the failed scene; a state inside a pane keeps its container's.
+ */
+export function usePageSurfaceStateSize(): Extract<HappierStateSize, 'page' | 'phone'> {
+    return useDeviceType() === 'phone' ? 'phone' : 'page';
 }

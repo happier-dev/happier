@@ -83,12 +83,12 @@ describe('SurfaceStateCard', () => {
             .flatMap((node) => React.Children.toArray(node.props.children))
             .filter((child) => typeof child === 'string')).toEqual([]);
     });
-    it('tints a failed line rose and a warning line amber: rose means failure, amber means it needs you (DESIGN.md)', async () => {
+    it('keeps a failed line calm in ink and tints only a warning line amber: the words carry the failure (ui-craft "glyphs stay ink")', async () => {
         const glyphColor = async (kind: 'error' | 'warning') => {
             const screen = await renderScreen(<SurfaceStateCard size="line" kind={kind} title="Couldn't update this comment" />);
             return screen.findAll((node) => typeof node.props?.name === 'string' && node.props?.color !== undefined)[0]?.props.color;
         };
-        expect(await glyphColor('error')).toBe(lightTheme.colors.state.danger.foreground);
+        expect(await glyphColor('error')).toBe(lightTheme.colors.text.secondary);
         expect(await glyphColor('warning')).toBe(lightTheme.colors.state.warning.foreground);
     });
     it.each([undefined, 'inline'] as const)('reads failure detail before recovery in %s layout', async (layout) => {
@@ -512,6 +512,22 @@ describe('SurfaceStateCard pane-state composition', () => {
         const line = await renderScreen(<SurfaceStateCard size="line" kind="empty" iconName="globe" scene="nothingListening" title="Nothing running" />);
         expect(hasScene(line)).toBe(false);
         expect(glyph(line, 'globe')).toBe(1);
+    });
+
+    it('gives a failure that fills a sized surface the failed scene by default; an unsized, line or inline one keeps its glyph', async () => {
+        const { SurfaceStateCard } = await import('./SurfaceStateCard');
+        const hasScene = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAllHostsByTestId('scene-planet').length > 0;
+
+        for (const kind of ['error', 'unavailable'] as const) {
+            for (const size of ['page', 'phone', 'pane', 'details'] as const) {
+                expect(hasScene(await renderScreen(<SurfaceStateCard size={size} kind={kind} title="Triage can’t open" />)), `${kind} ${size}`).toBe(true);
+            }
+            // A local failure (a line among rows, an inline note, a card with no sized container) keeps its glyph.
+            expect(hasScene(await renderScreen(<SurfaceStateCard kind={kind} title="Couldn’t load" />))).toBe(false);
+            expect(hasScene(await renderScreen(<SurfaceStateCard size="pane" layout="inline" kind={kind} title="Couldn’t load" />))).toBe(false);
+            expect(hasScene(await renderScreen(<SurfaceStateCard size="line" kind={kind} title="Couldn’t list files" />))).toBe(false);
+        }
+        expect(hasScene(await renderScreen(<SurfaceStateCard size="page" kind="empty" title="No Teams yet" />))).toBe(false);
     });
 
     it('in a list it is one quiet line: the kind glyph, the sentence and an inline recovery', async () => {

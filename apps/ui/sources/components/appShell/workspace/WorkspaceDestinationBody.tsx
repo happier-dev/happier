@@ -3,6 +3,7 @@ import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 
 import type { DestinationRef } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { usePageSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { t } from '@/text';
 import { loadWorkspaceRouteLayout, workspaceRouteBodies } from './workspaceRouteBodies';
 import { matchWorkspaceDestinationRoute, workspaceMachinePageRouteKey, workspacePluginAppPageRouteKey, workspaceRouteFiles } from './workspaceRoutes';
@@ -41,6 +42,11 @@ const PluginAppPageScreen = retryableLazy(async () => ({
     default: (await import('@/components/appShell/plugins/PluginAppPageScreen')).PluginAppPageScreen,
 }));
 
+/** A destination with no page is a page-level state: it takes the page step (and its failed scene). */
+function DestinationUnavailable(): React.ReactElement {
+    return <SurfaceStateCard kind="unavailable" size={usePageSurfaceStateSize()} title={t('common.unavailable')} />;
+}
+
 /** Renders the catalog-admitted identity; the Expo entrypoint is only its URL sink. */
 export const WorkspaceDestinationBody = React.memo(function WorkspaceDestinationBody(props: Readonly<{
     target: DestinationRef;
@@ -58,7 +64,7 @@ export const WorkspaceDestinationBody = React.memo(function WorkspaceDestination
                 localId={props.target.params.localId} subPath={props.target.params.subPath ?? ''} />
         </React.Suspense>;
     }
-    if (!Body) return <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} />;
+    if (!Body) return <DestinationUnavailable />;
     let content: React.ReactNode = <Body />;
     const machineKey = match ? workspaceMachinePageRouteKey(match.routeKey) : null;
     // Keep the page below the same providers when only its door changes. The collection

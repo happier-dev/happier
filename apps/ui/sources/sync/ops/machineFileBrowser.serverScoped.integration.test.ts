@@ -241,13 +241,13 @@ describe('file-browser failures across the scoped network boundary', () => {
         const result = await list(home.id);
         expect(boundary.requests.length).toBeGreaterThan(0);
         expect(result).toEqual({ ok: false, error: 'action_failed', errorCode: 'action_failed' });
-        if (!result.ok) expect(resolveFilesystemErrorReason(result.error)).toBe(t('errors.operationFailed'));
+        if (!result.ok) expect(resolveFilesystemErrorReason(result.error)).toBeUndefined();
     });
 
     it.each([
         [RPC_ERROR_CODES.FORBIDDEN, 'errors.permissionDenied'],
         [RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, 'errors.daemonUnavailableBody'],
-        [RPC_ERROR_CODES.METHOD_NOT_FOUND, 'errors.operationFailed'],
+        [RPC_ERROR_CODES.METHOD_NOT_FOUND, null],
     ] as const)('preserves the %s failure class without exposing server exception text', async (code, key) => {
         boundary.setRpcAckResponder(async () => ({ ok: false, error: 'private server internals', errorCode: code }));
         for (const [, list] of listings) {
@@ -256,7 +256,7 @@ describe('file-browser failures across the scoped network boundary', () => {
             expect(result).toMatchObject({ ok: false, errorCode: code });
             if (result.ok) throw new Error('Expected listing refusal');
             expect(result.error).not.toContain('private server internals');
-            expect(resolveFilesystemErrorReason(result.error)).toBe(t(key));
+            expect(resolveFilesystemErrorReason(result.error)).toBe(key ? t(key) : undefined);
         }
         expect(resolveFilesystemErrorReason(RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE)).toBe(t('errors.daemonUnavailableBody'));
     });

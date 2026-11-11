@@ -16,6 +16,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { usePageSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { useDeploymentPresentationDemand } from './useDeploymentPresentationDemand';
@@ -71,6 +72,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
 ) {
   const { read, serverId } = props;
   const { snapshot } = read;
+  const pageStateSize = usePageSurfaceStateSize();
   const header = (
     <PageHeader
       testID="all-deployments.header"
@@ -96,12 +98,14 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
         {withdrawn ? (
           <SurfaceStateCard
             kind="denied"
+            size={pageStateSize}
             title={t('projects.deployments.allDeniedTitle')}
             reason={t('projects.deployments.allDeniedBody')}
           />
         ) : (
           <SurfaceStateCard
             kind="error"
+            size={pageStateSize}
             title={t('projects.deployments.allLoadErrorTitle')}
             reason={t('projects.deployments.loadErrorBody')}
             diagnosticCode={snapshot.failure?.code ?? null}
