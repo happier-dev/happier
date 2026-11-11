@@ -10,6 +10,7 @@ import { createProjectAccountSnapshotMutation, readProjectAccountRows, withdrawA
 import { createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ProjectOpenRuntime } from '@/workspaces/activation/openProject';
@@ -1681,7 +1682,7 @@ describe('Project Open RPC', () => {
     expect(native.commands.some(command => command.t === 'terminate')).toBe(true);
   });
 
-  it('finishes an admitted Source copy to a new destination after revocation and refuses the next Open before effects', async () => {
+  it.each(['source-checkout', 'workspace-only'] as const)('finishes an admitted Source copy to a new destination after revocation and refuses the next Open before effects (%s)', async sourceShape => {
     const diagnostic = vi.spyOn(logger, 'warnLocalFile');
     const fixture = await mkdtemp(join(tmpdir(), 'OPEN-TESTS-source-copy-'));
     const root = join(fixture, 'source');
@@ -1779,12 +1780,16 @@ describe('Project Open RPC', () => {
       verifyMachineAdmissionCurrent: async () => { admissionReads += 1; return current; } };
     const fields = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
     const input = { serverId: 'srv_test_home', machineId: 'machine',
-      source: { kind: 'source' as const, id: source.id, revision: 9, selector: source.repository,
+      source: sourceShape === 'workspace-only' ? { kind: 'workspace' as const, workspaceId: workspace.id }
+        : { kind: 'source' as const, id: source.id, revision: 9, selector: source.repository,
         checkout: { serverId: 'srv_test_home', workspaceId: workspace.id, machineId: 'machine', rootPath: root } },
       materialization: { kind: 'sync' as const, targetPath, workspaceAction: { kind: 'copy_once' as const,
         contentPolicy: { ...fields, policyDigest: computeWorkspaceSyncPolicyDigest(fields) } } } };
     const handler = register(RPC_METHODS.PROJECTS_OPEN, runtime);
     try {
+      expect(projectWorkspaceSyncAdmissionInputV1('projects.open', input)).toEqual({
+        sourceMachineId: workspace.machineId, sourceWorkspaceRefId: workspace.id,
+      });
       const opened = await handler(input, context);
       expect(opened, JSON.stringify(diagnostic.mock.calls)).toMatchObject({ kind: 'opened', directory: targetPath,
         workspace: { serverId: 'srv_test_home', machineId: 'machine', rootPath: targetPath } });
