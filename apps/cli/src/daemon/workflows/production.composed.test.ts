@@ -112,6 +112,9 @@ import { createWorkflowRunStorageClient } from './workflowRunStorageClient';
 import { createWorkflowOriginContextInputPort } from '@/agent/runtime/session/contextOnly/workflowOriginInput';
 import { DEFAULT_SESSION_AUTO_FOLLOW_PREFERENCES_V1, DEFAULT_SESSION_FOLLOW_CREATION_POLICIES_V1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import type { FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { createHostApprovalOriginCurrentness } from '@/session/actions/approvals/hostOriginCurrentness';
 
 import { buildWorkflowActionContext, resolveWorkflowSessionConversation, createWorkflowAcceptedAuthorizationCurrentness } from './daemonRuntime';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
@@ -179,6 +182,71 @@ const onlyStep = {
   kind: 'step' as const, id: 'work', document: { text: 'work', references: [], attachments: [] },
   input: [], result: { kind: 'text' as const },
 };
+
+it.each(['manual', 'schedule', 'event', 'channel'] as const)('retains the trigger requester through contained approval and Resume (%s)', async cause => {
+  const directory = process.cwd();
+  let approval: ApprovalRequestV2 | undefined;
+  let effects = 0;
+  const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+    isApprovalExecutionOriginCurrent: createHostApprovalOriginCurrentness({
+      credentials: { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null },
+      serverId: 'server-1', serverApiUrl: 'https://home.example.test',
+      resolveServerFeaturesSnapshot: async () => ({ status: 'ready', provenance: 'authenticated',
+        features: FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } } }) }),
+    }),
+    machinesList: async () => { effects++; return { items: [] }; },
+    approvalsCreate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); return { artifactId: 'contained-approval' }; },
+    approvalsGet: async () => approval ?? null,
+    approvalsUpdate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+  });
+  const storage = createWorkflowRunStorageTestkit({ accountId, runId, machineId,
+    origin: { kind: 'automation', automationId: 'automation-1' } });
+  const coordinate = () => createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId,
+    workspaceScm: { inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
+    resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation' }),
+    resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+    isAcceptedAuthorizationCurrent: async () => true, onCommittedTransition: () => {}, storage,
+    resolveMaterializationHost: async input => ({ ...await productionMaterializationHost(input), effects: {
+      resolveTargetAvailability: async () => true,
+      readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))),
+    } }),
+    prepareAcceptedWorkspaceTarget: async () => ({ ok: true, workspaceTarget: {
+      project: { machineId, directory, checkoutRootPath: directory } } }),
+    execution: { ...productionExecution(), serverIdentityId: 'srv_home', action: { executor,
+      buildContext: async input => ({ ...buildWorkflowActionContext(input), serverId: 'server-1', serverIdentityId: 'srv_home',
+        runtimeAccountId: accountId, sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 }),
+      observeRun: async () => { throw new Error('Listing has no execution Run'); } } },
+  });
+  const triggerId = AutomationTriggerIdSchema.parse('11111111-1111-4111-8111-111111111111');
+  const occurrenceKey = deriveAutomationOccurrenceKeyV1({ triggerId, evidence: { v: 1, kind: 'sessionLifecycle',
+    event: 'parentTurnCompleted', sourceSessionId: 'source-session', sourceTurnId: 'turn-1', occurredAt: 1 } });
+  const automationCause = AutomationRunCauseSchema.parse(cause === 'manual' ? { kind: 'manual', invokedAt: 1 }
+    : cause === 'channel' ? { kind: 'conversation', occurrenceKey, occurredAt: 1 }
+    : cause === 'schedule' ? { kind: 'trigger', triggerKind: 'schedule', triggerId: '11111111-1111-4111-8111-111111111111',
+      triggerRevision: 1, occurredAt: 1, evidence: { scheduledFor: 1 }, occurrenceKey }
+    : { kind: 'trigger', triggerKind: 'sessionLifecycle', triggerId: '11111111-1111-4111-8111-111111111111',
+      triggerRevision: 1, occurrenceKey, occurredAt: 1, evidence: { sourceSessionId: 'source-session',
+        sourceTurnId: 'turn-1', event: 'parentTurnCompleted', policy: { kind: 'currentTurn' } } });
+  const claim = { runId, attempt: 0, expectedRevision: 0, automationId: 'automation-1', automationCause,
+    ...(cause === 'channel' ? { automationEvidenceEnvelope: JSON.stringify({ t: 'plain', v: {} }) } : {}),
+    causeWorkDepth: 0, accountCurrentness: { mode: 'plain' as const, version: 1, contentKeyFingerprint: null },
+    definitionEnvelope: JSON.stringify({ t: 'plain', v: { inlineDefinition: { version: 1, inputs: [], defaults: {},
+      blocks: [{ kind: 'action', id: 'list', actionId: 'machines.list', input: {} }] },
+      approvalProfileId: 'builtin:read-propose', workspace: { directory }, executionTarget: { kind: 'session' } } }) };
+  expect(await coordinate()(claim)).toMatchObject({ state: 'paused', reason: 'approval_required' });
+  expect(storage.rows().some(row => row.index.lifecycle === 'waiting_for_approval')).toBe(true);
+  expect(approval).toMatchObject({ status: 'open', executionOriginV1: { caller: { kind: 'workflowRun', authenticatedStarterV1: {
+    requestRef: runId, requester: { serverId: 'srv_home', accountId } } } } });
+  expect(effects).toBe(0);
+  const decision = await executor.execute('approval.request.decide', { artifactId: 'contained-approval', decision: 'approve' }, {
+    surface: 'ui', authority: 'present_user', runtimeAccountId: accountId, serverId: 'server-1', serverIdentityId: 'srv_home',
+  });
+  expect(decision.ok, JSON.stringify(decision)).toBe(true);
+  expect(approval?.status).toBe('executed');
+  expect(await coordinate()({ runId, attempt: 0, expectedRevision: storage.run().revision,
+    accountCurrentness: claim.accountCurrentness, acceptedEnvelope: storage.acceptedEnvelope()! })).toMatchObject({ state: 'succeeded' });
+  expect(effects).toBe(1);
+});
 
 function readPromptContext(text: string): WorkflowPromptContext[] {
   const entries: DiscussionPromptContextEntryV1[] = text.split('\n')
@@ -3784,7 +3852,8 @@ describe('production workflow coordinator', () => {
       expect(opened).toMatchObject({ kind: 'available', content: { executionTarget: { kind: 'detached_run' }, machineId } });
       if (opened.kind !== 'available') throw new Error('snapshot_unavailable');
       expect(opened.content.source).toEqual({ kind: 'automation', automationId: 'automation-1' });
-      expect(opened.content.origin).toEqual({ kind: 'direct', originSessionId: 'origin-session' });
+      expect(opened.content.origin).toEqual({ kind: 'direct', originSessionId: 'origin-session',
+        authenticatedStarterV1: { requestRef: runId, requester: { serverId: 'server-1', accountId } } });
       expect(opened.content.resultDelivery).toEqual(deliver
         ? { kind: 'originating_session', originSessionId: 'origin-session', reportPolicy: policy } : undefined);
       // Opaque accepted bytes cannot establish the server's origin lookup or ack request.

@@ -1666,12 +1666,18 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
                 ...(source.kind === 'saved' ? { definitionId: source.definitionId, revision: source.revision,
                   savedBy: source.savedBy ?? null } : {}) },
             ...(runMetadata ? { metadata: runMetadata } : {}),
-            ...(originSessionId || storedDefinition.data.approvalProfileId !== undefined ? { origin: { kind: 'direct',
+            // This Account owns the admitted trigger occurrence. Retain its
+            // requester for contained approvals, independently of saved consent
+            // or a Session persona, including later Resume of this snapshot.
+            origin: { kind: 'direct', authenticatedStarterV1: {
+              requestRef: claim.runId,
+              requester: { serverId: params.execution.serverIdentityId ?? params.execution.serverId, accountId: params.accountId },
+            },
               ...(originSessionId ? { originSessionId } : {}),
               ...(storedDefinition.data.approvalProfileId === undefined ? {} : { actionPolicy: {
                 authority: 'account_automation', approvalProfileId: storedDefinition.data.approvalProfileId,
               } }),
-            } } : {}),
+            },
             ...(storedDefinition.data.onComplete?.kind === 'originating_session' && originSessionId ? {
               resultDelivery: { kind: 'originating_session', originSessionId, reportPolicy },
             } : {}),
