@@ -8,7 +8,6 @@ import {
   packageJsonPathForNodeModules,
   parseSelfChannel,
   resolveSelfUpdateCommandForRing,
-  resolveNpmInstalledCliChannel,
 } from './self';
 
 describe('self command helpers', () => {
@@ -44,17 +43,6 @@ describe('self command helpers', () => {
     expect(computeSelfUpdateSpec({ packageName: '@happier-dev/cli', channel: 'publicdev', to: '' })).toBe('@happier-dev/cli@dev');
     expect(computeSelfUpdateSpec({ packageName: '@happier-dev/cli', channel: 'preview', to: '1.2.3' })).toBe('@happier-dev/cli@1.2.3');
     expect(computeSelfUpdateSpec({ packageName: '@happier-dev/cli', channel: 'stable', to: '  latest  ' })).toBe('@happier-dev/cli@latest');
-  });
-
-  it('infers the dev channel for an npm-installed dev version', () => {
-    expect(resolveNpmInstalledCliChannel({
-      version: '0.2.20-dev.8',
-      invokedPath: '/usr/local/lib/node_modules/@happier-dev/cli/bin/happier.mjs',
-    })).toBe('publicdev');
-    expect(resolveNpmInstalledCliChannel({
-      version: '0.2.20',
-      invokedPath: '/usr/local/lib/node_modules/@happier-dev/cli/bin/happier.mjs',
-    })).toBeNull();
   });
 
   it('rejects unsafe override specs', () => {

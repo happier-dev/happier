@@ -73,6 +73,8 @@ test('nightly-dev verifies exact immutable candidates before promoting any user-
   assert.equal(npm.with.publish_server, false);
   assert.match(String(npm.if), /needs\.release_verify\.result == 'success'/);
   assert.match(String(npm.if), /needs\.promote_cli\.result == 'success'/);
+  assert.equal(npm.permissions?.['id-token'], 'write', 'npm provenance needs the caller to grant the OIDC token');
+  assert.ok(!workflow.jobs.verify_promoted.needs.includes('publish_npm'), 'an npm failure must not skip post-promotion verification');
   for (const jobName of ['cli', 'hstack', 'runner', 'server_runtime', 'ui_web', 'docker']) {
     assert.equal(
       workflow.jobs[jobName].with.authorized_sha,

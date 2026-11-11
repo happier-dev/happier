@@ -447,6 +447,10 @@ jobs:
     name: Publish CLI npm package (dev)
     needs: [prepare_release_candidate, cli, promote_cli, release_verify]
     if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'true' && needs.release_verify.result == 'success' && needs.promote_cli.result == 'success' }}
+    # A called workflow cannot exceed its caller's permissions; npm provenance needs the OIDC token.
+    permissions:
+      contents: read
+      id-token: write
     uses: ./.github/workflows/release-npm.yml
     secrets: inherit
     with:
@@ -534,7 +538,7 @@ jobs:
 
   verify_promoted:
     name: Verify promoted nightly references
-    needs: [prepare_release_candidate, promote_runner, publish_npm, ui_mobile, ui_desktop, docker, verify_source_ci]
+    needs: [prepare_release_candidate, promote_runner, ui_mobile, ui_desktop, docker, verify_source_ci]
     uses: ./.github/workflows/release-verify.yml
     secrets: inherit
     with:
