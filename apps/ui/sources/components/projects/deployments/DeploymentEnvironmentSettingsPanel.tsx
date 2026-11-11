@@ -179,10 +179,8 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         </ItemGroup>
         {change.outcome && editing ? (
           <DeployOutcomeBanner
-            outcome={change.outcome}
-            pending={change.outcome.kind === 'approval' && editing.review.pendingId === change.outcome.artifactId}
+            controller={change.banner}
             machine={machineName(detail.environment.controllerMachineId)}
-            onOpenReview={editing.review.open}
             copy="setting"
           />
         ) : null}
@@ -677,10 +675,8 @@ function BackupRows(props: SectionProps) {
         machine={props.machineName(props.detail.environment.controllerMachineId)} testID={`${props.testID}.retention`} />
       {retentionChange.outcome && editing ? (
         <DeployOutcomeBanner
-          outcome={retentionChange.outcome}
-          pending={retentionChange.outcome.kind === 'approval' && editing.review.pendingId === retentionChange.outcome.artifactId}
+          controller={retentionChange.banner}
           machine={props.machineName(props.detail.environment.controllerMachineId)}
-          onOpenReview={editing.review.open}
           copy="setting"
         />
       ) : null}

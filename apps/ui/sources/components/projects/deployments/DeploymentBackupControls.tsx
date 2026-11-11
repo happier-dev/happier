@@ -133,9 +133,8 @@ export function DeploymentBackupControls(props: Readonly<{
         } />
       {change.running ? <Item title={t('projects.deployments.loading')} mode="info" /> : null}
       {result ? <Item testID={`${props.testID}.result`} title={result} mode="info" /> : null}
-      {change.outcome ? <DeployOutcomeBanner outcome={change.outcome}
-        pending={change.outcome.kind === 'approval' && props.review.pendingId === change.outcome.artifactId}
-        machine={props.machineName(target.machineId)} onOpenReview={props.review.open} onRetry={change.retry} copy="setting" /> : null}
+      {change.outcome ? <DeployOutcomeBanner controller={change.banner}
+        machine={props.machineName(target.machineId)} copy="setting" /> : null}
       {open && snapshots?.length === 0 ? <Item title={t('projects.deployments.backupNoSnapshots')} mode="info" /> : null}
       {open ? snapshots?.map(snapshot => (
         <Item key={snapshot.snapshot.snapshotId} testID={`${props.testID}.snapshot.${snapshot.snapshot.snapshotId}`}
@@ -381,9 +380,8 @@ export function DeploymentBackupRetentionRows(props: Readonly<{
           }
         />
       ) : null}
-      {prune.outcome && props.review && target ? <DeployOutcomeBanner outcome={prune.outcome}
-        pending={prune.outcome.kind === 'approval' && props.review.pendingId === prune.outcome.artifactId}
-        machine={props.machineName(target.machineId)} onOpenReview={props.review.open} onRetry={prune.retry} copy="setting" /> : null}
+      {prune.outcome && props.review && target ? <DeployOutcomeBanner controller={prune.banner}
+        machine={props.machineName(target.machineId)} copy="setting" /> : null}
     </>
   );
 }
@@ -465,10 +463,8 @@ export function DeploymentBackupSetup(props: Readonly<{
           if (result.kind === 'notNeeded') props.onChanged();
           return { ok: true };
         })} />} />
-    {change.outcome ? <DeployOutcomeBanner outcome={change.outcome}
-      pending={change.outcome.kind === 'approval' && props.review.pendingId === change.outcome.artifactId}
-      machine={props.machineName(props.detail.environment.controllerMachineId)} onOpenReview={props.review.open}
-      onRetry={change.retry} copy="setting" /> : null}</>;
+    {change.outcome ? <DeployOutcomeBanner controller={change.banner}
+      machine={props.machineName(props.detail.environment.controllerMachineId)} copy="setting" /> : null}</>;
   if (projection.phase === 'establishing') return finish(<Item testID={id} title={t('projects.deployments.loading')} mode="info" />);
   if (!destinations.length && projection.phase !== 'current') return finish(<Item testID={id}
     title={t('projects.deployments.settingsSections.setupTitle')} subtitle={t('projects.deployments.backupStatusUnavailable')} mode="info" />);
@@ -696,9 +692,8 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
     <DeploymentBackupConfigurationResult result={result} machine={props.machine} testID={id} />
     {refused ? <SurfaceStateCard testID={`${id}.refused`} size="line" kind="error" title={t('projects.deployments.addRefused')}
       reason={deploymentActionRefusalRemedy(refused.code)} diagnosticCode={refused.code} /> : null}
-    {scheduleChange.outcome && props.mode !== 'intent' ? <DeployOutcomeBanner outcome={scheduleChange.outcome}
-      pending={scheduleChange.outcome.kind === 'approval' && props.review.pendingId === scheduleChange.outcome.artifactId}
-      machine={props.machine} onOpenReview={props.review.open} onRetry={scheduleChange.retry} copy="setting" /> : null}
+    {scheduleChange.outcome && props.mode !== 'intent' ? <DeployOutcomeBanner controller={scheduleChange.banner}
+      machine={props.machine} copy="setting" /> : null}
     {setChrome ? null : footer}
   </View></ListPresentationProvider>;
 }
@@ -771,10 +766,8 @@ export function DeploymentBackupCredentialRows(props: Readonly<{
           ) : undefined}
         />
       ))}
-      {change.outcome && props.review ? <DeployOutcomeBanner outcome={change.outcome}
-        pending={change.outcome.kind === 'approval' && props.review.pendingId === change.outcome.artifactId}
-        machine={props.machineName(props.detail.environment.controllerMachineId)} onOpenReview={props.review.open}
-        onRetry={change.retry} copy="setting" /> : null}
+      {change.outcome && props.review ? <DeployOutcomeBanner controller={change.banner}
+        machine={props.machineName(props.detail.environment.controllerMachineId)} copy="setting" /> : null}
     </>
   );
 }

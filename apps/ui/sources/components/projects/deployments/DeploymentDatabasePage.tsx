@@ -70,6 +70,7 @@ import { isPrivateServiceExport, privateServiceExportAuthoring } from './private
 import { privateServiceExportReachLabel, privateServiceExportUnavailableReason } from './DeploymentPrivateServiceExports';
 import { type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
+import { DeploymentManagedDataSheet, type DeploymentManagedDataInput } from './DeploymentManagedData';
 import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { createDeploymentActions } from './deploymentActions';
 import {
@@ -403,6 +404,9 @@ export function DeploymentDatabasePage(
       controller, source: detail, data: database.data, actions, backupTarget: factsInput,
       review: props.review, machine: machineName(factsInput.machineId),
     }) : null;
+  const openManaged = database.kind === 'managed' && lifetime && actions && detail.environment.capabilities.manage
+    ? () => showManagedDataSheet({ detail, lifetime, actions, linked: database.link,
+      onApproval: props.review.request }) : null;
 
   return (
     <NavigationBackChromeProvider control={backControl}>
@@ -461,13 +465,8 @@ export function DeploymentDatabasePage(
           ) : null}
           {backupNow.outcome && target ? (
             <DeployOutcomeBanner
-              outcome={backupNow.outcome}
-              pending={
-                backupNow.outcome.kind === 'approval' &&
-                props.review.pendingId === backupNow.outcome.artifactId
-              }
+              controller={backupNow.banner}
               machine={machineName(target.machineId)}
-              onOpenReview={props.review.open}
               copy="setting"
             />
           ) : null}
@@ -641,6 +640,8 @@ export function DeploymentDatabasePage(
               testID={`${id}.provider`}
               title={t('projects.deployments.databaseProviderTitle')}
             >
+              {openManaged ? <Item testID={`${id}.manage`} title={t('projects.deployments.managedData.manage')}
+                onPress={openManaged} /> : null}
               <Item
                 title={title}
                 subtitle={database.link.targetLink.targetKind}
@@ -697,9 +698,25 @@ export function showDeploymentTemplateUpdateSheet(input: DeploymentAddSheetInput
 type AddSheetProps = DeploymentAddSheetInput & CustomModalInjectedProps & Readonly<{
   update?: Readonly<{ sourceId: string; itemId: string }>;
 }>;
+function showManagedDataSheet(input: DeploymentManagedDataInput): void {
+  showDeploymentSheet({ component: DeploymentManagedDataSheet, props: input,
+    title: t('projects.deployments.managedData.title'), testID: 'project-deployments.managed.modal' });
+}
+
 function DeploymentAddSheet(props: AddSheetProps) {
-  return props.detail.content.definition.kind === 'repository'
-    ? <DeploymentRepositoryAddSheet {...props} /> : <DeploymentAddSheetContent {...props} />;
+  const actions = React.useMemo(() => createDeploymentActions(props.lifetime,
+    props.detail.environment.projectSourceId), [props.lifetime, props.detail.environment.projectSourceId]);
+  return <>
+    {!props.update ? <ListPresentationProvider value="page" pageInsets="contained">
+      <ItemGroup header="none"><Item testID="project-deployments.add.managed"
+        title={t('projects.deployments.managedData.add')} onPress={() => {
+          props.onClose();
+          showManagedDataSheet({ detail: props.detail, lifetime: props.lifetime, actions, onApproval: props.review.request });
+        }} /></ItemGroup>
+    </ListPresentationProvider> : null}
+    {props.detail.content.definition.kind === 'repository'
+      ? <DeploymentRepositoryAddSheet {...props} /> : <DeploymentAddSheetContent {...props} />}
+  </>;
 }
 
 function DeploymentRepositoryAddSheet(props: AddSheetProps) {

@@ -307,6 +307,7 @@ const ProjectDeploymentsPage = React.memo(
     const approvalId = approval.approvalId;
     const review = React.useMemo<DeploymentReviewHandle>(() => ({
       pendingId: approval.approvalPending ? approvalId : null,
+      openRecovery: openRecoveryDestination,
       request: id => {
         approval.requestApproval(id);
         router.pushRetainingCurrent(buildApprovalHref(id, props.serverId));
@@ -314,7 +315,7 @@ const ProjectDeploymentsPage = React.memo(
       open: () => {
         if (approvalId) router.pushRetainingCurrent(buildApprovalHref(approvalId, props.serverId));
       },
-    }), [approval.approvalPending, approval.requestApproval, approvalId, props.serverId, router]);
+    }), [approval.approvalPending, approval.requestApproval, approvalId, props.serverId, router, openRecoveryDestination]);
     const startDraft = React.useCallback(() => {
       setDraftSource(null);
       setSelection(DRAFTING);

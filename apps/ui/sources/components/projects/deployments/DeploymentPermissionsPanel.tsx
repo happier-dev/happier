@@ -83,10 +83,8 @@ export const DeploymentPermissionsPanel = React.memo(
       <>
         {change.outcome && editing ? (
           <DeployOutcomeBanner
-            outcome={change.outcome}
-            pending={change.outcome.kind === 'approval' && editing.review.pendingId === change.outcome.artifactId}
+            controller={change.banner}
             machine={props.machineName(environment.controllerMachineId)}
-            onOpenReview={editing.review.open}
             copy="setting"
           />
         ) : null}

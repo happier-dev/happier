@@ -83,6 +83,7 @@ import {
   useDeploymentPress,
   readDeploymentActionError,
   type DeploymentActionOutcome,
+  type DeploymentOutcomeController,
 } from './deploymentActionOutcome';
 import { createDeploymentActions } from './deploymentActions';
 import { DeploymentEnvironmentAgentActions } from './DeploymentEnvironmentAgentActions';
@@ -208,7 +209,7 @@ export const DeploymentEnvironmentDetail = React.memo(
     const { theme } = useUnistyles();
     const router = useRouter();
     const {
-      running: deploying, outcome, reviewPending, press,
+      running: deploying, outcome, reviewPending, press, banner,
     } = useDeploymentPress(props.review, props.onOpenReceipt);
     const environment = useDeploymentEnvironment(
       props.controller,
@@ -676,8 +677,8 @@ export const DeploymentEnvironmentDetail = React.memo(
         case undefined:
           // A just-accepted Deploy says so once, when nothing above it needs saying.
           return outcome?.kind === 'started' ? (
-            <DeployOutcomeBanner outcome={outcome} pending={reviewPending} onOpenRecovery={props.onOpenRecoveryDestination}
-              machine={runtime?.source.kind === 'plugin' ? null : machineLabel} onOpenReview={review.open} />
+            <DeployOutcomeBanner controller={banner}
+              machine={runtime?.source.kind === 'plugin' ? null : machineLabel} />
           ) : null;
         case 'machineOffline':
           return (
@@ -721,8 +722,8 @@ export const DeploymentEnvironmentDetail = React.memo(
         case 'actionRefused':
         case 'approvalWaiting':
           return outcome ? (
-            <DeployOutcomeBanner outcome={outcome} pending={reviewPending} onOpenRecovery={props.onOpenRecoveryDestination}
-              machine={runtime?.source.kind === 'plugin' ? null : machineLabel} onOpenReview={review.open} />
+            <DeployOutcomeBanner controller={banner}
+              machine={runtime?.source.kind === 'plugin' ? null : machineLabel} />
           ) : null;
         case 'latestFailed': {
           const failedId = attention.deploymentId;
@@ -1181,6 +1182,8 @@ export type DeploymentReviewHandle = Readonly<{
   pendingId: string | null;
   request: (artifactId: string) => void;
   open: () => void;
+  /** Shared with every press and modal sheet; the page owns destination navigation. */
+  openRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
 }>;
 
 /**
@@ -1189,20 +1192,16 @@ export type DeploymentReviewHandle = Readonly<{
  */
 export function DeployOutcomeBanner(
   props: Readonly<{
-    outcome: DeploymentActionOutcome;
-    pending: boolean;
+    controller: DeploymentOutcomeController;
     /** Null for a platform target: no Machine to name, so the refusal's own code says why. */
     machine: string | null;
-    onOpenReview: () => void;
     copy?: 'deploy' | 'rollback' | 'cancel' | 'domain' | 'setting';
     placement?: 'inline';
-    /** Opens the typed recovery's destination; absent where the page has nowhere to send the person. */
-    onOpenRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
-    /** Requests a fresh review through the original press owner, after an explicit recovery press. */
-    onRetry?: () => void;
   }>,
 ) {
-  const { outcome, placement } = props;
+  const { placement, controller } = props;
+  const { outcome } = controller;
+  if (!outcome) return null;
   const rollback = props.copy === 'rollback';
   const cancel = props.copy === 'cancel';
   const domain = props.copy === 'domain' || props.copy === 'setting';
@@ -1210,7 +1209,7 @@ export function DeployOutcomeBanner(
   if (outcome.kind === 'receipt') return null;
   if (outcome.kind === 'approval') {
     // Once decided, the receipt itself speaks; a stale "waiting" would be untrue.
-    if (!props.pending) return null;
+    if (!controller.pending) return null;
     return (
       <AttentionBanner
         testID="project-deployments.outcome.approval"
@@ -1229,10 +1228,10 @@ export function DeployOutcomeBanner(
                   // A platform target has no Machine to name.
                   : t('projects.deployments.domainApprovalBody')
         }
-        action={{
+        action={controller.openReview ? {
           label: t('projects.deployments.openReview'),
-          onPress: props.onOpenReview,
-        }}
+          onPress: controller.openReview,
+        } : undefined}
       />
     );
   }
@@ -1255,7 +1254,7 @@ export function DeployOutcomeBanner(
   const recovery = readDeploymentRefusalRecoveryV1(outcome.code, outcome.failure?.details);
   const storedRemedy = failure?.technicalDetails.find(line => line.key === 'failure-remedy')?.value;
   const canonicalReason = failure && failure.reason !== storedRemedy ? failure.reason : null;
-  const { onOpenRecovery } = props;
+  const { openRecovery } = controller;
   return (
     <AttentionBanner
       testID={`project-deployments.outcome.refused.${outcome.reason}`}
@@ -1291,10 +1290,10 @@ export function DeployOutcomeBanner(
                 })
               : recovery?.remedy ?? failure?.reason ?? refusalConsequence(outcome.code))
       }
-      {...(recovery?.nextAction.destination === 'review' && props.onRetry
-        ? { action: { label: recovery.nextAction.label, onPress: props.onRetry } }
-        : recovery && onOpenRecovery ? { action: { label: recovery.nextAction.label,
-          onPress: () => onOpenRecovery(recovery.nextAction.destination) } } : {})}
+      {...(recovery?.nextAction.destination === 'review'
+        ? { action: { label: recovery.nextAction.label, onPress: controller.retry } }
+        : recovery && openRecovery ? { action: { label: recovery.nextAction.label,
+          onPress: () => openRecovery(recovery.nextAction.destination) } } : {})}
       // The typed code is for support; the sentence says what it left.
       details={failure ? failure.technicalDetails.map(line => `${line.label}: ${line.value}`) : [outcome.code]}
     />

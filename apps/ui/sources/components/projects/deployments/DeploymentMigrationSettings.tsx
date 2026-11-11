@@ -87,8 +87,7 @@ export function DeploymentMigrationSettings(props: Readonly<{
       {policy.migration && editing ? <Item testID={`${id}.remove`} title={t('common.remove')} disabled={change.running}
         onPress={() => { void change.press(() => editing.actions.updateEnvironment(props.detail.environment, { ownServer: { migration: null } })); }} /> : null}
     </>}
-    {change.outcome && editing ? <DeployOutcomeBanner outcome={change.outcome}
-      pending={change.outcome.kind === 'approval' && editing.review.pendingId === change.outcome.artifactId}
-      machine={props.machineName(props.detail.environment.controllerMachineId)} onOpenReview={editing.review.open} copy="setting" /> : null}
+    {change.outcome && editing ? <DeployOutcomeBanner controller={change.banner}
+      machine={props.machineName(props.detail.environment.controllerMachineId)} copy="setting" /> : null}
   </ItemGroup>;
 }

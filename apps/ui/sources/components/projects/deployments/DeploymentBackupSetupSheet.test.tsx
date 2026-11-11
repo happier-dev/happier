@@ -91,7 +91,7 @@ describe('Backup destination setup fields', () => {
             configuration: DeploymentBackupConfigurationV1Schema.parse(draft.configuration),
         }));
         const onConfigured = vi.fn<NonNullable<React.ComponentProps<typeof DeploymentBackupSetupSheet>['onConfigured']>>()
-            .mockRejectedValueOnce(new HappyError('source_unavailable', false)).mockResolvedValueOnce(undefined);
+            .mockRejectedValueOnce(new HappyError('approval_stale', false, { code: 'approval_stale' })).mockResolvedValueOnce(undefined);
         const onClose = vi.fn();
         const screen = await renderScreen(<DeploymentBackupSetupSheet detail={detail} destination={destination}
             defaults={{ values: { retainPreviousDeployments: 1, backupSchedule: { kind: 'interval', everyMs: 86_400_000,
@@ -102,9 +102,9 @@ describe('Backup destination setup fields', () => {
         await act(async () => screen.findAllByType(HappierInputField).find(entry => entry.props.field.path === 'layout')!.props.onChange('modern'));
         await screen.pressByTestIdAsync('setup.save');
         expect(onClose).not.toHaveBeenCalled();
-        const banner = screen.findAllByType(DeployOutcomeBanner).find(entry => entry.props.outcome.kind === 'refused');
+        const banner = screen.findAllByType(DeployOutcomeBanner).find(entry => entry.props.controller.outcome.kind === 'refused');
         expect(banner).toBeDefined();
-        await act(async () => banner!.props.onRetry());
+        await screen.pressByTestIdAsync('project-deployments.outcome.refused.other.action');
         expect(configure).toHaveBeenCalledOnce();
         expect(onConfigured).toHaveBeenCalledTimes(2);
         expect(onClose).toHaveBeenCalledOnce();

@@ -75,8 +75,7 @@ function FleetIngressChoice(props: Readonly<{
             : t(suggested ? 'projects.deployments.settingsSections.fleetIngressSuggestedBody'
               : 'projects.deployments.settingsSections.fleetIngressUnobserved'),
         detailFormatter: () => current, itemProps: { disabled: change.running, accessoryLayout: 'stacked' } }} />
-    {change.outcome ? <DeployOutcomeBanner outcome={change.outcome}
-      pending={change.outcome.kind === 'approval' && props.editing.review.pendingId === change.outcome.artifactId}
-      machine={props.machineName(props.detail.environment.controllerMachineId)} onOpenReview={props.editing.review.open} copy="setting" /> : null}
+    {change.outcome ? <DeployOutcomeBanner controller={change.banner}
+      machine={props.machineName(props.detail.environment.controllerMachineId)} copy="setting" /> : null}
   </>;
 }

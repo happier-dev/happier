@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { readDeploymentTemplateInstantiationPartialV1 as readDeploymentPartialResult } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 export { readDeploymentPartialResult };
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -7,6 +8,27 @@ import type { DeploymentPreviewEnrollmentV1 } from '@happier-dev/protocol/deploy
 import { HappyError } from '@/utils/errors/errors';
 
 import { readActionApprovalRequestCreatedError } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+
+type DeploymentPressReview = Readonly<{
+  request: (artifactId: string) => void;
+  pendingId?: string | null;
+  open?: () => void;
+  openRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
+}>;
+
+export type DeploymentOutcomeController = Readonly<{
+  outcome: DeploymentActionOutcome | null;
+  pending: boolean;
+  openReview: (() => void) | null;
+  retry: () => Promise<void>;
+  openRecovery: ((destination: DeploymentFailureRecoveryDestinationV1) => void) | null;
+}>;
+
+function createDeploymentOutcomeController(outcome: DeploymentActionOutcome | null, review: DeploymentPressReview | null,
+  retry: () => Promise<void>): DeploymentOutcomeController {
+  return { outcome, pending: outcome?.kind === 'approval' && review?.pendingId === outcome.artifactId,
+    openReview: review?.open ?? null, retry, openRecovery: review?.openRecovery ?? null };
+}
 
 /**
  * What a Deploy or Roll back press led to, for the page that pressed it. The Action owner decides; this only
@@ -120,18 +142,22 @@ export async function runDeploymentAction(
  * to the page's approval continuation, and the answer stays for the banner where the person pressed.
  */
 export function useDeploymentPress(
-  review: Readonly<{ pendingId: string | null; request: (artifactId: string) => void }>,
+  review: DeploymentPressReview,
   onOpenReceipt: (deploymentId: string) => void,
 ) {
   const [running, setRunning] = React.useState(false);
   const [outcome, setOutcome] = React.useState<DeploymentActionOutcome | null>(null);
   const busy = React.useRef(false);
   const { request } = review;
+  const lastPress = React.useRef<(() => Promise<ReceiptResult>) | null>(null);
+  const lastOptions = React.useRef<Readonly<{ openReceipt?: boolean }> | undefined>(undefined);
   const press = React.useCallback(async (
     run: () => Promise<ReceiptResult>,
     options?: Readonly<{ openReceipt?: boolean }>,
   ) => {
     if (busy.current) return;
+    lastPress.current = run;
+    lastOptions.current = options;
     busy.current = true;
     setRunning(true);
     setOutcome(null);
@@ -145,8 +171,11 @@ export function useDeploymentPress(
     if (result.kind === 'approval') request(result.artifactId);
     setOutcome(result);
   }, [onOpenReceipt, request]);
-  const reviewPending = outcome?.kind === 'approval' && review.pendingId === outcome.artifactId;
-  return { running, outcome, reviewPending, press };
+  const retry = React.useCallback(async () => {
+    if (lastPress.current) await press(lastPress.current, lastOptions.current);
+  }, [press]);
+  const banner = createDeploymentOutcomeController(outcome, review, retry);
+  return { running, outcome, reviewPending: banner.pending, press, banner };
 }
 
 type SettledChange = Readonly<{ ok: true; previewEnrollment?: DeploymentPreviewEnrollmentV1 }> | Extract<ReceiptResult, { ok: false }>;
@@ -156,7 +185,7 @@ type SettledChange = Readonly<{ ok: true; previewEnrollment?: DeploymentPreviewE
  * review opens the page's approval; a refusal is kept for the banner; success re-reads what the change moved.
  */
 export function useDeploymentChangePress(
-  review: Readonly<{ request: (artifactId: string) => void }> | null,
+  review: DeploymentPressReview | null,
   onSettled: () => void,
 ) {
   const [running, setRunning] = React.useState(false);
@@ -191,5 +220,6 @@ export function useDeploymentChangePress(
   const retry = React.useCallback(async () => {
     if (lastPress.current) await press(lastPress.current);
   }, [press]);
-  return { running, outcome, followup, press, retry };
+  const banner = createDeploymentOutcomeController(outcome, review, retry);
+  return { running, outcome, followup, press, retry, banner };
 }

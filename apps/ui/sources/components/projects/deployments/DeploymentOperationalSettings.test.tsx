@@ -79,7 +79,7 @@ it.each(['plain', 'e2ee'] as const)('saves and removes a literal candidate migra
       screen.findHostByTestId(`${prefix}.pending.input`)!.props.onChangeText('pending\n--check');
     });
     await screen.pressByTestIdAsync(`${prefix}.save`);
-    await vi.waitFor(() => expect(writes, `${screen.getTextContent()} ${JSON.stringify(screen.findAllByType(DeployOutcomeBanner).map(node => node.props.outcome))}`).toEqual([{ migration: { service: 'app', argv: ['migrate', '--all'], pendingCheck: { argv: ['pending', '--check'] } },
+    await vi.waitFor(() => expect(writes, `${screen.getTextContent()} ${JSON.stringify(screen.findAllByType(DeployOutcomeBanner).map(node => node.props.controller.outcome))}`).toEqual([{ migration: { service: 'app', argv: ['migrate', '--all'], pendingCheck: { argv: ['pending', '--check'] } },
       backupBeforeMigration: true, migrationFailurePolicy: 'ask' }]));
     detail = { ...detail, content: { ...detail.content, ownServer: { ...detail.content.ownServer!,
       migration: { service: 'app', argv: ['migrate', '--all'] } } } };
@@ -132,7 +132,7 @@ it.each(['plain', 'e2ee'] as const)('edits and removes registry access through t
     await screen.pressByTestIdAsync(`${registry}.edit`);
     await screen.pressByTestIdAsync(`${registry}.access:pushPull`);
     await screen.pressByTestIdAsync(`${registry}.save`);
-    await vi.waitFor(() => expect(writes, `${screen.getTextContent()} ${JSON.stringify(screen.findAllByType(DeployOutcomeBanner).map(node => node.props.outcome))}`).toEqual([{ set: [{ ...binding, access: 'pushPull' }], remove: [] }]));
+    await vi.waitFor(() => expect(writes, `${screen.getTextContent()} ${JSON.stringify(screen.findAllByType(DeployOutcomeBanner).map(node => node.props.controller.outcome))}`).toEqual([{ set: [{ ...binding, access: 'pushPull' }], remove: [] }]));
     const changed = { ...binding, access: 'pushPull' as const, registryOrigin: 'https://renamed.registry' };
     detail = { ...detail, content: { ...detail.content, bindings: [{ ...binding, access: 'pushPull' }] } };
     await act(async () => screen.update(element()));
@@ -158,5 +158,48 @@ it.each(['plain', 'e2ee'] as const)('edits and removes registry access through t
     await vi.waitFor(() => expect(writes.at(-1)).toEqual({ set: [{ ...binding, registryOrigin: 'https://other.registry',
       source: { ...binding.source, resourceRevision: entry.revision } }], remove: [] }));
     expect(home.request.mock.calls.filter(([url]) => new URL(String(url)).pathname.endsWith('/resources/materials'))).toHaveLength(0);
+  } finally { controller.retire(); context.dispose(); }
+});
+
+it.each(['action_interactive_review_required', 'approval_stale', 'machine_unavailable'] as const)('opens recovery from Settings after %s', async code => {
+  const mode = 'plain';
+  let boundary: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | null = null;
+  const writes: unknown[] = [];
+  home = await createSecretSettingsTestHarness({ mode, settings: authoringSettings, token: authoringToken, serverIdentityId: `srv_${({ action_interactive_review_required: '1', approval_stale: '2', machine_unavailable: '3' }[code]).repeat(32)}`,
+    handleRequest: async (path, init) => path.startsWith('/v1/deployments/environments/')
+      ? Response.json({ ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink) })
+      : boundary?.handle(new URL(path, context.endpointUrl), init) ?? null });
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const context = await captureLazyActionAccountContext(home.scope.serverId);
+  const { encryption } = await context.resolveAccountEncryption();
+  const { createDeploymentActions } = await import('./deploymentActions');
+  const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
+  const { DeploymentEnvironmentSettingsPanel } = await import('./DeploymentEnvironmentSettingsPanel');
+  const recovered: string[] = [];
+  const { ModalProvider } = await import('@/modal');
+  const initial = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: context.serverIdentityId! }) });
+  let detail = { ...initial, runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1(initial), memberVersions: {}, secretRevisions: [] };
+  boundary = await createExternalActionAccountHttpBoundary({ serverUrl: context.endpointUrl,
+    serverIdentityId: context.serverIdentityId!, accountId: context.accountId, machineId: detail.environment.controllerMachineId,
+    actionId: 'deployments.environments.update', tokenEpoch: 0, ...(encryption ? { encryption } : {}), execute: raw => {
+      const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(raw);
+      writes.push(input.patch?.ownServer);
+      return { ok: false, error: code };
+    }, failure: () => ({ errorCode: code, error: code }) });
+  const controller = createDeploymentReadControllerV1({ scope: { ...home.scope, projectSourceId: detail.environment.projectSourceId },
+    transport: createDeploymentReadTransport(context.accountLifetime) });
+  const actions = createDeploymentActions(context.accountLifetime, detail.environment.projectSourceId);
+  const editing = { actions, serverId: home.scope.serverId, review: { pendingId: null, request() {}, open() {}, openRecovery(destination: string) { recovered.push(destination); } }, onChanged() {} };
+  const element = () => <ModalProvider><ListPresentationProvider value="page"><DeploymentEnvironmentSettingsPanel detail={detail} controller={controller}
+    definitionDocument={{ document: detail.content.definition.kind === 'stored' ? detail.content.definition.document : '', change() {} }}
+    demand={{ mounted: false, visible: false, focused: false }} machineName={id => id} environmentTitle={() => null}
+    editing={editing} lifetime={context.accountLifetime} /></ListPresentationProvider></ModalProvider>;
+  try {
+    const screen = await renderScreen(element());
+    await screen.pressByTestIdAsync('project-deployments.environment.settings.rollout.rollout:startFirst');
+    await vi.waitFor(() => expect(screen.findByTestId(`project-deployments.outcome.refused.${code === 'machine_unavailable' ? 'machine' : 'other'}`)).not.toBeNull());
+    await screen.pressByTestIdAsync(`project-deployments.outcome.refused.${code === 'machine_unavailable' ? 'machine' : 'other'}.action`);
+    if (code === 'machine_unavailable') expect(recovered).toEqual(['machines']);
+    else await vi.waitFor(() => expect(writes).toHaveLength(2));
   } finally { controller.retire(); context.dispose(); }
 });

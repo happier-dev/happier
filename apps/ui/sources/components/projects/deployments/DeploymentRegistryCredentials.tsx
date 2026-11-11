@@ -99,8 +99,7 @@ export function DeploymentRegistryCredentials(props: Readonly<{
         testID={`${id}.edit`} mode={editable ? undefined : 'info'} onPress={editable ? () => open(selected) : undefined} />
       {editable ? <Item testID={`${id}.remove`} title={t('common.remove')} onPress={remove} disabled={change.running} /> : null}
     </> : <Item title={t('projects.deployments.settingsSections.registryNone')} mode="info" />}
-    {change.outcome && editing ? <DeployOutcomeBanner outcome={change.outcome}
-      pending={change.outcome.kind === 'approval' && editing.review.pendingId === change.outcome.artifactId}
-      machine={props.machineName(props.detail.environment.controllerMachineId)} onOpenReview={editing.review.open} copy="setting" /> : null}
+    {change.outcome && editing ? <DeployOutcomeBanner controller={change.banner}
+      machine={props.machineName(props.detail.environment.controllerMachineId)} copy="setting" /> : null}
   </ItemGroup>;
 }

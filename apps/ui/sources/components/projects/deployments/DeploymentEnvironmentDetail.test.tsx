@@ -78,7 +78,7 @@ const { HappyError } = await import('@/utils/errors/errors');
 it('lets a refused backup press request a fresh review from its failure banner', async () => {
   let attempts = 0;
   const reviews: string[] = [];
-  const review = { request: (id: string) => { reviews.push(id); } };
+  const review = { pendingId: 'fresh-backup-review', open() {}, request: (id: string) => { reviews.push(id); } };
   const settled = () => {};
   // The caller's Action boundary settles stale first, then returns a newly minted review.
   const run = async () => {
@@ -92,8 +92,8 @@ it('lets a refused backup press request a fresh review from its failure banner',
     const change = useDeploymentChangePress(review, settled);
     return <>
       <SectionActionButton testID="backup.run" title="Back up now" onPress={() => change.press(run)} />
-      {change.outcome ? <DeployOutcomeBanner outcome={change.outcome} pending={change.outcome.kind === 'approval'}
-        machine="Backup machine" onOpenReview={() => {}} copy="setting" onRetry={change.retry} /> : null}
+      {change.outcome ? <DeployOutcomeBanner controller={change.banner}
+        machine="Backup machine" copy="setting" /> : null}
     </>;
   }
   const screen = await renderScreen(<BackupRecovery />);
@@ -287,14 +287,21 @@ it('shows the declared login username and first-admin warning with the serving i
     expect(screen.getTextContent()).toContain(`sha256:${'b'.repeat(64)}`);
     // No admitted address means no speculative external link; the existing Domains tab is the remedy.
     await screen.pressByTestIdAsync('project-deployments.environment.services.firstRun.domains');
-    expect(screen.findHostByTestId('project-deployments.environment.tab:domains')?.props.accessibilityState?.selected).toBe(true);
+    await waitForHomeGovernance(async () => {
+      await act(async () => {});
+      const { Modal } = await import('@/modal');
+      expect(screen.findHostByTestId('project-deployments.environment.tab:domains')?.props.accessibilityState?.selected,
+        JSON.stringify({ alerts: vi.mocked(Modal.alert).mock.calls.map(call => call.slice(0, 2)),
+          presentations: vi.mocked(Modal.show).mock.calls.map(call => call[0]?.component?.name),
+          requests: homes.requests.map(request => `${request.method} ${request.path.split('?')[0]}`) })).toBe(true);
+    });
   } finally { await act(async () => { controller.retire(); }); }
 });
 
 beforeEach(async () => {
   installHomeGovernanceBoundaries(homes);
   scope.serverId = await homes.addHome({ name: 'Environment navigation', serverUrl: 'https://environment-navigation.test',
-    accountId: scope.accountId, serverIdentityId: 'srv_environment_navigation' });
+    accountId: scope.accountId, serverIdentityId: 'srv_environment_navigation', currentAccount: true });
   const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
   const resolution = await resolveServerCredentialAccountScope(scope.serverId);
   expect(resolution.kind).toBe('bound');

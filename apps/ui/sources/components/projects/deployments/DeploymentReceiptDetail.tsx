@@ -384,15 +384,13 @@ export const DeploymentReceiptDetail = React.memo(
       </View>
     );
     const outcomeBanner = (
-      press: Readonly<{ outcome: ReturnType<typeof useDeploymentPress>['outcome']; reviewPending: boolean }>,
+      press: ReturnType<typeof useDeploymentPress>,
       copy: 'deploy' | 'rollback' | 'cancel',
       placement?: 'inline',
     ) => press.outcome ? (
       <DeployOutcomeBanner
-        outcome={press.outcome}
-        pending={press.reviewPending}
+        controller={press.banner}
         machine={content.machines[0] ? firstMachine : null}
-        onOpenReview={review.open}
         copy={copy}
         placement={placement}
       />

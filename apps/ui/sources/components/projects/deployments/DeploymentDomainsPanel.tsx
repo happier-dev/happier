@@ -92,7 +92,8 @@ export function DeploymentDomainsPanel(
     editing?.onChanged();
     void refresh();
   }, [editing, refresh]);
-  const { running, outcome, press } = useDeploymentChangePress(editing?.review ?? null, onSettled);
+  const change = useDeploymentChangePress(editing?.review ?? null, onSettled);
+  const { running, outcome, press } = change;
   // The Environment record (one shared lease with the page) names its services, their declared ports and which
   // Domain credentials are already bound; it is read only where this viewer can edit.
   const record = useDeploymentEnvironmentRecord(props.controller, editing ? props.environmentId : null, props.demand);
@@ -143,10 +144,8 @@ export function DeploymentDomainsPanel(
     >
       {outcome && editing ? (
         <DeployOutcomeBanner
-          outcome={outcome}
-          pending={outcome.kind === 'approval' && editing.review.pendingId === outcome.artifactId}
+          controller={change.banner}
           machine={editing.machine}
-          onOpenReview={editing.review.open}
           copy="domain"
         />
       ) : null}
