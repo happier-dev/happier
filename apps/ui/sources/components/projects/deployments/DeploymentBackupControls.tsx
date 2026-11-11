@@ -457,7 +457,7 @@ export function DeploymentBackupSetup(props: Readonly<{
     projection.interactionEnabled, destinations.length, open]);
   const finish = (content: React.ReactNode) => <>{content}
     <Item title={t('projects.deployments.backupNotNeededTitle')} mode="info" rightElement={
-      <SectionActionButton testID={`${id}.notNeeded`} title={t('projects.deployments.backupNotNeededTitle')}
+      <SectionActionButton testID={`${id}.notNeeded`} title={t('projects.deployments.backupNotNeededAction')}
         disabled={change.running} onPress={() => change.press(async () => {
           const result = await props.actions.configureBackup(props.detail.environment, { intent: 'markNotNeeded' });
           if (result.kind === 'notNeeded') props.onChanged();

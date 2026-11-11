@@ -18896,6 +18896,7 @@ settingsSession: {
         notAvailableYet: "Ainda não disponível",
         backupsErrorTitle: "Não foi possível carregar as configurações de backup",
         backupNotNeededTitle: "Nada para fazer backup aqui",
+        backupNotNeededAction: "Pular backups",
         backupNotNeededBody: ({ name }: { name: string }) => `${name} não guarda dados que precisem de backup.`,
         backupSources: "Faz backup de",
         backupSourceDump: ({ service }: { service: string }) => `${service} (dump do banco de dados)`,

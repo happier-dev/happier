@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { DeploymentEnvironmentReadDetailV1, DeploymentReadControllerV1, DeploymentReadDemandV1 } from '@happier-dev/deployments';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -255,9 +256,9 @@ function PreviewForkChoice(props: Readonly<{
         ...(id === 'approveEachCommit' && !allowed ? { unavailableReason: reason } : {}) }))}
       value={props.template.forkPreviews} disabled={props.saving}
       onChange={next => { if (next === 'off' || allowed) props.onSave(next); }} />
-    {failed ? <Item title={t('projects.deployments.settingsSections.previewEditor.forksUnavailable')}
-      rightElement={<SectionActionButton testID={`${props.testID}.retry`} title={t('common.retry')}
-        onPress={() => setRetry(value => value + 1)} />} /> : null}
+    {/* The choice above already says why; this row only offers the way forward. */}
+    {failed ? <Item testID={`${props.testID}.retry`} title={t('common.retry')}
+      onPress={() => setRetry(value => value + 1)} /> : null}
     {eligibility && !allowed && props.onChooseMachine ? <Item
       title={t('projects.deployments.settingsSections.previewEditor.forksChooseMachine')}
       onPress={props.onChooseMachine} /> : null}
@@ -301,6 +302,7 @@ function PreviewTurnOnRow(props: Readonly<{
   machineName: (id: string) => string;
   inspect: ReturnType<typeof createDeploymentActions>['inspectPlatformTarget'] | null;
 }>) {
+  const { theme } = useUnistyles();
   const project = useProjectSource(props.lifetime, props.detail.environment.projectSourceId);
   const repository = readProjectRepositoryIdentityV1({ source: project.source?.source ?? null });
   const [draft, setDraft] = React.useState<PreviewTemplate | null>(null);
@@ -315,10 +317,8 @@ function PreviewTurnOnRow(props: Readonly<{
         title={t('projects.deployments.settingsSections.previewsNoRepository')} mode="info" />
     );
   }
+  // The template rows below carry the one Runs on row for the draft.
   if (draft) return <>
-    {defaults ? <Item title={t('projects.deployments.settingsSections.previewsRunsOn')}
-      detail={defaults.values.previewMachineId ? props.machineName(defaults.values.previewMachineId) : undefined}
-      subtitle={sourceWord(defaults.sources.previewMachineId)} mode="info" /> : null}
     {defaults && unresolvedData && draft.data.length === 0 ? <Item testID={`${props.testID}.data.default`}
       title={t('projects.deployments.settingsSections.previewsData')}
       detail={t(unresolvedData === 'own' ? 'projects.deployments.settingsSections.previewsDataOwn'
@@ -329,12 +329,12 @@ function PreviewTurnOnRow(props: Readonly<{
       unresolvedData={draft.data.length === 0 ? unresolvedData : undefined}
       onDataChoice={choice => setUnresolvedData(choice === 'none' ? undefined : choice)}
       requireRuntimeChoice={requireRuntimeChoice} onRuntimeChoice={() => setRequireRuntimeChoice(false)} />
-    <Item title={t('projects.deployments.settingsSections.previewEditor.configure')} rightElement={<>
+    <Item title={t('projects.deployments.settingsSections.previewEditor.configure')} rightElement={<View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
       <SectionActionButton title={t('common.cancel')} onPress={() => { setDraft(null); setDefaults(null); }} />
       <SectionActionButton testID={`${props.testID}.setup.save`} title={t('common.save')}
         disabled={props.saving || requireRuntimeChoice || Boolean(unresolvedData && draft.data.length === 0)}
         onPress={() => { if (!requireRuntimeChoice && !(unresolvedData && draft.data.length === 0)) props.onSave(draft); }} />
-    </>} />
+    </View>} />
   </>;
   return (
     <>

@@ -18898,6 +18898,7 @@ settingsSession: {
             notAvailableYet: "Noch nicht verfügbar",
             backupsErrorTitle: "Backup-Einstellungen konnten nicht geladen werden",
             backupNotNeededTitle: "Hier gibt es nichts zu sichern",
+            backupNotNeededAction: "Backups überspringen",
             backupNotNeededBody: ({ name }: { name: string }) => `${name} speichert keine Daten, die ein Backup brauchen.`,
             backupSources: "Sichert",
             backupSourceDump: ({ service }: { service: string }) => `${service} (Datenbank-Dump)`,

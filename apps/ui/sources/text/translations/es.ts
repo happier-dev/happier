@@ -18790,6 +18790,7 @@ settingsSession: {
         notAvailableYet: "Aún no disponible",
         backupsErrorTitle: "No se pudo cargar la configuración de copias",
         backupNotNeededTitle: "Nada que respaldar aquí",
+        backupNotNeededAction: "Omitir copias de seguridad",
         backupNotNeededBody: ({ name }: { name: string }) => `${name} no guarda datos que necesiten copia.`,
         backupSources: "Respalda",
         backupSourceDump: ({ service }: { service: string }) => `${service} (volcado de base de datos)`,

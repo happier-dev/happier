@@ -18615,6 +18615,7 @@ settingsSession: {
         notAvailableYet: "Jeszcze niedostępne",
         backupsErrorTitle: "Nie udało się wczytać ustawień kopii zapasowych",
         backupNotNeededTitle: "Tu nie ma czego kopiować",
+        backupNotNeededAction: "Pomiń kopie zapasowe",
         backupNotNeededBody: ({ name }: { name: string }) => `${name} nie przechowuje danych wymagających kopii.`,
         backupSources: "Kopiuje",
         backupSourceDump: ({ service }: { service: string }) => `${service} (zrzut bazy danych)`,

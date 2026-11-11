@@ -4,7 +4,7 @@ import { resolveLocalServiceDomainActionRpcBinding } from '@happier-dev/protocol
 import { LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
 import { resolveApprovalReplayRoute } from './approvalReplayRoute';
-import { executeMachineActionAtDaemon } from './executeMachineActionAtDaemon';
+import { executeMachineActionAtDaemon, openPresentUserReviewForRefusal } from './executeMachineActionAtDaemon';
 import { createUiPreparedSessionBirthV1 } from './preparedSessionBirth';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED, isAccountModeDowngradeUnverifiedError, readRpcRequestDisposition } from '@happier-dev/sync-client';
@@ -5029,7 +5029,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     }
     return resolved.surface !== 'plugin' && isMachineOwnedAdmissionAction(actionId, input)
       ? await executeMachineAction(actionId, input, resolved, confirmInFlow)
-      : await executor.execute(actionId, input, confirmInFlow ? bindPresentUserActionConfirmation(actionId, input, resolved) : resolved);
+      : await openPresentUserReviewForRefusal(actionId, input, resolved,
+        await executor.execute(actionId, input, confirmInFlow ? bindPresentUserActionConfirmation(actionId, input, resolved) : resolved),
+        (requestedActionId, actionInput) => executor.execute(requestedActionId, actionInput, resolved));
   };
   return {
     previewSessionTargets: async (target, context) => {
@@ -5077,7 +5079,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           ...(review?.operation ? { operation: review.operation } : {}),
           invocation: { run: () => executeMachineAction(actionId, input, resolved) } };
       }
-      return await executor.prepare(actionId, input, resolved, options);
+      // A prepared run reaches the same receiving owner as execute, so its refusal opens the same review.
+      const prepared = await executor.prepare(actionId, input, resolved, options);
+      return prepared.kind === 'ready' ? { ...prepared, invocation: { ...prepared.invocation,
+        run: async () => await openPresentUserReviewForRefusal(actionId, input, resolved, await prepared.invocation.run(),
+          (requestedActionId, actionInput) => executor.execute(requestedActionId, actionInput, resolved)) } } : prepared;
     },
     executeAdmittedClientAction: (actionId, input, context) => executor.executeAdmittedClientAction(actionId, input, context),
     execute: executeAction,

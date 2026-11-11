@@ -18743,6 +18743,7 @@ settingsSession: {
         notAvailableYet: "Пока недоступно",
         backupsErrorTitle: "Не удалось загрузить настройки резервного копирования",
         backupNotNeededTitle: "Здесь нечего копировать",
+        backupNotNeededAction: "Пропустить резервное копирование",
         backupNotNeededBody: ({ name }: { name: string }) => `${name} не хранит данных, которым нужна резервная копия.`,
         backupSources: "Копирует",
         backupSourceDump: ({ service }: { service: string }) => `${service} (дамп базы данных)`,

@@ -159,6 +159,15 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
       { id: 'recreate', label: t('projects.deployments.settingsSections.rolloutRecreateShort') },
       { id: 'startFirst', label: t('projects.deployments.settingsSections.rolloutStartFirstShort') },
     ];
+    // Each change's outcome shows inside the section that pressed it, as Backups places its retention outcome;
+    // the Compose editor sits right under the page lead, so its outcome stays there.
+    const changeOutcome = (at: DeploymentEnvironmentSettingsSectionV1 | null) => change.outcome && editing && change.outcomeAt === at ? (
+      <DeployOutcomeBanner
+        controller={change.banner}
+        machine={machineName(detail.environment.controllerMachineId)}
+        copy="setting"
+      />
+    ) : null;
     const checkLifetime = editing ? props.lifetime ?? null : null;
     const checkAnchor = React.useRef<View>(null);
     const [openingCheckSetup, setOpeningCheckSetup] = React.useState(false);
@@ -177,13 +186,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             onPress={() => router.push({ pathname: SETTINGS_ROUTES.deployments,
               params: { serverId: props.detail.environment.serverId } })} />
         </ItemGroup>
-        {change.outcome && editing ? (
-          <DeployOutcomeBanner
-            controller={change.banner}
-            machine={machineName(detail.environment.controllerMachineId)}
-            copy="setting"
-          />
-        ) : null}
+        {changeOutcome(null)}
         {detail.content.definition.kind === 'stored' ? <StoredDefinitionEditor environment={detail.environment}
           definition={detail.content.definition} document={props.definitionDocument} editing={editing} change={change} /> : null}
         {editing ? <MoveDefinitionToRepository detail={detail} lifetime={props.lifetime ?? null}
@@ -208,6 +211,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             />
           ) : undefined}
         >
+          {changeOutcome('servers-build')}
           {platformSource && runtimeLinkId ? (
             <Item
               testID={`${section('servers-build')}.platform`}
@@ -266,7 +270,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
               fallback={t('projects.deployments.buildsOnTarget')}
               disabled={change.running}
               onChoose={(machineId) => {
-                void change.press(() => editing.actions.updateEnvironment(detail.environment, { buildMachineId: machineId }));
+                void change.press(() => editing.actions.updateEnvironment(detail.environment, { buildMachineId: machineId }), 'servers-build');
               }}
             />
           ) : (
@@ -292,6 +296,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
           title={t('projects.deployments.sectionController')}
           description={t('projects.deployments.sectionControllerDescription')}
         >
+          {changeOutcome('controller')}
           {editing ? (
             <EnvironmentMachineChoice
               testID={`${section('controller')}.machine`}
@@ -302,7 +307,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
               fallback={machineName(detail.environment.controllerMachineId)}
               disabled={change.running}
               onChoose={(machineId) => {
-                void change.press(() => editing.actions.setController(detail.environment, machineId));
+                void change.press(() => editing.actions.setController(detail.environment, machineId), 'controller');
               }}
             />
           ) : (
@@ -321,6 +326,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
           title={t('projects.deployments.sectionRollout')}
           description={t('projects.deployments.sectionRolloutDescription')}
         >
+          {changeOutcome('rollout')}
           {ownServer && editing ? (
             <>
               {/* How it deploys (lab review/howitdeploys): each choice saves once through environments.update. */}
@@ -336,7 +342,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
                 value={ownServer.rollout}
                 disabled={change.running}
                 onChange={(rollout) => {
-                  void change.press(() => editing.actions.updateEnvironment(detail.environment, { ownServer: { rollout } }));
+                  void change.press(() => editing.actions.updateEnvironment(detail.environment, { ownServer: { rollout } }), 'rollout');
                 }}
               />
               <Item
@@ -351,7 +357,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
                     disabled={change.running}
                     onValueChange={(autoRestorePreviousRelease) => {
                       void change.press(() => editing.actions.updateEnvironment(detail.environment,
-                        { ownServer: { autoRestorePreviousRelease } }));
+                        { ownServer: { autoRestorePreviousRelease } }), 'rollout');
                     }}
                   />
                 }
@@ -395,7 +401,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
                 if (draft.trim() !== '' && Number.isSafeInteger(count) && count >= 0
                   && count !== detail.content.retainPreviousDeployments) {
                   void change.press(() => editing.actions.updateEnvironment(detail.environment,
-                    { retainPreviousDeployments: count }));
+                    { retainPreviousDeployments: count }), 'rollout');
                 }
                 // The settled Environment re-read replaces this value.
                 return String(detail.content.retainPreviousDeployments);
@@ -468,6 +474,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             title={t('projects.deployments.sectionPreviews')}
             description={t('projects.deployments.sectionPreviewsDescription')}
           >
+            {changeOutcome('previews')}
             {/* The save landed; only new pull requests are affected, so the warning sits with the previews it concerns. */}
             {change.followup || previewEnrollmentUnavailable ? (
               <SurfaceStateCard testID="project-deployments.environment.settings.preview-enrollment" kind="warning" size="line"
@@ -484,7 +491,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
                 demand={props.demand}
                 machineName={machineName}
                 onSave={editing ? (next) => {
-                  void change.press(() => editing.actions.updateEnvironment(detail.environment, { previewTemplate: next }));
+                  void change.press(() => editing.actions.updateEnvironment(detail.environment, { previewTemplate: next }), 'previews');
                 } : null}
                 saving={change.running}
                 inspect={editing?.actions.inspectPlatformTarget ?? null}

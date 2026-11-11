@@ -18664,6 +18664,7 @@ settingsSession: {
         notAvailableYet: "Pas encore disponible",
         backupsErrorTitle: "Impossible de charger les réglages de sauvegarde",
         backupNotNeededTitle: "Rien à sauvegarder ici",
+        backupNotNeededAction: "Ignorer les sauvegardes",
         backupNotNeededBody: ({ name }: { name: string }) => `${name} ne garde aucune donnée à sauvegarder.`,
         backupSources: "Sauvegarde",
         backupSourceDump: ({ service }: { service: string }) => `${service} (dump de base de données)`,

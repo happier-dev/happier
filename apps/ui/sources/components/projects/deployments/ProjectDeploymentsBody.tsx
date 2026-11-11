@@ -24,7 +24,6 @@ import { CollectionDraftTitleScope } from '@/components/ui/lists/collection/Coll
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useCollectionRailWidth } from '@/components/ui/lists/collection/useCollectionRailWidth';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { usePageSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
@@ -395,7 +394,6 @@ const ProjectDeploymentsPage = React.memo(
       };
       return (
         <ItemList testID="project-deployments.empty">
-          {preparation ? <ItemGroup header="none">{preparation}</ItemGroup> : null}
           <EmptyState
             layout="page"
             scene="shipped"
@@ -407,6 +405,12 @@ const ProjectDeploymentsPage = React.memo(
               secondaryAction: emptySettingsAction,
             } : { primaryAction: emptySettingsAction })}
           />
+          {/* The agent ways forward the copy names, quiet beneath the page's own actions rather than a card above them. */}
+          {preparation ? (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: theme.space.s8 }}>
+              {preparation}
+            </View>
+          ) : null}
         </ItemList>
       );
     }

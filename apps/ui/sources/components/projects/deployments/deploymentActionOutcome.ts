@@ -193,9 +193,14 @@ export function useDeploymentChangePress(
   const [followup, setFollowup] = React.useState<Extract<DeploymentPreviewEnrollmentV1, { status: 'unavailable' }> | null>(null);
   const busy = React.useRef(false);
   const lastPress = React.useRef<(() => Promise<SettledChange>) | null>(null);
-  const press = React.useCallback(async (run: () => Promise<SettledChange>) => {
+  // The page section whose control pressed, so its outcome shows where the person acted.
+  const [outcomeAt, setOutcomeAt] = React.useState<string | null>(null);
+  const lastAt = React.useRef<string | null>(null);
+  const press = React.useCallback(async (run: () => Promise<SettledChange>, at?: string) => {
     if (busy.current) return false;
     lastPress.current = run;
+    lastAt.current = at ?? null;
+    setOutcomeAt(at ?? null);
     busy.current = true;
     setRunning(true);
     setOutcome(null);
@@ -218,8 +223,8 @@ export function useDeploymentChangePress(
   // A person can request a new review through the same Action entry point;
   // the refused approval itself is never replayed or accepted here.
   const retry = React.useCallback(async () => {
-    if (lastPress.current) await press(lastPress.current);
+    if (lastPress.current) await press(lastPress.current, lastAt.current ?? undefined);
   }, [press]);
   const banner = createDeploymentOutcomeController(outcome, review, retry);
-  return { running, outcome, followup, press, retry, banner };
+  return { running, outcome, outcomeAt, followup, press, retry, banner };
 }

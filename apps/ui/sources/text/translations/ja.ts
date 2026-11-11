@@ -18704,6 +18704,7 @@ settingsSession: {
         notAvailableYet: "まだ利用できません",
         backupsErrorTitle: "バックアップ設定を読み込めませんでした",
         backupNotNeededTitle: "ここにバックアップするものはありません",
+        backupNotNeededAction: "バックアップを省略",
         backupNotNeededBody: ({ name }: { name: string }) => `${name} はバックアップが必要なデータを保持していません。`,
         backupSources: "バックアップ対象",
         backupSourceDump: ({ service }: { service: string }) => `${service}（データベースダンプ）`,

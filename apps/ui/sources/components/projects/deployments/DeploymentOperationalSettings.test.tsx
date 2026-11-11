@@ -176,6 +176,7 @@ it.each(['action_interactive_review_required', 'approval_stale', 'machine_unavai
   const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
   const { DeploymentEnvironmentSettingsPanel } = await import('./DeploymentEnvironmentSettingsPanel');
   const recovered: string[] = [];
+  const requested: string[] = [];
   const { ModalProvider } = await import('@/modal');
   const initial = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: context.serverIdentityId! }) });
   let detail = { ...initial, runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1(initial), memberVersions: {}, secretRevisions: [] };
@@ -189,7 +190,7 @@ it.each(['action_interactive_review_required', 'approval_stale', 'machine_unavai
   const controller = createDeploymentReadControllerV1({ scope: { ...home.scope, projectSourceId: detail.environment.projectSourceId },
     transport: createDeploymentReadTransport(context.accountLifetime) });
   const actions = createDeploymentActions(context.accountLifetime, detail.environment.projectSourceId);
-  const editing = { actions, serverId: home.scope.serverId, review: { pendingId: null, request() {}, open() {}, openRecovery(destination: string) { recovered.push(destination); } }, onChanged() {} };
+  const editing = { actions, serverId: home.scope.serverId, review: { pendingId: null, request(artifactId: string) { requested.push(artifactId); }, open() {}, openRecovery(destination: string) { recovered.push(destination); } }, onChanged() {} };
   const element = () => <ModalProvider><ListPresentationProvider value="page"><DeploymentEnvironmentSettingsPanel detail={detail} controller={controller}
     definitionDocument={{ document: detail.content.definition.kind === 'stored' ? detail.content.definition.document : '', change() {} }}
     demand={{ mounted: false, visible: false, focused: false }} machineName={id => id} environmentTitle={() => null}
@@ -197,8 +198,25 @@ it.each(['action_interactive_review_required', 'approval_stale', 'machine_unavai
   try {
     const screen = await renderScreen(element());
     await screen.pressByTestIdAsync('project-deployments.environment.settings.rollout.rollout:startFirst');
-    await vi.waitFor(() => expect(screen.findByTestId(`project-deployments.outcome.refused.${code === 'machine_unavailable' ? 'machine' : 'other'}`)).not.toBeNull());
-    await screen.pressByTestIdAsync(`project-deployments.outcome.refused.${code === 'machine_unavailable' ? 'machine' : 'other'}.action`);
+    const refused = `project-deployments.outcome.refused.${code === 'machine_unavailable' ? 'machine' : 'other'}`;
+    if (code === 'action_interactive_review_required') {
+      // The controller's refusal opens one review of this exact Save; nothing reruns and nothing reads as a failure.
+      await vi.waitFor(() => expect(requested).toHaveLength(1));
+      expect(writes).toHaveLength(1);
+      expect(screen.findByTestId(refused)).toBeNull();
+      return;
+    }
+    await vi.waitFor(() => expect(screen.findByTestId(refused)).not.toBeNull());
+    const banner = screen.find(node => node.props.testID === refused && node.props.tone !== undefined);
+    // The outcome shows inside the section whose control was pressed, not at the page lead.
+    let section = banner.parent;
+    while (section && section.props.testID !== 'project-deployments.environment.settings.rollout') section = section.parent;
+    expect(section).not.toBeNull();
+    // A refusal that needs a fresh review is "needs you" (amber) with its review, never a rose failure.
+    if (code === 'approval_stale') {
+      expect(banner.props).toMatchObject({ tone: 'warning', title: 'Waiting for your review' });
+    }
+    await screen.pressByTestIdAsync(`${refused}.action`);
     if (code === 'machine_unavailable') expect(recovered).toEqual(['machines']);
     else await vi.waitFor(() => expect(writes).toHaveLength(2));
   } finally { controller.retire(); context.dispose(); }

@@ -20,6 +20,7 @@ import { DeploymentBackupConfigurationV1Schema } from '@happier-dev/deployment-p
 import { createWorkflowAutomationHttpBoundary } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
 import { AutomationStoredWorkflowDefinitionV2Schema } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal'))
     .createModalModuleMock({ confirmResult: true }).module);
@@ -460,6 +461,50 @@ describe('deployment UI Action callbacks', () => {
         expect(homes.requestsFor('/v1/artifacts')).toHaveLength(0);
     });
 
+    const copyFrom = { environmentId: 'production', expectedRevision: 7, choices: { secrets: [], values: [], data: [] } };
+    it.each([
+        ['Duplicate', { controllerMachineId: 'controller', copyFrom },
+            { controllerMachineId: 'controller', copyFrom, copyPlan: { bindings: [] }, copyIntentCommitment: 'A'.repeat(43) }],
+        ['Create with Always on retention', {
+            definition: { from: 'repository' as const, ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } },
+            firstTargetLink: { machines: [{ machineId: 'controller', installationId: 'controller-installation' }] }, managedRetention: 'keep' as const },
+            { controllerMachineId: 'controller', managedRetention: 'keep', firstTargetLink: { machines: [{ machineId: 'controller',
+                installationId: 'controller-installation' }], contentArtifactId: 'reviewed-link', contentHeaderVersion: 1, contentBodyVersion: 1 } }],
+    ] as const)('opens one review of the exact %s when its prepared Create is refused for review, without creating it', async (_name, authored, reviewed) => {
+        const serverId = await homes.addHome({ name: 'Create review', serverUrl: 'https://create-review.test',
+            serverIdentityId: `srv_${'9'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' }, isCurrent: () => true,
+            onRetire: () => ({ dispose() {} }) };
+        const input = { name: 'Staging', requestKey: 'create-review', protection: 'nonProduction' as const,
+            purpose: 'standard' as const, deployerMode: 'managers' as const, ...authored };
+        const preview = DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: {
+            serverId, projectSourceId: 'source-app', requestKey: input.requestKey, protection: input.protection,
+            purpose: input.purpose, deployerMode: input.deployerMode,
+            contentArtifactId: 'reviewed-content', contentHeaderVersion: 1, contentBodyVersion: 1, ...reviewed,
+        }, review: { creationDefaults: { values: { controllerMachineId: 'controller', retainPreviousDeployments: 0 },
+            sources: { controllerMachineId: 'project', retainPreviousDeployments: 'project' } },
+            creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 7, projectDefaultsRevision: 3, content: null } } });
+        const commits: unknown[] = [];
+        // The controller has no presenter for the present-user review, so it refuses the commit before any effect.
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: 'controller',
+            actionId: 'deployments.environments.create', tokenEpoch: 0,
+            failure: result => result === 'refuse' ? { errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' } : null,
+            execute: received => {
+                if (typeof received === 'object' && received !== null && 'mode' in received) return preview;
+                commits.push(received);
+                return 'refuse';
+            } });
+        const prepared = await createDeploymentActions(lifetime, 'source-app').prepareCreate(input);
+        const refusal = await prepared.run().catch((error: unknown) => error);
+        expect(refusal).toMatchObject({ code: 'approval_request_created',
+            details: { kind: 'approval_request_created', actionId: 'deployments.environments.create' } });
+        expect(commits).toEqual([preview.input]);
+        expect(homes.artifacts(serverId).list()).toHaveLength(1);
+        const review = ApprovalRequestV2Schema.parse(JSON.parse(homes.artifacts(serverId)
+            .readPlainBody((refusal as { details: { artifactId: string } }).details.artifactId) ?? 'null'));
+        expect(review).toMatchObject({ status: 'open', actionId: 'deployments.environments.create', actionArgs: preview.input });
+    });
+
     it('prepares protection facts without promising fork approval and saves one exact direct Action', async () => {
         const homeId = `srv_${'f'.repeat(32)}`;
         const serverId = await homes.addHome({ name: 'Protection edit', serverUrl: 'https://protection-edit.test',
@@ -532,6 +577,35 @@ describe('deployment UI Action callbacks', () => {
         expect(homes.requestsFor('/v1/actions/deployments.domains.add')).toHaveLength(1);
         expect(homes.requestsFor('/v1/actions/artifact.create')).toHaveLength(0);
         expect(homes.requestsFor('/v1/artifacts')).toHaveLength(0);
+    });
+
+    it('turns the controller\'s review-required refusal into one review of the exact Save, never an effect', async () => {
+        const homeId = `srv_${'e'.repeat(32)}`;
+        const serverId = await homes.addHome({ name: 'Preview Save review', serverUrl: 'https://preview-save-review.test',
+            serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'owner' }, isCurrent: () => true,
+            onRetire: () => ({ dispose() {} }) };
+        const header = createDeploymentEnvironmentHeaderV1({ serverId: homeId, revision: 7 });
+        homes.answer(serverId, `GET /v1/deployments/environments/${header.id}`, { body: { ok: true, environment: header, targetLinks: [] } });
+        const previewTemplate = { v: 1, enabled: true, forkPreviews: 'off',
+            repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
+            runtimeTargetLinkId: 'runtime', domain: null, bindingBlueprints: [], data: [] } as const;
+        const dispatched: unknown[] = [];
+        // The controller has no presenter for a present-user review; it refuses before any effect.
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: header.controllerMachineId,
+            actionId: 'deployments.environments.update', tokenEpoch: 0,
+            failure: () => ({ errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' }),
+            execute: raw => { dispatched.push(raw); return {}; } });
+        const saved = createDeploymentActions(lifetime, header.projectSourceId).updateEnvironment(header, { previewTemplate });
+        const refusal = await saved.catch((error: unknown) => error);
+        expect(refusal).toMatchObject({ code: 'approval_request_created',
+            details: { kind: 'approval_request_created', actionId: 'deployments.environments.update' } });
+        expect(dispatched).toHaveLength(1);
+        expect(homes.artifacts(serverId).list()).toHaveLength(1);
+        const review = ApprovalRequestV2Schema.parse(JSON.parse(homes.artifacts(serverId)
+            .readPlainBody((refusal as { details: { artifactId: string } }).details.artifactId) ?? 'null'));
+        expect(review).toMatchObject({ status: 'open', actionId: 'deployments.environments.update',
+            actionArgs: dispatched[0] as Record<string, unknown> });
     });
 
     it('requests the controller-owned Deploy review without executing the deploy', async () => {

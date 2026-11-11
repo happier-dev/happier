@@ -1255,17 +1255,23 @@ export function DeployOutcomeBanner(
   const storedRemedy = failure?.technicalDetails.find(line => line.key === 'failure-remedy')?.value;
   const canonicalReason = failure && failure.reason !== storedRemedy ? failure.reason : null;
   const { openRecovery } = controller;
+  // A refusal whose way forward is a review needs the person, not a retry of a failure: amber, paired with that review.
+  const needsReview = recovery?.nextAction.destination === 'review';
   return (
     <AttentionBanner
       testID={`project-deployments.outcome.refused.${outcome.reason}`}
       placement={placement}
       tone={
-        unsupported || outcome.reason === 'machine'
+        needsReview
+          ? 'warning'
+          : unsupported || outcome.reason === 'machine'
           ? 'neutral'
           : 'danger'
       }
       title={
-        unsupported
+        needsReview
+          ? t('projects.deployments.reviewWaitingTitle')
+          : unsupported
           ? t('projects.deployments.deployUnavailableTitle')
           : rollback
             ? t('projects.deployments.rollbackFailedTitle')

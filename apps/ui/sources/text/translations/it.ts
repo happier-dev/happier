@@ -18792,6 +18792,7 @@ settingsSession: {
         notAvailableYet: "Non ancora disponibile",
         backupsErrorTitle: "Impossibile caricare le impostazioni di backup",
         backupNotNeededTitle: "Niente da salvare qui",
+        backupNotNeededAction: "Salta i backup",
         backupNotNeededBody: ({ name }: { name: string }) => `${name} non conserva dati che richiedono un backup.`,
         backupSources: "Salva",
         backupSourceDump: ({ service }: { service: string }) => `${service} (dump del database)`,

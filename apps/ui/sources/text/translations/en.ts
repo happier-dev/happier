@@ -22238,6 +22238,7 @@ const enProjects = {
       notAvailableYet: "Not available yet",
       backupsErrorTitle: "Couldn’t load the backup settings",
       backupNotNeededTitle: "Nothing to back up here",
+      backupNotNeededAction: "Skip backups",
       backupNotNeededBody: ({ name }: { name: string }) => `${name} keeps no data that needs a backup.`,
       backupSources: "Backs up",
       backupDestination: "Backup destination",

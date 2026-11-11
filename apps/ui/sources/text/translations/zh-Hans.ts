@@ -18409,6 +18409,7 @@ settingsSession: {
         notAvailableYet: "暂不可用",
         backupsErrorTitle: "无法加载备份设置",
         backupNotNeededTitle: "这里没有需要备份的内容",
+        backupNotNeededAction: "跳过备份",
         backupNotNeededBody: ({ name }: { name: string }) => `${name} 不保存需要备份的数据。`,
         backupSources: "备份内容",
         backupSourceDump: ({ service }: { service: string }) => `${service}（数据库转储）`,
