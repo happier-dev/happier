@@ -13,6 +13,39 @@ import { prepareCliTypecheckProjects } from '../../apps/cli/scripts/deriveTypech
 import { prepareReferencedTypecheckDeclarations, orderTypecheckProjects } from './prepareReferencedTypecheckDeclarations.mjs';
 import { createDistTypeScriptProjectConfig } from './buildTypeScriptPackageDist.mjs';
 
+test('prepared consumers reference the producer with the same workspace source resolution', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-prepared-source-reference-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const files = {
+    'apps/cli/package.json': '{"name":"@fixture/cli"}',
+    'apps/ui/package.json': '{"name":"@fixture/ui"}',
+    'apps/server/package.json': '{"name":"@fixture/server"}',
+    'apps/cli/tsconfig.json': JSON.stringify({ compilerOptions: {
+      composite: true, declaration: true, emitDeclarationOnly: true,
+      disableSourceOfProjectReferenceRedirect: true,
+    }, files: ['index.ts'] }),
+    'apps/cli/index.ts': 'export const producer = true;',
+    'apps/ui/tsconfig.json': JSON.stringify({ compilerOptions: {
+      composite: true, declaration: true, emitDeclarationOnly: true,
+      disableSourceOfProjectReferenceRedirect: true,
+    }, files: ['index.ts'], references: [{ path: '../cli/tsconfig.json' }] }),
+    'apps/ui/index.ts': 'export { producer } from "../cli/index";',
+  };
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), content);
+  }
+  const projects = ['apps/ui', 'apps/cli'].map(directory => {
+    const project = join(root, directory, 'tsconfig.json');
+    return { project, args: ['--project', project] };
+  });
+  await prepareWorkspaceSourceTypecheckProjects(projects, root);
+  const consumer = ts.readConfigFile(projects[0].project, ts.sys.readFile);
+  assert.equal(consumer.error, undefined);
+  assert.deepEqual(consumer.config.references, [{ path: projects[1].project }],
+    'a consumer must resolve its producer through the prepared source aliases used for emission');
+});
+
 test('channels declaration preparation never emits Protocol source siblings', async t => {
   const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
   const root = await mkdtemp(join(tmpdir(), 'happier-channel-declaration-boundary-'));

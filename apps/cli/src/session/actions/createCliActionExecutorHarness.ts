@@ -12,7 +12,7 @@ import { ProjectWorkerStatusInputV1Schema } from '@happier-dev/protocol/actions/
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, projectDeploymentTemplateInstantiationResultV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -407,12 +407,15 @@ export function createCliActionExecutorHarness(
   const prepareControllerDeploymentDispatch = (actionId: string, input: unknown, context: ActionExecutorContext) => {
     const dispatch = readControllerDeploymentDispatch({ ...params,
       deploymentAction: overrides?.deploymentAction ?? params.deploymentAction,
+      deploymentMoveToRepository: overrides?.deploymentMoveToRepository ?? params.deploymentMoveToRepository,
       deploymentTemplateInstantiate: overrides?.deploymentTemplateInstantiate ?? params.deploymentTemplateInstantiate }, actionId, input, context);
     if (!dispatch) return null;
     let result: Promise<ActionExecuteResult> | undefined;
     return { run: () => result ??= Promise.resolve().then(async (): Promise<ActionExecuteResult> => {
       const parsed = dispatch.actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
         ? { actionId: 'deployments.templates.instantiate' as const, result: DeploymentTemplateInstantiateInputV1Schema.safeParse(input) }
+        : dispatch.actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
+        ? { actionId: dispatch.actionId, result: DeploymentActionInputSchemasV1[dispatch.actionId].safeParse(input) }
         : { actionId: dispatch.actionId, result: DeploymentActionInputSchemasV1[dispatch.actionId].safeParse(input) };
       if (!parsed.result.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       if (dispatch.caller === 'host') {
@@ -425,9 +428,14 @@ export function createCliActionExecutorHarness(
         return projectDeploymentTemplateInstantiationResultV1(
           await baseDepsForRuntime.deploymentTemplateInstantiate!(parsed.result.data, context));
       }
+      if (parsed.actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1) {
+        const result = await baseDepsForRuntime.deploymentMoveToRepository!(parsed.result.data, context,
+          async () => ({ ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' }));
+        return 'ok' in result ? result : { ok: true, result };
+      }
       const dispatched = await baseDepsForRuntime.deploymentAction!(parsed.actionId, parsed.result.data, context);
-      if ('errorCode' in dispatched) return dispatched;
-      if ('ok' in dispatched && !dispatched.ok) return { ok: false, errorCode: dispatched.error, error: dispatched.error };
+      if ('ok' in dispatched && !dispatched.ok) return 'errorCode' in dispatched
+        ? dispatched : { ok: false, errorCode: dispatched.error, error: dispatched.error };
       return { ok: true, result: dispatched };
     }) };
   };
@@ -446,7 +454,7 @@ export function createCliActionExecutorHarness(
       }) : null;
       const getApproval = authorizedStore?.approvalsGet ?? deps.approvalsGet;
       if (!getApproval) return failure('approval_context_unavailable');
-      let observedRequest: Awaited<ReturnType<typeof getApproval>> = null;
+      const observed: { request: Awaited<ReturnType<typeof getApproval>> } = { request: null };
       const current = async () => !args.signal.aborted
         && (!args.isCurrent || await args.isCurrent()) && !args.signal.aborted;
       const observe = async (): Promise<ActionExecuteResult> => {
@@ -477,9 +485,9 @@ export function createCliActionExecutorHarness(
               || Object.entries(args.expectedOrigin).some(([key, value]) => Reflect.get(origin, key) !== value)
               // Machine-hosted core Actions need no external target. The exact
               // origin Machine above still binds their recorded execution.
-              || request.v === 2 && origin.target !== undefined && (origin.target.kind !== 'machine'
-                || origin.target.machineId !== args.expectedOrigin.machineId)) return failure(args.signal.aborted ? 'cancelled' : 'approval_stale');
-            observedRequest = request;
+              || request.v === 2 && request.executionOriginV1.target !== undefined && (request.executionOriginV1.target.kind !== 'machine'
+                || request.executionOriginV1.target.machineId !== args.expectedOrigin.machineId)) return failure(args.signal.aborted ? 'cancelled' : 'approval_stale');
+            observed.request = request;
             if (!await current()) return failure(args.signal.aborted ? 'cancelled' : 'approval_stale');
             const result = buildActionExecuteResultFromRecordedApprovalExecution(request);
             if (result) return result;
@@ -510,7 +518,7 @@ export function createCliActionExecutorHarness(
         }
       };
       const result = await observe();
-      const request = observedRequest;
+      const request = observed.request;
       if (args.signal.aborted && request?.v === 2 && request.status === 'open' && request.approval?.flow === 'deferred') {
         const updateApproval = authorizedStore?.approvalsUpdate ?? deps.approvalsUpdate;
         if (!updateApproval) return failure('approval_context_unavailable');

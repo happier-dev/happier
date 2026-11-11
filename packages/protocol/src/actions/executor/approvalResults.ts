@@ -3,6 +3,7 @@ import type { ActionExecuteResult, ActionExecutorContext } from './types.js';
 import { getActionSpec } from '../actionSpecs.js';
 import type { ApprovalRequest } from '../../approvals/approvalRequestV1.js';
 import type { ApprovalRequestPublicRead } from '../../approvals/approvalRequestPublicRead.js';
+import type { TargetActionApprovalRequestV1 } from '../../approvals/targetActionApprovalRequestV1.js';
 import { resolveApprovalExecutor } from '../../approvals/resolveApprovalExecutor.js';
 import type { ActionExecuteFailure } from './types.js';
 import { normalizeId } from './inputReading.js';
@@ -139,7 +140,7 @@ export function buildApprovalDecisionResult(request: ApprovalRequest, freshExecu
   }
 }
 
-export function buildActionExecuteResultFromRecordedApprovalExecution(request: ApprovalRequest | ApprovalRequestPublicRead): ActionExecuteResult | null {
+export function buildActionExecuteResultFromRecordedApprovalExecution(request: ApprovalRequest | TargetActionApprovalRequestV1 | ApprovalRequestPublicRead): ActionExecuteResult | null {
   if (!request.execution) return null;
   const operationCredentialUses = request.v === 2 || !('actionId' in request)
     ? request.execution.operationCredentialUses : undefined;

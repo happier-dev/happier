@@ -58,6 +58,7 @@ import type {
   StoredApprovalRequestV2,
 } from './approvalRequestV1.js';
 import type { ApprovalRequestPublicRead } from './approvalRequestPublicRead.js';
+import type { TargetActionApprovalRequestV1 } from './targetActionApprovalRequestV1.js';
 import { isHistoricalPublishApprovalRequestV2 } from './approvalRequestV1.js';
 import { RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 export { ApprovalStaleReasonSchema, ApprovalStaleFailureDetailsSchema, type ApprovalStaleReason } from './approvalStaleReason.js';
@@ -565,7 +566,7 @@ function readTypedDomainFailure(value: unknown): ActionExecuteFailure | null {
 
 /** Read terminal history without trusting legacy or unvalidated opaque fields. */
 export function readApprovalExecutionFailure(
-  request: ApprovalRequest | ApprovalRequestPublicRead,
+  request: ApprovalRequest | TargetActionApprovalRequestV1 | ApprovalRequestPublicRead,
 ): ActionExecuteFailure | null {
   const execution = request.execution;
   if (!execution) return null;

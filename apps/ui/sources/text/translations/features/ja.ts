@@ -368,6 +368,9 @@ const translated = Shared_actionFamilyTranslations.translated;
 
 const actionFamilyTranslations = { ja: translated({
         actionFamilies: {
+            bot_templates: "ボットテンプレート",
+            client_files: "クライアントのファイル",
+            project_readiness: "プロジェクトの準備状況",
             deployments: "デプロイ",
             machine_agent_isolation: "エージェントの分離",
             plugin_execution_origin: "プラグインの実行",
@@ -2176,7 +2179,6 @@ const ja: ConnectedServicesPoolCopy = {
     active: 'アクティブ',
     offNotUsed: 'オフの間はプールで使われません',
     autoOffModel: '自動的にオフ · このプランでは選択したモデルを使えません',
-    checkedAt: ({ time }) => `${time} に確認`,
     makeActiveA11y: ({ name }) => `${name} をアクティブなメンバーにする`,
     memberOnA11y: ({ name }) => `このプールで ${name} を使う`,
     openA11y: ({ name }) => `${name} を開く`,
@@ -6283,6 +6285,7 @@ const ja: MachineAgentsTranslation = {
     showFewer: '表示を減らす',
     emptyInstalled: 'このマシンにはまだエージェントがありません。下から選ぶと、Happier がインストールしてサインインします。',
     offlineNote: ({ machine }) => `${machine} はオフラインです。最後に報告された内容です。`,
+    checkingAgents: 'エージェントを確認中…',
     firstTitle: '最初のエージェントを設定',
     firstLead: ({ machine }) => `${machine} は接続済みですが、まだエージェントがありません。選ぶと Happier がインストールしてサインインします。`,
     firstMore: ({ count }) => (count === 1 ? `ほかに 1 つのエージェントから選べます。` : `ほかに ${count} のエージェントから選べます。`),
@@ -6712,6 +6715,10 @@ const machineDetailPageTranslations = { ja: translated({
             fleet: {
                 calm: "すべて安定",
                 count: ({ count }) => `${count} 台のマシンを確認してください`,
+                sentenceOne: ({ phrase }) => `${phrase}。`,
+                sentenceTwo: ({ first, second }) => `${first}、${second}。`,
+                sentenceMore: ({ first, second, count }) => `${first}、${second}、ほか${count}件。`,
+                sameReason: ({ word, count }) => `${count}台のマシンで${word}。`,
                 otherOnlineCalm: ({ count }) => `オンラインの他の ${count} 台は安定しています。`,
                 allOnlineCalm: ({ count }) => count === 1 ? "オンラインの1台は安定しています。" : `オンラインのマシンはすべて安定しています。`,
             },
@@ -11048,7 +11055,7 @@ const sessionCollaborationTranslations: Pick<Record<'en'|'ca'|'de'|'es'|'fr'|'it
         participantReturnFailed: ({ participant }: { participant: string }) => `${participant}からの返信を投稿できませんでした。`,
         participantHeld: ({ participant }: { participant: string }) => `${participant}は保留中です。別のアカウントからの依頼にはまだ対応していません。`,
         participantPending: ({ participant }: { participant: string }) => `${participant} へのリクエストは配信待ちです。`,
-        featureUnavailable: "この Home では会話が有効になっていません。", bindingUnavailable: "会話を表示するには、この Home に再度サインインしてください。", scopeMismatch: "これらの会話は、この Home の別のアカウントに属しています。", modeMismatch: "内容がセッションの暗号化モードと一致しません。再試行するか、セッション管理者にアクセスの確認を依頼してください。",  title: "ディスカッション", newDiscussion: "新しいディスカッション", create: '会話を作成', titlePlaceholder: '会話のタイトル', messagePlaceholder: 'メッセージを書く…', active: '進行中', activeDisclosure: '進行中の会話を表示', archived: 'アーカイブ済み', archivedDisclosure: 'アーカイブ済みの会話を表示', emptyActive: '進行中の会話はまだありません。', emptyArchived: 'アーカイブ済みの会話はありません。', loading: '会話を読み込み中…', loadError: '会話を読み込めませんでした。', retry: 'もう一度試す', checking: '更新を確認中…', deliveryUnknown: '配信結果が不明です — 再試行する前に確認してください。', locked: 'この会話は読めますが、投稿はできません。', offline: 'オフラインです。再接続して続けてください。', unavailable: 'この会話は利用できません。', unreadCount: ({ count }) => `未読${count.toLocaleString()}件`, unreadMentionCount: ({ count }) => `未読のメンション${count.toLocaleString()}件`,
+        listUnavailable: "ディスカッションを利用できません。", featureUnavailable: "この Home では会話が有効になっていません。", bindingUnavailable: "会話を表示するには、この Home に再度サインインしてください。", scopeMismatch: "これらの会話は、この Home の別のアカウントに属しています。", modeMismatch: "内容がセッションの暗号化モードと一致しません。再試行するか、セッション管理者にアクセスの確認を依頼してください。",  title: "ディスカッション", newDiscussion: "新しいディスカッション", create: '会話を作成', titlePlaceholder: '会話のタイトル', messagePlaceholder: 'メッセージを書く…', active: '進行中', activeDisclosure: '進行中の会話を表示', archived: 'アーカイブ済み', archivedDisclosure: 'アーカイブ済みの会話を表示', emptyActive: '進行中の会話はまだありません。', emptyArchived: 'アーカイブ済みの会話はありません。', loading: '会話を読み込み中…', loadError: '会話を読み込めませんでした。', retry: 'もう一度試す', checking: '更新を確認中…', deliveryUnknown: '配信結果が不明です — 再試行する前に確認してください。', locked: 'この会話は読めますが、投稿はできません。', offline: 'オフラインです。再接続して続けてください。', unavailable: 'この会話は利用できません。', unreadCount: ({ count }) => `未読${count.toLocaleString()}件`, unreadMentionCount: ({ count }) => `未読のメンション${count.toLocaleString()}件`,
         mentioned: 'あなたがメンションされました', unreadConversations: '未読の会話', messageCount: ({ count }) => `${count.toLocaleString()}件のメッセージ`, viaAgent: 'Agent経由', externalSender: 'Happier 外の人', viaExternal: ({ conversation }) => `${conversation} 経由`, outwardReply: ({ conversation }) => `返信は Happier の外にある ${conversation} にも送信されます。`, collaborator: '共同作業者', contentUnavailable: 'メッセージを利用できません', rename: '会話名を変更', archive: '会話をアーカイブ', restore: '会話を復元', selection: { copy: 'コピー', askAgent: 'Agentに質問', sendToSession: 'セッションに送信', handoffError: '選択したメッセージをセッションの入力欄に追加できませんでした。' }, titleRequired: 'この会話を始めるにはタイトルを追加してください。', encryptedTitle: '暗号化された会話', rowOnDoc: "ドキュメントについて", rowFreshOpinions: ({ count }) => `独立した意見 · ${`${count.toLocaleString()}件の回答`}`, rowFreshOpinionsSynthesis: ({ count }) => `独立した意見 · ${`${count.toLocaleString()}件の回答`}と統合`, rowAnswerReviewSettled: '回答 + レビュー · 完了', rowOpenComments: ({ count }) => `未解決のコメント${count.toLocaleString()}件`, archivedNotice: 'この会話はアーカイブされています。', sessionArchived: 'このセッションはアーカイブされています。', postDenied: 'このセッションには投稿できなくなりました。', invalidMention: 'メンションした相手はこのセッションを読めなくなりました。', invalidContent: 'このメッセージはこのままでは送信できません。空か、長すぎる可能性があります。', idempotencyConflict: 'この識別子では別のメッセージがすでに送信されています。', sendFailed: 'このメッセージを送信できませんでした。', dismiss: '閉じる', loadOlder: '以前のメッセージを読み込む', loadMore: 'さらに会話を読み込む' } } };
 
 return { sessionCollaborationTranslations };
@@ -15891,6 +15898,8 @@ const ja: WorkflowEditorPageTranslations = {
     },
     /** Workflow settings and Step options (U-9): group summaries and the block subject. */
     inspector: {
+        recentRuns: '最近の実行',
+        noRunsYet: 'まだ実行はありません。',
         stepOptions: 'ステップのオプション',
         whereMissing: 'マシン未選択',
         none: 'なし',
@@ -16101,7 +16110,7 @@ const workflowRunCompositionTranslations = {...Domain_workflowRunCompositionTran
 
 const en = Shared_workflowStartTranslations.en;
 
-const workflowStartTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "ja"> = { ja: { ...workflowRunRoleTranslations.ja, ...workflowRunCompositionTranslations.ja, answerCount: ({ count }: { count: number }) => `${count}件の回答`, capture: { title: "パターンとして保存", subtitle: ({ title }: { title: string }) => `${title} から`, chooseTitle: "作成に使うメッセージ", chooseDescription: "やり取りを構成する質問と回答を選んでください。", chosenCount: ({ count }: { count: number }) => count === 1 ? "1件選択" : `${count}件選択`, emptyTitle: "まだ保存できるものがありません", emptyBody: "ここで人やエージェントが話したら、パターンとして保存するメッセージを選べます。", reviewSteps: "ステップを確認", openInEditor: "エディタで開く", name: "名前", stepsTitle: "ここでの流れから作ったステップ", changeMessages: "メッセージを変更", building: "ステップを作成中…", failedTitle: "ステップを作成できませんでした", needsReview: ({ count }: { count: number }) => count === 1 ? "エディタで開く前に1件のメッセージで選択が必要です" : `エディタで開く前に${count}件のメッセージで選択が必要です`, question: "質問", context: ({ number }: { number: number }) => `コンテキスト ${number}`, answers: ({ name }: { name: string }) => `${name} が回答`, someoneAnswers: "誰かが回答", leftOut: "除外", uses: ({ steps }: { steps: string }) => `${steps} を使用`, usesLabel: "使用するもの", usedAs: "使い方", roleInput: "入力", roleStep: "ステップ", roleExclude: "除外", whoAnswers: "回答者", chooseParticipant: "選択…", askEachRun: "実行ごとに尋ねる", askEachRunOn: "実行…で尋ねます", askEachRunOff: "ここでの内容のまま", askedTitle: "実行するたびに尋ねる項目", askedNone: "なし。保存したとおりに実行します。", agentFor: ({ number }: { number: number }) => `回答者 ${number}`, privacy: ({ count }: { count: number }) => count === 1 ? "未保存のままエディタで開きます。保存すると自分だけに表示され、このメッセージにリンクします。" : `未保存のままエディタで開きます。保存すると自分だけに表示され、これら${count}件のメッセージにリンクします。`, reasons: { unlinked_message: "回答に結び付いていません。入力・ステップ・除外のどれにするか選んでください。", missing_dependency: "含まれていないメッセージを使っています。追加するか、使うものを変更してください。", participant_required: "このステップの回答者を選んでください。", no_steps: "回答がまだ選ばれていません。エージェントの回答を追加してステップにしてください。", unsupported_content: "この種類のメッセージはパターンで再利用できません。除外してください。", ambiguous_workflow: "これらのメッセージは複数の実行から来ています。1つの実行のメッセージを選んでください。" } }, runPattern: '実行…', runPatternTitle: 'パターンを実行', anotherRound: 'もう1ラウンド', participantTitle: '参加者を選択', participantSearch: 'セッションまたはモデルを検索', participantSession: 'それぞれ自身の設定で回答', participantModel: ({ agent, machine }: { agent: string; machine: string }) => `${machine} の新しい ${agent} セッション`, participantDone: '完了', choicesFailed: '選択肢を読み込めませんでした', choicesNeedField: ({ field }: { field: string }) => `先に${field}を選んでください`, shortcutStarts: '開始', neededNamed: ({ name }) => `入力 · ${name}が必要`, addToStart: ({ name }) => `開始するには${name}を追加してください`, workflow: 'ワークフロー', inputs: '入力', start: '開始', starting: '開始中…', stillStarting: '引き続き開始中…', retry: { action: 'もう一度試す', start: 'この実行が開始されたか確認できませんでした。もう一度試すと同じリクエストを再送します。二重に開始されることはありません。', runAgain: '「もう一度実行」が開始されたか確認できませんでした。もう一度試すと同じリクエストを再送します。二重に開始されることはありません。', anotherRound: '「もう1ラウンド」が開始されたか確認できませんでした。もう一度試すと同じリクエストを再送します。二重に開始されることはありません。' }, needed: ({ count }) => `入力 · あと${count}項目`, required: '開始に必要', preview: '実行する内容', unsaved: '未保存の変更を含む', remove: '通常のセッションに戻る', search: 'パターンを検索', builtin: '組み込み', library: 'あなたのライブラリ', noInputs: '入力は不要', needsSession: 'セッションが必要', asksFor: ({ names }) => `必要な入力：${names}`, optional: '任意 — 空欄', defaultValue: ({ value }) => `既定値：${value}` } };
+const workflowStartTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "ja"> = { ja: { ...workflowRunRoleTranslations.ja, ...workflowRunCompositionTranslations.ja, answerCount: ({ count }: { count: number }) => `${count}件の回答`, capture: { title: "パターンとして保存", subtitle: ({ title }: { title: string }) => `${title} から`, chooseTitle: "作成に使うメッセージ", chooseDescription: "やり取りを構成する質問と回答を選んでください。", chosenCount: ({ count }: { count: number }) => count === 1 ? "1件選択" : `${count}件選択`, emptyTitle: "まだ保存できるものがありません", emptyBody: "ここで人やエージェントが話したら、パターンとして保存するメッセージを選べます。", reviewSteps: "ステップを確認", openInEditor: "エディタで開く", name: "名前", stepsTitle: "ここでの流れから作ったステップ", changeMessages: "メッセージを変更", building: "ステップを作成中…", failedTitle: "ステップを作成できませんでした", needsReview: ({ count }: { count: number }) => count === 1 ? "エディタで開く前に1件のメッセージで選択が必要です" : `エディタで開く前に${count}件のメッセージで選択が必要です`, question: "質問", context: ({ number }: { number: number }) => `コンテキスト ${number}`, answers: ({ name }: { name: string }) => `${name} が回答`, someoneAnswers: "誰かが回答", leftOut: "除外", uses: ({ steps }: { steps: string }) => `${steps} を使用`, usesLabel: "使用するもの", usedAs: "使い方", roleInput: "入力", roleStep: "ステップ", roleExclude: "除外", whoAnswers: "回答者", chooseParticipant: "選択…", askEachRun: "実行ごとに尋ねる", askEachRunOn: "実行…で尋ねます", askEachRunOff: "ここでの内容のまま", askedTitle: "実行するたびに尋ねる項目", askedNone: "なし。保存したとおりに実行します。", agentFor: ({ number }: { number: number }) => `回答者 ${number}`, privacy: ({ count }: { count: number }) => count === 1 ? "未保存のままエディタで開きます。保存すると自分だけに表示され、このメッセージにリンクします。" : `未保存のままエディタで開きます。保存すると自分だけに表示され、これら${count}件のメッセージにリンクします。`, reasons: { unlinked_message: "回答に結び付いていません。入力・ステップ・除外のどれにするか選んでください。", missing_dependency: "含まれていないメッセージを使っています。追加するか、使うものを変更してください。", participant_required: "このステップの回答者を選んでください。", no_steps: "回答がまだ選ばれていません。エージェントの回答を追加してステップにしてください。", unsupported_content: "この種類のメッセージはパターンで再利用できません。除外してください。", ambiguous_workflow: "これらのメッセージは複数の実行から来ています。1つの実行のメッセージを選んでください。" } }, runPattern: '実行…', runPatternTitle: 'パターンを実行', allPatterns: 'すべてのパターン', anotherRound: 'もう1ラウンド', participantTitle: '参加者を選択', participantSearch: 'セッションまたはモデルを検索', participantSession: 'それぞれ自身の設定で回答', participantModel: ({ agent, machine }: { agent: string; machine: string }) => `${machine} の新しい ${agent} セッション`, participantDone: '完了', choicesFailed: '選択肢を読み込めませんでした', choicesNeedField: ({ field }: { field: string }) => `先に${field}を選んでください`, shortcutStarts: '開始', neededNamed: ({ name }) => `入力 · ${name}が必要`, addToStart: ({ name }) => `開始するには${name}を追加してください`, workflow: 'ワークフロー', inputs: '入力', start: '開始', starting: '開始中…', stillStarting: '引き続き開始中…', retry: { action: 'もう一度試す', start: 'この実行が開始されたか確認できませんでした。もう一度試すと同じリクエストを再送します。二重に開始されることはありません。', runAgain: '「もう一度実行」が開始されたか確認できませんでした。もう一度試すと同じリクエストを再送します。二重に開始されることはありません。', anotherRound: '「もう1ラウンド」が開始されたか確認できませんでした。もう一度試すと同じリクエストを再送します。二重に開始されることはありません。' }, needed: ({ count }) => `入力 · あと${count}項目`, required: '開始に必要', preview: '実行する内容', unsaved: '未保存の変更を含む', remove: '通常のセッションに戻る', search: 'パターンを検索', builtin: '組み込み', library: 'あなたのライブラリ', noInputs: '入力は不要', needsSession: 'セッションが必要', asksFor: ({ names }) => `必要な入力：${names}`, optional: '任意 — 空欄', defaultValue: ({ value }) => `既定値：${value}` } };
 
 return { workflowStartTranslations };
 })();
@@ -17196,6 +17205,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         whatWentWrong: '問題の内容',
         configureAdminAccess: '管理者アクセスを設定',
         reviewMachineSetup: 'マシンのセットアップを確認',
+        reloadSourceRuntime: 'このマシンで現在のソースコードからHappierのランタイムを再読み込みまたは再起動して、もう一度お試しください。',
         nextOpenWorkflow: 'もう一度試すには、ワークフローを開いて実行してください。',
         sameConversationTitle: '同じ会話で続ける',
         freshAgentBody: '新しい Agent はステップの入力とワークスペースを受け取りますが、この会話は引き継ぎません。',

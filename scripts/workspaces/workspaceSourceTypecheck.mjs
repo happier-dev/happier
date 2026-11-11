@@ -82,6 +82,7 @@ export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
   if (!sources.repoRoot) return [];
   const failures = [];
   const preparedDeclarations = new Set();
+  const preparedProjects = new Map();
   for (const project of projects) {
     const options = typecheckCompilerOptions(project.args, cwd);
     if (!options?.configFilePath) continue;
@@ -104,13 +105,13 @@ export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
     const cache = /^tsc(?:\.tsrs)?$/u.test(basename(dirname(original)))
       ? dirname(original) : resolve(dirname(original), 'node_modules/.cache/tsc');
     const target = resolve(cache, `source-${basename(original)}`);
-    await writeJsonAtomic(target, {
+    preparedProjects.set(original, { target, config: {
       extends: original,
       compilerOptions: sourceTypecheckCompilerOptions(options, original, sources, { declarations: useDeclarations }),
       // Project references are not inherited through extends.
       references: (authored.config.references ?? []).map(reference => ({ ...reference,
         path: resolve(dirname(original), reference.path) })),
-    });
+    } });
     let replaced = false;
     project.args = project.args.map((arg, index) => {
       if (['--project', '-p'].includes(project.args[index - 1])) { replaced = true; return target; }
@@ -119,6 +120,12 @@ export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
     });
     if (!replaced) project.args.push('--project', target);
     project.project = target;
+  }
+  for (const { target, config } of preparedProjects.values()) {
+    await writeJsonAtomic(target, { ...config,
+      references: config.references.map(reference => ({ ...reference,
+        path: preparedProjects.get(reference.path)?.target ?? reference.path })),
+    });
   }
   return failures;
 }
