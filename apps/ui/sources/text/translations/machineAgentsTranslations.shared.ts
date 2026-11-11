@@ -21,6 +21,7 @@ export type MachineAgentsTranslation = Readonly<{
     offlineNotInstalled: string;
     offlineUnknown: string;
     unknown: string;
+    signInUnknown: string;
 
     actionInstall: string;
     actionUpdate: string;
@@ -153,6 +154,7 @@ export const en: MachineAgentsTranslation = {
     offlineNotInstalled: 'Not installed when last seen · machine offline',
     offlineUnknown: 'Machine offline',
     unknown: 'Couldn’t check this machine',
+    signInUnknown: 'Installed · sign-in status unknown',
 
     actionInstall: 'Install',
     actionUpdate: 'Update',

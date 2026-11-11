@@ -22,7 +22,8 @@ import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { presentAgentInstallJobFailure, presentAgentInstallJobRpcFailure } from '@/agents/machineAgents/installJobs/presentAgentInstallJobFailure';
 import { AgentInstallJobRpcError } from '@/agents/machineAgents/installJobs/api';
 import { AGENT_INSTALL_JOB_VERIFY_STEP_ID, buildAgentInstallJobCliStepId } from '@happier-dev/protocol/daemon/agent-install-jobs';
-import { isMachineAgentInstalledBySetup, resolveAgentSetupPhase, type AgentSetupPhase } from './machineAgentPresentation';
+import { isMachineAgentInstalledBySetup, resolveAgentSetupPhase, resolveMachineAgentStatus, type AgentSetupPhase } from './machineAgentPresentation';
+import { formatMachineAgentStatus } from './machineAgentCopy';
 
 /** Exact choices from the connected-account chooser, or the Agent's own login. */
 export type AgentSignInChoice = Readonly<{ kind: 'service'; serviceId: string; option: SelectionListOption }> | Readonly<{ kind: 'native' }>;
@@ -303,7 +304,7 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
                     testID={`${testID}.unknown`}
                     size="line"
                     kind="unavailable"
-                    title={t('machineAgents.unknown')}
+                    title={formatMachineAgentStatus(resolveMachineAgentStatus(agent, props.session))}
                     action={{ label: t('machineAgents.checkAgain'), onPress: handlers.onCheckAgain }}
                 />
                 </>

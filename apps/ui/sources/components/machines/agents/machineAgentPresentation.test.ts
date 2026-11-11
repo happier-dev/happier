@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { MachineAgent, MachineAgentSignInSession } from '@/agents/machineAgents/machineAgentTypes';
 import { formatMachineAgentStatus } from './machineAgentCopy';
+import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
+import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
 import { t } from '@/text';
 import { resolveMachineAgentState, isMachineAgentReady } from '@/agents/machineAgents/resolveMachineAgentState';
 
@@ -39,6 +41,26 @@ function agent(overrides: Partial<MachineAgent> = {}): MachineAgent {
 }
 
 describe('machine agent presentation', () => {
+    it('distinguishes a known installation with unknown sign-in from a failed Machine check', () => {
+        // Recorded QA Machine result: installed Droid 1.7.1, unknown native auth, no unavailable result.
+        const facts = MachineAgentInventoryItemSchema.parse({ agentId: 'droid', title: 'Factory Droid',
+            installed: true, version: '1.7.1', latestVersion: null, update: { supported: false, command: null },
+            signIn: { status: 'unknown', loginSupport: 'login_terminal' }, platform: { supported: true },
+            install: { available: true, mode: 'vendor_recipe', sizeBytes: null, guideUrl: null }, dependencies: [] });
+        const project = (installed: boolean) => projectMachineAgent({ agentId: facts.agentId, title: facts.title,
+            facts: { ...facts, installed }, checking: false, stale: false, connectedServices: [], job: null });
+        const installed = project(true);
+        expect(installed.state).toBe('unknown');
+        expect(isMachineAgentReady(installed)).toBe(false);
+        expect(installed.version).toBe('1.7.1');
+        expect(resolveMachineAgentStatus(installed)).toEqual({ kind: 'signInUnknown', tone: 'quiet' });
+        expect(formatMachineAgentStatus(resolveMachineAgentStatus(installed))).toBe(t('machineAgents.signInUnknown'));
+        expect(resolveMachineAgentRowAction(installed)).toBeNull();
+        expect(resolveMachineAgentStatus(project(false))).toMatchObject({ kind: 'notInstalled' });
+        expect(resolveMachineAgentStatus({ ...installed, stale: true, staleReason: 'error',
+            unavailableReason: { reason: 'probe_failed', errorCode: 'cli-detection-failed' } })).toMatchObject({ kind: 'unavailable' });
+    });
+
     it('does not offer setup from retained Agent facts while its Machine is offline', () => {
         const missing = agent({ stale: true, staleReason: 'offline' });
         const signedOut = agent({ installed: true, state: 'needsSignIn', stale: true, staleReason: 'offline' });

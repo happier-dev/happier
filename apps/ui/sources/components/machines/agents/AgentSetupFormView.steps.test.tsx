@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
+import { t } from '@/text';
 import { presentAgentInstallJobFailure, presentAgentInstallJobRpcFailure } from '@/agents/machineAgents/installJobs/presentAgentInstallJobFailure';
 import { AgentInstallJobRpcError } from '@/agents/machineAgents/installJobs/api';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
@@ -131,6 +132,20 @@ async function stepsOf(agent: MachineAgent) {
 }
 
 describe('agent setup steps', () => {
+  it('keeps unknown sign-in distinct from a failed installation check in the expanded setup', async () => {
+    const agent = pi({ installed: true, signIn: 'unknown' });
+    expect(agent.state).toBe('unknown');
+    const onCheckAgain = vi.fn();
+    const screen = await renderScreen(<AgentSetupFormView testID="setup" agent={agent} machineName="devbox"
+      layout="full" handlers={{ ...HANDLERS, onCheckAgain }} />);
+    try {
+      expect(screen.getTextContent()).toContain(t('machineAgents.signInUnknown'));
+      expect(screen.getTextContent()).not.toContain(t('machineAgents.unknown'));
+      await screen.pressByTestIdAsync('setup.unknown-action');
+      expect(onCheckAgain).toHaveBeenCalledOnce();
+    } finally { await screen.unmount(); }
+  });
+
   it('offers recovery for a refused observation without claiming the installer failed', async () => {
     const onRetry = vi.fn();
     const agent = pi({ job: { ...job([step(cliStep, 'Pi CLI', 'running')]), readFailure: 'install_unavailable' } });

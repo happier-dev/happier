@@ -41,6 +41,15 @@ export type MachineAgentRowAction =
     /** Uninstall a Happier-managed install from this machine (offered beside the row's own action). */
     | Readonly<{ kind: 'remove' }>;
 
+/** Actions that mutate a machine or an install job and therefore require machine Manage access. */
+export function isMachineAgentRowActionManageOnly(action: MachineAgentRowAction): boolean {
+    return action.kind === 'install'
+        || action.kind === 'update'
+        || action.kind === 'retry'
+        || action.kind === 'cancel'
+        || action.kind === 'remove';
+}
+
 export type MachineAgentStatusTone = 'quiet' | 'warn' | 'bad';
 
 export type MachineAgentStatus =
@@ -54,6 +63,7 @@ export type MachineAgentStatus =
     | Readonly<{ kind: 'checking'; tone: 'quiet' }>
     | Readonly<{ kind: 'offline'; tone: 'quiet'; lastKnown: 'signedIn' | 'signedOut' | 'notInstalled' | 'unknown' }>
     | Readonly<{ kind: 'unavailable'; tone: 'quiet'; reason: NonNullable<MachineAgent['unavailableReason']> }>
+    | Readonly<{ kind: 'signInUnknown'; tone: 'quiet' }>
     | Readonly<{ kind: 'unknown'; tone: 'quiet' }>;
 
 function isJobRunning(agent: MachineAgent): boolean {
@@ -190,7 +200,9 @@ export function resolveMachineAgentStatus(
         case 'checking':
             return { kind: 'checking', tone: 'quiet' };
         case 'unknown':
-            return { kind: 'unknown', tone: 'quiet' };
+            return agent.installed && agent.signIn.status === 'unknown'
+                ? { kind: 'signInUnknown', tone: 'quiet' }
+                : { kind: 'unknown', tone: 'quiet' };
     }
 }
 
