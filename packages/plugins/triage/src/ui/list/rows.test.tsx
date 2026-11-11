@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { TriageListDisplayRowV1 } from '../marks/pinnedRows.js';
 import type { TriageTextResolverV1 } from '../shell/windowState.js';
@@ -83,6 +83,19 @@ describe('a PRs & Issues entry row\u2019s secondary actions', () => {
 const ANNOUNCED = Object.freeze({ nowMs: 1_760_000_000_000, locale: 'en' });
 
 describe('a PRs & Issues entry row', () => {
+  it('announces activity and stale observations when native Intl has no RelativeTimeFormat', () => {
+    const activityAtMs = ANNOUNCED.nowMs - 4 * 60_000;
+    const intl = globalThis.Intl;
+    vi.stubGlobal('Intl', { ...intl, DateTimeFormat: intl.DateTimeFormat, RelativeTimeFormat: undefined });
+    try {
+      const props = triageListRowItemProps(displayRow({ activityAtMs, stale: true, observedAtMs: activityAtMs }), false, ANNOUNCED);
+      const exactTime = new intl.DateTimeFormat(ANNOUNCED.locale, { dateStyle: 'medium', timeStyle: 'short' }).format(activityAtMs);
+      expect(props.subtitle).toContain(exactTime);
+      expect(props.accessibilityHint).toContain(`Stale, last seen ${exactTime}`);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it('retains the source identity when its declared display name is unavailable', () => {
     const props = triageListRowItemProps(displayRow(), false, {
       ...ANNOUNCED, source: SOURCE, descriptor: null,

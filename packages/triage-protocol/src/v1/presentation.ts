@@ -99,7 +99,8 @@ export function formatTriageTimestampV1(
     format: TriageRowFactTimestampFormatV1,
     nowMs: number,
 ): string {
-    if (format === 'absolute') {
+    // Runtimes without relative-time formatting still show the known instant in the reader's locale.
+    if (format === 'absolute' || typeof Intl.RelativeTimeFormat !== 'function') {
         return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' })
             .format(new Date(atMs));
     }
