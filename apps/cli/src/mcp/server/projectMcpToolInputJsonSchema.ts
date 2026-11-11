@@ -21,25 +21,43 @@ function referencedObject(document: JsonSchemaObject, ref: unknown): JsonSchemaO
     return asObject(value);
 }
 
-/** Rewrite schema references without interpreting literal const/default/enum data. */
-export function rewriteMcpJsonSchemaReferences(schema: JsonSchemaObject, rewrite: (ref: string) => string): JsonSchemaObject {
-    const result: Record<string, unknown> = { ...schema };
-    if (typeof schema.$ref === 'string') result.$ref = rewrite(schema.$ref);
+/** Visit schema nodes without interpreting literal const/default/enum data. */
+function mapMcpJsonSchema(schema: JsonSchemaObject, project: (schema: JsonSchemaObject) => JsonSchemaObject): JsonSchemaObject {
+    const result: Record<string, unknown> = { ...project(schema) };
     for (const key of ['properties', 'definitions', '$defs']) {
         const entries = asObject(schema[key]);
         if (entries) result[key] = Object.fromEntries(Object.entries(entries).map(([name, child]) =>
-            [name, asObject(child) ? rewriteMcpJsonSchemaReferences(child as JsonSchemaObject, rewrite) : child]));
+            [name, asObject(child) ? mapMcpJsonSchema(child as JsonSchemaObject, project) : child]));
     }
     for (const key of ['items', 'additionalProperties', 'propertyNames', 'not']) {
         const child = asObject(schema[key]);
-        if (child) result[key] = rewriteMcpJsonSchemaReferences(child, rewrite);
+        if (child) result[key] = mapMcpJsonSchema(child, project);
     }
     for (const key of ['anyOf', 'oneOf', 'allOf', 'items']) {
         const children = schema[key];
         if (Array.isArray(children)) result[key] = children.map(child =>
-            asObject(child) ? rewriteMcpJsonSchemaReferences(child, rewrite) : child);
+            asObject(child) ? mapMcpJsonSchema(child, project) : child);
     }
     return result;
+}
+
+/** Rewrite schema references without interpreting literal const/default/enum data. */
+export function rewriteMcpJsonSchemaReferences(schema: JsonSchemaObject, rewrite: (ref: string) => string): JsonSchemaObject {
+    return mapMcpJsonSchema(schema, node => typeof node.$ref === 'string' ? { ...node, $ref: rewrite(node.$ref) } : node);
+}
+
+function projectProviderEnum(schema: JsonSchemaObject): JsonSchemaObject {
+    const values = schema.enum;
+    if (!Array.isArray(values) || !values.every(value => typeof value === 'string')) return schema;
+    // OpenAI/Meta strict tool schemas constrain large string enums at 250
+    // values / 15,000 combined characters. Happier advertises an enum only
+    // within BOTH thresholds; the original Action/plugin parser stays strict.
+    // https://developers.openai.com/api/docs/guides/structured-outputs#limitations-on-enum-size
+    if (values.length <= 250 && values.reduce((sum, value) => sum + value.length, 0) <= 15_000) return schema;
+    const { enum: _enum, ...rest } = schema;
+    return { ...rest, type: 'string', description: [schema.description,
+        'Discover valid identifiers with action_spec_search; the server validates the selected value.',
+    ].filter(Boolean).join(' ') };
 }
 
 /**
@@ -50,6 +68,7 @@ export function rewriteMcpJsonSchemaReferences(schema: JsonSchemaObject, rewrite
  * Cross-field/variant correlations remain authoritative at call validation.
  */
 export function projectMcpToolInputJsonSchema(schema: JsonSchemaObject): JsonSchemaObject {
+    schema = mapMcpJsonSchema(schema, projectProviderEnum);
     const projected = projectObjectInputSchema(schema, schema, new Set());
     const removed = ['anyOf', 'oneOf', 'allOf'].filter(key => Array.isArray(schema[key]));
     if (removed.length === 0) return projected;

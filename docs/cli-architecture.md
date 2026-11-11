@@ -5537,7 +5537,11 @@ Union fields stay at their existing argument paths, with only common required
 fields; intersection requirements combine. This is provider-facing presentation:
 the original Action/plugin schemas still validate calls strictly, including
 variant correlations and unknown fields, and canonical dispatch still owns
-normalization. MCP output schemas and Action discovery schemas are unchanged.
+normalization. String enums exceeding either 250 values or 15,000 combined
+characters are advertised as strings with `action_spec_search` discovery guidance;
+smaller enums remain inline. This applies recursively to input schema definitions
+and nested fields without changing literal defaults or constants. MCP output
+schemas and Action discovery schemas are unchanged.
 
 The development definition family delegates to Protocol's
 `createWorkflowDefinitionActions`; CLI Artifact transport is a host adapter,
