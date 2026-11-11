@@ -171,6 +171,46 @@ it('returns confirmed save and retry outcomes and restores only changed fields t
     await hook.unmount();
 });
 
+it.each([false, true])('retains the latest same-field choice and retries a failed followup (latest %s)', async latest => {
+    const home = await renderEnabledPreferencesSection(`https://preferences-latest-${latest}.example`);
+    let preferences = SessionAutoFollowPreferencesV1Schema.parse({ assigned: true, direct: false, team: true, group: false });
+    const held = createDeferred<void>();
+    let writes = 0;
+    let rejectFollowup = true;
+    setPreferencesFetch(async (_url, init) => {
+        if (init?.method === 'PUT') {
+            writes++;
+            if (writes === 1) await held.promise;
+            else if (rejectFollowup) return Response.json({}, { status: 503 });
+            preferences = SessionAutoFollowPreferencesV1Schema.parse(JSON.parse(String(init.body)));
+        }
+        return Response.json(preferences);
+    });
+    const hook = await renderHook(() => useSessionAutoFollowPreferences(home.id));
+    await vi.waitFor(() => expect(hook.getCurrent().displayed).not.toBeNull());
+    let settled: ReturnType<ReturnType<typeof useSessionAutoFollowPreferences>['save']> | undefined;
+    act(() => { settled = hook.getCurrent().save({ patch: { direct: true } }); });
+    await vi.waitFor(() => expect(writes).toBe(1));
+    act(() => {
+        for (const direct of [false, true, false, latest]) void hook.getCurrent().save({ patch: { direct } });
+    });
+    expect(hook.getCurrent().displayed?.direct).toBe(latest);
+    expect(writes).toBe(1);
+    await act(async () => { held.resolve(); await settled; });
+    expect(writes).toBe(latest ? 1 : 2);
+    expect(preferences).toMatchObject({ direct: true, team: true });
+    expect(hook.getCurrent().displayed?.direct).toBe(true);
+    expect(hook.getCurrent().error).toBe(!latest);
+    if (!latest) {
+        expect(hook.getCurrent().failed?.patch.direct).toBe(false);
+        rejectFollowup = false;
+        await act(async () => { await hook.getCurrent().retry(); });
+        expect(preferences).toMatchObject({ direct: false, team: true });
+        expect(hook.getCurrent().error).toBe(false);
+    }
+    await hook.unmount();
+});
+
 it('offers Retry when Undo restores a previously implicit default level', async () => {
     await renderEnabledPreferencesSection('https://preferences-implicit-default.example');
     let preferences = SessionAutoFollowPreferencesV1Schema.parse({ assigned: true, direct: false, team: false, group: false });
@@ -201,7 +241,7 @@ it('offers Retry when Undo restores a previously implicit default level', async 
     await screen.unmount();
 });
 
-it('shares one page acquisition and save gate across creation levels and automatic Follow defaults', async () => {
+it('coalesces rapid choices across both Follow sections while preserving neighbouring preferences', async () => {
     await renderEnabledPreferencesSection('https://preferences-whole-page.example');
     let preferences: SessionAutoFollowPreferencesV1 = { assigned: true, direct: false, team: false, group: false,
         managerPolicy: { preset: 'important' }, runReportPolicy: { preset: 'important' },
@@ -229,15 +269,26 @@ it('shares one page acquisition and save gate across creation levels and automat
     act(() => level().props.onSelect('quiet'));
     await vi.waitFor(() => expect(writes).toHaveLength(1));
     expect(readPresentationNotice()).toBeNull();
-    expect(screen.findByTestId('session-auto-follow-direct:important')?.props.disabled).toBe(true);
-    held.resolve();
-    await vi.waitFor(() => expect(level().props.selectedId).toBe('quiet'));
-    // The displayed level is optimistic; the neighbouring control re-enables only
-    // once the held write has actually settled at the shared save gate.
-    await vi.waitFor(() => expect(screen.findByTestId('session-auto-follow-direct:important')?.props.disabled).toBe(false));
+    expect(screen.findByTestId('session-auto-follow-direct:important')?.props.disabled).toBe(false);
+    expect(level().props.itemTrigger.itemProps.disabled).toBe(false);
+    act(() => {
+        level().props.onSelect('important');
+        level().props.onSelect('everything');
+        choose(screen, 'direct', true);
+        choose(screen, 'direct', false);
+        choose(screen, 'direct', true);
+    });
+    expect(isOn(screen, 'direct')).toBe(true);
+    expect(level().props.selectedId).toBe('everything');
+    expect(writes).toHaveLength(1);
+    await act(async () => { held.resolve(); });
+    await vi.waitFor(() => expect(preferences).toMatchObject({ direct: true, managerPolicy: { preset: 'everything' },
+        runReportPolicy: { preset: 'important' }, discussionReceivePolicy: { preset: 'important' } }));
+    expect(writes).toHaveLength(2);
     expect(readPresentationNotice()?.undo).toBeDefined();
     await act(async () => { readPresentationNotice()?.undo?.run(); });
     await vi.waitFor(() => expect(preferences.managerPolicy?.preset).toBe('important'));
+    expect(preferences.direct).toBe(false);
     await act(async () => { choose(screen, 'direct', true); });
     await vi.waitFor(() => expect(preferences).toMatchObject({ managerPolicy: { preset: 'important' }, direct: true }));
     expect(readPresentationNotice()?.undo).toBeDefined();

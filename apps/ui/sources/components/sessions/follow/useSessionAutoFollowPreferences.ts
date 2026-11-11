@@ -64,6 +64,8 @@ export function useSessionAutoFollowPreferences(serverId: string) {
     const [online, setOnline] = React.useState(isServerReachabilityNetworkAllowed);
     const currentOperation = React.useRef<object | null>(null);
     const savingRef = React.useRef(false);
+    const desiredRef = React.useRef<SessionAutoFollowPreferencesIntent | null>(null);
+    const savePromiseRef = React.useRef<Promise<SessionAutoFollowPreferencesSaveOutcome> | null>(null);
     const refreshAfterSaveRef = React.useRef(false);
 
     const refresh = React.useCallback(async () => {
@@ -97,6 +99,8 @@ export function useSessionAutoFollowPreferences(serverId: string) {
             dispatchMutation({ kind: 'abandoned' });
             setSaving(false);
             savingRef.current = false;
+            desiredRef.current = null;
+            savePromiseRef.current = null;
             refreshAfterSaveRef.current = false;
         };
         const lifetime = captureActiveServerAccountScopeLifetime();
@@ -137,29 +141,55 @@ export function useSessionAutoFollowPreferences(serverId: string) {
         };
     }, [enabled, refresh, serverId]);
 
-    const save = React.useCallback(async function save(intent: SessionAutoFollowPreferencesIntent): Promise<SessionAutoFollowPreferencesSaveOutcome> {
+    const save = React.useCallback(function save(intent: SessionAutoFollowPreferencesIntent): Promise<SessionAutoFollowPreferencesSaveOutcome> {
         const base = preferencesRef.current;
-        if (!isServerReachabilityNetworkAllowed() || savingRef.current || !base) return { kind: 'unchanged' };
-        const combinedIntent = { patch: { ...mutationRef.current.failed?.patch, ...intent.patch } };
+        if (!isServerReachabilityNetworkAllowed() || !base) return Promise.resolve({ kind: 'unchanged' });
+        const combinedIntent = { patch: { ...mutationRef.current.failed?.patch, ...desiredRef.current?.patch, ...intent.patch } };
+        if (savingRef.current) {
+            desiredRef.current = combinedIntent;
+            dispatchMutation({ kind: 'started', intent: combinedIntent });
+            return savePromiseRef.current!;
+        }
         const changedFields = (Object.keys(combinedIntent.patch) as (keyof SessionAutoFollowPreferencesV1)[])
             .filter(field => !sameStrictJsonValue(base[field], combinedIntent.patch[field]));
-        if (changedFields.length === 0) return { kind: 'unchanged' };
-        const previous: SessionAutoFollowPreferencesIntent = { patch: Object.fromEntries(changedFields.map(field => [field, base[field]])) };
+        if (changedFields.length === 0) return Promise.resolve({ kind: 'unchanged' });
         const noticeKey = `follow-preferences:${serverId}`;
         retirePresentationNotice(noticeKey);
         const operation = {};
         currentOperation.current = operation;
         savingRef.current = true;
+        desiredRef.current = combinedIntent;
         setSaving(true);
         // A second section edit keeps the exact failed fields until a write applies them.
         // The confirmed Home baseline still supplies every neighbouring field at retry time.
         dispatchMutation({ kind: 'started', intent: combinedIntent });
-        try {
-            const result = await sessionAutoFollowPreferencesSet(serverId, { ...base, ...combinedIntent.patch });
-            if (currentOperation.current !== operation) return { kind: 'unchanged' };
-            if (result.kind === 'ok') {
-                preferencesRef.current = result.value;
-                setPreferences(result.value);
+        const pending = (async (): Promise<SessionAutoFollowPreferencesSaveOutcome> => {
+            try {
+                let confirmed = base;
+                const previousPatch: Partial<SessionAutoFollowPreferencesV1> = {};
+                while (true) {
+                    const desired = desiredRef.current!;
+                    const fields = (Object.keys(desired.patch) as (keyof SessionAutoFollowPreferencesV1)[])
+                        .filter(field => !sameStrictJsonValue(confirmed[field], desired.patch[field]));
+                    for (const field of fields) {
+                        if (!Object.hasOwn(previousPatch, field)) Object.assign(previousPatch, { [field]: confirmed[field] });
+                    }
+                    if (fields.length === 0) break;
+                    const result = await sessionAutoFollowPreferencesSet(serverId, { ...confirmed, ...desired.patch });
+                    if (currentOperation.current !== operation) return { kind: 'unchanged' };
+                    if (result.kind !== 'ok') {
+                        dispatchMutation({ kind: 'failed', error: true });
+                        return { kind: 'failed', cause: result };
+                    }
+                    confirmed = result.value;
+                    preferencesRef.current = confirmed;
+                    setPreferences(confirmed);
+                    // Only a newer choice needs another write. The Home's returned value
+                    // remains authoritative when it normalizes the submitted preference.
+                    if (desiredRef.current === desired) break;
+                }
+                if (currentOperation.current !== operation) return { kind: 'unchanged' };
+                const previous: SessionAutoFollowPreferencesIntent = { patch: previousPatch };
                 dispatchMutation({ kind: 'succeeded' });
                 publishPresentationNotice({ key: noticeKey, severity: 'info', message: t('settingsCoordination.followDefaultsSaved'),
                     undo: { label: t('common.undo'), run: () => {
@@ -168,24 +198,25 @@ export function useSessionAutoFollowPreferences(serverId: string) {
                                 message: t('settingsCoordination.followDefaultsFailed') });
                         });
                     } } });
-                return { kind: 'saved', previous, value: result.value };
-            } else {
-                dispatchMutation({ kind: 'failed', error: true });
-                return { kind: 'failed', cause: result };
-            }
-        } catch (cause) {
-            if (currentOperation.current === operation) dispatchMutation({ kind: 'failed', error: true });
-            return { kind: 'failed', cause: { kind: 'exception', cause } };
-        } finally {
-            if (currentOperation.current === operation) {
-                savingRef.current = false;
-                setSaving(false);
-                if (refreshAfterSaveRef.current) {
-                    refreshAfterSaveRef.current = false;
-                    await refresh();
+                return { kind: 'saved', previous, value: confirmed };
+            } catch (cause) {
+                if (currentOperation.current === operation) dispatchMutation({ kind: 'failed', error: true });
+                return { kind: 'failed', cause: { kind: 'exception', cause } };
+            } finally {
+                if (currentOperation.current === operation) {
+                    savingRef.current = false;
+                    desiredRef.current = null;
+                    savePromiseRef.current = null;
+                    setSaving(false);
+                    if (refreshAfterSaveRef.current) {
+                        refreshAfterSaveRef.current = false;
+                        await refresh();
+                    }
                 }
             }
-        }
+        })();
+        savePromiseRef.current = pending;
+        return pending;
     }, [refresh, serverId]);
 
     const outstanding = mutation.pending;

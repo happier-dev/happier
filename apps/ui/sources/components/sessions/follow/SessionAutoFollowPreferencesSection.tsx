@@ -24,7 +24,7 @@ type AutoFollowLevel = 'important' | 'off';
 export function SessionAutoFollowPreferencesSection({ preferences }: Readonly<{
     preferences: ReturnType<typeof useSessionAutoFollowPreferences>;
 }>) {
-    const { enabled, displayed, confirmed, failed, online, saving, error, save, retry } = preferences;
+    const { enabled, displayed, confirmed, failed, online, error, save, retry } = preferences;
     const failedField = FIELDS.find(field => failed && Object.hasOwn(failed.patch, field));
     const sectionError = error && (!failed || failedField !== undefined);
     if (!enabled) return null;
@@ -41,7 +41,7 @@ export function SessionAutoFollowPreferencesSection({ preferences }: Readonly<{
                 titleLines={0}
                 options={levels}
                 value={displayed[field] ? 'important' : 'off'}
-                disabled={!online || saving}
+                disabled={!online}
                 onChange={(level) => { void save({ patch: { [field]: level === 'important' } }); }}
             />
         </SettingAnchor>) : <Item title={t('common.loading')} loading={!error && online} mode="info" />}

@@ -43,7 +43,7 @@ function DefaultLevelsGroup(props: Readonly<{
     preferences: ReturnType<typeof useSessionAutoFollowPreferences>;
     popoverBoundaryRef: React.RefObject<ScrollView | null>;
 }>) {
-    const { enabled, displayed, confirmed, failed, online, saving, error, save, retry } = props.preferences;
+    const { enabled, displayed, confirmed, failed, online, error, save, retry } = props.preferences;
     const failedField = LEVEL_FIELDS.find(field => failed && Object.hasOwn(failed.patch, field));
     const sectionError = error && (!failed || failedField !== undefined);
     const [openField, setOpenField] = React.useState<CreationLevelField | null>(null);
@@ -74,7 +74,7 @@ function DefaultLevelsGroup(props: Readonly<{
                             title: t(setting.titleKey),
                             subtitle: setting.descriptionKey ? t(setting.descriptionKey) : undefined,
                             showSelectedSubtitle: false,
-                            itemProps: { subtitleLines: 0, disabled: !online || saving },
+                            itemProps: { subtitleLines: 0, disabled: !online },
                         }}
                         items={items}
                         onSelect={(id) => {
