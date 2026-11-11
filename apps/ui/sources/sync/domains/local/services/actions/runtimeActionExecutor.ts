@@ -508,7 +508,6 @@ export function createLocalServicesRuntimeActionExecutor(
             if (!machineId) return disabledResult('local_services_machine_unavailable');
             const request = parseLocalServiceDomainActionRpcRequest(args.actionId, {
                 ...(isRecord(parsed.input) ? parsed.input : {}), machineId,
-                ...(args.actionId === 'localServices.preview.openOrCreate' && sessionId ? { sessionId } : {}),
             });
             if (!request?.success) return invalidParametersResult;
             if (!input.executeOnMachine) return routeFailureResult('preview', 'unavailable');

@@ -1061,6 +1061,44 @@ describe('UI local-services runtime action executor', () => {
         }));
     });
 
+    it('registers a declared Service from a Session without changing its resource binding', async () => {
+        const { resolveLocalServiceBrowserTarget } = await import('../preview/resolveLaunchTarget');
+        const { DaemonLocalServicePreviewOpenOrCreateRequestV1Schema,
+            DaemonLocalServicePreviewOpenOrCreateResponseV1Schema } = await import('@happier-dev/protocol/local/services/preview/v1');
+        const { createLocalServicesRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const serviceTarget = {
+            kind: 'managed_service' as const, machineId: 'machine_1', managedServiceId: 'managed-web',
+            workspaceId: 'workspace_1', cwd: '/workspace',
+            declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } },
+        };
+        const { sessionId: _session, browserTarget: _browser, ...baseResource } = previewResource;
+        const resource = { ...baseResource, serviceTarget, owner: { kind: 'user', id: 'account_1' } };
+        const preview = { ...previewOpenOrCreateResponse.preview, resource };
+        const response = DaemonLocalServicePreviewOpenOrCreateResponseV1Schema.parse({
+            ...previewOpenOrCreateResponse, preview,
+            snapshot: { ...previewLifecycleSnapshot, resources: [resource], previews: [preview] },
+        });
+        // Machine Action transport is the process boundary; producer, executor and strict reader stay real.
+        const executeOnMachine = vi.fn(async (args: RuntimeActionExecuteArgs) => {
+            expect(DaemonLocalServicePreviewOpenOrCreateRequestV1Schema.parse(args.input))
+                .toEqual({ machineId: 'machine_1', serviceTarget });
+            return response;
+        });
+        const execute = createLocalServicesRuntimeActionExecutor({ executeOnMachine, onPreviewSnapshot: () => {} });
+        const result = await resolveLocalServiceBrowserTarget({
+            id: 'project-service:web', source: 'managed_service', machineId: 'machine_1',
+            title: 'web', confidence: 'high', state: 'available', actions: ['register_preview'],
+            sourceClass: { kind: 'managed_service', managedServiceId: 'managed-web' },
+            workspaceId: serviceTarget.workspaceId, cwd: serviceTarget.cwd, declaration: serviceTarget.declaration,
+        }, {
+            serverId: 'server_1', sessionId: 'invoking-session',
+            execute: (request, context) => execute(runtimeArgs({ actionId: 'localServices.preview.openOrCreate',
+                input: request, context: { defaultSessionId: 'invoking-session', ...context } })),
+        });
+        expect(result).toMatchObject({ status: 'succeeded', target: { serviceTarget } });
+        expect(executeOnMachine).toHaveBeenCalledOnce();
+    });
+
     it('dispatches localServices.preview.openOrCreate to the daemon route and publishes the snapshot', async () => {
         const mod = await import('./runtimeActionExecutor');
 
