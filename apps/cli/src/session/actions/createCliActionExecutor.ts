@@ -562,6 +562,7 @@ export function createCliActionExecutor(
       // admitted callerAuthority remains separate and is not upgraded here.
       currentAccount: runtimeAccountId && params.serverId && params.serverIdentityId ? {
         accountId: runtimeAccountId, serverId: params.serverId, serverIdentityId: params.serverIdentityId,
+        actionsSettings: actionSettingsProvider.getActionsSettings(),
       } : undefined,
     }),
   };

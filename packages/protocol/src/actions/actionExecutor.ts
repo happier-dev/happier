@@ -624,8 +624,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     artifactId: string;
     signal?: AbortSignal;
     callerAuthority?: ActionRequiredAuthority;
-    /** Current credential-bound host facts, never read from the approval or RPC operands. */
-    currentAccount?: Readonly<{ accountId: string; serverId: string; serverIdentityId: string }>;
+    /** Current credential-bound host facts, never read from the approval or RPC operands.
+     * Its Action settings are that same Account's current policy snapshot. */
+    currentAccount?: Readonly<{ accountId: string; serverId: string; serverIdentityId: string; actionsSettings?: ActionsSettingsV1 }>;
   }>) => Promise<ActionExecuteResult>;
 }> {
   const startExecutionRunWithSelection = async (

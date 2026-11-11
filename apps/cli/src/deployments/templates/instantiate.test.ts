@@ -17,7 +17,7 @@ import { isNativeDefinitionRecord } from '@/workspaces/projectSetup/nativePackag
 import { createRegistryHostV1, DeploymentTemplateV1Schema, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
 import { accountSettingsParse, ProjectDeploymentDefaultsOutputV1Schema, DeploymentTemplateInstantiateInputV1Schema,
     DeploymentTemplateInstantiateResultV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateInputV1Schema, DeploymentTargetLinkResultV1Schema, MachineSetupApplyInputV1Schema, ApprovalRequestV2Schema,
-    decideApprovalRequestTransition, getMachineSetupDesiredV1, type ApprovalRequestV2 } from '@happier-dev/protocol';
+    decideApprovalRequestTransition, getMachineSetupDesiredV1, type ApprovalRequestV2, type DeploymentBindingsSetInputV1 } from '@happier-dev/protocol';
 import { PromptLibraryCatalogKeyV1Schema, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -39,10 +39,16 @@ import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import { PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 
 afterEach(() => vi.restoreAllMocks());
+
+/** Applies reviewed bindings stop at Home before this child; its own owner is covered by the bindings writer tests. */
+const unreachedReviewedChild: HostReviewedChildPortV1 = {
+    invoke: async request => { throw new Error(`Reviewed child ${String(request.action)} is not reached`); },
+};
 
 it.each([false, true])('persists independent generated credentials from a bundled database (reviewed mapping=%s)', async reviewedMapping => {
     const fixture = await createSavedSecretsCliHttpFixture();
@@ -139,16 +145,26 @@ it.each([false, true])('persists independent generated credentials from a bundle
             expect(preview).toMatchObject({ kind: 'preview', review: { generatedSecrets: [{ name: ordinal === 1 ? 'DB_PASSWORD' : 'DB_PASSWORD_2' }] } });
             const prepared = await fixture.inHome(() => templates.prepare(input, { runtimeAccountId: 'account-cli-fixture' }));
             expect(prepared.input).toEqual(input);
-            const result = await fixture.inHome(() => templates.instantiate(input, { runtimeAccountId: 'account-cli-fixture' }));
+            // The reviewed bindings child commits at the same Home persistence boundary.
+            const bindingsChild: HostReviewedChildPortV1 = { invoke: async request => {
+                const bindings = request.input as { set: typeof current.content.bindings };
+                current.content = DeploymentEnvironmentContentV1Schema.parse({ ...current.content, bindings: bindings.set });
+                current.environment.revision++;
+                return { ok: true, result: { ok: true, environmentId: current.environment.id, revision: current.environment.revision } };
+            } };
+            const result = await fixture.inHome(() => templates.instantiate(input, { runtimeAccountId: 'account-cli-fixture',
+                hostReviewedChild: bindingsChild }));
             expect(result).toMatchObject({ kind: 'applied', savedSecrets: [{ name: ordinal === 1 ? 'DB_PASSWORD' : 'DB_PASSWORD_2' }] });
         }
         const stored = DeploymentEnvironmentContentV1Schema.parse(current.content);
         expect(stored.template?.data?.map(data => ({ service: data.service, variables: data.variables, backup: data.logicalBackup })))
             .toEqual([1, 2].map(ordinal => ({ service: ordinal === 1 ? 'database' : 'database-2',
                 variables: { username: ordinal === 1 ? 'DB_USER' : 'DB_USER_2', password: ordinal === 1 ? 'DB_PASSWORD' : 'DB_PASSWORD_2',
-                    database: ordinal === 1 ? 'DB_NAME' : 'DB_NAME_2' },
+                    database: ordinal === 1 ? 'DB_NAME' : 'DB_NAME_2', host: ordinal === 1 ? 'DB_HOST' : 'DB_HOST_2',
+                    port: ordinal === 1 ? 'DB_PORT' : 'DB_PORT_2' },
                 backup: { adapter: 'postgres-v1', database: ordinal === 1 ? 'DB_NAME' : 'DB_NAME_2', username: ordinal === 1 ? 'DB_USER' : 'DB_USER_2' } })));
-        expect(stored.bindings.map(binding => binding.name)).toEqual(['DB_USER', 'DB_NAME', 'DB_PASSWORD', 'DB_USER_2', 'DB_NAME_2', 'DB_PASSWORD_2']);
+        expect(stored.bindings.map(binding => binding.name)).toEqual(['DB_USER', 'DB_NAME', 'DB_PASSWORD', 'DB_HOST', 'DB_PORT',
+            'DB_USER_2', 'DB_NAME_2', 'DB_PASSWORD_2', 'DB_HOST_2', 'DB_PORT_2']);
         if (stored.definition.kind !== 'stored') throw new Error('Expected stored output');
         const composed = await parseNativeComposeSource(stored.definition.document);
         expect(composed.services).toHaveProperty('database-2');
@@ -256,7 +272,7 @@ it.each(['template', 'environment', 'admittedTemplate'] as const)('retains gener
         }
         sourceReads = 0;
         const result = await fixture.inHome(async () => {
-            const context = { runtimeAccountId: 'account-cli-fixture' };
+            const context = { runtimeAccountId: 'account-cli-fixture', hostReviewedChild: unreachedReviewedChild };
             if (entry === 'admittedTemplate') {
                 const prepared = await templates.prepare(input, context);
                 if ('errorCode' in prepared) return prepared;
@@ -288,7 +304,8 @@ it.each(['template', 'environment', 'admittedTemplate'] as const)('retains gener
             expect(value).toMatch(/^[a-f0-9]{64}$/u);
             expect(JSON.stringify(result)).not.toContain(value);
         }
-        expect(await fixture.inHome(() => templates.instantiate(input, { runtimeAccountId: 'account-cli-fixture' })))
+        expect(await fixture.inHome(() => templates.instantiate(input, { runtimeAccountId: 'account-cli-fixture',
+            hostReviewedChild: unreachedReviewedChild })))
             .toMatchObject({ ok: false, errorCode: 'invalid_source', effectAttempted: false });
         expect(fixture.writes).toHaveLength(secretKeys.length);
     } finally { await fixture.close(); }
@@ -369,7 +386,7 @@ it('keeps reloaded template pins usable and retains a refused first content writ
             expect.soft(await templates.instantiate(input, { runtimeAccountId: 'owner' })).toMatchObject({ kind: 'preview',
                 review: { templateRef: input.templateRef, services: ['web'] } });
             const apply = { ...input, mode: 'apply' as const };
-            const context = { runtimeAccountId: 'owner' };
+            const context = { runtimeAccountId: 'owner', hostReviewedChild: unreachedReviewedChild };
             const prepared = await templates.prepare(apply, context);
             if ('errorCode' in prepared) throw new Error(prepared.errorCode);
             const execute = prepared.hostReviewedChildren.executeAdmittedAction;
@@ -598,6 +615,12 @@ it('applies admitted Project defaults and preserves Team content audience throug
         credentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
         machineId: 'target', savedSecretOperationContext: operation, readMachineVitals: () => { sampleReads += 1; return sample; },
         runtime: { async acquire() { throw new Error('Preview cannot acquire native custody'); } } });
+    // The reviewed bindings child runs the real bindings writer over the same HTTP boundary.
+    const bindingsChild = (actionRequestId: string): HostReviewedChildPortV1 => ({ invoke: async request => {
+        const applied = await deps.deploymentAction!('deployments.bindings.set', request.input as DeploymentBindingsSetInputV1,
+            { runtimeAccountId: 'owner', actionRequestId });
+        return 'errorCode' in applied ? applied : { ok: true, result: applied };
+    } });
     phase = 'template_preview';
     const credentialed = createCliActionExecutorFromCredentials({ credentials, ...deps,
         serverId: 'home', serverIdentityId: 'home', serverApiUrl: 'https://home.test',
@@ -685,9 +708,10 @@ it('applies admitted Project defaults and preserves Team content audience throug
             surface: path === 'prepared' ? 'ui' : 'cli', authority: path === 'prepared' ? 'present_user' : 'account_automation',
             actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'srv_home', runtimeAccountId: 'owner',
             actionRequestId: `review-${path}-${changed}`, executionRunTargetMachineId: 'target',
+            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
         });
         if (path === 'prepared') {
-            expect(prepared.kind).toBe('ready');
+            expect(prepared, JSON.stringify(prepared)).toMatchObject({ kind: 'ready' });
             if (prepared.kind !== 'ready') throw new Error('Expected reviewed template invocation');
         } else {
             const open = ApprovalRequestV2Schema.parse(stored);
@@ -706,11 +730,12 @@ it('applies admitted Project defaults and preserves Team content audience throug
         phase = `approval_apply:${path}:${changed}`;
         const result = path === 'prepared' && prepared.kind === 'ready' ? await prepared.invocation.run()
             : await executor.replayApprovedApprovalRequest({ artifactId: 'review', callerAuthority: 'present_user',
-                currentAccount: { accountId: 'owner', serverId: 'home', serverIdentityId: 'srv_home' } });
+                currentAccount: { accountId: 'owner', serverId: 'home', serverIdentityId: 'srv_home',
+                    actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) } });
         if (path === 'prepared' || changed === 'observationTime') {
             // A finite prepared invocation consumes its admitted facts. Durable
             // replay admits again; unchanged capacity still reaches the write.
-            expect.soft(mutationRequests).toBe(mutationsBefore + 1);
+            expect.soft(mutationRequests, JSON.stringify(result)).toBe(mutationsBefore + 1);
         } else {
             expect.soft(path === 'prepared' ? result : stored?.execution).toMatchObject({ ok: false, errorCode: 'approval_stale' });
             expect.soft(mutationRequests).toBe(mutationsBefore);
@@ -741,7 +766,8 @@ it('applies admitted Project defaults and preserves Team content audience throug
         .toMatchObject({ ok: false, errorCode: 'deployment_conflict' });
     expect(proposed).toHaveLength(0);
     phase = 'account_content_write';
-    await runWithServerHttpBaseUrl('https://home.test', () => templates.instantiate(input, { runtimeAccountId: 'owner' }));
+    await runWithServerHttpBaseUrl('https://home.test', () => templates.instantiate(input,
+        { runtimeAccountId: 'owner', hostReviewedChild: unreachedReviewedChild }));
     expect(proposed).toHaveLength(1);
     expect(DeploymentEnvironmentContentV1Schema.parse(proposed[0]).retainPreviousDeployments).toBe(0);
     expect(DeploymentEnvironmentContentV1Schema.parse(proposed[0]).ownServer).toEqual({
@@ -771,7 +797,7 @@ it('applies admitted Project defaults and preserves Team content audience throug
             environment: { kind: 'existing', environmentId: current.environment.id, expectedRevision: current.environment.revision },
             target: { kind: 'existing', targetLinkId: link.id, expectedRevision: link.revision, installationId: identity.installationId },
             destination: { kind: 'stored', contentRevision: incumbent.contentRevision, composeDigest: incumbent.composeDigest },
-        }), { runtimeAccountId: 'owner' });
+        }), { runtimeAccountId: 'owner', hostReviewedChild: unreachedReviewedChild });
         expect(proposed).toHaveLength(changed ? 3 : 2);
         expect(DeploymentEnvironmentContentV1Schema.parse(proposed.at(-1)).definition)
             .toMatchObject({ kind: 'stored', contentRevision: incumbent.contentRevision + (changed ? 1 : 0) });
@@ -901,7 +927,8 @@ it('applies admitted Project defaults and preserves Team content audience throug
                 : { kind: 'existing', environmentId: environment.environment.id,
                 expectedRevision: environment.environment.revision },
             destination: kind === 'create' ? input.destination : { kind: 'stored', contentRevision: definition.contentRevision,
-                composeDigest: definition.composeDigest } }, { runtimeAccountId: 'owner', actionRequestId: `template-${kind}` });
+                composeDigest: definition.composeDigest } }, { runtimeAccountId: 'owner', actionRequestId: `template-${kind}`,
+                hostReviewedChild: bindingsChild(`template-${kind}-bindings`) });
         const failurePhase = 'kind' in result && result.kind === 'partial'
             ? `template ${kind}: ${result.phase}/${result.errorCode}` : undefined;
         // The real HTTP create must retain the reviewed authority operands,
@@ -942,6 +969,7 @@ it('applies admitted Project defaults and preserves Team content audience throug
         phase = `writer_currentness:${change}`;
         const result = await deps.deploymentTemplateInstantiate(input, {
             runtimeAccountId: 'owner', actionRequestId: `template-stale-${change}`,
+            hostReviewedChild: bindingsChild(`template-stale-${change}-bindings`),
         });
         expect(result).toMatchObject({ kind: 'applied' });
         expect(registrySourceReads - sourceReadsBefore).toBe(1);

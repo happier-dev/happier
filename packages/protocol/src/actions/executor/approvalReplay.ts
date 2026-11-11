@@ -113,7 +113,8 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
       const executed = await deps.executeApprovedActionForRequest({ artifactId, request, artifactServerId,
         ctx: { ...(args.signal ? { signal: args.signal } : {}),
           ...(args.currentAccount ? { surface: 'cli' as const, runtimeAccountId: args.currentAccount.accountId,
-            serverId: args.currentAccount.serverId, serverIdentityId: args.currentAccount.serverIdentityId } : {}),
+            serverId: args.currentAccount.serverId, serverIdentityId: args.currentAccount.serverIdentityId,
+            ...(args.currentAccount.actionsSettings ? { actionsSettings: args.currentAccount.actionsSettings } : {}) } : {}),
           ...(args.callerAuthority === 'present_user' ? { authority: 'present_user' as const } : {}),
         }, observeExecution: true });
       return executed.ok ? buildApprovalDecisionResult(executed.request, {
