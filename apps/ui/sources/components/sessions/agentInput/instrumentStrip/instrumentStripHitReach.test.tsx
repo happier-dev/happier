@@ -121,7 +121,8 @@ describe('instrument strip hit areas', () => {
       () => screen.findHostByTestId('session-instrument-git'),
       { width: 48, height: glyph },
     );
-    const clusterGap = Number(instrumentStripStyles.cluster.gap);
+    // The cluster's rhythm is each spaced instrument's leading margin (an empty plugin region takes none).
+    const clusterGap = Number(instrumentStripStyles.instrumentSpaced.marginLeft);
     expect(clusterGap).toBeGreaterThan(0);
     expect(
       hitAreaOverlap(gauge, quota, { axis: 'horizontal', gap: clusterGap }),

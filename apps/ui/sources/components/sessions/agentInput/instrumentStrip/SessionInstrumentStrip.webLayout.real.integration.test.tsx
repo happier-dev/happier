@@ -144,6 +144,22 @@ describe('the composer status line on a phone (owner 2026-11-10)', () => {
   });
 });
 
+describe('the status line right edge (owner 2026-11-11)', () => {
+  it('ends the last visible instrument on the composer content edge when a plugin region renders nothing', async () => {
+    // A plugin region with nothing to say (a Session with no pull request) must take no slot or gap.
+    function EmptyRegion() {
+      return null;
+    }
+    const layout = await measureStrip(800, { label: 'Ready', labelNumberOfLines: 1 }, false, [], [
+      { emphasis: 'prominent', node: <EmptyRegion key="empty" /> },
+    ]);
+    const frame = layout.rect('frame');
+    const badge = layout.rect('badge');
+    // The strip's content edge is its own horizontal inset in from the frame (20 on a desktop composer).
+    expect(frame.right - badge.right).toBeLessThanOrEqual(20.5);
+  });
+});
+
 describe('the composer status row, as a browser lays it out', () => {
   it('keeps the badge and the draft actions on one line where they fit', async () => {
     const layout = await measureStrip(900);

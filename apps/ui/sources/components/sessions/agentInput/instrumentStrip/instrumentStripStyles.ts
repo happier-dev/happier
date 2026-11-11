@@ -9,7 +9,7 @@ export const INSTRUMENT_STRIP_LINE_HEIGHT_PX = 28;
 const INSTRUMENT_GLYPH_LINE_PX = 16;
 
 /**
- * An instrument's hit area: half the cluster gap toward each neighbour, and above and below only the strip
+ * An instrument's hit area: half the cluster gap (`instrumentSpaced`) toward each neighbour, and above and below only the strip
  * line's own free band. Above the line is the transcript (a queued row's actions), below it the composer, so a
  * finger there belongs to them, not to the gauge or the quota ring.
  */
@@ -99,7 +99,14 @@ export const instrumentStripStyles = StyleSheet.create((theme) => ({
         // Only shrinks when it is alone on a line narrower than itself; a long badge then wraps its words.
         flexShrink: 1,
         minWidth: 0,
-        gap: theme.space.s10,
+    },
+    /**
+     * The cluster's rhythm, carried by each instrument that has content rather than by a container gap: a plugin
+     * region with nothing to show (a Session with no pull request) takes no gap, so the last visible instrument
+     * ends on the composer's content edge (owner 2026-11-11).
+     */
+    instrumentSpaced: {
+        marginLeft: theme.space.s10,
     },
     trailingActions: {
         flexDirection: 'row',

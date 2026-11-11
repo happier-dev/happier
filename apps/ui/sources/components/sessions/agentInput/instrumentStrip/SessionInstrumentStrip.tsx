@@ -318,7 +318,7 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
     const collapsibleInstruments = buildCollapsibleInstruments(isCompact);
 
     const permissionChip = props.permission ? (
-        <View style={instrumentStripStyles.permissionChip}>
+        <View style={[instrumentStripStyles.permissionChip, collapsibleInstruments.length > 0 ? instrumentStripStyles.instrumentSpaced : null]}>
             <Text style={[instrumentStripStyles.permissionText, { color: props.permission.color }]} numberOfLines={1}>
                 {props.permission.label}
             </Text>
@@ -413,7 +413,8 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
                     <CollapsedInstrumentsChip instruments={buildCollapsibleInstruments(false)} />
                 ) : (
                     collapsibleInstruments.map(({ node, yields }, index) => (
-                        <InstrumentEntrance key={(node as React.ReactElement).key ?? index} index={index} enabled={entranceEnabled} yields={yields}>
+                        <InstrumentEntrance key={(node as React.ReactElement).key ?? index} index={index} enabled={entranceEnabled} yields={yields}
+                            leading={index === 0}>
                             {node}
                         </InstrumentEntrance>
                     ))
@@ -441,8 +442,14 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
  * One-shot fade + 4px rise entrance, staggered per index via kit tokens (T5.1). Leaving fades over the same
  * duration, so a badge whose work ends (a created machine joining) settles instead of blinking out (lab af-create).
  */
-function InstrumentEntrance(props: Readonly<{ index: number; enabled: boolean; yields: boolean; children: React.ReactNode }>) {
+function InstrumentEntrance(props: Readonly<{ index: number; enabled: boolean; yields: boolean; leading: boolean; children: React.ReactNode }>) {
     const progress = useSharedValue(props.enabled ? 0 : 1);
+    // An instrument that renders nothing (an empty plugin region) measures zero wide and drops its gap.
+    const [hasContent, setHasContent] = React.useState(true);
+    const handleLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const next = event.nativeEvent.layout.width > 0.5;
+        setHasContent((current) => (current === next ? current : next));
+    }, []);
     React.useEffect(() => {
         if (props.enabled) {
             progress.value = withDelay(
@@ -459,7 +466,9 @@ function InstrumentEntrance(props: Readonly<{ index: number; enabled: boolean; y
         transform: [{ translateY: (1 - progress.value) * 4 }],
     }));
     return (
-        <InstrumentFrame style={[props.yields ? instrumentStripStyles.instrumentEntranceYielding : instrumentStripStyles.instrumentEntrance, style]}
+        <InstrumentFrame onLayout={handleLayout}
+            style={[props.yields ? instrumentStripStyles.instrumentEntranceYielding : instrumentStripStyles.instrumentEntrance,
+                !props.leading && hasContent ? instrumentStripStyles.instrumentSpaced : null, style]}
             exiting={props.enabled ? FadeOut.duration(INSTRUMENT_DURATIONS.entrance) : undefined}>
             {props.children}
         </InstrumentFrame>
