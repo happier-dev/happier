@@ -1,3 +1,7 @@
+import { createXaiPortableConnectedAccountRuntime, XAI_CREDENTIAL_KEY } from '../../../../../../packages/plugins/grok/src/connectedAccounts/portableRuntime';
+import { buildConnectedServiceCredentialSpawnErrorResult } from '../diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
+import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 import { describe, expect, it, vi } from 'vitest';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { buildQualifiedPluginContributionKey, PluginAgentContributionV2Schema, PluginManifestV2Schema } from '@happier-dev/protocol';
@@ -38,6 +42,46 @@ const purpose = Object.freeze({ consumer, purpose: 'launch' });
 const account = Object.freeze({ service, accountId: 'account-1' });
 
 describe('materializeQualifiedConnectedAccountLaunchUses', () => {
+  it('retains the authentication cause when an OAuth account cannot produce the required API key', async () => {
+    const runtime = createXaiPortableConnectedAccountRuntime();
+    const signal = new AbortController().signal;
+    const owner = createConnectedAccountPurposeBindingOwner({
+      store: { read: async () => ({ v: 1, bindings: [{ purpose, target: { kind: 'account', account } }] }),
+        update: async () => { throw new Error('Launch must not edit preferences'); }, subscribe: () => ({ dispose() {} }) },
+      selectTarget: async () => { throw new Error('Launch must not prompt'); },
+      resolveTarget: async target => target.kind === 'account' ? { displayName: target.account.accountId, account: target.account } : null,
+      materializeAccount: async ({ request }) => runtime.materialize(request, {
+        account, plugin: { id: service.pluginId, version: '1.0.0' },
+        contribution: { id: service.localId, qualifiedId: buildQualifiedPluginContributionKey(service) },
+        surface: 'background', invokedAtMs: 0, services: createUnavailablePluginServices(), signal,
+        credentials: { async get(key) {
+          expect(key).toBe(XAI_CREDENTIAL_KEY);
+          return JSON.stringify({ mode: 'subscription', accessToken: 'fixture-subscription-token' });
+        } },
+        configuration: { target: { kind: 'account', account, modeId: 'device' }, revision: 'configuration-1', values: {}, async getSecret() { return null; } },
+      }),
+      projectTargetAccounts: async () => { throw new Error('No account inventory needed'); },
+      assertTargetAccountMaterializable: async () => { throw new Error('No account inventory needed'); },
+    });
+    let failure: unknown;
+    try {
+      await materializeQualifiedConnectedAccountLaunchUses({ connectedAccountsOwner: owner, signal,
+        snapshot: { purposes: [purpose], bindings: [{ purpose, target: { kind: 'account', account } }],
+          environmentUses: [{ purpose, serviceRefs: [service], environmentKey: 'XAI_API_KEY' }] } });
+    } catch (error) { failure = error; }
+    const spawn = buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'pi', error: failure });
+    expect(spawn).toMatchObject({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED',
+      errorDetail: { kind: 'launch_error', code: 'credential_unavailable',
+        failureCause: { phase: 'authentication', code: 'credential_unavailable', failureReason: 'authentication_required', retryable: false } } });
+    if (!spawn) throw new Error('Expected typed launch refusal');
+    const projected = projectSessionSpawnFailure(spawn);
+    expect(projected.retryable).toBe(false);
+    expect(SessionSpawnLaunchErrorV1Schema.parse(projected.launchError)).toMatchObject({
+      code: 'credential_unavailable', failureCause: { phase: 'authentication', code: 'credential_unavailable' },
+    });
+    expect(JSON.stringify(spawn)).not.toContain('fixture-subscription-token');
+  });
+
 
   it('prepares the selected Copilot GitHub environment once for model probing and runtime opening', async () => {
     const manifest = COPILOT_PLUGIN.manifest;

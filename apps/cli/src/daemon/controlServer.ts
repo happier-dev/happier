@@ -2763,6 +2763,7 @@ export function createDaemonControlApp({
           ...('modelId' in result && result.modelId ? { modelId: result.modelId } : {}),
           ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
           ...(result.uxDiagnostic ? { uxDiagnostic: result.uxDiagnostic } : {}),
+          ...(result.failureCause ? { failureCause: result.failureCause } : {}),
         };
       }
       return {

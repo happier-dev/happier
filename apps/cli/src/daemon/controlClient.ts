@@ -1,3 +1,4 @@
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 /**
  * HTTP client helpers for daemon communication
  * Used by CLI commands to interact with running daemon
@@ -1246,7 +1247,7 @@ export async function requestExecutionRunConnectedServicesMaterialization(
   options: Readonly<{ signal?: AbortSignal }> = {},
 ): Promise<
   | { ok: true; result: { activationId: string; env: Record<string, string>; unsetEnvKeys?: readonly string[]; connectedServicesBindings: unknown; registration: ExecutionRunConnectedServicesRegistrationV1 } }
-  | { ok?: false; error?: string; errorCode?: string; errorMessage?: string; uxDiagnostic?: ConnectedServiceUxDiagnosticV1 }
+  | { ok?: false; error?: string; errorCode?: string; errorMessage?: string; uxDiagnostic?: ConnectedServiceUxDiagnosticV1; failureCause?: SessionRuntimeIssueV1["failureCause"] }
 > {
   options.signal?.throwIfAborted();
   // Allocate the existing activation identity before dispatch, so a lost
@@ -1295,6 +1296,7 @@ export async function requestExecutionRunConnectedServicesMaterialization(
   if (refusal.success && !refusal.data.ok) {
     return { ok: false, errorCode: refusal.data.errorCode,
       ...(refusal.data.uxDiagnostic ? { uxDiagnostic: refusal.data.uxDiagnostic } : {}),
+      ...(refusal.data.failureCause ? { failureCause: refusal.data.failureCause } : {}),
       ...(typeof failure?.error === 'string' ? { error: sanitizeConnectedServiceDiagnosticString(failure.error) } : {}),
       errorMessage: refusal.data.errorMessage
         ? sanitizeConnectedServiceDiagnosticString(refusal.data.errorMessage)

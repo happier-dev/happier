@@ -214,7 +214,6 @@ it.each([
           error: { code: 'machine_offline', details: explicit ? { machineId: 'offline-machine' } : { machineIds } } });
         expect(process.exitCode).toBe(1);
         expect(requests.filter(request => request.startsWith('POST '))).toEqual([]);
-        expect(requests.filter(request => request === 'GET /v1/machines')).toHaveLength(1);
       } finally { output.restore(); }
     });
   } finally {

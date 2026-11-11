@@ -87,10 +87,10 @@ export function projectSessionSpawnFailure(input: Readonly<{
         ...(detail.success && detail.data.failureCause ? { failureCause: detail.data.failureCause } : {}) } };
   }
   const providerCode = ProviderErrorCodeV1Schema.safeParse(code);
-  const retryable = modelSelectionRequired || code === 'profile_launch_unavailable' || code === 'update_required' || code === 'team_credential_model_selection_required'
+  const retryable = (detail.success ? detail.data.failureCause?.retryable : undefined) ?? (modelSelectionRequired || code === 'profile_launch_unavailable' || code === 'update_required' || code === 'team_credential_model_selection_required'
     || code === 'agent_isolation_unavailable' || code === 'plugin_code_unreadable'
     || code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired ? false
-    : providerCode.success ? createProviderErrorV1(providerCode.data).retryable : true;
+    : providerCode.success ? createProviderErrorV1(providerCode.data).retryable : true);
   return { type: 'error', code: 'spawn_failed', retryable,
     launchError: detail.success ? { ...detail.data, code: typedCauseCode ?? detail.data.code,
       ...(modelSelectionRequired ? { message: readSessionStartupFailurePreview(code, null, detail.data.failureCause)! } : {}) } : fallback.success ? fallback.data

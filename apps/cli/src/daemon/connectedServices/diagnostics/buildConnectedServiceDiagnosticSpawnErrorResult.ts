@@ -1,3 +1,5 @@
+import { isPluginError } from '@happier-dev/plugin-sdk';
+import { readSessionStartupFailurePreview, SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES, ConnectedServiceCredentialReconnectCauseV1Schema, ConnectedServiceUxDiagnosticCodeV1Schema } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { SPAWN_SESSION_ERROR_CODES, SPAWN_SESSION_ERROR_DETAIL_KINDS } from '@happier-dev/protocol/spawnSession';
 import type { ConnectedServiceUxDiagnosticV1, SpawnSessionResult } from '@happier-dev/protocol';
@@ -91,6 +93,19 @@ export function buildConnectedServiceCredentialSpawnErrorResult(input: Readonly<
   agentId: CatalogAgentId;
   error: unknown;
 }>): Extract<SpawnSessionResult, { type: 'error' }> | null {
+  if (isPluginError(input.error) && input.error.code === 'credential_unavailable') {
+    const details = readRecord(input.error.details);
+    const failureCause = SessionRuntimeFailureCauseV1Schema.safeParse(details?.failureCause);
+    if (failureCause.success) {
+      const message = readSessionStartupFailurePreview(input.error.code)!;
+      return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: input.error.code,
+        errorDetail: { kind: 'launch_error', code: input.error.code, message, failureCause: {
+          code: input.error.code, phase: failureCause.data.phase,
+          failureReason: failureCause.data.failureReason, retryable: failureCause.data.retryable,
+        } } };
+    }
+  }
   const authorityError = readRecord(input.error);
   if (readStringField(authorityError, 'name') === 'ConnectedServiceSpawnAuthGroupAuthorityError'
     && readStringField(authorityError, 'kind') === 'active_profile_missing') {

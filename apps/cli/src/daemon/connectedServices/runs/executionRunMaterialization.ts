@@ -1106,7 +1106,9 @@ export function createExecutionRunConnectedServicesBridge(
                     const credentialFailure = buildConnectedServiceCredentialSpawnErrorResult({ agentId, error });
                     const uxDiagnostic = credentialFailure?.errorDetail?.kind === 'connected_service_ux_diagnostic'
                         ? credentialFailure.errorDetail.uxDiagnostic : undefined;
-                    const safeResolutionFailure = uxDiagnostic?.code ?? sanitizeConnectedServiceDiagnosticError(error);
+                    const failureCause = credentialFailure?.errorDetail?.kind === 'launch_error'
+                        ? credentialFailure.errorDetail.failureCause : undefined;
+                    const safeResolutionFailure = failureCause?.code ?? uxDiagnostic?.code ?? sanitizeConnectedServiceDiagnosticError(error);
                     logger.warn('[DAEMON RUN] Execution-run connected services resolution failed; failing closed', {
                         runId: input.runId,
                         agentId,
@@ -1114,7 +1116,8 @@ export function createExecutionRunConnectedServicesBridge(
                     });
                     return error instanceof ConnectedServiceAuthGroupQuotaProbeIncompleteError || error instanceof ConnectedServiceSpawnNoEligibleMemberError
                         ? { ok: false, errorCode: error.code, errorMessage: safeResolutionFailure }
-                        : { ...blocked(safeResolutionFailure), ...(uxDiagnostic ? { uxDiagnostic } : {}) };
+                        : { ...blocked(safeResolutionFailure), ...(uxDiagnostic ? { uxDiagnostic } : {}),
+                            ...(failureCause ? { failureCause } : {}) };
                 }
 
                 if (!resolved) {

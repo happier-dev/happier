@@ -1,3 +1,4 @@
+import { assertQualifiedConnectedAccountLaunchUsesProduced } from '../materialize/materializeQualifiedConnectedAccountLaunchUses';
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
@@ -162,6 +163,36 @@ function createBridge(overrides: Partial<Parameters<typeof createExecutionRunCon
 }
 
 describe('createExecutionRunConnectedServicesBridge', () => {
+    it('retains the required launch credential cause through the finite Run HTTP boundary', async () => {
+        const purpose = { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' };
+        const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+        const { bridge } = createBridge({ resolveAuthForSpawn: async () => {
+            assertQualifiedConnectedAccountLaunchUsesProduced({
+                snapshot: { purposes: [purpose], bindings: [{ purpose, target: { kind: 'account', account: { service, accountId: 'profile_1' } } }],
+                    environmentUses: [{ purpose, serviceRefs: [service], environmentKey: 'REQUIRED_API_KEY' }] },
+                producedPurposeKeys: new Set(),
+            });
+            throw new Error('A missing required credential must refuse launch');
+        } });
+        const app = createDaemonControlApp({
+            getChildren: () => [], machineId: 'machine', stopSession: async () => ({ status: 'not_found' }),
+            spawnSession: async () => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'unused' }),
+            requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'master-token',
+            verifyRunMaterializeToken: provided => isValidConnectedServiceRunMaterializeToken(provided, 'master-token'),
+            materializeConnectedServicesForExecutionRun: bridge.materialize,
+        });
+        try {
+            const response = await app.inject({ method: 'POST', url: '/connected-service-run/materialize',
+                headers: { 'x-happier-daemon-token': deriveConnectedServiceRunMaterializeToken('master-token') },
+                payload: { ...MATERIALIZE_INPUT, connectedServices: PERSISTED_RUN_BINDINGS, activationId: randomUUID() } });
+            expect(response.statusCode).toBe(403);
+            const result: unknown = response.json();
+            expect(result).toMatchObject({ ok: false, failureCause: { phase: 'authentication',
+                code: 'credential_unavailable', failureReason: 'authentication_required', retryable: false } });
+            expect(ConnectedServiceRunMaterializationFailureResponseSchema.parse(result)).toEqual(result);
+        } finally { await app.close(); }
+    });
+
     it('retains the profile action-required diagnostic when direct Run materialization is refused', async () => {
         const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
         const credentials = { token: 'fixture-home-token', encryption: null };

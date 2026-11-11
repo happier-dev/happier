@@ -1,3 +1,5 @@
+import { assertQualifiedConnectedAccountLaunchUsesProduced } from './connectedServices/materialize/materializeQualifiedConnectedAccountLaunchUses';
+import { projectExecutionRunError } from '@/agent/runtime/bridges/executionRun/errors';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stubIssuedFetch } from '@/testkit/http/stubIssuedFetch';
 import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
@@ -92,6 +94,29 @@ describe('resolveExecutionRunConnectedServiceMaterializeTimeoutMs', () => {
     } },
   };
   const foreignActivationId = '22222222-2222-4222-8222-222222222222';
+  it('retains the required launch credential cause from daemon HTTP to the public Run error', async () => {
+    const purpose = { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' };
+    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+    let failure: unknown;
+    try { assertQualifiedConnectedAccountLaunchUsesProduced({ producedPurposeKeys: new Set(),
+      snapshot: { purposes: [purpose], bindings: [{ purpose, target: { kind: 'account', account: { service, accountId: 'work' } } }],
+        environmentUses: [{ purpose, serviceRefs: [service], environmentKey: 'REQUIRED_API_KEY' }] } });
+    } catch (error) { failure = error; }
+    const owner = buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'codex', error: failure });
+    if (owner?.errorDetail?.kind !== 'launch_error') throw new Error('Expected typed credential refusal');
+    const failureCause = owner.errorDetail.failureCause;
+    stubUndiciFetch(async (url: string) => new URL(url).pathname.endsWith('/release')
+      ? new Response(JSON.stringify({ ok: true, released: false }))
+      : new Response(JSON.stringify({ ok: false, errorCode: 'connected_service_run_materialization_blocked',
+        errorMessage: owner.errorMessage, failureCause }), { status: 403 }));
+    let caught: unknown;
+    try { await resolveExecutionRunConnectedServicesEnv({ runId: 'credential-refusal', backendId: 'codex',
+      backendSourceKind: 'built_in', connectedServices: materializeRequest.connectedServices, cwd: '/repo' });
+    } catch (error) { caught = error; }
+    expect(ExecutionRunErrorSchema.parse(projectExecutionRunError(caught))).toMatchObject({
+      code: 'credential_unavailable', runtimeIssueV1: { failureCause },
+    });
+  });
   it('carries a daemon profile-action refusal through Voice Run start without retrying', async () => {
     const ownerResult = buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'codex',
       error: new ConnectedServiceSpawnProfileActionRequiredError({

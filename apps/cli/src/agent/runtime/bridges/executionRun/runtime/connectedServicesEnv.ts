@@ -1,3 +1,4 @@
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { ConnectedServiceBindingSelectionV2, ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
@@ -55,13 +56,16 @@ export class ExecutionRunConnectedServicesError extends Error {
     readonly errorCode: string;
     readonly executionRunErrorCode: string;
 
-    constructor(message: string, errorCode?: string, readonly uxDiagnostic?: ConnectedServiceUxDiagnosticV1) {
+    readonly details?: Readonly<{ failureCause: NonNullable<SessionRuntimeIssueV1["failureCause"]> }>;
+
+    constructor(message: string, errorCode?: string, readonly uxDiagnostic?: ConnectedServiceUxDiagnosticV1, failureCause?: SessionRuntimeIssueV1["failureCause"]) {
         super(message);
         this.name = 'ExecutionRunConnectedServicesError';
         this.errorCode = errorCode ?? 'connected_service_run_materialization_failed';
         this.code = this.errorCode === CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.resumeUnavailable
             ? 'AGENT_RESUME_PROVIDER_STATE_MISSING' : 'execution_run_connected_services_failed';
-        this.executionRunErrorCode = uxDiagnostic?.code ?? this.errorCode;
+        this.executionRunErrorCode = failureCause?.code ?? uxDiagnostic?.code ?? this.errorCode;
+        if (failureCause) this.details = { failureCause };
     }
 }
 
@@ -351,7 +355,8 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
             ...(errorCode ? { errorCode } : {}),
         });
         throw new ExecutionRunConnectedServicesError(errorMessage, errorCode,
-            response && 'uxDiagnostic' in response ? response.uxDiagnostic : undefined);
+            response && 'uxDiagnostic' in response ? response.uxDiagnostic : undefined,
+            response && 'failureCause' in response ? response.failureCause : undefined);
     }
 
     let cleanupPromise: Promise<void> | null = null;

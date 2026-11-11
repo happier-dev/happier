@@ -1,3 +1,4 @@
+import { SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { z } from 'zod/mini';
 import { ConnectedServiceUxDiagnosticV1Schema } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
@@ -170,6 +171,7 @@ export const ConnectedServiceRunMaterializationFailureResponseSchema = z.strictO
     modelId: z.optional(z.string()),
     errorMessage: z.optional(z.string()),
     uxDiagnostic: z.optional(ConnectedServiceUxDiagnosticV1Schema),
+    failureCause: z.optional(SessionRuntimeFailureCauseV1Schema),
 });
 
 export const ConnectedServiceRunRejectedStartRequestSchema = z.strictObject({

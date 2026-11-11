@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import type { QualifiedConnectedAccountRef, QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol';
 
@@ -34,7 +35,13 @@ export function assertQualifiedConnectedAccountLaunchUsesProduced(input: Readonl
     const key = qualifiedPurposeKey(purpose);
     const bound = input.isPurposeBound?.(purpose) ?? input.snapshot.bindings.some(binding => qualifiedPurposeKey(binding.purpose) === key);
     if (!bound || (!input.includeNativeHomeUses && nativePurposeKeys.has(key))) continue;
-    if (!input.producedPurposeKeys.has(key)) throw new Error('Connected Account launch credential is unavailable');
+    if (!input.producedPurposeKeys.has(key)) throw new PluginError({
+      code: 'credential_unavailable',
+      message: 'Connected Account launch credential is unavailable',
+      retryable: false,
+      details: { failureCause: { phase: 'authentication', code: 'credential_unavailable',
+        failureReason: 'authentication_required', retryable: false } },
+    });
   }
 }
 
