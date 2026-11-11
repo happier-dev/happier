@@ -1016,6 +1016,9 @@ describe("Machine preset relational owner", () => {
             enrollmentIdentity: request.input.input.enrollmentIdentity, selection: { kind: 'one-off' as const,
                 homeId, controller, launch, retention: definition.retention, wakeOnAcceptedMessage: false },
         } } })).rejects.toMatchObject({ code: 'permission_denied' });
+        await expect(admitManagedAcquire({ ...request, input: { ...request.input, requestId: 'preset-delegation-effect-reviewed', input: {
+            ...request.input.input, reviewedFacts: { ...reviewedFacts, reviewedEffectDigest: 'requester-supplied-effect-digest' },
+        } } })).rejects.toMatchObject({ code: 'invalid_request' });
         const acquired = await admitManagedAcquire(request);
         expect(acquired.machine).toMatchObject({ launch: { ...launch, name: 'Guest' }, retention: definition.retention, enrollmentAccountId: member });
         expect((await db.managedMachine.findUniqueOrThrow({ where: { id: acquired.machine.id } })).reviewedFacts)

@@ -106,6 +106,9 @@ export async function admitManagedAcquire(params: Readonly<{
                 setup = selected.preset.setup;
                 declaration = selected.declaration;
                 if (selected.delegated) {
+                    if (request.input.reviewedFacts?.reviewedEffectDigest !== undefined) {
+                        throw new ManagedMachineError('invalid_request');
+                    }
                     delegatedPolicy = resolveMachineRetentionPolicyV1({ billing: declaration.billing,
                         nativeCapabilities: declaration.retention, presetOverride: selected.preset });
                     if (!sameManagedInput(review.retention, delegatedPolicy.retention)
