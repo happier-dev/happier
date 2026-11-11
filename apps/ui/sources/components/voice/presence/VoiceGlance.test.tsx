@@ -13,6 +13,39 @@ import type { VoiceSurfaceViewModel } from '@/components/voice/surface/useVoiceS
 import { VoiceGlance } from './VoiceGlance';
 import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
+import type { NormalizedMessage } from '@happier-dev/session-core/raw';
+import { useVoiceSurfaceConversationState } from '@/components/voice/surface/useVoiceSurfaceConversationState';
+import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
+import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+
+const R115_CONVERSATION = 'r115-conversation';
+// RUN115 restart136: committed pairs captured in final115-brief/transcript-ids.json.
+const R115_TURNS = [
+    'WHAT ARE THE DAYS OF THE WEEK',
+    'The days of the week are Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, and Sunday.',
+    'WHAT IS TOO PLUS TOO',
+    'Two plus two is four.',
+    'NAME ONE PRIMARY COLOR ONE',
+    'Red.',
+];
+const R115_MESSAGES: NormalizedMessage[] = R115_TURNS.map((text, index) => ({
+    id: `r115-${index}`, localId: `r115-local-${index}`, isSidechain: false,
+    createdAt: 1794348168520 + index * 10_000, seq: index + 1,
+    ...(index % 2 === 0
+        ? { role: 'user' as const, content: { type: 'text' as const, text } }
+        : { role: 'agent' as const, content: [{ type: 'text' as const, text, uuid: `r115-${index}`, parentUUID: null }] }),
+}));
+
+function StoredVoiceGlance(props: Readonly<{ presentation: 'companion' | 'popover' | 'sheet' }>) {
+    const conversation = useVoiceSurfaceConversationState({
+        providerId: 'local_conversation', activeControlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+        surfaceSessionId: null, transcriptEnabled: true, voiceSettings: {},
+    });
+    return <VoiceGlance presentation={props.presentation} model={surface(attempt(), {
+        transcriptEntries: conversation.transcriptEntries,
+        visibleTranscriptEntries: conversation.visibleTranscriptEntries,
+    })} />;
+}
 
 /**
  * The Voice section (Companion, popovers, sheet) renders the canonical surface model: Mute, the
@@ -99,6 +132,56 @@ afterEach(async () => {
 });
 
 describe('VoiceGlance', () => {
+    it.each(['companion', 'popover', 'sheet'] as const)('shows the latest committed R115 turns in owner order across %s lifetimes', async (presentation) => {
+        const previousStorage = storage.getState();
+        const previousBindings = voiceSessionBindingStore.getState();
+        try {
+            storage.setState({
+                sessions: { [R115_CONVERSATION]: createSessionFixture({ id: R115_CONVERSATION, serverId: 'server-active' }) },
+                sessionMessages: {},
+            });
+            voiceSessionBindingStore.getState().bind({
+                adapterId: 'local_conversation', controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+                conversationSessionId: R115_CONVERSATION,
+                conversationSessionAddress: { serverId: 'server-active', sessionId: R115_CONVERSATION },
+                transcriptMode: 'native_session', targetSessionAddress: { serverId: 'server-active', sessionId: 's1' }, updatedAt: 1,
+            });
+            storage.getState().applyMessages(R115_CONVERSATION, R115_MESSAGES);
+            const expectLatest = () => {
+                const text = screen!.getTextContent();
+                for (const older of R115_TURNS.slice(0, 3)) expect(text).not.toContain(older);
+                const latest = R115_TURNS.slice(-3);
+                for (const turn of latest) expect(text).toContain(turn);
+                expect(text.indexOf(latest[0]!)).toBeLessThan(text.indexOf(latest[1]!));
+                expect(text.indexOf(latest[1]!)).toBeLessThan(text.indexOf(latest[2]!));
+            };
+            screen = await renderScreen(<StoredVoiceGlance presentation={presentation} />);
+            expectLatest(); // cold mount of the live-captured six-turn shape
+            await screen.unmount();
+            screen = null;
+            storage.setState({ sessionMessages: {} });
+            screen = await renderScreen(<StoredVoiceGlance presentation={presentation} />);
+            await act(async () => {
+                storage.getState().applyMessages(R115_CONVERSATION, R115_MESSAGES.slice(0, 4));
+            });
+            await act(async () => {
+                storage.getState().applyMessages(R115_CONVERSATION, [R115_MESSAGES[5]!]);
+            });
+            await act(async () => {
+                storage.getState().applyMessages(R115_CONVERSATION, [R115_MESSAGES[4]!]);
+            });
+            expectLatest(); // mounted late hydration must use event order
+            await screen.unmount();
+            screen = await renderScreen(<StoredVoiceGlance presentation={presentation} />);
+            expectLatest(); // reopening retains the same owner projection
+        } finally {
+            await screen?.unmount();
+            screen = null;
+            storage.setState(previousStorage, true);
+            voiceSessionBindingStore.setState(previousBindings, true);
+        }
+    });
+
     it('keeps the full failure caption readable and selectable', async () => {
         const detail = 'The selected speech provider could not start. Check the account key and its restrictions before trying again.';
         const voice = {

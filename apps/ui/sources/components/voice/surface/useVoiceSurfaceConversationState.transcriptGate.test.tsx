@@ -63,6 +63,15 @@ function surface(transcriptEnabled: boolean, activeControlSessionId: string | nu
 }
 
 describe('useVoiceSurfaceConversationState transcript gating (L10.T4)', () => {
+    it('keeps the latest 50 visible rows in owner event order', async () => {
+        getStorage().setState({ sessionMessages: { [CONVERSATION_ID]: messages(...Array.from({ length: 51 }, (_, index) => `turn-${index + 1}`)) } });
+        const hook = await renderHook(() => surface(true));
+        expect(hook.getCurrent().transcriptEntries).toHaveLength(51);
+        expect(hook.getCurrent().visibleTranscriptEntries.map((entry) => entry.id)).toEqual(
+            Array.from({ length: 50 }, (_, index) => `m${index + 2}`),
+        );
+    });
+
     it('does not project transcript entries when the activity feed is disabled', async () => {
         // A disabled feed must never read message contents; the binding remains
         // navigable independently. This fails if projection happens then is hidden.

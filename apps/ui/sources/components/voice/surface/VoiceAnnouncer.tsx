@@ -109,9 +109,8 @@ export const VoiceAnnouncerSurface = React.memo(function VoiceAnnouncerSurface(p
     /** Additional canonical state channels, delivered through this same live region. */
     stateAnnouncements?: readonly VoiceStateAnnouncement[];
     /**
-     * Newest-first, as `visibleTranscriptEntries` produces them
-     * (`useVoiceSurfaceConversationState.ts:161-167`). Reading the chronological
-     * list instead silently flips the order of a batch.
+     * Chronological, as the surface owner's bounded `visibleTranscriptEntries`
+     * window produces them. Consumers preserve that order.
      */
     transcriptEntries: readonly VoiceSurfaceTranscriptEntry[];
 }>) {
@@ -128,13 +127,7 @@ export const VoiceAnnouncerSurface = React.memo(function VoiceAnnouncerSurface(p
     const observedAnnouncements = React.useRef<AnnouncementHistory>({ ids: new Set(), order: [] });
 
     React.useEffect(() => {
-        /*
-         * Rendering stays newest-first, but speech is temporal: when several
-         * finals become visible in one projection, announce the oldest newly
-         * admitted row first. Reversing this filtered copy cannot affect the
-         * Horizon transcript array or its scroll/virtualization contract.
-         */
-        const candidates = props.transcriptEntries.filter((entry) => entry.announce).reverse();
+        const candidates = props.transcriptEntries.filter((entry) => entry.announce);
         const statusChanged = lastStatusKeyRef.current !== props.statusTransitionKey;
         lastStatusKeyRef.current = props.statusTransitionKey;
         const scopeChanged = activeScopeKeyRef.current !== props.announcementScopeKey;

@@ -109,7 +109,7 @@ describe('VoiceAnnouncer transcript announcements', () => {
         await screen.update(
             <VoiceAnnouncerSurface
                 {...IDLE}
-                transcriptEntries={[entry({ id: 'mount-new', text: 'Arrived after mount' }), ...seeded]}
+                transcriptEntries={[...seeded, entry({ id: 'mount-new', text: 'Arrived after mount', createdAt: 2 })]}
             />,
         );
 
@@ -149,7 +149,7 @@ describe('VoiceAnnouncer transcript announcements', () => {
         await screen.unmount();
     });
 
-    it('announces a newest-first batch in chronological order', async () => {
+    it('announces the owner chronological batch without reversing it', async () => {
         const screen = await renderScreen(
             <VoiceAnnouncerSurface {...LISTENING} transcriptEntries={[]} />,
         );
@@ -158,8 +158,8 @@ describe('VoiceAnnouncer transcript announcements', () => {
             <VoiceAnnouncerSurface
                 {...LISTENING}
                 transcriptEntries={[
-                    entry({ id: 'batch-assistant', text: 'Second final', createdAt: 2 }),
                     entry({ id: 'batch-user', text: 'First final', createdAt: 1 }),
+                    entry({ id: 'batch-assistant', text: 'Second final', createdAt: 2 }),
                 ]}
             />,
         );
@@ -207,7 +207,7 @@ describe('VoiceAnnouncer transcript announcements', () => {
         await screen.update(
             <VoiceAnnouncerSurface
                 {...LISTENING}
-                transcriptEntries={[entry({ id: 'journey-first-real', text: 'Real event' }), ...scenery]}
+                transcriptEntries={[...scenery, entry({ id: 'journey-first-real', text: 'Real event', createdAt: 2 })]}
             />,
         );
         expect(readAnnouncement(screen)).toBe('Real event');
@@ -295,8 +295,8 @@ describe('VoiceAnnouncer transcript announcements', () => {
             <VoiceAnnouncerSurface
                 {...scopeB}
                 transcriptEntries={[
-                    entry({ id: 'moving-scope-new', text: 'New second scope text', createdAt: 2 }),
                     ...existingSecondScopeEntries,
+                    entry({ id: 'moving-scope-new', text: 'New second scope text', createdAt: 2 }),
                 ]}
             />,
         );
@@ -306,8 +306,8 @@ describe('VoiceAnnouncer transcript announcements', () => {
             <VoiceAnnouncerSurface
                 {...scopeB}
                 transcriptEntries={[
-                    entry({ id: 'moving-scope-new', text: 'New second scope text', createdAt: 2 }),
                     ...existingSecondScopeEntries,
+                    entry({ id: 'moving-scope-new', text: 'New second scope text', createdAt: 2 }),
                 ]}
             />,
         );

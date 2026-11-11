@@ -18,7 +18,7 @@ function noop(): void {}
 const SEEDED_TRANSCRIPT = [
     {
         id: 'journey-voice-user-1',
-        createdAt: 3,
+        createdAt: 1,
         kind: 'user' as const,
         text: 'Walk me through the auth change before we ship it.',
         transcriptState: 'final' as const,
@@ -36,7 +36,7 @@ const SEEDED_TRANSCRIPT = [
     },
     {
         id: 'journey-voice-user-2',
-        createdAt: 1,
+        createdAt: 3,
         kind: 'user' as const,
         text: 'Yes, and queue a follow-up to add the regression test.',
         transcriptState: 'final' as const,

@@ -173,10 +173,10 @@ export function useVoiceSurfaceConversationState(params: VoiceSurfaceConversatio
     );
     const visibleTranscriptEntries: readonly VoiceSurfaceTranscriptEntry[] = React.useMemo(() => {
         if (mergedTranscriptEntries.length === 0) return EMPTY_SURFACE_ENTRIES;
-        const tail = mergedTranscriptEntries.length > 50
+        // Keep the owner's chronological order when bounding the surface window.
+        return mergedTranscriptEntries.length > 50
             ? mergedTranscriptEntries.slice(mergedTranscriptEntries.length - 50)
             : mergedTranscriptEntries;
-        return [...tail].reverse();
     }, [mergedTranscriptEntries]);
 
 
