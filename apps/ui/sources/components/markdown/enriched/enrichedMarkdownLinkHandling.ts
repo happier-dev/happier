@@ -374,7 +374,7 @@ export async function openMarkdownLinkUrl(raw: string, openUrl: (url: string) =>
         if (options.unavailable) await options.unavailable();
         else {
             const [{ Modal }, { t }] = await Promise.all([import('@/modal'), import('@/text')]);
-            Modal.alert(t('common.error'), t('entityDragDrop.organize.cantOpenHere'));
+            Modal.alert(t('common.error'), t('entityDragDrop.pane.cantOpenHere'));
         }
         return;
     }
