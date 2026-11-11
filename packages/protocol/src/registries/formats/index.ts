@@ -7,6 +7,7 @@ import { acpRegistryAdapterV1 } from './acpRegistry.js';
 import { mcpRegistryAdapterV1 } from './mcpRegistry.js';
 import { composeCatalogRegistryAdapterV1 } from './composeCatalog.js';
 import { composeTomlCatalogRegistryAdapterV1 } from './composeTomlCatalog.js';
+import { chromeWebStoreRegistryAdapterV1 } from './chromeWebStore.js';
 import type { RegistryFormatAdapterV1 } from './registryFormatAdapterV1.js';
 export const REGISTRY_FORMAT_ADAPTERS_V1 = {
   git:githubRegistryAdapterV1, 'skills-sh':skillsShRegistryAdapterV1, 'claude-marketplace':claudeMarketplaceRegistryAdapterV1,
@@ -15,6 +16,7 @@ export const REGISTRY_FORMAT_ADAPTERS_V1 = {
   'mcp-registry': mcpRegistryAdapterV1,
   'coolify-templates': composeCatalogRegistryAdapterV1,
   'dokploy-templates': composeTomlCatalogRegistryAdapterV1,
+  'chrome-web-store': chromeWebStoreRegistryAdapterV1,
 } satisfies Record<string,RegistryFormatAdapterV1>;
 export * from './registryFormatAdapterV1.js';
 export { readGitHubRepositoryV1 } from './github.js';

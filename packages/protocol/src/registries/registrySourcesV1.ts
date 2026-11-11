@@ -9,17 +9,17 @@ import type { DeploymentTemplateV1 } from '../plugins/contributions/deploymentTe
 import { COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1, PUBLIC_NPM_REGISTRY_ORIGIN_V1, DEFAULT_CURATED_MARKETPLACE_SOURCE_TITLE, DEFAULT_CURATED_MARKETPLACE_SOURCE_URL, deriveMarketplaceSourceId } from '../marketplace/marketplaceSourceRegistryV1.js';
 
 export const RegistryFormatV1Schema = lazyZodSchema(() => z.enum([
-  'skills-sh', 'git', 'claude-marketplace', 'mcp-registry', 'acp-registry', 'happier-catalog', 'happier-npm', 'coolify-templates', 'dokploy-templates',
+  'skills-sh', 'git', 'claude-marketplace', 'mcp-registry', 'acp-registry', 'happier-catalog', 'happier-npm', 'coolify-templates', 'dokploy-templates', 'chrome-web-store',
 ]));
 export type RegistryFormatV1 = z.infer<typeof RegistryFormatV1Schema>;
 
-export const REGISTRY_KINDS_V1 = ['skill', 'mcpServer', 'agent', 'plugin', 'app', 'browserExtension'] as const;
+export const REGISTRY_KINDS_V1 = ['skill', 'mcpServer', 'agent', 'plugin', 'app', 'starter', 'browserExtension'] as const;
 export const RegistryKindV1Schema = lazyZodSchema(() => z.enum(REGISTRY_KINDS_V1));
 export type RegistryKindV1 = z.infer<typeof RegistryKindV1Schema>;
 export const REGISTRY_FORMAT_KINDS_V1: Readonly<Record<RegistryFormatV1, readonly RegistryKindV1[]>> = {
   'skills-sh': ['skill'], git: ['skill'], 'claude-marketplace': ['skill'], 'mcp-registry': ['mcpServer'],
   'acp-registry': ['agent'], 'happier-catalog': REGISTRY_KINDS_V1, 'happier-npm': ['plugin', 'agent'],
-  'coolify-templates': ['app'], 'dokploy-templates': ['app'],
+  'coolify-templates': ['app'], 'dokploy-templates': ['app'], 'chrome-web-store': ['browserExtension'],
 };
 export const RegistrySourceTokenV1Schema = lazyZodSchema(() => z.strictObject({ secretRef: z.string().check(z.minLength(1)),
   header: z.optional(z.strictObject({ name: z.string().check(z.minLength(1)), scheme: z.optional(z.enum(['Bearer', 'token'])) })),
@@ -66,7 +66,7 @@ export const RegistryPackageContentSourceV1Schema = lazyZodSchema(() => z.strict
 }));
 export const RegistryPackagedSourceDescriptorV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.minLength(1)), title: z.string().check(z.minLength(1)),
-  format: z.literal('happier-catalog'), kinds: z.array(z.literal('app')).check(z.minLength(1), z.maxLength(1)),
+  format: z.literal('happier-catalog'), kinds: z.array(z.union([z.literal('app'), z.literal('starter')])).check(z.minLength(1), z.maxLength(1)),
   packageContent: RegistryPackageContentSourceV1Schema, enabled: z.boolean(),
   addedAt: z.number().check(z.int(), z.nonnegative()), removable: z.literal(false),
   origin: z.strictObject({ kind: z.literal('plugin'), pluginId: z.string().check(z.minLength(1)),
@@ -171,6 +171,8 @@ export function readRegistrySourcesRecordV1(raw: unknown): RegistrySourcesRecord
 export const BUILT_IN_REGISTRY_SOURCES_V1: readonly RegistrySourceDescriptorV1[] = [{
   id: HAPPIER_PICKS_SOURCE_ID, title: DEFAULT_CURATED_MARKETPLACE_SOURCE_TITLE, format: 'happier-catalog', kinds: [...REGISTRY_FORMAT_KINDS_V1['happier-catalog']],
   url: DEFAULT_CURATED_MARKETPLACE_SOURCE_URL, enabled: true, addedAt: 0, origin: { kind: 'built_in' }, removable: false,
+}, {
+  id: 'builtin:chrome-web-store', title: 'Chrome Web Store', format: 'chrome-web-store', kinds: ['browserExtension'], url: 'https://chromewebstore.google.com', enabled: true, addedAt: 0, origin: { kind: 'built_in' }, removable: false,
 }, {
   id: 'builtin:skills-sh', title: 'skills.sh', format: 'skills-sh', kinds: ['skill'], url: 'https://skills.sh', enabled: true,
   addedAt: 0, origin: { kind: 'built_in' }, removable: false,

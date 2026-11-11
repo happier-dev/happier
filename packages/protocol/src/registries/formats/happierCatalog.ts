@@ -10,6 +10,7 @@ import { registryPluginItemV1, registryPluginSummaryV1, registryPluginSupportsKi
 import { bindRegistryMarketplaceCatalogV1 } from './registryMarketplaceCatalogBindingV1.js';
 import { HappierAppCatalogV1Schema, latestHappierAppCatalogRefsV1, listHappierAppCatalogV1, readHappierAppCatalogItemV1 } from './happierAppCatalog.js';
 import { readHappierBrowserExtensionCatalogItemV1, registryBrowserExtensionSummaryV1 } from './happierBrowserExtensionCatalog.js';
+import { chromeWebStoreRegistryAdapterV1 } from './chromeWebStore.js';
 import type { RegistryBrowserExtensionCatalogEntryV1 } from '../registryBrowserExtensionV1.js';
 
 async function readCatalog(ctx: RegistryFetchContextV1, source: RegistrySourceV1,
@@ -94,7 +95,7 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
       if (!response.ok) throw new RegistryFetchErrorV1(response.status);
       const parsed = HappierAppCatalogV1Schema.safeParse(response.value);
       if (parsed.success) return readHappierAppCatalogItemV1({ sourceId: req.source.id, catalog: parsed.data,
-        fetchedAt: response.fetchedAt, itemId: req.itemId, version: req.version });
+        fetchedAt: response.fetchedAt, itemId: req.itemId, version: req.version, appMappingCorrection: req.appMappingCorrection });
       acquired = response;
     }
     const { catalog, fetchedAt } = await readCatalog(ctx, req.source,
@@ -111,7 +112,8 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
         if (listing) return registryPluginItemV1(req.source, listing, fetchedAt);
       }
       if (!pick || !adapter) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
-      const target = { source: pickSource(pick), kind: pick.kind, itemId: pick.itemId, ...(req.version === undefined ? {} : { version: req.version }) };
+      const target = { source: pickSource(pick), kind: pick.kind, itemId: pick.itemId, ...(req.version === undefined ? {} : { version: req.version }),
+        ...(req.appMappingCorrection ? { appMappingCorrection: req.appMappingCorrection } : {}) };
       const read = ctx.readTargetItem ? await ctx.readTargetItem(target) : await adapter.read(ctx, target);
       const item = RegistryItemV1Schema.parse(read);
       return { ...item, summary: { ...item.summary, sourceId: req.source.id, itemId: req.itemId,
@@ -154,6 +156,14 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
         if (ref !== undefined) result.set(item.catalogId, ref);
       }
     }));
+    for (const item of items) {
+      if (item.format !== 'happier-catalog') continue;
+      const browser = catalog.browserExtensions?.find(entry => entry.itemId === item.itemId);
+      if (!browser) continue;
+      const target: RegistryRemoteProvenanceV1 = { sourceId: 'builtin:chrome-web-store', sourceUrl: 'https://chromewebstore.google.com', format: 'chrome-web-store', itemId: browser.extension.extensionId, ref: item.ref, importedAt: item.importedAt };
+      const latest = await chromeWebStoreRegistryAdapterV1.latest(ctx, [target], { source: { id: 'builtin:chrome-web-store', title: 'Chrome Web Store', format: 'chrome-web-store', kinds: ['browserExtension'], url: 'https://chromewebstore.google.com', enabled: true, addedAt: 0 } });
+      result.set(item.itemId, latest.get(browser.extension.extensionId) ?? 'removed');
+    }
     return result;
   },
 };

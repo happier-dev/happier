@@ -97,6 +97,7 @@ export async function generateMarketplaceCatalog({
     freshness: { state: 'fresh', fetchedAtMs: null },
     entries,
     picks: source.picks ?? [],
+    ...(source.browserExtensions === undefined ? {} : { browserExtensions: source.browserExtensions }),
     discovery: projectDiscovery(source.discovery),
     diagnostics: [],
   });
