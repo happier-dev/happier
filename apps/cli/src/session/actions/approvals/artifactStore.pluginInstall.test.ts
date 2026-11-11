@@ -19,6 +19,7 @@ import { libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
 import type { StoredCredentials } from '@/persistence';
 import { PluginAvailabilityIntentReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { normalizeActionExecutorThrownError, settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createCliActionDeps } from '../createCliActionDeps';
@@ -701,10 +702,20 @@ describe('plugin install approval Artifact rejoin', () => {
     expect(await store.approvalsCreate({ request: nextRequest, serverId: 'home-1' })).toEqual(first);
   });
 
-  it.each(['review', 'machine', 'home', 'account', 'family', 'access'] as const)(
+  it.each(['review', 'machine', 'machine-absent-stored', 'machine-absent-incoming', 'home', 'local-profile', 'account', 'family', 'access'] as const)(
     'refuses to rejoin a pending id with a different %s', async (mismatch) => {
       const store = createStore();
-      const request = installRequest();
+      const original = installRequest();
+      let origin = original.executionOriginV1;
+      if (mismatch === 'local-profile') {
+        const { serverIdentityId: _serverIdentityId, ...withoutHomeIdentity } = origin;
+        origin = withoutHomeIdentity;
+      }
+      if (mismatch === 'machine-absent-stored') {
+        const { machineId: _machineId, target: _target, ...withoutMachine } = origin;
+        origin = withoutMachine;
+      }
+      const request = ApprovalRequestV2Schema.parse({ ...original, executionOriginV1: origin });
       const first = await store.approvalsCreate({ request, serverId: 'home-1' });
       if (mismatch === 'access') rows.get(first.artifactId)!.access = 'view';
       let next: ApprovalRequest = request;
@@ -715,6 +726,11 @@ describe('plugin install approval Artifact rejoin', () => {
       if (mismatch === 'machine') next = ApprovalRequestV2Schema.parse({ ...request,
         executionOriginV1: { ...request.executionOriginV1, machineId: 'machine-2',
           target: { kind: 'machine', machineId: 'machine-2' } } });
+      if (mismatch === 'machine-absent-stored') next = original;
+      if (mismatch === 'machine-absent-incoming') next = ApprovalRequestV2Schema.parse({ ...request,
+        executionOriginV1: { ...request.executionOriginV1, machineId: undefined, target: undefined } });
+      if (mismatch === 'local-profile') next = ApprovalRequestV2Schema.parse({ ...request,
+        executionOriginV1: { ...request.executionOriginV1, serverId: 'other-profile' } });
       if (mismatch === 'home') next = ApprovalRequestV2Schema.parse({ ...request,
         executionOriginV1: { ...request.executionOriginV1, serverIdentityId: 'other-home' } });
       if (mismatch === 'account') next = ApprovalRequestV2Schema.parse({ ...request,
@@ -729,8 +745,20 @@ describe('plugin install approval Artifact rejoin', () => {
         rows.clear(); rows.set(pendingChangeId, { ...row, id: pendingChangeId });
       }
       const retained = [...rows.entries()].map(([id, row]) => [id, { ...row }]);
-      await expect(store.approvalsCreate({ request: next, serverId: 'home-1' }))
-        .rejects.toThrow('approval_request_subject_mismatch');
+      const failure = await store.approvalsCreate({ request: next, serverId: 'home-1' }).then(
+        () => null,
+        (error: unknown) => settleActionOutput('plugins.install', { ok: false, ...normalizeActionExecutorThrownError(error) }),
+      );
+      expect(failure).toMatchObject({ ok: false, errorCode: 'subject_mismatch', error: 'approval_request_subject_mismatch' });
+      const field = { review: 'pendingReview', machine: 'origin.machineId',
+        'machine-absent-stored': 'origin.machineId', 'machine-absent-incoming': 'origin.machineId',
+        home: 'origin.serverIdentityId', 'local-profile': 'origin.serverId', account: 'origin.accountId',
+        family: 'artifact.family', access: 'artifact.access' }[mismatch];
+      // Exact details also prove that no subject values, ids or secrets escaped.
+      expect(failure && !failure.ok ? failure.details : undefined).toEqual({ mismatches: [{ field,
+        existing: mismatch === 'machine-absent-stored' || mismatch === 'access' ? 'absent' : 'present',
+        expected: mismatch === 'machine-absent-incoming' ? 'absent' : 'present',
+      }] });
       expect([...rows.entries()]).toEqual(retained);
     },
   );

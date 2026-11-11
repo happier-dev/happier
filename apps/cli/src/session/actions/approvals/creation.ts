@@ -43,18 +43,49 @@ type PluginInstallApprovalSubject = Readonly<{
   origin: Pick<ApprovalRequestV2['executionOriginV1'], 'accountId' | 'machineId' | 'serverIdentityId' | 'serverId'>;
 }>;
 
-/** Creation/rejoin and retirement must refer to the same Account/Home candidate.
- * Host-origin installs may have no Machine; when present, the Machine remains
- * part of the subject and must match exactly.
+type PluginInstallApprovalSubjectMismatch = Readonly<{
+  field: 'pendingReview' | `origin.${keyof PluginInstallApprovalSubject['origin']}` | 'artifact.access' | 'artifact.family';
+  existing: 'present' | 'absent';
+  expected: 'present' | 'absent';
+}>;
+
+function pluginInstallSubjectMismatch(
+  field: PluginInstallApprovalSubjectMismatch['field'], existing: unknown, expected: unknown,
+): PluginInstallApprovalSubjectMismatch {
+  return { field, existing: existing === undefined || existing === null ? 'absent' : 'present',
+    expected: expected === undefined || expected === null ? 'absent' : 'present' };
+}
+
+function pluginInstallSubjectMismatchError(mismatches: readonly PluginInstallApprovalSubjectMismatch[]) {
+  return Object.assign(new Error('approval_request_subject_mismatch'), {
+    code: 'subject_mismatch' as const, details: { mismatches },
+  });
+}
+
+/** Creation/rejoin and retirement use one comparison of the Account/Home candidate.
+ * Host-origin installs may have no Machine; a present Machine must match exactly.
+ * Diagnostics contain only fixed field names and presence, never subject values.
  */
-function matchesPluginInstallApprovalSubject(request: ApprovalRequest, expected: PluginInstallApprovalSubject): request is ApprovalRequestV2 {
-  if (request.v !== 2 || request.actionId !== 'plugins.install') return false;
+function matchPluginInstallApprovalSubject(request: ApprovalRequest, expected: PluginInstallApprovalSubject):
+  | Readonly<{ matched: true; request: ApprovalRequestV2 }>
+  | Readonly<{ matched: false; mismatches: readonly PluginInstallApprovalSubjectMismatch[] }> {
+  if (request.v !== 2 || request.actionId !== 'plugins.install') return { matched: false,
+    mismatches: [pluginInstallSubjectMismatch('artifact.family', request, expected)] };
   const origin = request.executionOriginV1;
-  return sameStrictJsonValue(readPluginInstallApprovalPendingReview(request.preview), expected.pendingReview)
-    && origin.accountId === expected.origin.accountId
-    && origin.machineId === expected.origin.machineId
-    && origin.serverIdentityId === expected.origin.serverIdentityId
-    && (origin.serverIdentityId !== undefined || origin.serverId === expected.origin.serverId);
+  const pendingReview = readPluginInstallApprovalPendingReview(request.preview);
+  const mismatches: PluginInstallApprovalSubjectMismatch[] = [];
+  if (!sameStrictJsonValue(pendingReview, expected.pendingReview)) {
+    mismatches.push(pluginInstallSubjectMismatch('pendingReview', pendingReview, expected.pendingReview));
+  }
+  for (const field of ['accountId', 'machineId', 'serverIdentityId'] as const) {
+    if (origin[field] !== expected.origin[field]) {
+      mismatches.push(pluginInstallSubjectMismatch(`origin.${field}`, origin[field], expected.origin[field]));
+    }
+  }
+  if (origin.serverIdentityId === undefined && origin.serverId !== expected.origin.serverId) {
+    mismatches.push(pluginInstallSubjectMismatch('origin.serverId', origin.serverId, expected.origin.serverId));
+  }
+  return mismatches.length > 0 ? { matched: false, mismatches } : { matched: true, request };
 }
 
 export type WorkflowDiscussionReplyApprovalSubject = Readonly<Pick<DiscussionWorkflowPostPublicationV1, 'producer' | 'origin'> & {
@@ -165,8 +196,8 @@ export function createCliApprovalCreation(params: Readonly<{
           const request = artifact?.access === 'owner' ? readBuiltInApprovalArtifact(artifact.header, artifact.body) : null;
           // Follow recorded terminal facts, not a fresh approval-policy or expiry
           // decision. A later open/approved successor is fresh owner consent.
-          return { followSuccessor: Boolean(request && matchesPluginInstallApprovalSubject(request, { pendingReview,
-            origin: { accountId, machineId, serverIdentityId, serverId: serverIdentityId } })
+          return { followSuccessor: Boolean(request && matchPluginInstallApprovalSubject(request, { pendingReview,
+            origin: { accountId, machineId, serverIdentityId, serverId: serverIdentityId } }).matched
             && request.status !== 'open' && request.status !== 'approved' && request.status !== 'executing') };
         },
       });
@@ -260,11 +291,17 @@ export function createCliApprovalCreation(params: Readonly<{
       const inspectPendingReviewArtifact = (artifact: AccountArtifact | null): Readonly<{ state: 'absent' }>
         | Readonly<{ state: 'rejoin' | 'terminal'; request: ApprovalRequestV2 }> => {
         if (!artifact) return { state: 'absent' };
-        const existing = readBuiltInApprovalArtifact(artifact.header, artifact.body);
-        if (artifact.access !== 'owner' || !existing || request.v !== 2 || !pendingReview
-          || !matchesPluginInstallApprovalSubject(existing, { pendingReview, origin: request.executionOriginV1 })) {
-          throw Object.assign(new Error('approval_request_subject_mismatch'), { code: 'subject_mismatch' });
+        const parsed = readBuiltInApprovalArtifact(artifact.header, artifact.body);
+        const subject = parsed && request.v === 2 && pendingReview
+          ? matchPluginInstallApprovalSubject(parsed, { pendingReview, origin: request.executionOriginV1 })
+          : { matched: false as const, mismatches: [pluginInstallSubjectMismatch('artifact.family', parsed, request)] };
+        if (artifact.access !== 'owner' || !subject.matched) {
+          throw pluginInstallSubjectMismatchError([
+            ...(artifact.access !== 'owner' ? [pluginInstallSubjectMismatch('artifact.access', artifact.access, 'owner')] : []),
+            ...(subject.matched ? [] : subject.mismatches),
+          ]);
         }
+        const existing = subject.request;
         const sameRequest = existing.executionOriginV1.requestId === request.executionOriginV1.requestId;
         if (sameRequest) assertApprovalRequestCreationBinding(existing, request);
         return { state: sameRequest || existing.status === 'open' || existing.status === 'approved' || existing.status === 'executing'
@@ -299,7 +336,7 @@ export function createCliApprovalCreation(params: Readonly<{
             // An owner-only read can hide the conflicting row; retrying its
             // create after every 409 would loop forever without a readable winner.
             if (!await readOwnedArtifact(artifactId)) {
-              throw Object.assign(new Error('approval_request_subject_mismatch'), { code: 'subject_mismatch' });
+              throw pluginInstallSubjectMismatchError([pluginInstallSubjectMismatch('artifact.access', undefined, 'owner')]);
             }
             continue;
           }
