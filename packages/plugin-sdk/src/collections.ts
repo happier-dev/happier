@@ -144,6 +144,7 @@ export type PluginCollectionQuery<TIndexId extends string = string> = Readonly<{
         lower?: PluginCollectionIndexScalarValueV1;
         upper?: PluginCollectionIndexScalarValueV1;
     }>;
+    /** Keyset order; both directions are supported by the Account Collection owner. */
     order: 'asc' | 'desc';
     cursor?: string;
     limit?: number;

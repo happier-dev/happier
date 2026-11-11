@@ -5345,6 +5345,41 @@ describe('grid', () => {
 });
 
 describe('named table orders', () => {
+  it('shows the active source field direction on its mapped column and delegates to the source order', async () => {
+    const changes: string[] = [];
+    const sort = {
+      key: 'sort:updated:desc',
+      direction: 'descending' as const,
+      orders: [
+        { key: 'newest', label: 'Newest' },
+        { key: 'sort:updated:asc', label: 'Updated: oldest first' },
+        { key: 'sort:updated:desc', label: 'Updated: newest first' },
+      ],
+      orderColumns: { age: ['sort:updated:asc', 'sort:updated:desc'] },
+      onChange: (key: string) => { changes.push(key); },
+    };
+    const view = mount({
+      sort,
+      renderPopover: (input) => input.open ? input.content({ requestClose: input.onRequestClose, maxHeight: 400 }) : null,
+    });
+    view.measure(1440);
+    expect(view.query('collection:sort:age:arrow')?.textContent).toBe('↓');
+    expect(view.query('collection:sort:age')!.closest('[aria-sort]')!.getAttribute('aria-sort')).toBe('descending');
+    act(() => { view.query('collection:sort:age')!.click(); });
+    const options = [...view.container.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+    expect(options.map(option => option.textContent)).toEqual(['Updated: oldest first', 'Updated: newest first']);
+    act(() => { options[0]!.click(); });
+    expect(changes).toEqual(['sort:updated:asc']);
+    await view.update({ sort: { ...sort, key: 'sort:updated:asc', direction: 'ascending' } });
+    expect(view.query('collection:sort:age:arrow')?.textContent).toBe('↑');
+    expect(view.query('collection:sort:age')!.closest('[aria-sort]')!.getAttribute('aria-sort')).toBe('ascending');
+    await view.update({ sort: { ...sort, key: 'newest' } });
+    expect(view.query('collection:sort:age:arrow')).toBeNull();
+    expect(view.query('collection:sort:age')!.closest('[aria-sort]')!.getAttribute('aria-sort')).toBe('none');
+    expect(view.query('collection:sort:title:arrow')?.textContent).toBe('↓');
+    view.unmount();
+  });
+
   it('offers the named orders in the title header, checks the active order and delegates selection to the caller', async () => {
     const changes: string[] = [];
     const sort = {

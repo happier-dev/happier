@@ -129,6 +129,8 @@ export type CollectionField<Item> = Readonly<{
   leading?: boolean;
   /** The column title is a sort button (`CollectionProps.sort`); the caller orders the items. */
   sortable?: boolean;
+  /** The declared Account Collection index used by the plugin UI table connector. */
+  collectionIndex?: string;
   /**
    * The table cell stands across this column and every field column after it for this item, which draws no cells
    * there (a machine that reports nothing says why once, across where its figures would stand). The list ignores it.
@@ -302,6 +304,8 @@ export type CollectionSort = Readonly<{
   direction: 'ascending' | 'descending';
   /** Named orders offered by the title column's menu, only in table geometry. */
   orders?: readonly Readonly<{ key: string; label: string }>[];
+  /** Named orders that a non-title column may expose through the same order owner. */
+  orderColumns?: Readonly<Record<string, readonly string[]>>;
   onChange: (key: string) => void;
 }>;
 
@@ -1069,7 +1073,7 @@ const catalogTitleFactsBeneathStyle: HappierPortableStyle = { flexDirection: 'ro
 /** Line 2 leads with the status word whole; the description beside it yields. */
 const catalogStatusStyle: HappierPortableStyle = { flexShrink: 0 };
 const flexCellStyle: HappierPortableStyle = { flex: 1, minWidth: 0 };
-const orderHeaderCellStyle: HappierPortableStyle = { alignItems: 'flex-start' };
+const orderHeaderCellStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 3 };
 const glyphWithBadgeStyle: HappierPortableStyle = { position: 'relative' };
 const glyphBadgeRingStyle: HappierPortableStyle = {
   position: 'absolute',
@@ -2745,6 +2749,15 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
               sort={props.sort}
               {...(props.testID === undefined ? {} : { testID: `${props.testID}:sort:title` })}
             />
+          ) : props.sort !== undefined
+            && namedOrderHeader
+            && props.sort.orderColumns?.[column.key] !== undefined ? (
+            <CollectionOrderHeader
+              key={column.key}
+              column={column as ResolvedColumn<unknown>}
+              sort={props.sort}
+              {...(props.testID === undefined ? {} : { testID: `${props.testID}:sort:${column.key}` })}
+            />
           ) : column.sortable && props.sort !== undefined && column.fieldKey !== null ? (
             <CollectionSortHeader
               key={column.key}
@@ -3167,7 +3180,10 @@ function CollectionOrderHeader(props: Readonly<{
   testID?: string;
 }>): ReactElement {
   const [open, setOpen] = useState(false);
-  const orders = props.sort.orders ?? [];
+  const orderKeys = props.sort.orderColumns?.[props.column.key];
+  const orders = orderKeys === undefined
+    ? (props.sort.orders ?? [])
+    : (props.sort.orders ?? []).filter((order) => orderKeys.includes(order.key));
   const current = orders.find((order) => order.key === props.sort.key);
   const title = props.column.title;
   const radioGroup = 'order';
@@ -3177,14 +3193,15 @@ function CollectionOrderHeader(props: Readonly<{
       <Dropdown
         open={open}
         onOpenChange={setOpen}
-        trigger={current === undefined ? title : `${title} · ${current.label}`}
-        triggerDisclosure
+        trigger={current === undefined || orderKeys !== undefined ? title : `${title} · ${current.label}`}
+        triggerDisclosure={current === undefined}
         triggerAccessibilityLabel={current === undefined ? title : `${title}: ${current.label}`}
         {...(props.testID === undefined ? {} : { testID: props.testID })}
         items={orders.map((order) => ({ id: order.key, label: order.label, kind: 'radio' as const, radioGroupId: radioGroup }))}
         radioGroups={[{ id: radioGroup, accessibilityLabel: title, selectedId: current?.key ?? null }]}
         onSelect={props.sort.onChange}
       />
+      {current === undefined ? null : <CollectionSortArrow sort={props.sort} testID={props.testID} />}
     </View>
   );
 }
@@ -3212,12 +3229,18 @@ function CollectionSortHeader(props: Readonly<{
       >
         <HappierText variant="meta" tone={active ? 'neutral' : 'muted'} numberOfLines={1}>{props.column.title}</HappierText>
         {active ? (
-          <HappierText variant="meta" tone="neutral" aria-hidden {...(props.testID === undefined ? {} : { testID: `${props.testID}:arrow` })}>
-            {props.sort.direction === 'descending' ? '↓' : '↑'}
-          </HappierText>
+          <CollectionSortArrow sort={props.sort} testID={props.testID} />
         ) : null}
       </HappierPressable>
     </View>
+  );
+}
+
+function CollectionSortArrow(props: Readonly<{ sort: CollectionSort; testID?: string | undefined }>): ReactElement {
+  return (
+    <HappierText variant="meta" tone="neutral" aria-hidden {...(props.testID === undefined ? {} : { testID: `${props.testID}:arrow` })}>
+      {props.sort.direction === 'descending' ? '↓' : '↑'}
+    </HappierText>
   );
 }
 

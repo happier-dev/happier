@@ -181,6 +181,38 @@ do not copy or rebuild a second manifest in the migration entry. The compiled
 export returns `{ manifest, collectionMigrations }` for the candidate loader's
 existing validation. Node built-ins remain unsupported in portable artifacts.
 
+## Sorting a Collection table
+
+The UI query owner already supports both directions. Declare the index beside
+the field that presents it, and let the shared connector own keyset cursors:
+
+```tsx
+import { Collection } from '@happier-dev/plugin-ui/components';
+import { createPluginCollectionTableQuery } from '@happier-dev/plugin-ui/data';
+
+const fields = [
+  {
+    key: 'title', title: 'Title', collectionIndex: 'by-title', sortable: true,
+    minWidth: 220, priority: 1, render: (row) => row.value.title,
+  },
+] as const;
+
+const table = createPluginCollectionTableQuery({
+  fields,
+  pageSize: 25,
+  initialSort: { field: 'title', direction: 'ascending' },
+  query: (request) => dataClient.collection(reviewStatuses).query(request),
+});
+
+// Render table.getSnapshot().rows through Collection and pass the connector's
+// sort state to Collection.sort. Call table.loadMore() at the end of the list.
+```
+
+Changing the field or direction starts a new query at the first page. Loading
+the next page sends the cursor returned by the previous page, so a table never
+sorts only the rows already loaded. Every sortable field must name a declared
+Collection index; fields without one remain presentation-only.
+
 ## Writing more rows than one batch carries
 
 `batch` is atomic: every operation in one call applies together or none does.

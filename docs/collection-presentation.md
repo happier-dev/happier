@@ -425,14 +425,17 @@ region to the slot).
 
 In 0.3 development source, `Collection.sort.orders` optionally supplies named orders as `{ key, label }`.
 The resting table's title column then is a quiet text trigger (the column's own title naming the active
-order, with a `Popover.triggerDisclosure` caret, never a button face in the header row) opening the shared radio menu, which checks the entry matching
+order, with a direction arrow while active and a disclosure caret otherwise, never a button face in the header row) opening the shared radio menu, which checks the entry matching
 `sort.key`, and publishes `aria-sort` for an active named order (or `none` while a field is active).
 Choosing an order calls the same `sort.onChange(key)` as a sortable field; the caller remains the only
 ordering owner. The control remains reachable in an empty table; list and board do not draw this menu. `useHappierCollectionLayout()?.composition`
 reports the rendered composition so header controls can retain a toolbar Order in those presentations
 without duplicating it in the table. Triage uses its existing lens edit and mounted `setLens.order` path.
 `Collection.sort.orderColumns` can map a non-title column to a subset of those named orders; the column
-then uses the same owner and menu while leaving unrelated columns non-sortable.
+then uses the same owner and menu while leaving unrelated columns non-sortable. Active named-order
+headers show the same direction arrow and `aria-sort` as field headers. Source-supported Triage
+field choices feed its canonical lens sort before pagination; the Collection preserves existing
+bands, with Pinned first, and presents the supplied order inside each band.
 
 In the 0.3 development source, a detail's outer public `Tabs presentation="page"` keeps its strip inside `renderDetail`, above that detail's body. Host placements reorder the triggers without changing panel membership, retention or a shared panel's mount. Moving its strip between phone top and host bottom also preserves that panel tree. The Collection's `headerHosted` and `pushed` render facts describe its responsive presentation; the page's mount/focus lifecycle owns foreground chrome. Nested `tabList="host"` Tabs do not publish a second navigation list. The transport contract is described in [Page Tabs navigation](plugin-platform.md#page-tabs-navigation-03-development-source).
 

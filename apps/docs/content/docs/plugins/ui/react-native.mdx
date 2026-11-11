@@ -1831,6 +1831,12 @@ ordered data. The menu is absent in list and board; header controls can read
 `useHappierCollectionLayout()?.composition` to keep a toolbar Order in those
 presentations without repeating it above the table.
 
+When rows come from an Account Collection, add `collectionIndex` to each
+sortable `CollectionField` and use `createPluginCollectionTableQuery` from
+`@happier-dev/plugin-ui/data`. It translates the field and direction into the
+declared index query and carries the returned cursor across pages; it resets to
+the first page when sorting changes. Do not reorder a loaded page in the UI.
+
 Use `Tabs tabList="host"` when an enclosing detail frame already draws the tab
 strip and requests one panel. Use `layout="fill"` inside a bounded region for a
 self-scrolling view. A retained `Tabs.Item retention="retain"` mounts only after

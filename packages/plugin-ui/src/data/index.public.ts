@@ -17,6 +17,16 @@ import type {
   PluginUiCollectionQuerySnapshot,
 } from './types.js';
 
+export {
+  createPluginCollectionTableQuery,
+} from './collectionTableQuery.js';
+export type {
+  PluginUiCollectionTableField,
+  PluginUiCollectionTableQuery,
+  PluginUiCollectionTableQuerySnapshot,
+  PluginUiCollectionTableSort,
+} from './collectionTableQuery.js';
+
 export { usePluginUiDataClient, usePluginUiDataClientOrNull } from './context.js';
 export type {
   PluginUiAccountCollectionForDefinition,
