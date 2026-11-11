@@ -7,8 +7,9 @@ import { queryTeamCredentialUsage } from './resourceUsage';
 import { removeTeamMemberForActorInTx } from '../memberships/memberAdministration';
 import { recordTeamCredentialDirectDeliveryActivityInTx } from './resourceActivity';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
-import { TeamCredentialUsageQueryInputV1Schema } from '@happier-dev/protocol/teams';
+import { TeamCredentialUsageQueryInputV1Schema, TeamCredentialUsageQueryResultV1Schema } from '@happier-dev/protocol/teams';
 import { UsageFileResultSchema } from '@happier-dev/protocol/usage/usageExport';
+import { resolveEffectiveUsageCostUsd } from '@happier-dev/protocol/usage/usageCostFacts';
 
 const TEST_AUTHENTICATION = {
   env: process.env,
@@ -20,6 +21,63 @@ describe('Team credential resource usage query', () => {
   let harness: LightSqliteHarness;
   beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'team-resource-usage-' }); }, 120_000);
   afterAll(async () => { await harness?.close(); });
+
+  it.each(['auto', 'reported', 'estimated', 'api_equivalent'] as const)(
+    'publishes an empty recorded population as zero in %s mode without inventing observation coverage', async costMode => {
+      const manager = await db.account.create({ data: { encryptionMode: 'plain' } });
+      const team = await db.team.create({ data: { name: randomUUID() } });
+      await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: 'admin' } });
+      const resource = await db.teamCredentialResource.create({ data: {
+        teamId: team.id, custodianAccountId: manager.id, displayName: 'Empty usage',
+        disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed', sourceBindingJson: '{}',
+        allMembersDeliveryMode: 'brokered',
+      } });
+      const result = await queryTeamCredentialUsage(manager.id, {
+        resourceId: resource.id, startMs: 0, endMs: Date.now(), granularity: 'day', costMode, breakdown: 'model',
+      }, TEST_AUTHENTICATION);
+      if ('ok' in result) throw new Error(`Usage refused: ${result.error}`);
+      const transported = TeamCredentialUsageQueryResultV1Schema.parse(JSON.parse(JSON.stringify(result)));
+      expect(transported.totals).toMatchObject({ eventCount: 0, requestCount: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        cost: { reportedUsd: 0, estimatedUsd: 0, invoiceUsd: 0, costSource: 'none' } });
+      expect(resolveEffectiveUsageCostUsd(transported.totals.cost, costMode)).toBe(0);
+      expect(transported.series).toEqual([]);
+      expect(transported.breakdown).toEqual([]);
+      expect(transported.coverage).toMatchObject({ requestAdmissionCount: 0, agentObservationCount: 0,
+        externalTerminalObservationCount: 0, directRecordedUseOnly: false, requestCountCoverage: 'complete',
+        tokenCoverage: 'unavailable', costCoverage: 'unavailable' });
+    },
+  );
+
+  it('preserves nonempty missing measurements and known zero while summing recorded requests', async () => {
+    const manager = await db.account.create({ data: { encryptionMode: 'plain' } });
+    const team = await db.team.create({ data: { name: randomUUID() } });
+    await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: 'admin' } });
+    const resource = await db.teamCredentialResource.create({ data: {
+      teamId: team.id, custodianAccountId: manager.id, displayName: 'Nullable usage',
+      disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed', sourceBindingJson: '{}',
+      allMembersDeliveryMode: 'brokered',
+    } });
+    const at = Date.now();
+    const base = { accountId: manager.id, agentId: 'codex', source: 'codex_app_server', scope: 'turn_delta',
+      teamCredentialResourceId: resource.id, teamCredentialActorAccountId: manager.id, credentialDeliveryMode: 'brokered' };
+    await db.usageEvent.create({ data: { ...base, observedAt: new Date(at), requestCount: 2 } });
+    const query = { resourceId: resource.id, startMs: at, endMs: at, granularity: 'day', costMode: 'auto' } as const;
+    const unknown = await queryTeamCredentialUsage(manager.id, query, TEST_AUTHENTICATION);
+    if ('ok' in unknown) throw new Error(`Usage refused: ${unknown.error}`);
+    expect(unknown.totals).toMatchObject({ eventCount: 1, requestCount: 2,
+      tokens: { total: null, input: null, output: null }, cost: { reportedUsd: null, estimatedUsd: null } });
+    expect(resolveEffectiveUsageCostUsd(unknown.totals.cost, 'auto')).toBeNull();
+    await db.usageEvent.create({ data: { ...base, observedAt: new Date(at + 1), requestCount: 3,
+      inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0,
+      reportedCostUsd: 0, estimatedCostUsd: 0, invoiceCostUsd: 0, costSource: 'provider_reported' } });
+    const known = await queryTeamCredentialUsage(manager.id, { ...query, startMs: at + 1, endMs: at + 1 }, TEST_AUTHENTICATION);
+    if ('ok' in known) throw new Error(`Usage refused: ${known.error}`);
+    expect(known.totals).toMatchObject({ eventCount: 1, requestCount: 3, tokens: { total: 0 }, cost: { reportedUsd: 0 } });
+    const mixed = await queryTeamCredentialUsage(manager.id, { ...query, endMs: at + 1 }, TEST_AUTHENTICATION);
+    if ('ok' in mixed) throw new Error(`Usage refused: ${mixed.error}`);
+    expect(mixed.totals).toMatchObject({ eventCount: 2, requestCount: 5, tokens: { total: 0 }, cost: { reportedUsd: 0 } });
+  });
 
   it('keeps incomplete finite publications unavailable to recipients while preserving owner and complete-share attribution', async () => {
     const manager = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -817,6 +875,43 @@ describe('Team credential resource usage query', () => {
     if ('ok' in invoiceView) throw new Error('expected usage result');
     expect(invoiceView.totals.cost).toMatchObject({ invoiceUsd: 1, reportedUsd: 2, costSource: 'none' });
     expect(invoiceView.totals.cost.effectiveUsd).toBe(3);
+  });
+
+  it('resolves reported-total overlap only inside the selected contribution population', async () => {
+    const manager = await db.account.create({ data: { encryptionMode: 'plain' } });
+    const team = await db.team.create({ data: { name: randomUUID() } });
+    await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: 'admin' } });
+    const resource = await db.teamCredentialResource.create({ data: {
+      teamId: team.id, custodianAccountId: manager.id, displayName: 'Scoped reported total',
+      disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed', sourceBindingJson: '{}',
+      allMembersDeliveryMode: 'brokered',
+    } });
+    const session = await db.session.create({ data: {
+      accountId: manager.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain',
+    } });
+    const at = Date.now();
+    const base = { accountId: manager.id, sessionId: session.id, agentId: 'codex', source: 'codex_app_server',
+      teamCredentialResourceId: resource.id, teamCredentialActorAccountId: manager.id, credentialDeliveryMode: 'brokered' };
+    await db.usageEvent.create({ data: { ...base, observedAt: new Date(at), scope: 'turn_delta',
+      inputTokens: 10, totalTokens: 10, estimatedCostUsd: 3, costSource: 'pricing_estimate', machineId: 'estimated-worker' } });
+    await db.usageEvent.create({ data: { ...base, observedAt: new Date(at + 1), scope: 'session_snapshot', isCumulative: true,
+      inputTokens: 15, totalTokens: 15, reportedCostUsd: 2, costSource: 'provider_reported', machineId: 'report-worker' } });
+    const input = { resourceId: resource.id, startMs: at, endMs: at + 1,
+      granularity: 'day', costMode: 'auto', breakdown: 'worker_machine' } as const;
+    const whole = await queryTeamCredentialUsage(manager.id, input, TEST_AUTHENTICATION);
+    if ('ok' in whole) throw new Error(`Usage refused: ${whole.error}`);
+    expect(whole.totals).toMatchObject({ eventCount: 2, tokens: { total: 15 }, cost: { reportedUsd: 2, estimatedUsd: 3 } });
+    expect(resolveEffectiveUsageCostUsd(whole.totals.cost, 'auto')).toBe(2);
+    expect(resolveEffectiveUsageCostUsd(whole.series[0]!.totals.cost, 'auto')).toBe(2);
+    // A covered fallback is not a separately selected charge in a partial breakdown.
+    expect(resolveEffectiveUsageCostUsd(whole.breakdown!.find(row => row.key === 'estimated-worker')!.totals.cost, 'auto')).toBeNull();
+    expect(resolveEffectiveUsageCostUsd(whole.breakdown!.find(row => row.key === 'report-worker')!.totals.cost, 'auto')).toBeNull();
+    const reportOnly = await queryTeamCredentialUsage(manager.id, { ...input, startMs: at + 1 }, TEST_AUTHENTICATION);
+    if ('ok' in reportOnly) throw new Error(`Usage refused: ${reportOnly.error}`);
+    expect(resolveEffectiveUsageCostUsd(reportOnly.totals.cost, 'auto')).toBeNull();
+    const estimateOnly = await queryTeamCredentialUsage(manager.id, { ...input, endMs: at }, TEST_AUTHENTICATION);
+    if ('ok' in estimateOnly) throw new Error(`Usage refused: ${estimateOnly.error}`);
+    expect(resolveEffectiveUsageCostUsd(estimateOnly.totals.cost, 'auto')).toBe(3);
   });
 
   it.each([

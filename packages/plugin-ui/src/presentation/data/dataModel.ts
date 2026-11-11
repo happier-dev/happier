@@ -24,7 +24,7 @@ export type HappierDataColumn = Readonly<{
  * retain every digit. Fractional readings keep the existing fifteen-significant-digit suppression of
  * binary accumulation noise ("0.30000000000000004" reads as "0.3").
  */
-export function formatHappierDataValue(value: HappierDataValue | null, locale?: string, missingMeasurementText = 'Not reported'): string {
+export function formatHappierDataValue(value: HappierDataValue | null, locale?: string, missingMeasurementText = '—'): string {
   if (value === null) return missingMeasurementText;
   if (typeof value !== 'number') return String(value);
   try {
@@ -34,6 +34,11 @@ export function formatHappierDataValue(value: HappierDataValue | null, locale?: 
   } catch {
     return String(value);
   }
+}
+
+/** Retain caller-owned units and wording alongside any precision its visible formatter hides. */
+export function formatHappierDataValueWithPrecision(exact: string, formatted: string): string {
+  return formatted.includes(exact) ? formatted : `${exact} (${formatted})`;
 }
 
 export { formatHappierDataBytes, formatHappierDataBytesParts, type HappierDataBytesKind } from './formatBytes.js';
@@ -54,8 +59,9 @@ export function formatHappierDataExactShare(share: number, locale?: string): str
   }
 }
 
-/** A whole-number percentage in the reader's locale ("63%"). */
+/** A whole-number percentage; a positive part below one percent never reads as zero. */
 export function formatHappierDataShare(share: number, locale?: string): string {
+  if (share > 0 && share < 0.01) return `<${formatHappierDataShare(0.01, locale)}`;
   try {
     return new Intl.NumberFormat(locale === undefined ? undefined : [locale], { style: 'percent', maximumFractionDigits: 0 }).format(share);
   } catch {

@@ -160,7 +160,7 @@ function HatchPattern(props: Readonly<{ id: string; color: string }>) {
 
 function HatchSwatch(props: Readonly<{ ink: string }>) {
   const id = `hatch-${useId().replace(/:/gu, '')}`;
-  return <Svg width="100%" height="100%"><Defs><HatchPattern id={id} color={props.ink} /></Defs>
+  return <Svg accessible={false} aria-hidden width="100%" height="100%"><Defs><HatchPattern id={id} color={props.ink} /></Defs>
     <Rect width="100%" height="100%" fill={`url(#${id})`} /></Svg>;
 }
 
@@ -347,7 +347,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
     const target = denseLine ? historyControlRef.current : controls.current.get(selectedId ?? geometry.buckets[0]?.id ?? '');
     target?.focus();
   }, [denseLine, selectedId, geometry.buckets]);
-  const unknown = formatHappierDataValue(null, text.locale, props.unknownLabel);
+  const unknown = props.unknownLabel ?? formatHappierDataValue(null, text.locale);
   const gapKey = props.gapLabel && props.variant === 'bar'
     && geometry.buckets.some(bucket => bucket.values.every(entry => entry.value === null)) ? props.gapLabel : null;
   const magnitude = (value: number) => props.mirrored ? Math.abs(value) : value;
@@ -582,13 +582,13 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
   const showGrid = props.showGrid ?? !inline;
   const hasAreaHatch = props.variant === 'area' && props.series.some(entry => entry.fillPattern === 'hatch');
   const pathInk = props.variant === 'line' && props.renderLinePath
-    ? <>{bandPaths.length ? <Svg width={plotWidth} height={height}>{bandPaths}</Svg> : null}{paths}</>
-    : <Svg width={plotWidth} height={height}>{hasAreaHatch ? <Defs><HatchPattern id={patternId} color={props.theme.colors.surface} /></Defs> : null}{bandPaths}{paths}</Svg>;
-  const thresholdInk = thresholdPaths.length ? <Svg width={plotWidth} height={height} style={{ position: 'absolute', left: 0, top: 0 }}>
+    ? <>{bandPaths.length ? <Svg accessible={false} aria-hidden width={plotWidth} height={height}>{bandPaths}</Svg> : null}{paths}</>
+    : <Svg accessible={false} aria-hidden width={plotWidth} height={height}>{hasAreaHatch ? <Defs><HatchPattern id={patternId} color={props.theme.colors.surface} /></Defs> : null}{bandPaths}{paths}</Svg>;
+  const thresholdInk = thresholdPaths.length ? <Svg accessible={false} aria-hidden width={plotWidth} height={height} style={{ position: 'absolute', left: 0, top: 0 }}>
     <Defs><ClipPath id={thresholdId}><Rect testID={props.testID ? `${props.testID}-threshold-clip` : undefined}
       x={0} y={0} width={plotWidth} height={thresholdY} /></ClipPath></Defs>{thresholdPaths}
   </Svg> : null;
-  const liveEndpoints = props.liveMotion && props.liveMotion.active !== false && geometry.buckets.length ? <Svg width={plotWidth} height={height}
+  const liveEndpoints = props.liveMotion && props.liveMotion.active !== false && geometry.buckets.length ? <Svg accessible={false} aria-hidden width={plotWidth} height={height}
     style={{ position: 'absolute', left: 0, top: 0 }}>
     {geometry.buckets[geometry.buckets.length - 1]!.values.map((entry, index) => entry.value === null ? null : <Circle key={entry.seriesId}
       testID={props.testID ? `${props.testID}-endpoint-${index}` : undefined}

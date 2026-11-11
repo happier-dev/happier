@@ -1,10 +1,33 @@
 import { expect, it } from 'vitest';
 import { addUsageTokens, createEmptyUsageTokens, addUsageCostForMode, aggregateUsageContributionCosts, aggregateUsageCostPartitions, aggregateUsageCosts, resolveUsageContributionCosts, withEffectiveUsageCost } from './usageAggregation.js';
 import { resolveUsageCostBasis } from './usageCost.js';
+import { projectUsageContributionTotals } from './usageActivityProjectionFacts.js';
 import { normalizeLegacyUsageTokens } from './legacyUsageTokens.js';
 import { aggregateUsageCostFactTotals } from './usageCostFactTotals.js';
 import { addUsageMoney, readUsageMoney, restoreUsageMoneyProvenance, serializeUsageMoneyProvenance,
     withUsageMoney } from './usageMoney.js';
+
+it.each(['auto', 'reported', 'estimated', 'api_equivalent'] as const)(
+    'publishes empty population totals as zero without measuring nonempty missing facts in %s mode', mode => {
+        const unknown = createEmptyUsageTokens();
+        const zero = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+        const unknownCost = { reportedUsd: null, estimatedUsd: null, invoiceUsd: null, currency: 'USD', costSource: 'none' as const };
+        const fold = (rows: Array<{ eventCount: number; tokens: typeof unknown; cost: typeof unknownCost }>) =>
+            projectUsageContributionTotals(rows, aggregateUsageContributionCosts(rows, mode));
+        const empty = fold([]);
+        expect(empty).toMatchObject({ eventCount: 0, tokens: zero,
+            cost: { reportedUsd: 0, estimatedUsd: 0, invoiceUsd: 0, costSource: 'none' } });
+        expect(resolveUsageCostBasis(empty.cost, mode)).toBeNull();
+        const missing = fold([{ eventCount: 1, tokens: unknown, cost: unknownCost }]);
+        expect(missing.tokens).toEqual(unknown);
+        expect(missing.cost).toMatchObject(unknownCost);
+        expect(resolveUsageCostBasis(missing.cost, mode)).toBeNull();
+        const report = projectUsageContributionTotals([{ eventCount: 0, tokens: unknown }],
+            aggregateUsageContributionCosts([{ cost: { ...unknownCost, reportedUsd: 3, costSource: 'provider_reported' } }], mode));
+        expect(report).toMatchObject({ eventCount: 0, tokens: unknown, cost: { reportedUsd: 3 } });
+        expect(projectUsageContributionTotals([{ eventCount: 1, tokens: zero }], unknownCost).tokens).toEqual(zero);
+        expect(projectUsageContributionTotals([{ eventCount: 1, tokens: unknown }, { eventCount: 1, tokens: zero }], unknownCost).tokens).toEqual(zero);
+    });
 
 it('skips unmeasured token operands while preserving unknown-only categories and measured zero', () => {
     const unknown = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };

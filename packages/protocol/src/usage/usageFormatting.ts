@@ -1,5 +1,3 @@
-const DEFAULT_MISSING_USAGE_MEASUREMENT_TEXT = 'Not reported';
-
 function isValidUsageNumber(value: number | null): value is number {
     return value !== null && Number.isFinite(value) && value >= 0;
 }
@@ -11,9 +9,8 @@ function trimTrailingZero(value: string): string {
 export function formatTokenCount(
     value: number | null,
     locales?: Intl.LocalesArgument,
-    missingMeasurementText: string = DEFAULT_MISSING_USAGE_MEASUREMENT_TEXT,
 ): string {
-    if (!isValidUsageNumber(value)) return missingMeasurementText;
+    if (!isValidUsageNumber(value)) return '—';
 
     return new Intl.NumberFormat(locales, { notation: 'compact', maximumFractionDigits: 1 }).format(Math.trunc(value));
 }
@@ -21,9 +18,8 @@ export function formatTokenCount(
 export function formatTokenCountLong(
     value: number | null,
     locales?: Intl.LocalesArgument,
-    missingMeasurementText: string = DEFAULT_MISSING_USAGE_MEASUREMENT_TEXT,
 ): string {
-    if (!isValidUsageNumber(value)) return missingMeasurementText;
+    if (!isValidUsageNumber(value)) return '—';
     return new Intl.NumberFormat(locales).format(Math.trunc(value));
 }
 
@@ -31,9 +27,8 @@ export function formatUsageCost(
     usd: number | null,
     currency: string,
     locales?: Intl.LocalesArgument,
-    missingMeasurementText: string = DEFAULT_MISSING_USAGE_MEASUREMENT_TEXT,
 ): string {
-    if (!isValidUsageNumber(usd)) return missingMeasurementText;
+    if (!isValidUsageNumber(usd)) return '—';
 
     // Cents from a dime up; smaller amounts keep the digits that show them.
     const maximumFractionDigits = usd < 0.1 ? 4 : 2;

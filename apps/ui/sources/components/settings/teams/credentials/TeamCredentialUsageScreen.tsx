@@ -674,8 +674,9 @@ export function TeamCredentialUsageSummary(props: Readonly<{
                                 y: selectedMetric === 'tokens' ? point.tokens : selectedMetric === 'cost' ? point.cost : point.requests ?? null })) }]}
                         coordinateFormatter={(timestampSeconds) => seriesBucketDate(timestampSeconds, period)}
                         valueFormatter={usageSeriesValueFormatter(selectedMetric, result.totals.cost.currency)}
-                        renderBucket={usageSeriesTooltip(theme.colors.text.link, 'usage-volume-point-trigger', usageSeriesValueFormatter(selectedMetric, result.totals.cost.currency),
-                            (timestampSeconds) => seriesBucketDate(timestampSeconds, period))}
+                        renderBucket={usageSeriesTooltip(theme.colors.text.link, 'usage-volume-point-trigger', { label: metricLabel(selectedMetric),
+                            format: usageSeriesValueFormatter(selectedMetric, result.totals.cost.currency),
+                            formatCoordinate: (timestampSeconds) => seriesBucketDate(timestampSeconds, period) })}
                         renderFrame={usageSeriesFrame(series.length, { accentColor: theme.colors.text.link,
                             resolveContent: usageVolumeLens(series, result.totals.cost.currency, (timestamp) => seriesBucketLabel(timestamp, period), usageRequestMetricLabel(result.coverage.requestCountCoverage)) })}
                     />

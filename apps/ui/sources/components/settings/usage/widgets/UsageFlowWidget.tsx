@@ -200,7 +200,7 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
               ),
             })}
         valueFormatter={format}
-        unknownLabel={t('usage.board.plans.cellUnknown')}
+        unknownLabel={'—'}
         showReadout={false}
         valuesLabel={t('usage.showAll')}
         valuesCollapseLabel={t('usage.showLess')}

@@ -26,7 +26,7 @@ describe('shared data presentation rules', () => {
     ]);
   });
   it('reads numbers in the reader locale and shares against the largest value shown', () => {
-    expect(formatHappierDataValue(null, 'en-US')).toBe('Not reported');
+    expect(formatHappierDataValue(null, 'en-US')).toBe('—');
     expect(formatHappierDataValue(null, 'en-US', 'Not measured by source')).toBe('Not measured by source');
     expect(formatHappierDataValue(0, 'en-US', 'Not measured by source')).toBe('0');
     expect(formatHappierDataValue(1284, 'en-US')).toBe('1,284');

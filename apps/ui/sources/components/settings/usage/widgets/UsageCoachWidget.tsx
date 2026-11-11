@@ -346,7 +346,7 @@ export function UsageCoachWidget(props: UsageBodyProps) {
     { key: 'findings', label: t('usage.board.coach.summaryFindings'), value: reading ? '—' : visible.length,
       caption: t('usage.board.coach.summaryOfChecks', { count: checked }) },
     { key: 'sessions', label: t('usage.board.coach.summarySessions'),
-      value: reading ? '—' : countUsageCheckedSessions(coach.sessionCoverage) ?? periodSessions ?? t('usage.board.plans.cellUnknown'),
+      value: reading ? '—' : countUsageCheckedSessions(coach.sessionCoverage) ?? periodSessions ?? '—',
       caption: usagePeriodPhrase(props.query) },
     { key: 'insufficient', label: t('usage.board.coach.summaryNeedEvidence'), value: reading ? '—' : insufficient.length,
       caption: !reading && clear.length ? t('usage.board.coach.summaryClearCaption', { count: clear.length }) : undefined },

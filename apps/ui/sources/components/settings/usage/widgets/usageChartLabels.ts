@@ -69,12 +69,13 @@ export function usageSkyLabels(input: Readonly<{
 }
 
 export function usageOrbitLabels(): UsageOrbitLabels {
-  return { percent: usageChartPercent, unknown: (names) => t('usage.board.charts.shareUnknown', { names }), unknownAgent: usageAgentTitle('') };
+  return { percent: usageChartPercent, unknown: (names) => t('usage.board.charts.shareUnknown', { names }), unknownAgent: usageAgentTitle(''),
+    values: { ...usageChartValuesLabels(), agentColumn: t('usage.board.charts.agentColumn'), shareColumn: t('usage.board.charts.shareColumn') } };
 }
 
 /** `activeDays` is the period's active-day total when known; Agent days then read "12 of 40". */
 export function usageCrewLabels(activeDays: number | null): UsageCrewLabels {
-  return { percent: usageChartPercent, unknownAgent: usageAgentTitle(''), unknownLabel: usageChartValuesLabels().unknownLabel,
+  return { percent: usageChartPercent, unknownAgent: usageAgentTitle(''),
     days: (days) => activeDays === null ? t('usage.board.charts.daysCount', { count: days }) : t('usage.board.charts.daysOf', { count: days, total: activeDays }) };
 }
 
@@ -90,7 +91,8 @@ export function usagePlanetLabels(): UsagePortraitLabels {
 export function usageShippedLabels(query: Pick<UsageQuery, 'timeZoneOffsetMinutes'>, colourBy: UsageShippedLabels['colourBy']): UsageShippedLabels {
   const dates = usageChartDateLabels(query);
   return { week: dates.short, noDate: t('usage.board.charts.noDate'), countLine: (count) => t('usage.board.charts.shippedCount', { count }),
-    mixed: t('usage.board.charts.mixed'), noMergeDate: t('usage.board.charts.noMergeDate'), colourBy };
+    mixed: t('usage.board.charts.mixed'), noMergeDate: t('usage.board.charts.noMergeDate'), colourBy,
+    values: { ...usageChartValuesLabels(), weekColumn: t('usage.board.charts.weekColumn'), countColumn: t('usage.board.charts.countColumn') } };
 }
 
 /** Wording shared by the calendar bodies (Ninety planets, Streak thread, Weeks, Around the period, Days on the surface, Rings). */

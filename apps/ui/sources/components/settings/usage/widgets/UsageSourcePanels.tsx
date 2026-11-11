@@ -79,7 +79,7 @@ export function UsageUnpricedWidget(props: UsageBodyProps) {
   const total = facts?.reduce<number | null>((sum, fact) => addUsageMeasurements(sum, fact.tokens.total), facts.length === 0 ? 0 : null);
   return <View testID={`${props.testID}.facts`}>
     <HappierDataMetric theme={theme} testID={`${props.testID}.tokens`} size="stat" showLabel
-      label={t('usage.board.sources.unpricedPurpose')} value={total ?? t('usage.board.plans.cellUnknown')} unit={t('usage.board.page.tokensUnit')}
+      label={t('usage.board.sources.unpricedPurpose')} value={total ?? '—'} unit={t('usage.board.page.tokensUnit')}
       valueFormatter={formatTokenCount} caption={total === undefined ? t('usage.board.page.notMeasuredYet')
         : [t('usage.board.page.unpricedCaption'), facts?.some(fact => !fact.complete) ? t('usage.board.page.factIncomplete') : null].filter(Boolean).join(' · ')} />
     <UsageModelPricesLine slice={props.slice} serverId={props.serverId} testID={`${props.testID}.prices`} />

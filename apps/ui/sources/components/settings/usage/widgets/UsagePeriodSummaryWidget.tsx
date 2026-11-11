@@ -25,7 +25,6 @@ import { usageComparison } from '../usageComparisonPresentation';
  * range; below it only facts this query actually produced (paid, merged work, agent time).
  */
 export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
-  const unknownValue = t('usage.board.plans.cellUnknown');
   const { theme } = useUnistyles();
   const chartTheme = useUsagePluginTheme();
   const view = useUsageAnalyticsView(props.slice, props.query);
@@ -81,7 +80,7 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
   // unavailable, so the column shows the tokens and the one cost message is said once (R135 N2).
   if (cost)
     stats.push(
-      { id: 'tokens', label: t('usage.tokens'), value: view.hero.totalTokens ?? unknownValue, valueFormatter: formatTokenCount },
+      { id: 'tokens', label: t('usage.tokens'), value: view.hero.totalTokens ?? UNKNOWN_VALUE, valueFormatter: formatTokenCount },
     );
   else if (invoice?.amountUsd != null)
     stats.push(
@@ -90,12 +89,12 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
     );
   else
     stats.push(
-      { id: 'cost', label: t('usage.cost'), value: selectedCost.amountUsd ?? unknownValue,
+      { id: 'cost', label: t('usage.cost'), value: selectedCost.amountUsd ?? UNKNOWN_VALUE,
         valueFormatter: (value) => formatUsageCost(value, currency), caption: costCaption },
     );
   if (props.query.includeWorkEvidence)
     stats.push(
-      { id: 'merged', label: t('usage.board.page.mergedPrs'), value: merged ?? unknownValue,
+      { id: 'merged', label: t('usage.board.page.mergedPrs'), value: merged ?? UNKNOWN_VALUE,
         // Every figure, a zero or a dash included, says why it reads as it does in the same caption slot.
         caption:
           merged === null
@@ -109,14 +108,14 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
   // value. An unanswered duration never temporarily becomes Active days.
   if (props.query.includeSessionEvidence)
     stats.push(
-      { id: 'agent', label: t('usage.board.page.agentTime'), value: intervals ? formatUsageDurationCompact(intervals.agentTimeMs) : unknownValue,
+      { id: 'agent', label: t('usage.board.page.agentTime'), value: intervals ? formatUsageDurationCompact(intervals.agentTimeMs) : UNKNOWN_VALUE,
         caption: intervals ? t('usage.board.page.elapsedTime', {
           time: formatUsageDurationCompact(intervals.elapsedBusyMs),
         }) : unmeasured('how_you_work') },
     );
   else
     stats.push(
-      { id: 'active', label: t('usage.board.page.activeDays'), value: view.insights.activeDays ?? unknownValue,
+      { id: 'active', label: t('usage.board.page.activeDays'), value: view.insights.activeDays ?? UNKNOWN_VALUE,
         caption: view.hero.longestStreakDays === null ? undefined : t('usage.board.page.longestStreak', {
           count: view.hero.longestStreakDays,
         }) },
@@ -127,7 +126,7 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
       subline={subline} sublineStyle={styles.subline} hero={{
           id: 'total',
           label: cost ? t('usage.cost') : t('usage.tokens'),
-          value: current ?? unknownValue,
+          value: current ?? UNKNOWN_VALUE,
           caption: cost ? costCaption : current === null ? t('common.unavailable') : undefined,
           unit: cost ? undefined : t('usage.board.page.tokensUnit'),
           valueFormatter:
@@ -152,6 +151,8 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
   );
 }
 
+
+const UNKNOWN_VALUE = '—';
 
 const styles = StyleSheet.create((theme) => ({
   // The line under the figure sits where the comparison's label sits once it lands (same role, colour and

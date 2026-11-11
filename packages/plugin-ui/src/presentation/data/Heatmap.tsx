@@ -90,7 +90,7 @@ export function HappierDataGrid(props: HeatmapProps & { variant: 'heatmap' | 'do
   const [axisWidth, setAxisWidth] = useState<number | null>(null);
   const controls = useRef(new Map<string, HappierFocusable>());
   const selected = props.cells.find((cell) => cell.id === selectedId);
-  const unknown = formatHappierDataValue(null, text.locale, props.unknownLabel);
+  const unknown = props.unknownLabel ?? formatHappierDataValue(null, text.locale);
   const rawValue = (cell: HappierGridCell) => cell.value === null || !Number.isFinite(cell.value) ? unknown : formatHappierDataValue(cell.value, text.locale);
   const visibleValue = (cell: HappierGridCell) => cell.value === null || !Number.isFinite(cell.value) ? unknown : cell.valueLabel ?? rawValue(cell);
   const exact = (cell: HappierGridCell) => `${cell.label}: ${rawValue(cell)}${visibleValue(cell) !== rawValue(cell) ? ` (${visibleValue(cell)})` : ''}`;

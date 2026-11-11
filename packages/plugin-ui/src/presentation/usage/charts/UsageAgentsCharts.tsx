@@ -5,7 +5,7 @@ import { HAPPIER_WIDGET_FRAME_METRICS } from '../../layout/WidgetFrame.js';
 
 import { HappierText } from '../../text/Text.js';
 import { ChartDatum, ChartDrawing, ChartMark, ChartPathMark } from '../../data/ChartDatum.js';
-import { formatHappierDataExactShare, formatHappierDataValue } from '../../data/dataModel.js';
+import { formatHappierDataExactShare, formatHappierDataValue, formatHappierDataValueWithPrecision } from '../../data/dataModel.js';
 import {
   UsageChartCaption, UsageChartColumn, UsageChartKey, UsageChartValues, resolveUsageChartInk, usageChartRound as r1, usageSmoothPath,
   useUsageChartSvgText, useUsageChartWidth, type UsageChartAgent, type UsageChartBaseProps, type UsageChartKeyItem, type UsageChartValuesLabels,
@@ -47,11 +47,11 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
   const phone = width !== null && width < 560;
   const rows = props.model.rows;
   const colour = (id: string | null) => agentOf(props.agents, id)?.color ?? ink.neutral;
-  const datum = (row: UsageScoreModel['rows'][number], day: number, hour: number, minutes: number) => ({
+  const datum = (row: UsageScoreModel['rows'][number], day: number, hour: number, minutes: number) => ({ keyboard: false,
     // A minutes value already names its hour ("10:00 18 min"), so its title stops at the day.
-    label: props.model.encoding === 'presence'
+    label: `${props.label} · ${props.model.encoding === 'presence'
       ? `${fullName(props.agents, row.agentId, props.labels.unknownAgent)} · ${props.labels.day(day)} · ${props.labels.clock(hour)}`
-      : `${fullName(props.agents, row.agentId, props.labels.unknownAgent)} · ${props.labels.day(day)}`,
+      : `${fullName(props.agents, row.agentId, props.labels.unknownAgent)} · ${props.labels.day(day)}`}`,
     value: props.model.encoding === 'presence' ? props.labels.key.presence : props.labels.values.formatHours(row.hours[day]!.map((value, index) => index === hour ? value : null)) || formatHappierDataValue(minutes),
     color: colour(row.agentId),
   });
@@ -65,7 +65,7 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
   let chart: ReactNode = <View style={{ height: rows.length * 26 + 26 }} />;
   if (width !== null && !phone) {
     const label = 92, plot = width - label, step = plot / 168, rowHeight = 26, height = rows.length * rowHeight + 26, radius = Math.min(2.5, step * 0.4);
-    chart = <ChartDrawing style={{ height }} accessibilityLabel={props.label}><Svg width={width} height={height}>
+    chart = <ChartDrawing style={{ height }} accessibilityLabel={props.label}><Svg accessible={false} aria-hidden width={width} height={height}>
       {Array.from({ length: 8 }, (_, day) => <Path key={`v${day}`} d={`M${r1(label + day * 24 * step)},2V${height - 18}`} stroke={ink.grid} strokeWidth={1} />)}
       {rows.map((row, index) => {
         const y = index * rowHeight + rowHeight / 2 + 2;
@@ -81,20 +81,21 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
       datum={datum(row, day, hour, minutes)} testID={`${props.testID}.hour.${index}.${day}.${hour}`}
       bounds={{ x: label + (day * 24 + hour) * step, y: index * rowHeight + 2, width: step, height: rowHeight }} /> : null)))}</ChartDrawing>;
   } else if (width !== null) {
-    // A phone recomposes the week into seven day strips: one row of 24 dots per Agent.
-    const label = 34, plot = width - label, step = plot / 24;
+    // A phone recomposes the week into seven day strips: the day's name on its own line, then one row of 24 dots
+    // per Agent across the full width (a side gutter cannot hold "Wed 11" at body size; native N5).
+    const step = width / 24, head = svgText.styles.body.lineHeight ?? (svgText.styles.body.fontSize ?? 13) + 4;
     chart = <ChartDrawing accessibilityLabel={props.label} style={{ gap: 4 }}>
       {Array.from({ length: 7 }, (_, day) => {
-        const height = 6 + rows.length * 7 + 4;
-        return <View key={day} style={{ height }}><Svg width={width} height={height}>
-          {svgText.draw({ x: 0, y: 12, text: props.labels.day(day), tone: 'secondary', size: 'body' })}
-          {rows.map((row, index) => (row.hours[day] ?? []).map((minutes, hour) => minutes === null ? null : <Circle key={`${index}-${hour}`} cx={r1(label + (hour + 0.5) * step)} cy={6 + index * 7}
+        const height = head + 6 + rows.length * 7 + 4;
+        return <View key={day} style={{ height }}><Svg accessible={false} aria-hidden width={width} height={height}>
+          {svgText.draw({ x: 0, y: head - 4, text: props.labels.day(day), tone: 'secondary', size: 'body' })}
+          {rows.map((row, index) => (row.hours[day] ?? []).map((minutes, hour) => minutes === null ? null : <Circle key={`${index}-${hour}`} cx={r1((hour + 0.5) * step)} cy={head + 6 + index * 7}
             r={2.1} fill={minutes ? colour(row.agentId) : ink.track} fillOpacity={minutes ? scoreOpacity(props.model.encoding, minutes) : 1} />))}
         </Svg>{rows.flatMap((row, index) => (row.hours[day] ?? []).map((minutes, hour) => minutes === null || (props.model.encoding === 'presence' && !minutes) ? null : <ChartMark key={`${index}-${hour}`}
           datum={datum(row, day, hour, minutes)} testID={`${props.testID}.hour.${index}.${day}.${hour}`}
-          bounds={{ x: label + hour * step, y: 2.5 + index * 7, width: step, height: 7 }} />))}</View>;
+          bounds={{ x: hour * step, y: head + 2.5 + index * 7, width: step, height: 7 }} />))}</View>;
       })}
-      <Svg width={width} height={14}>{[0, 6, 12, 18].map((hour) => svgText.draw({ x: label + hour * step, y: 11, text: props.labels.clock(hour) }, `h${hour}`))}</Svg>
+      <Svg accessible={false} aria-hidden width={width} height={14}>{[0, 6, 12, 18].map((hour) => svgText.draw({ x: hour * step, y: 11, text: props.labels.clock(hour) }, `h${hour}`))}</Svg>
     </ChartDrawing>;
   }
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
@@ -117,7 +118,8 @@ export type UsageAgentShare = Readonly<{
   activeDays?: number | null;
 }>;
 
-export type UsageOrbitLabels = Readonly<{ percent: (share: number) => string; unknown: (names: string) => string; unknownAgent: string }>;
+export type UsageOrbitLabels = Readonly<{ percent: (share: number) => string; unknown: (names: string) => string; unknownAgent: string;
+  values: UsageChartValuesLabels & Readonly<{ agentColumn: string; shareColumn: string }> }>;
 
 /** Orbit (new body): the closer orbit did more (rank by share); the dot's area is its share; unknown shares sit apart. */
 export function UsageOrbit(props: AgentsProps & Readonly<{ model: readonly UsageAgentShare[]; labels: UsageOrbitLabels; renderPlanet?: UsagePlanetSlot }>) {
@@ -150,14 +152,14 @@ export function UsageOrbit(props: AgentsProps & Readonly<{ model: readonly Usage
           // The "unknown share" line owns the bottom row, so planet labels stay above it.
           { height: unknown.length ? height - ((svgText.styles.body.fontSize ?? 13) + 3) : height, line: (svgText.styles.body.fontSize ?? 13) + 3 });
         return <>
-          <Svg width={width} height={height}>
+          <Svg accessible={false} aria-hidden width={width} height={height}>
             {known.map((_, index) => <Ellipse key={`o${index}`} cx={cx} cy={cy} rx={r1(rx0 + index * step)} ry={r1((rx0 + index * step) * aspect)} stroke={ink.grid} strokeWidth={1} fill="none" />)}
             {placed.map(({ entry, x, y, radius }) => <Circle key={JSON.stringify(entry.agentId)} cx={r1(x)} cy={r1(y)} r={r1(radius)} fill={agentOf(props.agents, entry.agentId)?.color ?? ink.neutral} />)}
             {placed.map(({ entry, text, at, anchor }, index) => svgText.draw({ x: at, y: labelY[index]!, anchor, tone: 'secondary', size: 'body', halo: props.paint.paper, text }, `l${index}-${JSON.stringify(entry.agentId)}`))}
             {unknown.length ? svgText.draw({ x: width, y: height - 4, anchor: 'end', text: props.labels.unknown(unknown.map((entry) => shortName(props.agents, entry.agentId, props.labels.unknownAgent)).join(', ')) }) : null}
           </Svg>
           {placed.map(({ entry, x, y, radius }) => <ChartMark key={JSON.stringify(entry.agentId)} testID={`${props.testID}.agent.${entry.agentId}`}
-            datum={{ label: fullName(props.agents, entry.agentId, props.labels.unknownAgent), value: exactPercent(entry.share), color: agentOf(props.agents, entry.agentId)?.color ?? ink.neutral }}
+            datum={{ keyboard: false, label: `${props.label} · ${fullName(props.agents, entry.agentId, props.labels.unknownAgent)}`, value: exactPercent(entry.share), color: agentOf(props.agents, entry.agentId)?.color ?? ink.neutral }}
             bounds={{ x: x - radius, y: y - radius, width: radius * 2, height: radius * 2 }} />)}
           {props.renderPlanet ? <View pointerEvents="none" style={{ position: 'absolute', left: r1(cx - 36), top: r1(cy - 36), width: 72, height: 72 }}>
             {props.renderPlanet({ size: 72, radius: 20, halo: 0.5, tail: 0, rise: 1, rotate: -0.6, style: 'rich' })}
@@ -165,6 +167,10 @@ export function UsageOrbit(props: AgentsProps & Readonly<{ model: readonly Usage
         </>;
       })() : null}
     </ChartDrawing>
+    <UsageChartValues theme={props.theme} label={props.label} labels={props.labels.values} testID={props.testID}
+      table={{ columns: [{ label: props.labels.values.agentColumn }, { label: props.labels.values.shareColumn }],
+        rows: props.model.map(entry => [fullName(props.agents, entry.agentId, props.labels.unknownAgent), entry.share === null
+          ? formatHappierDataValue(null, undefined, props.labels.values.unknownLabel) : exactPercent(entry.share)]) }} />
   </UsageChartColumn>;
 }
 
@@ -195,7 +201,7 @@ export function UsageCrew(props: AgentsProps & Readonly<{ model: readonly UsageA
         {!compact ? <View style={{ width: 100, height: 4, borderRadius: 2, backgroundColor: ink.track, overflow: 'hidden' }}>
           {entry.share !== null ? <View style={{ width: `${Math.round(Math.sqrt(entry.share) * 100)}%`, height: 4, borderRadius: 2, backgroundColor: agent?.color ?? ink.neutral }} /> : null}
         </View> : null}
-        <ChartDatum datum={{ label: fullName(props.agents, entry.agentId, props.labels.unknownAgent), value: entry.share === null ? unknown : exactPercent(entry.share),
+        <ChartDatum datum={{ label: `${props.label} · ${fullName(props.agents, entry.agentId, props.labels.unknownAgent)}`, value: entry.share === null ? unknown : exactPercent(entry.share),
           subtitle: entry.coverage?.long, color: agent?.color ?? ink.neutral }} testID={`${props.testID}.agent.${entry.agentId}`}>
           <HappierText tabularNumbers style={{ ...text.strong, minWidth: 40, textAlign: 'right' }}>{entry.share === null ? unknown : props.labels.percent(entry.share)}</HappierText>
         </ChartDatum>
@@ -233,10 +239,10 @@ export function UsageAgentRiver(props: AgentsProps & Readonly<{ model: UsageRive
   const members: (string | null)[] = [...props.agents.map((agent) => agent.id), ...(weeks.some((week) => (shareOf(week, null) ?? 0) > 0) ? [null] : [])];
   const order = members.filter((id) => weeks.some((week) => (shareOf(week, id) ?? 0) > 0))
     .sort((a, b) => weeks.reduce((sum, week) => sum + (shareOf(week, a) ?? 0) * weight(week), 0) - weeks.reduce((sum, week) => sum + (shareOf(week, b) ?? 0) * weight(week), 0));
-  const rows = weeks.map((week) => [week.partial ? props.labels.partialWeek(week.start, week.end) : props.labels.week(week.start), week.total === null ? unknown : props.labels.values.formatTotal(week.total),
+  const rows = weeks.map((week) => [week.partial ? props.labels.partialWeek(week.start, week.end) : props.labels.week(week.start), week.total === null ? unknown : formatHappierDataValueWithPrecision(formatHappierDataValue(week.total), props.labels.values.formatTotal(week.total)),
     ...order.slice().reverse().map((id) => {
       const share = shareOf(week, id);
-      return share === null ? unknown : props.labels.values.percent(share);
+      return share === null ? unknown : formatHappierDataValueWithPrecision(exactPercent(share), props.labels.values.percent(share));
     })] as const);
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
     <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
@@ -255,7 +261,7 @@ export function UsageAgentRiver(props: AgentsProps & Readonly<{ model: UsageRive
         });
         const colour = (id: string | null) => agentOf(props.agents, id)?.color ?? props.theme.colors.mutedText;
         const leaders = order.slice(-2).reverse();
-        return <><Svg width={width} height={height}>
+        return <><Svg accessible={false} aria-hidden width={width} height={height}>
           {bands.map((band) => <Path key={band.id ?? "unknown"} d={band.d} fill={colour(band.id)} fillOpacity={0.9} />)}
           {(() => {
             // Each leading Agent is named where its band is thickest (never the same week twice), kept inside the plot.
@@ -286,7 +292,7 @@ export function UsageAgentRiver(props: AgentsProps & Readonly<{ model: UsageRive
           const left = index === 0 ? 0 : (x(index - 1) + x(index)) / 2;
           const right = index === weeks.length - 1 ? width : (x(index) + x(index + 1)) / 2;
           return <ChartPathMark key={`${band.id}-${index}`} testID={`${props.testID}.week.${index}.${band.id}`} d={band.d} strokeWidth={0} hitMode="fill"
-            datum={{ label: `${fullName(props.agents, band.id, props.labels.unknownAgent)} · ${week.partial ? props.labels.partialWeek(week.start, week.end) : props.labels.week(week.start)}`,
+            datum={{ keyboard: false, label: `${props.label} · ${fullName(props.agents, band.id, props.labels.unknownAgent)} · ${week.partial ? props.labels.partialWeek(week.start, week.end) : props.labels.week(week.start)}`,
               value: share === null ? unknown : exactPercent(share), subtitle: week.total === null ? undefined : `${props.labels.values.totalColumn}: ${formatHappierDataValue(week.total)} · ${props.labels.values.formatTotal(week.total)}`, color: colour(band.id) }}
             bounds={{ x: left, y: 0, width: right - left, height }}
             focusBounds={{ x: left, y: mid - band.high[index]!, width: right - left, height: band.high[index]! - band.low[index]! }} />;
@@ -308,7 +314,7 @@ export type UsageShippedModel =
   /** Public or no merge dates: the count only, one anonymous shelf. */
   | Readonly<{ mode: 'count'; total: number }>;
 export type UsageShippedLabels = Readonly<{ week: (start: string) => string; noDate: string; countLine: (total: number) => string; mixed: string; noMergeDate: string;
-  colourBy: 'agent' | 'accent' }>;
+  colourBy: 'agent' | 'accent'; values: UsageChartValuesLabels & Readonly<{ weekColumn: string; countColumn: string }> }>;
 
 export function UsageShipped(props: AgentsProps & Readonly<{ model: UsageShippedModel; labels: UsageShippedLabels }>) {
   const [width, onLayout] = useUsageChartWidth(props.width);
@@ -334,7 +340,7 @@ export function UsageShipped(props: AgentsProps & Readonly<{ model: UsageShipped
   </UsageChartColumn>;
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
     <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
-      {width !== null ? <Svg width={width} height={height}>
+      {width !== null ? <Svg accessible={false} aria-hidden width={width} height={height}>
         <Defs>
           <Pattern id={mix} width={5} height={5} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
             <Rect width={5} height={5} fill={props.agents[0]?.color ?? ink.neutral} /><Rect width={2.5} height={5} fill={props.agents[1]?.color ?? ink.neutral} />
@@ -358,7 +364,7 @@ export function UsageShipped(props: AgentsProps & Readonly<{ model: UsageShipped
               const w = Math.max(2.5, Math.min(5, (column - 2) / 7)), h = unit * (0.8 + ((index * 7 + j * 3) % 5) * 0.06) * 3.2;
               out.push(<Rect key={`${index}-${j}`} x={r1(x + j * (w + 1.5))} y={r1(bottom - h)} width={r1(w)} height={r1(h)} rx={1} fill={colour(spine)} />);
               marks.push(<ChartMark key={`${index}-${j}`} testID={`${props.testID}.spine.${index}.${j}`}
-                datum={{ label: byAgent ? `${props.labels.week(week.start)} · ${spine === 'mixed' ? props.labels.mixed : agentOf(props.agents, spine)?.name ?? spine}` : props.labels.week(week.start),
+                datum={{ keyboard: false, label: `${props.label} · ${byAgent ? `${props.labels.week(week.start)} · ${spine === 'mixed' ? props.labels.mixed : agentOf(props.agents, spine)?.name ?? spine}` : props.labels.week(week.start)}`,
                   value: props.labels.countLine(1), color: spine === 'mixed' ? ink.neutral : byAgent ? agentOf(props.agents, spine)?.color ?? ink.neutral : spineInk }}
                 bounds={{ x: x + j * (w + 1.5), y: bottom - h, width: w, height: h }} />);
             });
@@ -368,18 +374,26 @@ export function UsageShipped(props: AgentsProps & Readonly<{ model: UsageShipped
           const ux = width - tail + 14;
           for (let j = 0; j < model.undated; j++) out.push(<Rect key={`u${j}`} x={ux + (j % 6) * 7} y={r1(bottom - unit * 2.6)} width={4.5} height={r1(unit * 2.6)} rx={1} fill="none" stroke={ink.neutral} strokeDasharray="2 1.5" />);
           if (model.undated > 0) marks.push(<ChartMark key="undated" testID={`${props.testID}.undated`}
-            datum={{ label: props.labels.noMergeDate, value: props.labels.countLine(model.undated), color: ink.neutral }}
+            datum={{ keyboard: false, label: `${props.label} · ${props.labels.noMergeDate}`, value: props.labels.countLine(model.undated), color: ink.neutral }}
             bounds={{ x: ux, y: bottom - unit * 2.6, width: Math.min(6, model.undated) * 7, height: unit * 2.6 }} />);
           out.push(svgText.draw({ x: ux - 2, y: height - 3, text: props.labels.noDate }, 'nodate'));
           return out;
         })()}
       </Svg> : null}
       {width !== null && model.mode === 'count' ? <ChartMark testID={`${props.testID}.count`}
-        datum={{ label: props.label, value: props.labels.countLine(model.total), color: spineInk }}
+        datum={{ keyboard: false, label: props.label, value: props.labels.countLine(model.total), color: spineInk }}
         bounds={{ x: 0, y: 0, width, height: bottom }} /> : null}
       {marks}
     </ChartDrawing>
     {keyItems.length ? <UsageChartKey theme={props.theme} items={keyItems} /> : null}
+    <UsageChartValues theme={props.theme} label={props.label} labels={props.labels.values} testID={props.testID}
+      table={{ columns: [{ label: props.labels.values.weekColumn }, { label: props.labels.values.countColumn }],
+        rows: model.mode === 'count' ? [[props.label, props.labels.countLine(model.total)]] : [
+          ...model.weeks.flatMap(week => week.spines.map(spine => [byAgent
+            ? `${props.labels.week(week.start)} · ${spine === 'mixed' ? props.labels.mixed : agentOf(props.agents, spine)?.name ?? spine}`
+            : props.labels.week(week.start), props.labels.countLine(1)])),
+          ...(model.undated > 0 ? [[props.labels.noMergeDate, props.labels.countLine(model.undated)]] : []),
+        ] }} />
   </UsageChartColumn>;
 }
 
@@ -394,7 +408,8 @@ export type UsageConstellationModel = Readonly<{
   unknownStarts: number | null;
 }>;
 export type UsageConstellationLabels = Pick<UsageChartValuesLabels, 'unknownLabel'> & Readonly<{ kinds: Readonly<{ session: string; run: string; native: string }>; arrowNote: string;
-  unknownStarts: (count: number) => string; nodesOnly: string; unknownAgent: string }>;
+  unknownStarts: (count: number) => string; nodesOnly: string; unknownAgent: string;
+  values: UsageChartValuesLabels & Readonly<{ agentColumn: string; shareColumn: string; kindColumn: string; countColumn: string }> }>;
 const EDGE_DASH = { session: undefined, run: '5 3', native: '1.5 3' } as const;
 const CONSTELLATION_SLOTS = 7;
 
@@ -428,13 +443,13 @@ export function UsageConstellation(props: AgentsProps & Readonly<{ model: UsageC
         const edges = (props.model.edges ?? []).filter((edge) => position.has(edge.from) && position.has(edge.to));
         const edgeMarks: ReactNode[] = [];
         return <>
-          <Svg width={width} height={height}>
+          <Svg accessible={false} aria-hidden width={width} height={height}>
             <Defs>{nodes.map((node) => <Marker key={JSON.stringify(node.agentId)} id={`${markerId}-arrow-${node.agentId}`} viewBox="0 0 8 8" refX={7} refY={4} markerWidth={9} markerHeight={9}
               markerUnits="userSpaceOnUse" orient="auto-start-reverse"><Path d="M0,0L8,4L0,8Z" fill={colour(node.agentId)} /></Marker>)}</Defs>
             {edges.map((edge, index) => {
               const stroke = 1 + Math.sqrt(edge.count) * 0.28;
               const [x1, y1] = position.get(edge.from)!, [x2, y2] = position.get(edge.to)!;
-              const datum = { label: `${fullName(props.agents, edge.from, props.labels.unknownAgent)} → ${fullName(props.agents, edge.to, props.labels.unknownAgent)} · ${props.labels.kinds[edge.kind]}`,
+              const datum = { keyboard: false, label: `${props.label} · ${fullName(props.agents, edge.from, props.labels.unknownAgent)} → ${fullName(props.agents, edge.to, props.labels.unknownAgent)} · ${props.labels.kinds[edge.kind]}`,
                 value: formatHappierDataValue(edge.count), color: colour(edge.from) };
               const countWidth = formatHappierDataValue(edge.count).length * (svgText.styles.body.fontSize ?? 13) * 0.7;
               const countHeight = (svgText.styles.body.fontSize ?? 13) * 1.5;
@@ -476,7 +491,7 @@ export function UsageConstellation(props: AgentsProps & Readonly<{ model: UsageC
           {nodes.map((node) => {
             const [x, y] = position.get(node.agentId)!, r = radius(node.agentId);
             return <ChartMark key={`datum-${node.agentId}`} testID={`${props.testID}.node.${node.agentId}`}
-              datum={{ label: fullName(props.agents, node.agentId, props.labels.unknownAgent), value: node.share === null ? unknown : exactPercent(node.share), color: colour(node.agentId) }}
+              datum={{ keyboard: false, label: `${props.label} · ${fullName(props.agents, node.agentId, props.labels.unknownAgent)}`, value: node.share === null ? unknown : exactPercent(node.share), color: colour(node.agentId) }}
               bounds={{ x: x - r, y: y - r, width: r * 2, height: r * 2 }} />;
           })}
           {props.renderPlanet ? nodes.map((node) => {
@@ -490,5 +505,12 @@ export function UsageConstellation(props: AgentsProps & Readonly<{ model: UsageC
     </ChartDrawing>
     {props.model.edges?.length ? <UsageChartKey theme={props.theme} items={keyItems} note={props.labels.arrowNote} /> : <UsageChartCaption theme={props.theme}>{props.labels.nodesOnly}</UsageChartCaption>}
     {props.model.edges && props.model.unknownStarts !== null && props.model.unknownStarts > 0 ? <UsageChartCaption theme={props.theme}>{props.labels.unknownStarts(props.model.unknownStarts)}</UsageChartCaption> : null}
+    <UsageChartValues theme={props.theme} label={props.label} labels={props.labels.values} testID={props.testID}
+      table={{ columns: [{ label: props.labels.values.agentColumn }, { label: props.labels.values.shareColumn },
+        { label: props.labels.values.kindColumn }, { label: props.labels.values.countColumn }], rows: [
+          ...nodes.map(node => [fullName(props.agents, node.agentId, props.labels.unknownAgent), node.share === null ? unknown : exactPercent(node.share), '', '']),
+          ...(props.model.edges ?? []).map(edge => [`${fullName(props.agents, edge.from, props.labels.unknownAgent)} → ${fullName(props.agents, edge.to, props.labels.unknownAgent)}`,
+            '', props.labels.kinds[edge.kind], formatHappierDataValue(edge.count)]),
+        ] }} />
   </UsageChartColumn>;
 }

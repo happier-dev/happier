@@ -173,8 +173,9 @@ export function projectUsagePageCost(response: UsageAnalyticsQueryResponse, mode
   const amounts = costs.flatMap(cost => { const amount = readUsageCostBasisForSelection(cost, selection); return amount ? [amount] : []; });
   const amountUsd = selection && amounts.length > 0 && amounts.every(amount => amount.currency === selection.currency)
     ? usageMoneyToNumber(amounts.reduce((sum, amount) => addUsageMoney(sum,
-      readUsageMoney(amount!, 'amountUsd', amount!.amountUsd)), usageMoneyFromNumber(0))) : null;
-  if (!rows || !selection) return retain({ selection, amountUsd, accounting: response });
+      readUsageMoney(amount!, 'amountUsd', amount!.amountUsd)), usageMoneyFromNumber(0)))
+    : resolveUsageCostBasis(response.totals.cost, mode) === null && resolveEffectiveUsageCostUsd(response.totals.cost, mode) === 0 ? 0 : null;
+  if (!rows?.length || !selection) return retain({ selection, amountUsd, accounting: response });
   const selectedMode = selectionMode(selection);
   const projectCost = (raw: UsageObservationCost, contributions: readonly UsageAnalyticsContribution[]): UsageObservationCost => {
     const selectedCosts = resolveUsageContributionCosts(contributions, selectedMode)
@@ -260,12 +261,14 @@ export function serializeUsageCostBasis(cost: UsageObservationCost, mode: UsageC
   return selected ? withUsageMoney<UsageObservationCost>({ ...observed, effectiveUsd: selected.amountUsd,
     selectedBasis: { mode, value: { kind: selected.kind, currency: selected.currency, source: selected.source } } },
     { effectiveUsd: readUsageMoney(selected, 'amountUsd', selected.amountUsd) })
-    : { ...observed, selectedBasis: { mode, value: null } };
+    : { ...observed, ...(resolveEffectiveUsageCostUsd(cost, mode) === 0 ? { effectiveUsd: 0 } : {}),
+      selectedBasis: { mode, value: null } };
 }
 
-/** Numeric presentation preserves an unmeasured selected basis. */
+/** Empty population zero is mode-independent and attributes no report or tariff basis. */
 export function resolveEffectiveUsageCostUsd(cost: UsageObservationCost, mode: UsageCostMode): number | null {
-  return resolveUsageCostBasis(cost, mode)?.amountUsd ?? null;
+  return resolveUsageCostBasis(cost, mode)?.amountUsd
+    ?? (cost.selectedBasis?.value === null && cost.effectiveUsd === 0 ? 0 : null);
 }
 
 export function resolveUsageCostPresentationSource(cost: UsageObservationCost, mode: UsageCostMode): string {

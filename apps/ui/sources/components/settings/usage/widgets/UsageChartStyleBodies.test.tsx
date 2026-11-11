@@ -1,5 +1,7 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
+import { ChartInteractionProvider, UsageCrew } from '@happier-dev/plugin-ui/presentation';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import {
   resolveUsagePageAggregation,
@@ -7,6 +9,10 @@ import {
 } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { renderScreen } from '@/dev/testkit';
 import { UsageChartPending } from './UsageChartStyleBodies';
+import { usageCrewLabels } from './usageChartLabels';
+import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
+import { lightTheme } from '@/theme';
+import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -14,6 +20,26 @@ vi.mock('react-native', async () =>
 vi.mock('react-native-unistyles', async () =>
   (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
 );
+
+it.each(['en', 'fr'] as const)('keeps an unreported Crew share quiet in the real %s host while preserving zero', async language => {
+  const previousLanguage = getPreferredLanguage();
+  await preloadTranslations(language);
+  setPreferredLanguageFromSettings(language);
+  try {
+    const label = t('usage.board.charts.crewA11y');
+    const screen = await renderScreen(<ChartInteractionProvider renderDatum={(datum, visual, testID) =>
+      <View testID={testID} accessibilityLabel={`${datum.label}: ${datum.value}`} accessibilityHint={datum.subtitle}>{visual}</View>}>
+      <UsageCrew theme={projectPluginUiTheme(lightTheme)} paint={{ accent: lightTheme.colors.text.primary, paper: lightTheme.colors.surface.base, dark: false }}
+        label={label} width={390} testID="crew" agents={[{ id: 'codex', name: 'Codex', color: lightTheme.colors.text.primary }, { id: 'claude', name: 'Claude Code', color: lightTheme.colors.text.primary }]}
+        model={[{ agentId: 'codex', share: null, activeDays: null }, { agentId: 'claude', share: 0, activeDays: 0 }]}
+        labels={usageCrewLabels(null)} />
+    </ChartInteractionProvider>);
+    expect(screen.findByTestId('crew.agent.codex')?.props.accessibilityLabel).toBe(`${label} · Codex: —`);
+    expect(screen.findByTestId('crew.agent.codex')?.props.accessibilityLabel).toContain('—');
+    expect(screen.findByTestId('crew.agent.claude')?.props.accessibilityLabel).toBe(`${label} · Claude Code: 0%`);
+    await screen.unmount();
+  } finally { setPreferredLanguageFromSettings(previousLanguage); }
+});
 
 describe('Usage chart bodies while activity is still being read', () => {
   it.each([

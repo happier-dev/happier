@@ -5,6 +5,7 @@ import type { Prisma } from '@prisma/client';
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema, UsageEventIngestRequestSchema,
     getUsageAnalyticsQueryRequestKey, type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery } from '@happier-dev/protocol/usage/usageAnalyticsBatchDelivery';
+import { projectUsagePageCost } from '@happier-dev/protocol/usage/usageCost';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { readUsageActivityProjectionOperand, type UsageActivityProjectionOperand } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
 
@@ -179,28 +180,32 @@ describe('compact Usage activity summary read cache', () => {
         ]);
     });
 
-    it('rebuilds legacy empty coverage instead of reusing a stale warm summary', async () => {
+    it('rebuilds prior-version empty measurements instead of reusing a stale warm summary', async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const query = compactQuery();
         const control = await read(account.id, query, false);
         const result = control.delivery.results[0];
         if (!result || !('value' in result) || !result.value.coverage) throw new Error('Expected empty accounting coverage');
-        // Version 6 persisted this false reason even with no canonical events or source witnesses.
-        const legacy = { version: 6, format: 'selective-day-facts', queryKey: getUsageAnalyticsQueryRequestKey(query), query,
+        // Version 7 persisted null aggregates even with no canonical events or source witnesses.
+        const legacy = { version: 7, format: 'selective-day-facts', queryKey: getUsageAnalyticsQueryRequestKey(query), query,
             subjectCount: 0, sourceDigest: '', response: { ...result.value,
-                coverage: { ...result.value.coverage, reasons: ['unknown_source'] } },
+                totals: { ...result.value.totals,
+                    tokens: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
+                    cost: { ...result.value.totals.cost, reportedUsd: null, estimatedUsd: null, invoiceUsd: null, effectiveUsd: undefined } },
+                costPresentation: undefined },
             sourceDays: [], subjectKeys: [], sessionKeys: [], sourceCoverage: [], reportSources: [],
             legacyReports: [], projectionDays: [], days: [] };
         const recordKey = createHash('sha256').update(JSON.stringify([
-            'usage-activity-summary-v6', account.id, 'actSummary6', 0,
+            'usage-activity-summary-v7', account.id, 'actSummary7', 0,
         ])).digest('hex');
-        await db.usageAccountingProjection.create({ data: { accountId: account.id, recordKey, kind: 'actSummary6',
+        await db.usageAccountingProjection.create({ data: { accountId: account.id, recordKey, kind: 'actSummary7',
             observedAtMs: 0n, validFromMs: 0n, payload: JSON.stringify(legacy) } });
         const actual = await read(account.id, query);
         const projected = actual.delivery.results[0];
         if (!projected || !('value' in projected)) throw new Error('Expected rebuilt empty accounting');
         expect(projected.value.coverage).toMatchObject({ status: 'unknown', reasons: [], sources: [] });
-        expect(total(actual)).toBeNull();
+        expect(total(actual)).toBe(0);
+        expect(projectUsagePageCost(projected.value, 'auto').amountUsd).toBe(0);
         expectSameWire(actual.serialized, control.serialized);
         const warm = await read(account.id, query);
         expectSameWire(warm.serialized, control.serialized);
@@ -237,7 +242,7 @@ describe('compact Usage activity summary read cache', () => {
         await expectControl(account.id, query);
         await db.usageEvent.deleteMany({ where: { accountId: account.id } });
         const empty = await expectControl(account.id, query);
-        expect(total(empty)).toBeNull();
+        expect(total(empty)).toBe(0);
         expect((await readSummaryChunks(account.id)).size).toBe(0);
         const head = await inReadSnapshot(tx => readUsageActivitySummaryHead(tx, account.id));
         expect(JSON.parse(head!).sessionKeys).toEqual([]);

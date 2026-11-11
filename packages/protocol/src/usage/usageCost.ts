@@ -193,6 +193,7 @@ export function* repriceUsageAnalyticsResponseSteps(value: UsageAnalyticsQueryRe
   const projectCost = function* (raw: UsageObservationCost, rows: readonly UsageAnalyticsContribution[], range?: { bucketStartMs: number; bucketEndMs: number }): Generator<void, UsageObservationCost, void> {
     const part = yield* pricePartition(rows, range !== undefined);
     if (range) partitions.series.set(usageTimelinePartitionKey('series', range), part.population);
+    if (rows.length === 0) return part.cost;
     const { apiEquivalentUsd: _old, pricingSource: _source, effectiveUsd: _effective, selectedBasis: _selected, ...observed } = raw;
     const allPriced = part.hasPrices;
     const exactApi = part.api;

@@ -1,5 +1,5 @@
 import type { UsageObservationCost, UsageObservationTokens } from './usageAnalyticsContracts.js';
-import { resolveUsageCostBasis, type UsageCostMode, type UsageSelectedCostBasis } from './usageCostFacts.js';
+import { resolveEffectiveUsageCostUsd, resolveUsageCostBasis, type UsageCostMode, type UsageSelectedCostBasis } from './usageCostFacts.js';
 import { addUsageMoney, createUsageMoneyAccumulator, hasUsageMoneyProvenance, readUsageMoney, usageMoneyToNumber, withUsageMoney, type ExactUsageMoney } from './usageMoney.js';
 
 export function createEmptyUsageTokens(): UsageObservationTokens {
@@ -195,6 +195,8 @@ export function resolveUsageContributionCosts(rows: readonly { id?: string; cost
 }
 
 export function aggregateUsageContributionCosts(rows: readonly { id?: string; cost: UsageObservationCost }[], mode: UsageCostMode): AggregatedUsageCost {
+    if (rows.length === 0) return { ...createEmptyUsageCost(), reportedUsd: 0, estimatedUsd: 0, invoiceUsd: 0,
+        effectiveUsd: 0, selectedBasis: { mode, value: null } };
     return aggregateUsageCostPartitions(resolveUsageContributionCosts(rows, mode), mode);
 }
 
@@ -269,7 +271,8 @@ function* aggregateResolvedUsageCostsSteps(initial: UsageObservationCost, costs:
 
 export function withEffectiveUsageCost(cost: UsageObservationCost, mode: UsageCostMode): UsageObservationCost {
     const basis = resolveUsageCostBasis(cost, mode);
+    const amount = basis?.amountUsd ?? resolveEffectiveUsageCostUsd(cost, mode);
     const { effectiveUsd: _previous, ...raw } = cost;
-    return basis ? withUsageMoney({ ...raw, effectiveUsd: basis.amountUsd },
-        { effectiveUsd: readUsageMoney(basis, 'amountUsd', basis.amountUsd) }) : raw;
+    return amount === null ? raw : withUsageMoney({ ...raw, effectiveUsd: amount },
+        { effectiveUsd: basis ? readUsageMoney(basis, 'amountUsd', amount) : readUsageMoney(cost, 'effectiveUsd', amount) });
 }

@@ -80,7 +80,7 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
     <View style={styles.body} testID={`${props.testID}.costFacts`}>
       <View style={styles.grid}>
         {facts.map((fact) => {
-          const exactTokens = formatHappierDataValue(fact.tokens.total, getPreferredLanguage(), t('usage.board.plans.cellUnknown'));
+          const exactTokens = formatHappierDataValue(fact.tokens.total, getPreferredLanguage());
           const exactAmount = fact.amountUsd === null ? null : formatHappierDataValue(fact.amountUsd, getPreferredLanguage());
           const hiddenPrecision = !formatTokenCount(fact.tokens.total).includes(exactTokens)
             || exactAmount !== null && !formatUsageCost(fact.amountUsd!, fact.currency).includes(exactAmount);
@@ -90,7 +90,7 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
               size="stat"
               showLabel
               label={t(KIND_TITLE[fact.kind])}
-              value={fact.amountUsd ?? fact.tokens.total ?? t('usage.board.plans.cellUnknown')}
+              value={fact.amountUsd ?? fact.tokens.total ?? '—'}
               {...(fact.amountUsd === null
                 ? { unit: t('usage.board.page.tokensUnit') }
                 : {})}

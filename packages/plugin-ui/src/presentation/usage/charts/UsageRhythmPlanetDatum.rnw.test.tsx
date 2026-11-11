@@ -38,11 +38,16 @@ const calendar = { period: { startMs: Date.UTC(2026, 8, 1), endMs: Date.UTC(2026
   { date: '2026-09-04', level: null }, { date: '2026-09-05', level: 0 as const },
 ] };
 function datums(children: ReactNode) {
-  const mount = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual) => <button data-datum-label={datum.label} data-datum-value={datum.value} data-datum-subtitle={datum.subtitle}>{visual}</button>}>{children}</ChartInteractionProvider>);
+  const mount = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual) => <button tabIndex={datum.keyboard === false ? -1 : 0} aria-hidden={datum.keyboard === false || undefined} data-datum-label={datum.label} data-datum-value={datum.value} data-datum-subtitle={datum.subtitle}>{visual}</button>}>{children}</ChartInteractionProvider>);
   return { ...mount, values: () => {
     const entries = [...mount.container.querySelectorAll<HTMLButtonElement>('button[data-datum-value]')].map(node => ({ label: node.dataset.datumLabel, value: node.dataset.datumValue, subtitle: node.dataset.datumSubtitle }));
     expect(entries.length).toBeGreaterThan(0);
     expect(entries.every(entry => entry.label === base.label || entry.label?.startsWith(`${base.label} · `))).toBe(true);
+    const marks = [...mount.container.querySelectorAll<HTMLElement>('[data-datum-value]')].filter(mark => !mark.closest('a'));
+    expect(marks.every(mark => mark.tabIndex === -1 && mark.getAttribute('aria-hidden') === 'true')).toBe(true);
+    const toggles = mount.container.querySelectorAll('[aria-expanded="false"]');
+    expect(toggles.length).toBeGreaterThan(0);
+    expect([...toggles].every(toggle => toggle.getAttribute('aria-label') === `${base.label} · ${values.show}`)).toBe(true);
     return entries;
   } };
 }
@@ -54,6 +59,11 @@ describe('Rhythm and planet chart datum targets', () => {
       const entries = mount.values();
       expect(entries).toEqual(expect.arrayContaining([expect.objectContaining({ value: '3' }), expect.objectContaining({ label: 'Activity · Codex', value: '1,234 ms' }), expect.objectContaining({ value: '2–4' }), expect.objectContaining({ value: '3–3.5' })]));
       expect(mount.container.querySelector('svg button')).toBeNull();
+      act(() => mount.container.querySelector<HTMLButtonElement>('[aria-expanded="false"]')!.click());
+      const table = mount.container.querySelector('[role="table"]')!;
+      expect(table.textContent).toContain('1,234 ms');
+      expect(table.textContent).toContain('3–3.5');
+      expect(table.textContent).toContain('18:00');
     } finally { mount.unmount(); }
   });
   it.each(['week', 'daylight'] as const)('retains exact amounts, unknown and ordinal readings in %s marks', style => {
@@ -66,6 +76,7 @@ describe('Rhythm and planet chart datum targets', () => {
         act(() => mount.container.querySelector<HTMLButtonElement>('[aria-expanded="false"]')!.click());
         expect(mount.container.textContent).toContain(values.unknownLabel);
         expect(mount.container.textContent).not.toContain('—');
+        if (encoding === 'amount') expect(mount.container.querySelector('[role="table"]')!.textContent).toContain('1,234.56789');
       } finally { mount.unmount(); }
     }
   });
@@ -78,13 +89,19 @@ describe('Rhythm and planet chart datum targets', () => {
       try {
         expect(mount.values().map(entry => entry.value)).toEqual(expect.arrayContaining([encoding === 'amount' ? '1,234.56789' : 'Busiest', 'Not recorded', 'No activity']));
         if (encoding === 'amount') expect(mount.values()).toContainEqual(expect.objectContaining({ label: 'Activity · 2026-09-04', value: 'Not recorded' }));
+        act(() => mount.container.querySelector<HTMLButtonElement>('[aria-expanded="false"]')!.click());
+        if (encoding === 'amount') expect(mount.container.querySelector('[role="table"]')!.textContent).toContain('1,234.56789');
       } finally { mount.unmount(); }
     }
   });
   it('keeps exact night-window share on its existing label, and never turns an unknown share into zero', () => {
     for (const share of [0.123456789, null]) {
       const mount = datums(<UsageDaylight {...base} labels={{ clock: String, night: () => 'Night window', caption: () => '', values: { ...values, hourColumn: 'Hour', valueColumn: 'Tokens', formatValue: formatted, levelNames: levels } }} model={{ encoding: 'amount', hours: [10], night: { fromHour: 23, toHour: 7, share } }} />);
-      try { expect(mount.values()).toContainEqual(expect.objectContaining({ label: 'Activity · Night window', value: share === null ? values.unknownLabel : '12.35%' })); } finally { mount.unmount(); }
+      try {
+        expect(mount.values()).toContainEqual(expect.objectContaining({ label: 'Activity · Night window', value: share === null ? values.unknownLabel : '12.35%' }));
+        act(() => mount.container.querySelector<HTMLButtonElement>('[aria-expanded="false"]')!.click());
+        expect(mount.container.querySelector('[role="table"]')!.textContent).toContain(share === null ? 'Night window' : '12.35%');
+      } finally { mount.unmount(); }
     }
   });
   it.each(['planets', 'thread', 'skyline', 'orbit', 'surface', 'rings'] as const)('makes %s calendar marks disclose their admitted day level or run length', style => {
@@ -103,13 +120,14 @@ describe('Rhythm and planet chart datum targets', () => {
     try {
       expect(mount.values()).toEqual(expect.arrayContaining([expect.objectContaining({ label: 'Activity · Codex', value: '12.35%' }), expect.objectContaining({ label: 'Activity · Unknown agent', value: values.unknownLabel })]));
       act(() => mount.container.querySelector<HTMLButtonElement>('[aria-expanded="false"]')!.click());
+      expect(mount.container.querySelector('[role="table"]')!.textContent).toContain('12.35%');
       expect(mount.container.textContent).toContain(values.unknownLabel);
       expect(mount.container.textContent).not.toContain('—');
     } finally { mount.unmount(); }
   });
   it('discloses machine counts and exact shares, project destinations and weekly atmosphere peaks', () => {
     const mount = datums(<><UsageMachines {...base} model={{ kinds: [{ kind: 'laptop', count: 2, agentTimeShare: 0.123456789, coverage: { status: 'partial', method: 'runtime' } }], coverage: { status: 'partial', method: 'runtime' } }} labels={{ kind: kind => kind, percent: value => `${Math.round(value * 100)}%`, unavailable: 'Unavailable', empty: 'Empty', values: { ...values, kindColumn: 'Kind', countColumn: 'Count', shareColumn: 'Share' } }} /><UsageProjects {...base} model={{ links: [{ label: 'Garden', url: 'https://example.com/garden' }] }} labels={{ empty: 'Empty' }} /><UsageAtmosphere {...base} model={{ weeks: [{ startMs: 1, endMs: 2, peak: 3, coverage: { status: 'partial', method: 'runtime' } }, { startMs: 2, endMs: 3, peak: 0, coverage: { status: 'unknown', method: 'unknown' } }] }} labels={{ week: start => `Week ${start}`, peak: count => `${count} at once`, firstWeek: 'First', caption: () => 'Atmosphere', values: { ...values, weekColumn: 'Week', peakColumn: 'Peak', notRecorded: 'Not recorded' } }} /></>);
-    try { expect(mount.values()).toEqual(expect.arrayContaining([expect.objectContaining({ value: '12.35%' }), expect.objectContaining({ label: 'Activity · Garden', value: 'https://example.com/garden' }), expect.objectContaining({ label: 'Activity · Week 1', value: '3' }), expect.objectContaining({ label: 'Activity · Week 2', value: 'Not recorded' })])); expect(mount.container.querySelector('a[href="https://example.com/garden"]')).not.toBeNull(); } finally { mount.unmount(); }
+    try { expect(mount.values()).toEqual(expect.arrayContaining([expect.objectContaining({ value: '12.35%' }), expect.objectContaining({ label: 'Activity · Garden', value: 'https://example.com/garden' }), expect.objectContaining({ label: 'Activity · Week 1', value: '3' }), expect.objectContaining({ label: 'Activity · Week 2', value: 'Not recorded' })])); expect(mount.container.querySelector('a[href="https://example.com/garden"]')).not.toBeNull(); act(() => { for (const toggle of mount.container.querySelectorAll<HTMLButtonElement>('[aria-expanded="false"]')) toggle.click(); }); expect([...mount.container.querySelectorAll('[role="table"]')].map(table => table.textContent).join(' ')).toContain('12.35%'); } finally { mount.unmount(); }
   });
   it('exposes interactive marks separately to assistive technology and scales sky targets with its drawing', () => {
     const mount = datums(<UsageSkyOfDays {...base} labels={skyLabels} agents={agents} model={{ encoding: 'ordinal', colourBy: 'intensity', days: [{ date: '2026-09-01', state: 'active', level: 4 }] }} />);
@@ -126,7 +144,7 @@ describe('Rhythm and planet chart datum targets', () => {
     { name: 'weekday ridge', value: '1,234.56789', body: <UsageWeekTide {...base} model={{ encoding: 'amount', grid: [[1234.56789, 0, 100]] }} labels={{ weekdays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], clock: String, peak: String, values: { ...values, weekdayColumn: 'Day', formatValue: formatted, levelNames: levels } }} /> },
     { name: 'surface meridian', value: 'Busiest', body: <UsageDaysOnSurface {...base} model={calendar} labels={{ ...calendarLabels, lit: String }} renderPlanet={() => null} /> },
     { name: 'weekly atmosphere', value: '3', body: <UsageAtmosphere {...base} model={{ weeks: [{ startMs: 1, endMs: 2, peak: 3, coverage: { status: 'partial', method: 'runtime' } }] }} labels={{ week: String, peak: String, firstWeek: 'First', caption: () => 'Atmosphere', values: { ...values, weekColumn: 'Week', peakColumn: 'Peak', notRecorded: 'Not recorded' } }} /> },
-  ])('activates the full $name geometry on pointer, focus, keyboard and press', ({ body, value, name }) => {
+  ])('keeps the full $name pointer geometry and offers one exact-values keyboard path', ({ body, value, name }) => {
     const selected: string[] = [];
     const mount = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual, _id, trigger) => trigger ? trigger({ onHoverChange: hovered => { if (hovered) selected.push(datum.value); }, onFocusChange: focused => { if (focused) selected.push(datum.value); }, onPress: () => { selected.push(datum.value); } }) : visual}>
       {body}
@@ -136,15 +154,17 @@ describe('Rhythm and planet chart datum targets', () => {
       expect(path).toBeDefined();
       expect(mount.container.querySelector('svg button')).toBeNull();
       const focusablePaths = mount.container.querySelectorAll('path[role="button"][tabindex="0"]');
-      // One stop per real semantic datum, not one stop per rendered atmosphere dot or sampled curve pixel.
-      if (name === 'weekly atmosphere') expect(focusablePaths).toHaveLength(1);
-      if (name === 'dial concurrency sector') expect(focusablePaths).toHaveLength(4);
-      if (name === 'weekday ridge') expect(focusablePaths).toHaveLength(3);
-      if (name === 'surface meridian') expect(focusablePaths).toHaveLength(calendar.days.length);
+      // The values table owns keyboard access; curves retain pointer geometry.
+      expect(focusablePaths).toHaveLength(0);
+      expect(path!.getAttribute('aria-hidden')).toBe('true');
+      const toggles = mount.container.querySelectorAll<HTMLButtonElement>('[aria-expanded="false"]');
+      expect(toggles).toHaveLength(1);
+      act(() => toggles[0]!.click());
+      expect(mount.container.querySelector('[role="table"] [role="row"]')).not.toBeNull();
       if (name === 'dial concurrency sector') expect(path!.getAttribute('clip-path')).toMatch(/^url\(#chart-datum-/u);
       if (name === 'dial concurrency sector' || name === 'weekday ridge') expect([...mount.container.querySelectorAll('path')].some(node => node !== path && node.getAttribute('d') === path!.getAttribute('d'))).toBe(true);
-      act(() => { path!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); path!.dispatchEvent(new FocusEvent('focusin', { bubbles: true })); path!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); path!.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true })); path!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
-      expect(selected).toEqual([value, value, value, value, value]);
+      act(() => { path!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); path!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+      expect(selected).toEqual([value, value]);
     } finally { mount.unmount(); }
   });
 });

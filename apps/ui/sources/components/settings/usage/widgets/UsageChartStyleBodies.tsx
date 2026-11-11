@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import {
+  formatHappierDataValue,
   UsageAgentRiver, UsageConstellation, UsageCrew, UsageDayInAgents, UsageDaylight, UsageOrbit, UsagePlanetPortrait, UsageRunLength,
   UsageChartGhost, UsagePersonalRecords, UsageScore, UsageShipped, UsageSkyOfDays, UsageSteeringTide, UsageWeekTide, type UsageChartGhostShape,
 } from '@happier-dev/plugin-ui/presentation';
@@ -299,7 +300,9 @@ export function UsageConstellationBody(props: UsageChartStyleBodyProps) {
       labels={{ kinds: { session: t('usage.board.charts.edgeSession'), run: t('usage.board.charts.edgeRun'), native: t('usage.board.charts.edgeNative') },
         arrowNote: t('usage.board.charts.edgeNote'), unknownStarts: (count) => t('usage.board.charts.unknownStarts', { count }),
         nodesOnly: props.slice.howYouWork?.collaboration ? t('usage.board.charts.nodesOnly') : t('usage.board.charts.collaborationNotRecorded'),
-        unknownAgent: usageAgentTitle(''), unknownLabel: usageChartValuesLabels().unknownLabel }} />
+        unknownAgent: usageAgentTitle(''),
+        values: { ...usageChartValuesLabels(), agentColumn: t('usage.board.charts.agentColumn'), shareColumn: t('usage.board.charts.shareColumn'),
+          kindColumn: t('usage.board.charts.kindColumn'), countColumn: t('usage.board.charts.countColumn') } }} />
     <UsageChartFooter slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />
   </View>;
 }
@@ -322,7 +325,7 @@ export function UsagePlanetBody(props: UsageChartStyleBodyProps) {
 
 export function UsageSteeringStyleBody(props: UsageChartStyleBodyProps) {
   const host = useUsageChartHost(props.serverId);
-  const unknown = usageChartValuesLabels().unknownLabel;
+  const unknown = formatHappierDataValue(null);
   useStyleCaption(t('usage.board.charts.inputSteering'));
   const model = React.useMemo(() => projectUsageSteeringModel(props.slice), [props.slice]);
   const agents = React.useMemo(() => (model?.rows ?? []).flatMap((row) => row.agentId ? [host.agent(row.agentId)] : []), [model, host.agent]);
@@ -333,7 +336,8 @@ export function UsageSteeringStyleBody(props: UsageChartStyleBodyProps) {
         fromPhoneHeader: t('usage.board.charts.fromPhone'), perBusyHourUnit: t('usage.board.charts.steersPerBusyHourUnit'), answers: t('usage.board.charts.answers'),
         rate: (value) => value === null ? unknown : (Math.round(value * 10) / 10).toString(),
         detail: (steers, busyMs) => t('usage.board.charts.steersDetail', { steers: steers ?? unknown, busy: busyMs === null ? unknown : formatUsageDuration(busyMs) }),
-        count: (value) => value === null ? unknown : String(value), caption: t('usage.board.charts.steeringCaption') }} />
+        count: (value) => value === null ? unknown : String(value), caption: t('usage.board.charts.steeringCaption'),
+        values: { ...usageChartValuesLabels(), agentColumn: t('usage.board.charts.agentColumn'), steersColumn: t('usage.board.charts.metric_steering') } }} />
     <UsageChartFooter slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />
   </View>;
 }

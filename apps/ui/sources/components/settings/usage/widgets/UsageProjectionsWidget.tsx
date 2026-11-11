@@ -5,6 +5,7 @@ import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import {
   BurnUpChart,
   ChartDatum,
+  describeHappierSeriesBucket,
   formatHappierDataExactShare,
   formatHappierDataValue,
   HAPPIER_PRESS_FEEDBACK_V1,
@@ -389,8 +390,14 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
             reference={{ value: 100, label: t('usage.board.plans.burnLimit') }}
             valueFormatter={(value) => `${Math.round(value)}%`}
             unknownLabel={t('usage.board.plans.cellUnknown')}
-            valuesLabel={t('usage.showAll')}
-            valuesCollapseLabel={t('usage.showLess')}
+            valuesLabel={`${focusTitle}: ${t('usage.board.charts.showValues')}`}
+            valuesCollapseLabel={t('usage.board.charts.hideValues')}
+            coordinateFormatter={value => new Date(value).toISOString()}
+            renderBucket={(bucket, visual) => <ChartDatum datum={{ keyboard: false, label: focusTitle,
+              value: describeHappierSeriesBucket(bucket, t('usage.board.plans.cellUnknown'), {
+                formatCoordinate: value => new Date(value).toISOString(),
+                formatValue: value => `${formatHappierDataValue(value, getPreferredLanguage())}%`,
+              }) }}><View style={{ height: '100%' }}>{visual}</View></ChartDatum>}
             // The range is said once, by its own line under the chart.
             summary={planWindowStatement(focus.window, nowMs).text}
             showAxis={!tile}
@@ -400,7 +407,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
             showReadout={false}
           />
           {range && exactRange && exactRange !== range ? <ChartDatum testID={`${props.testID}.range.detail`}
-            datum={{ label: focusTitle, value: exactRange }}>{rangeInk}</ChartDatum> : rangeInk}
+            datum={{ keyboard: false, label: focusTitle, value: exactRange }}>{rangeInk}</ChartDatum> : rangeInk}
           {earlier && !tile ? (
             <Text
               testID={`${props.testID}.earlier`}
@@ -522,7 +529,7 @@ function ProjectionHeadline(props: Readonly<{ window: UsagePlanWindow; nowMs: nu
   return (
     <View style={styles.headline}>
       {runsOut || exact !== `${Math.round(pace.projectedUsedFraction * 100)}%`
-        ? <ChartDatum testID={`${props.testID}.detail`} datum={{ label: props.window.label, value: exact, subtitle: basis }}>{figure}</ChartDatum> : figure}
+        ? <ChartDatum testID={`${props.testID}.detail`} datum={{ keyboard: false, label: props.window.label, value: exact, subtitle: basis }}>{figure}</ChartDatum> : figure}
       {runsOut ? (
         <NoticeLine
           testID={`${props.testID}.beforeReset`}
@@ -580,6 +587,7 @@ function SmallMultiple(
         {title}
       </Text>
       <BurnUpChart
+        decorative
         theme={chartTheme}
         size="tile"
         label={title}
@@ -651,7 +659,7 @@ function PastCycleRow(props: Readonly<{ cycle: UsagePlanPastCycle; nowMs: number
         ].join(' · ')
       : t('usage.board.plans.pastCycleNotMeasured', { reason: planPaceReasonText(value.reason) });
   const visual = (
-    <View testID={props.testID} style={styles.cycle} accessibilityLabel={`${ended}, ${detail}`}>
+    <View testID={props.testID} style={styles.cycle} accessible accessibilityLabel={`${ended}, ${detail}${value.status === 'available' ? ` · ${formatHappierDataExactShare(value.usedFraction, getPreferredLanguage())}` : ''}`}>
       <Text style={[styles.cycleWhen, text.detail]} numberOfLines={1}>
         {ended}
       </Text>
@@ -668,7 +676,7 @@ function PastCycleRow(props: Readonly<{ cycle: UsagePlanPastCycle; nowMs: number
   );
   const exact = value.status === 'available' ? formatHappierDataExactShare(value.usedFraction, getPreferredLanguage()) : null;
   return exact !== null && value.status === 'available' && formatPlanPercent(value.usedFraction) !== exact
-    ? <ChartDatum testID={`${props.testID}.detail`} datum={{ label: ended, value: exact, subtitle: detail }}>{visual}</ChartDatum> : visual;
+    ? <ChartDatum testID={`${props.testID}.detail`} datum={{ keyboard: false, label: ended, value: exact, subtitle: detail }}>{visual}</ChartDatum> : visual;
 }
 
 function ProjectionRow(
@@ -713,11 +721,15 @@ function ProjectionRow(
   );
   const exact = window.remainingFraction === null ? null : formatHappierDataExactShare(window.remainingFraction, getPreferredLanguage());
   return exact === null || !window.pace && formatPlanPercent(window.remainingFraction!).includes(exact) ? visual
-    : <ChartDatum testID={`${props.testID}.datum`} datum={{ label: `${props.name.title} · ${window.label}`,
+    : <ChartDatum testID={`${props.testID}.datum`} datum={{ keyboard: false, label: `${props.name.title} · ${window.label}`,
       value: t('usage.board.plans.cellLeft', { percent: exact }),
       subtitle: [window.pace ? t('usage.board.plans.estimatedFrom', { count: window.pace.sampleCount }) : null,
         window.pace ? `${t('usage.board.plans.projectionUsedAtReset')} · ${formatHappierDataExactShare(window.pace.projectedUsedFraction, getPreferredLanguage())}` : null,
-        window.resetAtMs === null ? null : formatPlanMoment(window.resetAtMs, props.nowMs)].filter(Boolean).join(' · ') }}>{visual}</ChartDatum>;
+        window.resetAtMs === null ? null : formatPlanMoment(window.resetAtMs, props.nowMs)].filter(Boolean).join(' · ') }}>
+      <View accessible accessibilityLabel={[`${props.name.title} · ${window.label}`, t('usage.board.charts.showValues'),
+        t('usage.board.plans.cellLeft', { percent: exact }), window.pace ? `${t('usage.board.plans.projectionUsedAtReset')} · ${formatHappierDataExactShare(window.pace.projectedUsedFraction, getPreferredLanguage())}` : null,
+        window.resetAtMs === null ? null : formatPlanMoment(window.resetAtMs, props.nowMs)].filter(Boolean).join(' · ')}>{visual}</View>
+    </ChartDatum>;
 }
 
 const styles = StyleSheet.create((theme) => ({

@@ -3,8 +3,49 @@ import { expect, it } from 'vitest';
 import { admitUsageAnalyticsServerPrices, projectUsageAnalyticsSummary, projectUsagePageCost, repriceUsageAnalyticsResponse, repriceUsageAnalyticsResponseSteps, repriceUsageObservationCost, resolveUsageCostFacts, resolveUsageCostBasis, resolveEffectiveUsageCostUsd } from './usageCost.js';
 import { bundledUsageModelPriceCatalog } from './usageModelPriceCatalog.js';
 import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
-import { addUsageCostForMode, createEmptyUsageCost } from './usageAggregation.js';
+import { addUsageCostForMode, aggregateUsageContributionCosts, createEmptyUsageCost, createEmptyUsageTokens } from './usageAggregation.js';
+import { mergeUsageActivityProjectionFacts, projectUsageActivityProjectionDayFacts, projectUsageActivitySubjectProjectionFacts, projectUsageContributionTotals } from './usageActivityProjectionFacts.js';
 import { buildUsagePricingPopulation, createUsagePricedPartitionBuilder, priceUsagePricingPopulation } from './usagePricingPopulation.js';
+
+it('retains empty population zero when an export selects another cost mode', () => {
+  const cost = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify({ v: 1,
+    totals: projectUsageContributionTotals([], aggregateUsageContributionCosts([], 'auto')) }))).totals.cost;
+  expect(resolveEffectiveUsageCostUsd(cost, 'estimated')).toBe(0);
+  expect(projectUsagePageCost({ v: 1, totals: { eventCount: 0, tokens: createEmptyUsageTokens(), cost } }, 'reported').amountUsd).toBe(0);
+});
+
+it.each(['auto', 'reported', 'estimated', 'api_equivalent'] as const)(
+  'retains empty population zero through JSON and grouped repricing in %s mode', mode => {
+    const totals = projectUsageContributionTotals([], aggregateUsageContributionCosts([], mode));
+    expect(resolveEffectiveUsageCostUsd(totals.cost, mode)).toBe(0);
+    for (const contributions of [undefined, []]) {
+      const value = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify({ v: 1, totals, contributions })));
+      expect(resolveEffectiveUsageCostUsd(value.totals.cost, mode)).toBe(0);
+      expect(resolveUsageCostFacts(value.totals.cost)).toEqual([]);
+      expect(projectUsagePageCost(value, mode).amountUsd).toBe(0);
+      const repriced = repriceUsageAnalyticsResponse(value, bundledUsageModelPriceCatalog, {}, mode);
+      expect(resolveEffectiveUsageCostUsd(repriced.totals.cost, mode)).toBe(0);
+      expect(projectUsagePageCost(repriced, mode).amountUsd).toBe(0);
+    }
+    const compact = priceUsagePricingPopulation(buildUsagePricingPopulation([]), bundledUsageModelPriceCatalog, {}, mode);
+    expect(compact.cost).toMatchObject({ reportedUsd: 0, estimatedUsd: 0, invoiceUsd: 0, costSource: 'none' });
+    expect(compact.selected).toBeNull();
+    expect(resolveEffectiveUsageCostUsd(compact.cost, mode)).toBe(0);
+    expect(compact.facts).toEqual([]);
+    const unknown = createEmptyUsageTokens();
+    const rows = [{ id: 'unmeasured', observedAtMs: 1, eventCount: 1, sessionId: null, turnId: null, agentId: null,
+      modelId: null, machineId: null, projectKey: null, workspaceId: null, source: null, tokens: unknown, cost: createEmptyUsageCost() }];
+    const missing = priceUsagePricingPopulation(buildUsagePricingPopulation(rows), bundledUsageModelPriceCatalog, {}, mode);
+    expect(missing.selected).toBeNull();
+    expect(missing.cost.reportedUsd).toBeNull();
+    const query = UsageAnalyticsQueryRequestSchema.parse({ costMode: mode, dateRange: { startMs: 0, endMs: 10 } });
+    const days = projectUsageActivitySubjectProjectionFacts(rows, query)
+      .map(day => projectUsageActivityProjectionDayFacts(day.operands, query));
+    const merged = mergeUsageActivityProjectionFacts([projectUsageActivityProjectionDayFacts([], query), ...days], query,
+      { status: 'unknown', reasons: [], missingDimensions: [], ranked: [], sources: [], range: { startMs: 0, endMs: 10, complete: false } });
+    expect(merged.totals.tokens).toEqual(unknown);
+    expect(resolveEffectiveUsageCostUsd(repriceUsageAnalyticsResponse(merged, bundledUsageModelPriceCatalog, {}, mode).totals.cost, mode)).toBeNull();
+  });
 
 it('keeps unknown token categories unpriced in detailed and compact projections without losing known money', () => {
   const unknown = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };

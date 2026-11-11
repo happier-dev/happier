@@ -4,7 +4,7 @@ import { Circle, Ellipse, Path, Svg } from 'react-native-svg';
 
 import { HappierText } from '../../text/Text.js';
 import { ChartDatum, ChartDrawing, ChartMark, ChartPathMark } from '../../data/ChartDatum.js';
-import { formatHappierDataExactShare, formatHappierDataValue } from '../../data/dataModel.js';
+import { formatHappierDataExactShare, formatHappierDataValue, formatHappierDataValueWithPrecision } from '../../data/dataModel.js';
 import {
   UsageChartCaption,
   UsageChartColumn,
@@ -102,7 +102,7 @@ export function UsageAgentMoons(
     (member) =>
       [
         name(member),
-        member.share === null ? unknown : props.labels.percent(member.share),
+        member.share === null ? unknown : formatHappierDataValueWithPrecision(formatHappierDataExactShare(member.share), props.labels.percent(member.share)),
         daysText(member) ?? unknown,
       ] as const,
   );
@@ -155,7 +155,7 @@ export function UsageAgentMoons(
                       })}
                     </View>
                   ) : (
-                    <Svg width={size} height={size}>
+                    <Svg accessible={false} aria-hidden width={size} height={size}>
                       <Circle
                         cx={size / 2}
                         cy={size / 2}
@@ -164,7 +164,7 @@ export function UsageAgentMoons(
                       />
                     </Svg>
                   )}
-                  <ChartMark datum={{ label: name(member), value: member.share === null ? unknown : formatHappierDataExactShare(member.share), subtitle: [member.share === null ? null : `${props.labels.values.shareColumn} · ${props.labels.percent(member.share)}`, daysText(member)].filter(Boolean).join(' · ') || undefined, color: colour }} bounds={{ x: (box - size) / 2, y: (box - size) / 2, width: size, height: size }} />
+                  <ChartMark datum={{ keyboard: false, label: `${props.label} · ${name(member)}`, value: member.share === null ? unknown : formatHappierDataExactShare(member.share), subtitle: [member.share === null ? null : `${props.labels.values.shareColumn} · ${props.labels.percent(member.share)}`, daysText(member)].filter(Boolean).join(' · ') || undefined, color: colour }} bounds={{ x: (box - size) / 2, y: (box - size) / 2, width: size, height: size }} />
                 </View>
                 <HappierText
                   numberOfLines={1}
@@ -261,7 +261,7 @@ export function UsageMachines(
       [
         props.labels.kind(entry.kind, entry.count),
         String(entry.count),
-        props.labels.percent(entry.agentTimeShare),
+        formatHappierDataValueWithPrecision(formatHappierDataExactShare(entry.agentTimeShare), props.labels.percent(entry.agentTimeShare)),
       ] as const,
   );
   return (
@@ -297,7 +297,7 @@ export function UsageMachines(
               const sunBox = Math.ceil(sun * 3.2);
               return (
                 <>
-                  <Svg
+                  <Svg accessible={false} aria-hidden
                     width={width}
                     height={height}
                     style={{ position: 'absolute', left: 0, top: 0 }}
@@ -391,7 +391,7 @@ export function UsageMachines(
                       ))}
                     </>
                   ) : null}
-                  {placed.map(planet => <ChartMark key={`datum-${planet.entry.kind}`} datum={{ label: props.labels.kind(planet.entry.kind, planet.entry.count), value: formatHappierDataExactShare(planet.entry.agentTimeShare), subtitle: `${props.labels.values.countColumn} · ${formatHappierDataValue(planet.entry.count)} · ${props.labels.values.shareColumn} · ${props.labels.percent(planet.entry.agentTimeShare)}`, color: props.paint.accent }} bounds={{ x: planet.x - planet.size / 2, y: planet.y - planet.size / 2, width: planet.size, height: planet.size }} />)}
+                  {placed.map(planet => <ChartMark key={`datum-${planet.entry.kind}`} datum={{ keyboard: false, label: `${props.label} · ${props.labels.kind(planet.entry.kind, planet.entry.count)}`, value: formatHappierDataExactShare(planet.entry.agentTimeShare), subtitle: `${props.labels.values.countColumn} · ${formatHappierDataValue(planet.entry.count)} · ${props.labels.values.shareColumn} · ${props.labels.percent(planet.entry.agentTimeShare)}`, color: props.paint.accent }} bounds={{ x: planet.x - planet.size / 2, y: planet.y - planet.size / 2, width: planet.size, height: planet.size }} />)}
                 </>
               );
             })()
@@ -467,7 +467,7 @@ export function UsageProjects(
     </HappierText>
   );
   const star = (size: number) => (
-    <Svg width={size} height={size}>
+    <Svg accessible={false} aria-hidden width={size} height={size}>
       <Circle
         cx={size / 2}
         cy={size / 2}
@@ -495,7 +495,7 @@ export function UsageProjects(
                 4 + scatter(projects[index]!.url, 7) * 16;
             return (
               <View style={{ height: 76 }}>
-                <Svg
+                <Svg accessible={false} aria-hidden
                   width={width}
                   height={40}
                   style={{ position: 'absolute', left: 0, top: 0 }}
@@ -526,7 +526,7 @@ export function UsageProjects(
                       paddingHorizontal: 6,
                     }}
                   >
-                    <ChartDatum datum={{ label: project.label, value: project.url, color: props.paint.accent }}>{star(18)}</ChartDatum>
+                    <ChartDatum datum={{ keyboard: false, label: `${props.label} · ${project.label}`, value: project.url, color: props.paint.accent }}>{star(18)}</ChartDatum>
                     {link(project)}
                   </View>
                 ))}
@@ -547,7 +547,7 @@ export function UsageProjects(
                   borderColor: ink.grid,
                 }}
               >
-                <ChartDatum datum={{ label: project.label, value: project.url, color: props.paint.accent }}>{star(14)}</ChartDatum>
+                <ChartDatum datum={{ keyboard: false, label: `${props.label} · ${project.label}`, value: project.url, color: props.paint.accent }}>{star(14)}</ChartDatum>
                 <View style={{ flex: 1, minWidth: 0 }}>{link(project)}</View>
               </View>
             ))}
@@ -618,7 +618,7 @@ export function UsageAtmosphere(
               const marks = weeks.flatMap((week, k) => {
                 const start = -Math.PI / 2 + k * slice;
                 const key = String(week.startMs);
-                const datum = { label: props.labels.week(week.startMs), value: unrecorded(week) ? props.labels.values.notRecorded : formatHappierDataValue(week.peak), subtitle: unrecorded(week) ? undefined : props.labels.peak(week.peak), color: props.paint.accent };
+                const datum = { keyboard: false, label: `${props.label} · ${props.labels.week(week.startMs)}`, value: unrecorded(week) ? props.labels.values.notRecorded : formatHappierDataValue(week.peak), subtitle: unrecorded(week) ? undefined : props.labels.peak(week.peak), color: props.paint.accent };
                 // An unrecorded week keeps its sector as a dotted arc on the rim; it never reads as a calm week.
                 if (unrecorded(week)) {
                   const a = start + slice * 0.15,
@@ -692,7 +692,7 @@ export function UsageAtmosphere(
                       })}
                     </View>
                   ) : null}
-                  <Svg
+                  <Svg accessible={false} aria-hidden
                     width={width}
                     height={height}
                     style={{ position: 'absolute', left: 0, top: 0 }}

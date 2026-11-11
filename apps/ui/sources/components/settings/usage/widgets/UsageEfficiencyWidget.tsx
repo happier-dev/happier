@@ -8,6 +8,7 @@ import {
   formatHappierDataExactShare,
   formatHappierDataValue,
   HappierDataMetric,
+  UsageChartValues,
 } from '@happier-dev/plugin-ui/presentation';
 import { ChartTooltip } from '@/components/ui/charts';
 import { Text } from '@/components/ui/text/Text';
@@ -24,6 +25,7 @@ import { getPreferredLanguage, t } from '@/text';
 import { usageSeriesColor } from '../usageAccent';
 import { usageCostKindPhrase } from '../usageCostPresentation';
 import { usageComparison } from '../usageComparisonPresentation';
+import { usageChartValuesLabels } from './usageChartHost';
 import {
   usageCompositionSegments,
   usageCompositionShareLabel,
@@ -192,6 +194,8 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
         </View>
       </View>
       {segments.length > 0 ? (
+        <View style={styles.mixSlot}>
+        <View aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
         <CompositionStrip
           theme={chartTheme}
           label={t('usage.context.tokenMixTitle')}
@@ -205,10 +209,11 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
           segmentGap={2}
           valueFormatter={formatTokenCount}
           shareFormatter={usageCompositionShareLabel}
-          unknownLabel={t('usage.board.plans.cellUnknown')}
+          unknownLabel={unknownValue}
           testID={`${props.testID}.mix`}
           renderBarSegment={(segment, visual, share) => (
             <ChartTooltip
+              keyboard={false}
               triggerTestID="usage-efficiency-mix-trigger"
               title={segment.label}
               subtitle={
@@ -216,7 +221,7 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
               }
               value={
                 segment.value === null
-                  ? t('usage.board.plans.cellUnknown')
+                  ? unknownValue
                   : formatTokenCountLong(segment.value)
               }
               accentColor={segment.color ?? chartTheme.colors.accent}
@@ -226,6 +231,16 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
             </ChartTooltip>
           )}
         />
+        </View>
+        <UsageChartValues theme={chartTheme} testID={`${props.testID}.mix`}
+          label={`${t('usage.context.tokenMixTitle')} · ${composition.total === null ? unknownValue : formatTokenCountLong(composition.total)} ${t('usage.board.page.tokensUnit')}`}
+          labels={usageChartValuesLabels()} table={{
+            columns: [{ label: t('usage.context.tokenMixTitle') }, { label: t('usage.tokens') }, { label: '%' }],
+            rows: composition.segments.map(segment => [t(`usage.tokenMix.${segment.key}`), segment.tokens === null ? unknownValue : formatTokenCountLong(segment.tokens),
+              composition.total !== null && composition.total > 0 && segment.tokens !== null
+                ? formatHappierDataExactShare(segment.tokens / composition.total, getPreferredLanguage()) : unknownValue]),
+          }} />
+        </View>
       ) : (
         // The mix keeps its slot when the sources report no token split: an empty track with the reason beneath it.
         <View style={styles.mixSlot} testID={`${props.testID}.mixUnavailable`}>

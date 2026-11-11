@@ -164,10 +164,9 @@ function UsageChartPlanet({
   );
 }
 
-export const usageChartValuesLabels = (): UsageChartValuesLabels & Readonly<{ unknownLabel: string }> => ({
+export const usageChartValuesLabels = (): UsageChartValuesLabels => ({
   show: t('usage.board.charts.showValues'),
   hide: t('usage.board.charts.hideValues'),
-  unknownLabel: t('usage.board.plans.cellUnknown'),
 });
 
 /** "Jul", "Tue 18 Aug", "13 Jul" on the query's own calendar. */

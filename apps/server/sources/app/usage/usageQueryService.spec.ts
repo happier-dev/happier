@@ -1,7 +1,7 @@
 import { addUsageMeasurements } from '@happier-dev/protocol/usage/usageAggregation';
 import { describe, expect, it, vi } from 'vitest';
-import { getUsageAnalyticsQueryRequestKey, UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryBatchResponseSchema, UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
-import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery, projectUsagePageCost, resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCost';
+import { getUsageAnalyticsQueryRequestKey, UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryBatchResponseSchema, UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery, projectUsagePageCost, resolveEffectiveUsageCostUsd, resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCost';
 import { projectUsageAnalyticsResponseDemand } from '@happier-dev/protocol/usage/usageLeaderProjection';
 import { prepareUsageAnalyticsProjection, prepareUsageAnalyticsProjectionSteps, projectUsageAnalytics, selectUsageMessageCounts, type UsageAnalyticsSnapshot } from './usageQueryService';
 import { projectUsageAnalyticsBatch } from './query/readUsageAnalyticsBatch';
@@ -40,20 +40,50 @@ function row(id: string, total: number, metadata: CapturedRow['metadata'], optio
 }
 
 describe('captured usage query projection', () => {
-    it('keeps empty accounting unreported while preserving measured zero and witnessed coverage failures', () => {
+    it.each(['auto', 'reported', 'estimated', 'api_equivalent'] as const)(
+        'measures an empty accounting population as zero through JSON and page-cost selection in %s mode', costMode => {
+            const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 200 }, costMode, includeSeries: false });
+            const snapshot: UsageAnalyticsSnapshot = { rows: [], legacyReports: [],
+                priceCatalog: { fetchEnabled: false, stored: null }, messageCountsBySession: undefined };
+            const empty = projectUsageAnalytics(snapshot, query);
+            const transported = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(empty)));
+            const input = UsageAnalyticsQueryBatchRequestSchema.parse({ queries: [query],
+                contributionQueries: [], sessionQueries: [] });
+            const delivery = collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery({ v: 1,
+                priceCatalog: resolveCapturedUsageModelPriceCatalog(snapshot.priceCatalog), results: [{ query, value: empty }] }, input, false));
+            const compact = UsageAnalyticsQueryBatchResponseSchema.parse(JSON.parse(JSON.stringify(delivery))).results[0];
+            if (!compact || !('value' in compact)) throw new Error('Expected compact empty accounting');
+            for (const value of [empty, transported, compact.value]) {
+                expect(value.totals).toMatchObject({ eventCount: 0,
+                    tokens: { total: 0, input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+                    cost: { reportedUsd: 0, estimatedUsd: 0, invoiceUsd: 0, costSource: 'none' } });
+                expect(resolveEffectiveUsageCostUsd(value.totals.cost, costMode)).toBe(0);
+                expect(projectUsagePageCost(value, costMode).amountUsd).toBe(0);
+                expect(value.coverage).toMatchObject({ status: 'unknown', reasons: [], sources: [], range: { complete: false } });
+            }
+        },
+    );
+    it('preserves nonempty missing measurements, measured zero and witnessed coverage failures', () => {
         const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 200 }, includeSeries: false });
         const snapshot: UsageAnalyticsSnapshot = { rows: [], legacyReports: [],
             priceCatalog: { fetchEnabled: false, stored: null }, messageCountsBySession: undefined };
-        const empty = projectUsageAnalytics(snapshot, query);
-        expect(empty.totals).toMatchObject({ eventCount: 0, tokens: { total: null, input: null, output: null },
+        const unmeasured = { ...row('unmeasured', 0,
+            { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } }), modelId: 'known-model',
+            inputTokens: null, outputTokens: null, reasoningTokens: null, cacheReadTokens: null,
+            cacheWriteTokens: null, totalTokens: null, reportedCostUsd: null, estimatedCostUsd: null, invoiceCostUsd: null };
+        const unknown = projectUsageAnalytics({ ...snapshot, rows: [unmeasured] }, query);
+        expect(unknown.totals).toMatchObject({ eventCount: 1, tokens: { total: null, input: null, output: null },
             cost: { reportedUsd: null, estimatedUsd: null } });
-        expect(empty.coverage).toMatchObject({ status: 'unknown', reasons: [], sources: [], range: { complete: false } });
+        expect(projectUsagePageCost(unknown, 'auto').amountUsd).toBeNull();
 
         const measuredZero = { ...row('measured-zero', 0,
             { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } }), modelId: 'known-model' };
         const known = projectUsageAnalytics({ ...snapshot, rows: [measuredZero] }, query);
         expect(known.totals).toMatchObject({ eventCount: 1, tokens: { total: 0 }, cost: { reportedUsd: 0 } });
         expect(known.coverage).toMatchObject({ status: 'complete', reasons: [], range: { complete: true } });
+        expect(projectUsagePageCost(known, 'auto').amountUsd).toBe(0);
+        const mixed = projectUsageAnalytics({ ...snapshot, rows: [unmeasured, measuredZero] }, query);
+        expect(mixed.totals).toMatchObject({ eventCount: 2, tokens: { total: 0 }, cost: { reportedUsd: 0 } });
 
         const partial = projectUsageAnalytics({ ...snapshot, rows: [{ ...measuredZero,
             metadata: { usageAccounting: { path: 'runtime', status: 'partial', historyComplete: false } } }] }, query);
@@ -765,7 +795,7 @@ describe('captured usage query projection', () => {
         const captured = { priceCatalog: snapshot.priceCatalog,
             snapshots: new Map(queries.map(query => [getUsageAnalyticsQueryRequestKey(query), snapshot])) };
         const batch = await projectUsageAnalyticsBatch(captured, queries, true, true);
-        expect(batch.results[0]).toMatchObject({ value: { totals: { tokens: { total: null } }, summary: { v: 1 } } });
+        expect(batch.results[0]).toMatchObject({ value: { totals: { tokens: { total: 0 } }, summary: { v: 1 } } });
         expect(batch.results[1]).toMatchObject({ error: 'usage_query_failed' });
     });
 

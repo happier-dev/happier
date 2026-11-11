@@ -34,7 +34,7 @@ describe('neutral public grids', () => {
         expect(query('samples-cell-red-zero').getAttribute('aria-label')).toContain('0');
         expect(query('samples-cell-red-unknown').getAttribute('aria-label')).toContain('Unknown');
         await mount.render(createElement(Grid, { ...props, unknownLabel: undefined }));
-        expect(query('samples-cell-red-unknown').getAttribute('aria-label')).toContain('Not reported');
+        expect(query('samples-cell-red-unknown').getAttribute('aria-label')).toContain('—');
         expect(query('samples-cell-red-zero').getAttribute('aria-label')).toContain('0');
         await mount.render(createElement(Grid, props));
         const selected = query('samples-cell-blue-result');

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ChartDatum, HappierDataMetric, HappierDataRows, RankedRows, StackedSeriesChart, UsageConstellation } from '@happier-dev/plugin-ui/presentation';
+import { WidgetPresentationProvider } from '@happier-dev/plugin-ui/components';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveUsageComparisonQuery, resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { projectUsagePageCost, resolveUsageCostForSelection} from '@happier-dev/protocol/usage/usageCostFacts';
@@ -146,8 +147,15 @@ describe('one selected money basis across Usage bodies', () => {
       <UsageCostFactsWidget {...props} id="usage_cost_facts" testID="unknown-facts" />
     </>);
     expect(screen.findAllByType(HappierDataMetric).find(node => node.props.label === t('usage.tokens'))?.props.value).toBe('—');
+    expect(screen.findHostByTestId('unknown-summary.hero')?.props.accessibilityLabel).toContain(`${t('usage.tokens')}: —`);
+    expect(screen.findAllByType(HappierDataMetric).find(node => node.props.testID === 'unknown-summary.hero')?.props.caption).toBe(t('common.unavailable'));
     expect(screen.findAllByType(HappierDataMetric).find(node => node.props.testID === 'unknown-unpriced.tokens')?.props.value).toBe('—');
     expect(screen.findAllByType(HappierDataMetric).find(node => node.props.testID === 'unknown-facts.fact.unpriced')?.props.value).toBe('—');
+    const measured = mountedCosts(false, 0);
+    await screen.update(<UsagePeriodSummaryWidget {...measured} query={query}
+      id="usage_period_summary" testID="unknown-summary" />);
+    expect(screen.findAllByType(HappierDataMetric).find(node => node.props.testID === 'unknown-summary.hero')?.props.value).toBe(0);
+    expect(screen.findHostByTestId('unknown-summary.hero')?.props.accessibilityLabel).toContain(`${t('usage.tokens')}: 0`);
   });
 
   it('draws no empty river plot when weeks were read but no agent recorded a share (C7)', async () => {
@@ -200,6 +208,33 @@ describe('one selected money basis across Usage bodies', () => {
     expect(row.value).toBe(1);
     expect(row.annotation).toContain(t('usage.board.page.kindReported'));
     expect(row.annotation).not.toContain(t('usage.board.page.costUnpricedCaption'));
+  });
+  it('names exact token breakdown amounts in tokens rather than the dimension being ranked', async () => {
+    const props = mountedCosts(false, 2_093_005);
+    const query = normalizeUsageQuery({ ...props.query, metric: 'tokens' });
+    const screen = await renderScreen(<UsageBreakdownsWidget {...props} query={query} id="usage_breakdowns" testID="token-units" />);
+    const datum = screen.findAllByType(ChartDatum).find(node => node.props.testID === 'token-units.agent-datum-0');
+    expect(datum?.props.datum.value).toContain('4,186,010');
+    expect(datum?.props.datum.value).toContain(t('usage.board.page.tokensUnit'));
+  });
+  it('keeps waffle marks for pointer inspection and exposes the mix once through Exact values', async () => {
+    const props = mountedCosts();
+    const tokenValues = { input: 94, output: 6, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 100 };
+    const tokenCategories = resolveUsageTokenCategories(tokenValues, { inputIncludesCache: false });
+    if (tokenCategories === null) throw new Error('Expected categorized tokens for an explicit accounting convention');
+    const accounting = { ...props.slice.accounting!, totals: { ...props.slice.accounting!.totals, tokens: tokenValues }, tokenCategories };
+    const screen = await renderScreen(<WidgetPresentationProvider value={{ size: 'small',
+      footprint: { columns: 2, columnSpan: 1, rowSpan: 1, height: 'compact', width: 'half' }, geometry: { width: 320, height: 384 } }}>
+      <UsageEfficiencyWidget {...props} slice={{ ...props.slice, accounting }} id="usage_efficiency" testID="waffle" />
+    </WidgetPresentationProvider>);
+    const marks = screen.findAllHostsByTestId('usage-efficiency-mix-trigger');
+    expect(marks).toHaveLength(50);
+    expect(marks.every(mark => mark.props.accessible === false && mark.props.focusable === false)).toBe(true);
+    const toggle = screen.findHostByTestId('waffle.mix-values-toggle');
+    expect(toggle?.props.accessibilityLabel).toContain(t('usage.board.charts.showValues'));
+    await screen.pressByTestIdAsync('waffle.mix-values-toggle');
+    expect(screen.findHostByTestId('waffle.mix-values-row-0')?.props.accessibilityLabel).toContain('94');
+    expect(screen.findHostByTestId('waffle.mix-values-row-1')?.props.accessibilityLabel).toContain('6');
   });
   it('keeps exact cache-hit precision in percentage units rather than the fractional numeric model', async () => {
     const props = mountedCosts();
@@ -474,6 +509,8 @@ describe('one selected money basis across Usage bodies', () => {
     // closed. Completeness of this duration belongs to the interval facet.
     const completeIntervals = resolveUsagePageAggregation({ queries: [query], accounting,
       howYouWork: [{ query, asOfMs: day, detail: { status: 'partial', facts } }] });
+    const measuredZero = resolveUsagePageAggregation({ queries: [query], accounting,
+      howYouWork: [{ query, asOfMs: day, detail: { status: 'available', facts: [] } }] });
     const pending = resolveUsagePageAggregation({ queries: [query], accounting, previous: complete,
       sources: [{ source: 'how_you_work', status: 'pending' }] });
     const refused = resolveUsagePageAggregation({ queries: [query], accounting, previous: complete,
@@ -484,7 +521,7 @@ describe('one selected money basis across Usage bodies', () => {
       .filter(metric => metric.props.size === 'stat').map(metric => metric.props.label);
     // A Cost-mode hero is the cost, so the first column is the tokens (R135 N2).
     const expectedLabels = [t('usage.tokens'), t('usage.board.page.mergedPrs'), t('usage.board.page.agentTime')];
-    for (const [batch, expected] of [[cold, '—'], [partial, '—'], [complete, formatUsageDurationCompact(3_600_000)], [completeIntervals, formatUsageDurationCompact(3_600_000)], [pending, formatUsageDurationCompact(3_600_000)], [partial, '—'], [refused, '—']] as const) {
+    for (const [batch, expected] of [[cold, '—'], [partial, '—'], [complete, formatUsageDurationCompact(3_600_000)], [completeIntervals, formatUsageDurationCompact(3_600_000)], [measuredZero, formatUsageDurationCompact(0)], [pending, formatUsageDurationCompact(3_600_000)], [partial, '—'], [refused, '—']] as const) {
       await screen.update(<UsagePeriodSummaryWidget {...props} query={query}
         slice={batch.results[0]!} id="usage_period_summary" testID="summary" />);
       expect(statLabels()).toEqual(expectedLabels);
@@ -656,14 +693,15 @@ describe('one selected money basis across Usage bodies', () => {
     expect(screen.findAllByType(HappierDataMetric).find(metric => metric.props.testID === 'efficiency.perMtok')?.props.comparison)
       .toMatchObject({ value: previousTokens === 23 ? '▼ 8%' : '▲ 228×', meaning: previousTokens === 23 ? 'good' : 'bad' });
   });
-  it('keeps all four efficiency figures in their slots, an unknown one as a dash with its reason', async () => {
+  it('keeps all four efficiency figures in their slots, an unknown one explicitly unreported with its reason', async () => {
     const props = mountedCosts();
     const screen = await renderScreen(<UsageEfficiencyWidget {...props} id="usage_efficiency" testID="efficiency" />);
     const metrics = screen.findAllByType(HappierDataMetric).filter(metric => String(metric.props.testID).startsWith('efficiency.'));
     expect(metrics.map(metric => metric.props.testID)).toEqual(['efficiency.cacheHit', 'efficiency.perMtok', 'efficiency.perMergedPr', 'efficiency.noKeptChange']);
-    // No merged PR is linked in this slice, and nothing measures work that kept no change: each is a dash that says why.
+    // No merged PR is linked in this slice, and nothing measures work that kept no change.
     expect(metrics.slice(2).map(metric => [metric.props.value, metric.props.caption]))
-      .toEqual([['—', t('usage.board.page.noneLinkedByEvidence')], ['—', t('usage.board.page.notMeasuredYet')]]);
+      .toEqual([[t('usage.board.plans.cellUnknown'), t('usage.board.page.noneLinkedByEvidence')],
+        [t('usage.board.plans.cellUnknown'), t('usage.board.page.notMeasuredYet')]]);
   });
   it('uses the common reported basis rather than mixing one invoice with another reported charge', async () => {
     const props = mountedCosts();

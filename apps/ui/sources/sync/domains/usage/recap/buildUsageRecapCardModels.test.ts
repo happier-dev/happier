@@ -111,8 +111,8 @@ describe('buildUsageRecapCardModels', () => {
         const viewModel = buildUsageAnalyticsViewModel({ ...response, activity: undefined, insights: undefined }, filters);
         const cards = buildUsageRecapCardModels({ viewModel, filters });
         const card = cards.find(value => value.id === 'streak');
-        expect(card).toMatchObject({ value: t('usage.board.plans.cellUnknown'), subtitle: t('common.unavailable') });
-        expect(cards.find(value => value.id === 'rhythm')?.value).toBe(t('usage.board.plans.cellUnknown'));
+        expect(card).toMatchObject({ value: '—', subtitle: t('common.unavailable') });
+        expect(cards.find(value => value.id === 'rhythm')?.value).toBe('—');
         expect(cards.find(value => value.id === 'usage')?.visual).toBeNull();
         const known = buildUsageAnalyticsViewModel({ ...response, insights: undefined, activity: {
             calendarDays: [{ date: '2026-04-01', eventCount: 4 }, { date: '2026-04-02', eventCount: 0 }],

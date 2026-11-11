@@ -16,7 +16,7 @@ const values = { show: 'Values', hide: 'Hide' };
 // This renderer is the host presentation boundary. The chart and shared datum owners stay real.
 function mount(chart: ReactNode) {
   return mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual, testID) =>
-    <button data-testid={testID} aria-label={`${datum.label}: ${datum.value}`} data-subtitle={datum.subtitle}>{visual}</button>}>
+    <button data-datum tabIndex={datum.keyboard === false ? -1 : 0} aria-hidden={datum.keyboard === false || undefined} data-testid={testID} aria-label={`${datum.label}: ${datum.value}`} data-subtitle={datum.subtitle}>{visual}</button>}>
     {chart}
   </ChartInteractionProvider>);
 }
@@ -28,6 +28,25 @@ function target(root: HTMLElement, label: string) {
 }
 
 describe('Agent chart exact data targets', () => {
+  it.each([
+    { name: 'score', body: <UsageScore {...common} model={{ weekStart: '2026-10-26', encoding: 'minutes', rows: [{ agentId: 'codex', hours: [[1, 2]] }] }} labels={{ day: String, clock: String, unknownAgent: 'Unknown', key: { light: 'Light', medium: 'Medium', strong: 'Strong', presence: 'Present', presenceNote: '' }, values: { ...values, agentColumn: 'Agent', dayColumn: 'Day', hoursColumn: 'Hours', formatHours: hours => hours.join(', ') } }} /> },
+    { name: 'river', body: <UsageAgentRiver {...common} model={{ width: 'share', weeks: [{ start: 'First', end: 'Last', partial: false, total: null, shares: [{ agentId: 'codex', share: 1 }] }, { start: 'Next', end: 'End', partial: false, total: null, shares: [{ agentId: 'codex', share: 1 }] }] }} labels={{ week: String, partialWeek: String, inline: String, caption: '', unknownAgent: 'Unknown', values: { ...values, weekColumn: 'Week', totalColumn: 'Total', formatTotal: String, percent } }} /> },
+    { name: 'orbit', body: <UsageOrbit {...common} model={[{ agentId: 'codex', share: 1 }]} labels={{ percent, unknown: String, unknownAgent: 'Unknown', values: { ...values, agentColumn: 'Agent', shareColumn: 'Share' } }} /> },
+    { name: 'shipped', body: <UsageShipped {...common} model={{ mode: 'weeks', total: 2, undated: 0, weeks: [{ start: 'First', spines: ['codex', 'claude'] }] }} labels={{ week: String, noDate: 'No date', countLine: String, mixed: 'Mixed', noMergeDate: 'No merge date', colourBy: 'agent', values: { ...values, weekColumn: 'Week', countColumn: 'Count' } }} /> },
+    { name: 'constellation', body: <UsageConstellation {...common} model={{ nodes: [{ agentId: 'codex', share: 1 }, { agentId: 'claude', share: 0 }], edges: [{ from: 'codex', to: 'claude', kind: 'session', count: 2 }], unknownStarts: 0 }} labels={{ kinds: { session: 'Session', run: 'Run', native: 'Native' }, arrowNote: '', unknownStarts: String, nodesOnly: '', unknownAgent: 'Unknown', values: { ...values, agentColumn: 'Agent', shareColumn: 'Share', kindColumn: 'Kind', countColumn: 'Count' } }} /> },
+  ])('keeps $name marks pointer-accessible and exposes one exact table to keyboard and assistive technology', ({ body }) => {
+    const chart = mount(body);
+    try {
+      const marks = [...chart.container.querySelectorAll('[data-datum], path[role="button"]')];
+      expect(marks.length).toBeGreaterThan(0);
+      expect(marks.every(mark => mark.getAttribute('tabindex') === '-1' && mark.getAttribute('aria-hidden') === 'true')).toBe(true);
+      const toggles = chart.container.querySelectorAll<HTMLButtonElement>('[aria-expanded="false"]');
+      expect(toggles).toHaveLength(1);
+      act(() => toggles[0]!.click());
+      expect(chart.container.querySelector('[role="table"] [role="row"]')).not.toBeNull();
+    } finally { chart.unmount(); }
+  });
+
   it('inspects each River week through the actual sloping band shape', () => {
     const hovered: string[] = [];
     const chart = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual, _testID, renderTrigger) => renderTrigger
@@ -61,7 +80,7 @@ describe('Agent chart exact data targets', () => {
       ? renderTrigger({ onHoverChange: (active) => { if (active) hovered.push(datum.value); }, onFocusChange: () => {}, onPress: () => {} }) : visual}>
       <UsageConstellation {...common} model={{ nodes: [{ agentId: 'claude', share: 0.2 }, { agentId: 'codex', share: 0.8 }],
         edges: [{ from: 'claude', to: 'codex', kind: 'session', count: 1234 }, { from: 'claude', to: 'claude', kind: 'run', count: 2 }], unknownStarts: null }}
-        labels={{ kinds: { session: 'Session', run: 'Run', native: 'Native' }, arrowNote: '', unknownStarts: String, nodesOnly: 'Nodes only', unknownAgent: 'Unknown' }} />
+        labels={{ values: { show: 'Values', hide: 'Hide values', agentColumn: 'Agent', shareColumn: 'Share', kindColumn: 'Kind', countColumn: 'Count' }, kinds: { session: 'Session', run: 'Run', native: 'Native' }, arrowNote: '', unknownStarts: String, nodesOnly: 'Nodes only', unknownAgent: 'Unknown' }} />
     </ChartInteractionProvider>);
     try {
       const drawn = chart.container.querySelectorAll('path[marker-end]');
@@ -108,7 +127,7 @@ describe('Agent chart exact data targets', () => {
 
   it('retains precise Orbit and Crew shares and does not turn unknown shares into zero', () => {
     const model = [{ agentId: 'claude', share: 0.123456 }, { agentId: 'codex', share: null }];
-    for (const body of [<UsageOrbit {...common} model={model} labels={{ percent, unknown: (name) => name, unknownAgent: 'Unknown' }} />,
+    for (const body of [<UsageOrbit {...common} model={model} labels={{ values: { show: 'Values', hide: 'Hide values', agentColumn: 'Agent', shareColumn: 'Share' }, percent, unknown: (name) => name, unknownAgent: 'Unknown' }} />,
       <UsageCrew {...common} model={model} labels={{ percent, days: String, unknownAgent: 'Unknown' }} />]) {
       const chart = mount(body);
       try {
@@ -130,6 +149,16 @@ describe('Agent chart exact data targets', () => {
     } finally { chart.unmount(); }
   });
 
+  it('uses the host missing-value label for Crew shares and days', () => {
+    const chart = mount(<UsageCrew {...common} model={[{ agentId: 'codex', share: null, activeDays: null }]}
+      labels={{ percent, days: String, unknownAgent: 'Unknown', unknownLabel: 'Not reported by source' }} />);
+    try {
+      target(chart.container, 'Codex: Not reported by source');
+      expect(chart.container.textContent).toContain('Not reported by source');
+      expect(chart.container.textContent).not.toContain('—');
+    } finally { chart.unmount(); }
+  });
+
   it('exposes each River week share with its own total and partial-week label', () => {
     const chart = mount(<UsageAgentRiver {...common} model={{ width: 'amount', weeks: [
       { start: 'first', end: 'last', partial: true, total: 1234.567, shares: [{ agentId: 'claude', share: 0.123456 }, { agentId: null, share: 0.876544 }] },
@@ -142,6 +171,8 @@ describe('Agent chart exact data targets', () => {
       target(chart.container, 'Unknown · first–last partial: 87.65%');
       expect(target(chart.container, 'Claude Code · next: 100%').dataset.subtitle).toBeUndefined();
       act(() => chart.container.querySelector<HTMLButtonElement>('[aria-expanded="false"]')!.click());
+      expect(chart.container.querySelector('[role="table"]')!.textContent).toContain('12.35%');
+      expect(chart.container.querySelector('[role="table"]')!.textContent).toContain('1,234.567');
       expect(chart.container.textContent).toContain('Not reported');
       expect(chart.container.textContent).not.toContain('—');
     } finally { chart.unmount(); }
@@ -166,7 +197,7 @@ describe('Agent chart exact data targets', () => {
   });
 
   it('exposes Shipped weekly, undated and count-only data without inventing PR identities', () => {
-    const labels = { week: String, noDate: 'No date', countLine: (n: number) => `${n} merged PRs`, mixed: 'Mixed', noMergeDate: 'No merge date', colourBy: 'agent' as const };
+    const labels = { values: { show: 'Values', hide: 'Hide values', countColumn: 'Count', weekColumn: 'Week' }, week: String, noDate: 'No date', countLine: (n: number) => `${n} merged PRs`, mixed: 'Mixed', noMergeDate: 'No merge date', colourBy: 'agent' as const };
     for (const model of [{ mode: 'weeks' as const, total: 3, undated: 1, weeks: [{ start: 'Week one', spines: ['claude', 'mixed'] }] }, { mode: 'count' as const, total: 3 }]) {
       const chart = mount(<UsageShipped {...common} labels={labels} model={model} />);
       try {
@@ -174,7 +205,7 @@ describe('Agent chart exact data targets', () => {
           target(chart.container, 'Week one · Claude Code: 1 merged PRs');
           target(chart.container, 'Week one · Mixed: 1 merged PRs');
           target(chart.container, 'No merge date: 1 merged PRs');
-        } else target(chart.container, 'Usage: 3 merged PRs');
+        } else expect(chart.container.querySelector('button[aria-label="Usage: 3 merged PRs"]')).not.toBeNull();
       } finally { chart.unmount(); }
     }
   });
@@ -182,7 +213,7 @@ describe('Agent chart exact data targets', () => {
   it('exposes Constellation node shares and typed directed edge counts, including self edges', () => {
     const chart = mount(<UsageConstellation {...common} model={{ nodes: [{ agentId: 'claude', share: 0.123456 }, { agentId: 'codex', share: null }],
       edges: [{ from: 'claude', to: 'codex', kind: 'session', count: 1234 }, { from: 'claude', to: 'claude', kind: 'run', count: 2 }], unknownStarts: null }}
-      labels={{ kinds: { session: 'Session', run: 'Run', native: 'Native' }, arrowNote: '', unknownStarts: String, nodesOnly: 'Nodes only', unknownAgent: 'Unknown' }} />);
+      labels={{ values: { show: 'Values', hide: 'Hide values', agentColumn: 'Agent', shareColumn: 'Share', kindColumn: 'Kind', countColumn: 'Count' }, kinds: { session: 'Session', run: 'Run', native: 'Native' }, arrowNote: '', unknownStarts: String, nodesOnly: 'Nodes only', unknownAgent: 'Unknown' }} />);
     try {
       target(chart.container, 'Claude Code: 12.35%');
       target(chart.container, 'Codex: Not reported');

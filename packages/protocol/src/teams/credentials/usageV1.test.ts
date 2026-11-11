@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildTeamCredentialUsageCsv } from './usageExportV1.js';
+import { aggregateUsageContributionCosts, createEmptyUsageCost, createEmptyUsageTokens } from '../../usage/usageAggregation.js';
+import { projectUsageContributionTotals } from '../../usage/usageActivityProjectionFacts.js';
 
 import {
   TeamCredentialUsageCapabilitiesV1Schema,
@@ -130,6 +132,24 @@ describe('Team credential usage-limit paging contracts', () => {
 });
 
 describe('Team credential usage coverage contract', () => {
+  it('exports canonical empty population zeros without turning unavailable coverage into missing measurements', () => {
+    const missing = [{ eventCount: 1, tokens: createEmptyUsageTokens(), cost: createEmptyUsageCost() }];
+    for (const rows of [[], missing]) {
+      const totals = projectUsageContributionTotals(rows, aggregateUsageContributionCosts(rows, 'auto'));
+      const result = TeamCredentialUsageQueryResultV1Schema.parse({ v: 1,
+        totals: { eventCount: totals.eventCount, requestCount: 0, tokens: totals.tokens, cost: totals.cost },
+        series: [], nextCursor: null, limits: [],
+        coverage: { requestAdmissionCount: 0, agentObservationCount: rows.length, externalTerminalObservationCount: 0,
+          directRecordedUseOnly: false, requestCountCoverage: 'brokered_only', tokenCoverage: 'unavailable',
+          costCoverage: 'unavailable', unobservedExternalRequestCount: 0 } });
+      const lines = buildTeamCredentialUsageCsv({ resourceName: 'Shared provider', result, startMs: 0, endMs: 1000,
+        breakdown: null, breakdownComplete: true, costMode: 'estimated' }).trim().split('\n').map(line => line.split(','));
+      const cells = ['tokens', 'cost', 'reported_cost', 'estimated_cost'].map(field => lines[1]![lines[0]!.indexOf(field)]);
+      expect(cells).toEqual(rows.length === 0 ? ['0', '0', '0', '0'] : ['', '', '', '']);
+      expect(lines[1]![lines[0]!.indexOf('token_coverage')]).toBe('unavailable');
+      expect(lines[1]![lines[0]!.indexOf('cost_coverage')]).toBe('unavailable');
+    }
+  });
   it('exports unknown measurements as blank cells and measured zero even with partial coverage', () => {
     const tokens = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
     const cost = { reportedUsd: null, estimatedUsd: null, currency: 'USD', costSource: 'none' as const };

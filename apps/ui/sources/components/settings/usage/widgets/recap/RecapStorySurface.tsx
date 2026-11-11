@@ -30,7 +30,8 @@ import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { Heatmap, RankedRows } from '@happier-dev/plugin-ui/presentation';
 import { ChartTooltip } from '@/components/ui/charts';
 import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
-import { usageActivityGridPresentation, useUsageActivityGridTooltip } from '../../usageGridPresentation';
+import { usageActivityGridPresentation, useUsageActivityGridTooltip, UsageGridValues } from '../../usageGridPresentation';
+import { usageChartValuesLabels } from '../usageChartHost';
 import { usageSignatureAccent, withUsageAccentAlpha } from '../../usageAccent';
 import { formatIdentifierLabel } from '@/utils/format/usageNumbers';
 import { buildRecapStorySlides, type RecapStorySlide, type RecapStorySlideId } from '@/sync/domains/usage/recap/buildRecapStorySlides';
@@ -258,7 +259,7 @@ export function RecapStorySurface(props: RecapStorySurfaceProps): React.ReactEle
     // ONE signature accent (D-1); per-slide identity comes from gradient
     // geometry + choreography, never from a different hue.
     const accentColor = usageSignatureAccent(theme);
-    const activityCell = useUsageActivityGridTooltip(accentColor, slide?.visual?.kind === 'activityMatrix' ? slide.visual.rowSize : 7);
+    const activityCell = useUsageActivityGridTooltip(accentColor, slide?.visual?.kind === 'activityMatrix' ? slide.visual.rowSize : 7, slide?.label ?? t('usage.activity'));
 
     const goForward = React.useCallback(() => {
         setIndex((current) => {
@@ -307,15 +308,20 @@ export function RecapStorySurface(props: RecapStorySurfaceProps): React.ReactEle
 
     let visual: React.ReactNode = null;
     if (slide.visual?.kind === 'activityMatrix') {
+        const grid = usageActivityGridPresentation(slide.visual.activity, accentColor, theme.colors.background.canvas, slide.visual.squareCount, slide.visual.rowSize,
+            props.query?.timeZoneOffsetMinutes ?? props.viewModel.timeZoneOffsetMinutes ?? 0);
         visual = (
-            <Heatmap
-                theme={projectPluginUiTheme(theme)}
-                {...usageActivityGridPresentation(slide.visual.activity, accentColor, theme.colors.background.canvas, slide.visual.squareCount, slide.visual.rowSize,
-                    props.query?.timeZoneOffsetMinutes ?? props.viewModel.timeZoneOffsetMinutes ?? 0)}
-                unknownLabel={t('usage.noData.title')}
-                renderCell={activityCell}
-                showReadout={false}
-            />
+            <>
+                <Heatmap
+                    theme={projectPluginUiTheme(theme)}
+                    {...grid}
+                    unknownLabel={t('usage.noData.title')}
+                    renderCell={activityCell}
+                    showReadout={false}
+                />
+                <UsageGridValues theme={projectPluginUiTheme(theme)} label={slide.label} cells={grid.cells} valueColumn={t('usage.tokens')}
+                    labels={usageChartValuesLabels()} testID="usage-recap-activity" />
+            </>
         );
     } else if (slide.visual?.kind === 'progress') {
         visual = <MeterBar tone="neutral" fillFraction={slide.visual.ratio}

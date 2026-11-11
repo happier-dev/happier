@@ -47,7 +47,8 @@ export function projectUsageSummaryObservationRange(rows: readonly Pick<UsageAna
 /** Canonical non-monetary totals; folded source identities are disjoint across admitted contributions. */
 export function projectUsageContributionTotals(rows: readonly Pick<UsageAnalyticsContribution, 'tokens' | 'eventCount' | 'context'>[],
     cost: UsageAnalyticsQueryResponse['totals']['cost']): UsageAnalyticsQueryResponse['totals'] {
-    let tokens = createEmptyUsageTokens();
+    let tokens: UsageObservationTokens = rows.length ? createEmptyUsageTokens()
+        : { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
     let eventCount = 0;
     let context: Totals['context'];
     for (const row of rows) {
@@ -161,8 +162,9 @@ export function projectUsageActivityProjectionDayFacts(operands: readonly UsageA
 /** Merge admitted dated operands, then use the existing calendar and repricing owners for presentation. */
 export function mergeUsageActivityProjectionFacts(parts: readonly UsageActivityProjectionDayFacts[], query: UsageAnalyticsQueryRequest,
     coverage: UsageAnalyticsCoverage): UsageAnalyticsQueryResponse {
-    const totals = projectUsageContributionTotals(parts.map(part => ({ ...part.totals, tokens: restoreUsageMoneyProvenance(part.totals.tokens, part.exact.tokens) })), createEmptyUsageCost());
-    const tokenCategories = projectUsageContributionTokenCategories(parts.filter(part => part.contributionCount > 0).map(part => ({
+    const populated = parts.filter(part => part.contributionCount > 0);
+    const totals = projectUsageContributionTotals(populated.map(part => ({ ...part.totals, tokens: restoreUsageMoneyProvenance(part.totals.tokens, part.exact.tokens) })), createEmptyUsageCost());
+    const tokenCategories = projectUsageContributionTokenCategories(populated.map(part => ({
         tokenCategories: part.tokenCategories && restoreUsageMoneyProvenance(part.tokenCategories, part.exact.categories ?? {}) })));
     const execution = summarizeUsageExecutionSources(parts.flatMap(part => part.execution.groups.map(group => ({ tokens: { total: group.tokens }, sourceContext: { execution: group.execution } }))));
     const accountGroups: Array<{ ref: AccountRows['ref']; contributionCount: number; populations: UsagePricingPopulation[] }> = [];

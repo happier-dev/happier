@@ -12,7 +12,7 @@ import {
 import { HappierText } from '../../text/Text.js';
 import { happierSvgGradientStop } from '../../layout/svgGradientStop.js';
 import { ChartDrawing, ChartMark } from '../../data/ChartDatum.js';
-import { formatHappierDataValue } from '../../data/dataModel.js';
+import { formatHappierDataValue, formatHappierDataValueWithPrecision } from '../../data/dataModel.js';
 
 import {
   UsageChartCaption,
@@ -324,7 +324,7 @@ export function UsageSkyOfDays(props: UsageSkyOfDaysProps) {
               ? (levelNames[day.level ?? 0] ?? '')
               : day.value == null
                 ? labels.values.notRecorded
-                : labels.formatValue(day.value),
+                : formatHappierDataValueWithPrecision(formatHappierDataValue(day.value), labels.formatValue(day.value)),
         ...(byAgent
           ? [day.state === 'active' ? leaderName(day.leader) : '']
           : []),
@@ -338,7 +338,7 @@ export function UsageSkyOfDays(props: UsageSkyOfDaysProps) {
         accessibilityLabel={props.label}
       >
         {geometry && width !== null ? (
-          <Svg {...usageChartSvgSize(width, height, scaled)}>
+          <Svg accessible={false} aria-hidden {...usageChartSvgSize(width, height, scaled)}>
             <Defs>
               {gradientKeys.map((key) => {
                 const color = colourOf(key);
@@ -583,7 +583,7 @@ export function UsageSkyOfDays(props: UsageSkyOfDaysProps) {
           const day = model.days[point.index]!;
           const value = day.state === 'unknown' ? labels.values.notRecorded : day.state === 'inactive' ? labels.values.noActivity
             : ordinal ? levelNames[day.level ?? 0] ?? labels.values.notRecorded : day.value == null ? labels.values.notRecorded : formatHappierDataValue(day.value);
-          return <ChartMark key={`datum-${point.index}`} datum={{ label: labels.day(day.date), value,
+          return <ChartMark key={`datum-${point.index}`} datum={{ keyboard: false, label: `${props.label} · ${labels.day(day.date)}`, value,
             subtitle: [!ordinal && day.state === 'active' && day.value != null ? `${labels.values.valueColumn} · ${labels.formatValue(day.value)}` : null, byAgent ? leaderName(day.leader) : null].filter(Boolean).join(' · ') || undefined,
             color: day.leader?.kind === 'agent' ? colourOf(day.leader.agentId) : props.paint.accent }}
             bounds={{ x: point.x - point.radius, y: point.y - Math.max(3, point.radius), width: point.radius * 2, height: Math.max(6, point.radius * 2) }} coordinateSpace={scaled ? { width, height } : undefined} />;

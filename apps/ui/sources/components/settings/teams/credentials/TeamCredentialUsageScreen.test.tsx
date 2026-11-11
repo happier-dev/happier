@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoveryPageV1Schema } from '@happier-dev/protocol/teams';
-import { createEmptyUsageCost, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
+import { aggregateUsageContributionCosts, createEmptyUsageCost, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
+import { serializeUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';
 
 import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialResourceFixture, teamGroupFixture, teamMembershipFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -476,6 +477,34 @@ describe('TeamCredentialUsageScreen', () => {
         expect(screen.getTextContent()).toContain('teams.credentials.usage.costIncomplete');
     });
 
+    it('retains empty-population zeros without claiming observation coverage', async () => {
+        const serverId = await addHome();
+        const empty = usageResult({
+            requestCount: 0, totalTokens: 0, reportedUsd: 0, estimatedUsd: 0,
+            tokenCoverage: 'unavailable', costCoverage: 'unavailable',
+        });
+        // Mirrors the serialized queryTeamCredentialUsage empty-population result:
+        // arithmetic zero is known even though no observation supplies coverage.
+        harness.answer(serverId, USAGE_QUERY_PATH, {
+            body: {
+                ...empty,
+                totals: { ...empty.totals, eventCount: 0,
+                    cost: serializeUsageCostBasis(aggregateUsageContributionCosts([], 'auto'), 'auto') },
+                coverage: { ...empty.coverage, agentObservationCount: 0 },
+                series: [], breakdown: [], limits: [],
+            },
+        });
+
+        const screen = await renderUsage(serverId);
+        await waitForTestId(screen, 'team-credential-usage-tokens');
+
+        expect(screen.findAllByTestId('team-credential-usage-tokens')[0]?.props.detail).toBe('0');
+        expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.detail).toBe('$0.00');
+        const testIds = collectRenderedTestIds(screen.tree.toJSON());
+        expect(testIds).toContain('team-credential-usage-metric:tokens');
+        expect(testIds).toContain('team-credential-usage-metric:cost');
+    });
+
     it('says direct use is missing from the totals when the audience receives material', async () => {
         const serverId = await addHome({ deliveryMode: 'both' });
         harness.answer(serverId, USAGE_QUERY_PATH, {
@@ -682,7 +711,7 @@ describe('TeamCredentialUsageScreen', () => {
         await waitForTestId(screen, 'team-credential-usage-requests');
 
         expect(screen.findAllByTestId('team-credential-usage-requests')[0]?.props.detail).toContain('3');
-        expect(screen.findAllByTestId('team-credential-usage-tokens')[0]?.props.detail).toBe('common.unavailable');
+        expect(screen.findAllByTestId('team-credential-usage-tokens')[0]?.props.detail).toBe('—');
         expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.detail)
             .toBe('teams.credentials.usage.costUnknown');
         expect(screen.getTextContent()).toContain('teams.credentials.usage.externalObservationsIncomplete');

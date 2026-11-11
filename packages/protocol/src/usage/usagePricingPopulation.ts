@@ -1,8 +1,8 @@
 import type { UsageAnalyticsContribution, UsageObservationCost, UsageObservationTokens, UsagePricingPopulation } from './usageAnalyticsContracts.js';
-import { addUsageCost, aggregateUsageCostPartitionsSteps, createUsageCostAccumulator, addUsageCostForMode, addUsageTokens, createEmptyUsageCost, resolveUsageContributionCosts, selectResolvedUsageCost, usageCostAggregationBasis, type AggregatedUsageCost } from './usageAggregation.js';
+import { addUsageCost, aggregateUsageContributionCosts, aggregateUsageCostPartitionsSteps, createUsageCostAccumulator, addUsageCostForMode, addUsageTokens, createEmptyUsageCost, resolveUsageContributionCosts, selectResolvedUsageCost, usageCostAggregationBasis, type AggregatedUsageCost } from './usageAggregation.js';
 import { createUsageModelCostEstimator, priceUsageObservation } from './usageCost.js';
 import type { UsagePricingReuse } from './usagePricingReuse.js';
-import { hasUnresolvedUsageReportedTotalScope, resolveUsageCostBasis, resolveUsageCostFacts, serializeUsageCostBasis, type UsageCostMode } from './usageCostFacts.js';
+import { hasUnresolvedUsageReportedTotalScope, resolveEffectiveUsageCostUsd, resolveUsageCostBasis, resolveUsageCostFacts, serializeUsageCostBasis, type UsageCostMode } from './usageCostFacts.js';
 import { createUsageSourceCostFacts } from './usageCostFactTotals.js';
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
 import { resolveUsageTokenCategories } from './usageTokenCategories.js';
@@ -118,7 +118,8 @@ function* buildUsagePricedPartitionSteps(rows: readonly UsagePricingOperand[], m
     // Selected provenance follows the witnessed row order, including interleaved
     // covered facts. Compact grouping is a separate operand, not a new ordering
     // of that canonical rich fold.
-    const cost = yield* aggregateUsageCostPartitionsSteps(admittedCosts, mode, shouldYield ?? (() => false));
+    const cost = rows.length === 0 ? aggregateUsageContributionCosts([], mode)
+        : yield* aggregateUsageCostPartitionsSteps(admittedCosts, mode, shouldYield ?? (() => false));
     const priced = prices.filter(price => price.api !== undefined);
     return { population, cost,
         allPriced: prices.every(price => price.api !== undefined),
@@ -224,7 +225,7 @@ export function mergeUsagePricingPopulations(populations: readonly UsagePricingP
 /** Shared exact arithmetic owners price grouped operands just as they price rows. */
 export function priceUsagePricingPopulation(population: UsagePricingPopulation, catalog: UsageModelPriceCatalog,
     overrides: UsageModelPriceOverridesV1, mode: UsageCostMode, reuse?: UsagePricingReuse) {
-    let total = createEmptyUsageCost();
+    let total = population.groups.length === 0 ? aggregateUsageContributionCosts([], mode) : createEmptyUsageCost();
     let api = usageMoneyFromNumber(0);
     let savings = usageMoneyFromNumber(0);
     let cacheSavingsComplete = true;
@@ -254,12 +255,14 @@ export function priceUsagePricingPopulation(population: UsagePricingPopulation, 
         total = addUsageCostForMode(total, cost, mode);
     }
     const selected = resolveUsageCostBasis(total, mode);
+    const effectiveUsd = selected?.amountUsd ?? resolveEffectiveUsageCostUsd(total, mode);
     const { apiEquivalentUsd: _old, pricingSource: _source, effectiveUsd: _effective, ...observed } = total;
     const hasPrices = pricedContributionCount > 0;
     const cost = withUsageMoney({ ...observed, ...(hasPrices ? { apiEquivalentUsd: usageMoneyToNumber(api),
         pricingSource: pricingSources.size === 1 ? [...pricingSources][0] : 'effective_model_prices' } : {}),
-        ...(selected ? { effectiveUsd: selected.amountUsd } : {}) }, { ...(hasPrices ? { apiEquivalentUsd: api } : {}),
-            ...(selected ? { effectiveUsd: readUsageMoney(selected, 'amountUsd', selected.amountUsd) } : {}) });
+        ...(effectiveUsd === null ? {} : { effectiveUsd }) }, { ...(hasPrices ? { apiEquivalentUsd: api } : {}),
+            ...(effectiveUsd === null ? {} : { effectiveUsd: selected ? readUsageMoney(selected, 'amountUsd', effectiveUsd)
+                : readUsageMoney(total, 'effectiveUsd', effectiveUsd) }) });
     const projectedFacts = facts.values();
     return { cost: serializeUsageCostBasis(cost, mode), selected, selectedCost: selectResolvedUsageCost(total, mode),
         pricedContributionCount, pricingSources: [...pricingSources].sort(), apiEquivalentUsd: hasPrices ? usageMoneyToNumber(api) : null,

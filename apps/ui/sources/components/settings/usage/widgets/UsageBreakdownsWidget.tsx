@@ -9,7 +9,7 @@ import {
   type UsageBreakdownBlock,
 } from '@happier-dev/plugin-ui/presentation';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
-import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
+import { formatTokenCount, formatTokenCountLong, formatUsageCost } from '@/utils/format/usageNumbers';
 import { t } from '@/text';
 import { usageMeterFill } from '../usageAccent';
 import { USAGE_BREAKDOWN_DIMENSION_HEADING } from '../usageBreakdownTitle';
@@ -159,6 +159,13 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
               metric === 'cost'
                 ? (value) => formatUsageCost(value, currency)
                 : formatTokenCount,
+            rowDatums: metric === 'cost' ? undefined : lead.rows.map(row => {
+              if (row.value === null) return null;
+              const exact = formatTokenCountLong(row.value);
+              return formatTokenCount(row.value).includes(exact) ? null : {
+                label: row.label, value: `${exact} ${t('usage.board.page.tokensUnit')}`,
+              };
+            }),
             ...(DRILL_FIELD[block.dimension] &&
             drill.available(DRILL_FIELD[block.dimension]!)
               ? {

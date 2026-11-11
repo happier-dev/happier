@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
+import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings } from '@/text';
 
 import {
     formatPercent,
@@ -31,8 +31,8 @@ describe('usage number formatting', () => {
         expect(formatTokenCount(1_100_000_000)).toBe('1.1B');
     });
 
-    it('uses localized explicit text for unknown or invalid token counts', () => {
-        const missingMeasurementText = t('usage.board.plans.cellUnknown');
+    it('keeps unknown or invalid values quiet while retaining known zero', () => {
+        const missingMeasurementText = '—';
         expect(formatTokenCount(null)).toBe(missingMeasurementText);
         expect(formatTokenCountLong(null)).toBe(missingMeasurementText);
         expect(formatUsageCost(null, 'USD')).toBe(missingMeasurementText);
@@ -41,6 +41,8 @@ describe('usage number formatting', () => {
         expect(formatTokenCount(Number.POSITIVE_INFINITY)).toBe(missingMeasurementText);
         expect(formatTokenCountLong(-1)).toBe(missingMeasurementText);
         expect(formatTokenCountLong(Number.NaN)).toBe(missingMeasurementText);
+        expect(formatTokenCount(0)).toBe('0');
+        expect(formatUsageCost(0, 'USD')).toBe('$0.00');
     });
 
     it('formats long token counts with locale grouping', () => {
@@ -60,8 +62,8 @@ describe('usage number formatting', () => {
         expect(formatUsageCost(0.0012, 'USD')).toBe('$0.0012');
         expect(formatUsageCost(1, 'USD')).toBe('$1.00');
         expect(formatUsageCost(12.4567, 'USD')).toBe('$12.46');
-        expect(formatUsageCost(-1, 'USD')).toBe(t('usage.board.plans.cellUnknown'));
-        expect(formatUsageCost(Number.NaN, 'USD')).toBe(t('usage.board.plans.cellUnknown'));
+        expect(formatUsageCost(-1, 'USD')).toBe('—');
+        expect(formatUsageCost(Number.NaN, 'USD')).toBe('—');
     });
 
     it('formats finite non-negative percentages and rejects invalid values', () => {

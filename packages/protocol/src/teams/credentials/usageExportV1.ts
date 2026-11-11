@@ -63,30 +63,21 @@ function requestCell(result: TeamCredentialUsageQueryResultV1, requestCount: num
         : String(requestCount);
 }
 
-function tokenCell(result: TeamCredentialUsageQueryResultV1, tokenCount: number | null): string {
-    return result.coverage.tokenCoverage === 'unavailable'
-        || tokenCount === null
-        ? ''
-        : String(tokenCount);
+function tokenCell(tokenCount: number | null): string {
+    return tokenCount === null ? '' : String(tokenCount);
 }
 
 function costCell(
-    result: TeamCredentialUsageQueryResultV1,
     cost: TeamCredentialUsageQueryResultV1['totals']['cost'],
     mode: UsageCostMode,
 ): string {
     const resolved = resolveEffectiveUsageCostUsd(cost, mode);
-    // A period the Home could not price has no cost, which is not the same
-    // number as zero; an empty cell keeps that distinction in the file.
-    return result.coverage.costCoverage === 'unavailable'
-        || resolved === null
-        ? ''
-        : String(resolved);
+    return resolved === null ? '' : String(resolved);
 }
 
-/** One cost component; blank, never zero, when the Home could not price the period. */
-function costComponentCell(result: TeamCredentialUsageQueryResultV1, amountUsd: number | null): string {
-    return result.coverage.costCoverage === 'unavailable' || amountUsd === null ? '' : String(amountUsd);
+/** Coverage travels in its own columns; NULL alone means this component was not measured. */
+function costComponentCell(amountUsd: number | null): string {
+    return amountUsd === null ? '' : String(amountUsd);
 }
 
 export function buildTeamCredentialUsageCsv(input: TeamCredentialUsageExportInput): string {
@@ -125,12 +116,12 @@ export function buildTeamCredentialUsageCsv(input: TeamCredentialUsageExportInpu
             '',
             '',
             requestCell(result, result.coverage.requestAdmissionCount),
-            tokenCell(result, result.totals.tokens.total),
-            costCell(result, result.totals.cost, input.costMode),
+            tokenCell(result.totals.tokens.total),
+            costCell(result.totals.cost, input.costMode),
             result.totals.cost.currency,
             input.costMode,
-            costComponentCell(result, result.totals.cost.reportedUsd),
-            costComponentCell(result, result.totals.cost.estimatedUsd),
+            costComponentCell(result.totals.cost.reportedUsd),
+            costComponentCell(result.totals.cost.estimatedUsd),
             ...common,
         ],
         ...(input.breakdown === null ? [] : (result.breakdown ?? []).map((entry) => [
@@ -142,12 +133,12 @@ export function buildTeamCredentialUsageCsv(input: TeamCredentialUsageExportInpu
             entry.key,
             entry.label ?? '',
             requestCell(result, entry.totals.requestCount),
-            tokenCell(result, entry.totals.tokens.total),
-            costCell(result, entry.totals.cost, input.costMode),
+            tokenCell(entry.totals.tokens.total),
+            costCell(entry.totals.cost, input.costMode),
             entry.totals.cost.currency,
             input.costMode,
-            costComponentCell(result, entry.totals.cost.reportedUsd),
-            costComponentCell(result, entry.totals.cost.estimatedUsd),
+            costComponentCell(entry.totals.cost.reportedUsd),
+            costComponentCell(entry.totals.cost.estimatedUsd),
             ...common,
         ])),
     ]);

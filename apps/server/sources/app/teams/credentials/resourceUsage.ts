@@ -21,15 +21,15 @@ import { SESSION_ACCESS_SESSION_BATCH_SIZE } from '@/app/session/access/sessionA
 import { authorizeTeamCredentialUsageSubjectInTx } from './resourceUsageSubject';
 import { resolveScopedUsageContributions, type ScopedUsageContribution, type ScopedUsageEventRow } from '@/app/usage/query/resolveScopedUsageContributions';
 import { toScopedUsageEventRow } from '@/app/usage/query/scopedUsageEventRow';
-import { addUsageCostForMode, withEffectiveUsageCost, type UsageCostMode } from '@/app/usage/query/resolveUsageCostMode';
-import { addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens } from '@/app/usage/usageMetrics';
 import { resolveUsageBucketBounds as resolveBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
 import { projectTeamCredentialUsageLimitsInTx, type TeamCredentialUsageLimitRow } from './teamCredentialUsageLimits';
 import { resolveEffectiveSessionAccessWhere } from '@/app/session/access/sessionAccessWhere';
 import { isSessionTranscriptShareable, SESSION_TRANSCRIPT_PUBLICATION_SELECT } from '@/app/session/sessionTranscriptPublicationPolicy';
 import { resolveEffectiveTeamGroupIdsForAccountInTx } from '../groups/effectiveGroupMembership';
 import { classifyTeamCredentialUsageObservationSource } from '@/app/usage/usageSourceClassifier';
-import { compareUsageMeasurementsDescending } from '@happier-dev/protocol/usage/usageAggregation';
+import { aggregateUsageContributionCosts, compareUsageMeasurementsDescending } from '@happier-dev/protocol/usage/usageAggregation';
+import { projectUsageContributionTotals } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
+import { serializeUsageCostBasis, type UsageCostMode } from '@happier-dev/protocol/usage/usageCostFacts';
 
 const UNAVAILABLE_SESSION_KEY = 'unavailable_session';
 const UNAVAILABLE_WORKER_MACHINE_KEY = 'unavailable_worker_machine';
@@ -60,25 +60,19 @@ function breakdownKey(
 
 function aggregate(rows: readonly ScopedUsageContribution[], costMode: UsageCostMode) {
     const ids = new Set<string>();
-    let tokens = createEmptyUsageTokens();
-    let cost = createEmptyUsageCost();
     let requestCount = 0;
     for (const row of rows) {
         for (const id of row.contributingEventIds) ids.add(id);
-        tokens = addUsageTokens(tokens, row.tokens);
-        // Cost-mode precedence resolves the several price representations of
-        // one contribution; it is not an operation on a merged column set.
-        // Resolving it per contribution is the canonical usage accumulator
-        // personal analytics already consumes, so a reported contribution plus
-        // an estimated one is their sum rather than only the reported one.
-        cost = addUsageCostForMode(cost, row.cost, costMode);
         requestCount += row.requestCount ?? 0;
     }
+    const { tokens, cost } = projectUsageContributionTotals(rows.map(row => ({
+        tokens: row.tokens, eventCount: row.contributingEventIds.length,
+    })), serializeUsageCostBasis(aggregateUsageContributionCosts(rows, costMode), costMode));
     return {
         eventCount: ids.size,
         requestCount,
         tokens,
-        cost: withEffectiveUsageCost(cost, costMode),
+        cost,
     };
 }
 
