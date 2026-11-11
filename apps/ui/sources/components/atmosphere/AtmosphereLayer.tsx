@@ -54,14 +54,14 @@ export const AtmosphereLayer = React.memo(function AtmosphereLayer(
   // The send dissolve is one of Home's moments (moments are always Home's); off, the page simply hands over.
   const sendMoment = useSetting('homeAtmosphere').moments.send !== false;
   const sending = snapshot.sendDissolving && sendMoment;
-  // A send keeps the last surface on screen until its dissolve has played, even as the session opens.
+  // Keep the measured surface while its destination registers before measurement, and through send's dissolve.
   const [held, setHeld] = React.useState<AtmosphereStage | null>(null);
   const [left, setLeft] = React.useState(false);
-  const current = stage ?? held;
+  const current = stage?.geometry ? stage : stage || sending ? held : null;
   const leaving = sending || stage === null;
   React.useEffect(() => {
-    if (stage) setHeld(sending ? stage : null);
-  }, [sending, stage]);
+    if (stage?.geometry) setHeld(stage);
+  }, [stage]);
   React.useEffect(() => {
     if (!leaving) setLeft(false);
     else if (left && stage === null) setHeld(null);

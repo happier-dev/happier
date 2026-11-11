@@ -196,8 +196,15 @@ it.each(['horizon', 'wallpaper'] as const)('hands the planet over to a painted %
         holdReplies = true;
         await act(async () => {
             atmosphereStageStore.clearStage(home.id);
-            atmosphereStageStore.setStage({ ...home, id: -2 }, true);
+            // A newly opened destination registers before measureInWindow settles. The window's
+            // already painted canvas must survive that real route handover, not only ID changes
+            // whose geometry was supplied synchronously by the test.
+            atmosphereStageStore.setStage({ ...home, id: -2, geometry: null }, true);
         });
+        expect(screen.findAllHostsByTestId(canvasId)[0]).toBe(originalCanvas);
+        expect(atmosphereStageStore.get().pictureShown).toBe(true);
+        expect(replies).toHaveLength(0);
+        await act(async () => atmosphereStageStore.setStage({ ...home, id: -2 }, true));
         if (layout === 'horizon') {
             expect(screen.findAllHostsByTestId(canvasId)[0]).not.toBe(originalCanvas);
             expect(paints).toBe(painted);
