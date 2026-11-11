@@ -121,7 +121,7 @@ async function serve(address) {
       // A running payload may already be using an older source/dependency view.
       // Share only the unstarted follower: its normal dispatch admission runs
       // after the leader, so later callers never inherit a pre-edit result.
-      const queued = Boolean(group.running);
+      const queued = Boolean(group.running) && request.reuseRunning !== true;
       let job = queued ? group.following : group.running;
       if (!job) {
         job = { key, request, clients: new Set(), child: null };
@@ -214,7 +214,7 @@ try {
     }
   }
   else {
-    const [repo, identityCwd, , names, command] = process.argv.slice(2);
+    const [repo, identityCwd, , names, command, mode] = process.argv.slice(2);
     const physicalRepo = realpathSync(repo);
     let physicalCwd = identityCwd;
     try { physicalCwd = realpathSync(identityCwd); } catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -222,7 +222,8 @@ try {
       repo: physicalRepo, identityCwd: physicalCwd, cwd: process.cwd(), command,
       // Older resident controllers already implement this fresh-follower bit.
       // They drain normally; callers need no second controller identity.
-      typecheck: true, environmentNames: names.split(' ').filter(Boolean), environment: process.env,
+      typecheck: true, reuseRunning: mode === 'reuse-running',
+      environmentNames: names.split(' ').filter(Boolean), environment: process.env,
     });
   }
 } catch {

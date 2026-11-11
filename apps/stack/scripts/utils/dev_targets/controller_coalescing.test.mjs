@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -72,6 +72,62 @@ test('edited contract', async () => {
   assert.deepEqual([leaderResult.code, joinerResult.code], [0, 1]);
   assert.match(joinerResult.stdout, /ERR_ASSERTION/);
   assert.equal(connections.length, 2, 'the later caller must execute the edited source');
+});
+
+test('same current-source entry-load requests share one execution with every caller', {
+  timeout: 15000, skip: process.platform !== 'linux',
+}, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'entry-coalesce-' });
+  const gatePath = fixture.path('s');
+  const countPath = fixture.path('count');
+  const payload = fixture.path('payload.cjs');
+  await writeFile(payload, `const { appendFileSync } = require('node:fs');
+const { createConnection } = require('node:net');
+appendFileSync(process.argv[2], 'x');
+const socket = createConnection(process.argv[3]);
+socket.on('connect', () => process.stdout.write('entry-ready\\n'));
+socket.on('data', () => socket.end());
+`);
+  const connections = [];
+  const arrivals = [];
+  const gate = createServer(socket => { connections.push(socket); arrivals.shift()?.(socket); });
+  await new Promise(resolveListen => gate.listen(gatePath, resolveListen));
+  t.after(() => { for (const socket of connections) socket.destroy(); gate.close(); });
+  const nextConnection = () => new Promise(resolveConnection => arrivals.push(resolveConnection));
+  const callers = [];
+  t.after(() => { for (const caller of callers) if (caller.exitCode === null) caller.kill('SIGTERM'); });
+  const start = () => {
+    const caller = spawn(process.execPath, [owner, fixture.root, fixture.root, '0', '',
+      '"$HAPPIER_TEST_NODE" "$HAPPIER_TEST_PAYLOAD" "$HAPPIER_TEST_COUNT" "$HAPPIER_TEST_GATE"',
+      'reuse-running'], {
+      env: { ...process.env, HAPPIER_TEST_NODE: process.execPath, HAPPIER_TEST_PAYLOAD: payload,
+        HAPPIER_TEST_COUNT: countPath, HAPPIER_TEST_GATE: gatePath }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    callers.push(caller);
+    let stdout = '', stderr = '';
+    caller.stdout.on('data', chunk => { stdout += chunk; });
+    caller.stderr.on('data', chunk => { stderr += chunk; });
+    const result = new Promise(resolveExit => caller.once('close', code => resolveExit({ code, stdout, stderr })));
+    return { caller, result };
+  };
+  const firstConnection = nextConnection();
+  const first = start();
+  await firstConnection;
+  const peers = [1, 2, 3].map(() => start());
+  let status;
+  do {
+    await new Promise(resolveTick => setImmediate(resolveTick));
+    status = JSON.parse(spawnSync(process.execPath, [owner, '--status', fixture.root], { encoding: 'utf8' }).stdout);
+  } while (status.attachedCallers < 4);
+  assert.equal(status.runningDispatches, 1);
+  assert.equal(status.queuedFollowers, 0);
+  assert.equal(status.attachedCallers, 4);
+  assert.equal(status.duplicateCallers, 3);
+  assert.equal(connections.length, 1);
+  connections[0].write('finish');
+  const results = await Promise.all([first.result, ...peers.map(peer => peer.result)]);
+  assert.deepEqual(results.map(result => result.code), [0, 0, 0, 0]);
+  assert.equal((await readFile(countPath, 'utf8')).length, 1);
 });
 
 // Short prefixes keep Unix socket paths valid under worker TMPDIRs.
