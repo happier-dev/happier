@@ -135,6 +135,11 @@ Before briefing a lane whose change renders anything (new state, control, copy, 
   therefore catches every clause of a compound command.
 The same guard also refuses controller-wide `rg`, recursive `grep`, `find`, and `du`; route those
 searches through `./apps/stack/bin/hstack-exec -- rg <pattern> <narrow path>` or use a narrow path.
+It also refuses index/older-revision bytes written over shared source (including temp-file copies),
+shared-tree `checkout-index`, archive extraction, and literal stale-base Python private-index
+publication. Read-only inspection, OS-temp and `.project/tmp/<lane>/` copies, and external worktrees
+remain available. Observe RED in an OS-temp copy or a separate `git worktree add`; never restore
+older bytes over shared source. This lexical guard is not a shell or Python sandbox.
 - **Every open QA row has an owner; briefs carry no size caps.** Before reporting "nothing remains", list each
   PARTIAL / BLOCKED / NOT EXERCISED row in the program's coverage matrix and name its owning lane or the real
   prerequisite (Voice 11-03: two PARTIAL rows sat unowned behind a "nothing remains" report). Never put a file-count

@@ -9,6 +9,8 @@ const config = JSON.parse(readFileSync(new URL('../hooks.json', import.meta.url)
 
 for (const [command, expectedStatus] of [
   ['git stash list; git stash', 2],
+  ['git show HEAD:apps/cli/source.ts > apps/cli/source.ts', 2],
+  ['git show HEAD:apps/cli/source.ts > /tmp/stale-hook-source', 0],
   ['git status --short -- AGENTS.md', 0],
   ['git stash list', 0],
 ]) {

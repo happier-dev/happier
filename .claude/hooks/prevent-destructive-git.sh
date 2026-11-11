@@ -51,7 +51,7 @@ MATCHED=""
 # that exact compound shape caused the incident.
 STASH_STRIPPED=$(printf '%s' "$COMMAND" | sed -E 's/git[[:space:]]+stash[[:space:]]+(list|show)[^;&|]*//g')
 
-case "$COMMAND" in
+case "${COMMAND//git checkout-index/git __checkout_index__}" in
   *"git reset"*) MATCHED="git reset" ;;
   *"git restore"*) MATCHED="git restore" ;;
   *"git clean"*) MATCHED="git clean" ;;
@@ -68,6 +68,10 @@ fi
 
 if [[ -z "$MATCHED" ]]; then
   MATCHED=$(node "$(dirname "${BASH_SOURCE[0]}")/refWriteGuard.mjs" <<<"$COMMAND")
+fi
+
+if [[ -z "$MATCHED" ]]; then
+  MATCHED=$(node "$(dirname "${BASH_SOURCE[0]}")/staleWriteGuard.mjs" <<<"$COMMAND")
 fi
 
 if [[ -z "$MATCHED" ]]; then
@@ -89,6 +93,9 @@ Matched:
   $MATCHED
 
 Repo policy: do not discard, revert, or clean unrelated/uncommitted work unless the user explicitly asked for that exact destructive action.
+
+Stale-write policy: observe RED in an OS-temp copy or a separate git worktree add;
+never restore older bytes over shared source. The shared index is not source authority.
 
 Search policy: controller-wide searches are blocked to protect the shared checkout. Use:
   ./apps/stack/bin/hstack-exec -- rg <pattern> <narrow path>
