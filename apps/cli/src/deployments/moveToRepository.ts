@@ -22,11 +22,13 @@ import { prepareRepositoryFilesPullRequest, openRepositoryFilesPullRequest,
   type RepositoryFilesPullRequestHost } from '@/scm/actions/repositoryFilesPullRequest';
 import { previewRepositoryForDefinition, provisionRepositoryForDefinition } from '@/scm/actions/provisionRepositoryForDefinition';
 
+/** A definition Move reads Environment content only, never runtime target-link content. */
+type MoveEnvironment = Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'>;
 type Host = Readonly<{
   serverId: string; machineId: string;
   assertCurrent(context: ActionExecutorContext): Promise<void>;
   requireDefinitionManage(context: ActionExecutorContext): Promise<void>;
-  readEnvironment(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
+  readEnvironment(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<MoveEnvironment>;
   readSource: NonNullable<ActionExecutorDeps['projectSourcesRead']>;
   updateSource?: NonNullable<ActionExecutorDeps['projectSourcesUpdate']>;
   acceptWorkspace?(workspace: WorkspaceRefV1, source: ProjectSourceV1, repository: ScmHostingRepositoryIdentityV1,
@@ -155,7 +157,7 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
   };
 
   async function continueMove(input: DeploymentMoveToRepositoryInputV1, continuation: DeploymentMoveToRepositoryContinuationV1 | undefined,
-    capturedCurrent: DeploymentEnvironmentDetailV1, scm: RepositoryFilesPullRequestHost,
+    capturedCurrent: MoveEnvironment, scm: RepositoryFilesPullRequestHost,
     source: Readonly<{ id: string; revision: number }>, selectors: NonNullable<DeploymentMoveToRepositoryInputV1['selectors']>,
     context: ActionExecutorContext,
     executeCanonicalAction: Parameters<NonNullable<ActionExecutorDeps['deploymentMoveToRepository']>>[2],

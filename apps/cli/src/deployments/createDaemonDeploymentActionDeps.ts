@@ -989,7 +989,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             deleteFile: input => execute('daemon.filesystem.delete', input) };
     };
     const moveToRepository = createDeploymentMoveToRepositoryForHost({ ...host, storage, assertCurrent, requireDefinitionManage,
-        ...sharedRepositoryWorkspace, repositoryFiles, readEnvironment: targetHostReaders.readEnvironment,
+        ...sharedRepositoryWorkspace, repositoryFiles,
+        // A definition Move consumes only Environment content; Home admits no target-link reads for it.
+        readEnvironment: request => readDeploymentEnvironmentForHost(request, { readMetadata: readEnvironmentMetadata, open, assertCurrent }),
         updateSource: publicationSources.projectSourcesUpdate,
         async acceptWorkspace(workspace, source, repository, context) {
             const mutate = createProjectAccountSnapshotMutation(context.externalActionExecutionAuthorization
