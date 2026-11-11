@@ -21,6 +21,10 @@ export const prepareLumeStoredSchemas = () => prepareMachineProvisionerStoredSch
 const processAccess = 'lume-process';
 const networkAccess = 'lume-http';
 const registryAccess = 'lume-image-registry';
+const GIB = 1024 ** 3;
+const DEFAULT_CPU = 2;
+const DEFAULT_MEMORY_BYTES = 4 * GIB;
+const DEFAULT_DISK_BYTES = 150 * GIB;
 const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: [processAccess, networkAccess] } as const;
 const origin = 'http://localhost:7777';
 
@@ -137,9 +141,9 @@ export const LUME_PLUGIN = definePlugin({
       inputSchema: LumeOptionsInputV1Schema, resultSchema: MachineProvisionerOptionsResultV1Schema,
       inputHints: { fields: [
         { path: 'storage', title: label('storage'), description: label('storageDescription'), widget: 'text' },
-        { path: 'cpu', title: label('cpu'), widget: 'integer' },
-        { path: 'memoryBytes', title: label('memory'), widget: 'integer', unit: 'bytes' },
-        { path: 'diskBytes', title: label('disk'), widget: 'integer', unit: 'bytes' },
+        { path: 'cpu', title: label('cpu'), widget: 'integer', defaultValue: DEFAULT_CPU },
+        { path: 'memoryBytes', title: label('memory'), widget: 'integer', unit: 'bytes', defaultValue: DEFAULT_MEMORY_BYTES },
+        { path: 'diskBytes', title: label('disk'), widget: 'integer', unit: 'bytes', defaultValue: DEFAULT_DISK_BYTES },
         { path: 'image.kind', title: label('imageKind'), widget: 'select', requireExplicitSelection: true,
           options: [{ value: 'catalog', label: label('publishedImage') }, { value: 'native-image', label: label('nativeReference') }] },
         { path: 'image.id', title: label('publishedReference'), widget: 'text',

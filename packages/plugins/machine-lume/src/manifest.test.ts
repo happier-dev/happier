@@ -286,6 +286,16 @@ describe('activated Lume provisioner Actions', () => {
     expect(projectOptions(options)).toMatchObject({ kind: 'ready', launch: expectedLaunch });
   });
 
+  it('declares the fresh Lume hardware defaults used to complete the initial options read', () => {
+    const declaration = LUME_PLUGIN.manifest.contributes.actions?.find(action => action.id === 'options');
+    if (!declaration) throw new Error('Lume options declaration missing');
+    const fields = normalizePluginActionInputHintsV2(declaration.inputHints).fields;
+    expect(fields.filter(field => ['cpu', 'memoryBytes', 'diskBytes'].includes(field.path))
+      .map(field => [field.path, field.defaultValue])).toEqual([
+        ['cpu', 2], ['memoryBytes', 4 * 1024 ** 3], ['diskBytes', 150 * 1024 ** 3],
+      ]);
+  });
+
   it.each([undefined, false, true])('carries password opt-in %s through Create, pending recovery and key-first bootstrap', async keepPasswordLogin => {
     const runtime = await activated();
     const query = { ...launch, ...(keepPasswordLogin === undefined ? {} : { keepPasswordLogin }) };
