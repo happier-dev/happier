@@ -81,6 +81,19 @@ and sanitized failure cause. The shared unstructured-output classifier recognize
 explicit HTTP/authentication failures; mentioning a vendor environment variable
 alone does not establish an authentication failure.
 
+Native Codex user messages share one ingress parser for attached-client events and
+external history. Text annotations, skill/file references, and image/audio URL,
+file-id or local-path parts survive as opaque `nativeContent` on user-only
+`transcript-message-committed` events. The host stores that value explicitly in
+`raw.meta.nativeContent`, including external terminal replay; native bytes do not
+supply provenance, permissions, routing or rendered markup. Display text names
+references and marks media previews unavailable; local media files are not copied.
+Native subagent activities, collaboration and dynamic tools use the existing shared
+tool projector. An activity occurrence never establishes child-thread completion.
+Unknown history records use the shared unsupported-content row and safe diagnostic;
+attached-client user messages use the same SDK-owned fixed text and a payload-free
+warning. Source ordering, paging identity and the actual reply-byte allowance remain intact.
+
 ## Idle compaction (unreleased 0.3)
 
 Idle compaction belongs to the Session host. One compaction descriptor, authored
@@ -3857,6 +3870,15 @@ and incoming approval or question-answer commands remain retryable. Regular
 Session observations drive later notification reads without availability polling
 or a separate re-admission trigger. Pending state and settlement remain in the
 Session.
+
+For chat `/allow` and `/deny` commands, that same Session permission owner
+translates the requested decision and scope to a native choice only when the
+current offer has exactly one matching choice. Durable local choices and policy
+amendments are not inferred. Ambiguous offers remain pending for an explicit
+selection. The selected native identity is stored in the existing mediation
+record; an exact command retry consumes that record rather than selecting again.
+This is unreleased 0.3 behavior; ordinary native responses still require an
+explicit current native answer.
 
 The approval reviewer is a request-scoped client of the existing permission
 owner. That owner rejects ineligible effects before starting a no-tools review

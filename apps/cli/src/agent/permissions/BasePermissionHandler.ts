@@ -57,7 +57,7 @@ import type {
 import { HAPPIER_ACTION_REQUEST_SOURCE, isAgentStructuredQuestionRequest, resolveAgentRequestKind, resolveStructuredQuestionRequestMetadata } from './requestKind';
 import { admitManagerQuestionAnswer, resolveInitialQuestionHandler } from './sessionQuestionManager';
 import { normalizeStructuredQuestionPermissionAnswers } from './structuredQuestionAnswers';
-import { nativePermissionResult, resolveNativePermissionChoice } from './nativePermissionChoice';
+import { nativePermissionResult, resolveMediatedNativePermissionChoice, resolveNativePermissionChoice } from './nativePermissionChoice';
 import { AgentStateRequestStore } from './agentStateRequestStore';
 import type {
     AgentStateRequestResponseTarget,
@@ -2634,19 +2634,25 @@ export abstract class BasePermissionHandler {
         if (!actor.success) return null;
         let decision = params.input.decision;
         let scope = params.input.scope;
+        let nativeChoice = params.input.nativeChoice;
         if (admittedRecord) {
             // A retry consumes the already-admitted owner record, never caller proof.
-            if (!isDeepStrictEqual(admittedRecord.record.nativeChoice, params.input.nativeChoice)) return null;
-            if (params.input.nativeChoice) {
+            if (!nativeChoice && admittedRecord.record.nativeChoice) {
+                if (decision !== admittedRecord.record.decision || scope !== admittedRecord.record.requestedScope) return null;
+                nativeChoice = admittedRecord.record.nativeChoice;
+            }
+            if (!isDeepStrictEqual(admittedRecord.record.nativeChoice, nativeChoice)) return null;
+            if (nativeChoice) {
                 decision = admittedRecord.record.decision;
                 scope = admittedRecord.record.requestedScope;
             }
         } else {
             const context = this.requestCoordinator.getResponseContext(params.input.requestId);
             if (context) {
+                nativeChoice ??= resolveMediatedNativePermissionChoice(context.nativeChoices, decision, scope);
                 const response = this.resolveIncomingPermissionResponse({
                     id: params.input.requestId, turnId: params.input.turnId,
-                    ...(params.input.nativeChoice ? { nativeChoice: params.input.nativeChoice } : {}),
+                    ...(nativeChoice ? { nativeChoice } : {}),
                     approved: params.input.decision === 'allow',
                     decision: params.input.decision === 'allow' ? 'approved' : 'denied',
                 }, context);
@@ -2660,7 +2666,7 @@ export abstract class BasePermissionHandler {
             } else if (params.input.nativeChoice) return null;
         }
         if (decision === undefined || scope === undefined) return null;
-        const input = { ...params.input, decision, scope };
+        const input = { ...params.input, decision, scope, ...(nativeChoice ? { nativeChoice } : {}) };
 
         return {
             input,

@@ -196,6 +196,7 @@ async function settledState<T>(promise: Promise<T>): Promise<'pending' | 'fulfil
 
 function startBlockedRemoteSettlement(params: Readonly<{
   requestId: string;
+  decision?: 'allow' | 'deny';
   owner?: { kind: 'plugin'; pluginId: string; runtimeId: string };
   signal?: AbortSignal;
   scope?: 'request' | 'session';
@@ -293,7 +294,7 @@ function startBlockedRemoteSettlement(params: Readonly<{
     sourceRevisionOrEpoch: '42',
     idempotencyKey: `${params.requestId}-retry`,
     actor: { namespace: 'discord', principalId: 'person-1' },
-    decision: 'allow',
+    decision: params.decision ?? 'allow',
     scope: params.scope ?? 'request',
     mediator: { pluginId: 'happier.channels', contributionLocalId: 'discord' },
     ...(params.nativeChoice ? { nativeChoice: params.nativeChoice } : {}),
@@ -5518,10 +5519,10 @@ describe('remote native offered permission admission', () => {
     ],
   } as const satisfies NativePermissionChoicesV1;
 
-  it.each([undefined,
+  it.each([
     { requirementId: 'old-requirement', choiceId: 'run-opaque' },
     { requirementId: 'remote-native', choiceId: 'save-opaque' },
-  ])('refuses missing, stale or durable native answers before creating a mediation record: %j', async nativeChoice => {
+  ])('refuses stale or durable native answers before creating a mediation record: %j', async nativeChoice => {
     const fixture = startBlockedRemoteSettlement({ requestId: 'native-remote-refused', nativeChoices: choices, nativeChoice });
     const pendingOutcome = fixture.pending.then(() => undefined, () => undefined);
     fixture.releaseRowCreate.resolve();
@@ -5529,6 +5530,42 @@ describe('remote native offered permission admission', () => {
       await expect(fixture.remote).resolves.toMatchObject({ status: 'rejected' });
       expect(fixture.recordStore.createExpectedAbsent).not.toHaveBeenCalled();
       expect(fixture.session.agentState.requests['native-remote-refused']).toBeDefined();
+    } finally {
+      await fixture.handler.reset();
+      await pendingOutcome;
+    }
+  });
+
+  it.each(['allow', 'deny'] as const)('settles a chat %s using the unique offered request choice and replays it', async decision => {
+    const nativeChoices: NativePermissionChoicesV1 = { ...choices, choices: [...choices.choices,
+      { id: 'stop-opaque', label: 'Stop', scope: 'once', decision: 'abort', response: { approved: false, decision: 'abort' } },
+    ] };
+    const fixture = startBlockedRemoteSettlement({ requestId: `chat-native-${decision}`, nativeChoices, decision });
+    const pendingOutcome = fixture.pending.then(() => undefined, () => undefined);
+    fixture.releaseRowCreate.resolve();
+    const nativeChoice = { requirementId: choices.requirementId, choiceId: decision === 'allow' ? 'run-opaque' : 'stop-opaque' };
+    try {
+      await expect(fixture.remote).resolves.toMatchObject({ status: 'applied', decision });
+      await expect(fixture.pending).resolves.toMatchObject({ decision: decision === 'allow' ? 'approved' : 'abort', nativeChoice });
+      expect(fixture.readStored()?.record).toMatchObject({ nativeChoice });
+      await expect(fixture.handler.respondToMediatedPendingPermission(fixture.response)).resolves.toMatchObject({ status: 'alreadyApplied' });
+      await expect(fixture.handler.respondToMediatedPendingPermission({ ...fixture.response, decision: decision === 'allow' ? 'deny' : 'allow' })).resolves.toMatchObject({ status: 'rejected' });
+    } finally {
+      await fixture.handler.reset();
+      await pendingOutcome;
+    }
+  });
+
+  it('refuses a chat allow when multiple offered choices match its scope', async () => {
+    const fixture = startBlockedRemoteSettlement({ requestId: 'chat-native-ambiguous', nativeChoices: {
+      ...choices, choices: [...choices.choices, { ...choices.choices[0], id: 'another-once' }],
+    } });
+    const pendingOutcome = fixture.pending.then(() => undefined, () => undefined);
+    fixture.releaseRowCreate.resolve();
+    try {
+      await expect(fixture.remote).resolves.toMatchObject({ status: 'rejected' });
+      expect(fixture.recordStore.createExpectedAbsent).not.toHaveBeenCalled();
+      expect(fixture.session.agentState.requests[fixture.response.requestId]).toBeDefined();
     } finally {
       await fixture.handler.reset();
       await pendingOutcome;
