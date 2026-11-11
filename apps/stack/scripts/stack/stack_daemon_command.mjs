@@ -102,7 +102,7 @@ export async function resolveStackDaemonCommandContext({
   };
 }
 
-export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) {
+export async function runStackDaemonCommand({ rootDir, stackName, argv, json, emitResult = true, env = {} }) {
   const { flags, kv } = parseArgs(argv);
   const wantsHelpFlag = wantsHelp(argv, { flags });
 
@@ -150,10 +150,12 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
   const res = await withStackEnv({
     stackName,
     includeRuntimeRelay: true,
-    extraEnv:
-      action === 'status' && !hasExplicitStackRuntimeModeArg(argv)
+    extraEnv: {
+      ...env,
+      ...(action === 'status' && !hasExplicitStackRuntimeModeArg(argv)
         ? { HAPPIER_STACK_RUNTIME_MODE: 'source' }
-        : {},
+        : {}),
+    },
     fn: async ({ env, runtimeState }) => {
       if (env.HAPPIER_DEV_TARGET_EXECUTION !== '1') {
         const { config } = await loadDevTargetsConfig({ stackName, env });
@@ -341,9 +343,9 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
 
   if (res?.delegated) return;
 
-  if (res?.ok === false) process.exitCode = 1;
+  if (res?.ok === false && emitResult) process.exitCode = 1;
 
-  if (json) {
+  if (json && emitResult) {
     printResult({ json, data: { stackName, ...res } });
     return;
   }

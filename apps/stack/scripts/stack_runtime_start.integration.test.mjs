@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 
 import {
   createStartableRuntimeSnapshotFixture,
@@ -13,6 +13,8 @@ import {
 } from './testkit/runtime_snapshot_start_testkit.mjs';
 import { checkDaemonStatePingAware } from './daemon.mjs';
 import { isPidAlive } from './utils/proc/pids.mjs';
+import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
+import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 
 function stackRootDirFromMeta(metaUrl) {
   const scriptsDir = dirname(fileURLToPath(metaUrl));
@@ -568,6 +570,69 @@ test('hstack stack start --runtime --restart restarts the daemon in service mode
     const daemonPidAfter = Number(runtimeAfter?.processes?.daemonPid);
     assert.ok(daemonPidAfter > 1, `expected daemon pid after restart, got ${String(runtimeAfter?.processes?.daemonPid)}`);
     assert.notEqual(daemonPidAfter, daemonPidBefore, 'expected --restart to restart the daemon when credentials are available');
+  } finally {
+    await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'], {
+      cwd: rootDir,
+      env: baseEnv,
+    });
+  }
+});
+
+test('hstack stack start --runtime --restart restores a running named identity daemon', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createStartableRuntimeSnapshotFixture(t, { stackName: 'runtime-daemon-identity-reload' });
+  const identity = 'account-a';
+  const identityHome = join(fixture.stackDir, 'cli-identities', identity);
+  const activeServerId = buildStackStableScopeId({ stackName: fixture.stackName, cliIdentity: identity });
+  const identityCredentialPaths = resolveStackCredentialPaths({
+    cliHomeDir: identityHome,
+    serverUrl: fixture.baseUrl,
+    env: { HAPPIER_ACTIVE_SERVER_ID: activeServerId },
+  });
+  await mkdir(identityHome, { recursive: true });
+  await mkdir(dirname(identityCredentialPaths.serverScopedPath), { recursive: true });
+  await writeFile(identityCredentialPaths.serverScopedPath, 'fixture-credential\n', 'utf8');
+  if (identityCredentialPaths.hostPortServerScopedPath) {
+    await mkdir(dirname(identityCredentialPaths.hostPortServerScopedPath), { recursive: true });
+    await writeFile(identityCredentialPaths.hostPortServerScopedPath, 'fixture-credential\n', 'utf8');
+  }
+  if (identityCredentialPaths.urlHashServerScopedPath) {
+    await mkdir(dirname(identityCredentialPaths.urlHashServerScopedPath), { recursive: true });
+    await writeFile(identityCredentialPaths.urlHashServerScopedPath, 'fixture-credential\n', 'utf8');
+  }
+  await writeFile(join(identityHome, 'settings.json'), JSON.stringify({ machineId: 'runtime-identity-fixture' }) + '\n', 'utf8');
+
+  const baseEnv = {
+    ...process.env,
+    HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+  };
+  const startArgs = [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'start', fixture.stackName, '--background', '--runtime', '--no-browser'];
+  const restartArgs = [...startArgs, '--restart'];
+  const identityArgs = [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'daemon', fixture.stackName, 'start', '--runtime', `--identity=${identity}`, '--json'];
+
+  const startRes = await runNode(startArgs, { cwd: rootDir, env: baseEnv });
+  assert.equal(startRes.code, 0, `stdout:\n${startRes.stdout}\nstderr:\n${startRes.stderr}`);
+
+  try {
+    await waitForHealth(fixture.baseUrl, { timeoutMs: 30_000 });
+    const identityStartRes = await runNode(identityArgs, { cwd: rootDir, env: baseEnv });
+    assert.equal(identityStartRes.code, 0, `stdout:\n${identityStartRes.stdout}\nstderr:\n${identityStartRes.stderr}`);
+    const before = await checkDaemonStatePingAware(identityHome, { serverUrl: fixture.baseUrl, env: baseEnv });
+    assert.match(String(before?.status ?? ''), /running/i);
+
+    const restartRes = await runNode(restartArgs, { cwd: rootDir, env: baseEnv });
+    assert.equal(restartRes.code, 0, `stdout:\n${restartRes.stdout}\nstderr:\n${restartRes.stderr}`);
+    await waitForHealth(fixture.baseUrl, { timeoutMs: 30_000 });
+    await waitFor(async () => {
+      const after = await checkDaemonStatePingAware(identityHome, { serverUrl: fixture.baseUrl, env: baseEnv });
+      return /running/i.test(String(after?.status ?? '')) && Number(after?.pid) !== Number(before?.pid);
+    }, { timeoutMs: 30_000, label: 'named identity daemon after stack reload' });
+
+    const identityLog = await readFile(join(identityHome, 'runtime-daemon.log'), 'utf8');
+    assert.ok(identityLog.split(/\r?\n/).filter(line => line === 'start').length >= 2, identityLog);
   } finally {
     await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'], {
       cwd: rootDir,

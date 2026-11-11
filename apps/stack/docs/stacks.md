@@ -157,6 +157,12 @@ dependency publications still require recovery through the dependency owner.
 replacing it through the daemon lifecycle owner. Ordinary startup and recovery
 continue to use the retained source generation.
 
+During a full reload, the lifecycle owner records the named identity daemons
+that are running before it stops the incumbent runtime. After the replacement
+is ready, it starts exactly those identities on the new runtime; identities
+that were stopped remain stopped. An identity start failure is reported with a
+typed reason and does not fail or retry the stack reload.
+
 Use `hstack stack start <stack> --runtime=source --restart --verify` for a
 background reload followed by one `READY` or `NOT_READY` verdict. Verification
 consumes Stack's selected/loaded identities and authenticated daemon-control
