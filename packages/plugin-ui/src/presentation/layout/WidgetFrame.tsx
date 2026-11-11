@@ -1,4 +1,4 @@
-import { isValidElement, useCallback, useState, type ReactNode } from 'react';
+import { createContext, useContext, isValidElement, useCallback, useState, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Path, Svg } from 'react-native-svg';
 
@@ -225,10 +225,13 @@ export function resolveHappierWidgetFrameInsetPx(
     : HAPPIER_WIDGET_FRAME_METRICS.cardInsetPx;
 }
 
+const WidgetHeadingLevel = createContext<2 | 3>(2);
+
 export type HappierWidgetFrameTextRole = 'title' | 'source';
 
 export type HappierWidgetFrameTextRender = (
   input: Readonly<{
+    headingLevel?: 2 | 3;
     role: HappierWidgetFrameTextRole;
     text: string;
     testID: string;
@@ -331,6 +334,7 @@ export type HappierWidgetFrameProps = Readonly<{
 
 function DefaultFrameText(
   props: Readonly<{
+    headingLevel?: 2 | 3;
     role: HappierWidgetFrameTextRole;
     text: string;
     testID: string;
@@ -353,6 +357,7 @@ function DefaultFrameText(
       testID={props.testID}
       numberOfLines={props.numberOfLines ?? 1}
       accessibilityRole={title ? 'header' : undefined}
+      aria-level={title ? props.headingLevel ?? 2 : undefined}
       style={[
         resolveHappierPageTextStyle(
           title && !label ? 'sectionTitle' : 'meta',
@@ -367,7 +372,7 @@ function DefaultFrameText(
 }
 
 const renderDefaultFrameText: HappierWidgetFrameTextRender = (input) => (
-  <DefaultFrameText role={input.role} text={input.text} testID={input.testID} {...(input.numberOfLines === undefined ? {} : { numberOfLines: input.numberOfLines })} {...(input.frameStyle ? { frameStyle: input.frameStyle } : {})} />
+  <DefaultFrameText headingLevel={input.headingLevel} role={input.role} text={input.text} testID={input.testID} {...(input.numberOfLines === undefined ? {} : { numberOfLines: input.numberOfLines })} {...(input.frameStyle ? { frameStyle: input.frameStyle } : {})} />
 );
 
 function isEmptySlot(slot: ReactNode): boolean {
@@ -419,7 +424,9 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
   };
   const plain = props.frameStyle === 'plain';
   const inset = resolveHappierWidgetFrameInsetPx(props.frameStyle);
-  const renderText = props.renderText ?? renderDefaultFrameText;
+  const headingLevel = useContext(WidgetHeadingLevel);
+  const textRenderer = props.renderText ?? renderDefaultFrameText;
+  const renderText: HappierWidgetFrameTextRender = input => textRenderer({ ...input, headingLevel });
   const previewItem = !plain && props.anatomy === 'previewItem';
   const item = previewItem || (!plain && props.anatomy === 'item');
   const row = !plain && props.anatomy === 'row';
@@ -681,7 +688,7 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
             props.bodyStyle,
           ]}
         >
-          <HappierBodyEdgeContext.Provider value>{props.children}</HappierBodyEdgeContext.Provider>
+          <HappierBodyEdgeContext.Provider value><WidgetHeadingLevel.Provider value={isEmptySlot(props.title) ? headingLevel : 3}>{props.children}</WidgetHeadingLevel.Provider></HappierBodyEdgeContext.Provider>
         </View>}
         {props.facts || props.footer ? (
           <View

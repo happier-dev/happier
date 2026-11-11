@@ -100,7 +100,7 @@ export function CompositionStrip(props: CompositionStripProps) {
             style={{ ...text.captionStrong, ...props.appearance.textStyle }} tabularNumbers>
             {props.shareFormatter?.(share) ?? formatHappierDataShare(share, text.locale)}
           </HappierText> : <View style={{ borderRadius: props.theme.radii.small, paddingHorizontal: props.theme.spacing.xsmall,
-            backgroundColor: props.theme.colors.control }}><HappierText style={{ ...text.captionStrong, color: segment.color ?? props.theme.colors.accent }} tabularNumbers>
+            backgroundColor: props.theme.colors.control }}><HappierText style={{ ...text.captionStrong, color: props.theme.colors.text }} tabularNumbers>
             {props.shareFormatter?.(share) ?? formatHappierDataShare(share, text.locale)}
           </HappierText></View>;
         // A compact legend sits in narrow hosts (a rail, a small widget): name and figure are one text group beside the swatch, so when they do not fit one line the figure

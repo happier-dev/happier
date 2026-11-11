@@ -71,6 +71,11 @@ async function renderFrame(props: Partial<React.ComponentProps<typeof WidgetFram
 }
 
 describe('WidgetFrame', () => {
+    it('exposes widget titles below the page heading', async () => {
+        const screen = await renderFrame();
+        const title = screen.root.findAll(node => node.props.accessibilityRole === 'header' && node.props.children === 'Latest runs')[0];
+        expect(title?.props['aria-level']).toBe(2);
+    });
     it.each(['body', 'frame'] as const)('draws a string meta through its meta text role, never as a raw text node (%s)', async (presentation) => {
         const screen = await renderFrame({ presentation, frameStyle: 'plain', placement: 'companion', title: 'Running',
             meta: '4 services', body: { kind: 'content', children: <Text>rows</Text> } });

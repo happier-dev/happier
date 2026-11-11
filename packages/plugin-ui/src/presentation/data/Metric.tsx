@@ -65,12 +65,7 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
       ? props.valueFormatter(props.value)
       : exact;
   const size = props.size ?? 'default';
-  const comparisonColor =
-    props.comparison?.meaning === 'good'
-      ? props.theme.colors.success
-      : props.comparison?.meaning === 'bad'
-        ? props.theme.colors.danger
-        : props.theme.colors.secondaryText;
+  const comparisonColor = props.theme.colors.text;
   const valueStyle =
     size === 'hero'
       ? {

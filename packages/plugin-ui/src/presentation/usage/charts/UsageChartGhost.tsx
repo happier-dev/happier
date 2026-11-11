@@ -211,7 +211,7 @@ export function UsageChartGhost(
       style={{ minWidth: 0, height }}
     >
       {width > 0 ? (
-        <Svg width={width} height={height}>
+        <Svg accessible={false} aria-hidden width={width} height={height}>
           {marks}
         </Svg>
       ) : null}

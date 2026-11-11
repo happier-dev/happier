@@ -232,7 +232,7 @@ export function UsageNinetyPlanets(props: CalendarProps) {
         light: levelLight(level),
       })
     ) : (
-      <Svg width={box} height={box}>
+      <Svg accessible={false} aria-hidden width={box} height={box}>
         <Circle
           cx={box / 2}
           cy={box / 2}
@@ -258,7 +258,7 @@ export function UsageNinetyPlanets(props: CalendarProps) {
       >
         {width !== null ? (
           <>
-            <Svg
+            <Svg accessible={false} aria-hidden
               width={width}
               height={gridHeight}
               style={{ position: 'absolute', left: 0, top: 0 }}
@@ -374,7 +374,7 @@ export function UsageStreakThread(props: CalendarProps) {
         accessibilityLabel={props.label}
       >
         {width !== null && count ? (
-          <><Svg width={width} height={height}>
+          <><Svg accessible={false} aria-hidden width={width} height={height}>
             {streaks.runs.map((run) => {
               const current = sameRun(run, streaks.current),
                 best = sameRun(run, streaks.best);
@@ -513,7 +513,7 @@ export function UsageWeeksSkyline(props: CalendarProps) {
               let lastMonth = '';
               const targets: ReactNode[] = [];
               return (
-                <><Svg width={width} height={height}>
+                <><Svg accessible={false} aria-hidden width={width} height={height}>
                   <Path
                     d={`M0,${base + 0.5}H${width}`}
                     stroke={ink.base}
@@ -654,7 +654,7 @@ export function UsageAroundThePeriod(props: CalendarProps) {
               const size = Math.round(Math.min(56, height * 0.24));
               return (
                 <>
-                  <Svg width={width} height={height}>
+                  <Svg accessible={false} aria-hidden width={width} height={height}>
                     <Ellipse
                       cx={cx}
                       cy={cy}
@@ -932,7 +932,7 @@ export function UsageRingedByStreaks(props: CalendarProps<UsageRingsLabels>) {
               const size = Math.ceil(radius * 2.6);
               return (
                 <>
-                  <Svg
+                  <Svg accessible={false} aria-hidden
                     width={width}
                     height={height}
                     style={{ position: 'absolute', left: 0, top: 0 }}
@@ -961,7 +961,7 @@ export function UsageRingedByStreaks(props: CalendarProps<UsageRingsLabels>) {
                       })}
                     </View>
                   ) : (
-                    <Svg
+                    <Svg accessible={false} aria-hidden
                       width={width}
                       height={height}
                       style={{ position: 'absolute', left: 0, top: 0 }}
@@ -969,7 +969,7 @@ export function UsageRingedByStreaks(props: CalendarProps<UsageRingsLabels>) {
                       <Circle cx={cx} cy={cy} r={radius} fill={ink.track} />
                     </Svg>
                   )}
-                  <Svg
+                  <Svg accessible={false} aria-hidden
                     width={width}
                     height={height}
                     style={{ position: 'absolute', left: 0, top: 0 }}

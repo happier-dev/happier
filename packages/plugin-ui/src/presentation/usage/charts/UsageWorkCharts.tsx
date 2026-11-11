@@ -136,7 +136,7 @@ export function UsageSteeringTide(props: UsageChartBaseProps & Readonly<{ agents
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
     <View style={{ flexDirection: 'row', gap: 24 }}>
       <ChartDrawing style={{ height, width: chartWidth || undefined }} accessibilityLabel={props.label}>
-        {width !== null ? <Svg width={chartWidth} height={height}>
+        {width !== null ? <Svg accessible={false} aria-hidden width={chartWidth} height={height}>
           {nightSpans.map(([from, to], index) => <Rect key={`n${index}`} x={r1(axis + (from! / 24) * plot)} y={0} width={r1(((to! - from!) / 24) * plot)} height={height - 18} rx={6} fill={wash} />)}
           {rows.map((row, index) => {
             const base = (index + 1) * rowHeight - 6, amplitude = rowHeight * 0.72;
@@ -243,7 +243,7 @@ export function UsageRunLength(props: UsageChartBaseProps & Readonly<{ agents: r
         const x = (ms: number) => label + ((Math.log(Math.max(RUN_MIN_MS, Math.min(RUN_MAX_MS, ms))) - lo) / (hi - lo)) * plot;
         const ticks = [[60_000, props.labels.ticks.minute], [600_000, props.labels.ticks.tenMinutes], [3_600_000, props.labels.ticks.hour], [RUN_MAX_MS, props.labels.ticks.fourHours]] as const;
         const targets: ReactNode[] = [];
-        return <><Svg width={width} height={height}>
+        return <><Svg accessible={false} aria-hidden width={width} height={height}>
           {ticks.map(([ms, text]) => <G key={ms}>
             <Path d={`M${r1(x(ms))},4V${height - 20}`} stroke={ink.grid} strokeWidth={1} />
             {svgText.draw({ x: x(ms), y: height - 4, anchor: ms === RUN_MAX_MS ? 'end' : 'middle', text })}

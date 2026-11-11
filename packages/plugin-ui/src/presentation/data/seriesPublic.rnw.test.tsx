@@ -27,6 +27,7 @@ it.each(['bar', 'line', 'area'] as const)('renders the same native and Session d
       act(() => measured.__reactLayoutHandler({ nativeEvent: { layout: { x: 0, y: 0, width: 180, height: 150 } } }));
     }
     for (const svg of native.container.querySelectorAll('svg')) expect(svg.getAttribute('aria-hidden')).toBe('true');
+    for (const svg of native.container.querySelectorAll('svg')) expect(svg.getAttribute('aria-hidden')).toBe('true');
     const ink = (container: HTMLElement) => variant === 'bar'
       ? [...container.querySelectorAll<HTMLElement>('[data-testid*="-bar-"]')].map(bar => [bar.style.top, bar.style.height])
       : [...container.querySelectorAll('svg path')].map(path => path.getAttribute('d'));

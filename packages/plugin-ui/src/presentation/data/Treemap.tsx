@@ -252,7 +252,7 @@ export function Treemap(props: HappierTreemapProps) {
       {...webHandlers}
     >
       <Animated.View style={{ opacity: fade }}>
-        <Svg width={width} height={height} aria-hidden>
+        <Svg accessible={false} aria-hidden width={width} height={height}>
           <Defs>
             <Pattern
               id={`${id}-hatch`}

@@ -16,6 +16,7 @@ export type HappierChartDatumInteraction = Readonly<{
   onHoverChange: (hovered: boolean) => void;
   onFocusChange: (focused: boolean) => void;
   onPress: () => void;
+  describedBy?: string;
 }>;
 export type HappierChartDatumTrigger = (interaction: HappierChartDatumInteraction) => ReactNode;
 export type HappierChartDatumRenderer = (datum: HappierChartDatum, visual: ReactNode, testID?: string, renderTrigger?: HappierChartDatumTrigger) => ReactNode;
@@ -98,19 +99,19 @@ export function ChartPathMark(props: Readonly<{
   const focus = props.focusBounds ?? bounds;
   return <View pointerEvents="box-none" style={{ position: 'absolute', ...chartMarkPosition(bounds, props.coordinateSpace) }}>
     <ChartDatum datum={props.datum} testID={props.testID} renderTrigger={interaction => <View pointerEvents="box-none" style={{ width: '100%', aspectRatio: bounds.width / bounds.height }}>
-      <Svg width="100%" height="100%" viewBox={`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`} pointerEvents="box-none"
+      <Svg role="group" aria-hidden={props.datum.keyboard === false ? true : undefined} accessibilityLabel={`${props.datum.label}: ${props.datum.value}`} width="100%" height="100%" viewBox={`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`} pointerEvents="box-none"
         style={Platform.OS === 'web' ? { pointerEvents: 'none', overflow: 'hidden' } : { overflow: 'hidden' }}>
         {props.clipPathD ? <Defs><ClipPath id={clipId}><Path d={props.clipPathD} /></ClipPath></Defs> : null}
         {/* RNW's createElement turns role=button into HTML button even for RN-SVG Path; a DOM path retains SVG geometry. */}
         {Platform.OS === 'web' ? <path d={props.d} transform={props.transform} clipPath={props.clipPathD ? `url(#${clipId})` : undefined} fill={props.hitMode === 'fill' ? 'transparent' : 'none'} stroke={props.hitMode === 'fill' ? 'none' : 'transparent'} strokeWidth={props.strokeWidth} style={{ pointerEvents: props.hitMode ?? 'stroke' }}
-          data-testid={props.testID} role="button" tabIndex={props.datum.keyboard === false ? -1 : 0} aria-label={`${props.datum.label}: ${props.datum.value}`} aria-hidden={props.datum.keyboard === false ? true : undefined}
+          data-testid={props.testID} role="button" tabIndex={props.datum.keyboard === false ? -1 : 0} aria-label={`${props.datum.label}: ${props.datum.value}`} aria-hidden={props.datum.keyboard === false ? true : undefined} aria-describedby={interaction.describedBy}
           onMouseEnter={() => interaction.onHoverChange(true)} onMouseLeave={() => interaction.onHoverChange(false)}
           onFocus={() => interaction.onFocusChange(true)} onBlur={() => interaction.onFocusChange(false)} onClick={interaction.onPress}
           onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); interaction.onPress(); } }} />
           : <Path d={props.d} transform={props.transform} clipPath={props.clipPathD ? `url(#${clipId})` : undefined} fill={props.hitMode === 'fill' ? 'transparent' : 'none'} stroke={props.hitMode === 'fill' ? 'none' : 'transparent'} strokeWidth={props.strokeWidth} accessible={false} onPress={interaction.onPress} testID={props.testID ? `${props.testID}.path` : undefined} />}
       </Svg>
       {Platform.OS !== 'web' && props.datum.keyboard !== false ? <Pressable pointerEvents="none" testID={props.testID} accessibilityRole="button" accessibilityLabel={`${props.datum.label}: ${props.datum.value}`}
-        accessible focusable onFocus={() => interaction.onFocusChange(true)} onBlur={() => interaction.onFocusChange(false)} onPress={interaction.onPress}
+        accessible focusable aria-describedby={interaction.describedBy} onFocus={() => interaction.onFocusChange(true)} onBlur={() => interaction.onFocusChange(false)} onPress={interaction.onPress}
         onHoverIn={() => interaction.onHoverChange(true)} onHoverOut={() => interaction.onHoverChange(false)}
         style={{ position: 'absolute', left: focus.x - bounds.x, top: focus.y - bounds.y, width: focus.width, height: focus.height }} /> : null}
     </View>}>{null}</ChartDatum>

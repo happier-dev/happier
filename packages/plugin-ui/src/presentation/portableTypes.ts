@@ -246,6 +246,8 @@ export type HappierTextHostProps = Readonly<{
   accessibilityElementsHidden?: boolean;
   accessibilityLiveRegion?: HappierAccessibilityLiveRegion;
   accessibilityRole?: 'alert' | 'header' | 'link' | 'none' | 'text';
+  /** Heading rank beneath the page title; projected by the shared text host. */
+  'aria-level'?: number;
   allowFontScaling?: boolean;
   ellipsizeMode?: 'clip' | 'head' | 'middle' | 'tail';
   importantForAccessibility?: 'auto' | 'yes' | 'no' | 'no-hide-descendants';

@@ -52,6 +52,27 @@ function byId(root: ParentNode, id: string): HTMLElement | null {
 }
 
 describe('HappierWidgetFrame', () => {
+  it('exposes its title as a section heading beneath the page', () => {
+    const view = mount();
+    try { expect(byId(view.container, 'frame.title')?.getAttribute('aria-level')).toBe('2'); }
+    finally { view.unmount(); }
+  });
+  it('exposes a widget nested in another widget as a third-level heading', () => {
+    const view = mountThroughReactNativeWeb(
+      <HappierWidgetFrame testID="outer" title="Usage">
+        <HappierWidgetFrame testID="inner" title="Costs"><Text>Values</Text></HappierWidgetFrame>
+      </HappierWidgetFrame>,
+    );
+    try {
+      expect(byId(view.container, 'outer.title')?.getAttribute('aria-level')).toBe('2');
+      expect(byId(view.container, 'inner.title')?.getAttribute('aria-level')).toBe('3');
+    } finally { view.unmount(); }
+  });
+  it('does not consume a heading rank for an untitled layout group', () => {
+    const view = mountThroughReactNativeWeb(<HappierWidgetFrame><HappierWidgetFrame testID="inner" title="Costs"><Text>Values</Text></HappierWidgetFrame></HappierWidgetFrame>);
+    try { expect(byId(view.container, 'inner.title')?.getAttribute('aria-level')).toBe('2'); }
+    finally { view.unmount(); }
+  });
   it.each(['plain', 'card'] as const)('omits absent %s header slots across content updates instead of retaining hidden Yoga nodes', async (frameStyle) => {
     // RN 0.81 can retain a shared Yoga child for an empty display:none slot during a measure-only pass.
     // The native Usage replay identified the unmarked identity slot; the DOM boundary checks its absence.

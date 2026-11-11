@@ -53,7 +53,7 @@ export const TextLinkButton = React.memo(function TextLinkButton(
 ) {
   const { theme } = useUnistyles();
   const strong = props.tone === 'strong';
-  const accent = props.tone === 'accent' ? theme.colors.state.active.foreground : undefined;
+  const accent = props.tone === 'accent' ? theme.colors.text.primary : undefined;
   return (
     <HappierTextLinkButton
       {...props}

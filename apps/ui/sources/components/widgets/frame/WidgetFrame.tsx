@@ -380,7 +380,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         <MiddleEllipsisText testID={input.testID} style={styles.source} value={input.text} />
     ) : (
         <Text testID={input.testID} style={input.role !== 'title' ? styles.source : input.frameStyle === 'plain' && !pageSection ? styles.sectionLabel : styles.title}
-            numberOfLines={1} accessibilityRole={input.role === 'title' ? 'header' : undefined}>{input.text}</Text>
+            numberOfLines={1} accessibilityRole={input.role === 'title' ? 'header' : undefined} aria-level={input.role === 'title' ? input.headingLevel ?? 2 : undefined}>{input.text}</Text>
     ), [styles.sectionLabel, styles.source, styles.title, pageSection]);
     // A bound source's glyph from the app's icon family: the pin it is set by, or the link it follows.
     const renderSourceGlyph = React.useCallback((binding: HappierWidgetFrameSourceBinding) => (
