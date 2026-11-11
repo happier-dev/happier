@@ -51,6 +51,16 @@ export function createMuseEventProjection<SessionId extends string | undefined =
   function publish(content: EventContent | Omit<Extract<AgentSessionRuntimeEvent, { kind: 'catalog-changed' }>, 'sequence' | 'sessionId' | 'emittedAtMs'>) {
     if (disposed) return;
     if (content.kind === 'runtime-ended') {
+      // A native process can exit after publishing an item start but before
+      // its completion. Close that tool row at the same lifecycle boundary so
+      // the host never waits on a result Muse can no longer deliver.
+      for (const state of items.values()) {
+        if (state.committed || !state.presentation) continue;
+        state.committed = true;
+        publish({ kind: 'tool-result', toolCallId: state.presentation.toolCallId,
+          output: { status: 'runtimeEnded', cause: content.cause }, isError: true,
+          ...correlation(state.value.turnId) });
+      }
       // Settle pending input custody before the host closes its event stream.
       // A correlated native start already established acceptance and survives EOF.
       for (const [commandId, admission] of commands) {

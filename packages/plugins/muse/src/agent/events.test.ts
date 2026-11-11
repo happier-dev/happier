@@ -164,6 +164,19 @@ it('retains readable native fallback items without creating a foreground termina
   });
 });
 
+it('settles an in-flight native fallback when the runtime ends', () => {
+  const projection = createMuseEventProjection({ sessionId: 'host-tools' });
+  const observed: AgentSessionRuntimeEvent[] = [];
+  projection.watch(event => observed.push(event));
+  projection.observe({ method: 'item/started', params: { item: {
+    itemId: 'reminder-01', kind: 'reminderChild', fallbackText: 'Reminder child session', status: 'inProgress',
+  } } });
+  projection.publish({ kind: 'runtime-ended', cause: 'processExited', retryable: true });
+  expect(observed).toContainEqual(expect.objectContaining({ kind: 'tool-call', toolCallId: 'reminder-01', toolName: 'reminderChild' }));
+  expect(observed).toContainEqual(expect.objectContaining({ kind: 'tool-result', toolCallId: 'reminder-01', isError: true }));
+  projection.dispose();
+});
+
 it('preserves the native user-shell environment failure without inventing a turn', () => {
   const captured = JSON.parse(readFileSync(new URL('./testkit/fixtures/isolated-read-only-shell-unavailable.json', import.meta.url), 'utf8')) as typeof recording;
   const projection = createMuseEventProjection({ sessionId: 'host-shell' });
