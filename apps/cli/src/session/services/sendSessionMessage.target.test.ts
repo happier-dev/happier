@@ -28,6 +28,7 @@ import { resolveStartupPermissionModeFromSession } from '@/agent/runtime/permiss
 import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { readSessionInputForgeEvidenceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import { configuration } from '@/configuration';
+import { createLocalMachineActionTransportFixture } from '@/testkit/apiMachineTransport';
 
 // HTTP and fetch are the real process boundaries; authoring, crypto envelopes,
 // Session resolution, capability parsing and Pending transport stay real.
@@ -290,6 +291,7 @@ describe('target Session input authoring through HTTP', () => {
       accountEncryptionMode: 'e2ee',
     } });
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null,
+      machineActionDirectTargetTransport: createLocalMachineActionTransportFixture('machine-a'),
       externalActionMachineRequestPrivateKey: keys.secretKey, externalActionMachineInstallationId: 'installation',
       serverIdentityId: 'home', machineAdmissionTransport: (request, options) => client.enqueueSessionPendingByMachine(request, options) });
     try {
@@ -324,15 +326,27 @@ describe('target Session input authoring through HTTP', () => {
       accountEncryptionMode: 'plain',
     } });
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
+    const machineInputs: ReturnType<typeof SessionPendingEnqueueByMachineRequestV1Schema.parse>[] = [];
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null,
+      machineActionDirectTargetTransport: createLocalMachineActionTransportFixture('machine-a'),
+      machineAdmissionTransport: async (request, options) => {
+        expect(options.callerInputAuthorization?.binding.requestId).toBe('alias-send');
+        const admitted = SessionPendingEnqueueByMachineRequestV1Schema.parse(request);
+        machineInputs.push(admitted);
+        return { status: 'accepted', localId: admitted.localId };
+      },
       externalActionMachineRequestPrivateKey: keys.secretKey, externalActionMachineInstallationId: 'installation', serverIdentityId: 'home' });
     const executor = createActionExecutor({ ...deps, isActionApprovalRequired: () => false });
     const result = await executor.execute('session.message.send', input, { surface: 'api', authority: 'account_automation',
       externalActionTarget: target, externalActionExecutionAuthorization: authorization,
       externalActionCredential: { accountId: 'requester', principalId: 'principal', credentialId: 'credential', grant } });
-    expect(result).toMatchObject({ ok: true, result: { status: 'accepted', localId: 'alias-input' } });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'accepted', localId: 'alias-input' } });
     if (!result.ok) throw new Error('Expected successful Send');
     expect(SessionMessageSendResultV1Schema.parse(result.result)).toEqual({ status: 'accepted', localId: 'alias-input' });
+    expect(machineInputs.map(request => request.content)).toMatchObject([
+      { t: 'plain', v: { meta: { permissionMode: 'read-only' } } },
+    ]);
+    expect(http.post).not.toHaveBeenCalled();
     const writesBeforeMiswiring = http.post.mock.calls.length;
     const miswiredDeps = { ...deps, isActionApprovalRequired: () => false };
     Reflect.deleteProperty(miswiredDeps, 'sessionSendMessage');
@@ -347,7 +361,8 @@ describe('target Session input authoring through HTTP', () => {
     expect(http.post.mock.calls).toHaveLength(writesBeforeMiswiring);
     await deps.sessionSendMessage({ context: cliActionContext, sessionId, message: 'Use defaults',
       localId: 'ordinary-after-alias', requestedAction: { v: 1, kind: 'enqueue' }, wait: false, timeoutSeconds: 1 });
-    expect(http.post.mock.calls.map(([, body]) => body.content.v.meta.permissionMode)).toEqual(['read-only', 'default']);
+    expect(machineInputs).toHaveLength(1);
+    expect(http.post.mock.calls.map(([, body]) => body.content.v.meta.permissionMode)).toEqual(['default']);
   });
 
   it('suppresses a recovery continuation superseded during Session lookup before Pending admission', async () => {
@@ -417,6 +432,10 @@ describe('target Session input authoring through HTTP', () => {
     });
     rpc.callSessionRpc.mockReset();
     http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/machines/machine-a')) return { status: 200, data: { machine: {
+        id: 'machine-a', kind: 'persistent', active: true, managedMachineRef: null,
+        revokedAt: null, replacedByMachineId: null,
+      } } };
       if (url.endsWith('/v1/account/encryption/currentness')) return {
         status: 200, data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
           recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } },
@@ -1017,7 +1036,7 @@ describe('target Session input authoring through HTTP', () => {
           } } } },
         },
         ];
-        return { status: 200, data: { messages: messages.filter(row => {
+        return { status: 200, data: { hasMore: false, messages: messages.filter(row => {
           const sidechainId = row.content.v.content.data?.sidechainId;
           return query.get('scope') === 'sidechain'
             ? sidechainId === query.get('sidechainId')
