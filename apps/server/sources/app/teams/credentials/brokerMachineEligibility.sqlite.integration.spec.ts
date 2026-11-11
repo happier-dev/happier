@@ -103,7 +103,19 @@ describe("Team credential broker Machine eligibility", () => {
         const f = await fixture();
         await expect(f.save()).resolves.toEqual({ ok: true, machineId: f.machine.id });
         await db.machine.update({ where: { id: f.machine.id }, data: { active: true } });
+        // BROKER-PRESENCE-1111: retained Home history can report a reconnect
+        // whose clock precedes the disconnect. Neither timestamp nor revision
+        // replaces authenticated transport presence for a new broker open.
+        const transitions = JSON.stringify({
+            v: 1, revision: 1952,
+            offline: { revision: 1951, occurredAt: 1794418669240 },
+            online: { revision: 1952, occurredAt: 1794418668763 },
+        });
+        await db.$executeRaw`UPDATE "Machine" SET "presenceTransitions" = ${transitions} WHERE "id" = ${f.machine.id}`;
         await expect(f.open([])).resolves.toEqual({ ok: false, error: "broker_unavailable", refusalReason: "broker_offline" });
+        await expect(f.open([f.socket])).resolves.toEqual({
+            ok: true, machineId: f.machine.id, endpointAuthority: { endpointId, revision: 3 },
+        });
         await expect(f.open([{ ...f.socket, clientType: "user-scoped" }, { ...f.socket, userId: "other" }]))
             .resolves.toEqual({ ok: false, error: "broker_unavailable", refusalReason: "broker_offline" });
 
