@@ -11,7 +11,7 @@ export async function verifyResumeReachableKimi(input: AgentConnectedAccountResu
 export const KIMI_CONNECTED_ACCOUNT_LAUNCH = {
   environmentUses: [{ purpose: 'primary', environmentKey: 'HAPPIER_KIMI_ACCESS_TOKEN' }],
   environmentUnsetUses: ['KIMI_CODE_BASE_URL', 'KIMI_CODE_OAUTH_HOST', 'KIMI_OAUTH_HOST', 'KIMI_API_KEY', 'MOONSHOT_API_KEY']
-    .map(environmentKey => ({ purpose: 'primary', environmentKey })),
+    .map(environmentKey => ({ purpose: 'primary' as const, environmentKey })),
   switchContinuity: { continuityMode: 'restart_shared_state_required',
     supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected', 'same_connected_group'] },
   stateSharingDescriptor: {
@@ -19,7 +19,7 @@ export const KIMI_CONNECTED_ACCOUNT_LAUNCH = {
     providerSupportStatus: 'supported',
     config: { supported: true, modes: ['linked', 'copied', 'isolated'], entries: [{ path: 'config.toml', mode: 'force_copied' }] },
     state: { supported: true, modes: ['isolated', 'shared'],
-      entries: [{ path: 'sessions', mode: 'linked', createIfMissing: 'directory' }, { path: 'session_index.jsonl', mode: 'linked', createIfMissing: 'file' }],
+      entries: [{ path: 'sessions', mode: 'linked', createIfMissing: 'directory' }, { path: 'session_index.jsonl', mode: 'linked' }],
       sharedStatePrivacyRiskAcknowledgementRequired: true, symlinkUnavailableDegradePolicy: 'block_continuity' },
     authIsolation: { mode: 'materialized_home', secretEntries: ['config.toml'] },
   },

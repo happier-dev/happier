@@ -13,6 +13,16 @@ function numeric(value: unknown): number | undefined {
 function unavailable(): never {
   throw new QuotaFetchError('Kimi usage is unavailable', { quotaFetchErrorCode: 'malformed' });
 }
+function moneyLimit(currency: string, cents: Readonly<{ used?: number; limit?: number; remaining?: number }>) {
+  const divisor = currency === 'USD' ? 100 : 1;
+  return {
+    ...(cents.used !== undefined ? { used: cents.used / divisor } : {}),
+    ...(cents.limit !== undefined ? { limit: cents.limit / divisor } : {}),
+    ...(cents.remaining !== undefined ? { remaining: cents.remaining / divisor } : {}),
+    unit: currency === 'USD' ? 'usd' as const : 'unknown' as const,
+    ...(currency !== 'USD' ? { details: { note: `Amounts in ${currency} cents.` } } : {}),
+  };
+}
 /** Vendor windows remain separate observations; no guessed allowance or billing equivalence. */
 export function parseKimiQuota(value: unknown, observedAtMs: number): Snapshot {
   const body = record(value);
@@ -23,7 +33,7 @@ export function parseKimiQuota(value: unknown, observedAtMs: number): Snapshot {
     const ratio = numeric(entry.used_ratio);
     if (ratio === undefined) continue;
     const reset = typeof entry.reset_time === 'string' ? Date.parse(entry.reset_time) : NaN;
-    limits.push({ id, label: id, utilizationPct: ratio * 100, unit: 'percent',
+    limits.push({ id, label: id, utilizationPct: ratio * 100, unit: 'unknown',
       ...(Number.isFinite(reset) ? { resetsAtMs: reset } : {}) });
   }
   const wallet = record(body.boosterWallet);
@@ -35,16 +45,16 @@ export function parseKimiQuota(value: unknown, observedAtMs: number): Snapshot {
   const currency = capCurrency || spendingCurrency;
   const used = numeric(spending.priceInCents);
   const capAmount = wallet.monthlyChargeLimitEnabled === true ? numeric(cap.priceInCents) : undefined;
-  if (spendingCurrency && used !== undefined) limits.push({ id: 'monthly_spend', label: 'Extra usage', used,
-    ...(capCurrency === spendingCurrency && capAmount !== undefined ? { limit: capAmount } : {}), unit: `${spendingCurrency} cents` });
+  if (spendingCurrency && used !== undefined) limits.push({ id: 'monthly_spend', label: 'Extra usage',
+    ...moneyLimit(spendingCurrency, { used, ...(capCurrency === spendingCurrency && capAmount !== undefined ? { limit: capAmount } : {}) }) });
   if (capCurrency && capAmount !== undefined && (used === undefined || capCurrency !== spendingCurrency)) {
-    limits.push({ id: 'monthly_charge_limit', label: 'Extra usage monthly limit', limit: capAmount, unit: `${capCurrency} cents` });
+    limits.push({ id: 'monthly_charge_limit', label: 'Extra usage monthly limit', ...moneyLimit(capCurrency, { limit: capAmount }) });
   }
   const amount = numeric(balance.amount);
   const left = numeric(balance.amountLeft);
   if (balance.type === 'BOOSTER' && currency && amount !== undefined && left !== undefined) {
     // The vendor wallet stores one cent as 1,000,000 fixed-point units.
-    limits.push({ id: 'booster_balance', label: 'Extra usage balance', remaining: left / 1_000_000, limit: amount / 1_000_000, unit: `${currency} cents` });
+    limits.push({ id: 'booster_balance', label: 'Extra usage balance', ...moneyLimit(currency, { remaining: left / 1_000_000, limit: amount / 1_000_000 }) });
   }
   if (!limits.length) return unavailable();
   return { observedAtMs, limits };

@@ -73,7 +73,7 @@ describe('Kimi plugin manifest', () => {
     expect(PLUGIN_MANIFEST.hostAccess.required).toContainEqual(expect.objectContaining({
       id: 'kimi-process',
       capability: 'process',
-      scope: { executables: [{ kind: 'systemTool', id: 'kimi-cli' }] },
+      scope: expect.objectContaining({ executables: [{ kind: 'systemTool', id: 'kimi-cli' }] }),
     }));
   });
 

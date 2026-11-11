@@ -33,7 +33,7 @@ export const AGENT_DEFINITION = Object.freeze({
     // empty set to forward and Kimi advertised tools it never received.
     tools: { delivery: 'native_mcp', support: 'experimental' },
   },
-  sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
+  sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' } as const,
   sessionModesKind: 'acpAgentModes',
   modelConfig: {
     supportsSelection: true,

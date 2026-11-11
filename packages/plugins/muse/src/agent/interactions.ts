@@ -130,8 +130,7 @@ export function createMuseInteractions(options: Readonly<{
             input: kind === 'approval' ? toolInput(merged) : questionInput(merged),
             ...(nativeChoices ? { nativeChoices } : {}),
         }, { signal,
-            buildNativeChoices: ({ mcpTool }) => {
-                if (!nativeChoices) return undefined;
+            ...(nativeChoices ? { buildNativeChoices: ({ mcpTool }: Readonly<{ mcpTool: Parameters<typeof createMcpCatalogPermissionChoiceV1>[0]['mcpTool'] }>) => {
                 const grant = nativeChoices.choices.find(choice => choice.decision === 'approved' && choice.scope === 'once')
                     ?? nativeChoices.choices.find(choice => choice.decision === 'approved_for_session' && choice.scope === 'session');
                 if (!grant) return nativeChoices;
@@ -139,7 +138,7 @@ export function createMuseInteractions(options: Readonly<{
                 // Catalog persistence belongs to the host follow-up; Muse only receives its offered grant.
                 catalogGrant = catalogChoice ? { choiceId: catalogChoice.id, nativeChoiceId: grant.id } : undefined;
                 return catalogChoice ? { ...nativeChoices, choices: [...nativeChoices.choices, catalogChoice] } : nativeChoices;
-            },
+            } } : {}),
             async acknowledgeDecisionApplication(decision) {
             if (kind === 'approval') {
                 const answer = decision.nativeChoice;
