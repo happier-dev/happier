@@ -487,7 +487,7 @@ describe('preset collection and history through Actions', () => {
         { accountEncryptionMode: 'e2ee', team: true, delegated: true },
         { accountEncryptionMode: 'plain', team: false, delegated: false },
         { accountEncryptionMode: 'plain', team: true, delegated: false },
-    ] as const)('omits decrypted and supplied labels for $accountEncryptionMode team=$team delegated=$delegated saves', async scenario => {
+    ] as const)('publishes labels only for delegated Team saves: $accountEncryptionMode team=$team delegated=$delegated', async scenario => {
         const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
             serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true,
             accountEncryptionMode: scenario.accountEncryptionMode,
@@ -514,8 +514,15 @@ describe('preset collection and history through Actions', () => {
             expectedRevision: preset.revision, patch: { name: 'Edited', controllerDisplayName: 'Retained supplied label' } },
         { preset: saved });
         await client.saveDraft({ preset: saved, draft: { name: 'Draft save', creation: { launch: preset.launch, controller: preset.controller } } });
-        for (const request of harness.requestsFor('/v1/machines/presets/create')) expect(request.input).not.toHaveProperty('controllerDisplayName');
-        for (const request of harness.requestsFor('/v1/machines/presets/update')) expect(request.input).not.toHaveProperty('patch.controllerDisplayName');
+        const publishes = scenario.team && scenario.delegated;
+        for (const request of harness.requestsFor('/v1/machines/presets/create')) {
+            if (publishes) expect(request.input).toHaveProperty('controllerDisplayName', 'Private decrypted builder');
+            else expect(request.input).not.toHaveProperty('controllerDisplayName');
+        }
+        for (const request of harness.requestsFor('/v1/machines/presets/update')) {
+            if (publishes) expect(request.input).toHaveProperty('patch.controllerDisplayName', 'Private decrypted builder');
+            else expect(request.input).not.toHaveProperty('patch.controllerDisplayName');
+        }
         expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(1);
         expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(2);
     });

@@ -234,11 +234,82 @@ describe("Machine preset relational owner", () => {
         expect((await requestPreset(member, 'get', target)).statusCode).toBe(404);
     });
 
+    it('projects an E2EE Team delegated label and typed availability without owner Machine metadata', async () => {
+        const homeId = await getOrCreateServerIdentityId();
+        const owner = 'preset-public-controller-owner-e2ee';
+        const member = 'preset-public-controller-member-e2ee';
+        await db.account.createMany({ data: [owner, member].map(id => ({ id,
+            publicKey: encodeBase64(tweetnacl.sign.keyPair().publicKey, 'base64'), encryptionMode: 'e2ee' })) });
+        const team = await db.team.create({ data: { name: 'E2EE shared compute' } });
+        await db.teamMembership.createMany({ data: [{ teamId: team.id, accountId: owner, role: 'admin' },
+            { teamId: team.id, accountId: member, role: 'member' }] });
+        const controller = await seedCurrentProvisioner(owner, homeId);
+        const installationPublicKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19)).publicKey;
+        await db.machine.update({ where: { id: controller.machineId }, data: { installationPublicKey: new Uint8Array(installationPublicKey) } });
+        const definition = { id: 'preset-public-controller-e2ee', homeId, name: 'E2EE team guest', owner: { kind: 'team', teamId: team.id },
+            controllerDisplayName: 'E2EE company builder', controller, launch, teamAcquireDelegated: true,
+            retention: { kind: 'unused', afterMs: 60_000, effect: 'delete' }, wakeOnAcceptedMessage: false };
+        const created = await requestPreset(owner, 'create', definition);
+        expect(created.statusCode, created.body).toBe(200);
+        expect(created.json()).toMatchObject({ kind: 'saved', preset: { controllerDisplayName: definition.controllerDisplayName } });
+
+        const assertPublicProjection = (preset: Record<string, unknown>) => {
+            expect(preset.controllerDisplayName).toBe(definition.controllerDisplayName);
+            // The exact controller carrier is retained for preset admission; it is
+            // identity only and carries no Machine metadata or access grant.
+            expect(preset.controller).toEqual(controller);
+            expect(preset.launch).not.toHaveProperty('credentials');
+            expect(preset.delegatedAcquire).toMatchObject({ kind: 'ready', controller: { custodian: { accountId: owner },
+                installationPublicKey: encodeBase64(installationPublicKey, 'base64url') },
+                reviewedFacts: { controller, launch: { ...launch, name: 'Guest' }, optionStatus: 'current' } });
+            expect(preset.delegatedAcquire).not.toHaveProperty('credentialPurposes');
+            expect(preset.delegatedAcquire.controller).not.toHaveProperty('metadata');
+            expect(preset.delegatedAcquire.reviewedFacts).not.toHaveProperty('credentials');
+        };
+
+        const target = { homeId, id: definition.id };
+        const first = (await requestPreset(member, 'get', target)).json().preset as Record<string, unknown>;
+        assertPublicProjection(first);
+        const listed = (await requestPreset(member, 'list', { homeId })).json().presets as Record<string, unknown>[];
+        assertPublicProjection(listed.find(preset => preset.id === definition.id)!);
+        expect(await db.machineAccountGrant.count({ where: { machineId: controller.machineId, accountId: member } })).toBe(0);
+
+        const renamed = await requestPreset(owner, 'update', { ...target, expectedRevision: 0,
+            patch: { controllerDisplayName: 'Renamed E2EE builder' } });
+        expect(renamed.statusCode, renamed.body).toBe(200);
+        const afterUpdate = (await requestPreset(member, 'get', target)).json().preset as Record<string, unknown>;
+        expect(afterUpdate.controllerDisplayName).toBe('Renamed E2EE builder');
+        expect(afterUpdate.controller).toEqual(controller);
+        expect(afterUpdate.delegatedAcquire).toMatchObject({ kind: 'ready' });
+
+        const failingId = 'preset-public-controller-e2ee-failing-options';
+        const credentials = [{ purpose: { consumer: launch.provider, purpose: 'native' },
+            account: { service: { pluginId: launch.provider.pluginId, localId: 'native-account' }, accountId: 'missing-e2ee-profile' } }];
+        const failingDefinition = { ...definition, id: failingId, name: 'E2EE failing options', controllerDisplayName: 'E2EE options builder',
+            launch: { ...launch, credentials } };
+        const failingCreated = await requestPreset(owner, 'create', failingDefinition);
+        expect(failingCreated.statusCode, failingCreated.body).toBe(200);
+        expect(failingCreated.json()).toMatchObject({ kind: 'saved', preset: { controllerDisplayName: failingDefinition.controllerDisplayName } });
+        const failing = (await requestPreset(member, 'get', { homeId, id: failingId })).json().preset as Record<string, unknown>;
+        expect(failing.controllerDisplayName).toBe(failingDefinition.controllerDisplayName);
+        expect(failing.controller).toEqual(controller);
+        expect(failing.launch).not.toHaveProperty('credentials');
+        expect(failing.delegatedAcquire).toEqual({ kind: 'unavailable', code: 'credential_unavailable' });
+        const failingList = (await requestPreset(member, 'list', { homeId })).json().presets as Record<string, unknown>[];
+        expect(failingList.find(preset => preset.id === failingId)?.delegatedAcquire)
+            .toEqual({ kind: 'unavailable', code: 'credential_unavailable' });
+        const failingUpdate = await requestPreset(owner, 'update', { homeId, id: failingId, expectedRevision: 0,
+            patch: { controllerDisplayName: 'Renamed E2EE options builder' } });
+        expect(failingUpdate.statusCode, failingUpdate.body).toBe(200);
+        expect((await requestPreset(member, 'get', { homeId, id: failingId })).json().preset.delegatedAcquire)
+            .toEqual({ kind: 'unavailable', code: 'credential_unavailable' });
+    });
+
     it.each([
         { encryptionMode: 'e2ee', team: true, delegated: true },
         { encryptionMode: 'plain', team: false, delegated: false },
         { encryptionMode: 'plain', team: true, delegated: false },
-    ] as const)('never persists controller labels for $encryptionMode team=$team delegated=$delegated, including retained labels', async scenario => {
+    ] as const)('persists controller labels only for delegated Team presets for $encryptionMode team=$team delegated=$delegated, including retained labels', async scenario => {
         const homeId = await getOrCreateServerIdentityId();
         const accountId = `preset-private-label-${scenario.encryptionMode}-${scenario.team}`;
         await db.account.create({ data: { id: accountId, encryptionMode: scenario.encryptionMode,
@@ -249,20 +320,35 @@ describe("Machine preset relational owner", () => {
         const definition = { id: `${accountId}-preset`, homeId, name: 'Guest', controller, launch,
             owner: scenario.team ? { kind: 'team', teamId: team.id } : { kind: 'account', accountId },
             ...(scenario.delegated ? { teamAcquireDelegated: true } : {}), controllerDisplayName: 'Private builder' };
+        const publishes = scenario.team && scenario.delegated;
         const created = await requestPreset(accountId, 'create', definition);
         expect(created.statusCode, created.body).toBe(200);
-        expect(created.json().preset).not.toHaveProperty('controllerDisplayName');
-        expect((await db.managedMachinePreset.findUniqueOrThrow({ where: { id: definition.id } })).launch)
-            .not.toHaveProperty('controllerDisplayName');
-        // Retained development rows and caller-provided patches must not put a forbidden label back.
+        if (publishes) {
+            expect(created.json().preset.controllerDisplayName).toBe(definition.controllerDisplayName);
+            expect((await db.managedMachinePreset.findUniqueOrThrow({ where: { id: definition.id } })).launch)
+                .toHaveProperty('controllerDisplayName', definition.controllerDisplayName);
+        } else {
+            expect(created.json().preset).not.toHaveProperty('controllerDisplayName');
+            expect((await db.managedMachinePreset.findUniqueOrThrow({ where: { id: definition.id } })).launch)
+                .not.toHaveProperty('controllerDisplayName');
+        }
+        // Retained development rows and caller-provided patches must preserve the
+        // approved shared label, while private/non-delegated rows stay stripped.
         await db.managedMachinePreset.update({ where: { id: definition.id }, data: { launch: { ...launch, controllerDisplayName: 'Old retained builder' } } });
         for (const patch of [{ name: 'Content edit' }, { controllerDisplayName: 'Supplied builder' }]) {
             const current = await db.managedMachinePreset.findUniqueOrThrow({ where: { id: definition.id } });
             const updated = await requestPreset(accountId, 'update', { homeId, id: definition.id, expectedRevision: current.revision, patch });
             expect(updated.statusCode, updated.body).toBe(200);
-            expect(updated.json().preset).not.toHaveProperty('controllerDisplayName');
-            expect((await db.managedMachinePreset.findUniqueOrThrow({ where: { id: definition.id } })).launch)
-                .not.toHaveProperty('controllerDisplayName');
+            if (publishes) {
+                const expectedLabel = 'controllerDisplayName' in patch ? patch.controllerDisplayName : 'Old retained builder';
+                expect(updated.json().preset.controllerDisplayName).toBe(expectedLabel);
+                expect((await db.managedMachinePreset.findUniqueOrThrow({ where: { id: definition.id } })).launch)
+                    .toHaveProperty('controllerDisplayName', expectedLabel);
+            } else {
+                expect(updated.json().preset).not.toHaveProperty('controllerDisplayName');
+                expect((await db.managedMachinePreset.findUniqueOrThrow({ where: { id: definition.id } })).launch)
+                    .not.toHaveProperty('controllerDisplayName');
+            }
         }
     });
 

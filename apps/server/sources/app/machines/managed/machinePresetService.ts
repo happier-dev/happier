@@ -54,12 +54,11 @@ function storePresetLaunch(preset: Pick<ManagedMachinePresetV1, 'launch' | 'cont
     } : getActivePrismaRuntime().DbNull;
 }
 
-/** This plaintext presentation is published only by a Plain author for delegated Team use. */
-async function omitPrivateControllerDisplayNameInTx(tx: Tx, accountId: string,
-    preset: Pick<ManagedMachinePresetV1, 'owner' | 'teamAcquireDelegated' | 'controllerDisplayName'>): Promise<void> {
+/** Shared Team presentation is public only for an explicitly delegated Team preset. */
+function omitPrivateControllerDisplayName(preset: Pick<ManagedMachinePresetV1,
+    'owner' | 'teamAcquireDelegated' | 'controllerDisplayName'>): void {
     if (preset.controllerDisplayName === undefined) return;
-    if (preset.owner.kind !== 'team' || preset.teamAcquireDelegated !== true
-        || (await tx.account.findUnique({ where: { id: accountId }, select: { encryptionMode: true } }))?.encryptionMode !== 'plain') {
+    if (preset.owner.kind !== 'team' || preset.teamAcquireDelegated !== true) {
         delete preset.controllerDisplayName;
     }
 }
@@ -305,7 +304,7 @@ export async function createMachinePreset(params: PresetContext & Readonly<{ inp
         await requireHomeInTx(tx, input.homeId);
         if (!await resolvePresetAccessInTx(tx, params, input.owner, 'manage')) return { kind: "refused", code: "permission_denied" } as const;
         if (input.teamAcquireDelegated && (input.owner.kind !== 'team' || !hasManagedMachinePresetCreationV1(input))) throw new ManagedMachineError('invalid_request');
-        await omitPrivateControllerDisplayNameInTx(tx, params.accountId, input);
+        omitPrivateControllerDisplayName(input);
         const existing = await tx.managedMachinePreset.findUnique({ where: { id: input.id } });
         if (existing) {
             if (!await resolvePresetAccessInTx(tx, params, ownerOf(existing), 'manage') || existing.homeId !== input.homeId) return { kind: "refused", code: "permission_denied" } as const;
@@ -428,7 +427,7 @@ export async function updateMachinePreset(params: PresetContext & Readonly<{ inp
             delete nextDefinition.controllerDisplayName;
         }
         if (nextDefinition.teamAcquireDelegated === false) delete nextDefinition.teamAcquireDelegated;
-        await omitPrivateControllerDisplayNameInTx(tx, params.accountId, nextDefinition);
+        omitPrivateControllerDisplayName(nextDefinition);
         if (setup === null) delete nextDefinition.setup;
         else if (setup !== undefined) nextDefinition.setup = setup;
         if (retention === null) delete nextDefinition.retention;
