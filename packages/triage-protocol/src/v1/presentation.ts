@@ -117,6 +117,9 @@ export function formatTriageTimestampV1(
  * description keeps the full relative phrase; this is only what fits.
  */
 export function formatTriageCompactAgeV1(locale: string, atMs: number, nowMs: number): string {
+  if (typeof Intl.RelativeTimeFormat !== 'function') {
+    return formatTriageTimestampV1(locale, atMs, 'absolute', nowMs);
+  }
   const seconds = Math.max(0, Math.round((nowMs - atMs) / 1000));
   const [value, unit] = seconds < 3_600
     ? [Math.max(1, Math.round(seconds / 60)), 'minute' as const]

@@ -67,6 +67,18 @@ describe('the table\u2019s compact Age', () => {
     expect(formatTriageCompactAgeV1('en', 0, 70 * DAY_MS)).toBe('10w');
     expect(formatTriageCompactAgeV1('en', 0, 548 * 7 * DAY_MS)).toBe('11y');
   });
+
+  it('uses the localized absolute instant when native Intl lacks RelativeTimeFormat', () => {
+    const intl = globalThis.Intl;
+    const atMs = Date.UTC(2026, 10, 10, 14, 2);
+    vi.stubGlobal('Intl', { ...intl, DateTimeFormat: intl.DateTimeFormat, RelativeTimeFormat: undefined });
+    try {
+      const expected = new intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(atMs);
+      expect(formatTriageCompactAgeV1('en', atMs, atMs + 43_200_000)).toBe(expected);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('a PRs & Issues entry row\u2019s secondary actions', () => {
