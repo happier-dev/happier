@@ -134,6 +134,7 @@ export function projectHomeGovernancePolicyV1(
         authentication: projectHomeAuthenticationPolicyV1(record.authentication),
         teamProviders: record.teamProviders,
         identityNetwork: record.identityNetwork,
+        sessionDefaults: record.sessionDefaults ?? null,
     };
 }
 

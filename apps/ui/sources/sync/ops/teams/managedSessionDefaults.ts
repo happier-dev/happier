@@ -44,7 +44,8 @@ export function readManagedSessionDefaults(input: ManagedSessionDefaultsReadInpu
         const state = resolveTeamViewState(getTeamSnapshot(scope, address));
         if (state.kind !== 'ready') return { status: 'unavailable', reason: state.kind, teamState: state, context };
         repairRequired = state.team.policy.managedDefaultsStatus === 'repair_required';
-        context = { policyDefaults, teamDefaults: state.team.policy.managedDefaults ?? null,
+        context = { policyDefaults, homeDefaults: state.team.policy.homeDefaults ?? null,
+            teamDefaults: state.team.policy.managedDefaults ?? null,
             groupIds: state.team.managedDefaultsGroupIds ?? [] };
     }
     const defaults = resolveManagedSessionDefaults({ ...context, agentTargetKey: input.agentTargetKey,

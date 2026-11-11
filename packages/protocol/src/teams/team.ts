@@ -82,6 +82,8 @@ export const TeamPolicyV1Schema = lazyZodSchema(() => z.strictObject({
   authenticationPolicyStatus: z.optional(z.enum(['available', 'repair_required'])),
   managedDefaults: z.optional(z.nullable(ManagedDefaultsV1Schema)),
   managedDefaultsStatus: z.optional(z.enum(['available', 'repair_required'])),
+  /** Home-administered Session defaults, readable as a preselect by Team members. */
+  homeDefaults: z.optional(z.nullable(ManagedSessionDefaultsV1Schema)),
 }));
 export type TeamPolicyV1 = z.infer<typeof TeamPolicyV1Schema>;
 

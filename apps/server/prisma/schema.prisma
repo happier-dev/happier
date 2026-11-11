@@ -243,6 +243,7 @@ model HomeGovernancePolicy {
     authenticationPolicy  Json?
     teamProviderPolicy    Json?
     identityNetworkPolicy Json?
+    sessionDefaults       Json?
     revision              Int                @default(1)
     updatedAt             DateTime           @updatedAt
 }

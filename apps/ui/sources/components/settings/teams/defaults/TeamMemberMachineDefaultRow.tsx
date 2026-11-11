@@ -39,7 +39,7 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
         state: MachineDefaultState;
         conflict: boolean;
         testID: string;
-        onApprovalPending: TeamSectionContext['requestApproval'];
+        onApprovalPending?: TeamSectionContext['requestApproval'];
     }>,
 ) {
     const { state } = props;
