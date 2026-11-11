@@ -180,10 +180,12 @@ export function NewSessionComposerCard(input: Readonly<{
                         {props.composerTopContent ? (
                             <View ref={embeddedHost?.composerTopContentRef} collapsable={false}>{props.composerTopContent}</View>
                         ) : null}
-                        {props.permissionModeLock ? <Item
+                        {props.permissionModeLock || props.permissionModeSource === 'team' || props.permissionModeSource === 'group' ? <Item
                             testID="new-session-managed-permission"
                             title={getPermissionModeLabelForAgentType(props.agentType ?? '', props.permissionMode ?? 'default')}
-                            subtitle={<OrganizationPolicyManagedLine lock={props.permissionModeLock} />}
+                            subtitle={props.permissionModeLock ? <OrganizationPolicyManagedLine lock={props.permissionModeLock} />
+                                : t(props.permissionModeSource === 'team'
+                                    ? 'teams.settings.memberDefaults.teamDefault' : 'teams.settings.memberDefaults.groupDefault')}
                             showChevron={false}
                         /> : null}
                         {/* The atmosphere's band and hero follow the composer itself. A docked host seats its own

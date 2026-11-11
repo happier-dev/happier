@@ -111,6 +111,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'profileMap'
         | 'permissionMode'
         | 'permissionModeLock'
+        | 'permissionModeSource'
         | 'handlePermissionModeChange'
     > & Readonly<{
         selectedBackendTargetKey: string;

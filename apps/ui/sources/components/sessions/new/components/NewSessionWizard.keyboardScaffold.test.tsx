@@ -5,6 +5,7 @@ import { renderScreen } from '@/dev/testkit';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 import { createNewSessionWizardTestProps } from './newSessionWizardTestFixtures';
+import { english } from '@/text/translations/teamsTranslations.shared';
 
 installNewSessionComponentsCommonModuleMocks({
     reactNative: async () => {
@@ -18,6 +19,30 @@ installNewSessionComponentsCommonModuleMocks({
 const runtime = installSessionPaneRuntimeTestHarness();
 
 describe('NewSessionWizard real keyboard scaffold', () => {
+    it.each(['team', 'group'] as const)('attributes a fresh member permission default to its %s source', async source => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+        const { useNewSessionPermissionModeState } = await import('../hooks/screenModel/useNewSessionPermissionModeState');
+        const { ManagedDefaultsV1Schema } = await import('@happier-dev/protocol/teams/managedDefaults');
+        const values = { permissionModeByAgentTargetKey: { 'agent:happier.agent.claude/claude': 'read-only' } };
+        function MemberSession() {
+            const permission = useNewSessionPermissionModeState({
+                agentType: 'claude', backendTarget: { kind: 'backend', backendId: 'claude' },
+                hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: null,
+                selectedProfileId: null, profileMap: new Map(), enabledAgentIds: ['claude'],
+                sessionDefaultPermissionModeByTargetKey: {},
+                managedDefaults: { teamDefaults: ManagedDefaultsV1Schema.parse({
+                    team: values, groups: source === 'group' ? { engineering: values } : {},
+                }), groupIds: source === 'group' ? ['engineering'] : [] },
+            });
+            const props = createNewSessionWizardTestProps();
+            props.machine.serverId = runtime.serverId;
+            return <NewSessionWizard {...props} agent={{ ...props.agent, ...permission }} popoverBoundaryRef={{ current: null }} />;
+        }
+        const screen = await renderScreen(<runtime.Wrapper><MemberSession /></runtime.Wrapper>);
+        expect(screen.getTextContent()).toContain(english.teams.settings.memberDefaults[
+            source === 'team' ? 'teamDefault' : 'groupDefault']);
+    });
+
     it('renders through the shared scaffold and caps the real AgentInput panel to the native viewport', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
         const { AgentInput } = await import('@/components/sessions/agentInput');

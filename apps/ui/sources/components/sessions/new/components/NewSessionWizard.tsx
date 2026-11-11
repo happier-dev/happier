@@ -197,6 +197,7 @@ export interface NewSessionWizardAgentProps {
     profileMap: Map<string, AIBackendProfile>;
     permissionMode: PermissionMode;
     permissionModeLock?: OrganizationPolicyLock | null;
+    permissionModeSource?: import('@happier-dev/protocol/teams/managedDefaults').ResolvedManagedSessionDefaults['permissionMode']['source'];
     handlePermissionModeChange: (mode: PermissionMode) => void;
     installableDepInstallers?: InstallableDepInstallerProps[];
 }
@@ -498,6 +499,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         profileMap,
         permissionMode,
         permissionModeLock,
+        permissionModeSource,
         handlePermissionModeChange,
         installableDepInstallers,
     } = props.agent;
@@ -1224,7 +1226,10 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                 <View onLayout={registerWizardSectionOffset('permission')}>
                                     <ItemGroup
                                         title={t('newSession.wizardSection.permission')}
-                                        description={t('newSession.selectPermissionModeDescription')}
+                                        description={[t('newSession.selectPermissionModeDescription'),
+                                            permissionModeSource === 'team' ? t('teams.settings.memberDefaults.teamDefault')
+                                                : permissionModeSource === 'group' ? t('teams.settings.memberDefaults.groupDefault') : null,
+                                        ].filter(Boolean).join(' · ')}
                                     >
                                         {permissionModeLock ? <Item
                                             testID="new-session-managed-permission"

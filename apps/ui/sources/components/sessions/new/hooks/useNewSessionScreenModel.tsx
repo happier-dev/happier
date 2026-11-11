@@ -2541,6 +2541,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         permissionModeForPersistence,
         permissionModeExplicit,
         permissionModeLock,
+        permissionModeSource,
         hasUserSelectedPermissionModeRef,
         permissionModeRef,
         applyPermissionMode,
@@ -4440,6 +4441,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             profileMap,
             permissionMode,
             permissionModeLock,
+            permissionModeSource,
             handlePermissionModeChange,
         },
         machine: {
@@ -4566,6 +4568,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         model: {
             permissionMode,
             permissionModeLock,
+            permissionModeSource,
             handlePermissionModeChange,
             modelMode,
             setModelMode: setDraftModelMode,

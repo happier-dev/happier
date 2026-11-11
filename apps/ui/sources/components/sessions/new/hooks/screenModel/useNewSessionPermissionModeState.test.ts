@@ -53,8 +53,10 @@ describe('useNewSessionPermissionModeState authored draft intent', () => {
         const hook = await renderHook(useNewSessionPermissionModeState, { initialProps });
         await hook.rerender({ ...initialProps, managedDefaults });
         expect(hook.getCurrent().permissionMode).toBe('read-only');
+        expect(hook.getCurrent().permissionModeSource).toBe('team');
         await act(async () => { hook.getCurrent().handlePermissionModeChange(permissionMode); });
         expect(hook.getCurrent().permissionMode).toBe(permissionMode);
+        expect(hook.getCurrent().permissionModeSource).toBe('explicit');
         await hook.rerender({ ...initialProps, managedDefaults: { ...managedDefaults, homeDefaults: {} } });
         expect(hook.getCurrent().permissionMode).toBe(permissionMode);
     });

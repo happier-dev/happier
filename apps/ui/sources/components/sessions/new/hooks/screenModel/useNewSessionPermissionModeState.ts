@@ -40,6 +40,7 @@ export function useNewSessionPermissionModeState(params: Readonly<{
     permissionModeForPersistence: PermissionMode;
     permissionModeExplicit: boolean;
     permissionModeLock: OrganizationPolicyLock | null;
+    permissionModeSource: ReturnType<typeof resolveNewSessionDefaultPermissionModeDecision>['source'];
     hasUserSelectedPermissionModeRef: React.MutableRefObject<boolean>;
     permissionModeRef: React.MutableRefObject<PermissionMode>;
     applyPermissionMode: (mode: PermissionMode, source: 'user' | 'auto') => void;
@@ -120,6 +121,7 @@ export function useNewSessionPermissionModeState(params: Readonly<{
         permissionModeForPersistence: explicitPermissionMode ?? 'default',
         permissionModeExplicit: explicitPermissionMode !== undefined,
         permissionModeLock: decision.lock,
+        permissionModeSource: decision.source,
         hasUserSelectedPermissionModeRef,
         permissionModeRef,
         applyPermissionMode,

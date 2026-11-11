@@ -44,6 +44,7 @@ type NewSessionPermissionModeInput = Readonly<{
 export function resolveNewSessionDefaultPermissionModeDecision(params: NewSessionPermissionModeInput): Readonly<{
     permissionMode: PermissionMode;
     lock: OrganizationPolicyLock | null;
+    source: import('@happier-dev/protocol/teams/managedDefaults').ResolvedManagedSessionDefaults['permissionMode']['source'];
 }> {
     const { agentType, backendTarget, accountDefaults, profileDefaultsByTargetKey, legacyProfileDefaultPermissionMode } = params;
     const effectiveTarget = backendTarget ?? { kind: 'backend', backendId: agentType };
@@ -66,6 +67,7 @@ export function resolveNewSessionDefaultPermissionModeDecision(params: NewSessio
     return {
         permissionMode: normalizePermissionModeForAgentType(decision.value ?? 'default', agentType, params.sessionModeDescriptor),
         lock: decision.lock,
+        source: decision.source,
     };
 }
 
