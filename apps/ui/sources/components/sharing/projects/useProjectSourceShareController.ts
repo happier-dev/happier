@@ -13,6 +13,21 @@ const NO_TEAMS: readonly [] = [];
 const IDLE: ShareOperationModel = { kind: 'idle' };
 const EMPTY_OPERATIONS: Readonly<Record<string, ShareOperationModel>> = {};
 
+/** The Source owner supplies a typed issue; keep its recovery sentence in the ShareSheet row. */
+export function presentProjectSourceShareFailure(code: string): string | null {
+    switch (code) {
+        case 'source_conflict': return t('projects.sources.changed');
+        case 'outcome_unknown': return t('projects.sources.outcomeUnknown');
+        case 'source_access_denied':
+        case 'source_unavailable': return t('projects.sources.unavailable');
+        case 'home_unreachable': return t('projects.sources.offlineReason', { home: t('common.home') });
+        case 'source_backend_unavailable': return t('projects.sources.backendUnavailable');
+        case 'source_invalid': return t('projects.sources.addressInvalid');
+        case 'source_save_failed': return t('projects.sources.saveFailed');
+        default: return null;
+    }
+}
+
 /** Audience intents use the selected Source's acknowledged revision and its one update Action. */
 export function useProjectSourceShareController(input: Readonly<{
     controller: ProjectSourcesController;
@@ -58,7 +73,7 @@ export function useProjectSourceShareController(input: Readonly<{
         } else {
             const code = result && !result.ok ? result.error : controller.getSnapshot().issue ?? 'source_save_failed';
             setOperations((previous) => ({ ...previous, [key]: { kind: 'error', error: {
-                code, message: t('errors.operationFailed'), retryable: code !== 'source_conflict' && code !== 'outcome_unknown',
+                code, message: presentProjectSourceShareFailure(code) ?? t('errors.operationFailed'), retryable: code !== 'source_conflict' && code !== 'outcome_unknown',
             } } }));
         }
     }, [controller]);

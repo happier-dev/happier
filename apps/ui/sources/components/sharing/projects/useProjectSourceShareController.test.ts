@@ -5,7 +5,7 @@ import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/acti
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
 import { createProjectSourcesController } from '@/components/projects/sources/projectSourcesController';
-import { useProjectSourceShareController } from './useProjectSourceShareController';
+import { presentProjectSourceShareFailure, useProjectSourceShareController } from './useProjectSourceShareController';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { getStorage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -18,6 +18,14 @@ const repository = { provider: { id: 'github', kind: 'github', displayName: 'Git
     repository: { nameWithOwner: 'owner/repo', visibility: 'private' }, protocol: 'https' } satisfies ProjectSourceRepositorySelectorV1;
 
 describe('Source audience ShareSheet controller', () => {
+    it('keeps typed Source mutation reasons in the row presentation', () => {
+        expect(presentProjectSourceShareFailure('source_conflict')).toBe(t('projects.sources.changed'));
+        expect(presentProjectSourceShareFailure('outcome_unknown')).toBe(t('projects.sources.outcomeUnknown'));
+        expect(presentProjectSourceShareFailure('source_access_denied')).toBe(t('projects.sources.unavailable'));
+        expect(presentProjectSourceShareFailure('source_save_failed')).toBe(t('projects.sources.saveFailed'));
+        expect(presentProjectSourceShareFailure('future_source_failure')).toBeNull();
+    });
+
     it('presents the named creator as You and never exposes unresolved audience ids as names', async () => {
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             ...createProjectSourceActionDeps({ ...scope, credentialAuthorityKind: 'account', assertCurrent() {}, workflowArtifacts: { read: async () => null },
