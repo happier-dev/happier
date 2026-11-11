@@ -12,7 +12,20 @@
  * for at all).
  */
 
+import type { TriageListSortV1 } from '@happier-dev/triage-protocol/v1';
 import type { GitlabInvolvementFact, GitlabKindId, GitlabRowFact } from '../types.js';
+
+const GITLAB_NATIVE_SORT_FIELDS = Object.freeze({ updated: 'updated_at', created: 'created_at' } as const);
+export const GITLAB_TRIAGE_SORT_FIELDS = Object.freeze(
+  Object.keys(GITLAB_NATIVE_SORT_FIELDS) as (keyof typeof GITLAB_NATIVE_SORT_FIELDS)[],
+);
+export function supportsGitlabTriageSortField(field: TriageListSortV1['field']): boolean {
+  return Object.prototype.hasOwnProperty.call(GITLAB_NATIVE_SORT_FIELDS, field);
+}
+export function mapGitlabNativeSortField(field: TriageListSortV1['field']): string | undefined {
+  const fields: Readonly<Partial<Record<TriageListSortV1['field'], string>>> = GITLAB_NATIVE_SORT_FIELDS;
+  return fields[field];
+}
 
 export const GITLAB_LANE_IDS = [
   'authored',
@@ -32,6 +45,7 @@ export type GitlabLaneRequest = Readonly<{
   involvement: GitlabInvolvementFact;
   /** A bounded native row fact this lane proves, beyond the canonical involvement. */
   nativeRowFact?: GitlabRowFact;
+  sort?: TriageListSortV1;
 }>;
 
 export type GitlabUnavailableLane = Readonly<{
@@ -60,6 +74,7 @@ export type GitlabLaneSelection = Readonly<{
    * one. `approved_by_ids[]` needs it; nothing else does.
    */
   viewerUserId: number | null;
+  sort?: TriageListSortV1;
 }>;
 
 /**
@@ -71,6 +86,7 @@ export function buildGitlabScanLanes(selection: GitlabLaneSelection): GitlabScan
   const unavailable: GitlabUnavailableLane[] = [];
   const kindId = selection.kindId;
   const path = `${selection.projectId === undefined ? '' : `/projects/${selection.projectId}`}${kindId === 'merge-request' ? '/merge_requests' : '/issues'}`;
+  const sort = selection.sort;
 
   requests.push({
     laneId: 'authored',
@@ -78,6 +94,7 @@ export function buildGitlabScanLanes(selection: GitlabLaneSelection): GitlabScan
     path,
     query: [['scope', 'created_by_me']],
     involvement: 'author',
+    ...(sort === undefined ? {} : { sort }),
   });
   requests.push({
     laneId: 'assigned',
@@ -85,6 +102,7 @@ export function buildGitlabScanLanes(selection: GitlabLaneSelection): GitlabScan
     path,
     query: [['scope', 'assigned_to_me']],
     involvement: 'assignee',
+    ...(sort === undefined ? {} : { sort }),
   });
 
   if (kindId === 'merge-request') {
@@ -96,6 +114,7 @@ export function buildGitlabScanLanes(selection: GitlabLaneSelection): GitlabScan
       path,
       query: [['scope', 'reviews_for_me']],
       involvement: 'reviewRequested',
+      ...(sort === undefined ? {} : { sort }),
     });
 
     if (selection.viewerUserId !== null) {
@@ -108,6 +127,7 @@ export function buildGitlabScanLanes(selection: GitlabLaneSelection): GitlabScan
         query: [['scope', 'all'], ['approved_by_ids[]', String(selection.viewerUserId)]],
         involvement: 'participating',
         nativeRowFact: GITLAB_APPROVED_ROW_FACT,
+        ...(sort === undefined ? {} : { sort }),
       });
     } else {
       unavailable.push({

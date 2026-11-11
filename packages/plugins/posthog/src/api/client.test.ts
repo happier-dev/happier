@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { toTriageSourceFailure } from '../source/operations.js';
 import { createBoundedInvocation } from '@happier-dev/triage-sources/runtime';
 
 import { normalizePosthogApiOrigin, type PosthogApiOrigin } from '../connect/origin.js';
@@ -41,11 +42,13 @@ function readObject(body: unknown): Readonly<Record<string, unknown>> | null {
 function setup(options?: Readonly<{
     respond?: (call: number) => Promise<Response>;
     materialize?: () => Promise<PosthogMaterializationOutcome>;
+    requestId?: string;
 }>) {
     const calls: Recorded[] = [];
     const materializeCalls: { origin: string; signal: AbortSignal }[] = [];
     const client = createPosthogApiClient({
         origin: ORIGIN,
+        ...(options?.requestId === undefined ? {} : { requestId: options.requestId }),
         now: () => NOW,
         // The materializer settles its own outcome: which header name is asked for,
         // and whether a withdrawn call is a cancellation or a refused account, belong
@@ -129,6 +132,14 @@ describe('createPosthogApiClient request construction', () => {
 });
 
 describe('createPosthogApiClient throttle classification', () => {
+    it('retains the originating read identity through the canonical source failure projection', async () => {
+        const { client } = setup({ requestId: 'originating-posthog-read', respond: async () => jsonResponse({}, { status: 429 }) });
+        const result = await client.requestJson({ method: 'GET', path: '/api/projects/7/error_tracking/issues/' }, readObject, {});
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        expect(toTriageSourceFailure(result.failure)).toMatchObject({ class: 'rateLimit', requestId: 'originating-posthog-read' });
+    });
+
     it('returns one typed rate-limit failure with the provider deadline and does not retry', async () => {
         const { client, calls } = setup({
             respond: async () => jsonResponse({ detail: 'throttled' }, {

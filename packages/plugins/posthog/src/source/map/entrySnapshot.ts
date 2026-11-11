@@ -37,6 +37,7 @@ export type PosthogEntrySnapshot = Readonly<{
     state: PosthogMappedState;
     /** Presentation-only environment label; never identity and never a route. */
     scopeLabel: string;
+    createdAtMs?: number;
     facts: readonly PosthogFact[];
     /** Detail-only: severity exists on the CRUD plane alone. */
     severity?: 'low' | 'medium' | 'high' | 'critical';
@@ -114,6 +115,7 @@ export function buildPosthogEntrySnapshot(input: PosthogSnapshotInput): PosthogE
         title: title.value,
         state: mapPosthogIssueState(input.row.nativeStatus),
         scopeLabel: scopeLabel.value,
+        ...(input.row.firstSeenMs === undefined ? {} : { createdAtMs: input.row.firstSeenMs }),
         facts: projectedFacts.facts,
         ...(severity === null ? {} : { severity }),
         projectionTruncated,

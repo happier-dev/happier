@@ -90,12 +90,16 @@ export async function requestLinearGraphql(input: Readonly<({
   return record(envelope.data);
 }
 
-export function connection(value: unknown): Readonly<{ nodes: unknown[]; after?: string }> {
+export function connection(value: unknown, direction: 'forward' | 'backward' = 'forward'): Readonly<{ nodes: unknown[]; after?: string }> {
   const data = record(value);
   const info = record(data.pageInfo);
-  if (!Array.isArray(data.nodes) || typeof info.hasNextPage !== 'boolean') throw linearFailure('pageInvalid');
-  if (info.hasNextPage && (typeof info.endCursor !== 'string' || info.endCursor.length === 0)) throw linearFailure('cursorMissing');
-  return { nodes: data.nodes, ...(info.hasNextPage ? { after: String(info.endCursor) } : {}) };
+  const hasMore = direction === 'backward' ? info.hasPreviousPage : info.hasNextPage;
+  const cursor = direction === 'backward' ? info.startCursor : info.endCursor;
+  if (!Array.isArray(data.nodes) || typeof hasMore !== 'boolean') throw linearFailure('pageInvalid');
+  if (hasMore && (typeof cursor !== 'string' || cursor.length === 0)) throw linearFailure('cursorMissing');
+  // Relay keeps the native edge order for last/before. Traversing backwards
+  // reverses that page as well, so pages concatenate into ascending order.
+  return { nodes: direction === 'backward' ? [...data.nodes].reverse() : data.nodes, ...(hasMore ? { after: String(cursor) } : {}) };
 }
 
 // Explicit provider-default geometry, never a result ceiling: every connection

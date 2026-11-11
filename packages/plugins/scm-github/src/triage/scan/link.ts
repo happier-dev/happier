@@ -1,3 +1,4 @@
+import type { TriageListSortV1 } from '@happier-dev/triage-protocol/v1';
 import { parseForgeLinkHeader, readForgeLinkHeaderValue } from '@happier-dev/triage-sources/runtime';
 
 import { GITHUB_API_ORIGIN } from '../../observations/githubProviderContracts.js';
@@ -32,7 +33,7 @@ export type GithubValidatedNextPageV1 = Readonly<{ url: string; page: number }>;
  */
 export function validateGithubSearchNextUrl(
   candidate: string,
-  expected: Readonly<{ laneQuery: string; perPage: number }>,
+  expected: Readonly<{ laneQuery: string; perPage: number; sort?: TriageListSortV1 }>,
 ): GithubValidatedNextPageV1 | null {
   let url: URL;
   try {
@@ -46,8 +47,8 @@ export function validateGithubSearchNextUrl(
 
   const parameters = url.searchParams;
   if (parameters.get('q') !== expected.laneQuery) return null;
-  if (parameters.get('sort') !== 'updated') return null;
-  if (parameters.get('order') !== 'desc') return null;
+  if (parameters.get('sort') !== (expected.sort?.field ?? 'updated')) return null;
+  if (parameters.get('order') !== (expected.sort?.direction ?? 'desc')) return null;
   if (parameters.get('advanced_search') !== 'true') return null;
 
   const perPage = Number(parameters.get('per_page'));
@@ -148,7 +149,7 @@ export function readValidatedGithubFollowUpPage(
 export function readValidatedGithubNextPage(
   headers: Readonly<Record<string, string>>,
   requestedUrl: string,
-  expected: Readonly<{ laneQuery: string; perPage: number }>,
+  expected: Readonly<{ laneQuery: string; perPage: number; sort?: TriageListSortV1 }>,
 ): Readonly<{ kind: 'ended' }> | Readonly<{ kind: 'next'; next: GithubValidatedNextPageV1 }>
   | Readonly<{ kind: 'invalid' }> {
   const parsed = parseForgeLinkHeader(readForgeLinkHeaderValue(headers));

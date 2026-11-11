@@ -1,3 +1,4 @@
+import { MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -127,6 +128,152 @@ async function runWalk(input: Readonly<{
 }
 
 describe('GitHub triage scan', () => {
+  it('retains realistic native head pages inside the source continuation allocation', async () => {
+    const transport = createStubGithubTransport({ respond: request => {
+      if (new URL(request.url).pathname === '/graphql') return githubChecksBatchResponse(request);
+      const url = new URL(request.url);
+      expect(url.searchParams.get('per_page')).toBe('10');
+      const page = Number(url.searchParams.get('page'));
+      const next = new URL(url); next.searchParams.set('page', String(page + 1));
+      const offset = laneOf(request) === 'review-requested' ? 0 : 100;
+      return { status: 200, headers: { Link: `<${next}>; rel="next"` },
+        body: githubSearchResponse({ items: Array.from({ length: 10 }, (_, index) => {
+          const value = offset + (page - 1) * 10 + index + 1;
+          return { ...GITHUB_SEARCH_ISSUE_ITEM, number: 10_000 - value,
+            updated_at: new Date(value * 1000).toISOString() };
+        }) }) };
+    } });
+    const deps = { client: await createTestGithubApiClient(transport), now: fixedClock(1_000), signal: transport.context.signal };
+    const input = { repositoryKeys: [REPOSITORY_KEY], sort: { field: 'updated' as const, direction: 'asc' as const } };
+    const first = await runGithubTriageScan({ ...input, page: { kind: 'initial', limit: 50 } }, deps);
+    expect(first.kind).toBe('page');
+    if (first.kind !== 'page') throw new Error('expected retained native rows');
+    expect(new TextEncoder().encode(first.continuation).byteLength).toBeLessThanOrEqual(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1);
+    expect(first.observations).toHaveLength(10);
+    expect(transport.requests.filter(request => new URL(request.url).pathname === '/search/issues')).toHaveLength(5);
+    const beforeReplay = transport.requests.length;
+    const replay = await runGithubTriageScan({ ...input, sort: { field: 'updated', direction: 'desc' },
+      page: { kind: 'continuation', token: first.continuation } }, deps);
+    expect(replay).toMatchObject({ kind: 'failed', failure: { code: 'github_scan_continuation_unrecognized' } });
+    expect(transport.requests).toHaveLength(beforeReplay);
+    const second = await runGithubTriageScan({ ...input, page: { kind: 'continuation', token: first.continuation } }, deps);
+    expect(second.kind).toBe('page');
+    if (second.kind === 'failed') throw new Error(second.failure.code);
+    expect(second.observations.map(row => row.kind === 'present' && row.snapshot.sourceUpdatedAtMs))
+      .toEqual(Array.from({ length: 10 }, (_, index) => (index + 11) * 1000));
+    expect(transport.requests.filter(request => new URL(request.url).pathname === '/search/issues')).toHaveLength(6);
+  });
+
+  it('refuses an unsupported field before fetching an unsorted source page', async () => {
+    const transport = createStubGithubTransport({ respond: emptyPage });
+    const result = await runGithubTriageScan({ repositoryKeys: [REPOSITORY_KEY],
+      sort: { field: 'due', direction: 'asc' }, page: { kind: 'initial', limit: 2 } },
+      { client: await createTestGithubApiClient(transport), now: fixedClock(1_000), signal: transport.context.signal });
+    expect(result).toMatchObject({ kind: 'failed', failure: { class: 'unsupportedContract', code: 'unsupported-sort' } });
+    expect(transport.requests).toHaveLength(0);
+  });
+
+  it.each([{ field: 'updated', direction: 'asc' }, { field: 'updated', direction: 'desc' },
+    { field: 'created', direction: 'asc' }, { field: 'created', direction: 'desc' }] as const)('merges $field $direction lane heads before paginating and retains unshown rows', async ({ field, direction }) => {
+    const transport = createStubGithubTransport({ respond: request => {
+      if (new URL(request.url).pathname === '/graphql') return githubChecksBatchResponse(request);
+      const url = new URL(request.url);
+      expect(url.searchParams.get('per_page')).toBe('2');
+      expect(url.searchParams.get('sort')).toBe(field);
+      expect(url.searchParams.get('order')).toBe(direction);
+      const lane = laneOf(request);
+      const values = lane === 'review-requested' ? [1, 4, 5, 8] : lane === 'assigned' ? [2, 3, 6, 7] : [];
+      const sorted = direction === 'asc' ? values : values.slice().reverse();
+      const page = Number(url.searchParams.get('page'));
+      const next = new URL(url); next.searchParams.set('page', String(page + 1));
+      return { status: 200, ...(page === 1 && values.length > 0 ? { headers: { Link: `<${next}>; rel="next"` } } : {}),
+        body: githubSearchResponse({ items: sorted.slice((page - 1) * 2, page * 2).map(value => ({
+          ...GITHUB_SEARCH_ISSUE_ITEM, number: 100 - value,
+          [field === 'updated' ? 'updated_at' : 'created_at']: new Date(value * 1_000).toISOString(),
+        })) }) };
+    } });
+    const deps = { client: await createTestGithubApiClient(transport), now: fixedClock(1_000), signal: transport.context.signal };
+    const input = { repositoryKeys: [REPOSITORY_KEY], sort: { field, direction } };
+    const first = await runGithubTriageScan({ ...input, page: { kind: 'initial', limit: 10 } }, deps);
+    expect(first.kind).toBe('page');
+    if (first.kind !== 'page') throw new Error('expected retained lane heads');
+    expect(first.observations.map(row => row.kind === 'present' && row.localRef.entryId))
+      .toEqual(direction === 'asc' ? ['99', '98', '97'] : ['92', '93', '94']);
+    expect(transport.requests.filter(request => new URL(request.url).pathname === '/search/issues')).toHaveLength(5);
+    const second = await runGithubTriageScan({ ...input, page: { kind: 'continuation', token: first.continuation } }, deps);
+    expect(second.kind).toBe('complete');
+    if (second.kind === 'failed') throw new Error(second.failure.code);
+    expect(second.observations.map(row => row.kind === 'present' && row.localRef.entryId))
+      .toEqual(direction === 'asc' ? ['96', '95', '94', '93', '92'] : ['95', '96', '97', '98', '99']);
+    expect(transport.requests.filter(request => new URL(request.url).pathname === '/search/issues')).toHaveLength(7);
+  });
+  it('merges grouped repository queries without expanding successful native groups', async () => {
+    const repositories = Array.from({ length: 7 }, (_, index) => `owner/repository-${index}`);
+    const transport = createStubGithubTransport({ respond: request => {
+      if (new URL(request.url).pathname === '/graphql') return githubChecksBatchResponse(request);
+      const query = laneQueryOf(request) ?? '';
+      const values = query.includes('review-requested:@me') ? [query.includes('repository-6') ? 1 : 4] : [];
+      return { status: 200, body: githubSearchResponse({ items: values.map(value => ({
+        ...GITHUB_SEARCH_ISSUE_ITEM, number: 100 - value, updated_at: new Date(value * 1000).toISOString(),
+      })) }) };
+    } });
+    const result = await runGithubTriageScan({ repositoryKeys: repositories,
+      sort: { field: 'updated', direction: 'asc' }, page: { kind: 'initial', limit: 10 } },
+      { client: await createTestGithubApiClient(transport), now: fixedClock(1_000), signal: transport.context.signal });
+    expect(result.kind).toBe('complete');
+    if (result.kind === 'failed') throw new Error(result.failure.code);
+    expect(result.observations.map(row => row.kind === 'present' && row.localRef.entryId)).toEqual(['99', '96']);
+    expect(transport.requests.filter(request => new URL(request.url).pathname === '/search/issues')).toHaveLength(10);
+  });
+
+  it('partitions the fetched-row budget across repository streams after grouped query refusal', async () => {
+    let fetchedRows = 0;
+    const transport = createStubGithubTransport({ respond: request => {
+      if (new URL(request.url).pathname === '/graphql') return githubChecksBatchResponse(request);
+      const query = laneQueryOf(request) ?? '';
+      if (query.includes(' OR ')) return { status: 422, body: { message: 'repository unavailable' } };
+      const size = Number(new URL(request.url).searchParams.get('per_page'));
+      const items = Array.from({ length: size }, (_, index) => ({ ...GITHUB_SEARCH_ISSUE_ITEM,
+        number: index + 1, updated_at: new Date((index + 1) * 1000).toISOString(),
+      }));
+      fetchedRows += items.length;
+      return { status: 200, body: githubSearchResponse({ items }) };
+    } });
+    const result = await runGithubTriageScan({ repositoryKeys: ['owner/a', 'owner/b'],
+      sort: { field: 'updated', direction: 'asc' }, page: { kind: 'initial', limit: 10 } },
+      { client: await createTestGithubApiClient(transport), now: fixedClock(1_000), signal: transport.context.signal });
+    expect(result.kind).not.toBe('failed');
+    expect(fetchedRows).toBe(10);
+    expect(transport.requests.filter(request => new URL(request.url).pathname === '/search/issues')).toHaveLength(15);
+  });
+
+  it('merges every repository head when GitHub decomposes a rejected grouped query', async () => {
+    const transport = createStubGithubTransport({ respond: request => {
+      if (new URL(request.url).pathname === '/graphql') return githubChecksBatchResponse(request);
+      const query = laneQueryOf(request) ?? '';
+      if (query.includes(' OR ')) return { status: 422, body: { message: 'repository unavailable' } };
+      const values = query.includes('review-requested:@me') ? query.includes('repo:owner/a') ? [4, 9, 10, 11] : [1, 2, 3, 8] : [];
+      const url = new URL(request.url); const page = Number(url.searchParams.get('page'));
+      const next = new URL(url); next.searchParams.set('page', String(page + 1));
+      return { status: 200, ...(page === 1 && values.length > 0 ? { headers: { Link: `<${next}>; rel="next"` } } : {}),
+        body: githubSearchResponse({ items: values.slice((page - 1) * 2, page * 2).map(value => ({
+          ...GITHUB_SEARCH_ISSUE_ITEM, number: 100 - value, updated_at: new Date(value * 1000).toISOString(),
+        })) }) };
+    } });
+    const input = { repositoryKeys: ['owner/a', 'owner/b'], sort: { field: 'updated' as const, direction: 'asc' as const } };
+    const deps = { client: await createTestGithubApiClient(transport), now: fixedClock(1_000), signal: transport.context.signal };
+    const first = await runGithubTriageScan({ ...input, page: { kind: 'initial', limit: 20 } }, deps);
+    expect(first.kind).toBe('page');
+    if (first.kind !== 'page') throw new Error('expected decomposed continuation');
+    expect(first.observations.map(row => row.kind === 'present' && row.localRef.entryId)).toEqual(['99', '98']);
+    expect(transport.requests.filter(request => new URL(request.url).pathname === '/search/issues')).toHaveLength(15);
+    const second = await runGithubTriageScan({ ...input, page: { kind: 'continuation', token: first.continuation } }, deps);
+    expect(second.kind).toBe('complete');
+    if (second.kind === 'failed') throw new Error(second.failure.code);
+    expect(second.observations.map(row => row.kind === 'present' && row.localRef.entryId)).toEqual(['97', '96', '92', '91', '90', '89']);
+    expect(transport.requests.filter(request => new URL(request.url).pathname === '/search/issues')).toHaveLength(17);
+  });
+
   it('searches older text matches at GitHub within the configured repository and involvement lanes', async () => {
     const transport = createStubGithubTransport({ respond: request => {
       if (new URL(request.url).pathname === '/graphql') return githubChecksBatchResponse(request);

@@ -1,3 +1,4 @@
+import type { TriageListSortV1 } from '@happier-dev/triage-protocol/v1';
 import {
   decodeTriagePagingTokenV1,
   encodeTriagePagingTokenV1,
@@ -11,8 +12,10 @@ import {
 
 import { validateGithubSearchNextUrl } from './link.js';
 import {
+  githubScanLaneScopes,
   githubScanMaxPagesPerLane,
   githubScanNativePageSize,
+  githubScanSortedStreamCount,
   readGithubScanWalkHealth,
   type GithubScanInvocationFrontierV1,
   type GithubScanLaneFrontierV1,
@@ -27,8 +30,8 @@ import { GITHUB_SCAN_LANE_ORDER_V1, type GithubScanLaneIdV1 } from './query.js';
  * It therefore carries exactly the invocation-local lane frontier — the page geometry, the
  * next round-robin lane, the walk's sticky health reason names, and each lane's validated
  * provider next URL — and no credential,
- * authorization header, account ref, viewer identity, delivered-id history, accumulated row
- * array, or target timestamp.
+ * authorization header, account ref, viewer identity, delivered-id history, or target timestamp. Ordered walks also retain
+ * at most one native page of unshown rows per query in this existing token.
  *
  * It is emphatically not a durable checkpoint. Nothing reads it but this module, nothing
  * writes it but this module, and the walk it resumes claims no window, epoch, or
@@ -53,6 +56,8 @@ type LaneRecord = Readonly<{
   pagesConsumed: number;
   ended: boolean;
   repositoryIndex: number | null;
+  pending?: readonly unknown[];
+  scopeIndex?: number;
 }>;
 
 export type GithubScanResumeV1 = Readonly<{
@@ -65,6 +70,9 @@ export type GithubScanResumeV1 = Readonly<{
     pagesConsumed: number;
     ended: boolean;
     repositoryIndex: number | null;
+    pending?: readonly unknown[];
+    scopeIndex?: number;
+    laneId?: GithubScanLaneIdV1;
   }>[];
 }>;
 
@@ -83,6 +91,7 @@ export function encodeGithubScanContinuation(
     pagesConsumed: lane.pagesConsumed,
     ended: lane.ended,
     repositoryIndex: lane.repositoryIndex,
+    ...(frontier.sort === undefined ? {} : { pending: lane.pending, scopeIndex: lane.scopeIndex }),
   }));
   return encodeTriagePagingTokenV1({
     v: CONTINUATION_VERSION,
@@ -113,6 +122,7 @@ export function decodeGithubScanContinuation(
     buildLaneQuery: (laneId: GithubScanLaneIdV1, repositoryKeys: readonly string[] | null) => string;
     repositoryGroups?: readonly (readonly string[] | null)[];
     scopeKey?: string;
+    sort?: TriageListSortV1;
     completedSinceMs?: number;
   }>,
 ): GithubScanResumeV1 | null {
@@ -125,14 +135,15 @@ export function decodeGithubScanContinuation(
   if (scanLimit === null) return null;
   // The geometry is DERIVED, never trusted: a token claiming a wider native page than the
   // bound limit allows would raise this walk's ceiling above the admitted page size.
-  const nativePageSize = githubScanNativePageSize(scanLimit);
+  const nativePageSize = githubScanNativePageSize(scanLimit, expected.sort === undefined ? 1
+    : githubScanSortedStreamCount(expected.repositoryGroups));
   if (record.nativePageSize !== nativePageSize) return null;
 
   const groups = expected.repositoryGroups ?? [null];
   const groupIndex = readCount(record.groupIndex, 0);
   if (groupIndex === null || groupIndex >= groups.length) return null;
-  const repositoryKeys = groups[groupIndex] ?? null;
-  const laneCount = GITHUB_SCAN_LANE_ORDER_V1.length;
+  const scopes = githubScanLaneScopes(groups, groupIndex, expected.sort);
+  const laneCount = GITHUB_SCAN_LANE_ORDER_V1.length * scopes.length;
   const nextLaneIndex = readCount(record.nextLaneIndex, 0);
   if (nextLaneIndex === null || nextLaneIndex >= laneCount) return null;
 
@@ -140,14 +151,20 @@ export function decodeGithubScanContinuation(
   if (walkHealth === null) return null;
 
   const raw = record.lanes;
-  if (!Array.isArray(raw) || raw.length !== laneCount) return null;
+  if (!Array.isArray(raw) || (expected.sort === undefined && raw.length !== laneCount)) return null;
 
   const lanes: GithubScanResumeV1['lanes'][number][] = [];
   for (const [index, entry] of raw.entries()) {
-    const laneId = GITHUB_SCAN_LANE_ORDER_V1[index];
     const lane = readRecord(entry);
+    const scopeIndex = expected.sort === undefined ? groupIndex : readCount(lane?.scopeIndex, 0);
+    if (scopeIndex === null || scopeIndex >= groups.length) return null;
+    const laneId = expected.sort === undefined ? GITHUB_SCAN_LANE_ORDER_V1[index]
+      : GITHUB_SCAN_LANE_ORDER_V1.find(id => id === lane?.laneId);
+    const repositoryKeys = groups[scopeIndex] ?? null;
     if (laneId === undefined || lane === null || lane.laneId !== laneId) return null;
     if (typeof lane.ended !== 'boolean') return null;
+    if (expected.sort !== undefined && (!Array.isArray(lane.pending) || lane.pending.length > nativePageSize)) return null;
+    const pending = expected.sort === undefined ? [] : lane.pending as unknown[];
     const repositoryIndex = lane.repositoryIndex === null ? null : readCount(lane.repositoryIndex, 0);
     if (lane.repositoryIndex !== null && (repositoryIndex === null || repositoryKeys === null || repositoryIndex >= repositoryKeys.length)) return null;
     const pagesConsumed = readCount(lane.pagesConsumed, 0);
@@ -157,7 +174,7 @@ export function decodeGithubScanContinuation(
       // No next URL and not ended means the lane never started. A lane that consumed
       // pages and has no next URL is a finished lane, and must say so.
       if (!lane.ended && pagesConsumed !== 0) return null;
-      lanes.push({ frontier: { kind: 'initial' }, pagesConsumed, ended: lane.ended, repositoryIndex });
+      lanes.push({ frontier: { kind: 'initial' }, pagesConsumed, ended: lane.ended, repositoryIndex, pending, laneId, ...(expected.sort === undefined ? {} : { scopeIndex }) });
       continue;
     }
     if (typeof lane.nextUrl !== 'string') return null;
@@ -168,6 +185,7 @@ export function decodeGithubScanContinuation(
     const validated = validateGithubSearchNextUrl(lane.nextUrl, {
       laneQuery: expected.buildLaneQuery(laneId, repositoryIndex === null ? repositoryKeys : [repositoryKeys![repositoryIndex]!]),
       perPage,
+      ...(expected.sort === undefined ? {} : { sort: expected.sort }),
     });
     // One consumed page advances the frontier past page 1. A token that points
     // at that page again (or any earlier page) cannot make progress and would
@@ -179,12 +197,26 @@ export function decodeGithubScanContinuation(
       pagesConsumed,
       ended: lane.ended,
       repositoryIndex,
+      pending,
+      laneId,
+      ...(expected.sort === undefined ? {} : { scopeIndex }),
     });
+  }
+
+  if (expected.sort !== undefined) {
+    // Every configured native lane is either its original grouped query or all of
+    // that group's repository members after the existing 422/ceiling decomposition.
+    for (const [scopeIndex, scope] of groups.entries()) for (const laneId of GITHUB_SCAN_LANE_ORDER_V1) {
+      const members = lanes.filter(lane => lane.scopeIndex === scopeIndex && lane.laneId === laneId);
+      if (members.length === 1 && members[0]?.repositoryIndex === null) continue;
+      if (scope === null || members.length !== scope.length
+        || scope.some((_key, index) => members.filter(lane => lane.repositoryIndex === index).length !== 1)) return null;
+    }
   }
 
   // A continuation whose every lane has ended describes a walk that was already complete.
   // Honouring it would answer a page request with a settled walk's leftovers.
-  if (groupIndex + 1 === groups.length && lanes.every((lane) => lane.ended)) return null;
+  if ((expected.sort !== undefined || groupIndex + 1 === groups.length) && lanes.every((lane) => lane.ended && (lane.pending?.length ?? 0) === 0)) return null;
 
   return Object.freeze({
     scanLimit,

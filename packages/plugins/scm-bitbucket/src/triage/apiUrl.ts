@@ -17,3 +17,15 @@ export const BITBUCKET_CLOUD_API_BASE_URL = `${BITBUCKET_CLOUD_API_ORIGIN}/2.0`;
 export function readBitbucketApiUrl(candidate: unknown): string | null {
   return admitForgeRequestUrl(candidate, BITBUCKET_CLOUD_API_BASE_URL);
 }
+
+/** A resumed collection keeps the route and fixed query selected by its source owner. */
+export function matchesBitbucketCollectionRoute(candidate: string, seed: string): boolean {
+  const expected = new URL(seed);
+  const actual = new URL(candidate);
+  if (actual.pathname !== expected.pathname) return false;
+  for (const [key, value] of expected.searchParams) {
+    const actualValues = actual.searchParams.getAll(key);
+    if (actualValues.length !== 1 || actualValues[0] !== value) return false;
+  }
+  return true;
+}

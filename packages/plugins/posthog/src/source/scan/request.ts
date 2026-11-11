@@ -1,3 +1,4 @@
+import type { TriageListSortV1 } from '@happier-dev/triage-protocol/v1';
 /**
  * Scan request construction.
  *
@@ -14,6 +15,15 @@
  * avoidable offset churn; it does not prove that nothing moved.
  */
 
+/** Native field names are the source's capability and request-ordering authority. */
+export const POSTHOG_NATIVE_SORT_FIELDS = Object.freeze({ updated: 'last_seen', created: 'first_seen' } as const);
+export type PosthogSortField = keyof typeof POSTHOG_NATIVE_SORT_FIELDS;
+export type PosthogFieldSort = Readonly<{ field: PosthogSortField; direction: TriageListSortV1['direction'] }>;
+export const POSTHOG_TRIAGE_SORT_FIELDS = Object.freeze(Object.keys(POSTHOG_NATIVE_SORT_FIELDS) as PosthogSortField[]);
+export function isPosthogSortField(field: string): field is PosthogSortField {
+    return Object.prototype.hasOwnProperty.call(POSTHOG_NATIVE_SORT_FIELDS, field);
+}
+
 /** Provider page-size ceiling for `query/issues/`, from the published schema. */
 export const POSTHOG_ISSUES_QUERY_MAX_LIMIT = 100;
 
@@ -28,8 +38,8 @@ export type PosthogIssuesQueryBody = Readonly<{
     dateRange: Readonly<{ date_from: string; date_to: string | null }>;
     status: 'all';
     filterTestAccounts: false;
-    orderBy: 'first_seen';
-    orderDirection: 'ASC';
+    orderBy: (typeof POSTHOG_NATIVE_SORT_FIELDS)[PosthogSortField];
+    orderDirection: 'ASC' | 'DESC';
     limit: number;
     offset: number;
     volumeResolution: 0;
@@ -51,13 +61,14 @@ export function buildPosthogIssuesQueryBody(
     window: PosthogResolvedWindow,
     nativeLimit: number,
     offset: number,
+    sort?: PosthogFieldSort,
 ): PosthogIssuesQueryBody {
     return {
         dateRange: { date_from: window.from, date_to: window.to },
         status: 'all',
         filterTestAccounts: false,
-        orderBy: 'first_seen',
-        orderDirection: 'ASC',
+        orderBy: sort === undefined ? POSTHOG_NATIVE_SORT_FIELDS.created : POSTHOG_NATIVE_SORT_FIELDS[sort.field],
+        orderDirection: sort?.direction === 'desc' ? 'DESC' : 'ASC',
         limit: nativeLimit,
         offset,
         volumeResolution: 0,

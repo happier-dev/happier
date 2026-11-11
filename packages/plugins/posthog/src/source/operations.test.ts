@@ -965,6 +965,22 @@ describe('PostHog Triage source operations', () => {
         expect(result.observation).not.toHaveProperty('enrichmentFailure');
     });
 
+    it.each(['malformedBody', 'scopeRefusal'] as const)('retains the issued get identity for a registered %s failure', async (failure) => {
+        const requestId = 'adf83505-9059-461a-8eb6-c24f30241888';
+        const h = context([{}]);
+        const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate: POSTHOG_PLUGIN.activate, activateAccount }, services: h.value.services });
+        try {
+            const result = TriageGetResultV1Schema.parse(await kit.invokeAction(POSTHOG_ACTION_IDS.get, {
+                v: 1, instance: configuredInstance(), localRef: {
+                    kindId: 'error-issue', entryId: crudIssueRead.id,
+                    collisionScope: `posthog:https://eu.posthog.com:${failure === 'scopeRefusal'
+                        ? '00000000-0000-4000-8000-0000000000ff' : '00000000-0000-4000-8000-0000000000d1'}`,
+                },
+            }, { surface: 'ui', requestId }));
+            expect(result).toMatchObject({ kind: 'unresolved', failure: { class: 'unsupportedContract', requestId } });
+        } finally { await kit.dispose(); }
+    });
+
     it('performs CRUD-first get and returns one strict present observation', async () => {
         const host = context([crudIssueRead, queryIssueDetail]);
         const instance = configuredInstance();
@@ -1842,4 +1858,61 @@ describe('PostHog sampled occurrence coverage', () => {
         expect(result.events.map((event) => event.uuid)).toEqual([normal.uuid]);
         expect(result.omittedRowCount).toBe(1);
     });
+});
+
+
+describe('PostHog source-global field ordering', () => {
+    it.each([['updated', 'desc'], ['updated', 'asc'], ['created', 'desc'], ['created', 'asc']] as const)('merges native %s %s heads across environments and retains unshown rows', async (field, direction) => {
+        const base = configuredInstance();
+        const configuration = decodePosthogConfiguration(base.configuration);
+        if (configuration === null) throw new Error('fixture config');
+        const secondEnvironment = { ...configuration.environments[0]!, teamPathId: 4822, teamUuid: '00000000-0000-4000-8000-0000000000d2' };
+        const encoded = encodePosthogConfiguration({ ...configuration, environments: [...configuration.environments, secondEnvironment], include: { kind: 'selected', unitIds: [...configuration.environments.map((environment) => environment.teamUuid), secondEnvironment.teamUuid] } });
+        if (!encoded.ok) throw new Error('fixture config');
+        const instance = { ...base, configuration: { v: 1, token: encoded.token } };
+        const row = (id: number, day: number) => ({ ...queryIssuesPage2.results[0], id: '00000000-0000-4000-8000-' + String(id).padStart(12, '0'), first_seen: new Date(Date.UTC(2026, 7, day)).toISOString(), last_seen: new Date(Date.UTC(2026, 7, day)).toISOString() });
+        const host = context([
+            { results: direction === 'desc' ? [row(1, 8), row(2, 2)] : [row(2, 2), row(1, 8)], hasMore: true, nextOffset: 2, offset: 0, limit: 2 },
+            { results: direction === 'desc' ? [row(3, 9), row(4, 3)] : [row(4, 3), row(3, 9)], hasMore: false, offset: 0, limit: 2 },
+            { results: [row(5, direction === 'desc' ? 1 : 10)], hasMore: false, offset: 2, limit: 2 },
+        ]);
+        const sort = { field, direction };
+        const preparation = await scanPosthogSource({ v: 1, instance, sort, page: { kind: 'initial', limit: 2 } }, host.value);
+        expect(preparation.kind).toBe('page');
+        if (preparation.kind !== 'page') return;
+        expect(preparation.observations).toEqual([]);
+        expect(host.request).toHaveBeenCalledTimes(1);
+        const first = await scanPosthogSource({ v: 1, instance, sort, page: { kind: 'continuation', continuation: preparation.continuation } }, host.value);
+        expect(first.kind).toBe('page');
+        if (first.kind !== 'page') return;
+        expect(first.observations.map((entry) => entry.localRef.entryId)).toEqual(direction === 'desc' ? [row(3, 9).id, row(1, 8).id] : [row(2, 2).id, row(4, 3).id]);
+        const second = await scanPosthogSource({ v: 1, instance, sort, page: { kind: 'continuation', continuation: first.continuation } }, host.value);
+        expect(second.kind).toBe('page');
+        if (second.kind === 'failed') return;
+        expect(second.observations.map((entry) => entry.localRef.entryId)).toEqual(direction === 'desc' ? [row(4, 3).id, row(2, 2).id] : [row(1, 8).id, row(3, 9).id]);
+        expect(host.request).toHaveBeenCalledTimes(direction === 'desc' ? 2 : 3);
+        if (second.kind !== 'page') return;
+        const third = await scanPosthogSource({ v: 1, instance, sort, page: { kind: 'continuation', continuation: second.continuation } }, host.value);
+        expect(third.kind).toBe('complete');
+        if (third.kind === 'failed') return;
+        expect(third.observations.map((entry) => entry.localRef.entryId)).toEqual([row(5, 1).id]);
+        expect(host.request).toHaveBeenCalledTimes(3);
+        for (const [request] of host.request.mock.calls) {
+            const body = JSON.parse(new TextDecoder().decode((request as unknown as { body: Uint8Array }).body));
+            expect(body).toMatchObject({ orderBy: field === 'created' ? 'first_seen' : 'last_seen', orderDirection: direction === 'desc' ? 'DESC' : 'ASC', limit: 2 });
+        }
+        expect(TriageScanResultV1Schema.safeParse(third).success).toBe(true);
+    });
+});
+
+it.each([['malformed', 2, 2], ['advancing empty', 200, 0]] as const)('source-global field budget charges %s native positions before following another page', async (_shape, limit, rawCount) => {
+    const base = configuredInstance();
+    const configuration = decodePosthogConfiguration(base.configuration);
+    if (configuration === null) throw new Error('fixture config');
+    const encoded = encodePosthogConfiguration({ ...configuration, include: { kind: 'selected', unitIds: configuration.environments.map((environment) => environment.teamUuid) } });
+    if (!encoded.ok) throw new Error('fixture config');
+    const host = context([{ results: Array.from({ length: rawCount }, () => ({ id: 'unreadable' })), hasMore: true, nextOffset: Math.max(1, rawCount), offset: 0, limit: Math.min(limit, 100) }]);
+    const result = await scanPosthogSource({ v: 1, instance: { ...base, configuration: { v: 1, token: encoded.token } }, sort: { field: 'updated', direction: 'desc' }, page: { kind: 'initial', limit } }, host.value);
+    expect(result).toMatchObject({ kind: 'page', observations: [], evidence: { kind: 'partial' } });
+    expect(host.request).toHaveBeenCalledTimes(1);
 });

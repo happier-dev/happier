@@ -39,12 +39,14 @@ export type GitlabNextPageSelection =
   | Readonly<{ kind: 'refused' }>;
 
 /** A native page may advance inside its resource, never into another project. */
-export function isGitlabPageWithinResource(candidate: string, resourceUrl: string): boolean {
+export function isGitlabPageWithinResource(candidate: string, resourceUrl: string, preserveQuery = false): boolean {
   try {
     const url = new URL(candidate);
     const resource = new URL(resourceUrl);
     return url.origin === resource.origin && url.pathname === resource.pathname
-      && url.username === '' && url.password === '' && url.hash === '';
+      && url.username === '' && url.password === '' && url.hash === ''
+      && (!preserveQuery || [...resource.searchParams.keys()].every(key => key === 'page'
+        || JSON.stringify(url.searchParams.getAll(key)) === JSON.stringify(resource.searchParams.getAll(key))));
   } catch { return false; }
 }
 

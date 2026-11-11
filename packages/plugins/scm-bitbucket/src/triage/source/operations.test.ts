@@ -1309,3 +1309,69 @@ it('discovers workspaces through Account registration and selected credentials o
     expect(requests).toHaveLength(1);
   } finally { await kit.dispose(); }
 });
+
+
+describe('Bitbucket source-global field ordering', () => {
+  it.each([['updated', 'desc'], ['updated', 'asc'], ['created', 'desc'], ['created', 'asc']] as const)('merges native %s %s lane heads and retains the rest across source pages', async (field, direction) => {
+    const { connectedAccounts } = createConnectedAccountsStub({ accounts: [{ accountId: 'account-1' }] });
+    const row = (id: number, day: number) => ({ ...pageOne.values[0], id, created_on: new Date(Date.UTC(2026, 7, day)).toISOString(), updated_on: new Date(Date.UTC(2026, 7, day)).toISOString() });
+    const authored = Array.from({ length: 10 }, (_, i) => row(i + 1, 20 - i * 2));
+    const reviewed = Array.from({ length: 10 }, (_, i) => row(i + 11, 21 - i * 2));
+    if (direction === 'asc') { authored.reverse(); reviewed.reverse(); }
+    const { http, requests } = createHttpStub((url) => {
+      if (url.includes('/2.0/user')) return { body: currentUser };
+      if (url.includes('/repositories/') && !url.includes('/pullrequests')) return { body: { values: [repositoriesPage.values[0]] } };
+      if (url.includes('/repositories/') && url.includes('/pullrequests')) return { body: { values: reviewed } };
+      if (url.includes('/pullrequests/')) {
+        if (new URL(url).searchParams.get('page') === '2') return { body: { values: [row(21, direction === 'desc' ? 1 : 22)] } };
+        const next = new URL(url);
+        next.searchParams.set('page', '2');
+        return { body: { values: authored, next: next.toString() } };
+      }
+      return undefined;
+    });
+    const instance = configuredInstance();
+    const sort = { field, direction };
+    const preparation = await scanBitbucketSource(createRuntime(connectedAccounts, http), { v: 1, instance, sort, page: { kind: 'initial', limit: 10 } });
+    expect(preparation.kind).toBe('page');
+    if (preparation.kind !== 'page') return;
+    expect(preparation.observations).toEqual([]);
+    expect(requests.filter((request) => request.url.includes('/pullrequests'))).toHaveLength(1);
+    const first = await scanBitbucketSource(createRuntime(connectedAccounts, http), { v: 1, instance, sort, page: { kind: 'continuation', continuation: preparation.continuation } });
+    expect(first.kind).toBe('page');
+    if (first.kind !== 'page') return;
+    expect(first.observations.map((entry) => entry.localRef.entryId)).toEqual(direction === 'desc' ? ['11','1','12','2','13','3','14','4','15','5'] : ['10','20','9','19','8','18','7','17','6','16']);
+    const second = await scanBitbucketSource(createRuntime(connectedAccounts, http), { v: 1, instance, sort, page: { kind: 'continuation', continuation: first.continuation } });
+    expect(second.kind).toBe('page');
+    if (second.kind === 'failed') return;
+    expect(second.observations.map((entry) => entry.localRef.entryId)).toEqual(direction === 'desc' ? ['16','6','17','7','18','8','19','9','20','10'] : ['5','15','4','14','3','13','2','12','1','11']);
+    expect(requests.filter((request) => request.url.includes('/pullrequests'))).toHaveLength(direction === 'desc' ? 2 : 3);
+    if (second.kind !== 'page') return;
+    const third = await scanBitbucketSource(createRuntime(connectedAccounts, http), { v: 1, instance, sort, page: { kind: 'continuation', continuation: second.continuation } });
+    expect(third.kind).toBe('complete');
+    if (third.kind === 'failed') return;
+    expect(third.observations.map((entry) => entry.localRef.entryId)).toEqual(['21']);
+    const nativeQueries = requests.filter((request) => request.url.includes('/pullrequests'));
+    expect(nativeQueries).toHaveLength(3);
+    for (const request of nativeQueries) expect(new URL(request.url).searchParams.get('sort')).toBe((direction === 'desc' ? '-' : '') + (field === 'created' ? 'created_on' : 'updated_on'));
+    for (const request of nativeQueries) expect(new URL(request.url).searchParams.get('pagelen')).toBe('10');
+    expect(TriageScanResultV1Schema.safeParse(third).success).toBe(true);
+  });
+});
+
+it.each([['malformed', 10, 10], ['advancing empty', 100, 0]] as const)('source-global field budget charges %s native positions before following another page', async (_shape, limit, rawCount) => {
+  const { connectedAccounts } = createConnectedAccountsStub({ accounts: [{ accountId: 'account-1' }] });
+  const { http, requests } = createHttpStub((url) => {
+    if (url.includes('/2.0/user')) return { body: currentUser };
+    if (url.includes('/repositories/') && !url.includes('/pullrequests')) return { body: { values: [] } };
+    if (url.includes('/pullrequests/')) {
+      const next = new URL(url);
+      next.searchParams.set('page', '2');
+      return { body: { values: Array.from({ length: rawCount }, () => ({ id: 'unreadable' })), next: next.toString() } };
+    }
+    return undefined;
+  });
+  const result = await scanBitbucketSource(createRuntime(connectedAccounts, http), { v: 1, instance: configuredInstance(), sort: { field: 'updated', direction: 'desc' }, page: { kind: 'initial', limit } });
+  expect(result).toMatchObject({ kind: 'page', observations: [], evidence: { kind: 'partial' } });
+  expect(requests.filter((request) => request.url.includes('/pullrequests'))).toHaveLength(1);
+});

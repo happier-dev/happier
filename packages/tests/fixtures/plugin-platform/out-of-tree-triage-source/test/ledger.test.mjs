@@ -62,3 +62,16 @@ test('the existing curated and 2,000-row QA spaces retain their provider content
     assert.deepEqual(qa.at(-1), readLedgerRow('acme/ledger-qa', 'LGQ-1999'));
     assert.equal(readLedgerRow('acme/ledger-qa', 'LGQ-2000'), null);
 });
+
+for (const field of ['updated', 'created']) {
+    test(`FIELD-SORT-1111: provider orders ${field} before bounding pages`, () => {
+        const sort = { field, direction: 'asc' };
+        const first = readLedgerPage(SHALLOW_SPACE, 0, 2, sort);
+        const second = readLedgerPage(SHALLOW_SPACE, first.nextOffset, 2, sort);
+        assert.deepEqual(first.rows.map((row) => row.ref), ['LGQ-2', 'LGQ-1']);
+        assert.deepEqual(second.rows.map((row) => row.ref), ['LGQ-0']);
+        assert.equal(second.nextOffset, null);
+        const descending = readLedgerPage(SHALLOW_SPACE, 0, 2, { field, direction: 'desc' });
+        assert.deepEqual(descending.rows.map((row) => row.ref), ['LGQ-0', 'LGQ-1']);
+    });
+}

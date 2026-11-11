@@ -3,13 +3,18 @@ import {
   defineProtocolString, defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
-  TriageSourceFailureV1Schema,
+  TriageSourceFailureV1Schema, TriageListSortV1Schema, type TriageListSortFieldV1,
   TriageConfiguredSourceConnectedAccountInstanceV1Schema, TriageSourceEntryLocalRefV1Schema,
   TriageEntryLocatorV1Schema,
   TriageSourceScopeSelectionV1Schema, TriageSourceScopeUnitV1Schema,
   TriageSourceInstanceConfigurationV1Schema,
   type TriageSourceScopeUnitV1, type TriageSourceScopeSelectionV1, type TriageSourceInstanceDraftV1,
 } from '@happier-dev/triage-protocol/v1';
+
+// Public PaginationOrderBy supports these date fields; issue.sort is internal.
+export const LINEAR_SORT_COLUMNS: ReadonlyMap<TriageListSortFieldV1, string> = new Map<TriageListSortFieldV1, string>([
+  ['updated', 'updatedAt'], ['created', 'createdAt'],
+]);
 
 export const LINEAR_PLUGIN_ID = 'happier.linear';
 export const LINEAR_SOURCE_ID = 'linear-issues';
@@ -89,7 +94,7 @@ export const LinearTeamCursorSchema = defineProtocolObject({
   v: defineProtocolLiteral(1), after: id, query: text,
 }, { policy: 'closed' });
 export const LinearContinuationSchema = defineProtocolObject({
-  v: defineProtocolLiteral(1), digest: id, after: id, viewerId: id,
+  v: defineProtocolLiteral(1), digest: id, after: id, viewerId: id, sort: TriageListSortV1Schema,
   limit: defineProtocolNumber({ integer: true, minimum: 1 }),
   completedSinceMs: defineProtocolNumber({ integer: true }).optional(),
 }, { policy: 'closed' });

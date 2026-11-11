@@ -1,3 +1,4 @@
+import { scanSortedPosthogPage } from './scan/sorted.js';
 /**
  * The three bound Triage source operations.
  *
@@ -126,7 +127,7 @@ import { resolvePosthogInvocationScope } from './invocationScope.js';
 import type { PosthogProjectionBounds } from './map/bounds.js';
 import { POSTHOG_ENTRY_KIND, buildPosthogEntrySnapshot } from './map/entrySnapshot.js';
 import { buildPosthogPresentObservation } from './map/observation.js';
-import { resolvePosthogNativeLimit, type PosthogResolvedWindow } from './scan/request.js';
+import { isPosthogSortField, resolvePosthogNativeLimit, type PosthogResolvedWindow } from './scan/request.js';
 import { scanPosthogIssuePage } from './scan/scan.js';
 
 /** Stable source-local failure ids. They name a condition, never provider text. */
@@ -210,6 +211,11 @@ function sourceFailure(
  * reader keys on.
  */
 export function toTriageSourceFailure(failure: PosthogFailure): TriageSourceFailureV1 {
+    const classified = classifySourceFailure(failure);
+    return failure.requestId === undefined ? classified : Object.freeze({ ...classified, requestId: failure.requestId });
+}
+
+function classifySourceFailure(failure: PosthogFailure): TriageSourceFailureV1 {
     if ('class' in failure) return failure;
     switch (failure.kind) {
         case 'unauthorized':
@@ -821,6 +827,12 @@ function scanWindow(geometry: PosthogScanGeometry): PosthogResolvedWindow {
     return { from: geometry.from, to: geometry.to };
 }
 
+function projectPosthogScanObservation(observation: import('./scan/scan.js').PosthogIssueObservation, environment: PosthogConfiguredEnvironment): TriageSourceScanObservationV1 {
+    return buildPosthogPresentObservation({ snapshot: buildPosthogEntrySnapshot({ locator: observation.locator, row: observation.row,
+        scope: { displayName: environment.displayName, teamRouteId: environment.teamPathId }, untitledLabel: UNTITLED_ISSUE_LABEL, bounds: PROJECTION_BOUNDS }),
+        ...(observation.row.lastSeenMs === undefined ? {} : { sourceUpdatedAtMs: observation.row.lastSeenMs }) });
+}
+
 /** One provider page of the requested bounded walk for one exact configured instance. */
 export async function scanPosthogSource(
     input: unknown,
@@ -843,6 +855,19 @@ export async function scanPosthogSource(
         ? failed(sourceFailure('unsupportedContract', POSTHOG_FAILURE_CODES.malformedRows))
         : { kind: 'complete', observations: [], evidence: { kind: 'walkFinished' } };
     const sourceInstanceDigest = deriveTriageConfiguredSourceInstanceDigestV1(parsed.instance);
+
+    if (parsed.sort !== undefined) {
+        if (!isPosthogSortField(parsed.sort.field)) return failed(sourceFailure('unsupportedContract', POSTHOG_FAILURE_CODES.requestInvalid));
+        const outcome = await scanSortedPosthogPage({ client: createPosthogInvocationClient(context, parsed.instance.binding.account, origin), origin,
+            environments: configuration.environments, sourceInstanceDigest, sort: { ...parsed.sort, field: parsed.sort.field }, page: parsed.page,
+            window: resolvePosthogWindowPolicy(configuration.scanWindowPolicy, Date.now()), incomplete: routed.incomplete === true, signal: context.signal });
+        if (!outcome.ok) return failed(outcome.failure === undefined
+            ? sourceFailure('unsupportedContract', POSTHOG_FAILURE_CODES.continuationUnreadable) : toTriageSourceFailure(outcome.failure));
+        const observations = outcome.observations.map(({ observation, environment }) => projectPosthogScanObservation(observation, environment));
+        const evidence = resolvePageEvidence({ malformedRowCount: 0, nonAdvancing: outcome.nonAdvancing, unresumable: outcome.open && outcome.token === null, finished: !outcome.open,
+            walkHealth: new Set(outcome.malformed ? [POSTHOG_FAILURE_CODES.malformedRows] : []) });
+        return outcome.token === null ? { kind: 'complete', observations, evidence } : { kind: 'page', observations, evidence, continuation: { v: 1, token: outcome.token } };
+    }
 
     const geometry = parsed.page.kind === 'initial'
         ? ((): PosthogScanGeometry => {
@@ -899,21 +924,7 @@ export async function scanPosthogSource(
     if (!page.ok) return failed(toTriageSourceFailure(page.failure));
 
     const observations: readonly TriageSourceScanObservationV1[] = Object.freeze(
-        page.observations.map((observation) => buildPosthogPresentObservation({
-            snapshot: buildPosthogEntrySnapshot({
-                locator: observation.locator,
-                row: observation.row,
-                scope: {
-                    displayName: environment.displayName,
-                    teamRouteId: environment.teamPathId,
-                },
-                untitledLabel: UNTITLED_ISSUE_LABEL,
-                bounds: PROJECTION_BOUNDS,
-            }),
-            ...(observation.row.lastSeenMs === undefined
-                ? {}
-                : { sourceUpdatedAtMs: observation.row.lastSeenMs }),
-        })),
+        page.observations.map((observation) => projectPosthogScanObservation(observation, environment)),
     );
 
     const nextOffset = page.hasMore ? page.nextOffsetCandidate : null;
@@ -1110,7 +1121,13 @@ async function readPosthogSourceEntry(
         entryId: parsed.localRef.entryId,
     });
     const unresolved = (failure: TriageSourceFailureV1): PosthogNativeOverviewResultV1 => Object.freeze({
-        observation: { kind: 'unresolved' as const, localRef, failure },
+        observation: {
+            kind: 'unresolved' as const,
+            localRef,
+            failure: failure.requestId || !context.requestId
+                ? failure
+                : Object.freeze({ ...failure, requestId: context.requestId }),
+        },
     });
 
     if (!isTriageSourceConnectedAccountInstanceV1(parsed.instance)) {

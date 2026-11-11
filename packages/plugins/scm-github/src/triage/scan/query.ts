@@ -1,6 +1,15 @@
 import { GITHUB_API_ORIGIN } from '../../observations/githubProviderContracts.js';
+import type { TriageListSortV1 } from '@happier-dev/triage-protocol/v1';
 
 import { GITHUB_MAX_PAGE_SIZE_V1, type GithubTriageInvolvementV1 } from '../types.js';
+
+const GITHUB_NATIVE_SORT_FIELDS = Object.freeze({ updated: 'updated', created: 'created' } as const);
+export const GITHUB_TRIAGE_SORT_FIELDS_V1 = Object.freeze(
+  Object.keys(GITHUB_NATIVE_SORT_FIELDS) as (keyof typeof GITHUB_NATIVE_SORT_FIELDS)[],
+);
+export function supportsGithubTriageSortField(field: TriageListSortV1['field']): boolean {
+  return Object.prototype.hasOwnProperty.call(GITHUB_NATIVE_SORT_FIELDS, field);
+}
 
 /**
  * Lane query construction. One request per involvement lane, never a union query,
@@ -95,7 +104,15 @@ export type GithubLaneRequestGeometryV1 = Readonly<{
   laneQuery: string;
   perPage: number;
   page: number;
+  sort?: TriageListSortV1;
 }>;
+
+function mapGithubSort(sort: TriageListSortV1 | undefined): Readonly<{ field: 'updated' | 'created'; direction: 'asc' | 'desc' }> | null {
+  if (sort === undefined) return { field: 'updated', direction: 'desc' };
+  const fields: Readonly<Partial<Record<TriageListSortV1['field'], 'updated' | 'created'>>> = GITHUB_NATIVE_SORT_FIELDS;
+  const field = fields[sort.field];
+  return field === undefined ? null : { field, direction: sort.direction };
+}
 
 export function buildGithubLaneSearchUrl(geometry: GithubLaneRequestGeometryV1): string {
   if (
@@ -110,8 +127,11 @@ export function buildGithubLaneSearchUrl(geometry: GithubLaneRequestGeometryV1):
   }
   const url = new URL(`${GITHUB_API_ORIGIN}${GITHUB_SEARCH_ISSUES_PATH}`);
   url.searchParams.set('q', geometry.laneQuery);
-  url.searchParams.set('sort', 'updated');
-  url.searchParams.set('order', 'desc');
+  const providerSort = mapGithubSort(geometry.sort);
+  if (providerSort !== null) {
+    url.searchParams.set('sort', providerSort.field);
+    url.searchParams.set('order', providerSort.direction);
+  }
   url.searchParams.set('per_page', String(geometry.perPage));
   url.searchParams.set('page', String(geometry.page));
   url.searchParams.set('advanced_search', 'true');

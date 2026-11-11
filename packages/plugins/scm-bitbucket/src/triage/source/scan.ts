@@ -1,3 +1,6 @@
+import { isBitbucketSortField } from '../sort.js';
+import { scanSortedBitbucketSource } from './sortedScan.js';
+import { matchesBitbucketCollectionRoute } from '../apiUrl.js';
 import {
   isTriageSourceConnectedAccountInstanceV1,
   type TriageScanInputV1,
@@ -54,16 +57,6 @@ type ScanStart = Readonly<{
   currentRepository: BitbucketScanFrontierRecord['currentRepository'];
 }>;
 
-function matchesIssuedCollectionRoute(candidate: string, seed: string): boolean {
-  const expected = new URL(seed);
-  const actual = new URL(candidate);
-  if (actual.pathname !== expected.pathname) return false;
-  for (const [key, value] of expected.searchParams) {
-    const actualValues = actual.searchParams.getAll(key);
-    if (actualValues.length !== 1 || actualValues[0] !== value) return false;
-  }
-  return true;
-}
 
 function scanFrontierMatchesRoute(input: Readonly<{
   frontier: Pick<ScanStart, 'geometry' | 'authored' | 'repositoryListNextUrl'
@@ -79,7 +72,7 @@ function scanFrontierMatchesRoute(input: Readonly<{
     workspaceUuid: input.workspaceUuid,
   }), BITBUCKET_MAX_PAGE_LENGTH);
   const matches = (candidate: string | null, seed: string): boolean => (
-    candidate === null || matchesIssuedCollectionRoute(candidate, seed)
+    candidate === null || matchesBitbucketCollectionRoute(candidate, seed)
   );
   if (!matches(input.frontier.authored.nextUrl, authoredSeed)) return false;
   if (!matches(input.frontier.authored.cycleProbe?.cursor ?? null, authoredSeed)) return false;
@@ -144,7 +137,8 @@ function readScanStart(
 /**
  * One bounded Bitbucket scan page, confined to exactly one configured account × workspace.
  *
- * `input.limit` is this call's raw-row budget. The call fills up to it and then settles: while any
+ * The default walk uses `input.page.limit` as its raw-row budget. A sorted walk instead merges
+ * native lane heads and carries unshown rows in its continuation. The default walk settles while any
  * lane or the repository enumeration is still open the result is `page` plus this invocation's
  * frontier, and only an all-lanes-ended walk over a finished enumeration returns `complete`. The
  * frontier exists solely in memory for this refresh — it is never persisted, never resumed after an
@@ -175,9 +169,8 @@ export async function scanBitbucketSource(
     input.instance,
     configuration.workspaceUuid,
   );
-  const started = readScanStart(input, continuationScope);
-  if (!started.ok) return failed(started.failure);
-  const start = started.start;
+  const started = input.sort === undefined ? readScanStart(input, continuationScope) : null;
+  if (started !== null && !started.ok) return failed(started.failure);
 
   const authorized = await createAuthorizedBitbucketClient(runtime, {
     purpose: input.instance.binding.purpose,
@@ -193,6 +186,15 @@ export async function scanBitbucketSource(
     ...(runtime.signal === undefined ? {} : { signal: runtime.signal }),
   });
   if (!viewer.ok) return failed(viewer.failure);
+
+  if (input.sort !== undefined) {
+    if (!isBitbucketSortField(input.sort.field)) return failed(createBitbucketFailure('unsupportedContract', 'sort-field-unsupported'));
+    return scanSortedBitbucketSource({ client: authorized.client, scan: input, sort: { ...input.sort, field: input.sort.field }, continuationScope,
+      workspaceUuid: configuration.workspaceUuid, accountUuid: viewer.viewer.accountUuid,
+      ...(runtime.signal === undefined ? {} : { signal: runtime.signal }) });
+  }
+  if (started === null || !started.ok) return failed(createBitbucketFailure('unsupportedContract', 'continuation-not-issued'));
+  const start = started.start;
 
   const workspaceUuid = configuration.workspaceUuid;
   const accountUuid = viewer.viewer.accountUuid;

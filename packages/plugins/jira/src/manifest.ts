@@ -3,7 +3,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
 
-import { JIRA_ACCOUNT_PURPOSE, JIRA_ACTIONS, JIRA_PLUGIN_ID, JIRA_SOURCE_ID } from './contracts.js';
+import { JIRA_ACCOUNT_PURPOSE, JIRA_ACTIONS, JIRA_PLUGIN_ID, JIRA_SOURCE_ID, JIRA_SORT_COLUMNS } from './contracts.js';
 import { jiraAccountRuntime, jiraPortableAccountRuntime } from './connect.js';
 
 import { JIRA_TASK_FIELDS } from './source/metadata.js';
@@ -75,7 +75,7 @@ export const JIRA_PLUGIN = definePlugin({
     },
     contributesTo: { [TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1]: { [TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1]: {
         [JIRA_SOURCE_ID]: sources.contribute({
-            descriptor: { v: 1, purpose: JIRA_ACCOUNT_PURPOSE, displayName: 'Jira', settingsPageId: 'jira-sources',
+            descriptor: { v: 1, purpose: JIRA_ACCOUNT_PURPOSE, sortFields: Array.from(JIRA_SORT_COLUMNS.keys()), displayName: 'Jira', settingsPageId: 'jira-sources',
                 scopeUnit: { singularLabel: 'Project', pluralLabel: 'Projects' },
                 kinds: [{ id: 'issue', workflowSubject: 'issue', displayName: 'Issue', pluralDisplayName: 'Issues',
                     task: true, taskCapabilities: { completedScan: true, createFields: JIRA_TASK_FIELDS, editFields: JIRA_TASK_FIELDS },

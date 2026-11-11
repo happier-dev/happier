@@ -1,7 +1,6 @@
 import type { GithubApiResponseV1 } from '../observations/githubApiClient.js';
 import {
   classifyGithubResponseFailure as classifyGithubResponse,
-  classifyGithubTransportFailure as classifyGithubTransport,
 } from '../observations/githubResponseFailure.js';
 
 import type { GithubTriageFailureV1 } from './types.js';
@@ -44,9 +43,7 @@ export function classifyGithubResponseFailure(
 }
 
 /** A thrown transport/cancellation outcome, classified without inspecting a credential. */
-export function classifyGithubTransportFailure(error: unknown): GithubTriageFailureV1 {
-  return classifyGithubTransport(error);
-}
+export { classifyGithubTransportFailure } from '../observations/githubResponseFailure.js';
 
 export const GITHUB_ROUTE_BODY_MISMATCH_FAILURE: GithubTriageFailureV1 = Object.freeze({
   class: 'unknown',

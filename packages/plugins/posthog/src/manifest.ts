@@ -1,3 +1,4 @@
+import { POSTHOG_TRIAGE_SORT_FIELDS } from './source/scan/request.js';
 import { posthogDetailTabDeclaration } from './ui/detail/tabDeclarations.js';
 import { POSTHOG_ACCOUNT_ACTIONS } from './accountActions.js';
 /**
@@ -96,6 +97,7 @@ const POSTHOG_SOURCE_DESCRIPTOR = {
     // qualifies it with the contributor identity the host already admitted.
     settingsPageId: POSTHOG_TRIAGE_SETTINGS_PAGE_ID,
     displayName: POSTHOG_SOURCE_DISPLAY_NAME,
+    sortFields: POSTHOG_TRIAGE_SORT_FIELDS,
     scopeUnit: { singularLabel: 'Environment', pluralLabel: 'Environments' },
     kinds: [{
         id: POSTHOG_ENTRY_KIND,

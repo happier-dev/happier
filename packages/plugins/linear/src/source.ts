@@ -15,7 +15,7 @@ import { advanceCursorCycleWalkV1, type CursorCycleWalkV1, deriveTriageConfigure
 import { fitActionResultPageV1 } from '@happier-dev/triage-sources/projection/actionResultSequence';
 import { fitActionResultTextV1 } from '@happier-dev/triage-sources/projection/actionResultText';
 import {
-  LINEAR_PLUGIN_ID, LINEAR_SOURCE_ID, LINEAR_PURPOSE, LINEAR_SERVICE_ID, LinearTeamSchema,
+  LINEAR_PLUGIN_ID, LINEAR_SOURCE_ID, LINEAR_PURPOSE, LINEAR_SERVICE_ID, LINEAR_SORT_COLUMNS, LinearTeamSchema,
   LINEAR_CREATE_FIELDS, LINEAR_EDIT_FIELDS,
   readLinearConfiguration, linearIncludesTeam, linearConfiguredTeamUnits, LinearTeamCursorSchema, LinearContinuationSchema, LinearIssueSchema,
   LinearDetailInputSchema, LinearDetailResultSchema, LinearRelatedIssueSchema,
@@ -180,23 +180,29 @@ export async function scanLinearSource(input: unknown, context: LinearSourceCont
   const parsed = TriageScanInputV1Schema.parse(input);
   try {
     const { account, configuration } = admitLinearInstance(parsed.instance);
+    const sort = parsed.sort ?? { field: 'created', direction: 'desc' } as const;
+    const column = LINEAR_SORT_COLUMNS.get(sort.field);
+    if (column === undefined) throw linearFailure('sortUnsupported');
+    const backward = sort.direction === 'asc';
     const digest = deriveTriageConfiguredSourceInstanceDigestV1(parsed.instance);
     const continuation = parsed.page.kind === 'continuation' ? LinearContinuationSchema.parse(JSON.parse(parsed.page.continuation.token)) : undefined;
     const completedSinceMs = parsed.completed?.kindIds.includes('issue') ? parsed.completed.sinceMs : undefined;
-    if (continuation && continuation.digest !== digest) throw linearFailure('continuationChanged');
+    if (continuation && (continuation.digest !== digest || continuation.sort.field !== sort.field
+      || continuation.sort.direction !== sort.direction)) throw linearFailure('continuationChanged');
     if (continuation && continuation.completedSinceMs !== completedSinceMs) throw linearFailure('continuationChanged');
     const viewer = continuation?.viewerId ?? await viewerId(context, account);
     const limit = continuation?.limit ?? (parsed.page.kind === 'initial' ? parsed.page.limit : 1);
     const data = await requestLinearGraphql({ context, account, operationName: 'LinearIssues',
-      query: `query LinearIssues($filter: IssueFilter!, $after: String, $first: Int!, $viewerId: ID!) {
-        issues(filter: $filter, first: $first, after: $after, orderBy: createdAt) { nodes { ${LINEAR_ISSUE_FIELDS} } ${LINEAR_PAGE_INFO} }
+      query: `query LinearIssues($filter: IssueFilter!, ${backward ? '$before: String, $last: Int!' : '$after: String, $first: Int!'}, $viewerId: ID!) {
+        issues(filter: $filter, ${backward ? 'last: $last, before: $before' : 'first: $first, after: $after'}, orderBy: ${column}) { nodes { ${LINEAR_ISSUE_FIELDS} } ${backward ? 'pageInfo { hasPreviousPage startCursor }' : LINEAR_PAGE_INFO} }
       }`, variables: { filter: { ...(configuration.teams.kind === 'all' ? {} : { team: { id: configuration.teams.unitIds.length === 1
         ? { eq: configuration.teams.unitIds[0] } : { in: configuration.teams.unitIds } } }),
         ...(completedSinceMs === undefined ? involvementFilter(configuration.involvement, viewer) : { and: [
           involvementFilter(configuration.involvement, viewer),
           { or: [{ state: { type: { neq: 'completed' } } }, { completedAt: { gte: new Date(completedSinceMs).toISOString() } }] },
-        ] }) }, after: continuation?.after, first: Math.min(limit, LINEAR_PAGE_SIZE), viewerId: viewer } });
-    const page = connection(data.issues);
+        ] }) }, ...(backward ? { before: continuation?.after, last: Math.min(limit, LINEAR_PAGE_SIZE) }
+          : { after: continuation?.after, first: Math.min(limit, LINEAR_PAGE_SIZE) }), viewerId: viewer } });
+    const page = connection(data.issues, backward ? 'backward' : 'forward');
     const observations = [];
     let omitted = 0;
     for (const raw of page.nodes) {
@@ -209,7 +215,7 @@ export async function scanLinearSource(input: unknown, context: LinearSourceCont
       : page.after !== undefined ? { kind: 'partial', reason: 'linear/pageContinues' } : { kind: 'walkFinished' };
     if (page.after !== undefined) {
       if (page.after === continuation?.after) throw linearFailure('cursorNotAdvancing');
-      return TriageScanResultV1Schema.parse({ kind: 'page', observations, evidence, continuation: { v: 1, token: JSON.stringify({ v: 1, digest, after: page.after, viewerId: viewer, limit,
+      return TriageScanResultV1Schema.parse({ kind: 'page', observations, evidence, continuation: { v: 1, token: JSON.stringify({ v: 1, digest, after: page.after, viewerId: viewer, limit, sort,
         ...(completedSinceMs === undefined ? {} : { completedSinceMs }) }) } });
     }
     return TriageScanResultV1Schema.parse({ kind: 'complete', observations, evidence });

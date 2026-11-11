@@ -37,6 +37,7 @@ import type { GitlabConnectedAccounts } from './http/gitlabClient.js';
 import { readGitlabViewerIdentity } from './invocation.js';
 import {
   buildGitlabScanLanes,
+  supportsGitlabTriageSortField,
   type GitlabLaneRequest,
   type GitlabUnavailableLane,
 } from './mapping/gitlabInvolvement.js';
@@ -59,6 +60,7 @@ import { projectGitlabPresentObservation } from './sourceObservation.js';
 import type { GitlabScanHealth } from './mapping/gitlabInvolvement.js';
 
 export type GitlabScanOperationInput = Readonly<{
+  requestId?: string;
   scan: TriageScanInputV1;
   connectedAccounts: GitlabConnectedAccounts;
   fetcher: GitlabHttpFetcher;
@@ -84,9 +86,15 @@ function projectScanEvidence(
 export async function scanGitlabTriageSource(
   input: GitlabScanOperationInput,
 ): Promise<TriageScanResultV1> {
+  if (input.scan.sort !== undefined && !supportsGitlabTriageSortField(input.scan.sort.field)) {
+    return { kind: 'failed', failure: { class: 'unsupportedContract', code: 'unsupported-sort' } };
+  }
   const configuration = decodeGitlabConfiguration(input.scan.instance.configuration);
   if (configuration === null) {
     return { kind: 'failed', failure: { class: 'unsupportedContract', code: 'unsupported-configuration' } };
+  }
+  if (input.scan.sort !== undefined && configuration.selection.kind === 'selected') {
+    return scanGitlabScope(input, null, configuration.selection.unitIds);
   }
   return scanTriageSelectedScopeUnitsV1({
     instance: input.scan.instance,
@@ -104,6 +112,7 @@ export async function scanGitlabTriageSource(
 async function scanGitlabScope(
   input: GitlabScanOperationInput,
   projectId: string | null,
+  selectedProjectIds?: readonly string[],
 ): Promise<TriageScanResultV1> {
   const configured = resolveGitlabConfiguredInstance(input.scan.instance);
   if (configured.kind === 'failed') {
@@ -130,6 +139,7 @@ async function scanGitlabScope(
   }
 
   const authorized = await authorizeGitlabConfiguredInstance({
+    ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
     instance: input.scan.instance,
     connectedAccounts: input.connectedAccounts,
     signal: input.signal,
@@ -169,8 +179,11 @@ async function scanGitlabScope(
 
   const requests: GitlabLaneRequest[] = [];
   const unavailableLanes: GitlabUnavailableLane[] = [];
-  for (const kindId of GITLAB_TRIAGE_KIND_IDS) {
-    const lanes = buildGitlabScanLanes({ kindId, viewerUserId, ...(projectId === null ? {} : { projectId }) });
+  for (const selectedProjectId of selectedProjectIds ?? [projectId]) for (const kindId of GITLAB_TRIAGE_KIND_IDS) {
+    const lanes = buildGitlabScanLanes({ kindId, viewerUserId,
+      ...(selectedProjectId === null ? {} : { projectId: selectedProjectId }),
+      ...(input.scan.sort === undefined ? {} : { sort: input.scan.sort }),
+    });
     requests.push(...lanes.requests);
     unavailableLanes.push(...lanes.unavailable);
   }

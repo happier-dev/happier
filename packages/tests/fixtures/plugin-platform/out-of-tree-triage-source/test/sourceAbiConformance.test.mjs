@@ -788,6 +788,33 @@ test('QB-05: a page never exceeds the submitted limit once omissions are counted
     }
 });
 
+for (const field of ['updated', 'created']) {
+    test(`FIELD-SORT-1111: admitted source keeps ${field} ascending across page boundaries`, async () => {
+        const installed = await install();
+        try {
+            const instance = configuredInstance(manifest.id, 'acme/ledger-qa-shallow');
+            const sort = { field, direction: 'asc' };
+            const first = TriageScanResultV1Schema.parse(await installed.scan({
+                v: 1, instance, sort, page: { kind: 'initial', limit: 2 },
+            }));
+            assert.equal(first.kind, 'page');
+            assert.deepEqual(first.observations.map((row) => row.localRef.entryId), ['LGQ-2', 'LGQ-1']);
+            const second = TriageScanResultV1Schema.parse(await installed.scan({
+                v: 1, instance, sort, page: { kind: 'continuation', continuation: first.continuation },
+            }));
+            assert.equal(second.kind, 'complete');
+            assert.deepEqual(second.observations.map((row) => row.localRef.entryId), ['LGQ-0']);
+            const changed = TriageScanResultV1Schema.parse(await installed.scan({
+                v: 1, instance, sort: { field, direction: 'desc' },
+                page: { kind: 'continuation', continuation: first.continuation },
+            }));
+            assert.equal(changed.kind, 'failed');
+        } finally {
+            await installed.dispose();
+        }
+    });
+}
+
 // ---------------------------------------------------------------------------
 // QB-57 — the declared QA space is a real source for the loaded list recipe
 // ---------------------------------------------------------------------------

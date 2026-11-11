@@ -77,14 +77,13 @@ const ENTRY_ID_INVALID = createBitbucketFailure('unsupportedContract', 'entry-id
 
 /** The host services one bounded invocation reaches, bound to the signal that owns its lifetime. */
 export function toBitbucketRuntime(
-  context: Readonly<{ signal: PluginAccountActionContext['signal']; invocationId?: PluginAccountActionContext['invocationId']; services: Pick<PluginAccountActionContext['services'], 'connectedAccounts' | 'http'> }>,
+  context: Readonly<{ signal: PluginAccountActionContext['signal']; services: Pick<PluginAccountActionContext['services'], 'connectedAccounts' | 'http'> }>,
   signal: AbortSignal | undefined = context.signal,
 ): BitbucketSourceRuntime {
   return {
     connectedAccounts: context.services.connectedAccounts,
     http: context.services.http,
     now: () => Date.now(),
-    invocationId: context.invocationId,
     ...(signal === undefined ? {} : { signal }),
   };
 }

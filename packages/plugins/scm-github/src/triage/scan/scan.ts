@@ -1,4 +1,5 @@
 import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageListSortV1 } from '@happier-dev/triage-protocol/v1';
 
 import {
   decodeGithubJsonResponse,
@@ -40,6 +41,7 @@ import {
   readGithubScanWalkHealth,
   splitGithubScanLane,
   takeNextGithubScanLane,
+  takeGithubSortedScanHead,
   type GithubScanInvocationFrontierV1,
   type GithubScanLaneStateV1,
 } from './frontier.js';
@@ -49,6 +51,7 @@ import {
   buildGithubLaneSearchUrl,
   groupGithubScanRepositories,
   mapGithubLaneToInvolvement,
+  supportsGithubTriageSortField,
   type GithubScanLaneIdV1,
 } from './query.js';
 
@@ -83,6 +86,7 @@ export type GithubScanInputV1 = Readonly<{
   scopeKey?: string;
   completedSinceMs?: number;
   query?: string;
+  sort?: TriageListSortV1;
 }>;
 
 export type GithubScanDependenciesV1 = Readonly<{
@@ -209,12 +213,18 @@ export async function runGithubTriageScan(
   input: GithubScanInputV1,
   dependencies: GithubScanDependenciesV1,
 ): Promise<GithubTriageScanResultV1> {
+  if (input.sort !== undefined && !supportsGithubTriageSortField(input.sort.field)) {
+    return { kind: 'failed', failure: { class: 'unsupportedContract', code: 'unsupported-sort' } };
+  }
+  const sort = input.sort;
   const repositoryGroups = input.repositoryKeys === null
     ? [null]
     : groupGithubScanRepositories(input.repositoryKeys, input.completedSinceMs);
   const scope = input.scopeKey ?? JSON.stringify(repositoryGroups);
   const query = input.query?.trim();
-  const scopeKey = query ? JSON.stringify([scope, query]) : scope;
+  const scopeKey = input.sort === undefined
+    ? (query ? JSON.stringify([scope, query]) : scope)
+    : JSON.stringify([scope, query ?? null, input.sort]);
   const buildLaneQuery = (laneId: GithubScanLaneIdV1, repositoryKeys: readonly string[] | null): string => buildGithubLaneQuery({
     laneId,
     repositoryKeys,
@@ -224,11 +234,12 @@ export async function runGithubTriageScan(
 
   let frontier: GithubScanInvocationFrontierV1;
   if (input.page.kind === 'initial') {
-    frontier = createGithubScanFrontier({ scanLimit: input.page.limit, buildLaneQuery, repositoryGroups, scopeKey });
+    frontier = createGithubScanFrontier({ scanLimit: input.page.limit, buildLaneQuery, repositoryGroups, scopeKey, ...(sort === undefined ? {} : { sort }) });
   } else {
     const resumed = decodeGithubScanContinuation(input.page.token, {
       buildLaneQuery,
       repositoryGroups, scopeKey,
+      ...(sort === undefined ? {} : { sort }),
       ...(input.completedSinceMs === undefined ? {} : { completedSinceMs: input.completedSinceMs }),
     });
     if (resumed === null) {
@@ -239,6 +250,7 @@ export async function runGithubTriageScan(
       groupIndex: resumed.groupIndex,
       buildLaneQuery,
       repositoryGroups, scopeKey,
+      ...(sort === undefined ? {} : { sort }),
       resume: {
         nextLaneIndex: resumed.nextLaneIndex,
         walkHealth: resumed.walkHealth,
@@ -306,19 +318,27 @@ export async function runGithubTriageScan(
       health.reasons.add('projection-budget');
       break;
     }
-    const lane = takeNextGithubScanLane(frontier, buildLaneQuery);
+    const lane = sort === undefined ? takeNextGithubScanLane(frontier, buildLaneQuery)
+      : frontier.lanes.find(candidate => !candidate.ended && candidate.pending.length === 0) ?? null;
+    if (sort !== undefined && lane === null) {
+      const head = takeGithubSortedScanHead(frontier, sort);
+      if (head === null) break;
+      pendingViews.push({ view: head.view, involvement: mapGithubLaneToInvolvement(head.laneId) });
+      continue;
+    }
     if (lane === null) break;
     // The text-query budget is one native page per involvement/repository lane;
     // preserve the remaining frontier for explicit Load More.
-    if (query && searched.has(lane)) break;
+    if ((sort !== undefined || query) && searched.has(lane)) break;
     searched.add(lane);
-    const perPage = githubScanLanePageSize(frontier, lane);
+    const perPage = sort === undefined ? githubScanLanePageSize(frontier, lane) : frontier.nativePageSize;
 
     const url = lane.frontier.kind === 'initial'
       ? buildGithubLaneSearchUrl({
         laneQuery: lane.laneQuery,
         perPage,
         page: 1,
+        ...(input.sort === undefined ? {} : { sort: input.sort }),
       })
       : lane.frontier.nextUrl;
 
@@ -344,7 +364,7 @@ export async function runGithubTriageScan(
     if (!isGithubSuccessStatus(response.status)) {
       // A grouped qualifier can be rejected for one inaccessible repository.
       // Walk its members through this same fair frontier, preserving readable work.
-      if (response.status === 422 && splitGithubScanLane(lane, buildLaneQuery)) continue;
+      if (response.status === 422 && splitGithubScanLane(lane, buildLaneQuery, frontier)) continue;
       failLane(lane, classifyGithubResponseFailure(response, nowMs));
       continue;
     }
@@ -376,12 +396,12 @@ export async function runGithubTriageScan(
     }
     if (page.totalCount > GITHUB_SEARCH_RESULT_CEILING_V1) {
       // Grouping must not reduce the per-repository 1,000-result reachability.
-      if (splitGithubScanLane(lane, buildLaneQuery)) continue;
+      if (splitGithubScanLane(lane, buildLaneQuery, frontier)) continue;
       frontier.walkHealth.add('result-ceiling');
     }
     if (page.incompleteResults) frontier.walkHealth.add('incomplete-results');
 
-    const views = page.items.map((rawItem) => {
+    const views = (sort === undefined ? page.items : []).map((rawItem) => {
       // Budget is spent on RAW provider cardinality, before and regardless of decoding. A
       // malformed row still consumed a row of this page, and counting only the rows that
       // mapped is how `observations + omittedItemCount` grew past the submitted limit —
@@ -391,6 +411,7 @@ export async function runGithubTriageScan(
       // undecodable item can never make a following raw item vanish.
       return decodeGithubSearchItem(rawItem);
     });
+    if (sort !== undefined) lane.pending.push(...page.items);
     // Rows wait for the page's one checks/identity batch below. A batch per lane put a
     // GraphQL round trip between consecutive lane searches of the same page.
     const involvement = mapGithubLaneToInvolvement(lane.laneId);
@@ -412,6 +433,7 @@ export async function runGithubTriageScan(
     const next = readValidatedGithubNextPage(response.headers, url, {
       laneQuery: lane.laneQuery,
       perPage,
+      ...(sort === undefined ? {} : { sort }),
     });
     if (next.kind === 'ended') {
       finishGithubScanLane(lane, buildLaneQuery);

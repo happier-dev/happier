@@ -40,7 +40,7 @@ import type {
   GitlabUnavailableLane,
   GitlabWalkReason,
 } from '../mapping/gitlabInvolvement.js';
-import { projectGitlabScanHealth } from '../mapping/gitlabInvolvement.js';
+import { mapGitlabNativeSortField, projectGitlabScanHealth } from '../mapping/gitlabInvolvement.js';
 import type { GitlabConfiguredOrigin } from '../origin.js';
 import type { GitlabFailure, GitlabMappedEntry } from '../types.js';
 
@@ -50,20 +50,22 @@ export const GITLAB_MAX_NATIVE_PAGE_SIZE = GITLAB_REST_MAX_PAGE_SIZE;
 /**
  * The one derivation of this walk's fixed provider page size.
  *
- * It is a function of the caller's limit and nothing else, and it is exported because
+ * It partitions the caller's limit across sorted streams and is exported because
  * the continuation decoder has to answer the SAME question about a token it is handed.
  * A decoder that accepted whatever geometry a token named would let a resumed walk run
  * at a page size and a budget this source would never have chosen — which is a second
  * owner of the walk's geometry, reached through untrusted bytes.
  */
-export function deriveGitlabNativePageSize(scanLimit: number): number {
-  return Math.max(1, Math.min(scanLimit, GITLAB_MAX_NATIVE_PAGE_SIZE));
+export function deriveGitlabNativePageSize(scanLimit: number, streamCount = 1): number {
+  return Math.max(1, Math.min(Math.floor(scanLimit / streamCount), GITLAB_MAX_NATIVE_PAGE_SIZE));
 }
 
 export type GitlabLaneFrontier = {
   readonly request: GitlabLaneRequest;
   nextUrl: string;
   ended: boolean;
+  /** Unshown rows from at most one native provider page. */
+  pending: unknown[];
   /** Constant-space evidence that this provider walk has not revisited a URL. */
   cycleProbe: CursorCycleProbeV1;
 };
@@ -81,33 +83,39 @@ export type GitlabScanFrontier = Readonly<{
   walkHealth: Set<GitlabStickyWalkReason>;
 }> & { nextLaneIndex: number };
 
+/** The initial native request also owns the frozen filters of every next URL. */
+export function buildGitlabScanLaneUrl(origin: GitlabConfiguredOrigin, request: GitlabLaneRequest, nativePageSize: number): string {
+  const field = mapGitlabNativeSortField(request.sort?.field ?? 'updated');
+  const sortQuery = field === undefined ? [] as const
+    : [['order_by', field], ['sort', request.sort?.direction ?? 'desc']] as const;
+  return buildGitlabApiUrl(origin, request.path, [
+    ...request.query,
+    ['per_page', String(nativePageSize)],
+    ...sortQuery,
+  ]);
+}
+
 export function createGitlabScanFrontier(input: Readonly<{
   scanLimit: number;
   origin: GitlabConfiguredOrigin;
   lanes: readonly GitlabLaneRequest[];
   walkHealth?: ReadonlySet<GitlabStickyWalkReason>;
 }>): GitlabScanFrontier {
-  const nativePageSize = deriveGitlabNativePageSize(input.scanLimit);
+  const nativePageSize = deriveGitlabNativePageSize(input.scanLimit, input.lanes[0]?.sort === undefined ? 1 : input.lanes.length);
   return {
     scanLimit: input.scanLimit,
     nativePageSize,
     nextLaneIndex: 0,
     walkHealth: new Set(input.walkHealth ?? []),
     lanes: input.lanes.map((request) => {
-      const nextUrl = buildGitlabApiUrl(input.origin, request.path, [
-        ...request.query,
-        ['per_page', String(nativePageSize)],
-        // Newest-first is the ordering the surface reads; it is fixed for the whole
-        // invocation so a later page cannot silently re-sort the walk.
-        ['order_by', 'updated_at'],
-        ['sort', 'desc'],
-      ]);
+      const nextUrl = buildGitlabScanLaneUrl(input.origin, request, nativePageSize);
       const initialized = advanceCursorCycleWalkV1(null, nextUrl);
       if (initialized.kind !== 'advanced') throw new Error('an initial cursor cannot be revisited');
       return {
         request,
         nextUrl,
         ended: false,
+        pending: [],
         cycleProbe: initialized.walk.probe,
       };
     }),
@@ -129,7 +137,7 @@ export type GitlabScanSettlement = Readonly<{
 
 /** Whether any lane still has a provider page this walk has not read. */
 export function hasOpenGitlabLane(frontier: GitlabScanFrontier): boolean {
-  return frontier.lanes.some((lane) => !lane.ended);
+  return frontier.lanes.some((lane) => !lane.ended || lane.pending.length > 0);
 }
 
 export type GitlabScanResult =
@@ -174,6 +182,8 @@ function pageReasons(
 
 export async function runGitlabScan(input: GitlabScanInput): Promise<GitlabScanResult> {
   const { frontier } = input;
+  const requestedSort = frontier.lanes[0]?.request.sort;
+  const sort = requestedSort?.field === 'updated' || requestedSort?.field === 'created' ? requestedSort : undefined;
   // A lane GitLab offers no query for is observed once, when the lanes are built, and
   // is a property of the whole walk rather than of the page that noticed it.
   if (input.unavailableLanes.length > 0) frontier.walkHealth.add('lane-unavailable');
@@ -181,6 +191,7 @@ export async function runGitlabScan(input: GitlabScanInput): Promise<GitlabScanR
   let consumedItemCount = 0;
   let undecodableCount = 0;
   let budgetExhausted = false;
+  const fetched = new Set<GitlabLaneFrontier>();
 
   for (;;) {
     if (input.signal.aborted) {
@@ -193,13 +204,44 @@ export async function runGitlabScan(input: GitlabScanInput): Promise<GitlabScanR
     // the rotation: stopping after the selection would silently skip that lane on the
     // next call. A whole native page either fits the remaining budget or this page
     // ends; nothing is fetched and thrown away to find out.
-    if (consumedItemCount + frontier.nativePageSize > frontier.scanLimit) {
+    if (sort === undefined ? consumedItemCount + frontier.nativePageSize > frontier.scanLimit : consumedItemCount >= frontier.scanLimit) {
       budgetExhausted = true;
       break;
     }
 
-    const lane = selectNextLane(frontier);
+    const decodeHead = (lane: GitlabLaneFrontier) => decodeGitlabPage({
+      kindId: lane.request.kindId, origin: input.invocation.origin, body: [lane.pending[0]],
+      laneInvolvement: lane.request.involvement,
+      ...(lane.request.nativeRowFact ? { laneRowFact: lane.request.nativeRowFact } : {}),
+    });
+    const lane = sort === undefined ? selectNextLane(frontier)
+      : frontier.lanes.find(candidate => !candidate.ended && candidate.pending.length === 0) ?? null;
+    if (sort !== undefined && lane === null) {
+      const candidates = frontier.lanes.filter(candidate => candidate.pending.length > 0);
+      const compare = (a: GitlabLaneFrontier, b: GitlabLaneFrontier): number => {
+        const left = decodeHead(a)?.entries[0]; const right = decodeHead(b)?.entries[0];
+        if (left === undefined || right === undefined) return left === undefined ? -1 : 1;
+        const leftValue = sort.field === 'created' ? left.snapshot.sourceCreatedAtMs : left.snapshot.sourceUpdatedAtMs;
+        const rightValue = sort.field === 'created' ? right.snapshot.sourceCreatedAtMs : right.snapshot.sourceUpdatedAtMs;
+        const difference = (leftValue ?? 0) - (rightValue ?? 0);
+        return difference === 0 ? `${left.identity.collisionScope}:${left.identity.kindId}:${left.identity.entryId}`.localeCompare(`${right.identity.collisionScope}:${right.identity.kindId}:${right.identity.entryId}`)
+          : sort.direction === 'asc' ? difference : -difference;
+      };
+      let head = candidates[0];
+      for (const candidate of candidates.slice(1)) if (head !== undefined && compare(candidate, head) < 0) head = candidate;
+      if (head === undefined) break;
+      const decoded = decodeHead(head);
+      head.pending.shift();
+      consumedItemCount += 1;
+      if (decoded === null || decoded.undecodableCount > 0) {
+        undecodableCount += 1;
+        frontier.walkHealth.add('undecodable-items');
+      } else entries.push(...decoded.entries);
+      continue;
+    }
     if (!lane) break;
+    if (sort !== undefined && fetched.has(lane)) { budgetExhausted = true; break; }
+    fetched.add(lane);
 
     const result = await requestGitlabJson({
       invocation: input.invocation,
@@ -221,7 +263,7 @@ export async function runGitlabScan(input: GitlabScanInput): Promise<GitlabScanR
     // is atomic at this source boundary rather than at the host envelope.
     const rawItemCount = result.response.rawItemCount;
     if (rawItemCount !== null && (rawItemCount > frontier.nativePageSize
-      || consumedItemCount + rawItemCount > frontier.scanLimit)) {
+      || (sort === undefined && consumedItemCount + rawItemCount > frontier.scanLimit))) {
       return {
         kind: 'failed',
         failure: { class: 'unsupportedContract', code: 'provider-overdelivery' },
@@ -242,17 +284,21 @@ export async function runGitlabScan(input: GitlabScanInput): Promise<GitlabScanR
       };
     }
 
-    entries.push(...decoded.entries);
-    undecodableCount += decoded.undecodableCount;
-    if (decoded.undecodableCount > 0) frontier.walkHealth.add('undecodable-items');
-    // Position advances by what GitLab returned, not by what decoded cleanly.
-    consumedItemCount += decoded.rawItemCount;
+    if (sort === undefined) {
+      entries.push(...decoded.entries);
+      undecodableCount += decoded.undecodableCount;
+      if (decoded.undecodableCount > 0) frontier.walkHealth.add('undecodable-items');
+      consumedItemCount += decoded.rawItemCount;
+    } else if (Array.isArray(result.response.body)) {
+      lane.pending.push(...result.response.body);
+    }
 
     const selection = selectGitlabNextPageUrl(
       result.response.headers,
       input.invocation.origin.normalized,
     );
-    const advanced = selection.kind === 'next' && isGitlabPageWithinResource(selection.url, lane.nextUrl)
+    const advanced = selection.kind === 'next' && isGitlabPageWithinResource(selection.url, sort === undefined ? lane.nextUrl
+      : buildGitlabScanLaneUrl(input.invocation.origin, lane.request, frontier.nativePageSize), sort !== undefined)
       ? advanceCursorCycleWalkV1(
         { cursor: lane.nextUrl, probe: lane.cycleProbe },
         selection.url,

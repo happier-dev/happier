@@ -179,7 +179,7 @@ async function openClient(
   } catch (error) {
     return Object.freeze({
       ok: false as const,
-      failure: toTriageFailure(classifyGithubTransportFailure(error)),
+      failure: toTriageFailure(classifyGithubTransportFailure(error, context.requestId)),
     });
   }
 }
@@ -500,6 +500,7 @@ export async function scanGithubTriageSource(
       repositoryKeys: resolved.configuration.selection.kind === 'selected' ? resolved.configuration.selection.unitIds : null,
       scopeKey: deriveTriageConfiguredSourceInstanceDigestV1(scanInput.instance),
         ...(scanInput.query?.trim() ? { query: scanInput.query.trim() } : {}),
+      ...(scanInput.sort === undefined ? {} : { sort: scanInput.sort }),
       ...(scanInput.completed?.kindIds.includes('issue') ? { completedSinceMs: scanInput.completed.sinceMs } : {}),
     }, { client: opened.client, now, signal: context.signal });
     if (result.kind === 'failed') return { kind: 'failed', failure: toTriageFailure(result.failure) };
@@ -527,6 +528,12 @@ export async function getGithubTriageEntry(
     throw new Error('github_triage_get_input_invalid');
   }
   const getInput = parsed.data;
+  const unresolved = (failure: TriageSourceFailureV1): TriageGetResultV1 => Object.freeze({
+    kind: 'unresolved' as const,
+    localRef: getInput.localRef,
+    failure: context.requestId === undefined || failure.requestId !== undefined
+      ? failure : Object.freeze({ ...failure, requestId: context.requestId }),
+  });
   const kindId = readGithubTriageKindId(getInput.localRef.kindId);
   const localRef: GithubTriageEntryLocalRefV1 | null = kindId === null ? null : Object.freeze({
     kindId,
@@ -534,42 +541,23 @@ export async function getGithubTriageEntry(
     entryId: getInput.localRef.entryId,
   });
   if (localRef === null) {
-    return Object.freeze({
-      kind: 'unresolved' as const,
-      localRef: toTriageLocalRef(getInput.localRef as GithubTriageEntryLocalRefV1),
-      failure: Object.freeze({
-        class: 'unsupportedContract' as const,
-        code: 'github_kind_undeclared',
-      }),
-    });
+    return unresolved({ class: 'unsupportedContract', code: 'github_kind_undeclared' });
   }
 
   const resolved = resolveInstance(getInput.instance);
   if (!resolved.ok) {
-    return Object.freeze({
-      kind: 'unresolved' as const,
-      localRef: toTriageLocalRef(localRef),
-      failure: resolved.failure,
-    });
+    return unresolved(resolved.failure);
   }
   // Use the observed locator when supplied. A locator-free pin resolves the
   // current repository at the source's exact-get owner, never from scan configuration.
   const routingToken = resolveGithubTriageRoutingToken(getInput.lastKnownLocator);
   if (routingToken === null && getInput.lastKnownLocator !== undefined) {
-    return Object.freeze({
-      kind: 'unresolved' as const,
-      localRef: toTriageLocalRef(localRef),
-      failure: toTriageFailure(GITHUB_MISSING_LOCATOR_FAILURE),
-    });
+    return unresolved(toTriageFailure(GITHUB_MISSING_LOCATOR_FAILURE));
   }
 
   const opened = await openClient(getInput.instance, context);
   if (!opened.ok) {
-    return Object.freeze({
-      kind: 'unresolved' as const,
-      localRef: toTriageLocalRef(localRef),
-      failure: opened.failure,
-    });
+    return unresolved(opened.failure);
   }
 
   const read = await runGithubTriageGet({ localRef, routingToken,
@@ -579,6 +567,7 @@ export async function getGithubTriageEntry(
     signal: context.signal,
   });
   const result = toTriageGetResult(read.observation, getInput.instance);
+  if (result.kind === 'unresolved') return unresolved(result.failure);
   return result.kind === 'present' && read.dispatchEvidence !== undefined
     ? withGithubSecurityAlertDispatchEvidence(result, read.dispatchEvidence)
     : result;

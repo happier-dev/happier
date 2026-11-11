@@ -14,6 +14,47 @@ const workspaceInstance = (teams: unknown) => ({ ...instance, localInstanceKey: 
 
 describe('Linear source through provider HTTP', () => {
   it.each([
+    ['updated', 'asc', ['issue-a', 'issue-b', 'issue-y', 'issue-z']],
+    ['updated', 'desc', ['issue-z', 'issue-y', 'issue-b', 'issue-a']],
+    ['created', 'asc', ['issue-z', 'issue-y', 'issue-b', 'issue-a']],
+    ['created', 'desc', ['issue-a', 'issue-b', 'issue-y', 'issue-z']],
+  ] as const)('keeps %s %s globally ordered across native cursor pages', async (field, direction, expected) => {
+    // IDs and the two time fields have deliberately different orders.
+    const rows = [
+      { ...issue, id: 'issue-z', createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-04T00:00:00Z' },
+      { ...issue, id: 'issue-a', createdAt: '2026-10-04T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z' },
+      { ...issue, id: 'issue-y', createdAt: '2026-10-02T00:00:00Z', updatedAt: '2026-10-03T00:00:00Z' },
+      { ...issue, id: 'issue-b', createdAt: '2026-10-03T00:00:00Z', updatedAt: '2026-10-02T00:00:00Z' },
+    ];
+    let pages = 0;
+    const h = host(({ operationName, query, variables }) => {
+      if (operationName === 'LinearViewer') return { viewer: { id: 'viewer-1' } };
+      expect(query).toContain('orderBy: ' + (field === 'created' ? 'createdAt' : 'updatedAt'));
+      expect(variables).toMatchObject(direction === 'asc' ? { last: 2 } : { first: 2 });
+      expect(variables[direction === 'asc' ? 'before' : 'after']).toBe(pages === 0 ? undefined : 'page-2');
+      const nativeDescending = field === 'created' ? [rows[1], rows[3], rows[2], rows[0]] : [rows[0], rows[2], rows[3], rows[1]];
+      const nodes = direction === 'asc' ? nativeDescending.slice(pages === 0 ? 2 : 0, pages === 0 ? 4 : 2)
+        : nativeDescending.slice(pages === 0 ? 0 : 2, pages === 0 ? 2 : 4);
+      pages++;
+      return { issues: { nodes, pageInfo: direction === 'asc'
+        ? { hasPreviousPage: pages === 1, startCursor: pages === 1 ? 'page-2' : null }
+        : { hasNextPage: pages === 1, endCursor: pages === 1 ? 'page-2' : null } } };
+    });
+    const sort = { field, direction };
+    const first = await scanLinearSource({ v: 1, instance, sort, page: { kind: 'initial', limit: 2 } }, h.context);
+    expect(first.kind).toBe('page');
+    if (first.kind !== 'page') throw new Error('Expected Linear continuation');
+    const second = await scanLinearSource({ v: 1, instance, sort, page: { kind: 'continuation', continuation: first.continuation } }, h.context);
+    expect(second.kind).toBe('complete');
+    if (second.kind !== 'complete') throw new Error('Expected completed Linear walk');
+    expect([...first.observations, ...second.observations].map((row) => row.localRef.entryId)).toEqual(expected);
+    expect(pages).toBe(2);
+    expect(await scanLinearSource({ v: 1, instance, sort: { field, direction: direction === 'asc' ? 'desc' : 'asc' },
+      page: { kind: 'continuation', continuation: first.continuation } }, h.context)).toMatchObject({ kind: 'failed' });
+    expect(pages).toBe(2);
+  });
+
+  it.each([
     ['connected_service_credential_reconnect_required', 'authentication'],
     ['plugin_connected_account_settings_unavailable', 'transient'],
   ] as const)('preserves typed host refusal %s and request ID without HTTP', async (code, classification) => {

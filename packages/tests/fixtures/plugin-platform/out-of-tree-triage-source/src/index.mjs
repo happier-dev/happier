@@ -30,6 +30,7 @@ import {
     ledgerDetailDocumentResource,
 } from './detail.mjs';
 import {
+    LEDGER_SORT_COLUMNS,
     LEDGER_SPACE_IDS,
     LEDGER_SPACE_ID_LIST,
     LEDGER_UNAVAILABLE_REF,
@@ -70,29 +71,30 @@ const DETAIL_RENDERER_ID = 'ledger-detail';
 /**
  * The invocation-local scan continuation.
  *
- * It binds the provider offset and the limit the caller submitted on the
+ * It binds the requested order, provider offset and limit submitted on the
  * initial page, which is what makes a mid-scan limit change unrepresentable. It
  * exists only inside one scan invocation: nothing writes it anywhere, and the
  * source keeps no map of outstanding walks.
  */
-function encodeContinuation(offset, limit) {
-    return { v: 1, token: `o=${offset};l=${limit}` };
+function encodeContinuation(offset, limit, sortToken) {
+    return { v: 1, token: `o=${offset};l=${limit};s=${sortToken}` };
 }
 
-function decodeContinuation(continuation) {
-    const parsed = /^o=(\d+);l=(\d+)$/u.exec(continuation?.token ?? '');
-    if (parsed === null) return null;
-    return { offset: Number(parsed[1]), limit: Number(parsed[2]) };
+function decodeContinuation(continuation, sortToken) {
+    const parsed = /^o=(\d+);l=(\d+);s=([^;]*)$/u.exec(continuation?.token ?? '');
+    if (parsed === null || parsed[3] !== sortToken) return null;
+    return { offset: Number(parsed[1]), limit: Number(parsed[2]), sortToken };
 }
 
 function readPageRequest(input) {
+    const sortToken = input.sort === undefined ? '' : `${input.sort.field}:${input.sort.direction}`;
     if (input.page.kind === 'initial') {
         // The protocol-owned input schema already admits only page sizes whose
         // encoded result fits the host Action boundary. Re-clamping here would
         // make this external source a second, stale cardinality owner.
-        return { offset: 0, limit: input.page.limit };
+        return { offset: 0, limit: input.page.limit, sortToken };
     }
-    return decodeContinuation(input.page.continuation);
+    return decodeContinuation(input.page.continuation, sortToken);
 }
 
 /** Discovers the spaces this account can read. Discovery never configures. */
@@ -138,7 +140,8 @@ async function runListInstances(_input, context) {
 async function runScan(input) {
     const space = decodeConfiguration(input.instance.configuration);
     const request = readPageRequest(input);
-    if (space === null || request === null) {
+    if (space === null || request === null
+        || (input.sort !== undefined && !Object.hasOwn(LEDGER_SORT_COLUMNS, input.sort.field))) {
         return {
             kind: 'failed',
             failure: {
@@ -148,7 +151,7 @@ async function runScan(input) {
         };
     }
 
-    const { rows, nextOffset } = readLedgerPage(space, request.offset, request.limit);
+    const { rows, nextOffset } = readLedgerPage(space, request.offset, request.limit, input.sort);
     const { observations, omittedItemCount } = mapLedgerPage(rows, space);
     const evidence = omittedItemCount > 0
         ? { kind: 'partial', reason: 'acme/unmappable-rows', omittedItemCount }
@@ -160,7 +163,7 @@ async function runScan(input) {
             kind: 'page',
             observations,
             evidence,
-            continuation: encodeContinuation(nextOffset, request.limit),
+            continuation: encodeContinuation(nextOffset, request.limit, request.sortToken),
         };
 }
 
@@ -353,6 +356,7 @@ const plugin = definePlugin({
                     descriptor: {
                         v: 1,
                         purpose: LEDGER_ACCOUNT_PURPOSE,
+                        sortFields: Object.keys(LEDGER_SORT_COLUMNS),
                         displayName: LEDGER_DISPLAY_NAME,
                         settingsPageId: LEDGER_SETTINGS_PAGE_ID,
                         kinds: [

@@ -27,6 +27,7 @@ import { buildPosthogEntryLocator, type PosthogEntryLocator } from '../identity.
 import {
     buildPosthogIssuesQueryBody,
     type PosthogResolvedWindow,
+    type PosthogFieldSort,
 } from './request.js';
 
 export type PosthogScanEnvironment = Readonly<{
@@ -46,6 +47,8 @@ export type PosthogScanPageOutcome =
         observations: readonly PosthogIssueObservation[];
         /** Rows the provider returned that could not be parsed independently. */
         malformedRowCount: number;
+        /** Every native position consumes the caller's raw-row allowance, including malformed rows. */
+        rawRowCount: number;
         /** The provider's own claim that more rows exist behind this page. */
         hasMore: boolean;
         /**
@@ -70,6 +73,7 @@ export type PosthogScanPageInput = Readonly<{
     /** Fixed for the pass; never shrunk to a remainder on a later page. */
     nativeLimit: number;
     offset: number;
+    sort?: PosthogFieldSort;
 }>;
 
 /**
@@ -99,7 +103,7 @@ export async function scanPosthogIssuePage(
         {
             method: 'POST',
             path: errorTrackingIssuesQueryPath(route.teamRouteId),
-            body: buildPosthogIssuesQueryBody(input.window, input.nativeLimit, input.offset),
+            body: buildPosthogIssuesQueryBody(input.window, input.nativeLimit, input.offset, input.sort),
         },
         parsePosthogQueryEnvelope,
         options,
@@ -137,6 +141,7 @@ export async function scanPosthogIssuePage(
         ok: true,
         observations,
         malformedRowCount,
+        rawRowCount: envelope.rawResults.length,
         hasMore: envelope.hasMore,
         nextOffsetCandidate: envelope.hasMore
             ? envelope.nextOffset ?? (input.offset + envelope.rawResults.length)

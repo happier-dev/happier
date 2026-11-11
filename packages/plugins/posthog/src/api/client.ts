@@ -111,6 +111,7 @@ export interface PosthogApiClient {
 }
 
 export type PosthogApiClientDependencies = Readonly<{
+    requestId?: string;
     origin: PosthogApiOrigin;
     materializeHeaders: PosthogHeaderMaterializer;
     transport: PosthogTransport;
@@ -181,12 +182,15 @@ export function createPosthogApiClient(
         parse: PosthogBodyParser<T>,
         options: PosthogRequestOptions,
     ): Promise<PosthogResult<T>> {
+        const failed = (value: PosthogFailure): PosthogResult<T> => ({ ok: false, failure:
+            value.requestId !== undefined || dependencies.requestId === undefined ? value
+                : { ...value, requestId: dependencies.requestId } });
         // Direct client tests may omit a signal. Every real invocation supplies one,
         // and in that path this fallback is never used: materialization and transport
         // observe the exact same source-owned signal.
         const signal = options.signal ?? new AbortController().signal;
         const beforeStart = signalFailure(signal);
-        if (beforeStart !== null) return { ok: false, failure: beforeStart };
+        if (beforeStart !== null) return failed(beforeStart);
 
         {
             let materialized: PosthogMaterializationOutcome;
@@ -200,16 +204,16 @@ export function createPosthogApiClient(
                 );
             } catch {
                 const aborted = signalFailure(signal);
-                if (aborted !== null) return { ok: false, failure: aborted };
+                if (aborted !== null) return failed(aborted);
                 // The materializer settles its own failures, so reaching here means it
                 // threw outside its contract. That is still the account boundary rather
                 // than a transport fault.
-                return { ok: false, failure: { kind: 'unauthorized', status: 0 } };
+                return failed({ kind: 'unauthorized', status: 0 });
             }
             const afterMaterialization = signalFailure(signal);
-            if (afterMaterialization !== null) return { ok: false, failure: afterMaterialization };
+            if (afterMaterialization !== null) return failed(afterMaterialization);
             if (!materialized.ok) {
-                return { ok: false, failure: materialized.failure };
+                return failed(materialized.failure);
             }
             const authorization = materialized.authorization;
 
@@ -240,16 +244,16 @@ export function createPosthogApiClient(
                 );
             } catch {
                 const aborted = signalFailure(signal);
-                if (aborted !== null) return { ok: false, failure: aborted };
-                return { ok: false, failure: { kind: 'transport' } };
+                if (aborted !== null) return failed(aborted);
+                return failed({ kind: 'transport' });
             }
 
             const afterTransport = signalFailure(signal);
-            if (afterTransport !== null) return { ok: false, failure: afterTransport };
+            if (afterTransport !== null) return failed(afterTransport);
 
             const failure = classifyPosthogResponseStatus(response.status, response.headers, now());
             if (failure !== null) {
-                return { ok: false, failure };
+                return { ok: false, failure: dependencies.requestId === undefined ? failure : { ...failure, requestId: dependencies.requestId } };
             }
 
             let decoded: unknown;
@@ -257,13 +261,13 @@ export function createPosthogApiClient(
                 decoded = await awaitWithSignal(response.json(), signal);
             } catch {
                 const aborted = signalFailure(signal);
-                if (aborted !== null) return { ok: false, failure: aborted };
-                return { ok: false, failure: { kind: 'malformedResponse', at: 'body' } };
+                if (aborted !== null) return failed(aborted);
+                return failed({ kind: 'malformedResponse', at: 'body' });
             }
 
             const value = parse(decoded);
             if (value === null) {
-                return { ok: false, failure: { kind: 'malformedResponse', at: 'schema' } };
+                return failed({ kind: 'malformedResponse', at: 'schema' });
             }
             return { ok: true, value };
         }

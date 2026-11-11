@@ -1,3 +1,4 @@
+import { BITBUCKET_TRIAGE_SORT_FIELDS } from '../sort.js';
 import { bitbucketDetailTabDeclaration } from '../../ui/detail/tabDeclarations.js';
 import type { TriageSourceDescriptorV1 } from '@happier-dev/triage-protocol/v1';
 
@@ -67,6 +68,7 @@ export const BITBUCKET_TRIAGE_DESCRIPTOR: TriageSourceDescriptorV1 = Object.free
   // contributor identity the host already admitted.
   settingsPageId: BITBUCKET_TRIAGE_SETTINGS_PAGE_ID,
   displayName: 'Bitbucket Cloud',
+  sortFields: BITBUCKET_TRIAGE_SORT_FIELDS,
   minimumScanPageSize: BITBUCKET_MIN_PAGE_LENGTH,
   kinds: Object.freeze([
     Object.freeze({

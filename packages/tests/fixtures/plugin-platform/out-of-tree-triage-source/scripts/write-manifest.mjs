@@ -1,11 +1,15 @@
 #!/usr/bin/env node
-import { writeFile } from 'node:fs/promises';
+import { rename, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const fixtureRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const { manifest } = await import('../src/index.mjs');
+const manifestPath = join(fixtureRoot, '.happier-plugin', 'plugin.json');
+const temporaryPath = `${manifestPath}.${randomUUID()}.tmp`;
 await writeFile(
-  join(fixtureRoot, '.happier-plugin', 'plugin.json'),
+  temporaryPath,
   `${JSON.stringify(manifest, null, 2)}\n`,
 );
+await rename(temporaryPath, manifestPath);

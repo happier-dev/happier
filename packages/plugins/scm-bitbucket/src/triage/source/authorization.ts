@@ -24,7 +24,6 @@ export type BitbucketSourceRuntime = Readonly<{
   connectedAccounts: Pick<ConnectedAccountsService, 'listAccounts' | 'getBinding' | 'materializeListedAccount'>;
   http: HttpService;
   now: () => number;
-  invocationId?: string;
   signal?: AbortSignal;
 }>;
 
@@ -91,7 +90,6 @@ export async function createAuthorizedBitbucketClient(
     purpose: request.purpose,
     account: request.account,
     origin: BITBUCKET_CLOUD_API_ORIGIN,
-    invocationId: runtime.invocationId,
     ...(runtime.signal === undefined ? {} : { signal: runtime.signal }),
   });
   if (!authorization.ok) {

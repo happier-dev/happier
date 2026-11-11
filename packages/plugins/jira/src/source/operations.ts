@@ -12,7 +12,7 @@ import {
     type TriageConfiguredSourceInstanceV1, type TriageSourceEntryLocalRefV1,
 } from '@happier-dev/triage-protocol/v1';
 import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
-import { JIRA_ACCOUNT_PURPOSE } from '../contracts.js';
+import { JIRA_ACCOUNT_PURPOSE, JIRA_SORT_COLUMNS } from '../contracts.js';
 import { createJiraClient, invalidJira, jiraCloudOrigin, jiraFailure, numericId, object, string, type JiraClient } from '../api.js';
 import { readJiraConfiguration, readJiraIssue, projectJiraIssue, jiraTaskFields, type JiraConfiguration, type JiraIssue } from './model.js';
 import { readJiraTaskCapabilities } from './metadata.js';
@@ -124,33 +124,51 @@ export async function jiraViewer(client: JiraClient): Promise<string> {
 }
 const SCAN_FIELDS = ['summary', 'project', 'status', 'issuetype', 'priority', 'creator', 'assignee', 'watches', 'created', 'updated', 'duedate', 'resolutiondate', 'parent', 'subtasks', 'issuelinks'];
 
-function jql(configuration: JiraConfiguration, completedSinceMs?: number): string {
+type JiraDuePhase = 'dated' | 'missing';
+
+function jql(configuration: JiraConfiguration, order: string, completedSinceMs?: number, duePhase?: JiraDuePhase): string {
     const clauses = { assignee: 'assignee = currentUser()', author: 'creator = currentUser()', subscribed: 'watcher = currentUser()',
         mine: '(assignee = currentUser() OR creator = currentUser() OR watcher = currentUser())', all: '' };
     const project = configuration.scope.kind === 'selected' ? `project IN (${configuration.scope.unitIds.join(',')})` : '';
     // Numeric Jira dates are epoch milliseconds, avoiding the provider viewer's timezone.
     const completion = completedSinceMs === undefined ? '' : `(statusCategory != Done OR resolved >= ${completedSinceMs})`;
-    const selected = [project, clauses[configuration.involvement], completion].filter(Boolean).join(' AND ');
-    return `${selected}${selected ? ' ' : ''}ORDER BY updated DESC, id DESC`;
+    // Separate disjoint native partitions keep missing due dates last in both
+    // directions, regardless of Jira's native EMPTY ordering.
+    const due = duePhase === undefined ? '' : `duedate IS ${duePhase === 'dated' ? 'NOT ' : ''}EMPTY`;
+    const selected = [project, clauses[configuration.involvement], completion, due].filter(Boolean).join(' AND ');
+    return `${selected}${selected ? ' ' : ''}ORDER BY ${order}`;
 }
 
 export async function scanJiraSource(raw: unknown, context: JiraSourceContext): Promise<TriageScanResultV1> {
     const input = TriageScanInputV1Schema.parse(raw);
     const completedSinceMs = input.completed?.kindIds.includes('issue') ? input.completed.sinceMs : undefined;
     try {
+        const sort = input.sort ?? { field: 'updated', direction: 'desc' } as const;
+        const column = JIRA_SORT_COLUMNS.get(sort.field);
+        if (column === undefined) throw invalidJira('jira/sortUnsupported');
+        const direction = sort.direction.toUpperCase();
+        const order = `${column} ${direction}, id ${direction}`;
         const { client, configuration } = await openJiraInstance(input.instance, context);
         let limit: number;
         let nextPageToken: string | undefined;
+        let duePhase: JiraDuePhase | undefined = sort.field === 'due' ? 'dated' : undefined;
         if (input.page.kind === 'initial') limit = input.page.limit;
         else {
             const cursor = object(JSON.parse(input.page.continuation.token));
             if (cursor.v !== 1 || cursor.instance !== input.instance.localInstanceKey || cursor.configuration !== input.instance.configuration.token
+                || cursor.sortField !== sort.field || cursor.sortDirection !== sort.direction
                 || cursor.completedSinceMs !== completedSinceMs
-                || !Number.isSafeInteger(cursor.limit) || Number(cursor.limit) < 1 || !string(cursor.nextPageToken)) throw invalidJira('jira/continuationInvalid');
-            limit = Number(cursor.limit); nextPageToken = String(cursor.nextPageToken);
+                || !Number.isSafeInteger(cursor.limit) || Number(cursor.limit) < 1) throw invalidJira('jira/continuationInvalid');
+            if (sort.field === 'due') {
+                if (cursor.duePhase !== 'dated' && cursor.duePhase !== 'missing') throw invalidJira('jira/continuationInvalid');
+                duePhase = cursor.duePhase;
+            } else if (cursor.duePhase !== undefined) throw invalidJira('jira/continuationInvalid');
+            nextPageToken = string(cursor.nextPageToken);
+            if (nextPageToken === undefined && !(duePhase === 'missing' && cursor.nextPageToken === undefined)) throw invalidJira('jira/continuationInvalid');
+            limit = Number(cursor.limit);
         }
         const viewer = await jiraViewer(client);
-        const page = object(await client.request('/rest/api/3/search/jql', 'POST', { jql: jql(configuration, completedSinceMs), fields: SCAN_FIELDS,
+        const page = object(await client.request('/rest/api/3/search/jql', 'POST', { jql: jql(configuration, order, completedSinceMs, duePhase), fields: SCAN_FIELDS,
             maxResults: limit, ...(nextPageToken === undefined ? {} : { nextPageToken }) }));
         if (!Array.isArray(page.issues) || typeof page.isLast !== 'boolean' || page.issues.length > limit) throw invalidJira();
         const observations: Extract<TriageScanResultV1, { kind: 'complete' }>['observations'][number][] = [];
@@ -161,11 +179,17 @@ export async function scanJiraSource(raw: unknown, context: JiraSourceContext): 
             try { observations.push(projectJiraIssue(issue, client.origin, viewer)); } catch { omitted++; }
         }
         const evidence = omitted > 0 ? { kind: 'partial' as const, reason: 'jira/providerRowsInvalid', omittedItemCount: omitted } : { kind: 'walkFinished' as const };
-        if (page.isLast) return { kind: 'complete', observations, evidence };
-        const next = string(page.nextPageToken);
-        if (next === undefined || next === nextPageToken) throw invalidJira('jira/searchPageInvalid');
+        if (page.isLast && duePhase !== 'dated') return { kind: 'complete', observations, evidence };
+        let next = string(page.nextPageToken);
+        if (page.isLast) {
+            // A short (possibly empty) transition page avoids a second native
+            // query in this invocation. The next source page starts EMPTY.
+            duePhase = 'missing';
+            next = undefined;
+        } else if (next === undefined || next === nextPageToken) throw invalidJira('jira/searchPageInvalid');
         const continuation = TriageScanContinuationV1Schema.parse({ v: 1, token: JSON.stringify({ v: 1,
-            instance: input.instance.localInstanceKey, configuration: input.instance.configuration.token, limit, nextPageToken: next,
+            instance: input.instance.localInstanceKey, configuration: input.instance.configuration.token, limit, nextPageToken: next, sortField: sort.field, sortDirection: sort.direction,
+            ...(duePhase === undefined ? {} : { duePhase }),
             ...(completedSinceMs === undefined ? {} : { completedSinceMs }) }) });
         return { kind: 'page', observations, evidence: omitted > 0 ? evidence : { kind: 'partial', reason: 'jira/providerContinuation' }, continuation };
     } catch (error) { return { kind: 'failed', failure: jiraFailure(error) }; }

@@ -4,7 +4,7 @@ import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin
 import { TriageSourcesContributionProtocolV1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1 } from '@happier-dev/triage-protocol/v1';
 
 import { linearConnectedAccountRuntime, linearPortableAccountRuntime } from './account.js';
-import { LINEAR_PLUGIN_ID, LINEAR_SOURCE_ID, LINEAR_SERVICE_ID, LINEAR_PURPOSE, LINEAR_ORIGIN, LINEAR_ACTIONS, LINEAR_DETAIL_SECTIONS, LINEAR_DETAIL_TITLES, LINEAR_PERSONAL_KEY, LINEAR_CREATE_FIELDS, LINEAR_EDIT_FIELDS } from './contracts.js';
+import { LINEAR_PLUGIN_ID, LINEAR_SOURCE_ID, LINEAR_SORT_COLUMNS, LINEAR_SERVICE_ID, LINEAR_PURPOSE, LINEAR_ORIGIN, LINEAR_ACTIONS, LINEAR_DETAIL_SECTIONS, LINEAR_DETAIL_TITLES, LINEAR_PERSONAL_KEY, LINEAR_CREATE_FIELDS, LINEAR_EDIT_FIELDS } from './contracts.js';
 
 const sources = TriageSourcesContributionProtocolV1;
 
@@ -68,7 +68,7 @@ export const LINEAR_PLUGIN = definePlugin({
   },
   contributesTo: { [TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1]: { [TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1]: {
     [LINEAR_SOURCE_ID]: sources.contribute({
-      descriptor: { v: 1, purpose: LINEAR_PURPOSE, displayName: 'Linear', settingsPageId: 'triage-sources',
+      descriptor: { v: 1, purpose: LINEAR_PURPOSE, sortFields: Array.from(LINEAR_SORT_COLUMNS.keys()), displayName: 'Linear', settingsPageId: 'triage-sources',
         scopeUnit: { singularLabel: 'Team', pluralLabel: 'Teams' },
         kinds: [{ id: 'issue', workflowSubject: 'issue', displayName: 'Issue', pluralDisplayName: 'Issues', task: true,
           taskCapabilities: { completedScan: true, createFields: LINEAR_CREATE_FIELDS, editFields: LINEAR_EDIT_FIELDS },

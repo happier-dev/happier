@@ -1,3 +1,4 @@
+import { GITLAB_TRIAGE_SORT_FIELDS } from './mapping/gitlabInvolvement.js';
 import { gitlabDetailTabDeclaration } from '../ui/detail/tabDeclarations.js';
 /**
  * The one Triage boundary for this provider.
@@ -212,6 +213,7 @@ export const GITLAB_TRIAGE_SOURCE_DESCRIPTOR_V1: TriageSourceDescriptorV1 =
     // name another plugin's page.
     settingsPageId: GITLAB_TRIAGE_SETTINGS_PAGE_ID,
     displayName: 'GitLab',
+    sortFields: GITLAB_TRIAGE_SORT_FIELDS,
     scopeUnit: { singularLabel: 'Project', pluralLabel: 'Projects' },
     kinds: [
       {
@@ -223,7 +225,7 @@ export const GITLAB_TRIAGE_SOURCE_DESCRIPTOR_V1: TriageSourceDescriptorV1 =
           { kind: 'shared', id: 'overview', scrollOwner: gitlabDetailTabDeclaration('overview').scrollOwner },
           { kind: 'shared', id: 'activity', scrollOwner: gitlabDetailTabDeclaration('activity').scrollOwner },
           { kind: 'shared', id: 'files', scrollOwner: gitlabDetailTabDeclaration('changes').scrollOwner },
-          { kind: 'shared', id: 'checks', scrollOwner: gitlabDetailTabDeclaration('pipelines').scrollOwner },
+          { kind: 'shared', id: 'checks', summaryFact: 'gitlab/checks', scrollOwner: gitlabDetailTabDeclaration('pipelines').scrollOwner },
         ],
         detailActions: true,
       },

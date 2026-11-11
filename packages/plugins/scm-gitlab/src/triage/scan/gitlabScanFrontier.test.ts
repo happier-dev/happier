@@ -86,6 +86,27 @@ describe('createGitlabScanFrontier', () => {
     expect(urls.every((url) => url.startsWith('https://gitlab.com/api/v4/merge_requests?'))).toBe(true);
     expect(urls.every((url) => url.includes('per_page=100'))).toBe(true);
   });
+
+  it('maps source updated and created ordering before provider pagination', () => {
+    const { requests } = buildGitlabScanLanes({
+      kindId: 'merge-request', viewerUserId: 42,
+      sort: { field: 'created', direction: 'asc' },
+    });
+    const frontier = createGitlabScanFrontier({ scanLimit: 100, origin: GITLAB_COM, lanes: requests });
+    expect(new URL(frontier.lanes[0]!.nextUrl).searchParams.get('order_by')).toBe('created_at');
+    expect(new URL(frontier.lanes[0]!.nextUrl).searchParams.get('sort')).toBe('asc');
+  });
+
+  it('omits provider ordering for unsupported source fields', () => {
+    const { requests } = buildGitlabScanLanes({
+      kindId: 'merge-request', viewerUserId: 42,
+      sort: { field: 'status', direction: 'asc' },
+    });
+    const frontier = createGitlabScanFrontier({ scanLimit: 100, origin: GITLAB_COM, lanes: requests });
+    const url = new URL(frontier.lanes[0]!.nextUrl);
+    expect(url.searchParams.has('order_by')).toBe(false);
+    expect(url.searchParams.has('sort')).toBe(false);
+  });
 });
 
 describe('runGitlabScan', () => {

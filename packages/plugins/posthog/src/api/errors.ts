@@ -12,7 +12,7 @@
 import { parseRetryAfterNotBeforeMsV1 } from '@happier-dev/triage-sources/runtime';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
-export type PosthogFailure =
+export type PosthogFailure = Readonly<{ requestId?: string }> & (
     | TriageSourceFailureV1
     | Readonly<{ kind: 'unauthorized'; status: number }>
     | Readonly<{ kind: 'forbidden'; status: number }>
@@ -37,7 +37,7 @@ export type PosthogFailure =
     /** A follow-up URL that left the materialized origin; no credential was sent to it. */
     | Readonly<{ kind: 'originMismatch' }>
     /** The source could not construct a valid request from its own inputs. */
-    | Readonly<{ kind: 'requestInvalid'; at: string }>;
+    | Readonly<{ kind: 'requestInvalid'; at: string }>);
 
 /**
  * Reads RFC 9110 `Retry-After` in both accepted forms. Anything else — an absent,

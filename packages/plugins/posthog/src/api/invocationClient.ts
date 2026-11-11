@@ -8,7 +8,7 @@
  */
 
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
-export type PosthogSourceContext = Pick<PluginAccountActionContext, 'signal' | 'surface' | 'caller'> & Readonly<{
+export type PosthogSourceContext = Pick<PluginAccountActionContext, 'signal' | 'surface' | 'caller' | 'requestId'> & Readonly<{
     services: Pick<PluginAccountActionContext['services'], 'http' | 'connectedAccounts'>;
 }>;
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -55,10 +55,12 @@ export function createPosthogInvocationClient(
 ): PosthogApiClient {
     return createPosthogApiClient({
         origin,
+        ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
         materializeHeaders: async (request, options) => {
             const authorized = await materializeTriageSourceAuthorizationV1({
                 connectedAccounts: context.services.connectedAccounts,
                 purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
+                ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
                 account,
                 origin: request.origin,
                 signal: options.signal,

@@ -5,8 +5,8 @@
  * in-memory scan walk, and is copied back by the target without being parsed or
  * granted authority. It therefore carries exactly the invocation-local frontier —
  * the page geometry, the rotation cursor, and each lane's provider-issued next URL —
- * and no credential, account ref, viewer identity, delivered-id history, accumulated
- * row array, or target timestamp. Nothing here is persisted or checkpointed: a token
+ * and no credential, account ref, viewer identity, delivered-id history, or target timestamp. Ordered walks retain at most one
+ * native page of unshown rows per query in this same token. Nothing here is persisted or checkpointed: a token
  * that is dropped costs one page and loses nothing.
  *
  * Every field is re-validated on decode against the lanes THIS invocation built and
@@ -37,7 +37,7 @@ import {
 import type { GitlabConfiguredOrigin } from '../origin.js';
 import { buildGitlabApiUrl } from '../http/gitlabClient.js';
 import { isGitlabPageWithinResource } from '../http/gitlabLink.js';
-import { deriveGitlabNativePageSize } from './gitlabScanFrontier.js';
+import { buildGitlabScanLaneUrl, deriveGitlabNativePageSize } from './gitlabScanFrontier.js';
 import type { GitlabLaneFrontier, GitlabScanFrontier } from './gitlabScanFrontier.js';
 
 const CONTINUATION_VERSION = 1;
@@ -67,7 +67,7 @@ function hasExactKeys(record: Readonly<Record<string, unknown>>, expected: reado
  * lanes do not line up key-for-key with this invocation's is rejected.
  */
 function laneKey(request: GitlabLaneRequest): string {
-  return `${request.kindId}:${request.laneId}`;
+  return `${request.kindId}:${request.laneId}${request.sort === undefined ? '' : `:${JSON.stringify([request.path, request.query, request.sort])}`}`;
 }
 
 export function encodeGitlabScanContinuation(
@@ -88,6 +88,7 @@ export function encodeGitlabScanContinuation(
       nextUrl: lane.nextUrl,
       ended: lane.ended,
       cycleProbe: { ...lane.cycleProbe },
+      ...(lane.request.sort === undefined ? {} : { pending: lane.pending }),
     })),
   });
   return token === null ? null : { v: 1, token };
@@ -106,7 +107,8 @@ export function readGitlabScanContinuationViewerUserId(
   if (!Array.isArray(record.lanes)) return undefined;
   const reviewed = record.lanes
     .map(readRecord)
-    .find((lane): lane is Readonly<Record<string, unknown>> => lane !== null && lane.key === 'merge-request:reviewed');
+    .find((lane): lane is Readonly<Record<string, unknown>> => lane !== null
+      && typeof lane.key === 'string' && lane.key.startsWith('merge-request:reviewed'));
   if (reviewed === undefined || typeof reviewed.nextUrl !== 'string') return null;
   try {
     const raw = new URL(reviewed.nextUrl).searchParams.get('approved_by_ids[]');
@@ -156,11 +158,11 @@ export function decodeGitlabScanContinuation(
   const scanLimit = readCount(record.scanLimit, 1);
   if (scanLimit === null) return null;
   const nativePageSize = readCount(record.nativePageSize, 1);
-  if (nativePageSize === null || nativePageSize !== deriveGitlabNativePageSize(scanLimit)) {
+  if (nativePageSize === null || nativePageSize !== deriveGitlabNativePageSize(scanLimit, input.lanes[0]?.sort === undefined ? 1 : input.lanes.length)) {
     return null;
   }
 
-  const lanes = readLanes(record.lanes, input);
+  const lanes = readLanes(record.lanes, input, nativePageSize);
   if (lanes === null) return null;
 
   const nextLaneIndex = readCount(record.nextLaneIndex, 0);
@@ -197,6 +199,7 @@ function readWalkHealth(raw: unknown): Set<GitlabStickyWalkReason> | null {
 function readLanes(
   raw: unknown,
   input: GitlabScanContinuationDecodeInput,
+  nativePageSize: number,
 ): GitlabLaneFrontier[] | null {
   if (!Array.isArray(raw) || raw.length !== input.lanes.length) return null;
   const lanes: GitlabLaneFrontier[] = [];
@@ -204,27 +207,31 @@ function readLanes(
     const request = input.lanes[index];
     if (request === undefined) return null;
     const record = readRecord(entry);
-    if (record === null || !hasExactKeys(record, LANE_KEYS) || record.key !== laneKey(request)) {
+    if (record === null || !hasExactKeys(record, request.sort === undefined ? LANE_KEYS : [...LANE_KEYS, 'pending']) || record.key !== laneKey(request)) {
       return null;
     }
     if (typeof record.ended !== 'boolean') return null;
+    const pending = request.sort === undefined ? [] : record.pending;
+    if (!Array.isArray(pending) || pending.length > nativePageSize) return null;
     if (typeof record.nextUrl !== 'string') return null;
     // The URL is re-admitted against the configured origin exactly as a provider
     // `Link` header would be. A token is untrusted input: without this it could aim
     // the binding's credential at another host and answer the user's list from it.
     const nextUrl = admitForgeRequestUrl(record.nextUrl, input.origin.normalized);
-    const resourceUrl = buildGitlabApiUrl(input.origin, request.path);
-    if (nextUrl === null || !isGitlabPageWithinResource(nextUrl, resourceUrl)) return null;
+    const resourceUrl = request.sort === undefined ? buildGitlabApiUrl(input.origin, request.path)
+      : buildGitlabScanLaneUrl(input.origin, request, nativePageSize);
+    if (nextUrl === null || !isGitlabPageWithinResource(nextUrl, resourceUrl, request.sort !== undefined)) return null;
     const rawProbe = readRecord(record.cycleProbe);
     if (rawProbe === null || !hasExactKeys(rawProbe, CYCLE_PROBE_KEYS)) return null;
     const cycleProbe = readCursorCycleProbeV1(rawProbe);
     if (cycleProbe === null) return null;
     const admittedProbeCursor = admitForgeRequestUrl(cycleProbe.cursor, input.origin.normalized);
-    if (admittedProbeCursor === null || !isGitlabPageWithinResource(admittedProbeCursor, resourceUrl)) return null;
+    if (admittedProbeCursor === null || !isGitlabPageWithinResource(admittedProbeCursor, resourceUrl, request.sort !== undefined)) return null;
     lanes.push({
       request,
       nextUrl,
       ended: record.ended,
+      pending,
       cycleProbe: Object.freeze({ ...cycleProbe, cursor: admittedProbeCursor }),
     });
   }

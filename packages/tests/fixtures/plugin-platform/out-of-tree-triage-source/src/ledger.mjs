@@ -24,6 +24,9 @@
  * variable or a global mode.
  */
 
+/** Fields this provider can order globally before selecting a page. */
+export const LEDGER_SORT_COLUMNS = Object.freeze({ updated: 'updated_at', created: 'opened_at' });
+
 export const LEDGER_SPACE_IDS = Object.freeze({
     curated: 'acme/ledger',
     qa: 'acme/ledger-qa',
@@ -107,6 +110,24 @@ const CURATED_ROWS = Object.freeze([
     }),
 ]);
 
+/** The curated provider inventory is finite and already materialized. */
+const CURATED_SORT_ORDERS = Object.fromEntries(Object.entries(LEDGER_SORT_COLUMNS).map(([field, column]) => [
+    field, Object.fromEntries(['asc', 'desc'].map((direction) => [direction,
+        CURATED_ROWS.map((_, index) => index).sort((left, right) => {
+            const a = CURATED_ROWS[left][column];
+            const b = CURATED_ROWS[right][column];
+            if (a === undefined || b === undefined) {
+                if (a !== b) return a === undefined ? 1 : -1;
+            } else if (a !== b) {
+                return (a - b) * (direction === 'asc' ? 1 : -1);
+            }
+            const aRef = CURATED_ROWS[left].ref ?? '';
+            const bRef = CURATED_ROWS[right].ref ?? '';
+            return aRef < bRef ? -1 : aRef > bRef ? 1 : left - right;
+        }),
+    ])),
+]));
+
 /** The provider row the fixture treats as retired for authoritative reads. */
 export const LEDGER_RETIRED_REF = 'TCK-900';
 
@@ -171,6 +192,7 @@ function readGeneratedLedgerRowIndex(rowCount, ref) {
 function generatedLedgerSpace(space, rowCount, epochMs = QA_EPOCH_MS) {
     return Object.freeze({
         rowCount,
+        indexAtOffset: (offset, sort) => sort?.direction === 'asc' ? rowCount - offset - 1 : offset,
         readRow: (index) => readGeneratedLedgerRow(space, rowCount, epochMs, index),
         indexOfRef: (ref) => readGeneratedLedgerRowIndex(rowCount, ref),
     });
@@ -184,6 +206,7 @@ function generatedLedgerSpace(space, rowCount, epochMs = QA_EPOCH_MS) {
 const LEDGER_SPACES = Object.freeze({
     [LEDGER_SPACE_IDS.curated]: Object.freeze({
         rowCount: CURATED_ROWS.length,
+        indexAtOffset: (offset, sort) => sort === undefined ? offset : CURATED_SORT_ORDERS[sort.field][sort.direction][offset],
         readRow: (index) => CURATED_ROWS[index] ?? null,
         indexOfRef: (ref) => CURATED_ROWS.findIndex((row) => row.ref === ref),
     }),
@@ -208,13 +231,13 @@ export function isLedgerSpace(space) {
  * `offset` and `pageSize` are the provider's own geometry. The caller never
  * sees a next URL: the source owns continuation custody.
  */
-export function readLedgerPage(space, offset, pageSize) {
+export function readLedgerPage(space, offset, pageSize, sort) {
     if (!isLedgerSpace(space)) return Object.freeze({ rows: Object.freeze([]), nextOffset: null });
     const provider = LEDGER_SPACES[space];
     const end = Math.min(offset + pageSize, provider.rowCount);
     const rows = [];
     for (let index = offset; index < end; index += 1) {
-        const row = provider.readRow(index);
+        const row = provider.readRow(provider.indexAtOffset(index, sort));
         if (row !== null) rows.push(row);
     }
     return Object.freeze({

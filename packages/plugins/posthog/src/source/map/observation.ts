@@ -120,6 +120,7 @@ export function buildPosthogPresentObservation(
             title: snapshot.title,
             ...(snapshot.description === undefined ? {} : { summary: snapshot.description }),
             scopeLabel: snapshot.scopeLabel,
+            ...(snapshot.createdAtMs === undefined ? {} : { createdAtMs: snapshot.createdAtMs }),
             ...(scope === null ? {} : { scopeUnitId: scope.teamUuid }),
             state: {
                 presentation: snapshot.state.presentation,

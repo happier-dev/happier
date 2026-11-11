@@ -73,6 +73,104 @@ export function host(respond: (url: URL, body: unknown) => { status?: number; bo
 
 describe('Jira source through provider HTTP', () => {
     it.each([
+        ['updated', 'asc', 'updated ASC'], ['updated', 'desc', 'updated DESC'],
+        ['created', 'asc', 'created ASC'], ['created', 'desc', 'created DESC'],
+    ] as const)('orders %s %s in Jira before each provider page', async (field, direction, order) => {
+        const searches: unknown[] = [];
+        const h = host((url, body) => {
+            if (url.pathname === '/rest/api/3/myself') return { body: { accountId: 'person-1' } };
+            searches.push(body);
+            return { body: { isLast: searches.length === 2, ...(searches.length === 1 ? { nextPageToken: 'sorted-next' } : {}), issues: [issue] } };
+        });
+        const sort = { field, direction };
+        const first = await scanJiraSource({ v: 1, instance, sort, page: { kind: 'initial', limit: 1 } }, h.context);
+        expect(first.kind).toBe('page');
+        if (first.kind !== 'page') throw new Error('Expected Jira continuation');
+        expect(await scanJiraSource({ v: 1, instance, sort, page: { kind: 'continuation', continuation: first.continuation } }, h.context))
+            .toMatchObject({ kind: 'complete', observations: [{ localRef: { entryId: issue.id } }] });
+        expect(searches).toEqual([
+            expect.objectContaining({ jql: expect.stringContaining('ORDER BY ' + order + ', id ' + direction.toUpperCase()), maxResults: 1 }),
+            expect.objectContaining({ jql: expect.stringContaining('ORDER BY ' + order + ', id ' + direction.toUpperCase()), maxResults: 1, nextPageToken: 'sorted-next' }),
+        ]);
+        expect(await scanJiraSource({ v: 1, instance, sort: { field, direction: direction === 'asc' ? 'desc' : 'asc' },
+            page: { kind: 'continuation', continuation: first.continuation } }, h.context)).toMatchObject({ kind: 'failed' });
+        expect(searches).toHaveLength(2);
+    });
+
+    it.each(['asc', 'desc'] as const)('orders Jira due %s through dated then missing native pages', async (direction) => {
+        const dated = [
+            { ...issue, id: '10009', fields: { ...issue.fields, duedate: '2026-10-10' } },
+            { ...issue, id: '10003', fields: { ...issue.fields, duedate: '2026-10-20' } },
+            { ...issue, id: '10005', fields: { ...issue.fields, duedate: '2026-10-30' } },
+        ];
+        const ordered = direction === 'asc' ? dated : [...dated].reverse();
+        const missing = ['10007', '10008', '10011'].map(id => ({ ...issue, id, fields: { ...issue.fields, duedate: null } }));
+        let searches = 0;
+        const h = host((url, body) => {
+            if (url.pathname === '/rest/api/3/myself') return { body: { accountId: 'person-1' } };
+            const request = body as { jql: string; nextPageToken?: string; maxResults: number };
+            const empty = request.jql.includes('duedate IS EMPTY');
+            expect(request.jql).toContain(empty ? 'duedate IS EMPTY' : 'duedate IS NOT EMPTY');
+            expect(request.jql).toContain('ORDER BY duedate ' + direction.toUpperCase());
+            expect(request.maxResults).toBe(2);
+            const continued = request.nextPageToken !== undefined;
+            if (continued) expect(request.nextPageToken).toBe(empty ? 'missing-next' : 'dated-next');
+            const rows = empty ? missing : ordered;
+            searches++;
+            return { body: { issues: rows.slice(continued ? 2 : 0, continued ? 3 : 2), isLast: continued,
+                ...(continued ? {} : { nextPageToken: empty ? 'missing-next' : 'dated-next' }) } };
+        });
+        const sort = { field: 'due', direction } as const;
+        let input: Parameters<typeof scanJiraSource>[0] = { v: 1, instance, sort, page: { kind: 'initial', limit: 2 } };
+        const seen: { id: string; due: string | null }[] = [];
+        let firstContinuation: { v: 1; token: string } | undefined;
+        for (let pageIndex = 0; pageIndex < 4; pageIndex++) {
+            const result = TriageScanResultV1Schema.parse(await scanJiraSource(input, h.context));
+            expect(searches).toBe(pageIndex + 1); // one bounded native query per source page, including the phase transition
+            if (result.kind !== 'page' && result.kind !== 'complete') throw new Error('Expected readable Jira due page');
+            expect(result.observations.length).toBeLessThanOrEqual(2);
+            for (const observation of result.observations) {
+                if (observation.kind !== 'present') throw new Error('Expected Jira issue');
+                seen.push({ id: observation.localRef.entryId, due: observation.snapshot.dueDate ?? null });
+            }
+            expect(result.kind).toBe(pageIndex === 3 ? 'complete' : 'page');
+            if (result.kind === 'page') {
+                firstContinuation ??= result.continuation;
+                input = { v: 1, instance, sort, page: { kind: 'continuation', continuation: result.continuation } };
+            }
+        }
+        expect(seen).toEqual([...ordered.map(row => ({ id: row.id, due: row.fields.duedate })),
+            ...missing.map(row => ({ id: row.id, due: null }))]);
+        if (firstContinuation === undefined) throw new Error('Expected Jira due continuation');
+        const invalidPhase = { ...JSON.parse(firstContinuation.token), duePhase: 'nulls-first' };
+        expect(await scanJiraSource({ v: 1, instance, sort,
+            page: { kind: 'continuation', continuation: { v: 1, token: JSON.stringify(invalidPhase) } } }, h.context))
+            .toMatchObject({ kind: 'failed', failure: { class: 'unsupportedContract' } });
+        expect(await scanJiraSource({ v: 1, instance, sort: { field: 'created', direction },
+            page: { kind: 'continuation', continuation: firstContinuation } }, h.context)).toMatchObject({ kind: 'failed' });
+        expect(searches).toBe(4);
+    });
+
+    it('advances an empty dated Jira partition without eagerly querying missing dates', async () => {
+        let searches = 0;
+        const h = host((url, body) => {
+            if (url.pathname === '/rest/api/3/myself') return { body: { accountId: 'person-1' } };
+            searches++;
+            expect(body).toMatchObject({ jql: expect.stringContaining(searches === 1 ? 'duedate IS NOT EMPTY' : 'duedate IS EMPTY') });
+            return { body: { isLast: true, issues: searches === 1 ? [] : [issue] } };
+        });
+        const sort = { field: 'due', direction: 'desc' } as const;
+        const first = await scanJiraSource({ v: 1, instance, sort, page: { kind: 'initial', limit: 2 } }, h.context);
+        expect(first).toMatchObject({ kind: 'page', observations: [] });
+        expect(searches).toBe(1);
+        if (first.kind !== 'page') throw new Error('Expected missing-date phase');
+        expect(await scanJiraSource({ v: 1, instance, sort,
+            page: { kind: 'continuation', continuation: first.continuation } }, h.context))
+            .toMatchObject({ kind: 'complete', observations: [{ localRef: { entryId: issue.id } }] });
+        expect(searches).toBe(2);
+    });
+
+    it.each([
         ['connected_service_credential_reconnect_required', 'authentication'],
         ['plugin_connected_account_settings_unavailable', 'transient'],
     ] as const)('preserves typed host refusal %s and request ID without HTTP', async (code, classification) => {

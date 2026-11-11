@@ -1,4 +1,6 @@
 import {
+  decodeTriagePagingTokenV1,
+  encodeTriagePagingTokenV1,
   TriageGetResultV1Schema,
   TriageListScopeUnitsResultV1Schema,
   TriageScanResultV1Schema,
@@ -18,7 +20,7 @@ import { PLUGIN_MANIFEST } from '../manifest.js';
 import issueList from './__fixtures__/issueList.json' with { type: 'json' };
 import mergeRequestList from './__fixtures__/mergeRequestList.json' with { type: 'json' };
 import { GITLAB_CONFIGURATION_RECORD_V1, encodeGitlabConfiguration } from './configuration.js';
-import { GITLAB_CONNECTED_ACCOUNT_PURPOSE } from './contribution.js';
+import { GITLAB_CONNECTED_ACCOUNT_PURPOSE, GITLAB_TRIAGE_ACTION_IDS } from './contribution.js';
 import type { GitlabConnectedAccounts, GitlabHttpResponse } from './http/gitlabClient.js';
 import { createGitlabResponseHeaders } from './http/gitlabHeaders.js';
 import { getGitlabTriageEntry } from './sourceGet.js';
@@ -124,6 +126,102 @@ function harness(
 }
 
 type ScanSeam = ReturnType<typeof harness>;
+it('refuses unsupported scan sorting before acquiring credentials', async () => {
+  const seam = harness({ '/api/v4/user': { body: VIEWER } });
+  const result = await scanGitlabTriageSource({ connectedAccounts: seam.connectedAccounts,
+    fetcher: seam.fetcher, signal: new AbortController().signal, nowMs: NOW_MS,
+    scan: { instance: configuredInstance(), sort: { field: 'due', direction: 'asc' }, page: { kind: 'initial', limit: 2 } } });
+  expect(result).toMatchObject({ kind: 'failed', failure: { class: 'unsupportedContract', code: 'unsupported-sort' } });
+  expect(seam.materializeListedAccount).not.toHaveBeenCalled();
+});
+
+
+it.each([{ field: 'updated', direction: 'asc' }, { field: 'updated', direction: 'desc' },
+  { field: 'created', direction: 'asc' }, { field: 'created', direction: 'desc' }] as const)('orders $field $direction across native involvement lanes before returning source pages', async ({ field, direction }) => {
+  const seam = harness({});
+  seam.fetcher.mockImplementation(async (rawUrl: string) => {
+    seam.requested.push(rawUrl);
+    const url = new URL(rawUrl);
+    if (url.pathname.endsWith('/user')) return { status: 200, statusText: '', headers: createGitlabResponseHeaders({}), text: async () => JSON.stringify(VIEWER) };
+    expect(url.searchParams.get('per_page')).toBe('2');
+    expect(url.searchParams.get('order_by')).toBe(field === 'updated' ? 'updated_at' : 'created_at');
+    expect(url.searchParams.get('sort')).toBe(direction);
+    const values = url.pathname.endsWith('/merge_requests')
+      ? url.searchParams.get('scope') === 'created_by_me' ? [1, 4, 5, 8]
+        : url.searchParams.get('scope') === 'assigned_to_me' ? [2, 3, 6, 7] : []
+      : [];
+    const sorted = direction === 'asc' ? values : values.slice().reverse();
+    const page = Number(url.searchParams.get('page') ?? '1');
+    const next = new URL(url); next.searchParams.set('page', String(page + 1));
+    return { status: 200, statusText: '', headers: createGitlabResponseHeaders(page === 1 && values.length > 0 ? { Link: `<${next}>; rel="next"` } : {}),
+      text: async () => JSON.stringify(sorted.slice((page - 1) * 2, page * 2).map(value => ({
+        ...mergeRequestList[0], iid: 100 - value,
+        [field === 'updated' ? 'updated_at' : 'created_at']: new Date(value * 1000).toISOString(),
+      }))) };
+  });
+  const input = { connectedAccounts: seam.connectedAccounts, fetcher: seam.fetcher,
+    signal: new AbortController().signal, nowMs: NOW_MS };
+  const scan = { instance: configuredInstance(), sort: { field, direction } };
+  const first = await scanGitlabTriageSource({ ...input, scan: { ...scan, page: { kind: 'initial', limit: 12 } } });
+  expect(first.kind).toBe('page');
+  if (first.kind !== 'page') throw new Error('expected retained lane heads');
+  expect(first.observations.map(row => row.kind === 'present' && row.localRef.entryId))
+    .toEqual(direction === 'asc' ? ['99', '98', '97'] : ['92', '93', '94']);
+  expect(seam.requested.filter(url => !url.endsWith('/user'))).toHaveLength(6);
+  const second = await scanGitlabTriageSource({ ...input, scan: { ...scan,
+    page: { kind: 'continuation', continuation: first.continuation } } });
+  expect(second.kind).toBe('complete');
+  if (second.kind === 'failed') throw new Error(second.failure.code);
+  expect(second.observations.map(row => row.kind === 'present' && row.localRef.entryId))
+    .toEqual(direction === 'asc' ? ['96', '95', '94', '93', '92'] : ['95', '96', '97', '98', '99']);
+  expect(seam.requested.filter(url => !url.endsWith('/user'))).toHaveLength(8);
+});
+
+it('merges all selected project heads in the same sorted GitLab source frontier', async () => {
+  const seam = harness({});
+  seam.fetcher.mockImplementation(async (rawUrl: string) => {
+    seam.requested.push(rawUrl);
+    const url = new URL(rawUrl);
+    const page = Number(url.searchParams.get('page') ?? '1');
+    const value = url.pathname.endsWith('/merge_requests') && url.searchParams.get('scope') === 'created_by_me'
+      ? (url.pathname.includes('/projects/3/') ? 3 : 0) + page : null;
+    const next = new URL(url); next.searchParams.set('page', String(page + 1));
+    return { status: 200, statusText: '', headers: createGitlabResponseHeaders(value !== null && page === 1 ? { Link: `<${next}>; rel="next"` } : {}),
+      text: async () => JSON.stringify(url.pathname.endsWith('/user') ? VIEWER : value === null ? [] : [{
+        ...mergeRequestList[0], project_id: url.pathname.includes('/projects/3/') ? 3 : 4,
+        iid: 100 - value, updated_at: new Date(value * 1000).toISOString(),
+      }]) };
+  });
+  const scan = { instance: configuredInstance({ configuration: encodeGitlabConfiguration({ v: 1,
+    selection: { kind: 'selected', unitIds: ['3', '4'] } })! }), sort: { field: 'updated' as const, direction: 'asc' as const } };
+  const input = { connectedAccounts: seam.connectedAccounts, fetcher: seam.fetcher,
+    signal: new AbortController().signal, nowMs: NOW_MS };
+  const first = await scanGitlabTriageSource({ ...input, scan: { ...scan, page: { kind: 'initial', limit: 12 } } });
+  expect(first.kind).toBe('page');
+  if (first.kind !== 'page') throw new Error('expected project frontier continuation');
+  expect(first.observations.map(row => row.kind === 'present' && row.localRef.entryId)).toEqual(['99']);
+  expect(seam.requested.filter(url => !url.endsWith('/user'))).toHaveLength(12);
+  const replay = await scanGitlabTriageSource({ ...input, scan: { ...scan, sort: { field: 'updated', direction: 'desc' },
+    page: { kind: 'continuation', continuation: first.continuation } } });
+  expect(replay).toMatchObject({ kind: 'failed', failure: { code: 'unknown-continuation' } });
+  expect(seam.requested.filter(url => !url.endsWith('/user'))).toHaveLength(12);
+  const record = decodeTriagePagingTokenV1(first.continuation.token);
+  if (!record || !Array.isArray(record.lanes)) throw new Error('expected native lane frontier');
+  const lane = record.lanes[0] as { nextUrl: string };
+  lane.nextUrl = lane.nextUrl.replace('sort=asc', 'sort=desc');
+  const tampered = encodeTriagePagingTokenV1(record);
+  if (tampered === null) throw new Error('expected fitting frontier');
+  const changedNativeOrder = await scanGitlabTriageSource({ ...input, scan: { ...scan,
+    page: { kind: 'continuation', continuation: { v: 1, token: tampered } } } });
+  expect(changedNativeOrder).toMatchObject({ kind: 'failed', failure: { code: 'unknown-continuation' } });
+  expect(seam.requested.filter(url => !url.endsWith('/user'))).toHaveLength(12);
+  const second = await scanGitlabTriageSource({ ...input, scan: { ...scan,
+    page: { kind: 'continuation', continuation: first.continuation } } });
+  expect(second.kind).toBe('complete');
+  if (second.kind === 'failed') throw new Error(second.failure.code);
+  expect(second.observations.map(row => row.kind === 'present' && row.localRef.entryId)).toEqual(['98', '96', '95']);
+  expect(seam.requested.filter(url => !url.endsWith('/user'))).toHaveLength(14);
+});
 
 it('searches the exact self-managed base through Account activation without a Machine and keeps pagination bound to that directory', async () => {
   const seam = harness({});
@@ -769,6 +867,21 @@ describe('GitLab scan', () => {
 describe('GitLab get', () => {
   const localRef = { kindId: 'merge-request', collisionScope: PROJECT_SCOPE, entryId: '7' } as const;
 
+  it('retains the issued get identity after a registered malformed provider body', async () => {
+    const requestId = '8778a4ad-822b-4a1f-b2c7-12b2be8201db';
+    const seam = harness({});
+    const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      connectedAccounts: seam.connectedAccounts,
+      http: { request: async () => ({ status: 200, headers: {}, body: new TextEncoder().encode('{}') }) },
+    } });
+    try {
+      const result = TriageGetResultV1Schema.parse(await kit.invokeAction(GITLAB_TRIAGE_ACTION_IDS.get, {
+        v: 1, instance: configuredInstance(), localRef, lastKnownLocator: { v: 1, routingToken: REPOSITORY_KEY },
+      }, { surface: 'ui', requestId }));
+      expect(result).toMatchObject({ kind: 'unresolved', failure: { code: 'undecodable-item', requestId } });
+    } finally { await kit.dispose(); }
+  });
+
   async function get(routes: Parameters<typeof harness>[0], overrides: Readonly<{
     instance?: TriageConfiguredSourceInstanceV1;
     localRef?: TriageSourceEntryLocalRefV1;
@@ -805,6 +918,56 @@ describe('GitLab get', () => {
     // The fixture's author is the observed viewer; a `get` is reached by route,
     // so it proves nothing about a query lane.
     expect(result.viewer.involvement).toEqual(['author']);
+  });
+
+  it.each([
+    { name: 'passing', body: [{ id: 91, status: 'success', sha: mergeRequestList[0]!.sha }], value: 'All passing', tone: 'success' },
+    { name: 'failing', body: [{ id: 91, status: 'failed', sha: mergeRequestList[0]!.sha }], value: 'Failing', tone: 'danger' },
+    { name: 'running', body: [{ id: 91, status: 'running', sha: mergeRequestList[0]!.sha }], value: 'Running', tone: 'info' },
+    { name: 'pending', body: [{ id: 91, status: 'pending', sha: mergeRequestList[0]!.sha }], value: 'Running', tone: 'info' },
+    { name: 'empty', body: [], value: 'No pipelines', tone: 'neutral' },
+    { name: 'unreadable', status: 403, body: null, value: 'Checks unavailable', tone: 'warning' },
+    { name: 'malformed', body: [{ id: 91, sha: mergeRequestList[0]!.sha }], value: 'Checks unavailable', tone: 'warning' },
+    { name: 'unknown', body: [{ id: 91, status: 'future-status', sha: mergeRequestList[0]!.sha }], value: 'Checks unavailable', tone: 'warning' },
+    { name: 'canceled', body: [{ id: 91, status: 'canceled', sha: mergeRequestList[0]!.sha }], value: 'Checks unavailable', tone: 'warning' },
+    { name: 'stale head', body: [{ id: 91, status: 'success', sha: '7777777777777777777777777777777777777777' }], value: 'Checks unavailable', tone: 'warning' },
+    { name: 'missing pipeline head', body: [{ id: 91, status: 'success' }], value: 'Checks unavailable', tone: 'warning' },
+    { name: 'missing merge request head', missingHead: true, body: [{ id: 91, status: 'success', sha: mergeRequestList[0]!.sha }], value: 'Checks unavailable', tone: 'warning' },
+  ])('projects opening pipeline summary: $name, without reading job pages', async ({ body, status, value, tone, missingHead }) => {
+    const pipelinesPath = `/api/v4/projects/${ENCODED_REPOSITORY_KEY}/merge_requests/7/pipelines`;
+    const { result, seam } = await get({
+      [`/api/v4/projects/${ENCODED_REPOSITORY_KEY}/merge_requests/7`]: {
+        body: missingHead ? { ...mergeRequestList[0], sha: null, diff_refs: null } : mergeRequestList[0],
+      },
+      '/api/v4/user': { body: VIEWER },
+      [`${pipelinesPath}?per_page=1`]: { body, status },
+    });
+    const fact = { id: 'gitlab/checks', importance: 'primary', value: { kind: 'status', value, tone } };
+    expect(result).toMatchObject({
+      kind: 'present',
+      snapshot: { facts: expect.arrayContaining([fact]) },
+      detailData: { overview: { observation: { snapshot: { facts: expect.arrayContaining([fact]) } } } },
+    });
+    expect(seam.requested.filter((url) => new URL(url).pathname === pipelinesPath)
+      .map((url) => new URL(url).search)).toEqual(['?per_page=1']);
+    expect(seam.requested.some((url) => url.includes('/jobs'))).toBe(false);
+  });
+
+  it('does not search older pipelines when the opening summary is stale or incomplete', async () => {
+    const pipelinesPath = `/api/v4/projects/${ENCODED_REPOSITORY_KEY}/merge_requests/7/pipelines`;
+    for (const body of [[], [{ id: 91, status: 'success', sha: '7777777777777777777777777777777777777777' }]]) {
+      const { result, seam } = await get({
+        [`/api/v4/projects/${ENCODED_REPOSITORY_KEY}/merge_requests/7`]: { body: mergeRequestList[0] },
+        '/api/v4/user': { body: VIEWER },
+        [`${pipelinesPath}?per_page=1`]: {
+          body, headers: { Link: `<https://gitlab.com${pipelinesPath}?per_page=1&page=2>; rel="next"` },
+        },
+      });
+      expect(result).toMatchObject({ kind: 'present', snapshot: { facts: expect.arrayContaining([
+        { id: 'gitlab/checks', importance: 'primary', value: { kind: 'status', value: 'Checks unavailable', tone: 'warning' } },
+      ]) } });
+      expect(seam.requested.filter((url) => url.includes('/pipelines'))).toHaveLength(1);
+    }
   });
 
   it.each([false, true])('keeps a viewer rate limit unresolved for a review-requested item (subscribed=%s)', async (subscribed) => {

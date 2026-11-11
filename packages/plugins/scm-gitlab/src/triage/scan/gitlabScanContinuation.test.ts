@@ -1,3 +1,4 @@
+import { MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 import { advanceCursorCycleWalkV1 } from '@happier-dev/triage-sources/runtime';
 
@@ -142,13 +143,10 @@ describe('the GitLab scan continuation codec', () => {
   });
 
   it('refuses a frontier that cannot fit the canonical Action envelope', () => {
-    const wide: GitlabLaneRequest[] = Array.from({ length: 400 }, (_unused, index) => ({
-      laneId: 'authored',
-      kindId: 'merge-request',
-      path: '/merge_requests',
-      query: [['scope', 'created_by_me'], ['probe', `lane-${index}`]],
-      involvement: 'author',
-    }));
+    const wide: GitlabLaneRequest[] = [{
+      ...lanes()[0]!,
+      query: [['scope', 'created_by_me'], ['probe', 'x'.repeat(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1)]],
+    }];
 
     // The shared protocol owns the real carrier bound. This source must fail
     // closed rather than truncate an opaque frontier that it could not resume.
