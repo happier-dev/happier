@@ -4,7 +4,6 @@ import { omit, pick } from 'zod/mini';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 
 import type {
-    UsageCostMode,
     UsageDimension,
     UsageMetric,
 } from '@/sync/api/account/usageAnalytics';
@@ -29,7 +28,6 @@ export type UsageRouteWritableParams = Readonly<Record<
 >>;
 
 const VALID_METRICS = new Set<UsageMetric>(['tokens', 'cost']);
-const VALID_COST_MODES = new Set<UsageCostMode>(['auto', 'reported', 'estimated']);
 const VALID_DIMENSIONS = new Set<UsageDimension>([
     'agent',
     'model',
@@ -81,9 +79,8 @@ export function resolveUsagePageInitialFilters(
     const metric = VALID_METRICS.has(metricValue as UsageMetric)
         ? (metricValue as UsageMetric)
         : 'tokens';
-    const costMode = VALID_COST_MODES.has(costModeValue as UsageCostMode)
-        ? (costModeValue as UsageCostMode)
-        : 'auto';
+    const parsedCostMode = UsageQuerySchema.shape.costBasis.safeParse(costModeValue ?? undefined);
+    const costMode = parsedCostMode.success ? parsedCostMode.data : UsageQuerySchema.shape.costBasis.parse(undefined);
 
     const focus = VALID_DIMENSIONS.has(focusDimensionValue as UsageDimension)
         && typeof focusKey === 'string'

@@ -228,21 +228,23 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     }, [canChange, input.active, page.isCurrent, page.period, page.scope, input.layoutId, definitions]);
     const currentPublication = React.useRef(publication);
     React.useLayoutEffect(() => { currentPublication.current = publication; }, [publication]);
-    const invoke = React.useCallback(async (command: CurrentUiContextMountedCommand | undefined, invocation?: CurrentUiContextCommandInvocation): Promise<boolean> => {
+    const invoke = React.useCallback(async (command: CurrentUiContextMountedCommand | undefined): Promise<boolean> => {
         if (!canChange()) return false;
         return (await executeMountedCurrentUiContextCommand({ reader, command,
-            execute: (actionId, value) => invocation ? invocation.execute(execution, actionId, value) : execution.execute(actionId, value) })).ok;
-    }, [canChange, execution.execute, execution.executeForCaller, execution.binding, reader]);
+            execute: (actionId, value) => execution.execute(actionId, value) })).ok;
+    }, [canChange, execution.execute, reader]);
     // Menus close before invoking their queued callback. Resolve its semantic intent
     // from the committed publication, never the retired descriptor captured at close.
     // The current-context owner retires commands when their declaration or authority changes.
     const selectLayout = React.useCallback((id: string, signal?: AbortSignal) => signal?.aborted ? Promise.resolve(false)
         : invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('layout', id))?.command), [invoke]);
     const selectPeriod = React.useCallback((id: UsagePeriod) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('period', id))?.command), [invoke]);
-    const selectCostBasis = React.useCallback((id: UsageWidgetPageScope['costBasis'], _context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('cost', id))?.command, invocation), [invoke]);
-    // A foreground multi-select has already admitted its command and withholds the page's
+    // A foreground chooser has already admitted its command and withholds the page's
     // descriptors. Apply its intent through the same state owner with that caller;
     // asking for the hidden page command again would silently refuse the selection.
+    const selectCostBasis = React.useCallback((id: UsageWidgetPageScope['costBasis'], context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => invocation
+        ? Promise.resolve(latest.current.page.setScope({ costBasis: id }, context))
+        : invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('cost', id))?.command), [invoke]);
     const selectFilter = React.useCallback((field: string, id: string, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => invocation
         ? Promise.resolve(latest.current.filterCommands?.find(row => row.field === field && row.id === id)?.invoke(context) ?? false)
         : invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('filter', field, id))?.command), [invoke]);

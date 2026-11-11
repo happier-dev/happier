@@ -254,6 +254,51 @@ describe('mounted Usage page scope commands', () => {
             await waitForHomeGovernance(() => expect(ledger()).toHaveLength(unfilteredProjectCount));
         }
     });
+    it('applies foreground cost-basis choices to the page query through route feedback', async () => {
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-cost-basis-selection.test', accountId: 'account-a' }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query') return Response.json({ ...accounting,
+                    totals: { ...totals, cost: { ...totals.cost, estimatedUsd: 2, apiEquivalentUsd: 3 } } });
+                return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <CurrentContextPort /><RoutedUsagePage />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        const chip = () => screen.findAllByType(SelectionListFilterChip).find(node => node.props.filter.id === 'costBasis')!.props.filter;
+        const bodyQueries = () => screen.findAllByType(UsagePeriodSummaryWidget).map(node => normalizeUsageQuery(node.props.query));
+        await waitForHomeGovernance(() => expect(chip().options.map((option: { id: string }) => option.id))
+            .toEqual(['auto', 'reported', 'estimated', 'api_equivalent']));
+        expect(chip().selectedId).toBe('auto');
+        expect(bodyQueries().length).toBeGreaterThan(0);
+        expect(bodyQueries().every(query => query.costBasis === 'auto')).toBe(true);
+        for (const basis of ['estimated', 'reported', 'api_equivalent', 'auto'] as const) {
+            await screen.pressByTestIdAsync(chip().testID);
+            await flushHookEffects({ cycles: 10 });
+            const pageTitle = describeUsageWidgetSlotValue('costBasis', basis, screen.findByType(UsageFilterBar).props.page.period);
+            expect(reader!.readCurrentUiContext()!.commands.some(command => command.title === pageTitle),
+                'The foreground chooser withholds the page command').toBe(false);
+            await screen.pressByTestIdAsync(`${chip().testID}:${basis}`);
+            await flushHookEffects({ cycles: 40 });
+            expect(chip().selectedId).toBe(basis);
+            expect(screen.findByType(UsageFilterBar).props.page.scope.costBasis).toBe(basis);
+            expect(screen.findByType(UsageWidgetPage).props.initialFilters.costMode).toBe(basis);
+            await waitForHomeGovernance(() => {
+                const queries = bodyQueries();
+                expect(queries.length).toBeGreaterThan(0);
+                expect(queries.every(query => query.costBasis === basis)).toBe(true);
+            });
+        }
+    });
     it.each([{ selection: 'period' }, { selection: 'filter' }] as const)('retains native $selection callers through actual page layout admission', async ({ selection }) => {
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-origin-layout.test', accountId: 'account-a' }],
             route: request => {
@@ -516,7 +561,7 @@ describe('mounted Usage page scope commands', () => {
         const invoke = async (title: string) => {
             const read = await bridge.executeActionByToolName('action_execute', { actionId: 'ui.current_context.read',
                 input: { clientId: 'mounted-usage' } }, sessionId ?? 'native-session');
-            expect(read).toMatchObject({ ok: true });
+            expect(read, JSON.stringify(read)).toMatchObject({ ok: true });
             if (!read.ok) throw new Error('Native current-context read failed');
             const command = CurrentUiContextSnapshotV1Schema.parse(read.result).commands.find(command => command.title === title);
             expect(command, `mounted command: ${title}`).toBeDefined();
@@ -1054,10 +1099,11 @@ describe('mounted Usage page scope commands', () => {
             return input.requests.map(demand => ({ ...demand, workFactKinds: input.workFactKinds,
                 key: getUsageSessionEvidenceDemandKey({ ...demand.query, includeCoach: input.workFactKinds?.includes('coach') }, input.nowMs, demand.sessionIds) }));
         });
-        // b211af730f: work-only cards never acquire Coach records; mounted Coach admits its own scoped cohort.
-        expect(demands.map(demand => demand.workFactKinds)).toEqual(expect.arrayContaining([['work'], ['work', 'coach']]));
-        expect(new Set(demands.map(demand => demand.key)).size, 'each scoped demand has a distinct canonical identity').toBe(2);
-        expect(evidenceReads(), 'duplicate cards and quota arrival add no repeated acquisition within either scope').toHaveLength(2);
+        // Membership is shared; an empty work cohort has no private Coach payload to acquire.
+        expect(demands.map(demand => demand.workFactKinds)).toEqual([['work']]);
+        expect(new Set(demands.map(demand => demand.key)).size, 'one shared empty membership serves both fact scopes').toBe(1);
+        expect(evidenceReads(), 'duplicate cards, Coach and quota arrival do not rediscover the empty cohort').toHaveLength(1);
+        await vi.waitFor(() => expect(screen.findByType(UsageCoachWidget).props.slice.coach?.sessionCoverage).toMatchObject({ selected: 0 }));
     });
 
     it.each(['summary', 'transcript'] as const)('projects each opaque Overview %s record before the remaining cohort arrives without publishing an incomplete cohort', async phase => {
