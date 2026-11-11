@@ -37,9 +37,9 @@ use self::storage::{
 };
 use self::window_lifecycle::{
     ensure_pet_overlay_window, park_pet_overlay_window_offscreen,
-    show_pet_overlay_window_if_hidden,
     resolve_pet_overlay_available_monitor_rects, resolve_pet_overlay_ignore_cursor_events,
     resolve_pet_overlay_monitor_rect_with_id, set_pet_overlay_window_frame,
+    show_pet_overlay_window_if_hidden,
 };
 
 pub(crate) const PET_OVERLAY_WINDOW_LABEL: &str = "pet_overlay";
