@@ -8,6 +8,7 @@ import { PluginUiResourceIntentV1Schema } from '@happier-dev/plugin-sdk/protocol
 import { TriageActionEditorLaunchInputV1Schema } from '@happier-dev/triage-protocol/v1';
 import { TriageResourceSurface } from './resourceSurface.js';
 import { readTriageResourceIntent } from './contributions.js';
+import { useTriageTaskDraftLaunch } from './taskDraftLaunch.js';
 
 /**
  * The PRs & Issues app-page artifact entry.
@@ -76,7 +77,13 @@ function TriageListSurface(context: RenderContext): React.ReactElement {
     return parsed.success ? parsed.data : undefined;
   }, [context.launchInput]);
 
+  // A task draft opened over a Session (a message's Create task) lands in this Session details tab: the Tasks lens
+  // with the draft as its open detail, through the same draft adoption as the Tasks page.
+  const draft = useTriageTaskDraftLaunch(context.launchInput);
+
   if (resource !== null) return <TriageResourceSurface resource={resource} />;
+  if (draft.status === 'unavailable') return draft.notice;
+  if (draft.status === 'ready') return <TriageListShell tasksPage {...draft.shellProps} />;
 
   // Forward the host location and one-shot staged-open provenance alongside
   // any validated qualified entry input. Triage names no

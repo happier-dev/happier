@@ -6,6 +6,13 @@ import { TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1, TriageTaskDraftV1Schema,
   TRIAGE_TASKS_CHECK_WRITE_ACTION_LOCAL_ID_V1, TriageCheckTaskWriteInputV1Schema } from './tasksProtocol.js';
 import { checkTriageTaskWrite } from '../ui/detail/taskWrite.js';
 import { TRIAGE_TASK_DETAIL_DESTINATION_V1 } from '../composer/openEntryDetails.js';
+import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_RESOURCE_DETAILS_LOCAL_ID_V1 } from '../ui/contributions.js';
+
+/** The Session's own details tab (container `detailsTab`, target Session): a draft from a message opens beside it. */
+const TRIAGE_SESSION_DETAILS_DESTINATION_V1 = Object.freeze({
+  pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: TRIAGE_RESOURCE_DETAILS_LOCAL_ID_V1,
+});
 import { stageTriageTaskDraft } from '../ui/taskDraftHandoff.js';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema, TriageMountedSourceRevealInputV1Schema, TriageMountedSourceInsertInputV1Schema, type TriageMountedUiInputV1, type TriageMountedUiResultV1 } from './mountedUiProtocol.js';
 
@@ -71,7 +78,11 @@ export function activate(api: PluginClientApi): void {
     const handoff = stageTriageTaskDraft(context.ephemeralSharedScope, fields);
     if (handoff === null) return { status: 'unavailable' };
     try {
-      await context.ui.openSurface(TRIAGE_TASK_DETAIL_DESTINATION_V1, handoff.input,
+      // From a message the draft opens in the Session's details pane and the Session stays where it is (owner
+      // 2026-11-11); without a Session it opens the Tasks page. The host's destination owner decides the placement.
+      if (message !== undefined) await context.ui.openSurface(TRIAGE_SESSION_DETAILS_DESTINATION_V1, handoff.input,
+        { instanceKey: handoff.input.draftId, signal: context.signal });
+      else await context.ui.openSurface(TRIAGE_TASK_DETAIL_DESTINATION_V1, handoff.input,
         { subPath: 'tasks,mine', signal: context.signal });
       return { status: 'applied' };
     } catch {

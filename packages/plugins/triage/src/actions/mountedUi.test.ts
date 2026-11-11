@@ -16,6 +16,7 @@ import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol/plugins
 import { createTriageEphemeralSharedScopeOriginFixture } from '../ui/window/ephemeralSharedScope.test-support.js';
 import { readTriageTaskDraftLaunch } from '../ui/taskDraftHandoff.js';
 import { renderSurface as renderTasksSurface } from '../ui/tasksSurface.js';
+import { renderSurface as renderListSurface } from '../ui/surface.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { listTriageEntries } from './listEntries.js';
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1, TriageListEntriesInputV1Schema } from './listEntriesProtocol.js';
@@ -81,6 +82,7 @@ it.each([
   const selectedText = 'selectedText' in testCase ? testCase.selectedText : 'Selected answer\nwith details';
   const { declaration, handler, client } = await registeredDraftAction();
   const opened: unknown[] = [];
+  const openedAt: Readonly<{ destination: unknown; subPath?: string; instanceKey?: string }>[] = [];
   const writes: string[] = [];
   const sessionReads: string[] = [];
   const shared = createTriageEphemeralSharedScopeOriginFixture();
@@ -96,9 +98,11 @@ it.each([
         lifecycle: 'active', runtime: 'waiting', operational: 'ready',
         workStatus: { state: 'ready', bucket: 'idle', tone: 'neutral', attentionType: null, word: 'Ready' }, pendingPermissions: [],
       }; },
-      openSurface: ({ view, input }) => {
-        const request = PluginUiOpenSurfaceRequestV1Schema.parse({ destination: view, input, subPath: 'tasks,mine' });
-        expect(request.destination).toEqual({ pluginId: 'happier.triage', localId: 'tasks' });
+      openSurface: ({ view, input, subPath, instanceKey }) => {
+        const request = PluginUiOpenSurfaceRequestV1Schema.parse({ destination: view, input,
+          ...(subPath === undefined ? {} : { subPath }), ...(instanceKey === undefined ? {} : { instanceKey }) });
+        openedAt.push({ destination: request.destination, ...(subPath === undefined ? {} : { subPath }),
+          ...(instanceKey === undefined ? {} : { instanceKey }) });
         opened.push(request.input);
       },
       executeAction: ({ action }) => { writes.push(String(action)); throw new Error('Opening a draft must not write a task'); },
@@ -120,6 +124,15 @@ it.each([
     expect(sessionReads).toEqual(fromMessage ? ['session-a'] : []);
     expect(opened).toHaveLength(1);
     const launch = TriageTaskDraftLaunchV1Schema.parse(opened[0]);
+    // Owner 2026-11-11 (OWNER-1005-DISCUSS 05): from a message the draft opens in the Session's details pane, the
+    // Session staying where it is; an explicit draft (no Session context) still opens the Tasks page.
+    if (fromMessage) {
+      expect(openedAt[0]).toEqual({ destination: { pluginId: 'happier.triage', localId: 'resource-details' }, instanceKey: launch.draftId });
+      const view = PLUGIN_MANIFEST.contributes.ui?.views?.find(entry => entry.id === 'resource-details');
+      expect(view).toMatchObject({ container: 'detailsTab', target: { kind: 'session' } });
+    } else {
+      expect(openedAt[0]).toEqual({ destination: { pluginId: 'happier.triage', localId: 'tasks' }, subPath: 'tasks,mine' });
+    }
     expect(launch).not.toHaveProperty('fields');
     const received = readTriageTaskDraftLaunch(pageScope, launch);
     expect(received).toMatchObject({ status: 'ready', fields: expected });
@@ -146,7 +159,8 @@ it.each([
       const mountPage = async () => { await act(async () => {
         page = await createPluginUiTestkit({ identity: { instanceId: 'tasks-page', mountNonce: 'page' },
           authorPlugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
-          surface: renderTasksSurface, launchInput: launch, subPath: 'tasks,mine',
+          ...(fromMessage ? { surface: renderListSurface, launchInput: launch }
+            : { surface: renderTasksSurface, launchInput: launch, subPath: 'tasks,mine' }),
           surfaceContext: createSurfaceContextFixture(),
           adapter: { mount: async (input) => { pageMount = await adapter.mount(input); return pageMount; } },
           handlers: { publishCurrentUiContext: ({ enrichment }) => { publishedContexts.push(enrichment); },
