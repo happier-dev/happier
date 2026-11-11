@@ -261,8 +261,8 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   // pick, else the only account, else the selector's first eligible one. Without any of these the tightest account
   // stands in, said as the tightest. At full width every plan's cell still follows it for comparison.
   const next = readNextLimitsAccount(selections, drawn);
-  // The caption says what the headline is, and only while it is that: a tightest stand-in says so in its own words.
-  useWidgetFrameBodyCaption(next !== null ? t('usage.board.plans.limitsCaption') : null);
+  // The caption says what the headline is: the next session's account, or the tightest of every plan standing in.
+  useWidgetFrameBodyCaption(t(next !== null ? 'usage.board.plans.limitsCaption' : 'usage.board.plans.capacityCaption'));
   const nextWindow = next?.headline ?? null;
   const tightest = next === null ? projection.tightest
     : nextWindow !== null && nextWindow.remainingFraction !== null

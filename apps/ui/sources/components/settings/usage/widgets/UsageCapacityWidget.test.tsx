@@ -711,6 +711,13 @@ it('says Limits beside other widgets as the account the next session uses: its f
   expect(screen.findHostByTestId('capacity.cell.personal')).toBeNull();
   expect(screen.findHostByTestId('capacity.cell.spare')).toBeNull();
   expect(text).not.toContain(', the tightest');
+  // At full width (Plans, a full-width Home card) the headline means the same; every plan's cell follows it.
+  await screen.update(<InjectedAuthProvider credentials={null}>
+    <UsageCapacityWidget id="usage_capacity" model={model} slice={slice} query={query} serverId="home" testID="capacity" />
+  </InjectedAuthProvider>);
+  expect(screen.getTextContent()).toMatch(/60%\s*left on /);
+  expect(screen.findHostByTestId('capacity.cell.personal')).not.toBeNull();
+  expect(screen.findHostByTestId('capacity.cell.spare')).not.toBeNull();
 });
 
 it('names the only account in the Limits headline beside other widgets, where no cell names it (owner 11-11)', async () => {
