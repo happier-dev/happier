@@ -78,6 +78,7 @@ import { resolveUsagePageAggregation, resolveUsagePageAccountingReads, type Usag
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { ConnectedServicePoolSelectionGetResponseV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { ConnectedServiceQuotaGetResultV1Schema, type ConnectedServiceQuotaGetResultV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
+import { wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
 import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
 import { PublicProfileReadResultV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
@@ -89,7 +90,7 @@ import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowReadResponseV1Sche
 import { createCliAccountKvJsonTransport, resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
 import { createUsageCoachSuppressionPort, USAGE_COACH_SUPPRESSIONS_KV_KEY, type UsageCoachSuppressionStateV1 } from '@happier-dev/protocol/usage/coach/coachActions';
 import { readAccountSettingsV2Raw } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
-import { ActionExecuteFailureSchema, readUnexpectedActionErrorDiagnosticV1, type AccountActionHttpFailureDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, parseActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1, type AccountActionHttpFailureDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 
 export type AccountServerActionDeps = Pick<
@@ -502,6 +503,8 @@ export function createAccountServerActionDeps(input: Readonly<{
           if (context.signal?.aborted || axios.isCancel(error)) return failure('cancelled');
           const code = error instanceof Error && 'code' in error ? error.code : undefined;
           if (code === 'scope-retired' || input.isCredentialCurrent && !await input.isCredentialCurrent()) return failure('credential_scope_retired');
+          const typedFailure = parseActionExecuteFailure(error);
+          if (typedFailure) return typedFailure;
           if (isAuthenticationError(error) || code === 'action_authorization_unavailable') return externalAuthorizationUnavailable();
           return failure('usage_quota_read_failed');
         }
@@ -687,18 +690,21 @@ export function createAccountServerActionDeps(input: Readonly<{
             // A finite snapshot retains the canonical page and its continuation,
             // rather than withholding current facts until history is exhausted.
             const history = range && range.endAtMs > range.startAtMs ? { range, pageSize: 100 } : undefined;
-            return { source, result: await readQuota({ source, ...(history ? { history } : {}) }, context) };
+            const result = await readQuota({ source, ...(history ? { history } : {}) }, context);
+            const asOfMs = !('ok' in result) && result.current && wasConnectedServiceQuotaObserved(result.current)
+              ? result.current.fetchedAtMs : undefined;
+            return { source, result, asOfMs };
           }));
           await check();
-          quotaSources = rows.map(({ source, result }) => ({ source: `quota:${createCanonicalJsonSigningInput(source)}`,
+          quotaSources = rows.map(({ source, result, asOfMs }) => ({ source: `quota:${createCanonicalJsonSigningInput(source)}`,
             ...('ok' in result ? { status: result.errorCode === 'unsupported' ? 'unsupported' as const : 'error' as const,
               errorCode: result.errorCode ?? 'usage_quota_read_failed' }
               : { status: result.history?.nextCursor != null ? 'partial' as const : 'available' as const,
-                ...(result.current ? { asOfMs: result.current.fetchedAtMs } : {}) }),
+                ...(asOfMs === undefined ? {} : { asOfMs }) }),
           }));
           const values = rows.flatMap(({ result }) => 'ok' in result ? [] : [result]);
           const failures = rows.flatMap(({ result }) => 'ok' in result ? [result] : []);
-          const times = values.flatMap(row => row.current ? [row.current.fetchedAtMs] : []);
+          const times = rows.flatMap(row => row.asOfMs === undefined ? [] : [row.asOfMs]);
           quota = { status: failures.length ? values.length ? 'partial' : 'unknown'
             : values.some(row => row.history?.nextCursor != null) ? 'partial' : 'available',
             ...(failures.length ? { errorCode: failures[0]!.errorCode ?? 'usage_quota_read_failed' } : {}),
