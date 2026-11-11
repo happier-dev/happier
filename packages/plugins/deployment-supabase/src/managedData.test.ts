@@ -24,7 +24,8 @@ const pair = { password: { ref: 'saved:password', resourceRevision: 1 },
 // Official Management API OpenAPI v1/1.0.0 vectors characterized 2026-10-30:
 // https://api.supabase.com/api/v1-json. Responses deliberately include secret
 // echoes to prove that provider payloads never become ordinary Action output.
-async function host(respond: (request: HttpRequest) => unknown | Promise<unknown>, failSave?: string, responseStatus?: number | ((request: HttpRequest) => number)) {
+async function host(respond: (request: HttpRequest) => unknown | Promise<unknown>, failSave?: string,
+  responseStatus?: number | ((request: HttpRequest) => number), readError?: unknown) {
   const requests: HttpRequest[] = [];
   const saved: { id: string; value: string; audience: unknown }[] = [];
   const secrets: SecretsService = {
@@ -33,7 +34,7 @@ async function host(respond: (request: HttpRequest) => unknown | Promise<unknown
       saved.push({ id, value: new TextDecoder().decode(input.bytes), audience: input.audience });
       return { ref: `saved:${input.label}`, resourceRevision: 1 };
     },
-    async readSavedSecret() { return 'private:p@ss/word'; },
+    async readSavedSecret() { if (readError) throw readError; return 'private:p@ss/word'; },
     async get() { throw new Error('Unexpected direct secret read'); },
     async set() { throw new Error('Unexpected direct secret write'); },
     async delete() { throw new Error('Unexpected secret deletion'); },
@@ -198,6 +199,40 @@ describe('activated Supabase managed data target', () => {
       expect(result).toMatchObject({ status: 'outcome_unknown', parentProjectRef: 'parent-ref', code: 'plugin_fetch_response_too_large' });
       expect(h.requests.filter(request => request.method === 'POST')).toHaveLength(1);
       expect(JSON.stringify(result)).not.toContain('private-password');
+    } finally { await h.kit.dispose(); }
+  });
+
+  it('preserves a typed read failure envelope from the provider HTTP owner', async () => {
+    const h = await host(() => { throw new PluginError({ code: 'provider_account_paused', message: 'private-message',
+      details: { requestId: 'req-1' }, remediation: { kind: 'retry' } }); });
+    try {
+      await expect(h.kit.invokeAction('projects-list', preparation('projects-list'))).rejects.toMatchObject({
+        code: 'provider_account_paused', message: 'private-message', details: { requestId: 'req-1' }, remediation: { kind: 'retry' },
+      });
+    } finally { await h.kit.dispose(); }
+  });
+
+  it('preserves a typed pre-send refusal envelope for a write', async () => {
+    const error = new PluginError({ code: 'credential_unavailable', message: 'Reconnect the provider',
+      retryable: true, details: { requestId: 'req-write' }, remediation: { kind: 'retry' } });
+    const h = await host(() => { throw error; });
+    try {
+      await expect(h.kit.invokeAction('branches-create', { ...linked, name: 'Preview', withData: false }))
+        .rejects.toMatchObject({ code: error.code, message: error.message, retryable: true,
+          details: error.details, remediation: error.remediation });
+    } finally { await h.kit.dispose(); }
+  });
+
+  it('preserves a typed saved-secret read failure envelope', async () => {
+    const h = await host(request => request.url.includes('available-regions')
+      ? { recommendations: [], all: [{ name: 'Europe', code: 'eu-central-1', type: 'specific', provider: 'AWS' }] }
+      : { entitlements: [] }, undefined, undefined,
+    new PluginError({ code: 'secret_scope_revoked', message: 'private-message', details: { requestId: 'req-2' }, remediation: { kind: 'retry' } }));
+    try {
+      await expect(h.kit.invokeAction('projects-provision', { ...preparation('projects-provision'), name: 'Example',
+        password: pair.password, regionSelection: { type: 'specific', code: 'eu-central-1' } })).rejects.toMatchObject({
+        code: 'secret_scope_revoked', message: 'private-message', details: { requestId: 'req-2' }, remediation: { kind: 'retry' },
+      });
     } finally { await h.kit.dispose(); }
   });
 

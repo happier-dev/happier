@@ -1,4 +1,5 @@
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { HttpMethod, HttpResponse } from '@happier-dev/plugin-sdk/http';
@@ -37,7 +38,7 @@ export function resource(input: Scope) {
 async function readPassword(reference: Operands<'projects-provision'>['password'], context: Context) {
   if (!context.services.secrets) return failure('secret_use_client_required');
   try { return await context.services.secrets.readSavedSecret(reference.ref, { resourceRevision: reference.resourceRevision, signal: context.signal }); }
-  catch (error) { return failure(isPluginError(error) ? error.code : context.signal.aborted ? 'operation_cancelled' : 'deployment_unavailable'); }
+  catch (error) { return projectMachineProvisionerActionFailure(error, () => failure(context.signal.aborted ? 'operation_cancelled' : 'deployment_unavailable')); }
 }
 
 /** Official Management API v1/1.0.0, characterized 2026-10-30 (PROVIDER-API.md).
@@ -54,8 +55,8 @@ export async function request(context: Context, path: string, method: HttpMethod
     }, { signal: context.signal });
   } catch (error) {
     const code = isPluginError(error) ? error.code : undefined;
-    if (readOnlyRequest) return failure(context.signal.aborted ? 'operation_cancelled' : code ?? 'deployment_unavailable');
-    if (code && beforeRequestRefusals.has(code)) return failure(code);
+    if (readOnlyRequest) return projectMachineProvisionerActionFailure(error, () => failure(context.signal.aborted ? 'operation_cancelled' : 'deployment_unavailable'));
+    if (code && beforeRequestRefusals.has(code)) return projectMachineProvisionerActionFailure(error, () => failure(code));
     throw new PluginError({ code: 'outcome_unknown', message: 'outcome_unknown', ...(code ? { details: { code } } : {}) });
   }
   if (context.signal.aborted) return failure(readOnlyRequest ? 'operation_cancelled' : 'outcome_unknown');
