@@ -1015,8 +1015,10 @@ export function useNewSessionScreenModel(input?: Readonly<{
             // Defer until after interactions so the screen feels instant on iOS;
             // the timeout fallback guarantees the refresh still runs when
             // interactions never settle (hang class).
+            // Freshness is judged at focus, not when interactions finally settle.
+            const focusedAt = Date.now();
             runAfterInteractionsWithFallback(() => {
-                fireAndForget(sync.refreshMachinesThrottled({ staleMs: 15_000 }), { tag: 'NewSessionScreenModel.refreshMachinesThrottled.focus' });
+                fireAndForget(sync.refreshMachinesThrottled({ staleMs: 15_000, asOf: focusedAt }), { tag: 'NewSessionScreenModel.refreshMachinesThrottled.focus' });
             });
         }, [loadScopedNewSessionDraft, setLoadedScopedPersistedDraft])
     );

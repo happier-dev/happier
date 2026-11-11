@@ -127,7 +127,9 @@ export function NewSessionComposerCard(input: Readonly<{
     const emptyStatus = embeddedHost?.emptyComposerStatus !== undefined ? embeddedHost.emptyComposerStatus : backgroundLaunchStatus;
     const connectionStatus = emptyStatus !== undefined && composerEmpty && !props.isCreating
         ? emptyStatus ?? undefined : props.connectionStatus;
-    const workflowStart = useNewSessionWorkflowStart({ panelProps: props, prompt: props.promptStore, surfaceGroup: input.surfaceGroup });
+    // A chosen workflow swaps the composer, not the host: the same status line, inset and width carry over.
+    const workflowStart = useNewSessionWorkflowStart({ panelProps: props, prompt: props.promptStore, surfaceGroup: input.surfaceGroup,
+        host: { connectionStatus, contentPaddingHorizontal: 0, ...(embedded ? { maxWidthCap: null } : {}) } });
     const workflowSelected = workflowStart.composer !== null;
     React.useLayoutEffect(() => {
         input.onWorkflowSelectionChange?.(workflowSelected);
