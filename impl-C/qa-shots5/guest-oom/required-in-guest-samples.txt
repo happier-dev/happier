@@ -1,0 +1,9 @@
+Required samples not collected because the retained Lima guest is stopped and the native target was unavailable on retry. No start/restart was attempted.
+
+Missing primary evidence:
+- journalctl -k/dmesg OOM victim and kernel counters
+- victim PID, RSS, daemon PID/RSS, and other process RSS
+- free memory and agent/plugin/Node heap processes
+- daemon /proc/<pid>/status samples every 60s for ~10 minutes
+
+The 11-10 08:00Z / 583 MiB anon datum is user-supplied in the lane request; it was not independently re-read here.

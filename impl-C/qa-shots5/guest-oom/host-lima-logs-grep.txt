@@ -1,0 +1,4 @@
+hstack-dev-target-control: happier-nl3 synchronization status inspection failed
+[preferred-execution] nl3 synchronization is not ready; run hstack dev-targets status for details.
+HSTACK_PLACEMENT_EXCLUDED target=nl3 reason=prerequisite class=unclassified
+[preferred-execution] HSTACK_EXEC_DISPATCH_REFUSED: nl3=prerequisite; no eligible target accepted this command before payload start
