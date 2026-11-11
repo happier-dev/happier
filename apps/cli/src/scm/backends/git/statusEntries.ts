@@ -7,17 +7,15 @@ import {
 
 import type { ScmBackendContext } from '../../types';
 import { getGitSnapshot } from './repository';
+import { compareScmEntryPaths } from './statusSnapshot';
 
 /**
- * This RPC's one deterministic total order over entry paths: code-point
- * comparison, NOT `localeCompare` (locale-dependent — the repo already bans
- * it for signatures). Defined here for this RPC contract only; the ordering
- * of `snapshot.entries` itself is unchanged.
+ * Canonical paging order for this RPC: code-point comparison, NOT `localeCompare`
+ * (locale-dependent — the repo already bans it for signatures). Owned by
+ * {@link compareScmEntryPaths} and shared with the snapshot builder, so a truncated
+ * snapshot's prefix and its paged continuation observe the same order.
  */
-function compareEntryPaths(left: string, right: string): number {
-    if (left === right) return 0;
-    return left < right ? -1 : 1;
-}
+const compareEntryPaths = compareScmEntryPaths;
 
 /**
  * Paged entry-list delivery for the Files surface (`scm.status.entries`).
@@ -34,7 +32,16 @@ export async function gitStatusEntries(input: {
     request: ScmStatusEntriesRequest;
 }): Promise<ScmStatusEntriesResponse> {
     const { context, request } = input;
-    const snapshotResponse = await getGitSnapshot({ context, request: {} });
+    const snapshotResponse = await getGitSnapshot({
+        context,
+        // Top-level paging must continue the SAME entry shape the surface's window
+        // started with: 'normal' pages collapsed-directory rows (continuation of a
+        // truncated normal-mode snapshot); the default 'all' keeps the legacy
+        // per-file shape for expansions and standalone paging.
+        request: request.untrackedFiles === 'normal' && !(typeof request.expandPath === 'string' && request.expandPath.length > 0)
+            ? { untrackedFiles: 'normal' }
+            : {},
+    });
     const fetchedAt = Date.now();
     if (snapshotResponse.success !== true || !snapshotResponse.snapshot) {
         return {

@@ -103,6 +103,27 @@ function buildCapabilityLessRegistry(detected: { isRepo: boolean; mode: ScmRepoM
 }
 
 describe('scm.status.entries paged delivery', () => {
+    it("continues a truncated normal-mode window in the collapsed row shape (untrackedFiles: 'normal')", async () => {
+        const workspace = createGitWorkspaceWithUntrackedTree(30);
+        const { call } = createTestRpcManager({ workingDirectory: workspace });
+
+        // The Files surface's normal-mode window is truncated after the collapsed directory
+        // row; its continuation pages the SAME shape (collapsed top-level rows), not the
+        // per-file 'all' descendants.
+        const page = await call<ScmStatusEntriesResponse, { cwd?: string; afterPath?: string; limit?: number; untrackedFiles?: 'normal' | 'all' }>(
+            RPC_METHODS.SCM_STATUS_ENTRIES,
+            { cwd: '.', untrackedFiles: 'normal' },
+        );
+
+        expect(page.success).toBe(true);
+        expect(page.entries.length).toBeGreaterThan(0);
+        // Every row is a collapsed directory row (isDirectory) or a loose file — never a
+        // per-file descendant under a collapsed directory.
+        for (const entry of page.entries) {
+            expect(entry.isDirectory === true || !entry.path.includes('/')).toBe(true);
+        }
+    });
+
     it('pages ~1,200 untracked entries without dupes or misses in code-point order', async () => {
         const workspace = createGitWorkspaceWithUntrackedTree(1_200);
         const { call } = createTestRpcManager({ workingDirectory: workspace });

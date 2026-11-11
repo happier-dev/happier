@@ -83,6 +83,22 @@ describe('git status snapshot parser', () => {
         });
     });
 
+    it('orders entries in the paging contract order (code-point, not locale) so truncated prefixes continue correctly', () => {
+        const snapshot = buildGitSnapshot({
+            projectKey: 'machine-1:/repo',
+            fetchedAt: 123,
+            rootPath: '/repo',
+            statusOutput: '? a-file.ts\0? B-file.ts\0? _under.ts\0? z-file.ts\0',
+            includedNumStatOutput: '',
+            pendingNumStatOutput: '',
+        });
+
+        // Code-point: 'B'(66) < '_'(95) < 'a'(97) < 'z'(122). localeCompare would put
+        // a-file before B-file, diverging from the entries RPC's cursor order at a
+        // truncation boundary (skipped or duplicated files).
+        expect(snapshot.entries.map((entry) => entry.path)).toEqual(['B-file.ts', '_under.ts', 'a-file.ts', 'z-file.ts']);
+    });
+
     it('applies untracked file stats when provided (counts as pending additions)', () => {
         const statusOutput =
             '# branch.oid 1111111111111111111111111111111111111111\0' +

@@ -417,6 +417,14 @@ export const ScmStatusEntriesRequestSchema = lazySchema(() => ScmRequestBaseSche
   /** Entry filter; default `'all'`. */
   area: ScmStatusEntriesAreaSchema.optional(),
   /**
+   * Entry list shape for top-level paging (no `expandPath`): `'normal'` pages the
+   * same collapsed-directory row shape as a `untrackedFiles: 'normal'` snapshot
+   * (continuation of a truncated normal-mode window); default `'all'` pages the
+   * per-file legacy shape. Ignored when `expandPath` is set (expansions always
+   * page the per-file descendants).
+   */
+  untrackedFiles: z.enum(['normal', 'all']).optional(),
+  /**
    * Return only the file entries under one collapsed directory (the
    * snapshot's `isDirectory` entry path, with or without its trailing
    * separator).

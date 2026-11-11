@@ -136,6 +136,19 @@ function resolveRemoteDefaultBranch(input: Readonly<{
         ?.branch ?? null;
 }
 
+/**
+ * Canonical total order over SCM entry paths: code-point comparison, NOT
+ * `localeCompare` (locale-dependent). This is the contract order for BOTH the
+ * snapshot entry list and the `scm.status.entries` paging cursor, so a
+ * truncated snapshot's prefix and its paged continuation observe one order;
+ * mixed-case paths at the truncation boundary can otherwise be skipped or
+ * duplicated. Exported for the paging RPC (`statusEntries.ts`).
+ */
+export function compareScmEntryPaths(left: string, right: string): number {
+    if (left === right) return 0;
+    return left < right ? -1 : 1;
+}
+
 export function buildGitSnapshot(input: {
     projectKey: string;
     fetchedAt: number;
@@ -253,7 +266,7 @@ export function buildGitSnapshot(input: {
     const allNumstatPaths = new Set([...includedMap.keys(), ...pendingMap.keys()]);
     for (const path of allNumstatPaths) ensureEntry(path);
 
-    const sortedEntries = Array.from(entries.values()).sort((a, b) => a.path.localeCompare(b.path));
+    const sortedEntries = Array.from(entries.values()).sort((a, b) => compareScmEntryPaths(a.path, b.path));
     const headRaw = parsedStatus.branch.head ?? null;
     const detached =
         headRaw === null ||
