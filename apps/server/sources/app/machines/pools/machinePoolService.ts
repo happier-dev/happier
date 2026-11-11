@@ -139,7 +139,7 @@ function projectPool(stored: StoredPool, inventory: MachineDaemonPresenceInvento
             audience: machinePoolAudience(stored),
             members: access.canViewMembers ? members : [],
         },
-        availability: access.canViewMembers ? availability : { state: 'unknown' },
+        availability,
         access,
     };
 }
@@ -178,16 +178,24 @@ export async function listMachinePools(params: Readonly<{
         });
         const shared: StoredPool[] = [];
         for (const ids of portableQueryChunks({ values: teamIds, bindingsPerValue: 1, fixedBindings: 2 })) {
-            const rows = await tx.machinePool.findMany({ where: { teamId: { in: [...ids] }, accountId: { not: params.accountId } } });
-            shared.push(...rows.map(pool => ({ ...pool, members: [] })));
+            const rows = await tx.machinePool.findMany({ where: { teamId: { in: [...ids] }, accountId: { not: params.accountId } }, ...poolAggregate });
+            shared.push(...rows);
         }
         const activeCustodians = await readActiveTeamMembershipsInTx(tx, { memberships: shared.flatMap(pool => pool.teamId
             ? [{ teamId: pool.teamId, accountId: pool.accountId }] : []) });
         const available = shared.filter(pool => pool.teamId && activeCustodians.get(pool.teamId)?.has(pool.accountId));
         return [...owned, ...available].sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id));
     });
-    const inventory = await inventoryFor(params.accountId, params.io, stored.filter(pool => pool.accountId === params.accountId));
-    return stored.map(pool => projectPool(pool, inventory, pool.accountId === params.accountId
+    // Presence belongs to each custodian, even when the viewer may see only aggregate availability.
+    const poolsByCustodian = new Map<string, StoredPool[]>();
+    for (const pool of stored) {
+        const pools = poolsByCustodian.get(pool.accountId);
+        if (pools) pools.push(pool);
+        else poolsByCustodian.set(pool.accountId, [pool]);
+    }
+    const inventories = new Map(await Promise.all([...poolsByCustodian].map(async ([accountId, pools]) =>
+        [accountId, await inventoryFor(accountId, params.io, pools)] as const)));
+    return stored.map(pool => projectPool(pool, inventories.get(pool.accountId)!, pool.accountId === params.accountId
         ? CUSTODIAN_POOL_ACCESS : TEAM_POOL_ACCESS));
 }
 
@@ -204,8 +212,8 @@ export async function getMachinePool(params: Readonly<{
         return access ? { stored, access } : null;
     });
     return result
-        ? { ok: true, value: projectPool(result.stored, result.access.canViewMembers
-            ? await inventoryFor(params.accountId, params.io, [result.stored]) : { state: 'unavailable' }, result.access) }
+        ? { ok: true, value: projectPool(result.stored,
+            await inventoryFor(result.stored.accountId, params.io, [result.stored]), result.access) }
         : { ok: false, error: { code: "pool_not_found" } };
 }
 

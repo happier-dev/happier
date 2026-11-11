@@ -86,7 +86,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
         ]);
     });
 
-    it('shares only pool metadata with current Team members and never grants ordinary controller resolution', async () => {
+    it.each(['connected', 'offline', 'unavailable'] as const)('shares aggregate %s availability without Machine identities or controller resolution', async presence => {
         await seedAccounts();
         const team = await db.team.create({ data: { name: 'Build team' } });
         await db.teamMembership.createMany({ data: [
@@ -103,7 +103,9 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
             const memberRead = await app.inject({ method: 'POST', url: '/v1/machines/pools/get', headers: otherHeaders, payload: { poolId } });
             expect(memberRead.statusCode).toBe(200);
             expect(memberRead.json()).toMatchObject({ pool: { name: definition.name, audience: definition.audience, members: [] },
-                availability: { state: 'unknown' }, access: { canManage: false, canResolve: false, canViewMembers: false } });
+                availability: presence === 'unavailable' ? { state: 'unknown' }
+                    : { state: 'known', enabledCount: 1, connectedCount: presence === 'connected' ? 1 : 0 },
+                access: { canManage: false, canResolve: false, canViewMembers: false } });
             expect(JSON.stringify(memberRead.json())).not.toContain(machineId);
             const listed = await app.inject({ method: 'POST', url: '/v1/machines/pools/list', headers: otherHeaders, payload: {} });
             expect(listed.json()).toEqual({ pools: [memberRead.json()] });
@@ -129,7 +131,8 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
             const archived = await app.inject({ method: 'POST', url: '/v1/machines/pools/get', headers: otherHeaders, payload: { poolId } });
             expect(archived.statusCode).toBe(404);
             expect(await db.machineAccountGrant.count({ where: { machineId } })).toBe(0);
-        });
+        }, presence === 'unavailable' ? { in: () => ({ fetchSockets: async () => { throw new Error('presence unavailable'); } }) }
+            : presenceOf(presence === 'connected' ? [machineId] : []));
     });
 
     it.each(['removed', 'suspended'] as const)('makes a %s custodian publication unavailable to the Team while preserving custodian management', async withdrawal => {
