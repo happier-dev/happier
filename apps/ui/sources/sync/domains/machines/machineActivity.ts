@@ -8,7 +8,7 @@ export type MachineActivityPublication = Readonly<{
     activity: MachineActivityFacts;
     projections: readonly (MachineActivityFacts | null | undefined)[];
 }>;
-type ActivitySlice = { value: MachineActivityFacts; subscriptions: Set<ActivitySubscription>; parent?: ActivitySlice };
+type ActivitySlice = { value: MachineActivityFacts; subscriptions: Set<ActivitySubscription>; answered: boolean; parent?: ActivitySlice };
 type ActivitySubscription = Readonly<{ listener: () => void }>;
 // Current liveness is state, not an inventory revision or a derived-value cache.
 // The admitted row/projection is its key: a different Home, Account or replacement
@@ -69,6 +69,12 @@ export function readMachineActivity(machine: MachineActivityFacts): MachineActiv
     return slice ? resolveActivitySlice(slice).value : machine;
 }
 
+/** Warm projections can carry a retained active bit before any live presence answer. */
+export function readMachinePresenceAnswer(machine: MachineActivityFacts): boolean | undefined {
+    const slice = activitySlices.get(machine);
+    return slice ? resolveActivitySlice(slice).answered : undefined;
+}
+
 /** Forward every linked projection when its admitted row is carried to a replacement. */
 function resolveActivitySlice(slice: ActivitySlice): ActivitySlice {
     let root = slice;
@@ -85,7 +91,7 @@ function resolveActivitySlice(slice: ActivitySlice): ActivitySlice {
 function ensureActivitySlice(machine: MachineActivityFacts): ActivitySlice {
     let slice = activitySlices.get(machine);
     if (!slice) {
-        slice = { value: { active: machine.active, activeAt: machine.activeAt }, subscriptions: new Set() };
+        slice = { value: { active: machine.active, activeAt: machine.activeAt }, subscriptions: new Set(), answered: false };
         activitySlices.set(machine, slice);
     }
     return resolveActivitySlice(slice);
@@ -133,6 +139,7 @@ export function publishMachineActivities(publications: Iterable<MachineActivityP
             joinActivityProjection(slice, projection);
         }
         slice.value = activity;
+        slice.answered = true;
         for (const subscription of slice.subscriptions) listeners.add(subscription.listener);
     }
     if (presenceChanged) presenceRevision += 1;

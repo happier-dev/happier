@@ -5,6 +5,15 @@ import { carryMachineActivity, linkMachineActivity, publishMachineActivities, pu
 const row = () => Object.freeze({ active: true, activeAt: 1 });
 
 describe('machine activity subscriptions', () => {
+    it('publishes a cold presence answer only to the changed Machine row', () => {
+        const machines = Array.from({ length: 24 }, (_, index) => row());
+        const renders = machines.map(() => 0);
+        const stops = machines.map((machine, index) => subscribeMachineActivity(machine, () => { renders[index] += 1; }));
+        publishMachineActivities([{ machine: machines[0]!, activity: { active: false, activeAt: 2 }, projections: [] }]);
+        expect(renders).toEqual(Array.from({ length: 24 }, (_, index) => index === 0 ? 1 : 0));
+        stops.forEach(stop => stop());
+    });
+
     it.each([true, false])('keeps linked projections current across same-valued replacements from active=%s', (active) => {
         const held = Object.freeze({ active, activeAt: 1 });
         const projection = { ...held };

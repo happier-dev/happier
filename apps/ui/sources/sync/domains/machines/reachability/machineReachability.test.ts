@@ -3,7 +3,7 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import * as scopeKeys from '@/sync/domains/scope/serverAccountScope';
 import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
-import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { linkMachineActivity, publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 
 import {
     clearMachineRequestReachabilityForTest,
@@ -29,6 +29,16 @@ afterEach(() => {
 
 describe('machine reachability', () => {
     const negotiated = { presenceProtocolVersion: 1 as const };
+    it('keeps a retained active bit pending until its presence answer', () => {
+        const scope = { serverId: 'home', accountId: 'cold-account' };
+        const machines = Array.from({ length: 24 }, (_, index) => ({ id: `cold-${index}`, active: true, activeAt: 100, ...negotiated }));
+        const projections = machines.map(machine => ({ ...machine }));
+        machines.forEach((machine, index) => linkMachineActivity(machine, projections[index]!));
+        expect(machines.filter(machine => resolveMachineReachability(scope, machine, 100) === 'reachable')).toHaveLength(0);
+        publishMachineActivity(machines[0]!, { active: true, activeAt: 101 }, [projections[0]!]);
+        expect(resolveMachineReachability(scope, machines[0]!, 100)).toBe('reachable');
+        expect(machines.slice(1).every(machine => resolveMachineReachability(scope, machine, 100) === 'unknown')).toBe(true);
+    });
     it('counts only current persistent Machines, retaining unknown connection and historical identities separately', () => {
         const scope = { serverId: 'home', accountId: 'fleet-account' };
         const machines = [
