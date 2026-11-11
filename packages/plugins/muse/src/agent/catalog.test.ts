@@ -146,7 +146,10 @@ describe('Muse native model catalog', () => {
       expect(catalog.resolveModelSelection('meta/muse-spark-1.2-contributor')).toMatchObject({
         status: 'selected', providerId: 'meta', modelId: 'muse-spark-1.2-contributor',
       });
-      const selection = catalog.resolveModelSelection('meta/muse-spark-1.2-contributor');
+      for (const modelId of ['muse-spark-1.3-contributor', 'muse-spark-1.2-contributor', 'muse-spark-1.2']) {
+        expect(catalog.resolveModelSelection(modelId)).toMatchObject({ status: 'selected', providerId: 'meta', modelId });
+      }
+      const selection = catalog.resolveModelSelection('muse-spark-1.2-contributor');
       if (selection.status !== 'selected') throw new Error('Captured contributor model must be selectable');
       await msp.command('session/start', {
         workspaceRoot: '/selected/worktree', providerId: selection.providerId, modelId: selection.modelId,
@@ -155,6 +158,17 @@ describe('Muse native model catalog', () => {
         modelSelections: [{ providerId: 'meta', modelId: 'muse-spark-1.2-contributor' }],
         requests: ['initialize', 'initialized', 'model/list', 'session/start', 'fixture/inspect'],
       });
+    } finally { await msp.dispose(); }
+  });
+
+  it('refuses ambiguous native ids while preserving exact qualified selection', async () => {
+    const { msp, catalog } = await openCatalog(await recordingWithCatalog({ models: [
+      { providerId: 'first', modelId: 'shared' }, { providerId: 'second', modelId: 'shared' },
+    ] }));
+    try {
+      await catalog.refresh();
+      expect(catalog.resolveModelSelection('shared')).toEqual({ status: 'unavailable', reason: 'model_unavailable' });
+      expect(catalog.resolveModelSelection('second/shared')).toMatchObject({ status: 'selected', providerId: 'second', modelId: 'shared' });
     } finally { await msp.dispose(); }
   });
 

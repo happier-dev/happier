@@ -163,7 +163,9 @@ export function createMuseCatalog(client: Pick<PluginJsonRpcClient, 'request'>):
         return defaults.length === 1 ? { status: 'selected', ...defaults[0] }
           : { status: 'unavailable', reason: 'default_model_unavailable' };
       }
-      const selected = nativeModels.find(model => model.id === id);
+      const exact = nativeModels.find(model => model.id === id);
+      const matches = exact ? [exact] : nativeModels.filter(model => model.modelId === id);
+      const selected = matches.length === 1 ? matches[0] : undefined;
       return selected ? { status: 'selected', ...selected } : { status: 'unavailable', reason: 'model_unavailable' };
     },
     applyCurrentModel,
