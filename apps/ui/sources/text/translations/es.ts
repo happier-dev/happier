@@ -9738,6 +9738,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     sessionStopped: "Sesión detenida",
     stopSessionHoldFailed: 'No se pudo guardar la pausa hasta Reanudar. Pulsa Detener de nuevo antes de enviar otro mensaje.',
     stopSessionControlUnavailable: 'Happier no pudo acceder a los controles de la sesión. Comprueba que la máquina de la sesión y el daemon están en línea e inténtalo de nuevo.',
+    /** The short label where the Session is already in view (a row's swipe action). */
+    archive: "Archivar",
     archiveSession: "Archivar sesión",
     archiveSessionConfirm: "¿Seguro que quieres archivar esta sesión?",
     workspaceTitle: "Espacio de trabajo",

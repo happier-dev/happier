@@ -1,10 +1,9 @@
 import React from 'react';
-import { Pressable } from 'react-native';
+import { Pressable, type StyleProp, type ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { CollectionNavigationRow } from '@/components/ui/lists/collection/CollectionList';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { SecretKeyBackupModal } from '@/components/account/SecretKeyBackupModal';
@@ -14,12 +13,14 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 
 /**
- * "Save your recovery key": one message, drawn as a row of the surface it leads. In a list (`host="list"`, the
- * phone's My work) it is one of the list's rows, so its key, title and dismiss stand on the list's glyph, title
- * and trailing edges (phone-system lab D2); on a page it is a row of its own section.
+ * "Save your recovery key": one message on My work in the standard Item/ItemGroup chrome:
+ * the key, the title, the reason beneath and its dismiss. Account setup carries the same reminder in its hub tile.
  */
 export const RecoveryKeyReminderBanner = React.memo((props: Readonly<{
-    host?: 'list' | 'page';
+    /** A list that leads with it already spaces it from what is above; a page keeps the section gap. */
+    header?: 'none';
+    /** The leading list's spacing around the card (its rhythm is the list's, not the card's). */
+    style?: StyleProp<ViewStyle>;
 }>) => {
     const { theme } = useUnistyles();
     const triggerRef = React.useRef<React.ComponentRef<typeof Pressable> | null>(null);
@@ -61,22 +62,8 @@ export const RecoveryKeyReminderBanner = React.memo((props: Readonly<{
         </HappierPressable>
     );
 
-    if (props.host === 'list') {
-        return (
-            <CollectionNavigationRow
-                testID="recovery-key-reminder"
-                title={t('settingsOverview.saveRecoveryKeyTitle')}
-                subtitle={t('settingsOverview.saveRecoveryKeyReason')}
-                icon={icon}
-                selected={false}
-                rightElement={dismiss}
-                onPress={open}
-            />
-        );
-    }
-
     return (
-        <ItemGroup surface="none">
+        <ItemGroup {...(props.header ? { header: props.header } : {})} style={props.style}>
             <Item
                 testID="recovery-key-reminder"
                 pressableRef={triggerRef}

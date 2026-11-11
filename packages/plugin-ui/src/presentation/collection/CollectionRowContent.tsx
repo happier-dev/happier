@@ -41,22 +41,26 @@ const CONTENT_PADDING_PX =
 
 /**
  * The one geometry owner of collection work rows. Compact is the dense pointer row (32, lab `clflat`); a
- * touch-first compact row (`touchCompact`) is the phone's flat row (phone-system lab: 44 tall, its title in the
- * row-title role every phone row uses). Text scaling may grow a row.
+ * touch-first compact row (`touchCompact`) is the phone's flat list row: its row-title line in the same breathing
+ * room, so it is only as tall as that line needs — never the finger's target, whose hit area reaches past the drawn
+ * row invisibly (owner 11-10). Text scaling may grow a row.
  */
 export const HAPPIER_COLLECTION_ROW_METRICS = Object.freeze({
   height: Object.freeze({
     compact: 32,
     comfortable: 58,
     detailed: 84,
-    touchCompact: 44,
+    // The phone's flat row: its title line with a little air, closer than a sheet row (owner 1250 #03: too spread).
+    touchCompact: 32,
   }),
   /** The leading identity column and the mark inside it. */
   identity: Object.freeze({
     compact: Object.freeze({ slotSize: 16, markSize: 15 }),
     comfortable: Object.freeze({ slotSize: 30, markSize: 23 }),
     detailed: Object.freeze({ slotSize: 48, markSize: 37 }),
-    touchCompact: Object.freeze({ slotSize: 20, markSize: 16 }),
+    // A phone row's identity column is the page row's leading column, so its title shares one edge with group
+    // labels, navigation rows and sheet rows (owner 1250 #05: one icon column, one icon→text gap).
+    touchCompact: Object.freeze({ slotSize: HAPPIER_PAGE_METRICS.rowLeadingColumnPx, markSize: 16 }),
   }),
   /** The row's own horizontal padding, inside the column gutter; compact lands its glyph on the text edge. */
   padding: Object.freeze({

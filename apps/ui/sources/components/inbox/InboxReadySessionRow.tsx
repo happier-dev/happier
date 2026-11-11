@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { Platform, Pressable } from 'react-native';
+import { Platform } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useUnistyles } from 'react-native-unistyles';
 import type { InboxPluginSessionRow } from './inboxItemProjection';
 import { InboxPluginSessionLines } from './InboxPluginSessionLines';
 import type { InboxPluginSessionControlInvoker } from '@/hooks/inbox/useInboxPluginSessionControls';
@@ -9,9 +9,8 @@ import type { InboxPluginSessionControlInvoker } from '@/hooks/inbox/useInboxPlu
 import { InboxWorkRow } from './InboxWorkRow';
 import { Icon } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { RowSwipeAction } from '@/components/ui/lists/RowSwipeAction';
 import { t } from '@/text';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { useSessionContentDemand } from '@/sync/domains/session/useSessionContentDemand';
@@ -21,7 +20,6 @@ import {
     type SessionListIdentityDisplay,
 } from '@/components/sessions/shell/SessionListIdentity';
 import { SESSION_LIST_ROW_IDENTITY_METRICS } from '@/components/sessions/shell/resolveSessionListDensityViewState';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
 import type { WorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import type { SessionListPresentationSource } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 
@@ -147,28 +145,15 @@ export const InboxReadySessionRow = React.memo(function InboxReadySessionRow(pro
         <Swipeable
             ref={swipeableRef}
             renderRightActions={() => (
-                <Pressable
+                <RowSwipeAction
                     testID={`${testIdPrefix}.swipe_mark_read`}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('sessionInfo.markSessionRead')}
-                    disabled={readDisabled}
+                    icon="check-circle"
+                    label={props.readUnavailableReason ?? t('sessionInfo.markSessionRead')}
                     accessibilityHint={props.readUnavailableReason}
+                    disabled={readDisabled}
+                    busy={props.pending}
                     onPress={markRead}
-                    style={({ pressed }) => [
-                        styles.swipeAction,
-                        pressed ? styles.swipeActionPressed : null,
-                        readDisabled ? styles.swipeActionPending : null,
-                    ]}
-                >
-                    {props.pending ? (
-                        <ActivitySpinner size="small" color={theme.colors.button.primary.tint} />
-                    ) : (
-                        <Icon name="check-circle" size={20} color={theme.colors.button.primary.tint} />
-                    )}
-                    <Text style={styles.swipeActionText} numberOfLines={2}>
-                        {props.readUnavailableReason ?? t('sessionInfo.markSessionRead')}
-                    </Text>
-                </Pressable>
+                />
             )}
             overshootRight={false}
             enabled={!props.pending}
@@ -177,27 +162,3 @@ export const InboxReadySessionRow = React.memo(function InboxReadySessionRow(pro
         </Swipeable>
     );
 });
-
-const styles = StyleSheet.create((theme) => ({
-    swipeAction: {
-        width: 112,
-        height: '100%',
-        minHeight: 48,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: theme.colors.button.primary.background,
-        paddingHorizontal: theme.space.s12,
-    },
-    swipeActionPressed: {
-        opacity: motionTokens.press.opacity,
-    },
-    swipeActionPending: {
-        opacity: 0.56,
-    },
-    swipeActionText: {
-        marginTop: theme.space.s4,
-        ...Typography.variant('meta'),
-        color: theme.colors.button.primary.tint,
-        textAlign: 'center',
-    },
-}));

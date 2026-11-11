@@ -9403,6 +9403,8 @@ export const zhHans: TranslationStructure = {
     sessionStopped: "会话已停止",
     stopSessionHoldFailed: '无法保存“恢复前保持停止”的状态。发送下一条消息前，请再次点击停止。',
     stopSessionControlUnavailable: 'Happier 无法连接到会话控制。请确认会话所在的机器和守护进程均在线，然后重试。',
+    /** The short label where the Session is already in view (a row's swipe action). */
+    archive: "归档",
     archiveSession: "归档会话",
     archiveSessionConfirm: "您确定要归档此会话吗？",
     workspaceTitle: "工作区",

@@ -9057,6 +9057,8 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         stopSessionConfirm: 'Segur que vols aturar aquesta sessió?',
         sessionStopped: "Sessió aturada",
         stopSessionHoldFailed: 'No s’ha pogut desar l’aturada fins a Reprèn. Torna a prémer Atura abans d’enviar un altre missatge.',
+        /** The short label where the Session is already in view (a row's swipe action). */
+        archive: 'Arxiva',
         archiveSession: 'Arxiva la sessió',
         archiveSessionConfirm: 'Segur que vols arxivar aquesta sessió?',
         workspaceTitle: 'Espai de treball',

@@ -224,8 +224,18 @@ export function HappierFreshnessLine(props: Readonly<{
   const chip = props.presentation === 'chip';
   const inline = props.presentation === 'inline';
   const plain = chip || inline || props.onSheet === true;
+  const pageSection = useHappierPageSection();
   return (
     <View testID={props.testID} accessibilityRole="text" accessibilityLiveRegion="polite" role="status" aria-live="polite" aria-busy={props.busy || undefined} style={{
+      // The line is a quiet box among the list's boxes (owner 2026-11-11, phone 01): on the rows' inset in a page
+      // section, else on the list's box edge (its search field's), a header gap clear of its neighbours; never a
+      // full-bleed band with hard edges.
+      ...(plain ? null : {
+        marginHorizontal: pageSection ? pageSection.rowInsetPx : HAPPIER_COLLECTION_LIST_METRICS.toolsInset,
+        marginVertical: HAPPIER_COLLECTION_LIST_METRICS.headerGap,
+        borderRadius: HAPPIER_COLLECTION_LIST_METRICS.rowRadius,
+        borderWidth: StyleSheet.hairlineWidth,
+      }),
       flexDirection: 'row',
       alignItems: 'center',
       gap: chip ? metrics.chip.gapPx : metrics.gapPx,
@@ -236,8 +246,6 @@ export function HappierFreshnessLine(props: Readonly<{
       paddingRight: plain ? 0 : metrics.paddingEndPx,
       paddingVertical: chip || inline ? 0 : metrics.paddingVerticalPx,
       backgroundColor: plain ? 'transparent' : paintColor(props.colors.background),
-      borderTopWidth: plain ? 0 : StyleSheet.hairlineWidth,
-      borderBottomWidth: plain ? 0 : StyleSheet.hairlineWidth,
       borderColor: props.colors.border,
       // A line whose recoveries no longer fit beside its words moves them beneath (time over reason over
       // actions), never squeezing the sentence to an ellipsis. A page header's facts line (`inline`) is one row:

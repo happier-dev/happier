@@ -689,7 +689,9 @@ describe('SessionItem activity time', () => {
         const rowStyle = findRowGeometryStyle(screen, 'sess_compact_avatar_phone');
         // The full-width row is its own hit area: it keeps the readable phone height (DESIGN.md → touch
         // targets are hit areas, not drawn sizes), never the 44 pt finger target.
-        expect(rowStyle.height).toBe(36);
+        const { HAPPIER_COLLECTION_ROW_METRICS } = await import('@happier-dev/plugin-ui/presentation');
+        expect(rowStyle.height).toBe(HAPPIER_COLLECTION_ROW_METRICS.height.touchCompact);
+        expect(rowStyle.height).toBeLessThan(44);
     });
 
     it('renders the selected agent logo in the same narrow identity slot', async () => {

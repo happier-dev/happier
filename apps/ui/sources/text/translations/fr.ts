@@ -9578,6 +9578,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     stopSessionConfirm: "Veux-tu vraiment arrêter cette session ?",
     sessionStopped: "Session arrêtée",
     stopSessionHoldFailed: 'Impossible d’enregistrer la pause jusqu’à Reprendre. Réessaie Arrêter avant d’envoyer un autre message.',
+    /** The short label where the Session is already in view (a row's swipe action). */
+    archive: "Archiver",
     archiveSession: "Archiver la session",
     archiveSessionConfirm: "Veux-tu vraiment archiver cette session ?",
     workspaceTitle: "Espace de travail",

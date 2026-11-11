@@ -146,6 +146,7 @@ import {
 } from './SessionListIdentity';
 import type { BotActivity } from '@/components/sessions/bots/botActivity';
 import { Icon } from '@/components/ui/icons/Icon';
+import { RowSwipeAction } from '@/components/ui/lists/RowSwipeAction';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { useWorkspaceFavicon } from './useWorkspaceFavicon';
 import { Modal } from '@/modal';
@@ -657,13 +658,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         ...HAPPIER_META_COLUMN_STYLE,
     },
-    swipeAction: {
-        width: 112,
-        height: '100%',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: theme.colors.status.error,
-    },
     trailingStatusGroup: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -673,12 +667,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     trailingStatusWord: {
         flexShrink: 0,
-    },
-    swipeActionText: {
-        marginTop: theme.space.s4,
-        ...Typography.variant('meta', 'semiBold'),
-        color: theme.colors.button.primary.tint,
-        textAlign: 'center',
     },
 }));
 
@@ -2088,12 +2076,7 @@ const SessionItemContent = React.memo(
         }
 
         const renderRightActions = () => (
-            <Pressable style={styles.swipeAction} onPress={handleSwipeAction} disabled={mutatingSession}>
-                <Icon name="archive" size={20} color={theme.colors.button.primary.tint} />
-                <Text style={styles.swipeActionText} numberOfLines={2}>
-                    {t('sessionInfo.archiveSession')}
-                </Text>
-            </Pressable>
+            <RowSwipeAction icon="archive" label={t('sessionInfo.archive')} onPress={handleSwipeAction} disabled={mutatingSession} />
         );
 
         return (

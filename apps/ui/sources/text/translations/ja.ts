@@ -10036,6 +10036,8 @@ localTailscale: {
     stopSessionConfirm: "このセッションを停止してもよろしいですか？",
     sessionStopped: "セッションを停止しました",
     stopSessionHoldFailed: '再開するまでの停止状態を保存できませんでした。次のメッセージを送る前に、もう一度停止してください。',
+    /** The short label where the Session is already in view (a row's swipe action). */
+    archive: "アーカイブ",
     archiveSession: "セッションをアーカイブ",
     archiveSessionConfirm: "このセッションをアーカイブしてもよろしいですか？",
     workspaceTitle: "ワークスペース",

@@ -11411,6 +11411,8 @@ const enSessionInfo = {
   stopSessionHoldFailed: 'Couldn’t save the hold until Resume. Try Stop again before sending another message.',
   stopSessionControlUnavailable:
     'Happier could not reach the session controls. Make sure the session machine and daemon are online, then try again.',
+  /** The short label where the Session is already in view (a row's swipe action). */
+  archive: 'Archive',
   archiveSession: 'Archive session',
   archiveSessionConfirm: 'Are you sure you want to archive this session?',
   workspaceTitle: 'Workspace',

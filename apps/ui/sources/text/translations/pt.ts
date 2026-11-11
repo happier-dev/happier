@@ -9843,6 +9843,8 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     sessionStopped: "Sessão parada",
     stopSessionHoldFailed: 'Não foi possível salvar a pausa até Retomar. Tente Parar novamente antes de enviar outra mensagem.',
     stopSessionControlUnavailable: 'O Happier não conseguiu acessar os controles da sessão. Verifique se a máquina da sessão e o daemon estão online e tente novamente.',
+    /** The short label where the Session is already in view (a row's swipe action). */
+    archive: "Arquivar",
     archiveSession: "Arquivar sessão",
     archiveSessionConfirm: "Tem certeza de que deseja arquivar esta sessão?",
     workspaceTitle: "Espaço de trabalho",

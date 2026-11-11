@@ -5,7 +5,7 @@ import {
     ITEM_GROUP_CONTAINER_HORIZONTAL_PADDING_PX,
 } from '@/components/ui/lists/itemGroupSpacing';
 import { Typography } from '@/constants/Typography';
-import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { SESSION_LIST_COLUMN_METRICS } from './sessionListColumnMetrics';
 export { SESSION_LIST_COLUMN_METRICS } from './sessionListColumnMetrics';
 
@@ -48,6 +48,14 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         flex: 1,
     },
     listHeaderSection: {
+    },
+    /**
+     * A card leading the list (the recovery key) is a group of its own: a group edge's pause under the header,
+     * and the group gap to the first group label below it, which itself stands only its first-label offset lower.
+     */
+    listHeaderCard: {
+        marginTop: HAPPIER_PAGE_METRICS.groupSeparatorGapPx,
+        marginBottom: HAPPIER_COLLECTION_LIST_METRICS.groupLabelPaddingTop - HAPPIER_COLLECTION_LIST_METRICS.groupLabelFirstPaddingTop,
     },
     groupHeaderSection: {
         paddingHorizontal: SESSION_LIST_TEXT_INSET_PX,

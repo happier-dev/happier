@@ -197,7 +197,10 @@ const ScheduledRow = React.memo(function ScheduledRow(props: Readonly<{
             ...(listDensity === 'minimal' ? { titleLines: 1 } : {}),
             pressableStyle: SESSION_LIST_GROUP_ROW_PROPS.pressableStyle,
             showDivider: SESSION_LIST_GROUP_ROW_PROPS.showDivider,
-            style: [SESSION_LIST_GROUP_ROW_PROPS.style, { minHeight: geometry.densityViewState.rowHeight }] };
+            // A one-line row is exactly the list's row height, like the Drafts and Session rows beside it.
+            style: [SESSION_LIST_GROUP_ROW_PROPS.style, listDensity === 'minimal'
+                ? { height: geometry.densityViewState.rowHeight, minHeight: geometry.densityViewState.rowHeight, paddingVertical: 0 }
+                : { minHeight: geometry.densityViewState.rowHeight }] };
     })() : {};
     const quiet = [...steps, formatTriggerSummary(row.trigger)].join(' · ');
     // A compact list row is one line (lab `clfamily`: "Morning brief · Mon 9:00"); its schedule, steps and

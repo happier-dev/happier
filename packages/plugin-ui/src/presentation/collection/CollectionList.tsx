@@ -276,10 +276,11 @@ export const HAPPIER_COLLECTION_LIST_METRICS = Object.freeze({
   /** A label directly under the header needs less air. */
   groupLabelFirstPaddingTop: 4,
   /**
-   * A group label's mark glyph: in a column the rows' own glyph size, so the mark fills its box on the rows' icon
-   * column and reads as big as theirs (owner, 2026-11-11: My work's Needs you).
+   * A group label's mark glyph: the rows' own mark size (a column row's glyph; a phone's touch row mark,
+   * `HAPPIER_COLLECTION_ROW_METRICS.identity.touchCompact.markSize`), so the mark reads as big as theirs on their icon
+   * column (owner, 2026-11-11: My work's Needs you, desktop and phone).
    */
-  groupLabelMarkGlyph: PHONE_COLUMN ? 13 : 16,
+  groupLabelMarkGlyph: 16,
   /** The box an identity mark sits in, so names align whatever the mark's shape. */
   markSize: 28,
   troubleDotSize: 6,
@@ -513,8 +514,6 @@ const groupLabelStyle: ViewStyle = {
   paddingBottom: M.groupLabelPaddingBottom,
 };
 const groupLabelFirstStyle: ViewStyle = { marginTop: M.groupLabelFirstPaddingTop };
-// A group inside a group follows its siblings' rows by a group pause, less than a section's (phone-system lab D2).
-const groupLabelSubgroupStyle: ViewStyle = { marginTop: HAPPIER_PAGE_METRICS.groupSeparatorGapPx };
 const groupLabelMenuStyle: ViewStyle = {
   ...groupLabelRowStyle,
   paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx,
@@ -685,8 +684,8 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
   /** The first group sits closer to the header (a subgroup: closer to its section's label). */
   first?: boolean;
   /**
-   * `subgroup`: a group inside a group (a Project under "Sessions"). It follows the rows before it by a group
-   * pause rather than a section gap, and its title is a step quieter than its section's label.
+   * `subgroup`: a group inside a group (a Project under "Sessions"). Its title is a step quieter than its section's
+   * label; it follows the rows before it by the same group gap as every label (owner 2026-11-11, phone 1250 #03).
    */
   level?: 'subgroup';
   /** An identity mark before the title (the brand the rows share). */
@@ -758,7 +757,7 @@ export function HappierCollectionListGroupLabel(props: Readonly<{
       }]
     : props.presentation === 'menu'
       ? groupLabelMenuStyle
-      : [groupLabelStyle, props.level === 'subgroup' ? groupLabelSubgroupStyle : null, props.first ? groupLabelFirstStyle : null,
+      : [groupLabelStyle, props.first ? groupLabelFirstStyle : null,
           props.indentPx ? { paddingLeft: M.contentInset + props.indentPx } : null];
   // The title is the group's name: a long detail (a Machine, "offline") yields its width first.
   const detail = <>

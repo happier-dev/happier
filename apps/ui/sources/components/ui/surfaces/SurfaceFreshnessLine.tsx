@@ -1,4 +1,4 @@
-import { HAPPIER_FRESHNESS_LINE_METRICS, HappierFreshnessClauses, HappierFreshnessLine, HappierPressable, resolveHappierFreshnessText, useHappierPageSection } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FRESHNESS_LINE_METRICS, HappierFreshnessClauses, HappierFreshnessLine, HappierPressable, resolveHappierFreshnessText } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -69,7 +69,6 @@ export function SurfaceFreshnessLine(props: Readonly<{
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const onSheet = React.useContext(SurfaceFreshnessOnSheetContext);
-    const pageSection = useHappierPageSection();
     const chip = props.presentation === 'chip';
     const inline = props.presentation === 'inline';
     const actions = props.actions ?? (props.action ? [props.action] : []);
@@ -164,9 +163,8 @@ export function SurfaceFreshnessLine(props: Readonly<{
             )}
         </HappierFreshnessLine>
     );
-    // In a page section the strip spans the section's content, on its rows' inset like the rows and
-    // sub-headings beside it, never the full sheet past them (Session Info Habits, Context).
-    return pageSection && !chip && !inline ? <View style={{ marginHorizontal: pageSection.rowInsetPx }}>{line}</View> : line;
+    // The strip's placement (a page section's row inset, else the list's box edge) is the shared line's.
+    return line;
 }
 
 function renderEmphasis(text: string, emphasis: string | undefined): React.ReactNode {

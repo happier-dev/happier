@@ -8153,6 +8153,8 @@ export const ru: TranslationStructure = {
     sessionStopped: "Сессия остановлена",
     stopSessionHoldFailed: 'Не удалось сохранить остановку до возобновления. Нажмите «Остановить» ещё раз перед отправкой следующего сообщения.',
     stopSessionControlUnavailable: 'Happier не удалось подключиться к управлению сессией. Убедитесь, что машина сессии и демон в сети, и попробуйте снова.',
+    /** The short label where the Session is already in view (a row's swipe action). */
+    archive: "В архив",
     archiveSession: "Архивировать сессию",
     archiveSessionConfirm: "Вы уверены, что хотите архивировать эту сессию?",
     workspaceTitle: "Рабочее пространство",

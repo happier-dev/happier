@@ -9724,6 +9724,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         sessionStopped: "Session gestoppt",
         stopSessionHoldFailed: 'Die Pause bis zum Fortsetzen konnte nicht gespeichert werden. Drücke erneut Stoppen, bevor du eine weitere Nachricht sendest.',
         stopSessionControlUnavailable: 'Happier hat die Session-Steuerung nicht erreicht. Stell sicher, dass Rechner und Daemon der Session online sind, und versuch es dann noch einmal.',
+        /** The short label where the Session is already in view (a row's swipe action). */
+        archive: 'Archivieren',
         archiveSession: 'Session archivieren',
         archiveSessionConfirm: 'Willst du diese Session wirklich archivieren?',
         workspaceTitle: 'Workspace',

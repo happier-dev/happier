@@ -19,12 +19,13 @@ export type HeaderControlMetrics = Readonly<{ sizePx: number; glyphPx: number }>
 
 const TOUCH_HEADER_CONTROL: HeaderControlMetrics = Object.freeze({
     sizePx: HAPPIER_PAGE_METRICS.controlHeightPx,
-    glyphPx: ICON_SIZE.lg,
+    // `md`: the `lg` step read too big beside the title (owner 1250 #02).
+    glyphPx: ICON_SIZE.md,
 });
 
 /**
  * A list header's one control size (its icon buttons and its icon-only segmented choice): what the header draws
- * under a precise pointer, and on a finger one drawn box (the control height) with `lg` glyphs, whose hit area
+ * under a precise pointer, and on a finger one drawn box (the control height) with `md` glyphs, whose hit area
  * reaches 44 invisibly (phone-system lab D1; owner 11-10: the segment matches the buttons). The touch decision is
  * the shared pointer owner's.
  */

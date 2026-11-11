@@ -9962,6 +9962,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     sessionStopped: "Sessione arrestata",
     stopSessionHoldFailed: 'Non è stato possibile salvare la pausa fino a Riprendi. Premi di nuovo Arresta prima di inviare un altro messaggio.',
     stopSessionControlUnavailable: 'Happier non ha potuto raggiungere i controlli della sessione. Assicurati che la macchina della sessione e il daemon siano online, poi riprova.',
+    /** The short label where the Session is already in view (a row's swipe action). */
+    archive: "Archivia",
     archiveSession: "Archivia sessione",
     archiveSessionConfirm: "Sei sicuro di voler archiviare questa sessione?",
     workspaceTitle: "Area di lavoro",

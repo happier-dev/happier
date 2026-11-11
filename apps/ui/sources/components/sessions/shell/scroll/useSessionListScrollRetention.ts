@@ -237,6 +237,12 @@ export function useSessionListScrollRetention(params: Readonly<{
         // Reissuing scrollToIndex here would move an already-correct viewport.
         if (previous.nodeIds.indexOf(anchor.nodeId) === targetIndex
             && previous.nodeIds.slice(0, targetIndex).every((nodeId, index) => nodeId === nextNodeIds[index])) return;
+        // A reader at the top stays at the top: groups landing above the first session (Scheduled, Drafts) and a
+        // layout switch show from the list's start, never pulled down to that session (owner 1250 #01).
+        if (retentionEntry.lastVisibleOffsetY <= SCROLL_OFFSET_TOLERANCE_PX) {
+            pendingMembershipRestoreRef.current = null;
+            return;
+        }
         pendingMembershipRestoreRef.current = {
             retentionKey: params.retentionKey,
             nodeId: anchor.nodeId,

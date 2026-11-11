@@ -14,6 +14,7 @@ import { useIsTablet } from '@/utils/platform/responsive';
 
 import {
   resolveSessionListDensityViewState,
+  shouldUseReadablePhoneMinimalSessionRow,
   resolveSessionListItemDensity,
   resolveSessionListRowIdentityMetrics,
   resolveSessionListRowTitleTextMetrics,
@@ -92,8 +93,10 @@ export function resolveSessionListGroupRowGeometry(
     density === 'minimal' ? 'narrow' : density === 'compact' ? 'cozy' : 'comfortable',
     { isTablet: window.isTablet, platform: Platform.OS, windowWidth: window.windowWidth },
   );
+  // The touch decision's owner, never a height comparison: the phone's touch row and the pointer row can share a
+  // height, and then a group's rows lost the touch row's identity column (owner 1250 #05).
   const readableNativePhoneMinimal = density === 'minimal'
-    && densityViewState.rowHeight !== resolveSessionListDensityViewState('narrow').rowHeight;
+    && shouldUseReadablePhoneMinimalSessionRow({ isTablet: window.isTablet, platform: Platform.OS, windowWidth: window.windowWidth });
   const titleTextMetrics = resolveSessionListRowTitleTextMetrics({ density, readableNativePhoneMinimal });
   return { itemDensity, densityViewState, readableNativePhoneMinimal, titleTextMetrics };
 }

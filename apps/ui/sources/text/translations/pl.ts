@@ -9572,6 +9572,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     stopSessionConfirm: "Czy na pewno chcesz zatrzymać tę sesję?",
     sessionStopped: "Sesja zatrzymana",
     stopSessionHoldFailed: 'Nie udało się zapisać wstrzymania do wznowienia. Spróbuj ponownie zatrzymać sesję przed wysłaniem kolejnej wiadomości.',
+    /** The short label where the Session is already in view (a row's swipe action). */
+    archive: "Archiwizuj",
     archiveSession: "Zarchiwizuj sesję",
     archiveSessionConfirm: "Czy na pewno chcesz zarchiwizować tę sesję?",
     workspaceTitle: "Obszar roboczy",

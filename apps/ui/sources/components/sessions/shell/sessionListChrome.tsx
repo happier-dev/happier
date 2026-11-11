@@ -397,7 +397,7 @@ export const SessionsListHeader = React.memo(function SessionsListHeader() {
 
     return (
         <View style={styles.listHeaderSection}>
-            <RecoveryKeyReminderBanner header="none" />
+            <RecoveryKeyReminderBanner header="none" style={styles.listHeaderCard} />
         </View>
     );
 });

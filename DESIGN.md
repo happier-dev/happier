@@ -798,7 +798,10 @@ live in the page-presentation owners in code.
     cleanup or credential forwarding is authorized.
 - **Emptiness is designed.** An empty page shows a calm mark without a tile, a short title, one line
   of purpose and one primary action; an empty list or rail says so in one quiet line. A rail and its
-  detail never both show the full state. Where a state has room (a page, pane or card state, about
+  detail never both show the full state: a whole list with nothing beside it showing that state (a phone
+  page, a column that is the destination's first screen) shows the compact scene, its one line and one
+  primary action, while a section that is empty beside sections with content keeps its one-line hint
+  (owner ruling 2026-11-11, option a). Where a state has room (a page, pane or card state, about
   220 px or taller), the mark is a Daybreak scene: line art on one horizon with the planet as the
   colour, one moment of the day per state, composed from the shared scene library's parts
   (`scene = { horizon, moment, planet, props[], sky[], accent? }`) and chosen by scene id. A scene

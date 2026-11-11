@@ -7876,6 +7876,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         stopSessionConfirm: '您確定要停止此工作階段嗎？',
         sessionStopped: "工作階段已停止",
         stopSessionHoldFailed: '無法儲存「繼續前保持停止」的狀態。傳送下一則訊息前，請再次按下停止。',
+        /** The short label where the Session is already in view (a row's swipe action). */
+        archive: '封存',
         archiveSession: '封存工作階段',
         archiveSessionConfirm: '您確定要封存此工作階段嗎？',
         workspaceTitle: '工作區',

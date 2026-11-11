@@ -86,18 +86,21 @@ describe('SurfaceFreshnessLine recovery', () => {
 });
 
 describe('SurfaceFreshnessLine placement', () => {
-    it('is a filled strip under a pane header, and a plain line on a sheet that already draws the surface', async () => {
+    it('is an inset rounded box under a pane header (never a full-bleed band), and a plain line on a sheet that already draws the surface', async () => {
         const strip = await renderScreen(<SurfaceFreshnessLine testID="line" reason="Still reading" />);
-        expect(flattenStyle(strip.findByTestId('line')!.props.style).backgroundColor).not.toBe('transparent');
-        expect(flattenStyle(strip.findByTestId('line')!.props.style).borderTopWidth).toBeGreaterThan(0);
+        const box = flattenStyle(strip.findByTestId('line')!.props.style);
+        expect(box.backgroundColor).not.toBe('transparent');
+        expect(box.borderWidth).toBeGreaterThan(0);
+        expect(box.borderRadius).toBeGreaterThan(0);
+        expect(box.marginHorizontal).toBeGreaterThan(0);
 
         const onSheet = await renderScreen(
             <SurfaceFreshnessOnSheetProvider><SurfaceFreshnessLine testID="line" reason="Still reading" /></SurfaceFreshnessOnSheetProvider>,
         );
         const style = flattenStyle(onSheet.findByTestId('line')!.props.style);
         expect(style.backgroundColor).toBe('transparent');
-        expect(style.borderTopWidth ?? 0).toBe(0);
-        expect(style.borderBottomWidth ?? 0).toBe(0);
+        expect(style.borderWidth ?? 0).toBe(0);
+        expect(style.marginHorizontal ?? 0).toBe(0);
         expect(style.paddingLeft).toBe(0);
     });
 });

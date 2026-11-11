@@ -273,6 +273,8 @@ describe('useSessionListScrollRetention', () => {
         );
 
         await act(async () => {
+            hook.getCurrent().handleLayout(layoutEvent(416));
+            hook.getCurrent().handleScroll(scrollEvent(280, 416));
             hook.getCurrent().handleViewableItemsChanged({
                 viewableItems: [
                     { item: { id: 'header:today' }, index: 0, isViewable: true },
@@ -309,7 +311,7 @@ describe('useSessionListScrollRetention', () => {
 
         await act(async () => {
             hook.getCurrent().handleLayout(layoutEvent(416));
-            hook.getCurrent().handleScroll(scrollEvent(0, 416));
+            hook.getCurrent().handleScroll(scrollEvent(120, 416));
             hook.getCurrent().handleViewableItemsChanged({
                 viewableItems: [
                     { item: { id: 'session:home:a' }, index: 1, isViewable: true },
@@ -326,6 +328,39 @@ describe('useSessionListScrollRetention', () => {
         // A same-index anchor still needs restoration when the preceding content changes.
         await hook.rerender({ nodeIds: ['header:filtered', 'session:home:a', 'session:home:c', 'session:home:b'] });
         expect(scrollToIndex).toHaveBeenCalledWith({ index: 1, animated: false, viewOffset: 26, viewPosition: 0 });
+        await hook.unmount();
+    });
+
+    it('keeps a reader at the top at the top when groups arrive above the first session or the layout changes (owner 1250 #01)', async () => {
+        const scrollToOffset = vi.fn();
+        const scrollToIndex = vi.fn();
+        const hook = await renderHook(
+            (props: { nodeIds: readonly string[] }) => useSessionListScrollRetention({
+                retentionKey: 'reader-at-top',
+                scrollToOffset,
+                scrollToIndex,
+                nodeIds: props.nodeIds,
+                measureNodeViewportOffset: async () => 140,
+            }),
+            { initialProps: { nodeIds: ['header:needs-you', 'session:home:a', 'session:home:b'] } },
+        );
+
+        await act(async () => {
+            hook.getCurrent().handleLayout(layoutEvent(416));
+            hook.getCurrent().handleScroll(scrollEvent(0, 416));
+            hook.getCurrent().handleViewableItemsChanged({
+                viewableItems: [
+                    { item: { id: 'header:needs-you' }, index: 0, isViewable: true },
+                    { item: { id: 'session:home:a' }, index: 1, isViewable: true },
+                ],
+            });
+        });
+        // Scheduled and Drafts land above the first session; then the person switches to Recent.
+        await hook.rerender({ nodeIds: ['header:needs-you', 'supporting_sections', 'session:home:a', 'session:home:b'] });
+        await hook.rerender({ nodeIds: ['header:today', 'session:home:b', 'session:home:a'] });
+
+        expect(scrollToIndex).not.toHaveBeenCalled();
+        expect(scrollToOffset).not.toHaveBeenCalled();
         await hook.unmount();
     });
 
