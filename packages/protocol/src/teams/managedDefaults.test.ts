@@ -9,16 +9,33 @@ describe('managed Session defaults', () => {
   it('selects one precedence, preserves explicit choices and applies policy locks', () => {
     const input = {
       agentTargetKey: key,
+      memberDefaults: mode('yolo'),
       teamDefaults: { team: mode('safe-yolo'), groups: { reviewers: mode('read-only') } },
       groupIds: ['reviewers'], homeDefaults: mode('yolo'),
       policyDefaults: { values: mode('yolo'), locked: false, organization: 'Example' },
     };
-    expect(resolveManagedSessionDefaults(input).permissionMode).toMatchObject({ value: 'read-only', source: 'group', lock: null });
+    expect(resolveManagedSessionDefaults(input).permissionMode).toMatchObject({ value: 'yolo', source: 'member', lock: null });
     expect(resolveManagedSessionDefaults({ ...input, explicitChoices: mode('yolo') }).permissionMode)
       .toMatchObject({ value: 'yolo', source: 'explicit' });
     expect(resolveManagedSessionDefaults({ ...input, explicitChoices: mode('read-only'), policyDefaults: { ...input.policyDefaults, locked: true } }).permissionMode)
       .toMatchObject({ value: 'yolo', source: 'policy', lock: { organization: 'Example' } });
     expect(input.teamDefaults.team).toEqual(mode('safe-yolo'));
+  });
+
+  it('lets Team fill an unset member facet while an explicit choice wins', () => {
+    const input = { agentTargetKey: key, memberDefaults: {}, teamDefaults: {
+      team: mode('safe-yolo'), groups: {},
+    } };
+    expect(resolveManagedSessionDefaults(input).permissionMode)
+      .toMatchObject({ value: 'safe-yolo', source: 'team' });
+    expect(resolveManagedSessionDefaults({ ...input, explicitChoices: mode('read-only') }).permissionMode)
+      .toMatchObject({ value: 'read-only', source: 'explicit' });
+  });
+
+  it('lets a locked policy override the member default', () => {
+    const result = resolveManagedSessionDefaults({ agentTargetKey: key, memberDefaults: mode('read-only'),
+      policyDefaults: { values: mode('yolo'), locked: true, organization: 'Example' } });
+    expect(result.permissionMode).toMatchObject({ value: 'yolo', source: 'policy', lock: { organization: 'Example' } });
   });
 
   it('falls through conflicting Groups per field, independently of iteration order', () => {
@@ -54,7 +71,7 @@ describe('managed Session defaults', () => {
         service: { pluginId: 'example.service', localId: 'service' }, target: null, teamResource: null,
       }] } },
     });
-    expect(projection.layers.map(layer => layer.source)).toEqual(['explicit', 'team', 'home', 'policy']);
+    expect(projection.layers.map(layer => layer.source)).toEqual(['explicit', 'member', 'team', 'home', 'policy']);
     expect(projection.purposeKeys).toEqual([
       qualifiedPurposeKey({ consumer: { pluginId: 'example.agent', localId: 'agent' }, purpose: 'a-purpose' }),
       qualifiedPurposeKey({ consumer: { pluginId: 'example.agent', localId: 'agent' }, purpose: 'z-purpose' }),

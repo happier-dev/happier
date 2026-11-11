@@ -220,7 +220,7 @@ import { createRunnerCreatorSecretReader } from '@/sync/domains/ephemeralRunner/
 import { readProfileEnabledById } from '@/sync/domains/profiles/profileEnablement';
 import { resolveVisibleBuiltInLaunchProfiles } from '@/sync/domains/profiles/visibleBuiltInLaunchProfiles';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
-import { useProviderSettings } from '@/providers/hooks/useProviderSettings';
+import { useProviderDefaultModelSelections, useProviderSettings } from '@/providers/hooks/useProviderSettings';
 import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 import { useNewSessionDraftActions } from './screenModel/useNewSessionDraftActions';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
@@ -748,6 +748,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
 
     const recentMachinePaths = useAuthoringMemoryField('recentMachinePaths');
     const accountSettingsScope = useAccountSettingsScope();
+    const providerDefaultModelSelectionsByAgentTargetKeyV1 = useProviderDefaultModelSelections(accountSettingsScope);
     const newSessionDefaultPersistenceModeV1 = useSetting('newSessionDefaultPersistenceModeV1');
     const newSessionDefaultPersistenceModeByTargetKeyV1 = useSetting('newSessionDefaultPersistenceModeByTargetKeyV1');
 
@@ -780,6 +781,10 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const secrets = useSavedSecretCatalogPersonalSecrets();
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
     const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
+    const memberSessionDefaults = React.useMemo(() => ({
+        permissionModeByAgentTargetKey: sessionDefaultPermissionModeByTargetKey,
+        modelByAgentTargetKey: providerDefaultModelSelectionsByAgentTargetKeyV1,
+    }), [providerDefaultModelSelectionsByAgentTargetKeyV1, sessionDefaultPermissionModeByTargetKey]);
     const homeViewSelectionSettings = useHomeViewSelectionSettings();
     const executionRunsEnabled = resolveLocalFeaturePolicyEnabled('execution.runs', useFeatureLocalPolicySettings());
     const profileEnabledByIdSetting = useSetting('profileEnabledById');
@@ -1177,6 +1182,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         serverId: targetServerId ?? '',
         teamId: accessDraftState.primaryTeamId,
         access: accessDraftState.access,
+        memberDefaults: memberSessionDefaults,
         agentTargetKey: resolveBackendTargetKeyV2(routeBackendTarget ?? hydratedTempBackendTarget
             ?? hydratedPersistedBackendTarget ?? { kind: 'backend', backendId: DEFAULT_AGENT_ID }),
     });

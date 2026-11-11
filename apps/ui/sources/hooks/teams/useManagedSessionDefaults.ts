@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
+import type { ManagedSessionDefaultsV1 } from '@happier-dev/protocol/teams';
 
 import { useTeamBinding } from './useTeamBinding';
 import {
@@ -10,8 +11,9 @@ import {
 /** Existing Team demand owns first load, Account qualification and pushed updates. */
 export function useManagedSessionDefaults(input: Omit<ManagedSessionDefaultsReadInput, 'memberAccountId'> & Readonly<{
     access?: SessionInitialAccessDraftV1 | null;
+    memberDefaults?: ManagedSessionDefaultsV1 | null;
 }>) {
-    const { serverId, agentTargetKey, explicitChoices } = input;
+    const { serverId, agentTargetKey, explicitChoices, memberDefaults } = input;
     // Sharing does not change the Session's primary Team or its creation policy.
     // A sole shared Team nevertheless supplies member defaults. Several shared
     // Teams need an explicit context; their order is not a precedence rule.
@@ -27,7 +29,8 @@ export function useManagedSessionDefaults(input: Omit<ManagedSessionDefaultsRead
         teamId,
         agentTargetKey,
         explicitChoices,
+        memberDefaults,
         memberAccountId: binding.kind === 'bound' ? binding.scope.accountId : null,
-    }), [serverId, teamId, agentTargetKey, explicitChoices, binding]);
+    }), [serverId, teamId, agentTargetKey, explicitChoices, memberDefaults, binding]);
     return { read, binding };
 }

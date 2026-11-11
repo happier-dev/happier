@@ -69,6 +69,8 @@ export function readManagedDefaultsV1(raw: unknown):
 }
 
 export type ManagedSessionDefaultsContext = Readonly<{
+  /** Member-owned settings deliberately saved by the person; absent facets remain unset. */
+  memberDefaults?: ManagedSessionDefaultsV1 | null;
   teamDefaults?: ManagedDefaultsV1 | null;
   groupIds?: readonly string[];
   homeDefaults?: ManagedSessionDefaultsV1 | null;
@@ -76,7 +78,7 @@ export type ManagedSessionDefaultsContext = Readonly<{
 }>;
 export type ManagedDefaultDecision<T> = Readonly<{
   value: T | undefined;
-  source: 'policy' | 'explicit' | 'group' | 'team' | 'home' | 'none';
+  source: 'policy' | 'explicit' | 'member' | 'group' | 'team' | 'home' | 'none';
   lock: Readonly<{ organization: string; supportUrl?: string }> | null;
   groupConflict: boolean;
 }>;
@@ -88,7 +90,7 @@ export type ResolvedManagedSessionDefaults = Readonly<{
 }>;
 
 export type ManagedSessionDefaultsLayerV1 = Readonly<{
-  source: 'explicit' | 'group' | 'team' | 'home' | 'policy';
+  source: 'explicit' | 'member' | 'group' | 'team' | 'home' | 'policy';
   defaults: ManagedSessionDefaultsV1 | null;
 }>;
 
@@ -107,6 +109,7 @@ export function projectManagedSessionDefaultsLayers(
   const groups = (input.groupIds ?? []).flatMap(id => input.teamDefaults?.groups[id] ? [input.teamDefaults.groups[id]] : []);
   const layers: ManagedSessionDefaultsLayerV1[] = [
     { source: 'explicit', defaults: input.explicitChoices ?? null },
+    { source: 'member', defaults: input.memberDefaults ?? null },
     ...groups.map(defaults => ({ source: 'group' as const, defaults })),
     { source: 'team', defaults: input.teamDefaults?.team ?? null },
     { source: 'home', defaults: input.homeDefaults ?? null },
@@ -138,6 +141,7 @@ export function resolveManagedSessionDefaults(input: ManagedSessionDefaultsConte
     };
     const candidates = [
       ['explicit', input.explicitChoices && read(input.explicitChoices)],
+      ['member', input.memberDefaults && read(input.memberDefaults)],
       ['group', groupConflict ? undefined : first],
       ['team', input.teamDefaults && read(input.teamDefaults.team)],
       ['home', input.homeDefaults && read(input.homeDefaults)],

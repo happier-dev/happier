@@ -416,12 +416,13 @@ a preset stores its existing Home/preset identity without acquiring a Machine; a
 target remains in place until explicitly changed or cleared.
 
 Defaults preselect choices without copying them into Account settings. Locked policy values
-outrank explicit choices; otherwise precedence is explicit choice, agreeing Group, Team,
-Home, then unlocked policy. Disagreeing Groups fall through per field/purpose. Only the
+outrank explicit choices; otherwise precedence is explicit choice, deliberate member defaults, agreeing Group,
+Team, Home, then unlocked policy. Disagreeing Groups fall through per field/purpose. Only the
 [organization policy file](organization-policy.md#session-defaults) locks controls. Existing
 Team-change push and member-qualified Team snapshots supply updates; no additional polling
-or defaults storage is introduced. Home has no admin defaults slot in this implementation,
-so no Home defaults are persisted; machine policy remains a separate source.
+or defaults storage is introduced by the precedence resolver. Home defaults are stored in
+`HomeGovernancePolicy.sessionDefaults` and projected in Team policy as `homeDefaults`;
+machine policy remains a separate source.
 
 ### Accepted authentication
 

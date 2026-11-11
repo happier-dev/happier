@@ -49,14 +49,18 @@ export function resolveNewSessionDefaultPermissionModeDecision(params: NewSessio
     const effectiveTarget = backendTarget ?? { kind: 'backend', backendId: agentType };
     const targetKey = resolveBackendTargetKeyV2(effectiveTarget);
 
-    const explicitMode = params.explicitPermissionMode
-        ?? profileDefaultsByTargetKey?.[targetKey]
+    const memberMode = profileDefaultsByTargetKey?.[targetKey]
         ?? accountDefaults.byTargetKey[targetKey]
         ?? legacyProfileDefaultPermissionMode;
-    const explicitIntent = explicitMode ? parseAgentPermissionIntentV1Alias(explicitMode) : null;
+    const memberIntent = memberMode ? parseAgentPermissionIntentV1Alias(memberMode) : null;
+    const explicitIntent = params.explicitPermissionMode ? parseAgentPermissionIntentV1Alias(params.explicitPermissionMode) : null;
     const decision = resolveManagedSessionDefaults({
         ...params.managedDefaults,
         agentTargetKey: targetKey,
+        memberDefaults: {
+            ...(params.managedDefaults?.memberDefaults ?? {}),
+            ...(memberIntent ? { permissionModeByAgentTargetKey: { [targetKey]: memberIntent } } : {}),
+        },
         ...(explicitIntent ? { explicitChoices: { permissionModeByAgentTargetKey: { [targetKey]: explicitIntent } } } : {}),
     }).permissionMode;
     return {

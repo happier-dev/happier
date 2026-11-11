@@ -60,6 +60,12 @@ describe('resolveAgentConnectedServicesDefaultBindings managed defaults', () => 
             .toEqual({ source: 'connected', selection: 'profile', profileId: 'required' });
     });
 
+    it('preserves a deliberately saved native choice over Team defaults', () => {
+        const input = { ...base, purposeBindings: { v: 1 as const, bindings: [{ purpose, target: null }] },
+            managedSessionDefaults: teamDefaults('engineering') };
+        expect(resolveAgentConnectedServicesDefaultBindings(input).bindingsByServiceId[serviceKey]).toEqual({ source: 'native' });
+    });
+
     it('keeps authored native and retained Team selections when policy is unlocked', () => {
         for (const binding of [{ source: 'native' as const }, {
             source: 'team_resource' as const, resourceId: 'retained-resource', deliveryMode: 'direct' as const,

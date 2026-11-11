@@ -8,7 +8,7 @@ import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-acc
 import { resolveManagedSessionDefaults, type ManagedConnectedServiceDefaultV1, type ManagedSessionDefaultsContext } from '@happier-dev/protocol/teams';
 import type { ConnectedServicesServiceBinding } from './connectedServicesAgentOptionStateBindings';
 
-/** Resolve the selected Agent's Account defaults as an explicit spawn choice, including native. */
+/** Resolve deliberate Account choices ahead of managed defaults, including saved native. */
 export function resolveAgentConnectedServicesDefaultBindings(
     input: Parameters<typeof resolveAgentConnectedAccountPurposeDefaults>[0] & Readonly<{
         managedSessionDefaults?: ManagedSessionDefaultsContext;
@@ -24,7 +24,7 @@ export function resolveAgentConnectedServicesDefaultBindings(
     }
     const explicitChoices = accountDefaults.flatMap((entry): ManagedConnectedServiceDefaultV1[] => {
         const binding = input.explicitBindings?.[buildQualifiedPluginContributionKey(entry.service)];
-        if (binding === undefined) return entry.target || entry.teamResource ? [entry] : [];
+        if (binding === undefined) return [];
         const target = binding?.source === 'connected'
             ? binding.selection === 'group' && binding.groupId
                 ? { kind: 'group' as const, service: entry.service, groupId: binding.groupId }
@@ -40,6 +40,10 @@ export function resolveAgentConnectedServicesDefaultBindings(
     const decisions = resolveManagedSessionDefaults({
         ...input.managedSessionDefaults,
         agentTargetKey: input.agentTargetKey,
+        memberDefaults: {
+            ...(input.managedSessionDefaults.memberDefaults ?? {}),
+            connectedServicesByAgentTargetKey: { [input.agentTargetKey]: resolveAgentConnectedAccountPurposeDefaults({ ...input, onlySavedDefaults: true }) },
+        },
         explicitChoices: { connectedServicesByAgentTargetKey: { [input.agentTargetKey]: explicitChoices } },
     }).connectedServices;
     const decisionsByPurpose = new Map(decisions.flatMap(decision => decision.value

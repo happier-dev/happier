@@ -18,6 +18,7 @@ export type ManagedSessionDefaultsReadInput = Readonly<{
     memberAccountId: string | null;
     agentTargetKey: string;
     explicitChoices?: ManagedSessionDefaultsV1;
+    memberDefaults?: ManagedSessionDefaultsV1 | null;
 }>;
 export type ManagedSessionDefaultsRead = Readonly<{ context: ManagedSessionDefaultsContext }> & (
     | Readonly<{
@@ -35,7 +36,7 @@ export type ManagedSessionDefaultsRead = Readonly<{ context: ManagedSessionDefau
 /** Synchronous, Home/Account-qualified read. useManagedSessionDefaults declares live Team demand. */
 export function readManagedSessionDefaults(input: ManagedSessionDefaultsReadInput): ManagedSessionDefaultsRead {
     const policyDefaults = getOrganizationPolicySessionDefaults(readOrganizationPolicy());
-    let context: ManagedSessionDefaultsContext = { policyDefaults };
+    let context: ManagedSessionDefaultsContext = { policyDefaults, memberDefaults: input.memberDefaults ?? null };
     let repairRequired = false;
     if (input.teamId !== null) {
         const scope = createServerAccountScope(input.serverId, input.memberAccountId);
@@ -44,7 +45,7 @@ export function readManagedSessionDefaults(input: ManagedSessionDefaultsReadInpu
         const state = resolveTeamViewState(getTeamSnapshot(scope, address));
         if (state.kind !== 'ready') return { status: 'unavailable', reason: state.kind, teamState: state, context };
         repairRequired = state.team.policy.managedDefaultsStatus === 'repair_required';
-        context = { policyDefaults, homeDefaults: state.team.policy.homeDefaults ?? null,
+        context = { policyDefaults, memberDefaults: input.memberDefaults ?? null, homeDefaults: state.team.policy.homeDefaults ?? null,
             teamDefaults: state.team.policy.managedDefaults ?? null,
             groupIds: state.team.managedDefaultsGroupIds ?? [] };
     }

@@ -409,6 +409,8 @@ export function admitAgentConnectedAccountPurposeDeclarations<T extends AgentCon
  * migration seam omit the catalog and read retained service-keyed defaults.
  */
 export function resolveAgentConnectedAccountPurposeDefaults(input: Readonly<{
+  /** Exclude implicit native fallbacks when projecting deliberate member choices. */
+  onlySavedDefaults?: boolean;
   settings: AgentConnectedAccountDefaultSettings;
   purposeBindings?: QualifiedConnectedAccountPurposeBindingsV1;
   agentId: string;
@@ -435,6 +437,8 @@ export function resolveAgentConnectedAccountPurposeDefaults(input: Readonly<{
     if (seen.has(key)) continue;
     seen.add(key);
     const durableValue = index.defaultFor(key);
+    if (input.onlySavedDefaults && durableValue === undefined
+      && legacy?.[buildQualifiedPluginContributionKey(service)] === undefined) continue;
     const teamSelection = index.teamFor(key);
     const teamResource = durableValue === 'team' && teamSelection
       ? teamResourceDefaultForService(teamSelection, service)
