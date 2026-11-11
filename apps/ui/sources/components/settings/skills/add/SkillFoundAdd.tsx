@@ -514,7 +514,7 @@ export function SkillFoundAdd(
   return props.ctx.renderFound<Preview>({
     ...(props.field === undefined ? {} : { field: props.field }),
     items,
-    itemKey: keyOf,
+    itemKey: item => keyOf(item),
     // Nothing left to choose, so no "Choose which to add" heading over rows that are all held.
     ...(items.length > 0 && !allHeld ? { groups: [{ key: 'found', title: props.groupTitle, ...(groupAction === undefined ? {} : { action: groupAction }), itemKeys: items.map(item => keyOf(item)) }] } : {}),
     anatomy,

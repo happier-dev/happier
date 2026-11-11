@@ -159,6 +159,8 @@ describe('SkillUploadInput', () => {
     const selected: string[] = [];
     const { screen, pressPrimary, onClose } = await renderUpload(answer, (id) => selected.push(id));
     expect(screen.findByTestId('upload.detail.title')).not.toBeNull();
+    expect(screen.findByTestId('upload.detail.where')).not.toBeNull();
+    expect(screen.findByTestId('skills.add:primary')).not.toBeNull();
     // One found skill shows one Add: its details' primary, not a second one in the footer.
     expect(screen.findByTestId('upload.add')).toBeNull();
     expect(screen.find(node => node.props.testID === 'skills.add:primary' && typeof node.props.display === 'string').props.display).toBe('primary');

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { SkillInstallPreviewV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 
 import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { MountedAuthoringActionExecute } from '@/sync/ops/actions/sessionAuthoringActions';
@@ -55,7 +56,7 @@ const PREVIEW = {
       treeSha: 'b'.repeat(40),
     },
   },
-} as const;
+} satisfies SkillInstallPreviewV1;
 
 const SECOND = { ...PREVIEW, path: 'skills/to-prd', name: 'to-prd', description: 'Turn the talk into a PRD.',
   provenance: { ...PREVIEW.provenance, ref: { ...PREVIEW.provenance.ref, path: 'skills/to-prd', treeSha: 'c'.repeat(40) } } };
@@ -635,5 +636,36 @@ describe('SkillLinkInput skills the library already holds', () => {
     await open('skills/grill-me');
     await pressPrimary();
     expect(selected).toEqual(['skill-held']);
+  });
+});
+
+describe('controlled well-known Link preview', () => {
+  it('settles a rejected preview read with its typed error and permits another Find', async () => {
+    let unavailable = true;
+    const answer: MountedAuthoringActionExecute = async () => {
+      if (unavailable) throw Object.assign(new Error('Registry transport disconnected'), { code: 'registry_transport_disconnected' });
+      return { ok: true, result: { items: [PREVIEW] } };
+    };
+    const { screen } = await renderLink(answer);
+    expect(screen.getTextContent()).toContain('registry_transport_disconnected');
+    expect(screen.findByTestId('skills.add:primary')).toBeNull();
+    unavailable = false;
+    await screen.pressByTestIdAsync('link.find');
+    expect(screen.findByTestId('link.detail.title')).not.toBeNull();
+    expect(screen.findByTestId('link.detail.where')).not.toBeNull();
+    expect(screen.findByTestId('skills.add:primary')).not.toBeNull();
+  });
+  it('opens the found item through the shared detail and presents Add and scope controls', async () => {
+    const indexUrl = 'https://skills.example.test/.well-known/agent-skills/index.json';
+    const item = { ...PREVIEW, path: 'store-fixtures-125', name: 'store-fixtures-125',
+      provenance: { kind: 'wellKnown' as const, indexUrl, name: 'store-fixtures-125', digest: `sha256:${'a'.repeat(64)}` } };
+    const answer: MountedAuthoringActionExecute = async () => ({ ok: true, result: { items: [item] } });
+    const { screen, open } = await renderLink(answer, {}, indexUrl);
+    expect(screen.findByTestId('link.detail.title')).not.toBeNull();
+    await open(item.path);
+    expect(screen.findByTestId('link.detail.title')).not.toBeNull();
+    expect(screen.findByTestId('link.detail.where')).not.toBeNull();
+    expect(screen.findByTestId('skills.add:primary')).not.toBeNull();
+    expect(screen.getTextContent()).toContain(t('capabilities.skillAdd.addToLibrary'));
   });
 });

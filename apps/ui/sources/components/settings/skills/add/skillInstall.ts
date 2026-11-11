@@ -123,7 +123,10 @@ export async function previewSkillInstall(
   | Readonly<{ ok: true; items: readonly SkillInstallPreviewV1[]; source: SkillInstallSource }>
   | Readonly<{ ok: false; error: string; status?: RegistryFailureStatus }>
 > {
-  const result = await execute('skills.install', { source, dryRun: true });
+  const result = await execute('skills.install', { source, dryRun: true }).catch((error: unknown) => {
+    const cause = readSkillActionFailure(error);
+    return { ok: false as const, errorCode: cause.code, error: cause.message };
+  });
   if (!result.ok) return failure(result);
   const parsed = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.install'].safeParse(
     result.result,

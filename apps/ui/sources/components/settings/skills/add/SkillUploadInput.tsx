@@ -24,7 +24,7 @@ import { applyWebDirectoryInputAttributes } from '@/utils/files/applyWebDirector
 import { nativePickFiles } from '@/utils/files/nativePickFiles';
 import { readWebDroppedEntries } from '@/utils/files/webDroppedEntries';
 
-import { previewSkillInstall } from './skillInstall';
+import { describeSkillActionFailure, previewSkillInstall } from './skillInstall';
 import { SkillFoundAdd, createSkillFoundDraft } from './SkillFoundAdd';
 
 type UploadPreview =
@@ -113,7 +113,8 @@ export function SkillUploadInput(
       if (!preview.ok || preview.items.length === 0) {
         setState({
           kind: 'error',
-          message: t('capabilities.skillAdd.upload.failed'),
+          message: preview.ok ? t('capabilities.skillAdd.upload.failed')
+            : describeSkillActionFailure({ code: preview.error, error: t('capabilities.skillAdd.upload.failed') }),
         });
         return;
       }

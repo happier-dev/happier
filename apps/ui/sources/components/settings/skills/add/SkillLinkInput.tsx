@@ -15,8 +15,9 @@ import { describeRegistrySourceStatus } from '@/registries/describeRegistrySourc
 import { t } from '@/text';
 
 import { previewRef, previewSource, previewSourceFacts } from './SkillPreviewRows';
-import { previewSkillInstall, type SkillInstallSource } from './skillInstall';
+import { describeSkillActionFailure, previewSkillInstall, type SkillInstallSource } from './skillInstall';
 import { SkillFoundAdd, createSkillFoundDraft } from './SkillFoundAdd';
+import { skillPreviewKey } from './skillPreviewSelection';
 
 type LinkPreview =
   | Readonly<{ kind: 'idle' }>
@@ -80,7 +81,8 @@ export function SkillLinkInput(
     if (!preview.ok) {
       setState({
         kind: 'error',
-        message: preview.status ? describeRegistrySourceStatus(preview.status) : t('capabilities.skillAdd.link.failed'),
+        message: preview.status ? describeRegistrySourceStatus(preview.status)
+          : describeSkillActionFailure({ code: preview.error, error: t('capabilities.skillAdd.link.failed') }),
         // An unreadable link is the field's to fix; any other state is the source's, said in its tone (as Browse does).
         ...(preview.status && preview.status.state !== 'invalid_source' ? { source: preview.status.state === 'rate_limited'
           || preview.status.state === 'needs_machine' ? 'waits' as const : 'failed' as const } : {}),
@@ -89,7 +91,7 @@ export function SkillLinkInput(
     }
     setState({ kind: 'found', url: link, source: preview.source, items: preview.items, draft: createSkillFoundDraft(preview.items) });
     // One skill is the details themselves, as an upload's is: Where it's on, then its one Add.
-    if (preview.items.length === 1) props.ctx.openDetail(preview.items[0]!.path);
+    if (preview.items.length === 1) props.ctx.openDetail(skillPreviewKey(preview.items[0]!));
   }, [draft, props.ctx, props.execute, setState, url]);
 
   const found = state.kind === 'found' ? state : null;
