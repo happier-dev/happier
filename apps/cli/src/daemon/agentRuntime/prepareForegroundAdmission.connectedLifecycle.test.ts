@@ -27,6 +27,34 @@ const claimInput = {
 } as const;
 
 describe('foreground Connected Account custody through real authored Agent activation', () => {
+  it('resumes a retained qualified Account instead of refusing it or using the current default', async () => {
+    const service = { pluginId: 'acme.connected-account', localId: 'credential' } as const;
+    const account = createExternalConnectedAccountForegroundFixture({
+      service, materializationKinds: ['environment'],
+      launch: { environmentUses: [{ purpose: 'primary', environmentKey: 'ACME_TOKEN' }] },
+      materializeAccount: async ({ account: selected, request }) => {
+        if (request.kind !== 'environment') throw new Error('Unexpected Account materialization kind');
+        return { kind: 'environment', env: { ACME_TOKEN: selected.accountId } };
+      },
+    });
+    await withRealForegroundAdmissionFixture({ plugins: account.plugins, runtimeOptions: { connectedAccounts: account.owner } }, async fixture => {
+      const admitted = await fixture.prepare({
+        ...account.requestFor(fixture.runtime.registry), existingSessionId: 'retained-session',
+        connectedServices: { v: 2, bindingsByServiceId: {
+          'acme.connected-account/credential': { source: 'connected', profileId: 'retained-account' },
+        } },
+      }, { ...account.dependencies, connectedServicesMaterializationBaseDir: join(fixture.directory, 'materialized') });
+      expect(admitted.ok, admitted.ok ? undefined : admitted.error.code).toBe(true);
+      if (!admitted.ok) throw new Error(admitted.error.code);
+      const claimed = await admitted.prepared.claim({ ...claimInput, canonicalSessionId: 'retained-session' });
+      expect(claimed.ok, claimed.ok ? undefined : claimed.error.code).toBe(true);
+      if (!claimed.ok) throw new Error(claimed.error.code);
+      expect(claimed.environment.ACME_TOKEN).toBe('retained-account');
+      expect((await account.store.read()).bindings[0]?.target).toEqual(account.binding.target);
+      await admitted.prepared.cleanup();
+    });
+  });
+
   it.each(['files', 'environment'] as const)('applies only the selected Account mode leaves through foreground claim (%s)', async mode => {
     const selectedAuth = new Uint8Array([0, 255, 17, 99]);
     const account = createExternalConnectedAccountForegroundFixture({
@@ -76,9 +104,10 @@ describe('foreground Connected Account custody through real authored Agent activ
   });
 
   it.each([
-    { label: 'a novel service', service: { pluginId: 'acme.connected-account', localId: 'credential' } },
-    { label: 'a legacy-mapped service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } },
-  ] as const)('activates an external Agent request-auth capability for $label without host-issued compatibility provenance', async ({ service }) => {
+    { label: 'a novel service', service: { pluginId: 'acme.connected-account', localId: 'credential' }, retainedAccount: false },
+    { label: 'a legacy-mapped service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, retainedAccount: false },
+    { label: 'an explicit qualified Account on a legacy-mapped service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, retainedAccount: true },
+  ] as const)('activates an external Agent request-auth capability for $label without host-issued compatibility provenance', async ({ service, retainedAccount }) => {
     let revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
     let displayName = 'Selected Account';
     const account = createExternalConnectedAccountForegroundFixture({
@@ -98,7 +127,12 @@ describe('foreground Connected Account custody through real authored Agent activ
     });
     await withRealForegroundAdmissionFixture({ plugins: account.plugins, runtimeOptions: { connectedAccounts: account.owner } }, async (fixture) => {
       const registry = createConnectedAccountRequestAuthSubjectRegistry();
-      const admitted = await fixture.prepare(account.requestFor(fixture.runtime.registry), {
+      const admitted = await fixture.prepare({
+        ...account.requestFor(fixture.runtime.registry),
+        ...(retainedAccount ? { connectedServices: { v: 2 as const, bindingsByServiceId: {
+          [service.pluginId + '/' + service.localId]: { source: 'connected' as const, profileId: 'selected-account' },
+        } } } : {}),
+      }, {
         ...account.dependencies, connectedServicesMaterializationBaseDir: join(fixture.directory, 'materialized'),
         connectedAccountRequestAuthRegistry: registry, resolveConnectedAccountRequestAuthHttpPort: () => 43123,
       });
@@ -327,10 +361,10 @@ describe('foreground Connected Account custody through real authored Agent activ
     });
   });
 
-  it('refuses external catalog Agents on the released service-keyed ingress instead of issuing compatibility provenance', async () => {
+  it('refuses an explicit Account outside an external Agent declared services', async () => {
     const account = createExternalConnectedAccountForegroundFixture({
-      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, materializationKinds: ['files'],
-      materializeAccount: async () => { throw new Error('Refused service-keyed launch must not open Account material'); },
+      service: { pluginId: 'acme.connected-account', localId: 'credential' }, materializationKinds: ['files'],
+      materializeAccount: async () => { throw new Error('Undeclared service must not open Account material'); },
     });
     await withRealForegroundAdmissionFixture({ plugins: account.plugins, runtimeOptions: { connectedAccounts: account.owner } }, async (fixture) => {
       await expect(fixture.prepare({ ...account.requestFor(fixture.runtime.registry), connectedServices: {

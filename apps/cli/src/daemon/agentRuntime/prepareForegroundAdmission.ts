@@ -850,7 +850,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
       : null;
     let sessionTeamCredentialBindings: SessionTeamCredentialBindingIntentListV1 | null = null;
     let sessionPurposeBindingSnapshot: AgentSpawnQualifiedPurposeBindingSnapshot | null =
-      legacyConnectedServiceCatalogAgent && effectiveConnectedServices
+      effectiveConnectedServices
       ? resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
           agentId: request.agentId,
           bindings: effectiveConnectedServices,
@@ -858,13 +858,9 @@ export async function prepareForegroundAgentRuntimeAdmission(
           catalogEntry: connectedServiceCatalogEntry,
         })
       : null;
-    if (!legacyConnectedServiceCatalogAgent && effectiveConnectedServices) {
-      return refusal(createProviderErrorV1(
-        'provider_agent_runtime_unsupported',
-        { machineId: request.machineId },
-      ));
-    }
-    if (externalPurposeDeclarations?.authorizedPurposes.length) {
+    // A resumed Session carries its exact Account selection. Only a new launch
+    // without that selection reads current defaults through the purpose owner.
+    if (!effectiveConnectedServices && externalPurposeDeclarations?.authorizedPurposes.length) {
       if (
         !dependencies.activateSessionPurposeBindings
         || !dependencies.resolveExternalAgentSessionPurposeBindingSnapshot
@@ -948,8 +944,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
       });
     }
     if (
-      legacyConnectedServiceCatalogAgent
-      && effectiveConnectedServices
+      effectiveConnectedServices
       && (
         !sessionPurposeBindingSnapshot
         || !hasCompleteConnectedServiceProjection(
@@ -957,8 +952,10 @@ export async function prepareForegroundAgentRuntimeAdmission(
           sessionPurposeBindingSnapshot,
         )
         || !dependencies.activateSessionPurposeBindings
-        || !dependencies.resolveConnectedServiceAuthForSpawn
-        || !dependencies.resolveDaemonSpawnHooks
+        || legacyConnectedServiceCatalogAgent && (
+          !dependencies.resolveConnectedServiceAuthForSpawn
+          || !dependencies.resolveDaemonSpawnHooks
+        )
       )
     ) {
       return refusal(createProviderErrorV1(
