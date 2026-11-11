@@ -16,6 +16,7 @@ import { buildUsagePricedPartition, buildUsagePricingPopulation, priceUsagePrici
 import { projectUsageAnalyticsResponseDemand } from './usageAnalyticsDemandProjection.js';
 import * as usageSummary from './usageSummary.js';
 import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery } from './usageAnalyticsBatchDelivery.js';
+import { createUsagePricingReuseResolver } from './resolveUsagePageAggregation.js';
 
 const tokens = { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 };
 const cost = { reportedUsd: 0, estimatedUsd: 1, currency: 'USD', costSource: 'pricing_estimate' as const };
@@ -36,6 +37,28 @@ function response(rows: UsageAnalyticsContribution[]): UsageAnalyticsQueryRespon
         coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [], range: { startMs: 0, endMs: 86_400_000, complete: true },
             sources: [{ source: 'runtime', path: 'runtime', machineId: 'machine', status: 'available', eventCount: rows.length, historyComplete: true }] } });
 }
+
+it('shares tariff evaluation across distinct accounting periods in one projection batch', () => {
+    const firstQuery = normalizeUsageQuery({ period: { startMs: 0, endMs: 86_400_000 }, includeContributions: true,
+        includeWorkEvidence: false, includeSessionEvidence: false, includeTranscriptEvidence: false });
+    const secondQuery = normalizeUsageQuery({ period: { startMs: 86_400_000, endMs: 2 * 86_400_000 }, includeContributions: true,
+        includeWorkEvidence: false, includeSessionEvidence: false, includeTranscriptEvidence: false });
+    const first = response([contribution(1)]);
+    const second = { ...first, totals: { ...first.totals }, contributions: first.contributions!.map(row => ({ ...row, id: 'period-2' })) };
+    const reuseFor = createUsagePricingReuseResolver();
+    const reuse = reuseFor(first, {}, 'auto')!;
+    const equivalentCatalog = { ...catalog, models: { ...catalog.models } };
+    const equivalentValue = { ...second, priceCatalog: equivalentCatalog };
+    expect(reuseFor(equivalentValue, {}, 'auto'), 'equal catalog revisions share one finite-read pricing owner').toBe(reuse);
+    const pricedFirst = projectUsageAccountingSnapshotPrices({ query: firstQuery, period: { startMs: 0, endMs: 86_400_000 },
+        status: 'available', value: first }, {}, undefined, undefined, reuse);
+    const pricedSecond = projectUsageAccountingSnapshotPrices({ query: secondQuery, period: { startMs: 86_400_000, endMs: 2 * 86_400_000 },
+        status: 'available', value: second }, {}, undefined, undefined, reuse);
+    expect(pricedFirst.priceProjection?.value.totals.cost.apiEquivalentUsd).toBe(0.000001);
+    expect(pricedSecond.priceProjection?.value.totals.cost.apiEquivalentUsd).toBe(0.000001);
+    expect(reuse.stats.tariffCalculations, 'pricing is one evaluation per distinct model/token operand across periods').toBe(1);
+    expect(reuse.stats.tariffReuses).toBe(1);
+});
 
 // The existing snapshot price owner consumes only the compact admitted answer.
 function priceCompact(compact: UsageAnalyticsQueryResponse,

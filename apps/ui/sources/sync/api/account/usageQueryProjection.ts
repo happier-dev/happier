@@ -1,5 +1,5 @@
 import { getUsageQueryKey, usageQueryToAnalyticsRequest, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
-import { resolveUsagePageAggregation, resolveUsageQuotaPageAggregation, resolveUsageComparisonQuery, retainUsageQueryResultReferences, retainAccountingReferences, projectUsageAccountingSnapshotPrices,
+import { createUsagePricingReuseResolver, resolveUsagePageAggregation, resolveUsageQuotaPageAggregation, resolveUsageComparisonQuery, retainUsageQueryResultReferences, retainAccountingReferences, projectUsageAccountingSnapshotPrices,
     projectUsageAccountingSnapshotCalendar, type UsageAccountingSourceSnapshot, type UsageWorkSourceSnapshot,
     type UsageHowYouWorkSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryBatchResult,
     type UsageQuerySourceState, type UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
@@ -152,6 +152,7 @@ type ReadProjection = {
     lifetime: ServerAccountScopeLifetime;
     slices: Map<string, RetainedSliceProjection>;
     settings?: ProjectionSettings;
+    pricingReuseFor?: ReturnType<typeof createUsagePricingReuseResolver>;
     locations?: UsageQueryProjectionInput['sourceLocations'];
     batch?: UsageQueryBatchResult;
 };
@@ -175,6 +176,10 @@ export function projectUsageQueryBatch(input: UsageQueryProjectionInput): UsageQ
         usageCoachPreferencesV1: retainSetting(openedSettings.usageCoachPreferencesV1, state.settings?.usageCoachPreferencesV1),
     };
     state.settings = accountSettings;
+    // A finite publication can contain several accounting periods. Share the
+    // pricing owner across those periods so each distinct model/token operand
+    // is evaluated once, while each period still performs its own aggregation.
+    const pricingReuseFor = state.pricingReuseFor ??= createUsagePricingReuseResolver();
     // Accounting reductions belong to the admitted A response, not each quota/selection publication.
     // The Account answer retains the prepared snapshot across finite reads.
     for (const [key, snapshot] of accounting) {
@@ -183,7 +188,8 @@ export function projectUsageQueryBatch(input: UsageQueryProjectionInput): UsageQ
         // without changing the already admitted contribution population.
         const prepared = input.prepareAccounting(snapshot, retained => {
             const pricedSnapshot = projectUsageAccountingSnapshotPrices(retained, accountSettings.usageModelPriceOverridesV1,
-                accounting.values(), priorAccounting.get(key)?.value);
+                accounting.values(), priorAccounting.get(key)?.value,
+                retained.value ? pricingReuseFor(retained.value, accountSettings.usageModelPriceOverridesV1, retained.query.costBasis) : undefined);
             const priced = prepareAccountingDelivery(pricedSnapshot, accountingNowMs);
             return calendarQueryKeys.has(key) ? projectUsageAccountingSnapshotCalendar(priced, accounting.values()) : priced;
         });

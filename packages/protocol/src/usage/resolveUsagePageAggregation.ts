@@ -16,8 +16,8 @@ import { createUsageCoachDigestSuggestion } from './coach/coachDigestSuggestion.
 import { UsageCoachEvaluationSchema } from './coach/coachFinding.js';
 import { QualifiedConnectedAccountGroupRefSchema } from '../connect/qualifiedConnectedAccountProjectionsV4.js';
 import { ConnectedServicePoolSelectionGetResponseV1Schema } from '../connect/connectedServicePoolSelection.js';
-import { projectUsageAnalyticsSummary, repriceUsageAnalyticsResponse } from './usageCost.js';
-import type { UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
+import { createUsagePricingReuse, projectUsageAnalyticsSummary, repriceUsageAnalyticsResponse, type UsagePricingReuse } from './usageCost.js';
+import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
 import { projectUsagePlanInsights, UsagePlanInsightsSchema } from './usagePlanInsights.js';
 import { hasSameUsageQueryWorkEvidenceMembership } from './usageWorkEvidence.js';
 import { projectUsageAgentAccountingCalendar, resolveUsageAccountingCalendarPeriod, type UsageAgentAccountingCalendar } from './usageAgentCalendar.js';
@@ -27,6 +27,26 @@ import { PublicProfilePrivateFactsSchema, PublicProfilePrivateFieldCoverageSchem
 import { readUsageAccountingSessionMembership } from './usageAccountingMembership.js';
 import { resolveUsageBucketBounds } from './usageCalendar.js';
 export type { UsagePlanInsights } from './usagePlanInsights.js';
+
+/** One finite accounting publication shares tariff operands across its periods. */
+export function createUsagePricingReuseResolver() {
+  const pricingReuses: Array<{ revision: string; overrides: UsageModelPriceOverridesV1;
+    mode: UsageQuery['costBasis']; reuse: UsagePricingReuse }> = [];
+  return (value: NonNullable<UsageAccountingSourceSnapshot['value']>, overrides: UsageModelPriceOverridesV1 | undefined,
+    mode: UsageQuery['costBasis']) => {
+    if (!value.priceCatalog) return undefined;
+    const effectiveOverrides = overrides ?? {};
+    // The catalog owner publishes `provenance.revision` as its content identity;
+    // decoded responses may wrap equal catalog bytes in different objects.
+    const revision = value.priceCatalog.provenance.revision;
+    const existing = pricingReuses.find(candidate => candidate.revision === revision
+      && candidate.mode === mode && sameStrictJsonValue(candidate.overrides, effectiveOverrides));
+    if (existing) return existing.reuse;
+    const reuse = createUsagePricingReuse(value.priceCatalog, effectiveOverrides, mode);
+    pricingReuses.push({ revision, overrides: effectiveOverrides, mode, reuse });
+    return reuse;
+  };
+}
 
 /** Source transport currentness is separate from accounting completeness. */
 export const UsageQuerySourceStatusSchema = lazyZodSchema(() => z.enum([
@@ -425,7 +445,8 @@ export type UsageAccountingSourceSnapshot = Readonly<{
 export function projectUsageAccountingSnapshotPrices(snapshot: UsageAccountingSourceSnapshot,
   overrides: UsageModelPriceOverridesV1 | undefined,
   siblings?: Iterable<UsageAccountingSourceSnapshot>,
-  previous?: UsageAnalyticsQueryResponse): UsageAccountingSourceSnapshot {
+  previous?: UsageAnalyticsQueryResponse,
+  reuse?: UsagePricingReuse): UsageAccountingSourceSnapshot {
   const value = snapshot.value;
   if (snapshot.query.population === 'public_eligible_personal') return snapshot.priceProjection
     ? { ...snapshot, priceProjection: undefined } : snapshot;
@@ -449,7 +470,7 @@ export function projectUsageAccountingSnapshotPrices(snapshot: UsageAccountingSo
       return { ...snapshot, priceProjection: admitted === projection.value ? projection : { ...projection, value: admitted } };
     }
   }
-  const priced = repriceUsageAnalyticsResponse(value, value.priceCatalog, overrides, snapshot.query.costBasis);
+  const priced = repriceUsageAnalyticsResponse(value, value.priceCatalog, overrides, snapshot.query.costBasis, undefined, reuse);
   const projected = priced.contributions && !needsRows ? projectUsageAnalyticsSummary(priced,
     usageQueryToAnalyticsRequest(snapshot.query, snapshot.period?.endMs ?? value.coverage?.range.endMs)) : priced;
   return { ...snapshot, priceProjection: { input: value, overrides, costBasis: snapshot.query.costBasis,
@@ -672,6 +693,7 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
     ...snapshot,
     asOfMs: snapshot.asOfMs ?? (snapshot.value ? resolveUsageAccountingAsOfMs(snapshot.value) : undefined),
   }]));
+  const pricingReuseFor = createUsagePricingReuseResolver();
   const sourceLocations = new Map(input.sourceLocations?.map(location => [location.machineId, location.displayLocation]));
   const projectSourceLocations = (value: UsageAnalyticsQueryResponse) => {
     const coverage = value.coverage;
@@ -694,7 +716,8 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
   };
   const projectPrices = (snapshot: UsageAccountingSourceSnapshot | undefined) => {
     if (!snapshot) return snapshot;
-    const projected = projectUsageAccountingSnapshotPrices(snapshot, pricingOverrides, accounting.values());
+    const projected = projectUsageAccountingSnapshotPrices(snapshot, pricingOverrides, accounting.values(), undefined,
+      snapshot.value ? pricingReuseFor(snapshot.value, pricingOverrides, snapshot.query.costBasis) : undefined);
     const key = getUsageQueryKey(projected.query);
     if (accounting.get(key)?.value === projected.value) accounting.set(key, projected);
     return projected.priceProjection ? { ...projected, value: projected.priceProjection.value } : projected;
