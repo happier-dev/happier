@@ -6,12 +6,6 @@ const userAgent = vi.hoisted(() => ({
     value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15',
 }));
 
-vi.stubGlobal('navigator', {
-    get userAgent() {
-        return userAgent.value;
-    },
-});
-
 vi.mock('@tauri-apps/api/window', () => ({
     getCurrentWindow: () => ({
         setBadgeCount,
@@ -27,6 +21,11 @@ describe('applyTauriBadgeState', () => {
         setBadgeCount.mockImplementation(async () => {});
         setBadgeLabel.mockImplementation(async () => {});
         userAgent.value = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15';
+        vi.stubGlobal('navigator', {
+            get userAgent() {
+                return userAgent.value;
+            },
+        });
     });
 
     it('sets a numeric badge without immediately clearing the macOS dock label', async () => {
