@@ -491,14 +491,14 @@ export const DeploymentEnvironmentDraft = React.memo(
           >
             {props.copyFrom ? <Item title={deploymentDefinitionLabel(props.copyFrom.content) ?? t('projects.deployments.whatRunsTitle')}
               subtitle={props.copyFrom.content.name} mode="info" /> : definitionKind === 'image' ? <>
-              <Item title={t('projects.deployments.imageName')} accessoryLayout="stacked" showChevron={false}
+              <Item title={t('managedMachines.config.image')} accessoryLayout="stacked" showChevron={false}
                 rightElement={<FieldTextInput testID="project-deployments.draft.imageName"
-                  accessibilityLabel={t('projects.deployments.imageName')} value={imageName}
+                  accessibilityLabel={t('managedMachines.config.image')} value={imageName}
                   onChangeText={setImageName} monospace autoCapitalize="none" autoComplete="off" />}
               />
-              <Item title={t('projects.deployments.imagePort')} accessoryLayout="stacked" showChevron={false}
+              <Item title={t('projects.deployments.domainFieldPort')} accessoryLayout="stacked" showChevron={false}
                 rightElement={<FieldTextInput testID="project-deployments.draft.imagePort"
-                  accessibilityLabel={t('projects.deployments.imagePort')} value={imagePort}
+                  accessibilityLabel={t('projects.deployments.domainFieldPort')} value={imagePort}
                   onChangeText={setImagePort} monospace autoCapitalize="none" autoComplete="off" />}
               />
             </> : storedDefinition ? (

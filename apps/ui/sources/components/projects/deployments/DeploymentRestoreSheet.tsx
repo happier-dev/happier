@@ -270,7 +270,7 @@ function DeploymentRestoreSheet(
     finally { uploadController.current = null; setBusy(false); }
   };
   const uploadForm = uploadTarget && step.kind !== 'settled' && step.kind !== 'prepared' ? (
-    <ItemGroup title={t('projects.deployments.restoreExtended.uploadTitle')}>
+    <ItemGroup title={t('projects.deployments.settingsSections.restoreExtended.uploadTitle')}>
       {uploadTarget.destinations.length > 1 ? uploadTarget.destinations.map((destination, index) => (
         <Item key={`${destination.service}-${destination.kind}`} title={destination.service}
           subtitle={destination.kind === 'volume' ? destination.volume : t('projects.deployments.restoreDatabase')}
@@ -282,13 +282,13 @@ function DeploymentRestoreSheet(
         subtitle={uploadDestination.service} accessoryLayout="adaptive" rightElement={<FieldTextInput testID="project-deployments.restore.uploadDatabase"
           value={uploadDatabase} onChangeText={setUploadDatabase} editable={!busy}
           accessibilityLabel={t('projects.deployments.restoreDatabase')} autoCapitalize="none" />} /> : null}
-      <Item testID="project-deployments.restore.upload" title={t('projects.deployments.restoreExtended.upload')}
-        subtitle={t('projects.deployments.restoreExtended.uploadBody')} disabled={busy || !uploadDestination || uploadDestination.kind === 'database' && !uploadDatabase.trim()}
+      <Item testID="project-deployments.restore.upload" title={t('projects.deployments.settingsSections.restoreExtended.upload')}
+        subtitle={t('projects.deployments.settingsSections.restoreExtended.uploadBody')} disabled={busy || !uploadDestination || uploadDestination.kind === 'database' && !uploadDatabase.trim()}
         onPress={() => { void pickUpload(); }} />
-      {busy && uploadController.current ? <SurfaceStateCard testID="project-deployments.restore.uploading" kind="loading" size="line" title={t('projects.deployments.restoreExtended.uploading')} /> : null}
+      {busy && uploadController.current ? <SurfaceStateCard testID="project-deployments.restore.uploading" kind="loading" size="line" title={t('projects.deployments.settingsSections.restoreExtended.uploading')} /> : null}
       {refusal?.code === 'restore_upload_unavailable' ? <SurfaceStateCard testID="project-deployments.restore.uploadFailed" kind="error" size="line"
         title={t('projects.deployments.restoreRefused')} diagnosticCode={refusal.code} /> : null}
-      {uploaded ? <Item testID="project-deployments.restore.uploaded" title={t('projects.deployments.restoreExtended.uploaded')} mode="info" /> : null}
+      {uploaded ? <Item testID="project-deployments.restore.uploaded" title={t('projects.deployments.settingsSections.restoreExtended.uploaded')} mode="info" /> : null}
     </ItemGroup>
   ) : null;
   const footer =
@@ -318,7 +318,7 @@ function DeploymentRestoreSheet(
       <ModalCardFooterActions cancel={{ onPress: () => { uploadController.current?.abort(); onClose(); }, testID: 'project-deployments.restore.cancel', disabled: busy && !uploadController.current }}>
         {snapshotStopped && lastConfirmation.current ? (
           <RoundButton testID="project-deployments.restore.continueWithoutSnapshot" size="normal" display="destructive"
-            title={t('projects.deployments.restoreExtended.continueWithoutSnapshot')} disabled={busy} loading={busy}
+            title={t('projects.deployments.settingsSections.restoreExtended.continueWithoutSnapshot')} disabled={busy} loading={busy}
             onPress={() => { if (lastConfirmation.current) void run({ ...lastConfirmation.current, snapshot: false }); }} />
         ) : step.kind === 'choose' ? null : step.kind === 'prepared' ? (
           <RoundButton
@@ -358,10 +358,10 @@ function DeploymentRestoreSheet(
   const takenAtMs = preparation?.takenAtMs ?? backup?.takenAtMs ?? null;
   const destination = preparation?.destination ?? (backup ? { adapter: 'postgres-v1' as const, service: backup.service, database: backup.database } : null);
   const facts: Array<Readonly<{ key: string; label: string; value: string }>> = destination ? [
-    { key: 'backup', label: t('projects.deployments.restoreBackup'), value: uploaded ? t('projects.deployments.restoreExtended.uploaded')
+    { key: 'backup', label: t('projects.deployments.restoreBackup'), value: uploaded ? t('projects.deployments.settingsSections.restoreExtended.uploaded')
       : backup ? backupLabel(backup, takenAtMs) : t('projects.deployments.restoreBackupRetained') },
     destination.adapter === 'volume-v1'
-      ? { key: 'volume', label: t('projects.deployments.restoreExtended.volume'), value: `${destination.service} · ${destination.volume}` }
+      ? { key: 'volume', label: t('projects.deployments.settingsSections.restoreExtended.volume'), value: `${destination.service} · ${destination.volume}` }
       : { key: 'database', label: t('projects.deployments.restoreDatabase'), value: t('projects.deployments.restoreDatabaseValue', destination) },
     { key: 'machine', label: t('projects.deployments.machine'), value: props.machine },
     ...(preparation ? [{ key: 'safety', label: t('projects.deployments.restoreSafety'), value: preparation.safetyBackup
@@ -369,13 +369,13 @@ function DeploymentRestoreSheet(
         : t('projects.deployments.restoreSafetySaved', { time: formatAsOfTime(preparation.safetyBackup.savedAtMs) })
       : t('projects.deployments.restoreSafetyNotNeeded') }] : []),
     ...(preparation?.snapshot ? [
-      { key: 'snapshotCoverage', label: t('projects.deployments.restoreExtended.coverage'), value: t('projects.deployments.restoreExtended.coverageValue', {
+      { key: 'snapshotCoverage', label: t('projects.deployments.settingsSections.restoreExtended.coverage'), value: t('projects.deployments.settingsSections.restoreExtended.coverageValue', {
         root: preparation.snapshot.coverage.rootDisk ? t('common.yes') : t('common.no'),
         volumes: preparation.snapshot.coverage.attachedVolumes ? t('common.yes') : t('common.no') }) },
-      { key: 'snapshotCost', label: t('projects.deployments.restoreExtended.billing'), value: `${preparation.snapshot.cost.price
+      { key: 'snapshotCost', label: t('projects.deployments.settingsSections.restoreExtended.billing'), value: `${preparation.snapshot.cost.price
         ? `${preparation.snapshot.cost.price.amount} ${preparation.snapshot.cost.price.currency}/${preparation.snapshot.cost.price.unit}`
-        : t('projects.deployments.restoreExtended.priceUnknown')} · ${preparation.snapshot.cost.source}` },
-      { key: 'snapshotConsistency', label: t('projects.deployments.restoreExtended.consistency'), value: `${preparation.snapshot.consistency === 'running' ? t('projects.deployments.restoreExtended.consistencyRunning') : preparation.snapshot.consistency === 'stopped' ? t('projects.deployments.restoreExtended.consistencyStopped') : t('projects.deployments.restoreExtended.consistencyUnknown')} · ${t('projects.deployments.restoreExtended.noQuiesce')}` },
+        : t('projects.deployments.settingsSections.restoreExtended.priceUnknown')} · ${preparation.snapshot.cost.source}` },
+      { key: 'snapshotConsistency', label: t('projects.deployments.settingsSections.restoreExtended.consistency'), value: `${preparation.snapshot.consistency === 'running' ? t('projects.deployments.settingsSections.restoreExtended.consistencyRunning') : preparation.snapshot.consistency === 'stopped' ? t('projects.deployments.settingsSections.restoreExtended.consistencyStopped') : t('projects.deployments.settingsSections.restoreExtended.consistencyUnknown')} · ${t('projects.deployments.settingsSections.restoreExtended.noQuiesce')}` },
     ] : []),
   ] : [];
   const snapshotOutcome = refusal?.failure?.details && isRecord(refusal.failure.details)
@@ -502,12 +502,12 @@ function DeploymentRestoreSheet(
         </ItemGroup>
         {uploadForm}
         {preparation?.snapshotUnavailable ? <Item testID="project-deployments.restore.snapshotUnavailable"
-          title={t('projects.deployments.restoreExtended.unavailable')} mode="info" /> : null}
+          title={t('projects.deployments.settingsSections.restoreExtended.unavailable')} mode="info" /> : null}
         {preparation?.snapshot && !snapshotStopped ? <Item testID="project-deployments.restore.snapshot"
-          title={t('projects.deployments.restoreExtended.snapshot')} disabled={busy}
+          title={t('projects.deployments.settingsSections.restoreExtended.snapshot')} disabled={busy}
           rightElement={<Switch value={snapshotSelected} onValueChange={setSnapshotSelected} disabled={busy} />} /> : null}
         {snapshotStopped ? <SurfaceStateCard testID="project-deployments.restore.snapshotStopped" kind="warning" size="details"
-          title={t('projects.deployments.restoreExtended.stopped')} reason={t('projects.deployments.restoreExtended.stoppedBody')}
+          title={t('projects.deployments.settingsSections.restoreExtended.stopped')} reason={t('projects.deployments.settingsSections.restoreExtended.stoppedBody')}
           diagnosticCode={snapshotOutcome?.success && snapshotOutcome.data.kind !== 'confirmed' ? snapshotOutcome.data.code : refusal?.code} /> : null}
         {stepRows}
         {refusal && !snapshotStopped && refusal.code !== 'restore_upload_unavailable' ? (

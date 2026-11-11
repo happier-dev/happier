@@ -710,7 +710,7 @@ function BackupRows(props: SectionProps) {
         <Item
           testID={`${props.testID}.restore`}
           title={t('projects.deployments.restoreEntry')}
-          subtitle={!props.retainedBackup ? t('projects.deployments.restoreExtended.uploadBody') : props.retainedBackup.versionLabel
+          subtitle={!props.retainedBackup ? t('projects.deployments.settingsSections.restoreExtended.uploadBody') : props.retainedBackup.versionLabel
             ? t('projects.deployments.restoreBackupBefore', { version: props.retainedBackup.versionLabel,
               time: formatAsOfTime(props.retainedBackup.takenAtMs) })
             : t('projects.deployments.restoreBackupTaken', { time: formatAsOfTime(props.retainedBackup.takenAtMs) })}
