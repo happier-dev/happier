@@ -69,6 +69,23 @@ function request(provider: string, model: string) {
       OPENCODE_AUTH_CONTENT: JSON.stringify({ xai: { type: 'api', key: 'fake-ambient' } }) } } };
 }
 describe('OpenCode selected native accounts', () => {
+  it('uses the admitted Session account instead of re-reading a durable default', async () => {
+    const row = cases[2]!;
+    const f = launchFixture(row);
+    const selected = { service: row.service, accountId: 'session-selected' };
+    const originalGetBinding = f.context.services.connectedAccounts.getBinding;
+    f.context.services.connectedAccounts.getBinding = async (purpose: string) => {
+      const binding = await originalGetBinding(purpose);
+      return binding ? { ...binding, account: { ...binding.account, accountId: 'durable-default' } } : null;
+    };
+    const requestValue = { ...request(row.provider, row.model), connectedAccounts: [{ purpose: row.purpose, account: selected }] };
+    const prepared = await prepareOpenCodeQualifiedConnectedAccounts(requestValue, f.context);
+    try {
+      expect(f.acquisitions()).toBe(1);
+      expect(JSON.parse(prepared.request.launchEnvironment!.values.OPENCODE_AUTH_CONTENT!)[row.provider]).toEqual({ type: 'api', key: row.key });
+    } finally { await prepared.dispose(); }
+  });
+
   it.each([...cases, ...metaCases, { ...cases[2], provider: 'google-vertex',
     context: producerContext({ serviceAccountJson }, 'service-account'), serviceAccountJson }])(
     'passes the selected $purpose credential through the real Session entry to managed launch', async row => {
