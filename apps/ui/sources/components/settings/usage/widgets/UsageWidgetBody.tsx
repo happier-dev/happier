@@ -40,7 +40,7 @@ import { UsageSourcesWidget } from './UsageSourcesWidget';
 import { UsageSourceCoverageWidget, UsageUnpricedWidget } from './UsageSourcePanels';
 import { UsageConstellationBody, UsagePlanetBody, UsageRunLengthBody, UsageScoreBody } from './UsageChartStyleBodies';
 import { UsageAtmosphereBody, UsageMachinesBody, UsageOrbitStyleBody, UsageProjectsBody } from './UsagePlanetFamilyBodies';
-import { UsageBodyReadingPlaceholderContext, UsageBodySettledReportContext, usageBodyOccurrence, useReportUsageBodySettled, useUsageBodyHeightMemory, type UsageBodyReadState } from './usageBodyHeightMemory';
+import { readUsageQueryBodyReadState, UsageBodyReadingPlaceholderContext, UsageBodySettledReportContext, usageBodyOccurrence, useReportUsageBodySettled, useUsageBodyHeightMemory, type UsageBodyReadState } from './usageBodyHeightMemory';
 
 const NOT_READ: UsageBodyReadState = Object.freeze({ facts: false, settled: false });
 
@@ -159,13 +159,8 @@ function UsageQueryWidgetContent(props: UsageWidgetBodyInput & Readonly<{
   // slot; a source that is still outstanding is said by the body's own coverage line.
   const replacing = slice !== null && model.updatingPreviousPeriod;
   useWidgetFrameResourceActivity(replacing || model.refreshing);
-  // Settled for the cold-load floor: facts are shown and none of their sources is still being read.
-  // Settled: facts are shown and none of their sources is still being read (or the body ended in a terminal state).
-  // Facts: the body draws admitted facts, so its height is worth remembering even while a read stays outstanding.
-  const bodySettled = !query || (slice !== null
-    ? !slice.sources.some(source => source.status === 'pending' || source.status === 'not_loaded')
-    : !!model.error && !model.pending || !model.requestedQuery && !model.pending);
-  useReportUsageBodySettled(bodySettled, bodySettled || slice !== null);
+  const readState = readUsageQueryBodyReadState(query, model);
+  useReportUsageBodySettled(readState.settled, readState.facts);
   const Body = USAGE_QUERY_BODIES[props.id];
   const style = props.input.style, colourBy = props.input.colourBy, day = props.input.day;
   // Keyed on the three scalars so an unrelated input change keeps the body's props stable.

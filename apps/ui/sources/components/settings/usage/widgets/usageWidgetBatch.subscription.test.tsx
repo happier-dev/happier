@@ -16,7 +16,7 @@ import { invalidateUsageQueryResources } from '@/sync/api/account/usageQueryReso
 import { storage } from '@/sync/domains/state/storage';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { readUsageWidgetQueryOverrides } from '../usageWidgetPageContext';
-import { UsageWidgetBatchProvider, useUsageWidgetBatchCostBasisOptions, useUsageWidgetBatchInventorySlice, useUsageWidgetModel } from './usageWidgetBatch';
+import { UsageWidgetBatchProvider, useUsageWidgetBatchCostBasis, type UsageWidgetCostBasis, useUsageWidgetBatchInventorySlice, useUsageWidgetModel } from './usageWidgetBatch';
 import * as usageWidgetBatch from './usageWidgetBatch';
 import { UsageWidgetBody } from './UsageWidgetBody';
 import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext } from '@/components/widgets/frame/widgetFrameDemand';
@@ -244,9 +244,9 @@ it('updates filter inventory without rendering an unchanged visible widget', asy
   const renders = new Map<string, number>();
   const models = new Map<string, UsageWidgetBodyModel>();
   let inventory: ReturnType<typeof useUsageWidgetBatchInventorySlice>;
-  let costChoices: ReturnType<typeof useUsageWidgetBatchCostBasisOptions> = [];
+  let costChoices: UsageWidgetCostBasis['options'] = [];
   let costChoiceRenders = 0;
-  function CostChoices() { costChoiceRenders++; costChoices = useUsageWidgetBatchCostBasisOptions(); return null; }
+  function CostChoices() { costChoiceRenders++; costChoices = useUsageWidgetBatchCostBasis().options; return null; }
   function Widget(props: Readonly<{ agent: string }>) {
     renders.set(props.agent, (renders.get(props.agent) ?? 0) + 1);
     models.set(props.agent, useUsageWidgetModel({ ...scope, agents: [props.agent], metric: 'tokens', breakdown: [] }, 'usage_daily').model);

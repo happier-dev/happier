@@ -32,7 +32,6 @@ import { usageSignatureAccent } from '../usageAccent';
 import {
   leadingUsageRows,
   useSettledBodyHeightFloor,
-  useUsageMeterListFirstReadReserve,
   UsageBodyInsufficient,
   UsageShowAllRows,
   useUsagePluginTheme,
@@ -60,7 +59,6 @@ import {
   UsagePlanAccountStates,
   UsagePlansNothingRead,
   readPendingPlanAccountCount,
-  readUsageKnownQuotaAccountCount,
   usePlanText,
 } from './plans/UsagePlanParts';
 import { readUsagePersonalPaceTarget, selectUsageWindowsAboveTarget } from './plans/usagePacingTarget';
@@ -227,18 +225,12 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
   ] : []);
   const chooseWindow = React.useCallback((key: string) => { void windowCommands.invoke(key); }, [windowCommands.invoke]);
   const details = useUsageChartDetails(t(`usage.widgets.${props.id}`), !list && Boolean(focus?.window.pace));
-  // Beside other widgets the body is a list of meters. Until every account has answered once it holds the
-  // list's room (the rows its accounts are expected to report, the pace alert and the notes under them), so
-  // reads fill the room instead of growing the page under the reader; a re-read after that never reserves.
-  const firstReadReserve = useUsageMeterListFirstReadReserve(props.slice, readUsageKnownQuotaAccountCount(props.slice),
-    settled, width !== null && width < STACKED_BELOW_PX);
-  const reserve = list ? firstReadReserve : undefined;
-  const readingShape = reserve?.shape;
-  // After that settle, every re-read swaps the pace alert / shared reason / legend: they do so inside the
-  // height the list has already shown, so the cards beside and below it never move.
+  // Beside other widgets the body is a list of meters. Its first reads land inside the height the dispatch
+  // remembers for this body, the one cold-load reservation. After the list settles, every re-read swaps the pace
+  // alert / shared reason / legend inside the height the list has already shown, so the cards beside and below it
+  // never move.
   const floor = useSettledBodyHeightFloor(list && settled, `${expanded}:${width !== null && width < STACKED_BELOW_PX}`);
-  const bodyStyle = reserve ? [styles.body, { minHeight: reserve.minHeight }]
-    : floor.minHeight !== undefined ? [styles.body, { minHeight: floor.minHeight }] : styles.body;
+  const bodyStyle = floor.minHeight !== undefined ? [styles.body, { minHeight: floor.minHeight }] : styles.body;
   if (projection.accounts.length === 0) {
     return (
       <View style={bodyStyle}>
@@ -246,7 +238,6 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
           testID={`${props.testID}.none`}
           slice={props.slice}
           promise={t('usage.board.plans.projectionsNoneConnected')}
-          {...(readingShape ? { readingShape } : {})}
           onRetry={props.model.refresh}
         />
       </View>
@@ -339,15 +330,12 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
         <UsageShowAllRows label={t(`usage.widgets.${props.id}`)} testID={`${props.testID}.showAll`} total={rows.length}
           hidden={lead.hidden} expanded={expanded} onToggle={() => setExpanded((value) => !value)}
           unlisted={unreported.length ? t('usage.board.plans.unreportedWindows', { count: unreported.length }) : null} />
-        {/* A window still without a pace may gain one and run out while reads arrive: the alert's line is held
-            until they settle, then let go, so a list that never gets an alert keeps no blank line. */}
-        {depletingNote ?? (!settled && rows.some(row => !row.window.pace)
-          ? <View style={{ minHeight: text.detail.lineHeight * (stacked ? 2 : 1) }} testID={`${props.testID}.aheadRoom`} /> : null)}
+        {/* The run-out alert lands inside the body's remembered height; no line is held for one that may come. */}
+        {depletingNote}
         {/* The legend explains pace marks; without any pace it explains nothing. */}
         {rows.some(row => row.window.pace) ? <UsagePlanLegend testID={`${props.testID}.legend`} parts={[t('usage.board.plans.legendEvenPace'), t('usage.board.plans.legendHatched')]} /> : null}
         <UsagePlanAccountStates accounts={projection.accounts} nameOf={nameOf} slice={props.slice} onRetry={props.model.refresh}
           replacesContent={!rows.length && !unreported.length && !depletingNote}
-          {...(readingShape ? { readingShape } : {})}
           testID={`${props.testID}.state`} />
       </View>
     );

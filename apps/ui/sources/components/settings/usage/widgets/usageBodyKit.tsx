@@ -1003,56 +1003,8 @@ export function UsageAgentMark(props: Readonly<{ agentId: string; serverId: stri
 /** A list leads with its largest rows; a long tail stays one press away (the shared plugin-ui owner). */
 export const leadingUsageRows = leadHappierListRows;
 
-/** An allowance account reports a session and a longer window; this only sizes the room held while reads arrive. */
-const EXPECTED_WINDOWS_PER_ACCOUNT = 2;
-/** What the settled list measures: a captioned meter row, the Show all button, one quiet line, the body's row gap. */
-const SETTLED_ROW_PX = 43;
-const SETTLED_SHOW_ALL_PX = 26;
+/** One quiet line under a led list. */
 const SETTLED_QUIET_LINE_PX = 18;
-const SETTLED_BODY_GAP_PX = 16;
-/** The quiet lines that can close a led list: the unreported-windows note (one line) and the pace legend (two on a phone). */
-const SETTLED_LEGEND_LINES = { wide: 1, narrow: 2 } as const;
-/** The pace alert ("runs out Thu 02:26 AM before it resets") sits among them and wraps to two lines at a half-width. */
-const SETTLED_PACE_NOTE_LINES = 2;
-
-/**
- * The room a list of allowance windows holds while their reads still arrive, from the accounts already
- * known: rows fill it and the notes under them join it, so nothing below the list moves until the
- * reads settle. Undefined when no allowance read is outstanding or no account is known yet.
- */
-export function readUsageMeterListReserve(slice: UsageQueryResultSlice, accountCount: number, narrow = false): Readonly<{
-  shape: Extract<NonNullable<React.ComponentProps<typeof UsageBodyReading>['shape']>, { kind: 'meters' }>;
-  minHeight: number;
-}> | undefined {
-  const outstanding = readUsageCoverageGaps(slice, ['quota']).some(gap => gap.status === 'pending' || gap.status === 'not_loaded');
-  if (!outstanding || accountCount < 1) return undefined;
-  const led = leadingUsageRows(Array.from({ length: accountCount * EXPECTED_WINDOWS_PER_ACCOUNT }), false);
-  const rows = led.rows.length;
-  const gap = SETTLED_BODY_GAP_PX;
-  const minHeight = rows * SETTLED_ROW_PX + (rows - 1) * USAGE_METER_METRICS.rowGapPx
-    + (led.hidden > 0 ? gap + SETTLED_SHOW_ALL_PX : 0)
-    + (gap + SETTLED_QUIET_LINE_PX)
-    + gap + SETTLED_LEGEND_LINES[narrow ? 'narrow' : 'wide'] * SETTLED_QUIET_LINE_PX
-    + gap + SETTLED_PACE_NOTE_LINES * SETTLED_QUIET_LINE_PX;
-  return { shape: { kind: 'meters', rows }, minHeight };
-}
-
-/**
- * The list's first-read room: held from the first frame until every account has answered once, through the
- * reads' arrivals, so the pace alert, its shared reason and the legend come and go inside it and the body
- * settles its height once. After that settle a re-read never reserves again, so it cannot add blank room
- * under retained rows. Nothing is held before the read's accounts are known.
- */
-export function useUsageMeterListFirstReadReserve(
-  slice: UsageQueryResultSlice,
-  accountCount: number,
-  everyAccountAnswered: boolean,
-  narrow: boolean,
-): ReturnType<typeof readUsageMeterListReserve> {
-  const settledOnce = React.useRef(false);
-  if (everyAccountAnswered) settledOnce.current = true;
-  return settledOnce.current ? undefined : readUsageMeterListReserve(slice, accountCount, narrow);
-}
 
 /**
  * The height a settled list body has shown, kept while it stays open. Its optional lines (the pace alert, the
@@ -1061,7 +1013,7 @@ export function useUsageMeterListFirstReadReserve(
  * the floor follows the drawn height up or down until the first re-read, so late arrivals (stored dismissals,
  * hidden findings) shrink the body once instead of leaving blank room. The floor starts over when the viewer changes
  * the list's own shape (Show all, a resize), so a deliberate collapse is never held open. Before the first settle the
- * first-read reserve holds the room. `onLayout` belongs on a view that does not carry the floor as its own min height.
+ * dispatch's remembered body height holds the room. `onLayout` belongs on a view that does not carry the floor as its own min height.
  */
 export function useSettledBodyHeightFloor(settled: boolean, shapeKey: string): Readonly<{
   minHeight: number | undefined;

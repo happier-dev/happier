@@ -598,10 +598,13 @@ describe('mounted Usage page scope commands', () => {
         expect(screen.findAllByTestId('usage-area.unavailable')).toHaveLength(0);
     });
 
-    it('holds the cost-basis chip from first paint on a view whose widgets read usage but have no Tokens/Cost (Sources at 390, N4)', async () => {
+    it.each([['sources', 'usage-area.widget.sources:group:0:widget:1'], ['plans', 'usage-area.widget.plans:group:0:widget:3']] as const)(
+        'holds the cost-basis chip from first paint until accounting answers (%s: N4 at 390, the 40 px drop at 1440)', async (layoutId, widgetTestId) => {
         // The chip followed only Tokens/Cost widgets while pending, but its choices follow every usage read: on Sources it
-        // arrived with the first read and pushed the whole page down a phone line (42 px).
-        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-basis-hold.test', accountId: 'account-a' }],
+        // arrived with the first read and pushed the whole page down a phone line (42 px). On Plans, the allowance-only
+        // widgets (Capacity, Projections, Resets) said "accounting answered" before Plan fit's accounting had: the row
+        // dropped 40 px and came back with the choices. The choices' own owner decides both.
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: `https://usage-basis-hold-${layoutId}.test`, accountId: 'account-a' }],
             route: request => {
                 if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
                 if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
@@ -615,10 +618,10 @@ describe('mounted Usage page scope commands', () => {
         const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
         const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
             <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
-                <UsageWidgetPage initialFilters={{ layoutId: 'sources', period: '7days', metric: 'tokens', costMode: 'auto', focus: null }} />
+                <UsageWidgetPage initialFilters={{ layoutId, period: '7days', metric: 'tokens', costMode: 'auto', focus: null }} />
             </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
         </InjectedAuthProvider>);
-        await waitForHomeGovernance(() => expect(screen.findAllByTestId('usage-area.widget.sources:group:0:widget:1').length).toBeGreaterThan(0));
+        await waitForHomeGovernance(() => expect(screen.findAllByTestId(widgetTestId).length).toBeGreaterThan(0));
         await flushHookEffects({ cycles: 20 });
         expect(screen.findByType(UsageFilterBar).props.costBasisPending).toBe(true);
     });

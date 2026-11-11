@@ -5,6 +5,7 @@ import { SURFACE_CONTEXT_THEME_FIXTURE as theme } from '../../../../../plugin-sd
 import { mountThroughReactNativeWeb } from '../../../rnwMount.testSupport.js';
 import { ChartInteractionProvider } from '../../data/ChartDatum.js';
 import { UsageAgentRiver, UsageConstellation, UsageCrew, UsageOrbit, UsageScore, UsageShipped } from './UsageAgentsCharts.js';
+import * as widgetPresentation from '../../../components/WidgetPresentation.js';
 
 const paint = { accent: '#007aff', paper: '#fff', dark: false };
 const agents = [{ id: 'claude', name: 'Claude Code', color: '#eb6834' }, { id: 'codex', name: 'Codex', color: '#2a78d6' }];
@@ -71,6 +72,23 @@ describe('Agent chart exact data targets', () => {
         act(() => { hit!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); });
       }
       expect(hovered).toEqual(['1,234', '2']);
+    } finally { chart.unmount(); }
+  });
+
+  it('draws in its frame from the first paint, before measuring itself (Agents at 390: Score −261 then +270)', () => {
+    // A chart with no width of its own drew nothing until its first layout event, so a settled body painted its legend
+    // alone and grew by the whole chart a frame later. Inside a widget frame the frame's measured body room is its width.
+    const { WidgetPresentationProvider } = widgetPresentation;
+    const chart = mount(<WidgetPresentationProvider value={{ size: 'wide', footprint: { columns: 1, columnSpan: 1, rowSpan: 2, width: 'full', height: 'regular' },
+      geometry: { width: 390, height: 300 } }}>
+      <UsageScore {...common} width={undefined} model={{ weekStart: '2026-10-26', encoding: 'minutes', rows: [{ agentId: 'claude', hours: [[12, null]] }] }}
+        labels={{ day: () => 'Monday', clock: (hour) => `${hour}:00`, unknownAgent: 'Unknown',
+          key: { light: 'Light', medium: 'Medium', strong: 'Strong', presence: 'Present', presenceNote: 'Presence only' },
+          values: { ...values, agentColumn: 'Agent', dayColumn: 'Day', hoursColumn: 'Hours', formatHours: () => '' } }} />
+    </WidgetPresentationProvider>);
+    try {
+      expect(chart.container.querySelector('svg')).not.toBeNull();
+      expect(chart.container.querySelector('button[aria-label^="Claude Code · Monday"]')).not.toBeNull();
     } finally { chart.unmount(); }
   });
 

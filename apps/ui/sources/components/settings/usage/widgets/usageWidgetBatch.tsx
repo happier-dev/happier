@@ -505,12 +505,30 @@ const selectCostBasisOptions = (slice: UsageQueryResultSlice | null) => {
 const sameCostBasisOptions = (left: readonly UsageQuery['costBasis'][], right: readonly UsageQuery['costBasis'][]) =>
     left.length === right.length && left.every((mode, index) => mode === right[index]);
 
-/** Choices follow the displayed accounting query; period acquisition does not withdraw them. */
-export function useUsageWidgetBatchCostBasisOptions(): readonly UsageQuery['costBasis'][] {
-    return useUsageWidgetCostBasisOptions(React.useContext(UsageWidgetBatchContext)?.resource ?? null);
+/**
+ * An accounting row has answered once its slice carries accounting or names its accounting source settled
+ * (failed, unavailable): only then can the choices be final.
+ */
+const hasAccountingAnswer = (slice: UsageQueryResultSlice) => hasAccounting(slice)
+    || readUsageSourceStates(slice, ['accounting']).some(source => source.status !== 'pending' && source.status !== 'not_loaded');
+const isAnswered = (slice: UsageQueryResultSlice | null) => slice !== null;
+
+export type UsageWidgetCostBasis = Readonly<{
+    options: readonly UsageQuery['costBasis'][];
+    /** The displayed accounting reads have not answered yet, so the choices are still unknown. */
+    pending: boolean;
+}>;
+
+/**
+ * The cost-basis choices and whether they are still unknown, decided once from the displayed widgets that read
+ * accounting. Allowance-only widgets (Capacity, Projections, Resets) never answer it, so the page's chip neither
+ * drops before the choices arrive nor waits on them. Period acquisition does not withdraw the choices.
+ */
+export function useUsageWidgetBatchCostBasis(): UsageWidgetCostBasis {
+    return useUsageWidgetCostBasis(React.useContext(UsageWidgetBatchContext)?.resource ?? null);
 }
 
-function useUsageWidgetCostBasisOptions(resource: UsageWidgetResource | null): readonly UsageQuery['costBasis'][] {
+function useUsageWidgetCostBasis(resource: UsageWidgetResource | null): UsageWidgetCostBasis {
     const plan = resource?.plan;
     const rows = React.useMemo(() => {
         if (!plan) return [];
@@ -524,7 +542,11 @@ function useUsageWidgetCostBasisOptions(resource: UsageWidgetResource | null): r
             return widget ? [widget] : [];
         });
     }, [plan]);
-    return useUsageWidgetQuerySliceSelection(resource, 'cost-basis', rows, selectCostBasisOptions, sameCostBasisOptions, hasAccounting);
+    const options = useUsageWidgetQuerySliceSelection(resource, 'cost-basis', rows, selectCostBasisOptions, sameCostBasisOptions, hasAccounting);
+    const answered = useUsageWidgetQuerySliceSelection(resource, 'cost-basis-answer', rows, isAnswered, Object.is, hasAccountingAnswer);
+    // While the cohort is still collecting (no batch yet), the accounting rows are not known either.
+    const pending = options.length === 0 && !answered && (rows.length > 0 || plan?.input === null);
+    return React.useMemo(() => ({ options, pending }), [options, pending]);
 }
 
 /**

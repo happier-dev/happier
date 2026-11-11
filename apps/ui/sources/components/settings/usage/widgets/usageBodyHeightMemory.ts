@@ -3,6 +3,8 @@ import { useWindowDimensions, type LayoutChangeEvent, type ViewStyle } from 'rea
 import { MMKV } from 'react-native-mmkv';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
+import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 
 /**
  * The height each Usage widget body last drew its facts at on this device, per occurrence and layout class, so a cold
@@ -93,6 +95,21 @@ export function useUsageBodyHeightMemory(occurrence: string, state: Readonly<{ f
  */
 export type UsageBodyReadState = Readonly<{ facts: boolean; settled: boolean }>;
 export const UsageBodySettledReportContext = React.createContext<((state: UsageBodyReadState) => void) | null>(null);
+
+/**
+ * What a query body shows, for the memory.
+ * - Settled: facts are shown and no source the body's query waits on is still being read (the slice's own `pending`,
+ *   which ignores sources the query never asked for), or the body ended in a terminal state.
+ * - Facts: the body draws admitted facts, so its height is worth remembering even while a read stays outstanding.
+ */
+export function readUsageQueryBodyReadState(query: UsageQuery | null,
+    model: Pick<UsageWidgetBodyModel, 'slice' | 'error' | 'pending' | 'requestedQuery'>): UsageBodyReadState {
+  const slice = model.slice;
+  const settled = !query || (slice !== null
+    ? !slice.pending
+    : !!model.error && !model.pending || !model.requestedQuery && !model.pending);
+  return { facts: settled || slice !== null, settled };
+}
 
 export function useReportUsageBodySettled(settled: boolean, facts: boolean = settled): void {
   const report = React.useContext(UsageBodySettledReportContext);

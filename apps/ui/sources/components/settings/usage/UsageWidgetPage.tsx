@@ -69,7 +69,7 @@ import {
   useUsageWidgetPageRetry,
   useUsageWidgetBatchSelection,
   useUsageWidgetBatchInventorySelection,
-  useUsageWidgetBatchCostBasisOptions,
+  useUsageWidgetBatchCostBasis,
   useUsageWidgetBatchHistory,
 } from './widgets/usageWidgetBatch';
 import type { UsagePageHistoryFact } from './useUsageWidgetPageContext';
@@ -351,15 +351,15 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     },
     [metricApproval.requestApproval, metricLifetime, props.port, ready, usageWidgets],
   );
-  const costBasisOptions = useUsageWidgetBatchCostBasisOptions();
-  // Cost bases are named by the first usage read; until it answers (or fails) the toolbar holds the chip's room.
+  // Cost bases are named by the displayed accounting reads; until they answer (or fail) the toolbar holds the chip's
+  // room. The choices' owner decides both, so the row never drops before its choices arrive (Plans at 1440: −40, +40).
+  const costBasis = useUsageWidgetBatchCostBasis();
+  const costBasisOptions = costBasis.options;
   // The toolbar's second row is held from first paint too: until the layout answers, the widgets it follows are unknown.
   const layoutLoading = layout.state.status === 'loading';
-  // The chip's choices come from every usage read on the view, not only Tokens/Cost widgets: Sources' Coverage and
-  // Unpriced read usage too, and their chip arriving with the first read pushed a phone page down a line (N4).
-  const readsUsage = React.useMemo(() => ready !== null && flattenWidgetLayoutWidgetsV1(ready.items)
-    .some(row => row.instance.definition.kind === 'builtin' && isUsageQueryWidget(row.instance.definition.id)), [ready]);
-  const costBasisPending = (layoutLoading || readsUsage) && facts.costBasisPending;
+  // Once the layout is known, every widget that reads accounting counts, not only Tokens/Cost: Sources' Coverage
+  // and Unpriced do too, and their chip arriving with the first read pushed a phone page down a line (N4).
+  const costBasisPending = ready !== null ? costBasis.pending : layoutLoading;
   const bindingSelectLayout = binding.selectLayout;
   const selectAreaLayout = React.useCallback(async (layoutId: string, callerContext?: ActionExecutorContext) =>
     (await bindingSelectLayout(layoutId, callerContext)).ok, [bindingSelectLayout]);
@@ -507,8 +507,6 @@ function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilte
       observedAtMs: latest === null ? null : Math.floor(latest / 60_000) * 60_000,
       machines: accounting?.breakdowns?.machine?.length ?? null,
       agents: accounting?.breakdowns?.agent?.length ?? null,
-      costBasisPending: !accounting && slices.every(slice => readUsageCoverageGaps(slice, ['accounting'])
-        .every(gap => gap.status === 'pending' || gap.status === 'not_loaded')),
       coverageIncomplete: slices.some(slice => readUsageCoverageGaps(slice, ['accounting']).length > 0),
     },
   };

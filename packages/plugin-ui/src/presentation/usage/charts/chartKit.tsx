@@ -4,6 +4,7 @@ import { G, Text as SvgText } from 'react-native-svg';
 
 import type { HappierUiTheme } from '../../../environment/types.js';
 import { HappierPressable } from '../../interaction/Pressable.js';
+import { useWidgetPresentation } from '../../../components/WidgetPresentation.js';
 import type { HappierLayoutChangeEvent } from '../../portableTypes.js';
 import { HappierText } from '../../text/Text.js';
 import { HappierDataTable } from '../../data/DataRows.js';
@@ -58,10 +59,15 @@ export function resolveUsageChartInk(theme: HappierUiTheme, paint: UsageChartPai
   };
 }
 
-/** The width the body was given; charts draw once it is known and hold their height until then. */
+/**
+ * The width the body was given; charts draw once it is known and hold their height until then. Inside a widget frame
+ * the frame's measured body room is known from the first paint, so the chart draws there instead of painting nothing
+ * and growing by its whole height one layout later (Agents at 390: Score −261 then +270); its own layout refines it.
+ */
 export function useUsageChartWidth(fixed?: number): readonly [number | null, (event: HappierLayoutChangeEvent) => void] {
   const [measured, setWidth] = useState<number | null>(null);
-  const width = fixed ?? measured;
+  const frameWidth = useWidgetPresentation()?.geometry?.width;
+  const width = fixed ?? measured ?? (frameWidth !== undefined && frameWidth > 0 ? Math.floor(frameWidth) : null);
   const onLayout = useCallback((event: HappierLayoutChangeEvent) => {
     const next = Math.floor(event.nativeEvent.layout.width);
     setWidth((previous) => (previous === next ? previous : next));

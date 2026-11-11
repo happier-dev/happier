@@ -1,7 +1,9 @@
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, standardCleanup } from '@/dev/testkit';
-import { useUsageBodyHeightMemory, useUsageBodyRememberedHeight } from './usageBodyHeightMemory';
+import { readUsageQueryBodyReadState, useUsageBodyHeightMemory, useUsageBodyRememberedHeight } from './usageBodyHeightMemory';
+import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { resolveUsageQuotaPageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -58,6 +60,18 @@ describe('the Usage body height memory (sweep 1110 N3)', () => {
     expect(drawn.getCurrent()!.style).toEqual({ minHeight: 322 });
     await drawn.rerender({ settled: true });
     expect(drawn.getCurrent()!.style).toBeUndefined();
+  });
+
+  it('settles an allowance-only body once its allowance reads answer, whatever the sources it never asked for say', () => {
+    // Projections, Resets and Capacity never ask for work or session evidence; those sources stay "not loaded". Read as
+    // outstanding, the body never settled: the floor held its tallest cold-load height forever and remembered it again
+    // (Projections 455 under a 197 px list: a blank gap under "Show all").
+    const query = normalizeUsageQuery({ includeAccounting: false, includeQuota: true, includeSessionEvidence: false, includeWorkEvidence: false });
+    const read = (status: 'pending' | 'available') => resolveUsageQuotaPageAggregation({ queries: [query],
+      quota: { status: 'available', value: [] }, sources: [{ source: 'quota:account-a', status }] }).results[0]!;
+    const model = (slice: ReturnType<typeof read>) => ({ slice, error: null, pending: false, requestedQuery: null });
+    expect(readUsageQueryBodyReadState(query, model(read('pending')))).toEqual({ facts: true, settled: false });
+    expect(readUsageQueryBodyReadState(query, model(read('available')))).toEqual({ facts: true, settled: true });
   });
 
   it("never remembers a reading placeholder as the body's height", async () => {

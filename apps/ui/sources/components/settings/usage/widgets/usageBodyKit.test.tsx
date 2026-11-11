@@ -23,7 +23,7 @@ import { readUsageWidgetQueryOverrides } from '../usageWidgetPageContext';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
 import { clearProjectedAgentUiBehaviorDescriptors, publishProjectedAgentUiBehaviorDescriptors } from '@/agents/registry/agentUiBehaviorProjection';
-import { describeUsagePageFailedSources, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageAsOfMs, readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useSettledBodyHeightFloor, useUsageMeterListFirstReadReserve, useUsageAnalyticsView } from './usageBodyKit';
+import { describeUsagePageFailedSources, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsagePageAsOfMs, readUsageCoverageGaps, isUsageReadOutstanding, UsageCoverageLine, usageCoverageDescription, usageCoverageLineMode, usageCoverageSummary, usagePeriodPhrase, usageDimensionLabel, usageAgentTitle, usageSourceTitle, useSettledBodyHeightFloor, useUsageAnalyticsView } from './usageBodyKit';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -700,31 +700,12 @@ describe('shared Usage identity and dependent coverage', () => {
     });
 });
 
-describe('the allowance list holds its first-read room once', () => {
-    const query = normalizeUsageQuery({});
-    const pendingSlice = () => resolveUsagePageAggregation({ queries: [query], sources: [0, 1, 2].map(index => ({
-        source: `quota:${JSON.stringify(QualifiedConnectedServiceUsageSourceV4Schema.parse({ bindingKind: 'account',
-            ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: `acct-${index}` } }))}`,
-        status: 'pending' as const })) }).results[0]!;
-    it('reserves through the first reads, lets go when every account has answered, and never reserves for a re-read', async () => {
-        const slice = pendingSlice();
-        const hook = await renderHook(({ answered }: { answered: boolean }) => useUsageMeterListFirstReadReserve(slice, 3, answered, false),
-            { initialProps: { answered: false } });
-        expect(hook.getCurrent()?.minHeight).toBeGreaterThan(0);
-        await hook.rerender({ answered: true });
-        expect(hook.getCurrent()).toBeUndefined();
-        // A later re-read puts accounts back to pending: the retained rows keep their height, no blank room is added.
-        await hook.rerender({ answered: false });
-        expect(hook.getCurrent()).toBeUndefined();
-    });
-});
-
 describe('a settled list body keeps the tallest height it has drawn', () => {
     const layout = (height: number) => ({ nativeEvent: { layout: { x: 0, y: 0, width: 400, height } } }) as never;
     it('holds the floor through shorter re-reads, ignores layouts before the settle, and starts over when the list changes shape', async () => {
         const hook = await renderHook(({ settled, shapeKey }: { settled: boolean; shapeKey: string }) => useSettledBodyHeightFloor(settled, shapeKey),
             { initialProps: { settled: false, shapeKey: 'wide' } });
-        // The first-read reserve owns the room before the settle.
+        // The dispatch's remembered height owns the room before the settle.
         await act(async () => { hook.getCurrent()!.onLayout(layout(500)); });
         expect(hook.getCurrent()!.minHeight).toBeUndefined();
         await hook.rerender({ settled: true, shapeKey: 'wide' });

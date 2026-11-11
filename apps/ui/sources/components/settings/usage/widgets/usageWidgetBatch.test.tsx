@@ -20,7 +20,8 @@ import {
   UsageWidgetBatchProvider,
   useUsageWidgetBatchSlices,
   useUsageWidgetBatchInventorySlice,
-  useUsageWidgetBatchCostBasisOptions,
+  useUsageWidgetBatchCostBasis,
+  type UsageWidgetCostBasis,
   useUsageWidgetModel,
   useUsageWidgetPageHasCoverageDetail,
   buildUsageWidgetQueryPlan,
@@ -222,7 +223,7 @@ describe('Usage page batch', () => {
     let costChoiceRenders = 0;
     function CostChoiceProbe() {
       costChoiceRenders++;
-      useUsageWidgetBatchCostBasisOptions();
+      useUsageWidgetBatchCostBasis();
       return null;
     }
     const rendersByWidget = new Map<string, number>();
@@ -421,9 +422,9 @@ describe('Usage page batch', () => {
     const credentials = await TokenStorage.getCredentialsForServerUrl(server.serverUrl);
     storage.setState({ profileScope: { serverId: server.id, accountId: 'account-a' },
       profile: AccountProfileSchema.parse({ id: 'account-a' }) });
-    let options: ReturnType<typeof useUsageWidgetBatchCostBasisOptions> = [];
+    let options: UsageWidgetCostBasis['options'] = [];
     const models = new Map<string, UsageWidgetBodyModel>();
-    function Choices() { options = useUsageWidgetBatchCostBasisOptions(); return null; }
+    function Choices() { options = useUsageWidgetBatchCostBasis().options; return null; }
     function Query(props: { agent: string; startMs: number }) {
       const { model } = useUsageWidgetModel({ ...scope, period: { startMs: props.startMs }, agents: [props.agent],
         metric: 'tokens', breakdown: [] }, 'usage_daily');
@@ -470,10 +471,10 @@ describe('Usage page batch', () => {
     storage.setState({ profileScope: { serverId: server.id, accountId: 'account-a' },
       settingsScope: { serverId: server.id, accountId: 'account-a' }, profile: AccountProfileSchema.parse({ id: 'account-a' }) });
     const seen = new Map<string, UsageWidgetBodyModel>();
-    let costBasisOptions: ReturnType<typeof useUsageWidgetBatchCostBasisOptions> = [];
+    let costBasisOptions: UsageWidgetCostBasis['options'] = [];
     const inventoryQuery = normalizeUsageQuery({ ...scope, metric: 'tokens', breakdown: ['agent'] });
     function Inventory() { useUsageWidgetBatchInventorySlice(); return null; }
-    function CostBasisOptions() { costBasisOptions = useUsageWidgetBatchCostBasisOptions(); return null; }
+    function CostBasisOptions() { costBasisOptions = useUsageWidgetBatchCostBasis().options; return null; }
     const page = (phase: 'shell' | 'visible' | 'contracted' | 'scrolled') => <InjectedAuthProvider credentials={credentials}>
       <UsageWidgetBatchProvider clauses={clauses} inventoryQuery={inventoryQuery}>
         <Inventory />

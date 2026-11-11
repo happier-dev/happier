@@ -498,8 +498,6 @@ it('chooses the earliest settled depletion consistently instead of whichever acc
     .flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
   expect(aheadText()).toContain('Account earlier');
   expect(aheadText()).not.toContain('Account later');
-  // The alert's line is in use, so none is held for it.
-  expect(screen.findByTestId('proj.aheadRoom')).toBeFalsy();
   await screen.update(render([...reads].reverse()));
   expect(aheadText()).toContain('Account earlier');
 });
@@ -519,8 +517,6 @@ it('does not declare all projections missing when a settled paced window is behi
   expect(screen.findByTestId('proj.showAll')).toBeTruthy();
   expect(screen.findByTestId('proj.window.paced.weekly')).toBeFalsy();
   expect(screen.findByTestId('proj.legend')).toBeTruthy();
-  // Every read has answered and no alert came: no blank line is kept above the legend for one that never arrives.
-  expect(screen.findByTestId('proj.aheadRoom')).toBeFalsy();
   // The eight windows without a projection share a cause: said once for the widget, as a partial statement,
   // never as "No projection yet" for the whole list nor beneath every row.
   const text = screen.getTextContent();
@@ -595,7 +591,9 @@ it('lists every reported window with its projection beside other widgets, withou
   expect(quiet.getTextContent().split(t('usage.board.plans.paceNotDerived')).length - 1).toBe(1);
 });
 
-it('holds the list room its accounts will fill while their first allowance reads are pending, then lets it go', async () => {
+it('holds no room of its own while first allowance reads are pending: the remembered body height is the one reservation', async () => {
+  // A list-sized guess from every known account overshot the remembered height (+168 then −168 on a cold Plans
+  // load with memory: four of its accounts never answer). The dispatch's height memory alone holds the room.
   const { QualifiedConnectedServiceUsageSourceV4Schema } = await import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4');
   const { WidgetPresentationProvider } = await import('@happier-dev/plugin-ui');
   const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
@@ -604,9 +602,9 @@ it('holds the list room its accounts will fill while their first allowance reads
       ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: `acct-${index}` } }))}`,
     status,
   }));
-  const render = async (count: number, status: 'pending' | 'available') => {
+  const render = async (count: number, status: 'pending' | 'available', quota?: readonly ConnectedServiceQuotaGetResultV1[]) => {
     const slice = resolveUsagePageAggregation({ queries: [query], nowMs: Date.now(), sources: sourcesFor(count, status),
-      ...(status === 'available' ? { quota: { status: 'available' as const, value: [] } } : {}) }).results[0]!;
+      ...(status === 'available' || quota ? { quota: { status: 'available' as const, value: quota ?? [] } } : {}) }).results[0]!;
     const model = { requestedQuery: null, shownQuery: null, slice, pending: status === 'pending', error: null,
       freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
     return renderScreen(wrap(<WidgetPresentationProvider value={{ size: 'medium',
@@ -618,13 +616,18 @@ it('holds the list room its accounts will fill while their first allowance reads
     const style = ([] as unknown[]).concat(screen.findByTestId('proj.projections')?.props.style ?? []).flat(2);
     return style.reduce<number>((held, entry) => (entry && typeof entry === 'object' && 'minHeight' in entry ? Number(entry.minHeight) : held), 0);
   };
-  // Each allowance account is expected to report a session and a longer window, up to the rows a list leads with:
-  // reads fill that room as they arrive, and a settled list holds none.
-  const five = heldRoom(await render(5, 'pending'));
-  const one = heldRoom(await render(1, 'pending'));
-  expect(one).toBeGreaterThan(0);
-  expect(five).toBeGreaterThan(one);
+  expect(heldRoom(await render(5, 'pending'))).toBe(0);
+  expect(heldRoom(await render(1, 'pending'))).toBe(0);
   expect(heldRoom(await render(3, 'available'))).toBe(0);
+  // One account has answered with a window that has no pace yet while another still reads: no blank line is held
+  // for a run-out alert that may come. It dropped at settle (−18 px) under the remembered height.
+  const now = Date.now();
+  const answered = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30, resetAtMs: now + DAY,
+    windowDurationMs: 7 * DAY }], { pace: [] });
+  const reading = await render(1, 'pending', [answered]);
+  expect(reading.findByTestId('proj.window.work.weekly')).toBeTruthy();
+  expect(reading.findByTestId('proj.aheadRoom')).toBeFalsy();
+  expect(heldRoom(reading)).toBe(0);
 });
 
 it('shows attributed API-equivalent account value and a qualified price multiple without claiming paid savings', async () => {
