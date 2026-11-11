@@ -8,6 +8,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import type { TextInputDictation, TextInputDictationNotice } from '@/voice/dictation/useTextInputDictation';
 import { resolveVoiceDictationFailureTranslationKey, voiceDictationFailureNeedsSetup } from '@/voice/dictation/voiceDictationErrorCopy';
+import { DictationModelPackRecovery } from '@/voice/dictation/DictationModelPackRecovery';
 import { AGENT_INPUT_QUIET_ICON_SIZE_PX } from './agentInputChromeStyles';
 
 type RetainedDictationFailure = NonNullable<TextInputDictation['failure']>;
@@ -22,6 +23,7 @@ function projectDictationRecovery(props: DictationRecoveryActions) {
   const transcribing = props.status === 'transcribing';
   return {
     reason: t(resolveVoiceDictationFailureTranslationKey(props.failure.reason)),
+    modelRecovery: props.failure.reason === 'transcription_model_not_installed' ? <DictationModelPackRecovery /> : null,
     setup: voiceDictationFailureNeedsSetup(props.failure.reason)
       ? { label: t('voicePresence.recovery.setUp'), onPress: props.onOpenSetup, testID: `${props.testID}-setup` }
       : null,
@@ -71,6 +73,7 @@ export function useDictationRecoveryFailure(
 
 /**
  * Dictation's one recovery look, a quiet line beside the field for every failure (Paseo rank 1).
+ * A missing daemon model adds the existing pack installer beside the kept recording's Retry.
  *
  * A failure whose recording was kept names the cause and offers Retry, with Discard after it; a cause
  * fixed in Dictation's setup also offers Set up in its sentence. It stays while the recording is
@@ -109,18 +112,21 @@ export function AgentInputDictationRecovery(
   }
   const recovery = projectDictationRecovery({ ...props, failure: props.failure, testID });
   return (
-    <SurfaceStateCard
-      testID={testID}
-      size="line"
-      kind="error"
-      accessibilitySemantics="alert"
-      title={recovery.reason}
-      reasonContent={recovery.setup ? (
-        <TextLinkButton testID={recovery.setup.testID} size="meta" label={recovery.setup.label} onPress={recovery.setup.onPress} />
-      ) : undefined}
-      reason={recovery.setup?.label}
-      action={recovery.retry}
-      secondaryAction={recovery.discard}
-    />
+    <>
+      <SurfaceStateCard
+        testID={testID}
+        size="line"
+        kind="error"
+        accessibilitySemantics="alert"
+        title={recovery.reason}
+        reasonContent={recovery.setup ? (
+          <TextLinkButton testID={recovery.setup.testID} size="meta" label={recovery.setup.label} onPress={recovery.setup.onPress} />
+        ) : undefined}
+        reason={recovery.setup?.label}
+        action={recovery.retry}
+        secondaryAction={recovery.discard}
+      />
+      {recovery.modelRecovery}
+    </>
   );
 }

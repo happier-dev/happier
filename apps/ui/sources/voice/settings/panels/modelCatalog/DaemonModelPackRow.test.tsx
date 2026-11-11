@@ -28,12 +28,15 @@ const { DaemonVoiceModelCatalogProvider } = await import('./DaemonVoiceModelCata
 const { useDaemonVoiceModelCatalogState } = await import('./useDaemonVoiceModelCatalogState');
 const { VOICE_CONVERSATIONS_SETTINGS } = await import('@/voice/settings/voiceSettingsDeclarations');
 const { storage } = await import('@/sync/domains/state/storage');
+const { voiceSettingsParse } = await import('@/sync/domains/settings/voiceSettings');
+const { AgentInputDictationRecovery } = await import('@/components/sessions/agentInput/components/AgentInputDictationRecovery');
 
-async function restoreModelAccount(waivedActions?: NonNullable<Parameters<typeof account.restore>[0]>['waivedActions'], daemonInferenceEnabled = true) {
+async function restoreModelAccount(waivedActions?: NonNullable<Parameters<typeof account.restore>[0]>['waivedActions'], daemonInferenceEnabled = true,
+    dictation?: ReturnType<typeof voiceSettingsParse>['dictation']) {
     const machineId = 'model-row-machine';
     const scope = await account.restore({ waivedActions, settings: { experiments: true,
         featureToggles: { 'voice.agent': true, 'execution.runs': true, 'voice.daemonInference': daemonInferenceEnabled },
-        voice: { executionMachine: { mode: 'fixed', machineId } } },
+        voice: { executionMachine: { mode: 'fixed', machineId }, ...(dictation ? { dictation } : {}) } },
         machines: [createMachineFixture({ id: machineId, activeAt: Date.now() })],
         features: createRootLayoutFeaturesResponse({ features: {
             voice: { enabled: true },
@@ -74,6 +77,54 @@ function hasAncestor(
 
 describe('DaemonModelPackRow', () => {
     afterEach(async () => { await account.reset(); vi.restoreAllMocks(); });
+    it('installs the missing Dictation model beside composer Retry without opening setup or discarding', async () => {
+        const entry = listModelPackCatalogEntries('stt_sherpa').find(candidate => candidate.packId === 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8')!;
+        const dictation = voiceSettingsParse({ dictation: { sttBinding: 'explicit', stt: { provider: 'local_neural',
+            localNeural: { execution: 'daemon', assetId: entry.packId } } } }).dictation;
+        await restoreModelAccount(['settings.invoke'], true, dictation);
+        expect(storage.getState().settings.voice.dictation.stt.localNeural.assetId).toBe(entry.packId);
+        let model = DaemonVoiceInferenceModelStatusSchema.parse({
+            packId: entry.packId, kind: entry.kind, model: entry.model, pluginIdentity: null,
+            version: null, executionSupport: ['daemon'], runtimeFamily: entry.runtimeFamily,
+            runtimeSupported: true, installState: 'not_installed', progress: null, lastError: null, updatedAtMs: 0,
+        });
+        let installs = 0;
+        reply = request => {
+            const catalog = answerVoiceModelCatalogRpcRequest(request, [model]);
+            if (catalog) return catalog;
+            if (request.method.endsWith(':daemon.voiceInference.models.install')) {
+                installs += 1;
+                model = DaemonVoiceInferenceModelStatusSchema.parse({ ...model, installState: 'installed' });
+                return DaemonVoiceInferenceModelsInstallResponseSchema.parse({ ok: true, model });
+            }
+            throw new Error(`Unexpected model RPC: ${request.method}`);
+        };
+        const onOpenSetup = vi.fn();
+        const onRetry = vi.fn(async () => ({ ok: true, result: { status: 'completed' } }) as never);
+        const onDiscard = vi.fn(async () => ({ ok: true, result: { status: 'completed' } }) as never);
+        const props = { failure: { id: 1, sessionId: 'kept-recording', kind: 'provider_error' as const,
+            reason: 'transcription_model_not_installed' as const, canRetry: true }, status: 'idle' as const,
+            testID: 'missing-model-recovery', onOpenSetup, onRetry, onDiscard };
+        const screen = await renderScreen(<AgentInputDictationRecovery {...props} notice={null} onDismissNotice={() => undefined} />);
+        const download = () => screen.tree.root.findAllByProps({ testID: `voice-model-install-${entry.packId}` })
+            .find(node => String(node.type) === 'Pressable');
+        expect(screen.tree.root.findAllByProps({ testID: `voice-model-row-${entry.packId}` })[0],
+            'Missing-model recovery must expose the selected model and its download size').toBeDefined();
+        await waitForTestEvent(screen.subscribe, download, button => Boolean(button));
+        expect(screen.tree.root.findAllByProps({ testID: `voice-model-row-${entry.packId}` })[0]?.props.subtitle)
+            .toContain(formatHappierDataBytes(entry.archiveSizeBytes!, { kind: 'storage' }));
+        expect(installs).toBe(0);
+        await pressTestInstanceAsync(download()!);
+        await waitForTestEvent(screen.subscribe,
+            () => screen.tree.root.findAllByProps({ testID: `voice-model-row-${entry.packId}` })[0]?.props.detail,
+            detail => detail === t('settingsVoice.local.models.state.installed'));
+        expect(installs).toBe(1);
+        expect(onOpenSetup).not.toHaveBeenCalled();
+        expect(onDiscard).not.toHaveBeenCalled();
+        await pressTestInstanceAsync(screen.tree.root.findAllByProps({ testID: 'missing-model-recovery-retry' })
+            .find(node => String(node.type) === 'Pressable')!);
+        expect(onRetry).toHaveBeenCalledOnce();
+    });
     it('says an unknown status once rather than as both the description and the value', async () => {
         const row: ModelCatalogRow = {
             packId: 'pack-unknown', kind: 'stt_sherpa', displayName: 'Unknown Pack', model: 'zipformer',
