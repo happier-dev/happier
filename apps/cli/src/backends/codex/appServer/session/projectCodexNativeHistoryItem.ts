@@ -1,5 +1,6 @@
 import { createCodexAppServerStreamEventBridge } from '../streamEventBridge';
 import type { CodexRolloutAction } from '../../localControl/rolloutMapper';
+import { codexNativeProjectionError } from '../../utils/codexNativeProjectionError';
 
 /** The native history API returns the same completed items as live app-server notifications. */
 export function projectCodexNativeHistoryItem(item: Readonly<Record<string, unknown>>): CodexRolloutAction[] {
@@ -17,11 +18,11 @@ export function projectCodexNativeHistoryItem(item: Readonly<Record<string, unkn
       case 'tool-result': actions.push({ type: 'tool-result', callId: update.callId, output: update.output }); break;
       case 'context-compaction': actions.push({ type: 'context-compaction', phase: 'completed', lifecycleId: `codex:context-compaction:${update.itemId}`, source: 'provider-event', providerEventId: update.itemId }); break;
       case 'reasoning-final': actions.push({ type: 'thinking', text: update.text }); break;
-      default: throw new Error('Codex native history contains an unsupported transcript item');
+      default: throw codexNativeProjectionError('transcript item', item.type);
     }
   }
   if (updates.length === 0 && !['reasoning', 'hookPrompt'].includes(String(item.type))) {
-    throw new Error('Codex native history contains an unsupported transcript item');
+    throw codexNativeProjectionError('transcript item', item.type);
   }
   return actions;
 }
