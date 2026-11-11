@@ -657,7 +657,8 @@ export async function applyConnectedServiceStateSharingDescriptor(
     try {
       for (const entryName of stateEntryNames) {
         const descriptorEntry = resolveDescriptorEntryForPath(input.descriptor, 'state', entryName);
-        if (!descriptorEntry || (descriptorEntry.mode !== 'linked' && descriptorEntry.mode !== 'linked_or_copied')) continue;
+        if (!descriptorEntry || descriptorEntry.requiresRealDirectory
+          || (descriptorEntry.mode !== 'linked' && descriptorEntry.mode !== 'linked_or_copied')) continue;
         if (await isConnectedServiceHomeEntryLinkedToSource(
           join(resolve(resolveStateSourceRoot(entryName)), entryName), join(targetRoot, entryName),
         )) continue;
@@ -758,6 +759,13 @@ export async function applyConnectedServiceStateSharingDescriptor(
         const sourceStat = await tryStatConnectedServiceHomeEntry(sourcePath);
         if (!sourceStat) continue;
         await copyConnectedServiceHomeEntry(sourcePath, destinationPath);
+        stateEntries.push(entryName);
+        continue;
+      }
+      if (descriptorEntry.requiresRealDirectory) {
+        const sourceStat = await tryStatConnectedServiceHomeEntry(sourcePath);
+        if (sourceStat) await copyConnectedServiceHomeEntry(sourcePath, destinationPath);
+        else await mkdir(destinationPath, { recursive: true });
         stateEntries.push(entryName);
         continue;
       }

@@ -643,6 +643,30 @@ describe('applyConnectedServiceStateSharingDescriptor', () => {
     }
   });
 
+  it('materializes a declared real directory without sharing its symlinked source', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-real-state-directory-'));
+    const sourceRoot = join(root, 'source');
+    const targetRoot = join(root, 'target');
+    try {
+      const sessionEntry = '.fx/sessions';
+      await mkdir(join(sourceRoot, sessionEntry), { recursive: true });
+      await writeFile(join(sourceRoot, sessionEntry, 'session.json'), '{\"id\":\"fx\"}\n');
+      const result = await applyConnectedServiceStateSharingDescriptor({
+        descriptor: createDescriptor({
+          stateEntries: [{ path: sessionEntry, mode: 'linked', createIfMissing: 'directory', requiresRealDirectory: true }],
+        }),
+        nativeSourceContext: { sourceRoot, sourceEnv: {} },
+        target: { targetMaterializedRoot: targetRoot, targetMaterializedEnv: {} },
+        configMode: 'isolated', requestedStateMode: 'shared', effectiveStateMode: 'shared', cwd: root,
+      });
+
+      expect((await lstat(join(targetRoot, sessionEntry))).isSymbolicLink()).toBe(false);
+      await expect(readFile(join(targetRoot, sessionEntry, 'session.json'), 'utf8')).resolves.toBe('{\"id\":\"fx\"}\n');
+      expect(result.linkedStateEntries).toEqual([]);
+      expect(result.manifest.stateEntries).toEqual([sessionEntry]);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it('fails fast in dev builds when native source root is nested under target root', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-state-sharing-descriptor-invariant-'));
     const targetRoot = join(root, 'target');

@@ -363,6 +363,8 @@ export type AgentConnectedAccountStateSharingDescriptorEntryV1 = Readonly<{
   mode: 'linked' | 'copied' | 'linked_or_copied' | 'env_redirect' | 'force_copied';
   /** Establish a native shared directory on first launch; isolated mode never creates it. */
   createIfMissing?: 'directory';
+  /** Keep this directory physical because the Agent rejects symlinked session storage. */
+  requiresRealDirectory?: boolean;
   envVar?: string;
   allowHardLinkFallback?: boolean;
   secret?: boolean;
