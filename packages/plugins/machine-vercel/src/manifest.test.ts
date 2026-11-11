@@ -273,18 +273,16 @@ describe('public Vercel provisioner composition', () => {
   });
 
   it.each([['hobby', 2_700_000], ['pro', 86_400_000], ['enterprise', 86_400_000]] as const)(
-    'requires an explicit vCPU while retaining the native plan duration maximum for %s', async (plan, maximum) => {
+    'defaults the fresh %s form to its native plan maximum, retaining a shorter explicit duration', async (plan, maximum) => {
       const { kit } = await vendor(undefined, { plan });
       try {
         const manifest = parsePluginManifest(PLUGIN_MANIFEST);
         if (!manifest.ok) throw new Error('Expected admitted manifest');
         const action = manifest.manifest.contributes.actions.find(action => action.id === 'options');
         if (!action) throw new Error('Expected options action');
-        // vCPU has no provider-owned default; duration still follows the plan maximum.
+        // Same declared-field seeding as the host launch form, not a hand-built default.
         const fresh = seedInputByFieldHints(PluginActionContributionV2Schema.parse(action), {});
-        expect(fresh).not.toHaveProperty('vcpus');
-        const explicit = { ...fresh, vcpus: 2 };
-        for (const [input, duration] of [[explicit, maximum], [{ ...explicit, timeoutMs: 60_000 }, 60_000]] as const {
+        for (const [input, duration] of [[fresh, maximum], [{ ...fresh, timeoutMs: 60_000 }, 60_000]] as const) {
           const options = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', input, { surface: 'plugin' }));
           const projected = projectMachineProvisionerSelectionV1({ options,
             selection: { ...selection, duration: String(duration) }, launchSchema: VercelLaunchSchema.jsonSchema });

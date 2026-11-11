@@ -9,6 +9,8 @@ import { activate } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { ANTIGRAVITY_AGENT_ID } from '../agent/install/cliRuntime.js';
 import { ANTIGRAVITY_CREDENTIAL_ENV_KEY } from './antigravityConnectedAccountRuntime.js';
+import { GEMINI_CONNECTED_ACCOUNT_SERVICE, GEMINI_API_KEY_ENV } from '@happier-dev/plugins-gemini/connected-account-service';
+import { antigravityConnectedAccountLaunch } from '../agent/connectedServices/continuity.js';
 
 const callbackUrl = 'https://antigravity.google/oauth-callback';
 const service = { pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' };
@@ -46,6 +48,16 @@ function response(status: number, body: unknown, finalUrl = 'https://oauth2.goog
 }
 
 describe('Antigravity qualified Connected Account', () => {
+  it('declares the shared Gemini API-key account for native ACP authentication', () => {
+    const agent = PLUGIN_MANIFEST.contributes.agents.find(({ id }) => id === ANTIGRAVITY_AGENT_ID);
+    expect(agent?.runtime).toMatchObject({ definition: { auth: { methodId: 'gemini-api-key' } } });
+    expect(agent?.connectedAccounts).toContainEqual({
+      purpose: 'gemini-api-key', service: GEMINI_CONNECTED_ACCOUNT_SERVICE,
+      required: false, materializationKinds: ['environment'], credentialKinds: ['token'],
+    });
+    expect(antigravityConnectedAccountLaunch.environmentUses)
+      .toContainEqual({ purpose: 'gemini-api-key', environmentKey: GEMINI_API_KEY_ENV });
+  });
   it.each([
     { kind: 'httpHeaders', origin: 'https://daily-cloudcode-pa.googleapis.com', headerNames: ['authorization'] },
     { kind: 'environment', keys: [ANTIGRAVITY_CREDENTIAL_ENV_KEY] },

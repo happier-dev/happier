@@ -11,6 +11,7 @@ import { antigravityConnectedAccountLaunch } from './agent/connectedServices/con
 import { ANTIGRAVITY_ACP_SERVER_INSTALL_ID, ANTIGRAVITY_ACP_SERVER_VERSION, ANTIGRAVITY_BACKEND_ID } from './agent/install/cliRuntime.js';
 import { ANTIGRAVITY_CLI_SYSTEM_TOOL_ID } from './agent/systemTool.js';
 import { createAntigravityNativeTerminalSurface } from './agent/terminal/nativeSurface.js';
+import { GEMINI_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-gemini/connected-account-service';
 
 export const ANTIGRAVITY_PLUGIN = definePlugin({
   id: 'happier.agent.antigravity',
@@ -36,7 +37,7 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
       id: 'antigravity-acp-process',
       capability: 'process',
       reason: 'Launch the pinned official Antigravity ACP server through host-mediated execution.',
-      scope: { executables: [{ kind: 'managedDependency', id: 'agy-acp-server' }], envKeys: ['GEMINI_HOME', 'AGY_ACP_FORCE_FILE_STORAGE'] },
+      scope: { executables: [{ kind: 'managedDependency', id: 'agy-acp-server' }], envKeys: ['GEMINI_HOME', 'GEMINI_API_KEY', 'AGY_ACP_FORCE_FILE_STORAGE'] },
     }, {
       id: 'antigravity-cli-process',
       capability: 'process',
@@ -99,7 +100,7 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
             executable: { kind: 'managedDependency', id: 'agy-acp-server' },
           },
           definition: {
-            auth: { methodId: 'oauth-personal',
+            auth: { methodId: 'gemini-api-key',
               // ACP 1.3.0 marks failed refresh/onboarding separately from generic missing authentication.
               setupFailure: { requestErrorCode: -32000, dataReason: 'onboarding_failed' },
             },
@@ -159,6 +160,12 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
           required: false,
           materializationKinds: ['files', 'environment'],
           credentialKinds: ['oauth'],
+        }, {
+          purpose: 'gemini-api-key',
+          service: GEMINI_CONNECTED_ACCOUNT_SERVICE,
+          required: false,
+          materializationKinds: ['environment'],
+          credentialKinds: ['token'],
         }],
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           skills: { delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported',
