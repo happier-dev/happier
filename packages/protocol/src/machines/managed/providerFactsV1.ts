@@ -7,6 +7,7 @@ import { formatSharedSavedSecretRefV1 } from '../../account/settings/savedSecret
 import { PluginDeclaredExecutableRefSchema } from '../../plugins/contributions/agentAcpTransport.js';
 import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
 import { DevcontainerNativeObservationV1Schema } from './devcontainerV1.js';
+import { ActionInputIssueSchema } from '../../actions/executor/actionInputValidation.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
 const instant = () => z.number().check(z.gte(0));
@@ -195,6 +196,10 @@ export const MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 = 10_000;
 const nativeRejectedFields = ['name', 'location', 'server_type', 'start_after_create', 'image', 'placement_group',
   'ssh_keys', 'volumes', 'networks', 'firewalls', 'user_data', 'labels', 'automount', 'public_net'] as const;
 export const MachineProvisionerNativeCauseV1Schema = lazyDefinition(() => z.union([
+  z.strictObject({ localCause: z.literal('plugin_action_input_schema_invalid'),
+    action: asProtocolZod(PluginContributionIdentityV1Schema),
+    issues: z.array(z.pick(ActionInputIssueSchema, { path: true, code: true })),
+  }),
   z.strictObject({ localCause: z.literal('ssh_keyscan_failed'), resultClass: z.enum(['empty', 'invalid', 'command_failed', 'spawn_failed']) }),
   z.strictObject({ localCause: z.literal('native_command_failed'), command: z.enum(['start', 'restart', 'stop', 'create', 'run', 'up', 'edit', 'update']),
     exitCode: z.nullable(z.int()),

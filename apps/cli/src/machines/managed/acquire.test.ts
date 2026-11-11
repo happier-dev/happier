@@ -3472,6 +3472,50 @@ describe('managed acquisition durable custody', () => {
             cancellation: 'supported', domainRef: { kind: 'managedMachine', id: retained.id },
         } });
     });
+    it.each(['bootstrap', 'exec'] as const)('retains sanitized native schema diagnostics for %s in the managed row and operation', async role => {
+        const nativeHomeId = 'srv_managed_schema_failure';
+        const nativeInput = { ...input, selection: { ...input.selection, homeId: nativeHomeId } };
+        const base = nativeFixture({ privateNative: true });
+        const nativeCalls: string[] = [];
+        // A real contributed input schema rejects the retained resource before its handler starts.
+        // The schema's expected value is deliberately private and must not enter public diagnostics.
+        const native = nativeFixture({ privateNative: true, fixtureManifest: { ...base.manifest,
+            contributes: { ...base.manifest.contributes, actions: base.manifest.contributes.actions.map(action =>
+                action.id === roleActionId(role) ? { ...action, inputSchema: { type: 'object',
+                    properties: { resource: { const: 'PRIVATE_SCHEMA_EXPECTED_VALUE' } }, required: ['resource'] } } : action) },
+        }, onNativeRole: currentRole => { nativeCalls.push(currentRole); } });
+        let retained = ManagedMachineV1Schema.parse({ ...machine, homeId: nativeHomeId, allocation: 'bound', resource: {
+            contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {},
+        } });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            if (String(url).endsWith('/report')) {
+                const report = ManagedControllerReportV1Schema.parse(body);
+                retained = ManagedMachineV1Schema.parse({ ...retained, observation: report.observation ?? retained.observation });
+            }
+            return { status: 200, data: String(url).endsWith('/admit') ? { machine: retained, replayed: false } : { machine: retained } };
+        });
+        const homeTarget = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: nativeHomeId,
+            canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' });
+        const nativeDriver = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: nativeHomeId,
+            controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs, homeTarget });
+        const operations = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => 'owner', generateOperationId: () => 'native-schema-failure' });
+        let work: Promise<JsonValue | null> | undefined;
+        await expect(operations.observeExecution({ actionId: 'machines.managed.acquire', input: nativeInput, actionRequestId: 'creation', execute: async context => {
+            work = nativeDriver.execute('machines.managed.acquire', nativeInput, { requestId: 'creation', context, signal: context.signal });
+            return { ok: true, result: await work };
+        } })).resolves.toMatchObject({ ok: true, result: { managedId: retained.id, operation: { operationId: 'native-schema-failure' } } });
+        await expect(work).rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
+        const result = await operations.handlers.getV2({ operationId: 'native-schema-failure', waitForTerminal: true });
+        const nativeCause = { localCause: 'plugin_action_input_schema_invalid',
+            action: { pluginId: base.manifest.id, localId: roleActionId(role) }, issues: [{ code: 'const', path: ['resource'] }] };
+        expect(retained.observation).toMatchObject({ availability: 'unavailable', reason: 'bootstrap.plugin_action_input_schema_invalid' });
+        expect(retained.observation?.nativeCause).toEqual(nativeCause);
+        expect(result).toMatchObject({ kind: 'found', operation: { state: 'failed', error: {
+            errorCode: 'plugin_action_input_schema_invalid', details: { kind: 'managedNative', nativeCause },
+        } } });
+        expect(JSON.stringify({ observation: retained.observation, result })).not.toContain('PRIVATE_SCHEMA_EXPECTED_VALUE');
+        expect(nativeCalls).toEqual(role === 'exec' ? ['bootstrap'] : []);
+    });
     it.each(['exception', 'timeout', 'signal', 'failed', 'truncated', 'configured'] as const)('projects guest setup progress and safe native completion cause (%s)', async failure => {
         const nativeHomeId = 'srv_managed_progress';
         const nativeInput = { ...input, selection: { ...input.selection, homeId: nativeHomeId } };

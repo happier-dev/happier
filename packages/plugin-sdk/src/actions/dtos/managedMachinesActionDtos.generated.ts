@@ -10162,6 +10162,16 @@ export type ManagedMachinesActionResultById = {
             route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
             httpStatus: 404;
         } | {
+            localCause: 'plugin_action_input_schema_invalid';
+            action: {
+                pluginId: string;
+                localId: string;
+            };
+            issues: {
+                path: (number | string)[];
+                code: string;
+            }[];
+        } | {
             localCause: 'ssh_keyscan_failed';
             resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
         } | {
@@ -10940,6 +10950,16 @@ export type ManagedMachinesActionResultById = {
             localCause: 'native_route_not_found';
             route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
             httpStatus: 404;
+        } | {
+            localCause: 'plugin_action_input_schema_invalid';
+            action: {
+                pluginId: string;
+                localId: string;
+            };
+            issues: {
+                path: (number | string)[];
+                code: string;
+            }[];
         } | {
             localCause: 'ssh_keyscan_failed';
             resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
@@ -11849,6 +11869,16 @@ export type ManagedMachinesActionResultById = {
                     route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                     httpStatus: 404;
                 } | {
+                    localCause: 'plugin_action_input_schema_invalid';
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    issues: {
+                        path: (number | string)[];
+                        code: string;
+                    }[];
+                } | {
                     localCause: 'ssh_keyscan_failed';
                     resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
                 } | {
@@ -12576,6 +12606,16 @@ export type ManagedMachinesActionResultById = {
                 localCause: 'native_route_not_found';
                 route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                 httpStatus: 404;
+            } | {
+                localCause: 'plugin_action_input_schema_invalid';
+                action: {
+                    pluginId: string;
+                    localId: string;
+                };
+                issues: {
+                    path: (number | string)[];
+                    code: string;
+                }[];
             } | {
                 localCause: 'ssh_keyscan_failed';
                 resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
@@ -13335,6 +13375,16 @@ export type ManagedMachinesActionResultById = {
                     localCause: 'native_route_not_found';
                     route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                     httpStatus: 404;
+                } | {
+                    localCause: 'plugin_action_input_schema_invalid';
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    issues: {
+                        path: (number | string)[];
+                        code: string;
+                    }[];
                 } | {
                     localCause: 'ssh_keyscan_failed';
                     resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
@@ -14115,6 +14165,16 @@ export type ManagedMachinesActionResultById = {
                     route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                     httpStatus: 404;
                 } | {
+                    localCause: 'plugin_action_input_schema_invalid';
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    issues: {
+                        path: (number | string)[];
+                        code: string;
+                    }[];
+                } | {
                     localCause: 'ssh_keyscan_failed';
                     resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
                 } | {
@@ -14865,6 +14925,16 @@ export type ManagedMachinesActionResultById = {
                 localCause: 'native_route_not_found';
                 route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                 httpStatus: 404;
+            } | {
+                localCause: 'plugin_action_input_schema_invalid';
+                action: {
+                    pluginId: string;
+                    localId: string;
+                };
+                issues: {
+                    path: (number | string)[];
+                    code: string;
+                }[];
             } | {
                 localCause: 'ssh_keyscan_failed';
                 resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
@@ -17526,6 +17596,9 @@ export type ManagedMachinesActionResultById = {
             };
             administratorRequired: boolean | null;
             downtime: 'none' | 'possible' | 'unknown';
+            administratorUnavailable?: undefined | {
+                reasonCode: 'mode_none';
+            };
             requiresSessionRefresh?: undefined | {
                 kind: 'requiresSessionRefresh';
                 username: string;
@@ -21094,6 +21167,9 @@ export type ManagedMachinesActionResultById = {
                     };
                     administratorRequired: boolean | null;
                     downtime: 'none' | 'possible' | 'unknown';
+                    administratorUnavailable?: undefined | {
+                        reasonCode: 'mode_none';
+                    };
                     requiresSessionRefresh?: undefined | {
                         kind: 'requiresSessionRefresh';
                         username: string;
@@ -22722,6 +22798,16 @@ export type ManagedMachinesActionResultById = {
                 route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                 httpStatus: 404;
             } | {
+                localCause: 'plugin_action_input_schema_invalid';
+                action: {
+                    pluginId: string;
+                    localId: string;
+                };
+                issues: {
+                    path: (number | string)[];
+                    code: string;
+                }[];
+            } | {
                 localCause: 'ssh_keyscan_failed';
                 resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
             } | {
@@ -22751,6 +22837,16 @@ export type ManagedMachinesActionResultById = {
                 localCause: 'native_route_not_found';
                 route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                 httpStatus: 404;
+            } | {
+                localCause: 'plugin_action_input_schema_invalid';
+                action: {
+                    pluginId: string;
+                    localId: string;
+                };
+                issues: {
+                    path: (number | string)[];
+                    code: string;
+                }[];
             } | {
                 localCause: 'ssh_keyscan_failed';
                 resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
@@ -22832,6 +22928,16 @@ export type ManagedMachinesActionResultById = {
                 localCause: 'native_route_not_found';
                 route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                 httpStatus: 404;
+            } | {
+                localCause: 'plugin_action_input_schema_invalid';
+                action: {
+                    pluginId: string;
+                    localId: string;
+                };
+                issues: {
+                    path: (number | string)[];
+                    code: string;
+                }[];
             } | {
                 localCause: 'ssh_keyscan_failed';
                 resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
@@ -23555,6 +23661,16 @@ export type ManagedMachinesActionResultById = {
                 localCause: 'native_route_not_found';
                 route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                 httpStatus: 404;
+            } | {
+                localCause: 'plugin_action_input_schema_invalid';
+                action: {
+                    pluginId: string;
+                    localId: string;
+                };
+                issues: {
+                    path: (number | string)[];
+                    code: string;
+                }[];
             } | {
                 localCause: 'ssh_keyscan_failed';
                 resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
@@ -24356,6 +24472,16 @@ export type ManagedMachinesActionResultById = {
                 route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                 httpStatus: 404;
             } | {
+                localCause: 'plugin_action_input_schema_invalid';
+                action: {
+                    pluginId: string;
+                    localId: string;
+                };
+                issues: {
+                    path: (number | string)[];
+                    code: string;
+                }[];
+            } | {
                 localCause: 'ssh_keyscan_failed';
                 resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
             } | {
@@ -25082,6 +25208,16 @@ export type ManagedMachinesActionResultById = {
                 localCause: 'native_route_not_found';
                 route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                 httpStatus: 404;
+            } | {
+                localCause: 'plugin_action_input_schema_invalid';
+                action: {
+                    pluginId: string;
+                    localId: string;
+                };
+                issues: {
+                    path: (number | string)[];
+                    code: string;
+                }[];
             } | {
                 localCause: 'ssh_keyscan_failed';
                 resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';

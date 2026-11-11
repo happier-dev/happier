@@ -5894,6 +5894,16 @@ export type ConnectedServicesConfigurationActionResultById = {
                     route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                     httpStatus: 404;
                 } | {
+                    localCause: 'plugin_action_input_schema_invalid';
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    issues: {
+                        path: (number | string)[];
+                        code: string;
+                    }[];
+                } | {
                     localCause: 'ssh_keyscan_failed';
                     resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
                 } | {
@@ -6649,6 +6659,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                 observedAtMs?: number | undefined;
                 retryAtMs?: number | undefined;
             }[];
+            state?: 'error_last_known_good' | 'loaded_data' | 'loaded_empty' | 'not_loaded' | 'stale_data' | undefined;
         };
         receipt: {
             [x: string]: unknown;

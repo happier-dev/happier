@@ -11679,7 +11679,7 @@ export type WidgetDefinitionBodyV1Input<Input extends boolean = false> = Input e
             contentBase64: string;
         }>;
         requestedCapabilities?: undefined | {
-            hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
+            hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "presentActionFailure" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
             resources?: undefined | {
                 pluginId: string;
                 localId: string;
@@ -11693,7 +11693,7 @@ export type WidgetDefinitionBodyV1Input<Input extends boolean = false> = Input e
         };
     };
     requestedCapabilities?: undefined | {
-        hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
+        hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "presentActionFailure" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
         resources?: undefined | {
             pluginId: string;
             localId: string;
@@ -11727,7 +11727,7 @@ export type WidgetDefinitionBodyV1Input<Input extends boolean = false> = Input e
             contentBase64: string;
         }>;
         requestedCapabilities?: undefined | {
-            hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
+            hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "presentActionFailure" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
             resources?: undefined | {
                 pluginId: string;
                 localId: string;
@@ -11741,7 +11741,7 @@ export type WidgetDefinitionBodyV1Input<Input extends boolean = false> = Input e
         };
     };
     requestedCapabilities?: undefined | {
-        hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
+        hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "presentActionFailure" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
         resources?: undefined | {
             pluginId: string;
             localId: string;
@@ -11921,7 +11921,7 @@ export type SessionBoardItemUpsertSchemaInputV1<Input extends boolean = false> =
                 };
             };
             requestedCapabilities?: undefined | {
-                hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
+                hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "presentActionFailure" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
                 resources?: undefined | {
                     pluginId: string;
                     localId: string;
@@ -11969,7 +11969,7 @@ export type SessionBoardItemUpsertSchemaInputV1<Input extends boolean = false> =
                     contentBase64: string;
                 }>;
                 requestedCapabilities?: undefined | {
-                    hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
+                    hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "presentActionFailure" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
                     resources?: undefined | {
                         pluginId: string;
                         localId: string;
@@ -11983,7 +11983,7 @@ export type SessionBoardItemUpsertSchemaInputV1<Input extends boolean = false> =
                 };
             };
             requestedCapabilities?: undefined | {
-                hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
+                hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "presentActionFailure" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
                 resources?: undefined | {
                     pluginId: string;
                     localId: string;
@@ -12212,7 +12212,7 @@ export type SessionBoardItemUpsertSchemaInputV1<Input extends boolean = false> =
                 };
             };
             requestedCapabilities?: undefined | {
-                hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
+                hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "presentActionFailure" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
                 resources?: undefined | {
                     pluginId: string;
                     localId: string;
@@ -12260,7 +12260,7 @@ export type SessionBoardItemUpsertSchemaInputV1<Input extends boolean = false> =
                     contentBase64: string;
                 }>;
                 requestedCapabilities?: undefined | {
-                    hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
+                    hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "presentActionFailure" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
                     resources?: undefined | {
                         pluginId: string;
                         localId: string;
@@ -12274,7 +12274,7 @@ export type SessionBoardItemUpsertSchemaInputV1<Input extends boolean = false> =
                 };
             };
             requestedCapabilities?: undefined | {
-                hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
+                hostMethods?: ("acquireComposerInputLock" | "actionControl" | "activeComposer" | "admitAction" | "applyComposer" | "confirm" | "context" | "diagnostic" | "downloadFile" | "executeAction" | "focusComposer" | "inspectComposerContent" | "notify" | "openAutomationEvent" | "openConnectedAccounts" | "openDeployment" | "openExternalLink" | "openManagedMachineConfiguration" | "openNewSession" | "openResource" | "openSurface" | "pickComposerMedia" | "presentActionFailure" | "publishCurrentUiContext" | "readClipboard" | "readComposer" | "readDiscussionComposer" | "readEntityDragItem" | "readMachineDisplayName" | "readOpenableContent" | "readResource" | "readSession" | "readStoredImage" | "releaseComposerContent" | "replacePageLocation" | "respondToSessionPermission" | "revealSessionInput" | "selectActionInput" | "setComposerDecorations" | "setPageNavigation" | "setUnsavedChanges" | "settleEphemeralInput" | "statOpenableContent" | "updateEntityDragDrop" | "watchComposer" | "watchContext" | "watchEntityDragDrop" | "watchLiveStream" | "watchResource" | "watchSession" | "widgetArea" | "writeClipboard")[] | undefined;
                 resources?: undefined | {
                     pluginId: string;
                     localId: string;
@@ -13812,7 +13812,7 @@ export type WidgetDefinitionBodyV1 = Readonly<{
             contentBase64: string;
         }>;
         requestedCapabilities?: undefined | {
-            hostMethods?: ('acquireComposerInputLock' | 'actionControl' | 'activeComposer' | 'admitAction' | 'applyComposer' | 'confirm' | 'context' | 'diagnostic' | 'downloadFile' | 'executeAction' | 'focusComposer' | 'inspectComposerContent' | 'notify' | 'openAutomationEvent' | 'openConnectedAccounts' | 'openDeployment' | 'openExternalLink' | 'openManagedMachineConfiguration' | 'openNewSession' | 'openResource' | 'openSurface' | 'pickComposerMedia' | 'publishCurrentUiContext' | 'readClipboard' | 'readComposer' | 'readDiscussionComposer' | 'readEntityDragItem' | 'readMachineDisplayName' | 'readOpenableContent' | 'readResource' | 'readSession' | 'readStoredImage' | 'releaseComposerContent' | 'replacePageLocation' | 'respondToSessionPermission' | 'revealSessionInput' | 'selectActionInput' | 'setComposerDecorations' | 'setPageNavigation' | 'setUnsavedChanges' | 'settleEphemeralInput' | 'statOpenableContent' | 'updateEntityDragDrop' | 'watchComposer' | 'watchContext' | 'watchEntityDragDrop' | 'watchLiveStream' | 'watchResource' | 'watchSession' | 'widgetArea' | 'writeClipboard')[] | undefined;
+            hostMethods?: ('acquireComposerInputLock' | 'actionControl' | 'activeComposer' | 'admitAction' | 'applyComposer' | 'confirm' | 'context' | 'diagnostic' | 'downloadFile' | 'executeAction' | 'focusComposer' | 'inspectComposerContent' | 'notify' | 'openAutomationEvent' | 'openConnectedAccounts' | 'openDeployment' | 'openExternalLink' | 'openManagedMachineConfiguration' | 'openNewSession' | 'openResource' | 'openSurface' | 'pickComposerMedia' | 'presentActionFailure' | 'publishCurrentUiContext' | 'readClipboard' | 'readComposer' | 'readDiscussionComposer' | 'readEntityDragItem' | 'readMachineDisplayName' | 'readOpenableContent' | 'readResource' | 'readSession' | 'readStoredImage' | 'releaseComposerContent' | 'replacePageLocation' | 'respondToSessionPermission' | 'revealSessionInput' | 'selectActionInput' | 'setComposerDecorations' | 'setPageNavigation' | 'setUnsavedChanges' | 'settleEphemeralInput' | 'statOpenableContent' | 'updateEntityDragDrop' | 'watchComposer' | 'watchContext' | 'watchEntityDragDrop' | 'watchLiveStream' | 'watchResource' | 'watchSession' | 'widgetArea' | 'writeClipboard')[] | undefined;
             resources?: undefined | {
                 pluginId: string;
                 localId: string;
@@ -13826,7 +13826,7 @@ export type WidgetDefinitionBodyV1 = Readonly<{
         };
     };
     requestedCapabilities?: undefined | {
-        hostMethods?: ('acquireComposerInputLock' | 'actionControl' | 'activeComposer' | 'admitAction' | 'applyComposer' | 'confirm' | 'context' | 'diagnostic' | 'downloadFile' | 'executeAction' | 'focusComposer' | 'inspectComposerContent' | 'notify' | 'openAutomationEvent' | 'openConnectedAccounts' | 'openDeployment' | 'openExternalLink' | 'openManagedMachineConfiguration' | 'openNewSession' | 'openResource' | 'openSurface' | 'pickComposerMedia' | 'publishCurrentUiContext' | 'readClipboard' | 'readComposer' | 'readDiscussionComposer' | 'readEntityDragItem' | 'readMachineDisplayName' | 'readOpenableContent' | 'readResource' | 'readSession' | 'readStoredImage' | 'releaseComposerContent' | 'replacePageLocation' | 'respondToSessionPermission' | 'revealSessionInput' | 'selectActionInput' | 'setComposerDecorations' | 'setPageNavigation' | 'setUnsavedChanges' | 'settleEphemeralInput' | 'statOpenableContent' | 'updateEntityDragDrop' | 'watchComposer' | 'watchContext' | 'watchEntityDragDrop' | 'watchLiveStream' | 'watchResource' | 'watchSession' | 'widgetArea' | 'writeClipboard')[] | undefined;
+        hostMethods?: ('acquireComposerInputLock' | 'actionControl' | 'activeComposer' | 'admitAction' | 'applyComposer' | 'confirm' | 'context' | 'diagnostic' | 'downloadFile' | 'executeAction' | 'focusComposer' | 'inspectComposerContent' | 'notify' | 'openAutomationEvent' | 'openConnectedAccounts' | 'openDeployment' | 'openExternalLink' | 'openManagedMachineConfiguration' | 'openNewSession' | 'openResource' | 'openSurface' | 'pickComposerMedia' | 'presentActionFailure' | 'publishCurrentUiContext' | 'readClipboard' | 'readComposer' | 'readDiscussionComposer' | 'readEntityDragItem' | 'readMachineDisplayName' | 'readOpenableContent' | 'readResource' | 'readSession' | 'readStoredImage' | 'releaseComposerContent' | 'replacePageLocation' | 'respondToSessionPermission' | 'revealSessionInput' | 'selectActionInput' | 'setComposerDecorations' | 'setPageNavigation' | 'setUnsavedChanges' | 'settleEphemeralInput' | 'statOpenableContent' | 'updateEntityDragDrop' | 'watchComposer' | 'watchContext' | 'watchEntityDragDrop' | 'watchLiveStream' | 'watchResource' | 'watchSession' | 'widgetArea' | 'writeClipboard')[] | undefined;
         resources?: undefined | {
             pluginId: string;
             localId: string;
@@ -13914,6 +13914,7 @@ export type WorkflowAcceptedAuthorizationV1 = {
             expectedRevision: number;
             intent: 'initializeAndSave' | 'markNotNeeded' | 'save' | 'test';
             inputDigest: string;
+            receiverMachineId?: string | undefined;
         } | {
             kind: 'domain';
             actionId: 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
@@ -14043,6 +14044,13 @@ export type ExternalActionExecutionAuthorizationV1 = {
                 managedId: string;
             };
         } | {
+            actionId: 'machines.managed.cancel' | 'machines.managed.setup.skip';
+            input: {
+                expectedIntentRevision: number;
+                homeId: string;
+                managedId: string;
+            };
+        } | {
             actionId: 'machines.managed.credentials.install';
             input: {
                 homeId: string;
@@ -14105,6 +14113,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                 managedId: string;
             };
         };
+        managedAcquireDelegation?: true | undefined;
         managedAccountExecutor?: undefined | {
             enrolledMachineId: string;
         };
@@ -14199,6 +14208,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     expectedRevision: number;
                     intent: 'initializeAndSave' | 'markNotNeeded' | 'save' | 'test';
                     inputDigest: string;
+                    receiverMachineId?: string | undefined;
                 } | {
                     kind: 'domain';
                     actionId: 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
@@ -14442,6 +14452,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                 machineId: string;
                 grantRef: string;
             }[];
+            machineTargets?: string[] | undefined;
         } | {
             operation: 'template';
             mode: 'apply' | 'preview';
@@ -14529,6 +14540,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
             expectedRevision: number;
             intent: 'initializeAndSave' | 'markNotNeeded' | 'save' | 'test';
             inputDigest: string;
+            receiverMachineId?: string | undefined;
         } | {
             kind: 'domain';
             actionId: 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
@@ -14811,6 +14823,13 @@ export type ExternalActionExecutionAuthorizationV1 = {
                 managedId: string;
             };
         } | {
+            actionId: 'machines.managed.cancel' | 'machines.managed.setup.skip';
+            input: {
+                expectedIntentRevision: number;
+                homeId: string;
+                managedId: string;
+            };
+        } | {
             actionId: 'machines.managed.credentials.install';
             input: {
                 homeId: string;
@@ -14873,6 +14892,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                 managedId: string;
             };
         };
+        managedAcquireDelegation?: true | undefined;
         managedAccountExecutor?: undefined | {
             enrolledMachineId: string;
         };
@@ -14967,6 +14987,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     expectedRevision: number;
                     intent: 'initializeAndSave' | 'markNotNeeded' | 'save' | 'test';
                     inputDigest: string;
+                    receiverMachineId?: string | undefined;
                 } | {
                     kind: 'domain';
                     actionId: 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
@@ -15210,6 +15231,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                 machineId: string;
                 grantRef: string;
             }[];
+            machineTargets?: string[] | undefined;
         } | {
             operation: 'template';
             mode: 'apply' | 'preview';
@@ -15297,6 +15319,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
             expectedRevision: number;
             intent: 'initializeAndSave' | 'markNotNeeded' | 'save' | 'test';
             inputDigest: string;
+            receiverMachineId?: string | undefined;
         } | {
             kind: 'domain';
             actionId: 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
@@ -15633,6 +15656,13 @@ export type ExternalActionExecutionAuthorizationV1 = {
                 managedId: string;
             };
         } | {
+            actionId: 'machines.managed.cancel' | 'machines.managed.setup.skip';
+            input: {
+                expectedIntentRevision: number;
+                homeId: string;
+                managedId: string;
+            };
+        } | {
             actionId: 'machines.managed.credentials.install';
             input: {
                 homeId: string;
@@ -15695,6 +15725,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                 managedId: string;
             };
         };
+        managedAcquireDelegation?: true | undefined;
         managedAccountExecutor?: undefined | {
             enrolledMachineId: string;
         };
@@ -15789,6 +15820,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     expectedRevision: number;
                     intent: 'initializeAndSave' | 'markNotNeeded' | 'save' | 'test';
                     inputDigest: string;
+                    receiverMachineId?: string | undefined;
                 } | {
                     kind: 'domain';
                     actionId: 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
@@ -16032,6 +16064,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                 machineId: string;
                 grantRef: string;
             }[];
+            machineTargets?: string[] | undefined;
         } | {
             operation: 'template';
             mode: 'apply' | 'preview';
@@ -16119,6 +16152,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
             expectedRevision: number;
             intent: 'initializeAndSave' | 'markNotNeeded' | 'save' | 'test';
             inputDigest: string;
+            receiverMachineId?: string | undefined;
         } | {
             kind: 'domain';
             actionId: 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
@@ -20776,7 +20810,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                     catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                                 };
                                 reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                providerErrorCode?: number | string | undefined;
                                 httpStatus?: number | undefined;
                                 providerErrorMessage?: string | undefined;
                             };
@@ -20923,6 +20957,16 @@ export type ExternalActionExecutionAuthorizationV1 = {
                             route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                             httpStatus: 404;
                         } | {
+                            localCause: 'plugin_action_input_schema_invalid';
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            issues: {
+                                path: (number | string)[];
+                                code: string;
+                            }[];
+                        } | {
                             localCause: 'ssh_keyscan_failed';
                             resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
                         } | {
@@ -20952,6 +20996,16 @@ export type ExternalActionExecutionAuthorizationV1 = {
                             localCause: 'native_route_not_found';
                             route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                             httpStatus: 404;
+                        } | {
+                            localCause: 'plugin_action_input_schema_invalid';
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            issues: {
+                                path: (number | string)[];
+                                code: string;
+                            }[];
                         } | {
                             localCause: 'ssh_keyscan_failed';
                             resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
@@ -20983,6 +21037,16 @@ export type ExternalActionExecutionAuthorizationV1 = {
                             route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                             httpStatus: 404;
                         } | {
+                            localCause: 'plugin_action_input_schema_invalid';
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            issues: {
+                                path: (number | string)[];
+                                code: string;
+                            }[];
+                        } | {
                             localCause: 'ssh_keyscan_failed';
                             resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
                         } | {
@@ -20992,6 +21056,237 @@ export type ExternalActionExecutionAuthorizationV1 = {
                         kind: 'unsupported';
                         code: string;
                     };
+                    observeSessionBirth?(observe: () => Promise<null | {
+                        type: 'error';
+                        code: 'agent_cli_missing' | 'agent_cli_not_ready' | 'agent_signed_out' | 'cancelled' | 'creation_conflict' | 'data_key_not_required' | 'incompatible_target' | 'invalid_cursor' | 'invalid_input' | 'invalid_request' | 'machine_offline' | 'organization_invalid' | 'organization_unavailable' | 'permission_denied' | 'recipient_envelope_required' | 'recipient_key_unavailable' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_disabled' | 'session_access_external_sharing_requires_team_admin' | 'session_access_forbidden' | 'session_access_invalid_recipient_envelope' | 'session_access_owner_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_request_failed' | 'session_access_self_grant_invalid' | 'session_access_session_not_found' | 'session_access_sharing_unavailable' | 'session_access_subject_ineligible' | 'session_access_subject_not_found' | 'session_access_team_policy_required' | 'session_data_key_unavailable' | 'session_initial_access_creator_mismatch' | 'session_responsibility_assignee_unavailable' | 'spawn_failed' | 'target_required' | 'target_unavailable';
+                        retryable: boolean;
+                        failureCause?: ActionFailureCauseV1 | undefined;
+                        agentId?: string | undefined;
+                        providerError?: undefined | {
+                            v: 1;
+                            code: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported';
+                            retryable: boolean;
+                            action: 'add_secret' | 'choose_connection' | 'choose_model' | 'enable_connection' | 'enable_on_machine' | 'load_model' | 'reduce_provider_settings' | 'replace_secret' | 'restart_probe' | 'restore_plugin' | 'retry' | 'review_account_grant' | 'review_and_restart' | 'review_compatibility' | 'review_connection' | 'review_credential_transport' | 'review_current_state' | 'review_features' | 'review_machine_grant' | 'review_profile_migration';
+                            requestId?: string | undefined;
+                            failureCause?: ActionFailureCauseV1 | undefined;
+                            connectionId?: (string) | undefined;
+                            machineId?: string | undefined;
+                            sourceProfileId?: string | undefined;
+                            retryAfterMs?: number | undefined;
+                            reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
+                            savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                        };
+                        terminalHostError?: undefined | {
+                            kind: 'terminal_host_unavailable';
+                            host: 'herdr' | 'zellij';
+                            reason: 'installation_unavailable' | 'server_version_unsupported';
+                        };
+                        incompatibleTarget?: undefined | {
+                            reason: 'checkout_unavailable' | 'context_memory_protocol_unavailable' | 'creation_lookup_unavailable' | 'creation_settlement_unavailable' | 'daemon_rpc_unavailable' | 'initial_access_unsupported' | 'initial_trigger_protocol_unavailable' | 'requester_credentials_unavailable' | 'session_spawn_protocol_unavailable' | 'spawn_rpc_unavailable' | 'target_preparation_invalid_result' | 'target_preparation_rpc_unavailable' | 'terminal_host_unavailable';
+                        };
+                        launchError?: undefined | {
+                            kind: 'launch_error';
+                            code: string;
+                            message: string;
+                            subtype?: 'check_failed' | 'closure_changed' | 'no_closure' | 'writer_active' | undefined;
+                            rpcErrorCode?: 'MACHINE_RPC_TIMEOUT' | 'RPC_OUTCOME_UNKNOWN' | 'RPC_TRANSPORT_UNAVAILABLE' | undefined;
+                            connectionPhase?: 'reachability-start' | 'reachability-wait' | 'socket-connect' | undefined;
+                            currentnessFailure?: undefined | {
+                                reason: 'http_error' | 'invalid_response' | 'network' | 'timeout';
+                                retryable: boolean;
+                                statusCode?: number | undefined;
+                            };
+                            childExit?: undefined | {
+                                code: null | number;
+                                signal: null | string;
+                                stderrHead?: string | undefined;
+                                cause?: undefined | {
+                                    kind: 'module_not_found';
+                                    specifierBasename: string;
+                                };
+                            };
+                            spawnFailure?: undefined | {
+                                reason: 'no_ptys' | 'other' | 'out_of_memory' | 'process_limit' | 'too_many_open_files';
+                                errno?: string | undefined;
+                                nativeErrno?: number | undefined;
+                                cwd?: string | undefined;
+                            };
+                            failureCause?: undefined | {
+                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                code?: string | undefined;
+                                retryable?: boolean | undefined;
+                                requestId?: string | undefined;
+                                preparationCause?: undefined | {
+                                    code: string;
+                                    stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                    requestId?: string | undefined;
+                                };
+                                connectedServicesDefault?: undefined | {
+                                    v: 1;
+                                    source: 'account_default';
+                                    reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                    phase: 'purpose_binding';
+                                    catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                };
+                                reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                providerErrorCode?: number | string | undefined;
+                                httpStatus?: number | undefined;
+                                providerErrorMessage?: string | undefined;
+                            };
+                            pluginCodeRefusal?: undefined | {
+                                remedy: {
+                                    kind: 'ask_machine_manager';
+                                } | {
+                                    kind: 'open_machine_security';
+                                    target: {
+                                        serverId: string;
+                                        machineId: string;
+                                    };
+                                };
+                            };
+                            agentIsolationRefusal?: undefined | {
+                                reason: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'member_setup_required' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+                                phase: 'native_execution_preparation' | 'native_identity_binding';
+                                reasonCode?: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported' | undefined;
+                                nativeFailure?: undefined | {
+                                    kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                                    reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                                    phase?: 'apply' | 'check' | undefined;
+                                };
+                                probeFailure?: undefined | {
+                                    exitCode: number;
+                                    check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                                    identity: {
+                                        username: string;
+                                        uid: number;
+                                        gid: number;
+                                        home: string;
+                                        cwd: string;
+                                    };
+                                } | {
+                                    transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                                    check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                                    identity: {
+                                        username: string;
+                                        uid: number;
+                                        gid: number;
+                                        home: string;
+                                        cwd: string;
+                                    };
+                                };
+                                readinessCode?: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready' | undefined;
+                                operationErrorCode?: 'machine_setup_operation_unavailable' | undefined;
+                                remedy?: undefined | {
+                                    kind: 'ask_machine_manager';
+                                } | {
+                                    kind: 'open_machine_security';
+                                    target: {
+                                        serverId: string;
+                                        machineId: string;
+                                    };
+                                };
+                            };
+                            profileRefusal?: undefined | {
+                                profileId: string;
+                                reason: 'profile_catalog_unavailable' | 'profile_overlay_mismatch' | 'profile_resume_unavailable' | 'profile_target_incompatible';
+                                catalogStatus?: 'loading' | 'partial' | 'unavailable' | undefined;
+                            };
+                            uxDiagnostic?: undefined | {
+                                code: 'connected_service_credential_mode_unsupported' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_credential_scope_missing' | 'connected_service_materialization_identity_missing' | 'connected_service_native_auth_materialization_failed' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                retryable: boolean;
+                                suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                serviceId?: string | undefined;
+                                agentId?: string | undefined;
+                                profileId?: string | undefined;
+                                groupId?: string | undefined;
+                                diagnostics?: undefined | ({
+                                    [x: string]: boolean | null | number | string;
+                                } & {
+                                    reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                });
+                            };
+                            connectedAccountPool?: undefined | {
+                                serviceId: string;
+                                excluded: {
+                                    profileId: string;
+                                    reason: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'not_meaningfully_better' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_evidence_unavailable' | 'quota_exhausted' | 'quota_probe_deferred' | 'validation_blocked';
+                                    retryAtMs?: null | number | undefined;
+                                }[];
+                            };
+                        };
+                    } | {
+                        type: 'error';
+                        code: 'update_required';
+                        retryable: false;
+                        details: {
+                            kind: 'update_required';
+                            operation: string;
+                            component: 'client' | 'daemon' | 'server';
+                            reason: string;
+                        };
+                    } | {
+                        type: 'pending';
+                        retryWithSameCreationKey: true;
+                        outcome: 'accepted' | 'unknown';
+                        operation?: undefined | {
+                            serverId: string;
+                            machineId: string;
+                            operationId: string;
+                        };
+                        sessionId?: string | undefined;
+                    } | {
+                        type: 'success';
+                        disposition: 'created' | 'rejoined';
+                        sessionId: string;
+                        executionTarget: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        organizationPlacement: {
+                            folderId: null | string;
+                            tagIds: string[];
+                        };
+                        initialInput: {
+                            status: 'accepted';
+                            localId: string;
+                        } | {
+                            status: 'alreadyAccepted';
+                            localId: string;
+                        } | {
+                            status: 'notRequested';
+                        } | {
+                            status: 'outcomeUnknown';
+                            localId: string;
+                            code: string;
+                        } | {
+                            status: 'rejected';
+                            code: 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion';
+                        };
+                        attestedContext?: undefined | {
+                            externalPrincipalId: string;
+                            sourceMessageId: string;
+                        };
+                        filesNotCopied?: undefined | {
+                            reason: 'cross_machine';
+                        };
+                        sourceKeyPreparation?: undefined | {
+                            kind: 'not_needed';
+                        } | {
+                            kind: 'prepared';
+                        } | {
+                            kind: 'waiting';
+                            reason: 'runner_key_unavailable' | 'runner_unreachable' | 'source_key_unavailable' | 'unsupported';
+                            cause?: 'action_context_unavailable' | 'credentials_unavailable' | 'destination_machine_exception' | 'destination_machine_missing' | 'destination_machine_unresolved' | 'destination_transport_exception' | 'destination_transport_unavailable' | 'home_identity_unavailable' | 'machine_content_key_unavailable' | 'machine_content_mode_mismatch' | 'machine_rpc_failed' | 'machine_rpc_invalid_response' | 'machine_target_not_current' | 'preparation_exception' | 'rpc_method_unavailable' | 'server_features_exception' | 'source_key_exception' | 'source_key_unavailable' | 'source_transport_exception' | 'source_transport_unavailable' | undefined;
+                        };
+                        agentUpdate?: undefined | {
+                            agentId: string;
+                            status: 'failed' | 'pending';
+                            requestId?: string | undefined;
+                        };
+                    }>): void;
                     accept(result: unknown): void;
                 }> | undefined;
                 operationOwnerUpdate?: Readonly<{
@@ -21189,7 +21484,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
                             };
                             reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
-                            providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                            providerErrorCode?: number | string | undefined;
                             httpStatus?: number | undefined;
                             providerErrorMessage?: string | undefined;
                         };
@@ -21336,6 +21631,16 @@ export type ExternalActionExecutionAuthorizationV1 = {
                         route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                         httpStatus: 404;
                     } | {
+                        localCause: 'plugin_action_input_schema_invalid';
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        issues: {
+                            path: (number | string)[];
+                            code: string;
+                        }[];
+                    } | {
                         localCause: 'ssh_keyscan_failed';
                         resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
                     } | {
@@ -21365,6 +21670,16 @@ export type ExternalActionExecutionAuthorizationV1 = {
                         localCause: 'native_route_not_found';
                         route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                         httpStatus: 404;
+                    } | {
+                        localCause: 'plugin_action_input_schema_invalid';
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        issues: {
+                            path: (number | string)[];
+                            code: string;
+                        }[];
                     } | {
                         localCause: 'ssh_keyscan_failed';
                         resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
@@ -21396,6 +21711,16 @@ export type ExternalActionExecutionAuthorizationV1 = {
                         route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                         httpStatus: 404;
                     } | {
+                        localCause: 'plugin_action_input_schema_invalid';
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        issues: {
+                            path: (number | string)[];
+                            code: string;
+                        }[];
+                    } | {
                         localCause: 'ssh_keyscan_failed';
                         resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
                     } | {
@@ -21405,6 +21730,237 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     kind: 'unsupported';
                     code: string;
                 };
+                observeSessionBirth?(observe: () => Promise<null | {
+                    type: 'error';
+                    code: 'agent_cli_missing' | 'agent_cli_not_ready' | 'agent_signed_out' | 'cancelled' | 'creation_conflict' | 'data_key_not_required' | 'incompatible_target' | 'invalid_cursor' | 'invalid_input' | 'invalid_request' | 'machine_offline' | 'organization_invalid' | 'organization_unavailable' | 'permission_denied' | 'recipient_envelope_required' | 'recipient_key_unavailable' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_disabled' | 'session_access_external_sharing_requires_team_admin' | 'session_access_forbidden' | 'session_access_invalid_recipient_envelope' | 'session_access_owner_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_request_failed' | 'session_access_self_grant_invalid' | 'session_access_session_not_found' | 'session_access_sharing_unavailable' | 'session_access_subject_ineligible' | 'session_access_subject_not_found' | 'session_access_team_policy_required' | 'session_data_key_unavailable' | 'session_initial_access_creator_mismatch' | 'session_responsibility_assignee_unavailable' | 'spawn_failed' | 'target_required' | 'target_unavailable';
+                    retryable: boolean;
+                    failureCause?: ActionFailureCauseV1 | undefined;
+                    agentId?: string | undefined;
+                    providerError?: undefined | {
+                        v: 1;
+                        code: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported';
+                        retryable: boolean;
+                        action: 'add_secret' | 'choose_connection' | 'choose_model' | 'enable_connection' | 'enable_on_machine' | 'load_model' | 'reduce_provider_settings' | 'replace_secret' | 'restart_probe' | 'restore_plugin' | 'retry' | 'review_account_grant' | 'review_and_restart' | 'review_compatibility' | 'review_connection' | 'review_credential_transport' | 'review_current_state' | 'review_features' | 'review_machine_grant' | 'review_profile_migration';
+                        requestId?: string | undefined;
+                        failureCause?: ActionFailureCauseV1 | undefined;
+                        connectionId?: (string) | undefined;
+                        machineId?: string | undefined;
+                        sourceProfileId?: string | undefined;
+                        retryAfterMs?: number | undefined;
+                        reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
+                        savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    };
+                    terminalHostError?: undefined | {
+                        kind: 'terminal_host_unavailable';
+                        host: 'herdr' | 'zellij';
+                        reason: 'installation_unavailable' | 'server_version_unsupported';
+                    };
+                    incompatibleTarget?: undefined | {
+                        reason: 'checkout_unavailable' | 'context_memory_protocol_unavailable' | 'creation_lookup_unavailable' | 'creation_settlement_unavailable' | 'daemon_rpc_unavailable' | 'initial_access_unsupported' | 'initial_trigger_protocol_unavailable' | 'requester_credentials_unavailable' | 'session_spawn_protocol_unavailable' | 'spawn_rpc_unavailable' | 'target_preparation_invalid_result' | 'target_preparation_rpc_unavailable' | 'terminal_host_unavailable';
+                    };
+                    launchError?: undefined | {
+                        kind: 'launch_error';
+                        code: string;
+                        message: string;
+                        subtype?: 'check_failed' | 'closure_changed' | 'no_closure' | 'writer_active' | undefined;
+                        rpcErrorCode?: 'MACHINE_RPC_TIMEOUT' | 'RPC_OUTCOME_UNKNOWN' | 'RPC_TRANSPORT_UNAVAILABLE' | undefined;
+                        connectionPhase?: 'reachability-start' | 'reachability-wait' | 'socket-connect' | undefined;
+                        currentnessFailure?: undefined | {
+                            reason: 'http_error' | 'invalid_response' | 'network' | 'timeout';
+                            retryable: boolean;
+                            statusCode?: number | undefined;
+                        };
+                        childExit?: undefined | {
+                            code: null | number;
+                            signal: null | string;
+                            stderrHead?: string | undefined;
+                            cause?: undefined | {
+                                kind: 'module_not_found';
+                                specifierBasename: string;
+                            };
+                        };
+                        spawnFailure?: undefined | {
+                            reason: 'no_ptys' | 'other' | 'out_of_memory' | 'process_limit' | 'too_many_open_files';
+                            errno?: string | undefined;
+                            nativeErrno?: number | undefined;
+                            cwd?: string | undefined;
+                        };
+                        failureCause?: undefined | {
+                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                            failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'model_selection_required' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                            code?: string | undefined;
+                            retryable?: boolean | undefined;
+                            requestId?: string | undefined;
+                            preparationCause?: undefined | {
+                                code: string;
+                                stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                requestId?: string | undefined;
+                            };
+                            connectedServicesDefault?: undefined | {
+                                v: 1;
+                                source: 'account_default';
+                                reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                phase: 'purpose_binding';
+                                catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                            };
+                            reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                            providerErrorCode?: number | string | undefined;
+                            httpStatus?: number | undefined;
+                            providerErrorMessage?: string | undefined;
+                        };
+                        pluginCodeRefusal?: undefined | {
+                            remedy: {
+                                kind: 'ask_machine_manager';
+                            } | {
+                                kind: 'open_machine_security';
+                                target: {
+                                    serverId: string;
+                                    machineId: string;
+                                };
+                            };
+                        };
+                        agentIsolationRefusal?: undefined | {
+                            reason: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'member_setup_required' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+                            phase: 'native_execution_preparation' | 'native_identity_binding';
+                            reasonCode?: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported' | undefined;
+                            nativeFailure?: undefined | {
+                                kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                                reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                                phase?: 'apply' | 'check' | undefined;
+                            };
+                            probeFailure?: undefined | {
+                                exitCode: number;
+                                check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                                identity: {
+                                    username: string;
+                                    uid: number;
+                                    gid: number;
+                                    home: string;
+                                    cwd: string;
+                                };
+                            } | {
+                                transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                                check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                                identity: {
+                                    username: string;
+                                    uid: number;
+                                    gid: number;
+                                    home: string;
+                                    cwd: string;
+                                };
+                            };
+                            readinessCode?: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready' | undefined;
+                            operationErrorCode?: 'machine_setup_operation_unavailable' | undefined;
+                            remedy?: undefined | {
+                                kind: 'ask_machine_manager';
+                            } | {
+                                kind: 'open_machine_security';
+                                target: {
+                                    serverId: string;
+                                    machineId: string;
+                                };
+                            };
+                        };
+                        profileRefusal?: undefined | {
+                            profileId: string;
+                            reason: 'profile_catalog_unavailable' | 'profile_overlay_mismatch' | 'profile_resume_unavailable' | 'profile_target_incompatible';
+                            catalogStatus?: 'loading' | 'partial' | 'unavailable' | undefined;
+                        };
+                        uxDiagnostic?: undefined | {
+                            code: 'connected_service_credential_mode_unsupported' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_credential_scope_missing' | 'connected_service_materialization_identity_missing' | 'connected_service_native_auth_materialization_failed' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                            failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                            source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                            retryable: boolean;
+                            suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                            serviceId?: string | undefined;
+                            agentId?: string | undefined;
+                            profileId?: string | undefined;
+                            groupId?: string | undefined;
+                            diagnostics?: undefined | ({
+                                [x: string]: boolean | null | number | string;
+                            } & {
+                                reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                            });
+                        };
+                        connectedAccountPool?: undefined | {
+                            serviceId: string;
+                            excluded: {
+                                profileId: string;
+                                reason: 'auth_invalid' | 'capacity_limited' | 'cooldown' | 'credential_unavailable' | 'current_active' | 'disabled' | 'not_meaningfully_better' | 'plan_unavailable' | 'policy_wait_until_reset' | 'quota_evidence_unavailable' | 'quota_exhausted' | 'quota_probe_deferred' | 'validation_blocked';
+                                retryAtMs?: null | number | undefined;
+                            }[];
+                        };
+                    };
+                } | {
+                    type: 'error';
+                    code: 'update_required';
+                    retryable: false;
+                    details: {
+                        kind: 'update_required';
+                        operation: string;
+                        component: 'client' | 'daemon' | 'server';
+                        reason: string;
+                    };
+                } | {
+                    type: 'pending';
+                    retryWithSameCreationKey: true;
+                    outcome: 'accepted' | 'unknown';
+                    operation?: undefined | {
+                        serverId: string;
+                        machineId: string;
+                        operationId: string;
+                    };
+                    sessionId?: string | undefined;
+                } | {
+                    type: 'success';
+                    disposition: 'created' | 'rejoined';
+                    sessionId: string;
+                    executionTarget: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                    organizationPlacement: {
+                        folderId: null | string;
+                        tagIds: string[];
+                    };
+                    initialInput: {
+                        status: 'accepted';
+                        localId: string;
+                    } | {
+                        status: 'alreadyAccepted';
+                        localId: string;
+                    } | {
+                        status: 'notRequested';
+                    } | {
+                        status: 'outcomeUnknown';
+                        localId: string;
+                        code: string;
+                    } | {
+                        status: 'rejected';
+                        code: 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion';
+                    };
+                    attestedContext?: undefined | {
+                        externalPrincipalId: string;
+                        sourceMessageId: string;
+                    };
+                    filesNotCopied?: undefined | {
+                        reason: 'cross_machine';
+                    };
+                    sourceKeyPreparation?: undefined | {
+                        kind: 'not_needed';
+                    } | {
+                        kind: 'prepared';
+                    } | {
+                        kind: 'waiting';
+                        reason: 'runner_key_unavailable' | 'runner_unreachable' | 'source_key_unavailable' | 'unsupported';
+                        cause?: 'action_context_unavailable' | 'credentials_unavailable' | 'destination_machine_exception' | 'destination_machine_missing' | 'destination_machine_unresolved' | 'destination_transport_exception' | 'destination_transport_unavailable' | 'home_identity_unavailable' | 'machine_content_key_unavailable' | 'machine_content_mode_mismatch' | 'machine_rpc_failed' | 'machine_rpc_invalid_response' | 'machine_target_not_current' | 'preparation_exception' | 'rpc_method_unavailable' | 'server_features_exception' | 'source_key_exception' | 'source_key_unavailable' | 'source_transport_exception' | 'source_transport_unavailable' | undefined;
+                    };
+                    agentUpdate?: undefined | {
+                        agentId: string;
+                        status: 'failed' | 'pending';
+                        requestId?: string | undefined;
+                    };
+                }>): void;
                 accept(result: unknown): void;
             }> | undefined;
             runActionOperation?: ((request: Readonly<{
@@ -22931,6 +23487,13 @@ export type ExternalActionExecutionAuthorizationV1 = {
                         managedId: string;
                     };
                 } | {
+                    actionId: 'machines.managed.cancel' | 'machines.managed.setup.skip';
+                    input: {
+                        expectedIntentRevision: number;
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.credentials.install';
                     input: {
                         homeId: string;
@@ -24147,6 +24710,13 @@ export type ExternalActionExecutionAuthorizationV1 = {
                         managedId: string;
                     };
                 } | {
+                    actionId: 'machines.managed.cancel' | 'machines.managed.setup.skip';
+                    input: {
+                        expectedIntentRevision: number;
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.credentials.install';
                     input: {
                         homeId: string;
@@ -24480,6 +25050,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                         machineId: string;
                         grantRef: string;
                     }[];
+                    machineTargets?: string[] | undefined;
                 } | {
                     operation: 'template';
                     mode: 'apply' | 'preview';
@@ -24547,6 +25118,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     expectedRevision: number;
                     intent: 'initializeAndSave' | 'markNotNeeded' | 'save' | 'test';
                     inputDigest: string;
+                    receiverMachineId?: string | undefined;
                 } | {
                     kind: 'domain';
                     actionId: 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
@@ -25700,6 +26272,13 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                     managedId: string;
                                 };
                             } | {
+                                actionId: 'machines.managed.cancel' | 'machines.managed.setup.skip';
+                                input: {
+                                    expectedIntentRevision: number;
+                                    homeId: string;
+                                    managedId: string;
+                                };
+                            } | {
                                 actionId: 'machines.managed.credentials.install';
                                 input: {
                                     homeId: string;
@@ -25762,6 +26341,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                     managedId: string;
                                 };
                             };
+                            managedAcquireDelegation?: true | undefined;
                             managedAccountExecutor?: undefined | {
                                 enrolledMachineId: string;
                             };
@@ -25856,6 +26436,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                         expectedRevision: number;
                                         intent: 'initializeAndSave' | 'markNotNeeded' | 'save' | 'test';
                                         inputDigest: string;
+                                        receiverMachineId?: string | undefined;
                                     } | {
                                         kind: 'domain';
                                         actionId: 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
@@ -26099,6 +26680,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                     machineId: string;
                                     grantRef: string;
                                 }[];
+                                machineTargets?: string[] | undefined;
                             } | {
                                 operation: 'template';
                                 mode: 'apply' | 'preview';
@@ -26186,6 +26768,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 expectedRevision: number;
                                 intent: 'initializeAndSave' | 'markNotNeeded' | 'save' | 'test';
                                 inputDigest: string;
+                                receiverMachineId?: string | undefined;
                             } | {
                                 kind: 'domain';
                                 actionId: 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
@@ -26468,6 +27051,13 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                     managedId: string;
                                 };
                             } | {
+                                actionId: 'machines.managed.cancel' | 'machines.managed.setup.skip';
+                                input: {
+                                    expectedIntentRevision: number;
+                                    homeId: string;
+                                    managedId: string;
+                                };
+                            } | {
                                 actionId: 'machines.managed.credentials.install';
                                 input: {
                                     homeId: string;
@@ -26530,6 +27120,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                     managedId: string;
                                 };
                             };
+                            managedAcquireDelegation?: true | undefined;
                             managedAccountExecutor?: undefined | {
                                 enrolledMachineId: string;
                             };
@@ -26624,6 +27215,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                         expectedRevision: number;
                                         intent: 'initializeAndSave' | 'markNotNeeded' | 'save' | 'test';
                                         inputDigest: string;
+                                        receiverMachineId?: string | undefined;
                                     } | {
                                         kind: 'domain';
                                         actionId: 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
@@ -26867,6 +27459,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                     machineId: string;
                                     grantRef: string;
                                 }[];
+                                machineTargets?: string[] | undefined;
                             } | {
                                 operation: 'template';
                                 mode: 'apply' | 'preview';
@@ -26954,6 +27547,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 expectedRevision: number;
                                 intent: 'initializeAndSave' | 'markNotNeeded' | 'save' | 'test';
                                 inputDigest: string;
+                                receiverMachineId?: string | undefined;
                             } | {
                                 kind: 'domain';
                                 actionId: 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
@@ -27290,6 +27884,13 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                     managedId: string;
                                 };
                             } | {
+                                actionId: 'machines.managed.cancel' | 'machines.managed.setup.skip';
+                                input: {
+                                    expectedIntentRevision: number;
+                                    homeId: string;
+                                    managedId: string;
+                                };
+                            } | {
                                 actionId: 'machines.managed.credentials.install';
                                 input: {
                                     homeId: string;
@@ -27352,6 +27953,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                     managedId: string;
                                 };
                             };
+                            managedAcquireDelegation?: true | undefined;
                             managedAccountExecutor?: undefined | {
                                 enrolledMachineId: string;
                             };
@@ -27446,6 +28048,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                         expectedRevision: number;
                                         intent: 'initializeAndSave' | 'markNotNeeded' | 'save' | 'test';
                                         inputDigest: string;
+                                        receiverMachineId?: string | undefined;
                                     } | {
                                         kind: 'domain';
                                         actionId: 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
@@ -27689,6 +28292,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                     machineId: string;
                                     grantRef: string;
                                 }[];
+                                machineTargets?: string[] | undefined;
                             } | {
                                 operation: 'template';
                                 mode: 'apply' | 'preview';
@@ -27776,6 +28380,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 expectedRevision: number;
                                 intent: 'initializeAndSave' | 'markNotNeeded' | 'save' | 'test';
                                 inputDigest: string;
+                                receiverMachineId?: string | undefined;
                             } | {
                                 kind: 'domain';
                                 actionId: 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
@@ -29292,6 +29897,13 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 managedId: string;
                             };
                         } | {
+                            actionId: 'machines.managed.cancel' | 'machines.managed.setup.skip';
+                            input: {
+                                expectedIntentRevision: number;
+                                homeId: string;
+                                managedId: string;
+                            };
+                        } | {
                             actionId: 'machines.managed.credentials.install';
                             input: {
                                 homeId: string;
@@ -30508,6 +31120,13 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 managedId: string;
                             };
                         } | {
+                            actionId: 'machines.managed.cancel' | 'machines.managed.setup.skip';
+                            input: {
+                                expectedIntentRevision: number;
+                                homeId: string;
+                                managedId: string;
+                            };
+                        } | {
                             actionId: 'machines.managed.credentials.install';
                             input: {
                                 homeId: string;
@@ -30841,6 +31460,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 machineId: string;
                                 grantRef: string;
                             }[];
+                            machineTargets?: string[] | undefined;
                         } | {
                             operation: 'template';
                             mode: 'apply' | 'preview';
@@ -30908,6 +31528,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                             expectedRevision: number;
                             intent: 'initializeAndSave' | 'markNotNeeded' | 'save' | 'test';
                             inputDigest: string;
+                            receiverMachineId?: string | undefined;
                         } | {
                             kind: 'domain';
                             actionId: 'deployments.domains.add' | 'deployments.domains.remove' | 'deployments.domains.verify';
@@ -31231,6 +31852,10 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     role: string;
                     input: JsonValue;
                     invocationServices?: Readonly<{
+                        deploymentPreviewDomain?: undefined | {
+                            domainId: string;
+                            url: string;
+                        };
                         sessionCreation?: Readonly<{
                             beforeLaunch(birth: Readonly<{
                                 sessionId: string;
@@ -32664,6 +33289,16 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                     route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
                                     httpStatus: 404;
                                 } | {
+                                    localCause: 'plugin_action_input_schema_invalid';
+                                    action: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    issues: {
+                                        path: (number | string)[];
+                                        code: string;
+                                    }[];
+                                } | {
                                     localCause: 'ssh_keyscan_failed';
                                     resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
                                 } | {
@@ -32710,7 +33345,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     }> | undefined;
                 }>[] | undefined;
                 invoke(request: Readonly<{
-                    action: 'account.apiTokens.create' | 'account.apiTokens.list' | 'account.apiTokens.revoke' | 'account.apiTokens.revokeAll' | 'account.apiTokens.update' | 'account.credentials.forgetAll' | 'account.delete' | 'account.email.change.request' | 'account.encryption.automationTemplates.recover' | 'account.encryption.historicalKey.forget' | 'account.home_continuation.invoke' | 'account.name.set' | 'account.password.change' | 'account.password.enroll' | 'account.password.remove' | 'account.plugins.data.erase' | 'account.profile.get' | 'account.public_profile.embed.get' | 'account.public_profile.get' | 'account.public_profile.pause' | 'account.public_profile.preview' | 'account.public_profile.publish' | 'account.public_profile.refresh' | 'account.public_profile.report.get' | 'account.public_profile.resume' | 'account.public_profile.unpublish' | 'account.public_profile.update' | 'account.security.get' | 'account.sessions.signOutEverywhere' | 'account.signOut' | 'account.username.check' | 'account.username.release' | 'account.username.set' | 'action.invoke' | 'action.operations.cancel' | 'action.operations.get' | 'action.operations.list' | 'action.options.resolve' | 'action.spec.get' | 'action.spec.search' | 'actions.policy.get' | 'actions.policy.reset' | 'actions.policy.set' | 'agents.acp.backends.delete' | 'agents.acp.backends.get' | 'agents.acp.backends.installFromRegistry' | 'agents.acp.backends.upsert' | 'agents.backends.list' | 'agents.config_options.list' | 'agents.models.list' | 'agents.session_modes.list' | 'app.updates.check' | 'app.updates.get' | 'app.updates.restart' | 'app.updates.retry' | 'app.updates.skip' | 'app.updates.update' | 'approval.request.create' | 'approval.request.decide' | 'approval.request.get' | 'approval.request.list' | 'artifact.access.grants.list' | 'artifact.access.grants.remove' | 'artifact.access.grants.set' | 'artifact.create' | 'artifact.delete' | 'artifact.export' | 'artifact.folder.set' | 'artifact.folders.create' | 'artifact.folders.delete' | 'artifact.folders.list' | 'artifact.folders.move' | 'artifact.folders.read' | 'artifact.folders.rename' | 'artifact.get' | 'artifact.list' | 'artifact.public_link.audit' | 'artifact.public_link.create' | 'artifact.public_link.join' | 'artifact.public_link.list' | 'artifact.public_link.revoke' | 'artifact.publish_from_file' | 'artifact.revisions.list' | 'artifact.revisions.restore' | 'artifact.storage.usage' | 'artifact.update' | 'automation.conversation.admit' | 'automation.conversation.target.verify' | 'automation.conversation.targets.list' | 'automation.event.admit' | 'automation.event.source.status.report' | 'automation.event.sources.list' | 'automation.run.reply_handoff.retry' | 'automation.run.result.redeliver' | 'boards.apply' | 'boards.list' | 'browser.automation.answerDialog' | 'browser.automation.cancelActive' | 'browser.automation.click' | 'browser.automation.clipboardRead' | 'browser.automation.clipboardWrite' | 'browser.automation.download' | 'browser.automation.drag' | 'browser.automation.focus' | 'browser.automation.getInteractionState' | 'browser.automation.goBack' | 'browser.automation.goForward' | 'browser.automation.hover' | 'browser.automation.navigate' | 'browser.automation.press' | 'browser.automation.queryElements' | 'browser.automation.reload' | 'browser.automation.scroll' | 'browser.automation.secret.fill' | 'browser.automation.select' | 'browser.automation.semanticSnapshot' | 'browser.automation.setValue' | 'browser.automation.snapshot' | 'browser.automation.status' | 'browser.automation.tap' | 'browser.automation.timeline.get' | 'browser.automation.type' | 'browser.automation.upload' | 'browser.automation.waitFor' | 'browser.context.annotation.attachDraft' | 'browser.context.annotation.cancel' | 'browser.context.annotation.setDraftComment' | 'browser.context.annotation.start' | 'browser.context.attachToAgentTurn' | 'browser.context.attachToComposer' | 'browser.context.captureConsoleSummary' | 'browser.context.captureNetworkSummary' | 'browser.context.capturePage' | 'browser.context.captureScreenshot' | 'browser.context.captureSelectedElement' | 'browser.context.clear' | 'browser.control.handBack' | 'browser.control.takeControl' | 'browser.diagnostics.clear' | 'browser.diagnostics.elementPicker.cancel' | 'browser.diagnostics.elementPicker.start' | 'browser.diagnostics.eval' | 'browser.diagnostics.getProperties' | 'browser.diagnostics.pause' | 'browser.diagnostics.releaseObjectGroup' | 'browser.diagnostics.resume' | 'browser.diagnostics.snapshot' | 'browser.extensions.disable' | 'browser.extensions.enable' | 'browser.extensions.install' | 'browser.extensions.list' | 'browser.extensions.openActionPopup' | 'browser.extensions.openOptions' | 'browser.extensions.remove' | 'browser.extensions.update' | 'browser.goBack' | 'browser.goForward' | 'browser.navigate' | 'browser.profile.create' | 'browser.profile.delete' | 'browser.profile.list' | 'browser.profile.logins.import' | 'browser.profile.select' | 'browser.recording.attachToComposer' | 'browser.recording.cancel' | 'browser.recording.cleanupExpired' | 'browser.recording.discard' | 'browser.recording.listForView' | 'browser.recording.start' | 'browser.recording.status' | 'browser.recording.stop' | 'browser.reload' | 'browser.sandbox.install' | 'browser.stop' | 'browser.target.set' | 'browser.view.close' | 'browser.view.focus' | 'browser.view.list' | 'browser.view.open' | 'browser.view.openDevtools' | 'browser.view.openExternal' | 'browser.view.setViewport' | 'browser.workspace.open' | 'bugreport.collectDiagnostics' | 'bugreport.getLogTail' | 'bugreport.submit' | 'bugreport.uploadArtifact' | 'capture.view' | 'clipboard.write' | 'code.callHierarchy.get' | 'code.codeAction.apply' | 'code.codeActions.list' | 'code.completion.list' | 'code.definition.get' | 'code.diagnostics.list' | 'code.file.rename.apply' | 'code.file.rename.preview' | 'code.format.apply' | 'code.hover.get' | 'code.implementation.get' | 'code.imports.organize' | 'code.references.list' | 'code.rename.apply' | 'code.rename.preview' | 'code.restart' | 'code.signature.get' | 'code.symbols.list' | 'code.symbols.workspace' | 'code.typeDefinition.get' | 'composer.attachments.pick' | 'composer.transaction.apply' | 'computer.capture' | 'computer.clipboard.read' | 'computer.clipboard.write' | 'computer.control.handBack' | 'computer.control.interrupt' | 'computer.control.status' | 'computer.input' | 'computer.permissions.openSettings' | 'computer.query' | 'computer.recording.attachToComposer' | 'computer.recording.cancel' | 'computer.recording.cleanupExpired' | 'computer.recording.discard' | 'computer.recording.listForTarget' | 'computer.recording.start' | 'computer.recording.status' | 'computer.recording.stop' | 'computer.secret.fill' | 'computer.target.close' | 'computer.target.get' | 'computer.target.select' | 'computer.targets.list' | 'connectedServices.accounts.credentials.save' | 'connectedServices.accounts.default.set' | 'connectedServices.accounts.list' | 'connectedServices.accounts.purposeDefault.set' | 'connectedServices.accounts.rename' | 'connectedServices.accounts.revoke' | 'connectedServices.acknowledgements.reset' | 'connectedServices.acknowledgements.set' | 'connectedServices.authentication.beginConnect' | 'connectedServices.authentication.beginReconnect' | 'connectedServices.authentication.cancel' | 'connectedServices.authentication.completeOAuth' | 'connectedServices.authentication.continueConnect' | 'connectedServices.authentication.pending.list' | 'connectedServices.authentication.pollDevice' | 'connectedServices.authentication.read' | 'connectedServices.authentication.reconcile' | 'connectedServices.authentication.resumeDevice' | 'connectedServices.authentication.submitManual' | 'connectedServices.billing.open' | 'connectedServices.catalog.list' | 'connectedServices.configuration.get' | 'connectedServices.configuration.replace' | 'connectedServices.identityPrivacy.set' | 'connectedServices.labels.reset' | 'connectedServices.labels.set' | 'connectedServices.pools.create' | 'connectedServices.pools.default.set' | 'connectedServices.pools.delete' | 'connectedServices.pools.get' | 'connectedServices.pools.members.add' | 'connectedServices.pools.members.patch' | 'connectedServices.pools.members.remove' | 'connectedServices.pools.patch' | 'connectedServices.pools.reorder' | 'connectedServices.pools.selection.get' | 'connectedServices.pools.switchNow' | 'connectedServices.purposes.default.set' | 'connectedServices.quota.get' | 'connectedServices.quota.refresh' | 'connectedServices.quota.reset' | 'connectedServices.subscription.price.set' | 'daemon.filesystem.browseDirectory' | 'daemon.filesystem.copy' | 'daemon.filesystem.createDirectory' | 'daemon.filesystem.delete' | 'daemon.filesystem.download' | 'daemon.filesystem.getDirectoryTree' | 'daemon.filesystem.listDirectory' | 'daemon.filesystem.listFiles' | 'daemon.filesystem.listRoots' | 'daemon.filesystem.readFile' | 'daemon.filesystem.rename' | 'daemon.filesystem.transfer.cancel' | 'daemon.filesystem.upload' | 'daemon.filesystem.writeFile' | 'deployments.backups.configure' | 'deployments.backups.history' | 'deployments.backups.inventory' | 'deployments.backups.prune' | 'deployments.backups.restore' | 'deployments.backups.run' | 'deployments.backups.test' | 'deployments.backups.verify' | 'deployments.bindings.set' | 'deployments.cancel' | 'deployments.data.query' | 'deployments.deploy' | 'deployments.domains.add' | 'deployments.domains.get' | 'deployments.domains.list' | 'deployments.domains.remove' | 'deployments.domains.verify' | 'deployments.drift.read' | 'deployments.environments.controller.set' | 'deployments.environments.create' | 'deployments.environments.delete' | 'deployments.environments.get' | 'deployments.environments.list' | 'deployments.environments.moveToRepository' | 'deployments.environments.update' | 'deployments.health.current' | 'deployments.health.read' | 'deployments.logs.read' | 'deployments.observation.get' | 'deployments.prepare' | 'deployments.promote' | 'deployments.publish.prepare' | 'deployments.receipts.get' | 'deployments.receipts.list' | 'deployments.receipts.observe' | 'deployments.restart' | 'deployments.rollback' | 'deployments.targets.link' | 'deployments.targets.unlink' | 'deployments.teardown' | 'deployments.templates.instantiate' | 'desktop.displays.list' | 'desktop.notch.set' | 'desktop.windows.open' | 'devices.simulator.input.button' | 'devices.simulator.input.key' | 'devices.simulator.input.orientation' | 'devices.simulator.input.pinch' | 'devices.simulator.input.rotate' | 'devices.simulator.input.swipe' | 'devices.simulator.input.tap' | 'devices.simulator.input.text' | 'devices.simulator.lease.acquire' | 'devices.simulator.lease.release' | 'devices.simulator.lease.renew' | 'devices.simulator.list' | 'devices.simulator.sideband.request' | 'devices.simulator.stream.fps.set' | 'devices.simulator.stream.keyframe' | 'devices.simulator.stream.quality.set' | 'devices.simulator.stream.scale.set' | 'devices.simulator.stream.snapshot' | 'diagnostics.daemons.check' | 'diagnostics.diagnosis.run' | 'diagnostics.status.get' | 'discussion.access.grants.list' | 'discussion.access.grants.remove' | 'discussion.access.grants.set' | 'discussion.archive' | 'discussion.attachment.read' | 'discussion.candidates.list' | 'discussion.create' | 'discussion.get' | 'discussion.invite' | 'discussion.leave' | 'discussion.list' | 'discussion.list.view.get' | 'discussion.list.view.reset' | 'discussion.list.view.set' | 'discussion.owner.transfer' | 'discussion.participant.policy.set' | 'discussion.participant.remove' | 'discussion.participants.list' | 'discussion.pass' | 'discussion.post' | 'discussion.read' | 'discussion.read_state.set' | 'discussion.rename' | 'discussion.reply' | 'discussion.restore' | 'discussion.second_opinion.start' | 'discussion.settings.get' | 'discussion.settings.set' | 'doc.comment.reply' | 'doc.edit.accept' | 'doc.edit.decline' | 'doc.edit.propose' | 'doc.read' | 'execution.run.action' | 'execution.run.cancel_turn' | 'execution.run.ensure' | 'execution.run.ensure_or_start' | 'execution.run.get' | 'execution.run.list' | 'execution.run.permission.respond' | 'execution.run.send' | 'execution.run.start' | 'execution.run.stop' | 'execution.run.stream.cancel' | 'execution.run.stream.read' | 'execution.run.stream.start' | 'execution.run.wait' | 'file.editor.resolve' | 'file.editor.save' | 'file.view.get' | 'file.view.preference.set' | 'file.view.set' | 'files.save' | 'follow.get' | 'follow.list' | 'follow.preferences.get' | 'follow.preferences.set' | 'follow.preview' | 'follow.remove' | 'follow.set' | 'friends.add' | 'friends.remove' | 'home.accounts.delete' | 'home.accounts.disable' | 'home.accounts.enable' | 'home.accounts.get' | 'home.accounts.list' | 'home.accounts.role.set' | 'home.accounts.search' | 'home.accounts.signOutEverywhere' | 'home.audit.list' | 'home.emptiness.get' | 'home.governance.claim' | 'home.governance.eligibility.get' | 'home.governance.get' | 'home.hub.layout.get' | 'home.hub.layout.update' | 'home.identity.connections.create' | 'home.identity.connections.disable' | 'home.identity.connections.enable' | 'home.identity.connections.list' | 'home.identity.connections.remove' | 'home.identity.connections.remove.preview' | 'home.identity.connections.settings.update' | 'home.identity.connections.test.consume' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.connection.create' | 'home.identity.workos.connection.set' | 'home.identity.workos.reconcile' | 'home.mailDelivery.get' | 'home.mailDelivery.test' | 'home.policy.set' | 'home.public_profiles.handle_reclaim' | 'home.public_profiles.restore' | 'home.public_profiles.restrict' | 'home.reachNudge.dismiss' | 'home.reachability.get' | 'home.reachability.iroh.set' | 'home.retention.dryRun' | 'home.runtime.get' | 'home.runtime.restart' | 'home.search.rebuild' | 'home.settings.get' | 'home.settings.set' | 'homes.connect' | 'homes.reconnect' | 'identity.githubApps.create' | 'identity.githubApps.list' | 'identity.githubApps.manifestSetup.start' | 'identity.githubApps.remove' | 'identity.githubApps.update' | 'identity.githubApps.verifyInstallation' | 'identity.providers.create' | 'identity.providers.disable' | 'identity.providers.enable' | 'identity.providers.list' | 'identity.providers.remove' | 'identity.providers.remove.preview' | 'identity.providers.secret.replace' | 'identity.providers.test.consume' | 'identity.providers.test.start' | 'identity.providers.update' | 'identity.providers.validate' | 'inbox.get' | 'inbox.mark_all_read' | 'inbox.notice.dismiss' | 'launch_profiles.create' | 'launch_profiles.delete' | 'launch_profiles.draft.discard' | 'launch_profiles.duplicate' | 'launch_profiles.edit' | 'launch_profiles.enabled.set' | 'launch_profiles.favorite.set' | 'launch_profiles.legacy.convert' | 'launch_profiles.legacy.preview' | 'launch_profiles.legacy.resolve_conflict' | 'launch_profiles.prompt_stack.update' | 'launch_profiles.publish' | 'launch_profiles.read' | 'launch_profiles.save' | 'launch_profiles.search' | 'launch_profiles.secrets.select' | 'launch_profiles.select' | 'links.openExternal' | 'localServices.actions.copyUrl' | 'localServices.actions.forget' | 'localServices.actions.openPreview' | 'localServices.actions.restartManaged' | 'localServices.actions.stopManaged' | 'localServices.actions.terminateDetected' | 'localServices.inventory.list' | 'localServices.inventory.refresh' | 'localServices.launcher.history.clear' | 'localServices.launcher.openPreview' | 'localServices.launcher.registerPreview' | 'localServices.launcher.snapshot' | 'localServices.launcher.start' | 'localServices.preview.openOrCreate' | 'localServices.preview.revoke' | 'localServices.preview.status' | 'localServices.publicPreview.copyUrl' | 'localServices.publicPreview.create' | 'localServices.publicPreview.revoke' | 'localServices.publicPreview.status' | 'machines.access.grant.remove' | 'machines.access.grant.set' | 'machines.access.grants.list' | 'machines.access.leave' | 'machines.access.prepareKeys' | 'machines.add.command' | 'machines.add.local.cancel' | 'machines.add.local.start' | 'machines.add.ssh.cancel' | 'machines.add.ssh.respond' | 'machines.add.ssh.start' | 'machines.add.ssh.status' | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set' | 'machines.agentIsolation.status' | 'machines.agents.install' | 'machines.agents.install.cancel' | 'machines.agents.install.status' | 'machines.agents.list' | 'machines.agents.signIn.cancel' | 'machines.agents.signIn.restart' | 'machines.agents.signIn.start' | 'machines.agents.signIn.status' | 'machines.agents.uninstall' | 'machines.capabilities.detect' | 'machines.capabilities.install' | 'machines.cli.update' | 'machines.command.run' | 'machines.daemon.stop' | 'machines.guard.activity.list' | 'machines.guard.activity.undo' | 'machines.guard.get' | 'machines.guard.idleStop.keepRunning' | 'machines.guard.sessionCeiling.set' | 'machines.list' | 'machines.local.service.autostart.set' | 'machines.local.service.disconnect' | 'machines.local.service.restart' | 'machines.local.service.start' | 'machines.local.service.status' | 'machines.local.service.stop' | 'machines.local.service.update' | 'machines.managed.acquire' | 'machines.managed.birth.get' | 'machines.managed.bootstrap.respond' | 'machines.managed.bootstrap.retry' | 'machines.managed.cancel' | 'machines.managed.controller.update' | 'machines.managed.credentials.install' | 'machines.managed.delete' | 'machines.managed.get' | 'machines.managed.inspect' | 'machines.managed.list' | 'machines.managed.power.set' | 'machines.managed.rebuild' | 'machines.managed.references.get' | 'machines.managed.resize' | 'machines.managed.retention.update' | 'machines.managed.retire' | 'machines.managed.setup.skip' | 'machines.metadata.update' | 'machines.pairing.create' | 'machines.pools.create' | 'machines.pools.delete' | 'machines.pools.get' | 'machines.pools.list' | 'machines.pools.resolve' | 'machines.pools.update' | 'machines.presence.read' | 'machines.presets.archive' | 'machines.presets.create' | 'machines.presets.get' | 'machines.presets.list' | 'machines.presets.restore' | 'machines.presets.update' | 'machines.processes.check' | 'machines.processes.get' | 'machines.processes.kill' | 'machines.processes.leftBehind.cleanUp' | 'machines.processes.list' | 'machines.processes.startAgain' | 'machines.processes.stop' | 'machines.provisioners.check' | 'machines.provisioners.list' | 'machines.provisioners.options' | 'machines.reachability.configure' | 'machines.reachability.inspect' | 'machines.reboot' | 'machines.remove' | 'machines.replacement.clear' | 'machines.replacement.set' | 'machines.resources.policy.get' | 'machines.resources.policy.set' | 'machines.runs.list' | 'machines.services.adopt' | 'machines.services.control' | 'machines.services.detail' | 'machines.services.discovery' | 'machines.services.exec' | 'machines.services.list' | 'machines.services.logs.read' | 'machines.services.unwatch' | 'machines.services.watch' | 'machines.setup.adminAccess.inspect' | 'machines.setup.adminAccess.set' | 'machines.setup.apply' | 'machines.setup.plan' | 'machines.setup.remove' | 'machines.setup.updates.apply' | 'machines.storage.category.list' | 'machines.storage.deleteNow' | 'machines.storage.docker.prune' | 'machines.storage.items.check' | 'machines.storage.pile.get' | 'machines.storage.pile.set' | 'machines.storage.protected.add' | 'machines.storage.protected.remove' | 'machines.storage.scan.cancel' | 'machines.storage.scan.get' | 'machines.storage.scan.skip' | 'machines.storage.scan.start' | 'machines.storage.size.refresh' | 'machines.storage.suggestions.decline' | 'machines.storage.suggestions.list' | 'machines.storage.summary.get' | 'machines.storage.trash.empty' | 'machines.storage.trash.move' | 'machines.storage.trash.restore' | 'machines.storage.worktrees.list' | 'machines.terminal.close' | 'machines.terminal.list' | 'machines.terminal.open' | 'machines.terminal.read' | 'machines.terminal.restart' | 'machines.terminal.write' | 'machines.vitals.get' | 'machines.vitals.history.get' | 'machines.vitals.summaries.list' | 'machines.work.summary.get' | 'machines.worker.policy.get' | 'machines.worker.policy.set' | 'mcp.found.adopt' | 'mcp.found.list' | 'mcp.rules.set' | 'mcp.servers.create' | 'mcp.servers.delete' | 'mcp.servers.duplicate' | 'mcp.servers.import' | 'mcp.servers.list' | 'mcp.servers.read' | 'mcp.servers.signIn.start' | 'mcp.servers.test' | 'mcp.servers.tools.list' | 'mcp.servers.tools.set' | 'mcp.servers.update' | 'media.annotation.apply' | 'media.annotation.read' | 'memory.clear_index' | 'memory.decision.save' | 'memory.ensure_up_to_date' | 'memory.forget' | 'memory.get_window' | 'memory.list' | 'memory.read' | 'memory.remember' | 'memory.search' | 'memory.status' | 'memory.update' | 'models.favorite.set' | 'notifications.desktop.permission.read' | 'notifications.desktop.permission.request' | 'notifications.expoPush.update' | 'notifications.notify_me' | 'notifications.push.permission.read' | 'notifications.push.permission.request' | 'notifications.push.register' | 'notifications.push.test' | 'notifications.push.tokens.list' | 'notifications.push.tokens.remove' | 'notifications.sounds.preview' | 'notifications.test' | 'notifications.webhooks.add' | 'notifications.webhooks.list' | 'notifications.webhooks.remove' | 'notifications.webhooks.signingSecret.clear' | 'notifications.webhooks.signingSecret.set' | 'notifications.webhooks.test' | 'notifications.webhooks.update' | 'paths.list_recent' | 'peerMediation.observability.snapshot' | 'peerMediation.observability.subscribe' | 'peerMediation.observability.unsubscribe' | 'plugin.webhook.delivery.discard' | 'plugin.webhook.delivery.movePending' | 'plugin.webhook.delivery.replay' | 'plugin.webhook.endpoint.checkCorrespondence' | 'plugin.webhook.endpoint.convergeTarget' | 'plugin.webhook.endpoint.credential.configure' | 'plugin.webhook.endpoint.credential.finishRotation' | 'plugin.webhook.endpoint.credential.rotate' | 'plugin.webhook.endpoint.ensure' | 'plugin.webhook.endpoint.read' | 'plugin.webhook.endpoint.retarget' | 'plugin.webhook.endpoint.revoke' | 'plugins.account.cache.clear' | 'plugins.account.hosting.remove' | 'plugins.account.hosting.set' | 'plugins.account.release.select' | 'plugins.change.status' | 'plugins.dev.build' | 'plugins.dev.install' | 'plugins.dev.publication.inspect' | 'plugins.dev.publication.prepare' | 'plugins.dev.publication.status' | 'plugins.dev.publish' | 'plugins.dev.submit' | 'plugins.dev.test' | 'plugins.dev.typecheck' | 'plugins.dev.unregister' | 'plugins.disable' | 'plugins.doctor' | 'plugins.enable' | 'plugins.execution_origin.clear' | 'plugins.execution_origin.list' | 'plugins.execution_origin.set' | 'plugins.install' | 'plugins.list' | 'plugins.npm_registry_profiles.add' | 'plugins.npm_registry_profiles.list' | 'plugins.npm_registry_profiles.login' | 'plugins.npm_registry_profiles.logout' | 'plugins.npm_registry_profiles.remove' | 'plugins.npm_registry_profiles.test' | 'plugins.npm_registry_profiles.update' | 'plugins.pack' | 'plugins.permissions.grants.dismissRequest' | 'plugins.permissions.grants.grant' | 'plugins.permissions.grants.list' | 'plugins.permissions.grants.request' | 'plugins.permissions.grants.revoke' | 'plugins.reload' | 'plugins.rollback' | 'plugins.scaffold' | 'plugins.sessionHooks.disable' | 'plugins.sessionHooks.enable' | 'plugins.sessionHooks.install' | 'plugins.sessionHooks.status.get' | 'plugins.sessionHooks.uninstall' | 'plugins.settings.get' | 'plugins.settings.list' | 'plugins.settings.reset' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.delete' | 'plugins.settings.secret.status' | 'plugins.settings.secret.unbind' | 'plugins.settings.set' | 'plugins.trust.forget' | 'plugins.uninstall' | 'plugins.update_policy.set' | 'projects.compute.exec' | 'projects.context.update' | 'projects.deploymentDefaults.set' | 'projects.execution.output.copy' | 'projects.execution.output.open' | 'projects.execution.output.read' | 'projects.inspect' | 'projects.list' | 'projects.manifest.update' | 'projects.open' | 'projects.organization.color.set' | 'projects.organization.update' | 'projects.pages.list' | 'projects.prepare' | 'projects.readiness.read' | 'projects.script.run' | 'projects.service.placement.get' | 'projects.service.placement.set' | 'projects.service.relocate' | 'projects.sources.create' | 'projects.sources.delete' | 'projects.sources.list' | 'projects.sources.moveToTeam' | 'projects.sources.read' | 'projects.sources.update' | 'projects.starters.create' | 'projects.trust.list' | 'projects.trust.revoke' | 'projects.visibility.set' | 'projects.worker.copy.inspect' | 'projects.worker.copy.retire' | 'projects.worker.preferences.get' | 'projects.worker.preferences.reset' | 'projects.worker.preferences.set' | 'projects.worker.status' | 'projects.workspace.forget' | 'projects.workspace.update' | 'prompt_bundle.update' | 'prompt_doc.create' | 'prompt_doc.favorite.set' | 'prompt_doc.get' | 'prompt_doc.update' | 'prompt_registry.install' | 'prompts.invocation.create' | 'prompts.invocation.delete' | 'prompts.invocation.resolve' | 'prompts.invocation.update' | 'prompts.invocations.list' | 'prompts.library.list' | 'prompts.stack.update' | 'providers.binding.status' | 'providers.connections.create_contribution' | 'providers.connections.create_custom' | 'providers.connections.delete' | 'providers.connections.describe' | 'providers.connections.duplicate' | 'providers.connections.enable_detected' | 'providers.connections.enabled.set' | 'providers.connections.endpoint.set' | 'providers.connections.secrets.bind' | 'providers.connections.start_local' | 'providers.connections.update' | 'providers.defaults.set' | 'providers.gateways.choose' | 'providers.legacy.prepare' | 'providers.models.cancel_load' | 'providers.models.experimental.confirm' | 'providers.models.list' | 'providers.models.load' | 'providers.models.manual.add' | 'providers.models.manual.remove' | 'providers.models.projection' | 'providers.models.refresh' | 'providers.models.source_visibility.set' | 'providers.models.visibility.bulk' | 'providers.models.visibility.reset' | 'providers.models.visibility.set' | 'providers.probe' | 'providers.usage.refresh' | 'registries.items.list' | 'registries.items.read' | 'registries.sources.create' | 'registries.sources.delete' | 'registries.sources.detect' | 'registries.sources.list' | 'registries.sources.token.set' | 'registries.sources.update' | 'registries.updates.check' | 'relay.access.configure' | 'relay.access.disable' | 'relay.access.status' | 'relay.runtime.install_or_update' | 'relay.runtime.open_path' | 'relay.runtime.personal_home.backup' | 'relay.runtime.personal_home.choose_archive' | 'relay.runtime.personal_home.choose_backup_destination' | 'relay.runtime.personal_home.claim' | 'relay.runtime.personal_home.erase' | 'relay.runtime.personal_home.inspect' | 'relay.runtime.personal_home.recover_restore' | 'relay.runtime.personal_home.relocate' | 'relay.runtime.personal_home.restore' | 'relay.runtime.personal_home.verify_backup' | 'relay.runtime.restart' | 'relay.runtime.reveal_output' | 'relay.runtime.start' | 'relay.runtime.status' | 'relay.runtime.stop' | 'relay.runtime.task.cancel' | 'relay.runtime.uninstall' | 'remote_hosts.add' | 'remote_hosts.cli.install_or_update' | 'remote_hosts.connect' | 'remote_hosts.credential.change' | 'remote_hosts.daemon.install_or_update' | 'remote_hosts.daemon.restart' | 'remote_hosts.daemon.start' | 'remote_hosts.daemon.stop' | 'remote_hosts.delete' | 'remote_hosts.duplicate' | 'remote_hosts.edit' | 'remote_hosts.list' | 'remote_hosts.personal_home.erase' | 'remote_hosts.read' | 'remote_hosts.relay.access.status' | 'remote_hosts.relay.configure' | 'remote_hosts.relay.install_or_update' | 'remote_hosts.relay.restart' | 'remote_hosts.relay.start' | 'remote_hosts.relay.status' | 'remote_hosts.relay.stop' | 'remote_hosts.relay.test' | 'remote_hosts.relay.use' | 'remote_hosts.save' | 'remote_hosts.setup_as_machine' | 'remote_hosts.trusted_keys.clear' | 'remote_hosts.trusted_keys.list' | 'remote_hosts.trusted_keys.remove' | 'remote_hosts.tunnel.list' | 'remote_hosts.tunnel.stop' | 'repository.upload.pick' | 'review.apply' | 'review.engines.list' | 'review.explain_findings' | 'review.start' | 'review.walkthrough' | 'reviews.comments.attachEvidence' | 'reviews.comments.bulkTransition' | 'reviews.comments.claimPublicationDispatch' | 'reviews.comments.create' | 'reviews.comments.edit' | 'reviews.comments.get' | 'reviews.comments.list' | 'reviews.comments.redact' | 'reviews.comments.reply' | 'reviews.comments.setDisposition' | 'reviews.comments.transition' | 'roles.create' | 'roles.delete' | 'roles.get' | 'roles.list' | 'roles.override.reset' | 'roles.override.set' | 'roles.update' | 'scm.backend.describe' | 'scm.blame.get' | 'scm.branch.checkout' | 'scm.branch.create' | 'scm.branch.list' | 'scm.branch.merge' | 'scm.branch.operation.abort' | 'scm.branch.operation.continue' | 'scm.branch.operation.skip' | 'scm.branch.rebase' | 'scm.change.discard' | 'scm.change.exclude' | 'scm.change.include' | 'scm.commit.backout' | 'scm.commit.create' | 'scm.commit.resolveOutcome' | 'scm.commit.undoLast' | 'scm.conflict.acceptSide' | 'scm.conflict.markResolved' | 'scm.diff.commit' | 'scm.diff.file' | 'scm.diffSummary.addOutputs' | 'scm.diffSummary.capture' | 'scm.diffSummary.commitPlan.accept' | 'scm.diffSummary.commitPlan.cancel' | 'scm.diffSummary.commitPlan.includeHookChanges' | 'scm.diffSummary.commitPlan.recover' | 'scm.diffSummary.commitPlan.stop' | 'scm.diffSummary.discuss' | 'scm.diffSummary.draftPullRequest' | 'scm.diffSummary.generate' | 'scm.diffSummary.refine' | 'scm.diffSummary.result.clear' | 'scm.diffSummary.result.delete' | 'scm.diffSummary.result.edit' | 'scm.diffSummary.result.list' | 'scm.diffSummary.result.read' | 'scm.diffSummary.result.undo' | 'scm.diffSummary.reviewed.mark' | 'scm.diffSummary.reviewed.unmark' | 'scm.file.read' | 'scm.history.entries' | 'scm.hostingRepository.describePublishTargets' | 'scm.hostingRepository.get' | 'scm.hostingRepository.publish' | 'scm.hostingRepository.resolveAddress' | 'scm.log.list' | 'scm.pullRequest.checkout' | 'scm.pullRequest.get' | 'scm.pullRequest.list' | 'scm.pullRequest.openCompose' | 'scm.pullRequest.openOrReuse' | 'scm.pullRequest.prepareWorktree' | 'scm.pullRequest.runStacked' | 'scm.remote.add' | 'scm.remote.fetch' | 'scm.remote.publish' | 'scm.remote.pull' | 'scm.remote.push' | 'scm.remote.remove' | 'scm.remote.setUrl' | 'scm.repository.clone' | 'scm.repository.init' | 'scm.repository.removeIndexLock' | 'scm.reviewWorkspace.materializePrepared' | 'scm.stash.apply' | 'scm.stash.create' | 'scm.stash.drop' | 'scm.stash.list' | 'scm.stash.pop' | 'scm.stash.show' | 'scm.status.snapshot' | 'scm.suggestion.apply' | 'scm.worktree.create' | 'scm.worktree.prune' | 'scm.worktree.remove' | 'scm.worktrees.enrichment' | 'screenCapture.addToDraft' | 'screenCapture.copy' | 'screenCapture.discard' | 'screenCapture.open' | 'screenCapture.permissions.read' | 'screenCapture.permissions.request' | 'screenCapture.privacy.set' | 'screenCapture.recent.list' | 'screenCapture.recording.edit' | 'screenCapture.recording.pause' | 'screenCapture.recording.read' | 'screenCapture.recording.resume' | 'screenCapture.recording.status' | 'screenCapture.recording.stop' | 'screenCapture.send' | 'screenCapture.showInFolder' | 'screenCapture.start' | 'screenCapture.targets.list' | 'screenCapture.windowText.read' | 'search.conversations' | 'search.settings.get' | 'search.settings.set' | 'secrets.create' | 'secrets.delete' | 'secrets.export' | 'secrets.link' | 'secrets.list' | 'secrets.update' | 'secrets.usedBy' | 'servers.list' | 'session.access.accounts.search' | 'session.access.candidates.inspect' | 'session.access.context.set' | 'session.access.encryption.prepare' | 'session.access.encryption.reprepare' | 'session.access.grant.remove' | 'session.access.grant.set' | 'session.access.grants.list' | 'session.access.layout.update' | 'session.access.principals.resolve' | 'session.activity.get' | 'session.agent.transition' | 'session.approval_profile.set' | 'session.approval_reviewer.set' | 'session.archive' | 'session.attention.set' | 'session.authoring.open' | 'session.board.get' | 'session.board.item.remove' | 'session.board.item.upsert' | 'session.board.layout.update' | 'session.bot.face.set' | 'session.bot.set' | 'session.capabilities.get' | 'session.capabilities.set' | 'session.checkpoint' | 'session.checkpoint_code_rollback' | 'session.compact' | 'session.config_option.set' | 'session.connected_services_auth.set' | 'session.context.update' | 'session.continuation.inspect' | 'session.continue_with_replay' | 'session.control.switch' | 'session.coordinator.enable' | 'session.delete' | 'session.delivery.mute.list' | 'session.delivery.mute.remove' | 'session.delivery.mute.set' | 'session.draft.append' | 'session.draft.delete' | 'session.draft.directory.set' | 'session.draft.model.set' | 'session.draft.open' | 'session.events.get' | 'session.exchange.control' | 'session.fork' | 'session.goal.clear' | 'session.goal.get' | 'session.goal.set' | 'session.handoff' | 'session.handoff.abort' | 'session.handoff.commit' | 'session.handoff.prepare_target' | 'session.handoff.prepare_target.resume' | 'session.handoff.prepare_target_result.get' | 'session.handoff.status.get' | 'session.history.get' | 'session.input.result.get' | 'session.instructions.set' | 'session.list' | 'session.list.view.get' | 'session.list.view.reset' | 'session.list.view.set' | 'session.log.tail' | 'session.manager.set' | 'session.memory.set' | 'session.message.reply' | 'session.message.send' | 'session.messages.pins' | 'session.messages.recent.get' | 'session.mode.set' | 'session.model.set' | 'session.model.unarm' | 'session.needs_you.raise' | 'session.notes.set' | 'session.open' | 'session.organization.appearance.set' | 'session.organization.move' | 'session.organization.pin.set' | 'session.pending.action.set' | 'session.pending.dismiss' | 'session.pending.edit' | 'session.pending.markHandled' | 'session.pending.next' | 'session.pending.reorder' | 'session.pending.requeue' | 'session.pending.resetStart.cancel' | 'session.pending.resetStart.set' | 'session.pending.sendAsNew' | 'session.pending.sendNow' | 'session.pending.withdraw' | 'session.pendingInput.interruptAndRun' | 'session.permission.remote.grants.list' | 'session.permission.remote.grants.revoke' | 'session.permission.remote.pending.list' | 'session.permission.remote.respond' | 'session.permission.respond' | 'session.permission_mode.set' | 'session.presentation.apply' | 'session.public_link.create' | 'session.public_link.get' | 'session.public_link.remove' | 'session.read_state.set' | 'session.responsibility.candidates.list' | 'session.responsibility.set' | 'session.restore' | 'session.role.set' | 'session.roles.add' | 'session.roles.apply_to_reports' | 'session.roles.override.clear' | 'session.roles.override.set' | 'session.roles.remove' | 'session.rollback' | 'session.runtime.refresh' | 'session.section.set' | 'session.sections.archive' | 'session.sections.create' | 'session.sections.delete' | 'session.sections.list' | 'session.sections.reorder' | 'session.sections.update' | 'session.skill_catalog.list' | 'session.space_membership.set' | 'session.spawn_new' | 'session.status.get' | 'session.status.set_reason' | 'session.stop' | 'session.tags.create' | 'session.tags.delete' | 'session.tags.list' | 'session.tags.rename' | 'session.tags.set' | 'session.target.primary.set' | 'session.target.tracked.set' | 'session.targets.resolve' | 'session.terminalComposer.clear' | 'session.terminals.close' | 'session.terminals.close_others' | 'session.terminals.close_tab' | 'session.terminals.detach' | 'session.terminals.focus' | 'session.terminals.list' | 'session.terminals.list_view' | 'session.terminals.open' | 'session.terminals.open_in_details' | 'session.terminals.rename' | 'session.terminals.reorder' | 'session.terminals.resize' | 'session.terminals.restart' | 'session.terminals.run_script' | 'session.terminals.split' | 'session.title.set' | 'session.transcript.get' | 'session.trigger.add' | 'session.trigger.list' | 'session.trigger.remove' | 'session.trigger.update' | 'session.turn.cancel' | 'session.unarchive' | 'session.update.post' | 'session.usageLimit.checkNow' | 'session.usageLimit.consumeResetCredit' | 'session.usageLimit.waitResume.cancel' | 'session.usageLimit.waitResume.enable' | 'session.user_action.answer' | 'session.user_action.remote.answer' | 'session.vendor_plugin_catalog.list' | 'session.view.toolCalls.set' | 'session.voice.preference.set' | 'session.wait.idle' | 'session.work.get' | 'session.work_state.get' | 'sessions.external.backgroundFollow.set' | 'sessions.external.candidate.delete' | 'sessions.external.candidates.list' | 'sessions.external.follow' | 'sessions.external.link.ensure' | 'sessions.external.materialize.start' | 'sessions.external.operation.cancel' | 'sessions.external.operation.discard' | 'sessions.external.operation.resume' | 'sessions.external.operation.retry' | 'sessions.external.operation.status.get' | 'sessions.external.status.get' | 'sessions.external.takeover' | 'sessions.external.takeover.start' | 'sessions.external.transcript.page' | 'sessions.external.transcript.readAfter' | 'sessions.external.unfollow' | 'sessions.runner.activation.cancel' | 'sessions.runner.activation.create' | 'sessions.runner.activation.get' | 'sessions.spawn.capabilities.preview' | 'sessions.spawn.connected_services.list' | 'sessions.spawn.mcp_servers.preview' | 'sessions.spawn.profiles.list' | 'sessions.subagents.complete' | 'sessions.subagents.get' | 'sessions.subagents.list' | 'sessions.subagents.updateStatus' | 'sessions.subagents.upsert' | 'sessions.subagents.watch' | 'settings.column.filter.clear' | 'settings.column.filter.get' | 'settings.column.filter.set' | 'settings.get' | 'settings.invoke' | 'settings.list' | 'settings.reset' | 'settings.set' | 'shell.column.get' | 'shell.column.set' | 'skills.create' | 'skills.delete' | 'skills.duplicate' | 'skills.export' | 'skills.found.adopt' | 'skills.found.list' | 'skills.found.read' | 'skills.install' | 'skills.list' | 'skills.machine.install' | 'skills.machine.uninstall' | 'skills.read' | 'skills.rules.set' | 'skills.update' | 'skills.updates.apply' | 'skills.updates.diff' | 'subagents.delegate.start' | 'subagents.plan.start' | 'tasks.internal.create' | 'tasks.internal.edit' | 'tasks.internal.grants' | 'tasks.internal.labels.clearColor' | 'tasks.internal.labels.setColor' | 'tasks.internal.list' | 'tasks.internal.prepare' | 'tasks.internal.read' | 'tasks.internal.reorder' | 'tasks.internal.session.link' | 'tasks.internal.share' | 'tasks.internal.transition' | 'tasks.internal.unshare' | 'teams.archive' | 'teams.create' | 'teams.get' | 'teams.groups.archive' | 'teams.groups.create' | 'teams.groups.get' | 'teams.groups.list' | 'teams.groups.members.add' | 'teams.groups.members.list' | 'teams.groups.members.remove' | 'teams.groups.restore' | 'teams.groups.update' | 'teams.identity.connections.create' | 'teams.identity.connections.disable' | 'teams.identity.connections.enable' | 'teams.identity.connections.list' | 'teams.identity.connections.remove' | 'teams.identity.connections.remove.preview' | 'teams.identity.connections.settings.update' | 'teams.identity.connections.test.consume' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.connection.create' | 'teams.identity.workos.reconcile' | 'teams.invitations.accept' | 'teams.invitations.accept.prepareApproval' | 'teams.invitations.create' | 'teams.invitations.list' | 'teams.invitations.preview' | 'teams.invitations.reissue' | 'teams.invitations.revoke' | 'teams.list' | 'teams.logo.remove' | 'teams.logo.set' | 'teams.members.add' | 'teams.members.get' | 'teams.members.groups.list' | 'teams.members.leave' | 'teams.members.list' | 'teams.members.management.set' | 'teams.members.reactivate' | 'teams.members.remove' | 'teams.members.role.set' | 'teams.members.suspend' | 'teams.policy.set' | 'teams.restore' | 'teams.update' | 'template.draft' | 'template.export_file' | 'template.follow.stop' | 'template.instantiate' | 'template.open' | 'template.preview' | 'template.release' | 'template.updates.apply' | 'template.updates.diff' | 'template.updates.skip' | 'transcript.follow' | 'transcript.import' | 'transcript.page' | 'transcript.readAfter' | 'transcript.search' | 'transcript.unfollow' | 'ui.command_palette.invoke' | 'ui.command_palette.list' | 'ui.current_context.command.invoke' | 'ui.current_context.read' | 'ui.find' | 'ui.pet.choose' | 'ui.prompts.history' | 'ui.prompts.picker.apply' | 'ui.prompts.picker.open' | 'ui.prompts.picker.select' | 'ui.voice_agent.teleport' | 'ui.voice_global.brief.close' | 'ui.voice_global.brief.request' | 'ui.voice_global.brief.retry' | 'ui.voice_global.brief.stop' | 'ui.voice_global.companion.reveal' | 'ui.voice_global.continue_conversation' | 'ui.voice_global.conversations.list' | 'ui.voice_global.conversations.open' | 'ui.voice_global.dictation.cancel' | 'ui.voice_global.dictation.dismiss' | 'ui.voice_global.dictation.finish' | 'ui.voice_global.dictation.retry' | 'ui.voice_global.dictation.start' | 'ui.voice_global.dismiss' | 'ui.voice_global.end' | 'ui.voice_global.get' | 'ui.voice_global.glance.close' | 'ui.voice_global.glance.open' | 'ui.voice_global.history.clear' | 'ui.voice_global.history.export' | 'ui.voice_global.history.load_older' | 'ui.voice_global.history.search' | 'ui.voice_global.hold_begin' | 'ui.voice_global.hold_cancel' | 'ui.voice_global.hold_release' | 'ui.voice_global.new_conversation' | 'ui.voice_global.open_conversation' | 'ui.voice_global.position.set' | 'ui.voice_global.recover' | 'ui.voice_global.reset' | 'ui.voice_global.say.start' | 'ui.voice_global.say.stop' | 'ui.voice_global.set_muted' | 'ui.voice_global.setup.close' | 'ui.voice_global.setup.microphone.permission.request' | 'ui.voice_global.setup.open' | 'ui.voice_global.setup.system_settings.open' | 'ui.voice_global.start' | 'ui.voice_global.transcript.set_visible' | 'ui.voice_global.turn_control' | 'updates.batch.start' | 'updates.batch.stop' | 'updates.check' | 'updates.get' | 'usage.calendar.export' | 'usage.coach.apply' | 'usage.coach.dismiss' | 'usage.coach.snooze' | 'usage.coach.undo' | 'usage.export' | 'usage.history.read' | 'usage.prices.get' | 'usage.prices.refresh' | 'usage.query' | 'usage.recap.compose' | 'usage.recap.deliver' | 'usage.recap.export' | 'usage.recap.private.compose' | 'usage.recap.private.deliver' | 'usage.recap.private.export' | 'usage.sources.consent.set' | 'usage.sources.discover' | 'usage.sources.dismiss' | 'usage.sources.get' | 'usage.sources.history.delete' | 'usage.sources.root.set' | 'usage.sources.stop' | 'voice_agent.start' | 'wait' | 'webhooks.call' | 'widgets.area.layout.create' | 'widgets.area.layout.delete' | 'widgets.area.layout.list' | 'widgets.area.layout.rename' | 'widgets.area.layout.reorder' | 'widgets.area.layout.reset' | 'widgets.area.layout.select' | 'widgets.area.layout.undo' | 'widgets.catalog.list' | 'widgets.definition.create' | 'widgets.definition.delete' | 'widgets.definition.duplicate' | 'widgets.definition.get' | 'widgets.definition.list' | 'widgets.definition.saveFromSession' | 'widgets.definition.update' | 'widgets.fragment.create' | 'widgets.fragment.delete' | 'widgets.fragment.duplicate' | 'widgets.fragment.get' | 'widgets.fragment.list' | 'widgets.fragment.update' | 'widgets.group.add' | 'widgets.group.create' | 'widgets.group.inputs.set' | 'widgets.group.set' | 'widgets.group.ungroup' | 'widgets.item.add' | 'widgets.item.frame.set' | 'widgets.item.inputs.get' | 'widgets.item.inputs.reset' | 'widgets.item.inputs.set' | 'widgets.item.inputs.validate' | 'widgets.item.list' | 'widgets.item.move' | 'widgets.item.network.set' | 'widgets.item.refresh' | 'widgets.item.remove' | 'widgets.item.rename' | 'widgets.item.size.set' | 'widgets.snapshot.post' | 'workflow.authoring.conversation.bind' | 'workflow.authoring.draft.discard' | 'workflow.authoring.draft.edit' | 'workflow.authoring.draft.get' | 'workflow.authoring.draft.redo' | 'workflow.authoring.draft.save' | 'workflow.authoring.draft.undo' | 'workflow.definition.capture' | 'workflow.definition.create' | 'workflow.definition.delete' | 'workflow.definition.edit' | 'workflow.definition.export' | 'workflow.definition.get' | 'workflow.definition.import' | 'workflow.definition.list' | 'workflow.definition.update' | 'workflow.discussion.round.project' | 'workflow.events.list' | 'workflow.library.view.get' | 'workflow.library.view.reset' | 'workflow.library.view.set' | 'workflow.run.cancel' | 'workflow.run.delete' | 'workflow.run.get' | 'workflow.run.invocations.complete_review' | 'workflow.run.invocations.get' | 'workflow.run.invocations.list' | 'workflow.run.invocations.publish_draft' | 'workflow.run.invocations.retry' | 'workflow.run.list' | 'workflow.run.pause' | 'workflow.run.read_state.set' | 'workflow.run.resume' | 'workflow.run.review.draft.set' | 'workflow.run.start' | 'workflow.run.summaries' | 'workflow.run.wait' | 'workflow.starters.list' | 'workflow.starters.resolve' | 'workflow.trigger.add' | 'workflow.trigger.list' | 'workflow.trigger.remove' | 'workflow.trigger.run_now' | 'workflow.trigger.test' | 'workflow.trigger.update' | 'workflow.validate' | 'workspace.files.link.get' | 'workspace.files.replace' | 'workspace.files.replace.preview' | 'workspace.files.search' | 'workspace.groups.focus' | 'workspace.groups.maximize' | 'workspace.groups.restore' | 'workspace.resize' | 'workspace.split' | 'workspace.sync.conflict.inspect' | 'workspace.sync.conflict.resolve' | 'workspace.sync.conflicts.list' | 'workspace.sync.relationship.create' | 'workspace.sync.relationship.disable' | 'workspace.sync.relationship.enable' | 'workspace.sync.relationship.flush' | 'workspace.sync.relationship.replace' | 'workspace.sync.relationship.terminate' | 'workspace.sync.relationships.list' | 'workspace.tabs.activate' | 'workspace.tabs.close' | 'workspace.tabs.close_all' | 'workspace.tabs.close_left' | 'workspace.tabs.close_others' | 'workspace.tabs.close_right' | 'workspace.tabs.closed.list' | 'workspace.tabs.list' | 'workspace.tabs.move' | 'workspace.tabs.open' | 'workspace.tabs.pin' | 'workspace.tabs.reopen' | 'workspace.tabs.reorder' | Readonly<any> | any;
+                    action: 'account.name.set' | 'account.profile.get' | 'account.public_profile.embed.get' | 'account.public_profile.get' | 'account.public_profile.pause' | 'account.public_profile.preview' | 'account.public_profile.publish' | 'account.public_profile.refresh' | 'account.public_profile.report.get' | 'account.public_profile.resume' | 'account.public_profile.unpublish' | 'account.public_profile.update' | 'account.username.check' | 'account.username.release' | 'account.username.set' | 'action.operations.cancel' | 'action.operations.get' | 'action.operations.list' | 'boards.apply' | 'boards.list' | 'capture.view' | 'code.callHierarchy.get' | 'code.codeAction.apply' | 'code.codeActions.list' | 'code.completion.list' | 'code.definition.get' | 'code.diagnostics.list' | 'code.file.rename.apply' | 'code.file.rename.preview' | 'code.format.apply' | 'code.hover.get' | 'code.implementation.get' | 'code.imports.organize' | 'code.references.list' | 'code.rename.apply' | 'code.rename.preview' | 'code.restart' | 'code.signature.get' | 'code.symbols.list' | 'code.symbols.workspace' | 'code.typeDefinition.get' | 'composer.attachments.pick' | 'composer.transaction.apply' | 'connectedServices.accounts.credentials.save' | 'connectedServices.accounts.default.set' | 'connectedServices.accounts.list' | 'connectedServices.accounts.purposeDefault.set' | 'connectedServices.accounts.rename' | 'connectedServices.accounts.revoke' | 'connectedServices.acknowledgements.reset' | 'connectedServices.acknowledgements.set' | 'connectedServices.authentication.beginConnect' | 'connectedServices.authentication.beginReconnect' | 'connectedServices.authentication.cancel' | 'connectedServices.authentication.completeOAuth' | 'connectedServices.authentication.continueConnect' | 'connectedServices.authentication.pending.list' | 'connectedServices.authentication.pollDevice' | 'connectedServices.authentication.read' | 'connectedServices.authentication.reconcile' | 'connectedServices.authentication.resumeDevice' | 'connectedServices.authentication.submitManual' | 'connectedServices.billing.open' | 'connectedServices.catalog.list' | 'connectedServices.configuration.get' | 'connectedServices.configuration.replace' | 'connectedServices.identityPrivacy.set' | 'connectedServices.labels.reset' | 'connectedServices.labels.set' | 'connectedServices.pools.create' | 'connectedServices.pools.default.set' | 'connectedServices.pools.delete' | 'connectedServices.pools.get' | 'connectedServices.pools.members.add' | 'connectedServices.pools.members.patch' | 'connectedServices.pools.members.remove' | 'connectedServices.pools.patch' | 'connectedServices.pools.reorder' | 'connectedServices.pools.selection.get' | 'connectedServices.pools.switchNow' | 'connectedServices.purposes.default.set' | 'connectedServices.quota.get' | 'connectedServices.quota.refresh' | 'connectedServices.quota.reset' | 'connectedServices.subscription.price.set' | 'daemon.filesystem.browseDirectory' | 'daemon.filesystem.copy' | 'daemon.filesystem.createDirectory' | 'daemon.filesystem.delete' | 'daemon.filesystem.download' | 'daemon.filesystem.getDirectoryTree' | 'daemon.filesystem.listDirectory' | 'daemon.filesystem.listFiles' | 'daemon.filesystem.listRoots' | 'daemon.filesystem.readFile' | 'daemon.filesystem.rename' | 'daemon.filesystem.transfer.cancel' | 'daemon.filesystem.upload' | 'daemon.filesystem.writeFile' | 'deployments.backups.configure' | 'deployments.backups.history' | 'deployments.backups.inventory' | 'deployments.backups.prune' | 'deployments.backups.restore' | 'deployments.backups.run' | 'deployments.backups.test' | 'deployments.backups.verify' | 'deployments.bindings.set' | 'deployments.cancel' | 'deployments.data.query' | 'deployments.deploy' | 'deployments.domains.add' | 'deployments.domains.get' | 'deployments.domains.list' | 'deployments.domains.remove' | 'deployments.domains.verify' | 'deployments.drift.read' | 'deployments.environments.controller.set' | 'deployments.environments.create' | 'deployments.environments.delete' | 'deployments.environments.get' | 'deployments.environments.list' | 'deployments.environments.moveToRepository' | 'deployments.environments.update' | 'deployments.health.current' | 'deployments.health.read' | 'deployments.logs.read' | 'deployments.observation.get' | 'deployments.prepare' | 'deployments.promote' | 'deployments.publish.prepare' | 'deployments.receipts.get' | 'deployments.receipts.list' | 'deployments.receipts.observe' | 'deployments.restart' | 'deployments.rollback' | 'deployments.targets.link' | 'deployments.targets.unlink' | 'deployments.teardown' | 'deployments.templates.instantiate' | 'diagnostics.daemons.check' | 'diagnostics.diagnosis.run' | 'diagnostics.status.get' | 'discussion.list.view.get' | 'discussion.list.view.reset' | 'discussion.list.view.set' | 'file.editor.resolve' | 'file.editor.save' | 'file.view.get' | 'file.view.preference.set' | 'file.view.set' | 'friends.add' | 'friends.remove' | 'launch_profiles.create' | 'launch_profiles.delete' | 'launch_profiles.draft.discard' | 'launch_profiles.duplicate' | 'launch_profiles.edit' | 'launch_profiles.enabled.set' | 'launch_profiles.favorite.set' | 'launch_profiles.legacy.convert' | 'launch_profiles.legacy.preview' | 'launch_profiles.legacy.resolve_conflict' | 'launch_profiles.prompt_stack.update' | 'launch_profiles.publish' | 'launch_profiles.read' | 'launch_profiles.save' | 'launch_profiles.search' | 'launch_profiles.secrets.select' | 'launch_profiles.select' | 'machines.worker.policy.get' | 'machines.worker.policy.set' | 'mcp.found.adopt' | 'mcp.found.list' | 'mcp.rules.set' | 'mcp.servers.create' | 'mcp.servers.delete' | 'mcp.servers.duplicate' | 'mcp.servers.import' | 'mcp.servers.list' | 'mcp.servers.read' | 'mcp.servers.signIn.start' | 'mcp.servers.test' | 'mcp.servers.tools.list' | 'mcp.servers.tools.set' | 'mcp.servers.update' | 'media.annotation.apply' | 'media.annotation.read' | 'plugins.account.cache.clear' | 'plugins.account.hosting.remove' | 'plugins.account.hosting.set' | 'plugins.account.release.select' | 'plugins.execution_origin.clear' | 'plugins.execution_origin.list' | 'plugins.execution_origin.set' | 'plugins.npm_registry_profiles.add' | 'plugins.npm_registry_profiles.list' | 'plugins.npm_registry_profiles.login' | 'plugins.npm_registry_profiles.logout' | 'plugins.npm_registry_profiles.remove' | 'plugins.npm_registry_profiles.test' | 'plugins.npm_registry_profiles.update' | 'projects.compute.exec' | 'projects.deploymentDefaults.set' | 'projects.execution.output.copy' | 'projects.execution.output.open' | 'projects.execution.output.read' | 'projects.inspect' | 'projects.manifest.update' | 'projects.organization.color.set' | 'projects.pages.list' | 'projects.prepare' | 'projects.readiness.read' | 'projects.script.run' | 'projects.service.placement.get' | 'projects.service.placement.set' | 'projects.sources.create' | 'projects.sources.delete' | 'projects.sources.list' | 'projects.sources.moveToTeam' | 'projects.sources.read' | 'projects.sources.update' | 'projects.starters.create' | 'projects.trust.list' | 'projects.trust.revoke' | 'projects.worker.copy.inspect' | 'projects.worker.copy.retire' | 'projects.worker.preferences.get' | 'projects.worker.preferences.reset' | 'projects.worker.preferences.set' | 'projects.worker.status' | 'providers.connections.create_contribution' | 'providers.connections.create_custom' | 'providers.connections.delete' | 'providers.connections.describe' | 'providers.connections.duplicate' | 'providers.connections.enable_detected' | 'providers.connections.enabled.set' | 'providers.connections.endpoint.set' | 'providers.connections.secrets.bind' | 'providers.connections.start_local' | 'providers.connections.update' | 'providers.gateways.choose' | 'providers.models.list' | 'providers.models.manual.add' | 'providers.models.projection' | 'providers.models.refresh' | 'registries.items.list' | 'registries.items.read' | 'registries.sources.create' | 'registries.sources.delete' | 'registries.sources.detect' | 'registries.sources.list' | 'registries.sources.token.set' | 'registries.sources.update' | 'registries.updates.check' | 'repository.upload.pick' | 'roles.create' | 'roles.delete' | 'roles.get' | 'roles.list' | 'roles.override.reset' | 'roles.override.set' | 'roles.update' | 'secrets.create' | 'secrets.delete' | 'secrets.export' | 'secrets.link' | 'secrets.list' | 'secrets.update' | 'secrets.usedBy' | 'session.agent.transition' | 'session.capabilities.get' | 'session.capabilities.set' | 'session.continuation.inspect' | 'session.list.view.get' | 'session.list.view.reset' | 'session.list.view.set' | 'session.notes.set' | 'session.organization.appearance.set' | 'session.organization.move' | 'session.organization.pin.set' | 'session.pending.reorder' | 'session.role.set' | 'session.roles.add' | 'session.roles.apply_to_reports' | 'session.roles.override.clear' | 'session.roles.override.set' | 'session.roles.remove' | 'session.terminals.close' | 'session.terminals.close_others' | 'session.terminals.close_tab' | 'session.terminals.detach' | 'session.terminals.focus' | 'session.terminals.list' | 'session.terminals.list_view' | 'session.terminals.open' | 'session.terminals.open_in_details' | 'session.terminals.rename' | 'session.terminals.reorder' | 'session.terminals.resize' | 'session.terminals.restart' | 'session.terminals.run_script' | 'session.terminals.split' | 'sessions.spawn.capabilities.preview' | 'settings.column.filter.clear' | 'settings.column.filter.get' | 'settings.column.filter.set' | 'shell.column.get' | 'shell.column.set' | 'skills.create' | 'skills.delete' | 'skills.duplicate' | 'skills.export' | 'skills.found.adopt' | 'skills.found.list' | 'skills.found.read' | 'skills.install' | 'skills.list' | 'skills.machine.install' | 'skills.machine.uninstall' | 'skills.read' | 'skills.rules.set' | 'skills.update' | 'skills.updates.apply' | 'skills.updates.diff' | 'tasks.internal.create' | 'tasks.internal.edit' | 'tasks.internal.grants' | 'tasks.internal.labels.clearColor' | 'tasks.internal.labels.setColor' | 'tasks.internal.list' | 'tasks.internal.prepare' | 'tasks.internal.read' | 'tasks.internal.reorder' | 'tasks.internal.session.link' | 'tasks.internal.share' | 'tasks.internal.transition' | 'tasks.internal.unshare' | 'template.follow.stop' | 'template.instantiate' | 'template.updates.apply' | 'template.updates.diff' | 'template.updates.skip' | 'usage.calendar.export' | 'usage.coach.apply' | 'usage.coach.dismiss' | 'usage.coach.snooze' | 'usage.coach.undo' | 'usage.export' | 'usage.history.read' | 'usage.prices.get' | 'usage.prices.refresh' | 'usage.query' | 'usage.recap.compose' | 'usage.recap.deliver' | 'usage.recap.export' | 'usage.recap.private.compose' | 'usage.recap.private.deliver' | 'usage.recap.private.export' | 'usage.sources.consent.set' | 'usage.sources.discover' | 'usage.sources.dismiss' | 'usage.sources.get' | 'usage.sources.history.delete' | 'usage.sources.root.set' | 'usage.sources.stop' | 'wait' | 'widgets.area.layout.create' | 'widgets.area.layout.delete' | 'widgets.area.layout.list' | 'widgets.area.layout.rename' | 'widgets.area.layout.reorder' | 'widgets.area.layout.reset' | 'widgets.area.layout.select' | 'widgets.area.layout.undo' | 'widgets.catalog.list' | 'widgets.definition.create' | 'widgets.definition.delete' | 'widgets.definition.duplicate' | 'widgets.definition.get' | 'widgets.definition.list' | 'widgets.definition.saveFromSession' | 'widgets.definition.update' | 'widgets.fragment.create' | 'widgets.fragment.delete' | 'widgets.fragment.duplicate' | 'widgets.fragment.get' | 'widgets.fragment.list' | 'widgets.fragment.update' | 'widgets.group.add' | 'widgets.group.create' | 'widgets.group.inputs.set' | 'widgets.group.set' | 'widgets.group.ungroup' | 'widgets.item.add' | 'widgets.item.frame.set' | 'widgets.item.inputs.get' | 'widgets.item.inputs.reset' | 'widgets.item.inputs.set' | 'widgets.item.inputs.validate' | 'widgets.item.list' | 'widgets.item.move' | 'widgets.item.network.set' | 'widgets.item.refresh' | 'widgets.item.remove' | 'widgets.item.rename' | 'widgets.item.size.set' | 'widgets.snapshot.post' | 'workflow.events.list' | 'workflow.library.view.get' | 'workflow.library.view.reset' | 'workflow.library.view.set' | 'workspace.files.link.get' | 'workspace.files.replace' | 'workspace.files.replace.preview' | 'workspace.files.search' | 'workspace.groups.focus' | 'workspace.groups.maximize' | 'workspace.groups.restore' | 'workspace.resize' | 'workspace.split' | 'workspace.tabs.activate' | 'workspace.tabs.close' | 'workspace.tabs.close_all' | 'workspace.tabs.close_left' | 'workspace.tabs.close_others' | 'workspace.tabs.close_right' | 'workspace.tabs.closed.list' | 'workspace.tabs.list' | 'workspace.tabs.move' | 'workspace.tabs.open' | 'workspace.tabs.pin' | 'workspace.tabs.reopen' | 'workspace.tabs.reorder' | Readonly<any> | any;
                     role: string;
                     input: JsonValue;
                     invocationServices?: Readonly<any> | undefined;
@@ -33498,6 +34133,16 @@ export type ActionOperationObservationV1 = Readonly<{
             route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
             httpStatus: 404;
         } | {
+            localCause: 'plugin_action_input_schema_invalid';
+            action: {
+                pluginId: string;
+                localId: string;
+            };
+            issues: {
+                path: (number | string)[];
+                code: string;
+            }[];
+        } | {
             localCause: 'ssh_keyscan_failed';
             resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
         } | {
@@ -33528,6 +34173,16 @@ export type ActionOperationObservationV1 = Readonly<{
             route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
             httpStatus: 404;
         } | {
+            localCause: 'plugin_action_input_schema_invalid';
+            action: {
+                pluginId: string;
+                localId: string;
+            };
+            issues: {
+                path: (number | string)[];
+                code: string;
+            }[];
+        } | {
             localCause: 'ssh_keyscan_failed';
             resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
         } | {
@@ -33557,6 +34212,16 @@ export type ActionOperationObservationV1 = Readonly<{
             localCause: 'native_route_not_found';
             route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
             httpStatus: 404;
+        } | {
+            localCause: 'plugin_action_input_schema_invalid';
+            action: {
+                pluginId: string;
+                localId: string;
+            };
+            issues: {
+                path: (number | string)[];
+                code: string;
+            }[];
         } | {
             localCause: 'ssh_keyscan_failed';
             resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';

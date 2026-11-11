@@ -399,7 +399,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                 if (nativeEffectGuardFailure) throw nativeEffectGuardFailure.error;
                 if (!attempt.matched) throw new ManagedMachineNativeEffectGuardRefusal('provider_unavailable');
                 if (!attempt.result.ok) {
-                    const failureDetails = readManagedNativeFailureDetails(attempt.result.data, attempt.result.errorCode);
+                    const failureDetails = readManagedNativeFailureDetails(attempt.result, { pluginId: contribution.pluginId, localId });
                     throw attempt.result.actionHandlerInvocation === 'notStarted'
                         ? new ManagedMachineNativeEffectGuardRefusal(attempt.result.errorCode, undefined, failureDetails)
                         : new ManagedMachineControllerError(attempt.result.errorCode, undefined, failureDetails);

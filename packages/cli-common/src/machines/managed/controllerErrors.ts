@@ -2,6 +2,7 @@ import { ManagedMachineFailureDetailsV1Schema, type ManagedMachineFailureDetails
 import { MachineProvisionerNativeCauseV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { projectActionFailureCauseV1,
     type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contributionIdentity';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 export class ManagedMachineControllerError extends Error {
@@ -21,8 +22,14 @@ export class ManagedMachineControllerError extends Error {
     }
 }
 
-/** Preserve only the closed native diagnostic from the dispatcher's PluginError payload. */
-export function readManagedNativeFailureDetails(data: unknown, code: string): ManagedNativeFailureDetailsV1 | undefined {
+/** Preserve only canonical schema paths/codes or the closed native PluginError diagnostic. */
+export function readManagedNativeFailureDetails(failure: ActionExecuteFailure, action: PluginContributionIdentityV1): ManagedNativeFailureDetailsV1 | undefined {
+    if (failure.errorCode === 'plugin_action_input_schema_invalid' && failure.details
+        && typeof failure.details === 'object' && !Array.isArray(failure.details) && 'issues' in failure.details) {
+        const cause = MachineProvisionerNativeCauseV1Schema.safeParse({ localCause: failure.errorCode, action, issues: failure.details.issues });
+        if (cause.success) return { kind: 'managedNative', nativeCause: cause.data };
+    }
+    const { data, errorCode: code } = failure;
     if (!data || typeof data !== 'object' || Array.isArray(data) || !('name' in data) || data.name !== 'PluginError'
         || !('code' in data) || data.code !== code || !('details' in data)) return undefined;
     const details = data.details;

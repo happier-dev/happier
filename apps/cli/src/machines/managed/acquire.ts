@@ -745,7 +745,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     });
                     if (!attempt.matched) throw new ManagedMachineControllerError('provider_unavailable');
                     if (!attempt.result.ok) throw new ManagedMachineControllerError(attempt.result.errorCode, undefined,
-                        readManagedNativeFailureDetails(attempt.result.data, attempt.result.errorCode));
+                        readManagedNativeFailureDetails(attempt.result, { pluginId, localId }));
                     return attempt.result.result;
                 } finally { current = false; await activation.cleanup(); }
                 } });
