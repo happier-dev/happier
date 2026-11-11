@@ -125,6 +125,30 @@ describe('TabBarNewSessionButton', () => {
         expect(button?.props.accessibilityLabel).toBe('newSession.title');
     });
 
+    // Owner 2026-11-11: the desktop sidebar's "+" is the phone's floating create button, not a restyled second
+    // control. Only its frame's size differs (a fixed circle with no bar to measure); the glass, its shadow and
+    // the glyph are the bar capsule's, and nothing inside the frame re-derives a size.
+    it('draws the desktop sidebar "+" as the bar capsule: same shadow and glyph, sized only on its frame', async () => {
+        const { TabBarNewSessionButton } = await import('./TabBarNewSessionButton');
+        const capsule = async (element: React.ReactElement) => {
+            const screen = await renderScreen(element);
+            // The capsule's GlassPanel: the composite that takes the full-pill radius.
+            const panel = screen.tree.root.findAll((node) => typeof node.type !== 'string' && node.props.radius === 999)[0]!;
+            const glyph = screen.tree.root.findAll((node) => node.props.name === 'plus' && typeof node.props.size === 'number')[0]!;
+            return { panel: panel.props as Record<string, unknown>, glyphSize: glyph.props.size as number };
+        };
+        const flatten = (style: unknown): Record<string, unknown> => Array.isArray(style)
+            ? Object.assign({}, ...style.map(flatten))
+            : (style && typeof style === 'object' ? style as Record<string, unknown> : {});
+
+        const bar = await capsule(<TabBarNewSessionButton />);
+        const sidebar = await capsule(<TabBarNewSessionButton placement="sidebar" />);
+        expect(sidebar.panel.shadowLevel).toBe(bar.panel.shadowLevel);
+        expect(sidebar.panel.style).toBe(bar.panel.style);
+        expect(sidebar.glyphSize).toBe(bar.glyphSize);
+        expect(flatten(sidebar.panel.frameStyle)).toMatchObject({ width: 44, height: 44 });
+    });
+
     // The tab-bar row gives the capsule a square cell (`FloatingTabBarSurface`). The panel's
     // outermost box, the flex item that also casts the shadow, must fill that cell, and the glass
     // must fill the panel; sizing an inner box instead drew a 26x26 circle inside a 26x44 shadow.
