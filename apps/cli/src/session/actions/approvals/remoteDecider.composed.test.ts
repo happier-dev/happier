@@ -118,7 +118,10 @@ describe('remote person approval through credentialed CLI and registered daemon 
         isApprovalExecutionOriginCurrent: async ({ origin }) => origin.machineId === 'origin-machine',
         ...(mcpClient ? { clientActionExecute: createClientActionReverseDispatcher(() => ({
           hasConnectedClientRpcHandler: () => true,
-          callConnectedClientRpc: async (_method, raw, options) => {
+          callConnectedClientRpc: async (method, raw, options) => {
+            // The person approves elsewhere, without viewing the Agent's Session.
+            // The App advertises its Account handler, not that Session's room.
+            if (method !== RPC_METHODS.UI_ACTION_EXECUTE) return { ok: false, errorCode: 'RPC_CLIENT_NOT_AVAILABLE' };
             effects.push(UiActionDispatchRequestV1Schema.parse(raw));
             options.onIssued();
             return { ok: true, result: { v: 1, execution: { ok: true, result: { ok: true } } } };

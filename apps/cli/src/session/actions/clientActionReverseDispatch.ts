@@ -24,7 +24,7 @@ import { createBrowserAutomationReverseDispatcher } from '@/daemon/browser/autom
 import { isVoiceConversationActionId } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { isSettingsDeclarationActionIdV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { isWorkspaceActionId } from '@happier-dev/protocol/actions/workspaceActionFamily';
-import { isSessionOrganizationAppearanceActionId } from '@happier-dev/protocol/actions/actionIds';
+import { isSessionClientControlActionId, isSessionOrganizationAppearanceActionId } from '@happier-dev/protocol/actions/actionIds';
 import { readWidgetActionSessionTargetV1, readWidgetActionSurfaceV1 } from '@happier-dev/protocol/widgets/actionsV1';
 
 export type ClientActionMachineRpc = Readonly<{
@@ -70,6 +70,7 @@ export function createClientActionReverseDispatcher(
     // the invoking Agent's Session is in the background. View-specific Actions
     // still require the App viewing their exact Session, without fallback.
     const accountClientAction = isVoiceConversationActionId(actionId) || isSettingsDeclarationActionIdV1(actionId)
+      || isSessionClientControlActionId(actionId)
       || isSessionOrganizationAppearanceActionId(actionId)
       || isWorkspaceActionId(actionId) || actionId === USAGE_HISTORY_ACTION_IDS.read
       || actionId === 'session.open' || actionId === 'desktop.windows.open'

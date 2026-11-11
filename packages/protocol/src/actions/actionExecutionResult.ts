@@ -236,7 +236,7 @@ export const UNEXPECTED_ACTION_FAILURE_CODES_V1 = ['action_not_admitted', 'actio
 
 /** A lost acknowledgement is not a definite failure, including approval replay. */
 export function isActionOutcomeUnknownErrorCodeV1(code: unknown): boolean {
-  return code === 'outcome_unknown' || code === UNEXPECTED_ACTION_FAILURE_CODES_V1[1]
+  return code === 'outcome_unknown' || code === 'outcome_uncertain' || code === UNEXPECTED_ACTION_FAILURE_CODES_V1[1]
     || code === 'approval_execution_outcome_unknown'
     || code === RPC_ERROR_CODES.OUTCOME_UNKNOWN
     // The Project row transport/receipt owner has already classified settlement.

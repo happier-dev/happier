@@ -8,6 +8,7 @@ import { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
 export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
+
 export const SESSION_RUNTIME_REFRESH_ACTION_ID_V1 = 'session.runtime.refresh' as const;
 export const SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 = 'session.connected_services_auth.set' as const;
 
@@ -125,7 +126,7 @@ import { ACTION_POLICY_ACTION_IDS } from './actionPolicyActionIds.js';
 import { APP_SHELL_ACTION_IDS } from './appShellActionIdsV1.js';
 import { SESSION_TERMINAL_ACTION_IDS } from './sessionTerminalActionIdsV1.js';
 import { SESSION_AGENT_TRANSITION_ACTION_IDS } from './sessionAgentTransitionActionIdsV1.js';
-import { NOTIFICATION_CONFIGURATION_ACTION_IDS } from './notificationConfigurationActionIds.js';
+import { NOTIFICATION_CONFIGURATION_ACTION_IDS, NOTIFICATION_NOTIFY_ME_ACTION_ID } from './notificationConfigurationActionIds.js';
 import { APP_UPDATE_ACTION_IDS } from './appUpdateActionIdsV1.js';
 import { BUG_REPORT_SUBMISSION_ACTION_IDS } from './specs/bugReportActionIdsV1.js';
 import { UPDATES_ACTION_IDS } from './updatesActionIdsV1.js';
@@ -227,8 +228,14 @@ export function isSessionOrganizationAppearanceActionId(value: string): value is
 }
 export const ACCOUNT_API_TOKENS_LIST_ACTION_ID_V1 = 'account.apiTokens.list' as const;
 
+/** Explicit Session controls use the Account App, without a mounted Session view. */
+export function isSessionClientControlActionId(value: string): boolean {
+  return value === 'session.config_option.set' || value === 'session.connected_services_auth.set'
+    || value === 'session.target.primary.set' || value === 'session.target.tracked.set';
+}
+
 /** Ordered host Actions promoted in the Workflow step picker. */
-export const WORKFLOW_STEP_PROMOTED_ACTION_IDS_V1: readonly string[] = ['notifications.notify_me', 'review.start'];
+export const WORKFLOW_STEP_PROMOTED_ACTION_IDS_V1: readonly string[] = [NOTIFICATION_NOTIFY_ME_ACTION_ID, 'review.start'];
 
 export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   deployments: DEPLOYMENT_ACTION_IDS_V1,
@@ -296,7 +303,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   doc_collaboration: DOC_COLLABORATION_ACTION_IDS_V1,
   settings_declarations: [...SETTINGS_DECLARATION_ACTION_IDS_V1, ...ACTION_POLICY_ACTION_IDS],
   app_shell: APP_SHELL_ACTION_IDS,
-  notifications: ['notifications.notify_me'],
+  notifications: [NOTIFICATION_NOTIFY_ME_ACTION_ID],
   notification_configuration: NOTIFICATION_CONFIGURATION_ACTION_IDS,
   app_updates: APP_UPDATE_ACTION_IDS,
   updates: UPDATES_ACTION_IDS,

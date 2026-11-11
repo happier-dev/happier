@@ -37,8 +37,13 @@ import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approval
 import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
 import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { createClientActionReverseDispatcher } from '../clientActionReverseDispatch';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
+import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { createCliArtifactActions } from '../artifactActions';
 
-// Only the Account server's HTTP boundary is replaced. The real Action executor,
+// Only Account HTTP and connected-client RPC boundaries are replaced. The real Action executor,
 // the real approval Artifact store and its codecs, and the server's versioned
 // Artifact CAS contract (expected header/body versions) run over in-memory rows.
 const http = vi.hoisted(() => ({
@@ -163,6 +168,10 @@ const uiContext = {
   actionCaller: { kind: 'host' as const },
 };
 
+const savedSecretApprovalContext = { ...uiContext, surface: 'cli' as const,
+  actionsSettings: normalizeActionsSettingsV1({ v: 1,
+    actions: { 'secrets.shared.create': { approvalRequiredSurfaces: ['cli'] } } }) };
+
 function createExecutor(
   store: ReturnType<typeof createStore>,
   overrides: Partial<ActionExecutorDeps> = {},
@@ -179,8 +188,9 @@ async function createDeferred(
   executor: ReturnType<typeof createExecutor>,
   actionId: 'identity.providers.secret.replace' | 'secrets.shared.create',
   input: unknown,
+  context: ActionExecutorContext = uiContext,
 ): Promise<string> {
-  const created = await executor.execute(actionId, input, uiContext);
+  const created = await executor.execute(actionId, input, context);
   expect(created).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
   const artifactId = String((created as { result: { artifactId: string } }).result.artifactId);
   // Deferred replay still needs the admitted operands while the request is pending.
@@ -1001,6 +1011,101 @@ describe('approval settlement through the real CLI Artifact store', () => {
     expect(storedBody(artifactId)).not.toContain(SAVED_SECRET_CIPHERTEXT);
   });
 
+  it('retains an issued MCP native mutation as outcome unknown across another surface decision and replay', async () => {
+    const store = createStore();
+    let nativeDispatches = 0;
+    const executor = createExecutor(store, {
+      isActionApprovalRequired: undefined,
+      clientActionExecute: createClientActionReverseDispatcher(() => ({
+        hasConnectedClientRpcHandler: () => true,
+        callConnectedClientRpc: async (_method, _request, options) => {
+          nativeDispatches += 1;
+          options.onIssued();
+          return { ok: false, errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN };
+        },
+      })),
+    });
+    const created = await executor.execute('session.connected_services_auth.set', {
+      sessionId: 'origin-session', machineId: 'machine-a', agentId: 'external-agent',
+      bindings: { v: 2, bindingsByServiceId: {} },
+    }, { ...uiContext, surface: 'mcp', authority: 'account_automation',
+      defaultSessionId: 'origin-session', defaultSessionMachineId: 'machine-a',
+      actionCaller: { kind: 'host' },
+      actionsSettings: normalizeActionsSettingsV1({ v: 1,
+        actions: { 'session.connected_services_auth.set': { approvalRequiredSurfaces: ['mcp'] } } }),
+      externalActionTarget: { kind: 'session', sessionId: 'origin-session' } });
+    expect(created).toEqual({ ok: true, result: expect.objectContaining({ kind: 'approval_request_created' }) });
+    const artifactId = String((created as { result: { artifactId: string } }).result.artifactId);
+    expect(await store.approvalsGet({ artifactId, serverId: null }))
+      .toMatchObject({ status: 'open', executionOriginV1: { surface: 'mcp', machineId: 'machine-a',
+        caller: { kind: 'host' } } });
+
+    const decided = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, uiContext);
+    expect(decided).toMatchObject({ ok: true, result: { status: 'outcome_unknown' } });
+    const persisted = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId, serverId: null }));
+    expect(persisted.status).toBe('outcome_unknown');
+    expect(persisted.execution).not.toHaveProperty('effectAttempted');
+    expect(readApprovalExecutionFailure(persisted)).toMatchObject({ ok: false, errorCode: 'outcome_uncertain',
+      details: { reason: 'client_rpc_transport_failure', errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN } });
+    await expect(executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, uiContext))
+      .resolves.toMatchObject({ ok: true, result: { status: 'outcome_unknown' } });
+    await expect(executor.replayApprovedApprovalRequest({ artifactId }))
+      .resolves.toMatchObject({ ok: true, result: { status: 'outcome_unknown' } });
+    expect(nativeDispatches).toBe(1);
+  });
+
+  it('settles a post-claim operand Artifact503 as failed without an effect', async () => {
+    const store = createStore();
+    const operands = createAccountArtifactStore({
+      credentials: { token: 'synthetic-token', encryption: null } as never,
+      getAccountEncryptionMode: async () => 'plain',
+    });
+    const operandId = 'approval-operand';
+    await operands.create({ artifactId: operandId, header: { kind: 'example.v1' }, body: 'before' });
+    let approvalArtifactId: string | undefined;
+    let operandReadFailures = 0;
+    let operandWrites = 0;
+    const get = http.get.getMockImplementation()!;
+    const post = http.post.getMockImplementation()!;
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/${operandId}`) && approvalArtifactId) {
+        const decoded = JSON.parse(storedBody(approvalArtifactId));
+        const approval = ApprovalRequestV2Schema.parse(JSON.parse(decoded.body.body));
+        if (approval.status === 'executing') {
+          operandReadFailures += 1;
+          return { status: 503, data: { error: 'database_connection_unavailable' } };
+        }
+      }
+      return await get(url);
+    });
+    http.post.mockImplementation(async (url: string, body: Record<string, unknown>) => {
+      if (url.endsWith(`/${operandId}`)) operandWrites += 1;
+      return await post(url, body);
+    });
+    const executor = createExecutor(store, {
+      isActionApprovalRequired: undefined,
+      artifactAction: createCliArtifactActions({ store: operands,
+        beforeDelete: async () => { throw new Error('This update cannot delete an Artifact'); },
+        resolvePublishCaller: async () => null,
+      }),
+    });
+    const created = await executor.execute('artifact.update', { artifactId: operandId,
+      expectedRevision: { headerVersion: 1, bodyVersion: 1 }, header: { kind: 'example.v1' }, body: 'after' },
+    { ...uiContext, surface: 'cli', actionsSettings: normalizeActionsSettingsV1({ v: 1,
+      actions: { 'artifact.update': { approvalRequiredSurfaces: ['cli'] } } }) });
+    expect(created).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    approvalArtifactId = String((created as { result: { artifactId: string } }).result.artifactId);
+
+    const decided = await executor.execute('approval.request.decide', { artifactId: approvalArtifactId, decision: 'approve' }, uiContext);
+    expect(decided).toMatchObject({ ok: true, result: { status: 'failed', execution: {
+      ok: false, errorCode: 'artifact_read_unavailable',
+    } } });
+    expect(await store.approvalsGet({ artifactId: approvalArtifactId, serverId: null }))
+      .toMatchObject({ status: 'failed', execution: { ok: false, errorCode: 'artifact_read_unavailable' } });
+    expect(operandReadFailures).toBe(1);
+    expect(operandWrites).toBe(0);
+  });
+
   it('fresh-reads a committed terminal outcome when its update acknowledgement is lost', async () => {
     const store = createStore();
     let effects = 0;
@@ -1011,7 +1116,7 @@ describe('approval settlement through the real CLI Artifact store', () => {
         return { resourceId: 'secret-1', revision: 1 };
       },
     });
-    const artifactId = await createDeferred(executor, 'secrets.shared.create', savedSecretInput);
+    const artifactId = await createDeferred(executor, 'secrets.shared.create', savedSecretInput, savedSecretApprovalContext);
     const decided = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, uiContext);
 
     expect(decided).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
@@ -1033,7 +1138,7 @@ describe('approval settlement through the real CLI Artifact store', () => {
         return result;
       },
     });
-    const artifactId = await createDeferred(executor, 'secrets.shared.create', savedSecretInput);
+    const artifactId = await createDeferred(executor, 'secrets.shared.create', savedSecretInput, savedSecretApprovalContext);
 
     const decided = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, uiContext);
     const repeated = await executor.replayApprovedApprovalRequest({ artifactId });

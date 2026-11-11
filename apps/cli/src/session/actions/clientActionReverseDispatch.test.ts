@@ -5,7 +5,8 @@ import { createClientActionReverseDispatcher, type ClientActionMachineRpc } from
 import { createCliSettingsDeclarationAction } from './settingsDeclarationAction';
 import { clientActionUnavailable, mountedWorkReadClientRpcMethod, sessionUiActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { ApprovalRequestV2Schema, StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
+import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
+import { projectSettledApprovalExecution } from '@happier-dev/protocol/actions/executor/approvalResults';
 import { uiBrowserAutomationDispatchMethod, UiBrowserAutomationDispatchRequestV1Schema } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
 import { BrowserDiagnosticsEvalResultV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
 import { WidgetInstanceActionInputSchemasV1 } from '@happier-dev/protocol/widgets/actionsV1';
@@ -24,20 +25,28 @@ const disconnectedClient: ClientActionMachineRpc = {
 
 describe('client Action reverse delivery', () => {
   it.each([
+    { actionId: 'session.connected_services_auth.set', input: { sessionId: 'target-session', machineId: 'machine', agentId: 'external-agent', bindings: { v: 2, bindingsByServiceId: {} } } },
+    { actionId: 'session.config_option.set', input: { sessionId: 'target-session', configId: 'effort', valueId: 'high' } },
+    { actionId: 'session.target.primary.set', input: { serverId: 'home', sessionId: 'target-session' } },
+    { actionId: 'session.target.tracked.set', input: { sessionAddresses: [{ serverId: 'home', sessionId: 'target-session' }] } },
     { actionId: 'session.organization.appearance.set', input: { sessionId: 'target-session', color: null } },
     { actionId: 'projects.organization.color.set', input: { workspaceKey: 'project-group', color: null } },
-  ] as const)('routes saved personal color $actionId to the Account client while the invoking Session is backgrounded', async ({ actionId, input }) => {
+  ] as const)('routes explicit Account changes $actionId while the invoking Session is backgrounded', async ({ actionId, input }) => {
+    const result = getActionSpec(actionId).outputSchema!.parse(actionId === 'session.target.tracked.set'
+      ? { ok: true, status: 'ok', sessionIds: ['target-session'],
+          sessionAddresses: [{ serverId: 'home', sessionId: 'target-session' }], sessions: [] }
+      : { status: 'applied' });
     const dispatch = createClientActionReverseDispatcher(() => ({
       hasConnectedClientRpcHandler: method => method === RPC_METHODS.UI_ACTION_EXECUTE,
       callConnectedClientRpc: async (method, _payload, options) => {
         if (method !== RPC_METHODS.UI_ACTION_EXECUTE) return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
         options.onIssued();
-        return { ok: true, result: { v: 1, execution: { ok: true, result: { status: 'applied' } } } };
+        return { ok: true, result: { v: 1, execution: { ok: true, result } } };
       },
     }));
     expect(await dispatch({ actionId, input,
       context: { surface: 'agent', authority: 'account_automation', defaultSessionId: 'background-agent' } }))
-      .toEqual({ ok: true, result: { status: 'applied' } });
+      .toEqual({ ok: true, result });
   });
   it('routes Usage history to the Account client while the invoking Session is backgrounded', async () => {
     const input = { query: normalizeUsageQuery({ period: { relative: '90days' } }), operation: 'status' as const };
@@ -269,7 +278,12 @@ describe('client Action reverse delivery', () => {
       .toMatchObject({ ok: false, errorCode: 'client_ambiguous' });
     expect(effects).toBe(0);
   });
-  it.each([RPC_ERROR_CODES.OUTCOME_UNKNOWN, 'MACHINE_RPC_TIMEOUT'])('preserves the transport cause %s of an issued Find without claiming a known effect', async errorCode => {
+  it.each([
+    { actionId: 'ui.find', input: { op: 'set', query: 'needle' }, errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN },
+    { actionId: 'ui.find', input: { op: 'set', query: 'needle' }, errorCode: 'MACHINE_RPC_TIMEOUT' },
+    { actionId: 'session.connected_services_auth.set', input: { sessionId: 'target-session', machineId: 'machine',
+      agentId: 'external-agent', bindings: { v: 2, bindingsByServiceId: {} } }, errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN },
+  ] as const)('preserves issued $actionId $errorCode through approval settlement', async ({ actionId, input, errorCode }) => {
     const dispatch = createClientActionReverseDispatcher(() => ({
       hasConnectedClientRpcHandler: () => true,
       callConnectedClientRpc: async (_method, _request, options) => {
@@ -277,23 +291,24 @@ describe('client Action reverse delivery', () => {
         return { ok: false, errorCode };
       },
     }));
-    const failure = await dispatch({ actionId: 'ui.find', input: { op: 'set', query: 'needle' },
+    const failure = await dispatch({ actionId, input,
       context: { surface: 'agent', defaultSessionId: 'invoking-session' } });
     expect(failure)
       .toMatchObject({ ok: false, errorCode: 'outcome_uncertain', details: {
         reason: 'client_rpc_transport_failure', errorCode,
       } });
     if (failure.ok) throw new Error('Expected the issued transport failure');
-    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
-      createdBy: { surface: 'agent', sessionId: 'invoking-session' }, requestedSurface: 'agent', actionId: 'ui.find',
-      actionArgs: { op: 'set', query: 'needle' }, summary: 'Find', executionOriginV1: {
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'executing', createdAtMs: 1, updatedAtMs: 2,
+      createdBy: { surface: 'agent', sessionId: 'invoking-session' }, requestedSurface: 'agent', actionId,
+      actionArgs: input, summary: 'Review client action', decision: { kind: 'approve', decidedAtMs: 2 }, executionOriginV1: {
         v: 1, authority: 'account_automation', surface: 'agent',
         caller: { kind: 'session', sessionId: 'invoking-session', starterDepth: 0, turnDepth: 0 },
-        serverId: 'home', accountId: 'account', machineId: 'machine', actionId: 'ui.find', requestId: 'request',
+        serverId: 'home', accountId: 'account', machineId: 'machine', actionId, requestId: 'request',
       } });
-    const stored = StoredApprovalRequestSchema.parse({ ...request, status: 'failed', updatedAtMs: 3,
-      decision: { kind: 'approve', decidedAtMs: 2 },
-      execution: projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 3 }) });
+    const settled = projectSettledApprovalExecution({ request, actionId, exec: failure, dispatchEffectAttempted: true, executedAtMs: 3 });
+    const stored = StoredApprovalRequestSchema.parse(settled.request);
+    expect(stored.status).toBe('outcome_unknown');
+    expect(stored.execution).not.toHaveProperty('effectAttempted');
     expect(readApprovalExecutionFailure(stored)).toEqual(failure);
   });
   it('reports a failed conversation-search read without claiming an uncertain effect', async () => {
