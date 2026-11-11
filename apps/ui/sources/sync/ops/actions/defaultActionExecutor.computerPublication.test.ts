@@ -27,6 +27,82 @@ describe('default Action Computer Account publication', () => {
     beforeEach(() => { network.resetRequests(); });
     afterAll(async () => { await network.dispose(); });
 
+    it.each(['access_denied', 'machine_unavailable'] as const)('retains the %s refusal reason through the real Computer front door', async reason => {
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { captureLazyActionAccountContext } = await import('./actionAccountContext');
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const { createComputerControlClient } = await import('@/sync/domains/computer/computerControlClient');
+        const { useComputerScreen } = await import('@/components/computer/useComputerScreen');
+        const { ActionFailureCauseV1Schema } = await import('@happier-dev/protocol/actions/actionExecutionResult');
+        const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const previousScope = storage.getState().profileScope;
+        const previousProfile = storage.getState().profile;
+        const previousSnapshot = getAppliedActiveServerSnapshot();
+        const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+        let account: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | null = null;
+        try {
+            const home = await network.addHome(`https://computer-refusal-${reason}.test`, 'computer-person');
+            const machineId = 'computer-refusal-machine';
+            const failureCause = ActionFailureCauseV1Schema.parse({
+                phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: reason, httpStatus: 403,
+            });
+            let visibleRead = createDeferred<void>();
+            let observingScreen = false;
+            let refused = true;
+            // The external Socket.IO boundary returns the server's refusal;
+            // Account admission, decoding and Computer execution stay real.
+            network.setRpcAckResponder(async request => {
+                expect(request.method).toBe(RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE);
+                expect(request.targetId).toBe(machineId);
+                const payload = DaemonComputerActionExecuteRequestV1Schema.parse(request.payload);
+                expect(payload.actionId).toBe('computer.target.get');
+                if (observingScreen) visibleRead.resolve();
+                return refused ? { ok: false, error: 'Forbidden', errorCode: 'RPC_FORBIDDEN', failureCause }
+                    : { ok: true, result: { protocolVersion: 1, result: { consentGranted: false,
+                        approvalDisplay: { machineDisplayName: 'Refusal machine', requiresTargetSelection: true } } } };
+            });
+            storage.getState().activateProfileScope({ serverId: home.id, accountId: home.accountId });
+            storage.getState().applyProfile({ ...storage.getState().profile, id: home.accountId });
+            storage.getState().applyMachines([createMachineFixture({ id: machineId, storageMode: 'plain' })], false, { sourceServerId: home.id });
+            publishAppliedActiveServerSnapshot({ serverId: home.id, serverUrl: home.serverUrl, generation: 1 }, false);
+            account = await captureLazyActionAccountContext(home.id);
+            const execute = createDefaultActionExecutor().execute;
+            const context = { surface: 'ui' as const, authority: 'present_user' as const,
+                runtimeAccountId: home.accountId, serverId: home.id, expectedAccountId: home.accountId };
+            expect(await execute('computer.target.get', { machineId }, context)).toMatchObject({
+                ok: false, errorCode: 'RPC_FORBIDDEN', failureCause,
+            });
+            const scope = { serverId: home.id, machineId,
+                source: { kind: 'machine-person' as const, personId: home.accountId } };
+            const client = createComputerControlClient(scope, execute, account.accountLifetime);
+            expect(await client.getTarget()).toMatchObject({ ok: false, code: 'RPC_FORBIDDEN', failureCause });
+            observingScreen = true;
+            const accountLifetime = account.accountLifetime;
+            const screen = await renderHook(() => useComputerScreen({ scope, execute, accountLifetime }));
+            try {
+                await act(async () => { await visibleRead.promise; });
+                await flushHookEffects();
+                expect(screen.getCurrent()).toMatchObject({ failure: 'RPC_FORBIDDEN', failureCause });
+                visibleRead = createDeferred<void>();
+                await act(async () => { screen.getCurrent().onRefresh?.(); await visibleRead.promise; });
+                await flushHookEffects();
+                expect(screen.getCurrent()).toMatchObject({ failure: 'RPC_FORBIDDEN', failureCause });
+                refused = false;
+                visibleRead = createDeferred<void>();
+                await act(async () => { screen.getCurrent().onRefresh?.(); await visibleRead.promise; });
+                await flushHookEffects();
+                expect(screen.getCurrent()).toMatchObject({ failure: null, failureCause: undefined });
+            } finally {
+                await screen.unmount();
+            }
+        } finally {
+            account?.dispose();
+            publishAppliedActiveServerRuntimeAvailability(false);
+            storage.setState({ profileScope: previousScope, profile: previousProfile });
+            publishAppliedActiveServerSnapshot(previousSnapshot, previousAvailable);
+        }
+    });
+
     it.each(['owner', 'guest'] as const)('names the exact Home in the real picker for a %s when two Homes have the same Session id', async role => {
         const { storage } = await import('@/sync/domains/state/storageStore');
         const { captureLazyActionAccountContext } = await import('./actionAccountContext');

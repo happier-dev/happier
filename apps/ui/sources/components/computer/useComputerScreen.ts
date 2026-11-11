@@ -141,6 +141,7 @@ export function useComputerScreen(props: Readonly<{
         checking: control.busy === 'check',
         stopping: control.busy === 'stop',
         failure: control.failure,
+        failureCause: control.failureCause,
         stopFailed: control.stopFailed,
         onRepairDriver: driverRepair.repair,
         repairingDriver: driverRepair.repairing,

@@ -5,6 +5,7 @@ import { PixelRatio, ScrollView, View, type LayoutChangeEvent } from 'react-nati
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ComputerGrantStatusV1} from '@happier-dev/protocol/computer/v1';
 import { resolveComputerAccess } from '@happier-dev/protocol/computer/v1';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import {
     containRect,
@@ -37,6 +38,7 @@ import type { BrowserCopresence } from '@/sync/domains/browser/automation/copres
 import type { LiveStreamInputGesture } from '@/sync/domains/machines/peer/mediation/stream/inputGesture';
 import { t } from '@/text';
 import { keepHyphenatedNameTogether } from '@/utils/sessions/machineDisplayNames';
+import { showActionFailureDetails } from '@/utils/errors/alertActionFailure';
 
 import { ComputerPermissionCard, type ComputerOpenSettingsState } from './ComputerPermissionCard';
 
@@ -137,6 +139,7 @@ export type ComputerScreenViewerProps = Readonly<{
     /** The person's Stop sharing is in flight. */
     stopping?: boolean;
     failure?: string | null;
+    failureCause?: ActionFailureCauseV1;
     /** `failure` came from the person's Stop sharing: the share is still on and the press can be retried. */
     stopFailed?: boolean;
     repairingDriver?: boolean;
@@ -312,6 +315,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
     // pixels, so a small window stays sharp, centred on the neutral stage, instead of being blown up.
     const pageRect = pictureUp && viewport ? containRect(viewport, frameSize, 1 / PixelRatio.get()) : null;
     const failure = props.failure ?? playerState?.diagnostic?.reasonCode;
+    const failureCause = props.failure ? props.failureCause : undefined;
     const recovery = failure ? resolveComputerRecovery({ kind: 'failed', code: failure }, resolveComputerAccess(props.access)) : null;
     const needsCapture = recovery?.action === 'capture';
     const needsDriverRepair = recovery?.action === 'repair_driver';
@@ -404,6 +408,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                     : recoveryTitle !== recoveryReason ? recoveryReason : undefined}
                 // A machine that isn't answering is not a fault: its title says it and the code adds nothing to look up.
                 diagnosticCode={recovery?.cause === 'offline' && !stopFailed ? undefined : failure}
+                diagnosticDetail={failureCause ? JSON.stringify(failureCause) : undefined}
                 action={recoveryAction}
             />
         </ComputerStateStage>
@@ -564,7 +569,11 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
             </View>}
             {pictureUp && hasRecovery ? (
                 <SurfaceFreshnessLine testID={`${testID}-recovery`} reason={recoveryReason} asOf={stopFailed ? undefined : pausedAtMs}
-                    busy={stopFailed ? props.stopping : needsDriverRepair ? props.repairingDriver : props.checking} tone="warning" action={recoveryAction} />
+                    busy={stopFailed ? props.stopping : needsDriverRepair ? props.repairingDriver : props.checking} tone="warning" action={recoveryAction}
+                    actions={failure && failureCause ? [
+                        ...(recoveryAction ? [recoveryAction] : []),
+                        { label: t('common.details'), onPress: () => showActionFailureDetails({ code: failure, context: failureCause }) },
+                    ] : undefined} />
             ) : pictureUp && props.stopping ? (
                 // Release waits for the Machine to drain and confirm; until it answers, say the press is under way.
                 <SurfaceFreshnessLine testID={`${testID}-stopping`} reason={t('computerUse.presentation.stopping')} busy />

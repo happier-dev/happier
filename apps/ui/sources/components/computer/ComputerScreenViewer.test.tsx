@@ -88,6 +88,39 @@ function pictureStage(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 describe('ComputerScreenViewer', () => {
+  it('reveals the typed refusal reason while retaining the last picture and Check again', async () => {
+    const { installBrowserRuntimeForTests } = await import('@/dev/testkit/harness/browserRuntimeHarness');
+    const browser = await installBrowserRuntimeForTests({ url: 'https://computer-viewer.test/' });
+    const { installReactDomPortalBoundaryForTests } = await import('@/dev/testkit/mocks/reactDom');
+    const portal = installReactDomPortalBoundaryForTests();
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+      const { ModalProvider } = await import('@/modal');
+      const onRefresh = vi.fn();
+      const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error',
+        errorCode: 'machine_unavailable', httpStatus: 403 } satisfies NonNullable<ComputerScreenViewerProps['failureCause']>;
+      screen = await renderScreen(<ModalProvider><ComputerScreenViewer {...props({
+        failure: 'RPC_FORBIDDEN', failureCause, onRefresh,
+        stream: { machineName: 'machine', playerState: { phase: 'playing', selectedCodec: 'image.mjpeg', activeRenderer: 'mjpeg',
+          lastFrameUrl: 'data:image/jpeg;base64,AQID', decodedFrames: 1, droppedFrames: 0, bufferedBytes: 0 } },
+      })} /></ModalProvider>);
+      expect(screen.findHostByTestId('v-picture')).not.toBeNull();
+      await screen.pressByTestIdAsync('v-recovery-action');
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+      expect(screen.getTextContent()).not.toContain('rpc.admission.machine');
+      await screen.pressByTestIdAsync('v-recovery-action-1');
+      const revealed = screen.getTextContent();
+      expect(revealed).toContain('RPC_FORBIDDEN');
+      expect(revealed).toContain('rpc.admission.machine');
+      expect(revealed).toContain('machine_unavailable');
+      expect(screen.findHostByTestId('v-picture')).not.toBeNull();
+    } finally {
+      await screen?.unmount();
+      portal.restore();
+      browser.restore();
+    }
+  });
+
   it('keeps presence outside the input viewport and uses the inline footer layout', async () => {
     pointer.coarse = true;
     const viewerProps = props({ compact: true,
