@@ -453,15 +453,6 @@ Provider setup is intentionally separate from session launch. Once configured, u
 In 0.3 development, saving an API-key connection with a selected Machine runs
 the existing Provider probe once. The save remains committed when verification
 fails, and the Action returns the probe's typed refusal on the connection.
-A successful probe supplies the Machine's published health summary. Without a
-Machine, or when the network cannot verify the key, the connection remains
-Not verified. Enablement grants access to the configured source; it does not
-attest credential health. Contributed and custom connections share this Action
-dispatch; no additional credential validator or retry timer participates.
-
-In 0.3 development, saving an API-key connection with a selected Machine runs
-the existing Provider probe once. The save remains committed when verification
-fails, and the Action returns the probe's typed refusal on the connection.
 An answered probe supplies the Machine's published health summary. Without a
 Machine, or when the network cannot verify the key, the connection remains
 Not verified. Enablement grants access to the configured source; it does not
