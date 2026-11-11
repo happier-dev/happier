@@ -144,6 +144,11 @@ describe('PluginSurfaceInteractionBoundary.web', () => {
         // A body that still shows its cached rows claims nothing: the host's offline line stays, above the rows.
         await screen.update(mount(false, false));
         expect(screen.findByTestId('plugin-surface-machine-unavailable:widget')).not.toBeNull();
+        // Live B (owner 1111): the surface is still enabled while its Machine is unreachable, and the host draws the same
+        // line; the body with nothing cached claims it there too.
+        await screen.update(mount(true, true));
+        expect(screen.findByTestId('plugin-surface-machine-unavailable:widget')).toBeNull();
+        expect(screen.findByTestId('claimant')?.props.children.join('')).toBe(`${t('pluginSurfaces.state.offline.nothingCached')} + ${t('common.retry')}`);
     });
 
     it('keeps an offline summary perceivable while the executable snapshot is inert', async () => {

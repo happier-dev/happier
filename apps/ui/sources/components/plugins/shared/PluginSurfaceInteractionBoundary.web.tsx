@@ -50,9 +50,10 @@ export function PluginSurfaceInteractionBoundary(
     const companion = React.useContext(PluginSurfaceCompanionContext);
     const pageIdentity = React.useContext(PluginSurfacePageHeaderContext);
     const machineRecovery = React.useContext(PluginSurfaceMachineRecoveryContext);
-    // A body with nothing cached claims the offline notice as its one line; the boundary then draws none.
+    // A body with nothing cached claims the offline notice as its one line; the boundary then draws none. It is offered
+    // whenever the boundary would draw that line: offline, or its Machine unreachable while the surface is still enabled.
     const offlineClaim = useClaimableOfflineNotice({
-        offline: !props.enabled && !offlineNotice.nothingLoaded && !companion,
+        offline: (!props.enabled || Boolean(machineRecovery)) && !offlineNotice.nothingLoaded && !companion,
         ...(machineRecovery?.retry ? { retry: machineRecovery.retry } : {}),
     });
     const interactionEnabled = props.enabled && props.focusEligible !== false;
