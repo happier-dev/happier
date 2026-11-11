@@ -90,6 +90,12 @@ export const MANAGED_MACHINE_ACTION_IDS_V1 = [
 ] as const;
 export type ManagedMachineActionIdV1 = typeof MANAGED_MACHINE_ACTION_IDS_V1[number];
 
+/** Creator mutations retain the exact admitted resource and its controller. */
+export const MANAGED_CREATION_MUTATION_ACTION_IDS_V1 = ['machines.managed.cancel', 'machines.managed.setup.skip'] as const;
+export function isManagedCreationMutationActionIdV1(actionId: string): actionId is typeof MANAGED_CREATION_MUTATION_ACTION_IDS_V1[number] {
+  return MANAGED_CREATION_MUTATION_ACTION_IDS_V1.some(id => id === actionId);
+}
+
 /** Recovery completes only the retained enrollment policy, never unrelated creation effects. */
 export function isManagedEnrollmentRecoveryChildV1(rootActionId: string, childActionId: string): boolean {
   const isolation = childActionId === 'machines.agentIsolation.preview' || childActionId === 'machines.agentIsolation.set';
@@ -105,8 +111,10 @@ export function isManagedPowerOrDeleteActionIdV1(actionId: string): actionId is
 
 /** Executor location only; Home owns authorization for each invocation. */
 export function isManagedRetainedControlInvocation(actionId: string, input: unknown): actionId is
-  'machines.managed.inspect' | 'machines.managed.bootstrap.retry' | 'machines.managed.power.set' | 'machines.managed.delete' | 'machines.managed.resize' {
+  'machines.managed.inspect' | 'machines.managed.bootstrap.retry' | 'machines.managed.power.set' | 'machines.managed.delete' | 'machines.managed.resize'
+  | typeof MANAGED_CREATION_MUTATION_ACTION_IDS_V1[number] {
   return actionId === 'machines.managed.inspect' || actionId === 'machines.managed.bootstrap.retry'
+    || isManagedCreationMutationActionIdV1(actionId)
     || actionId === 'machines.managed.resize'
     || isManagedPowerOrDeleteActionIdV1(actionId) && readRecord(input).when === 'now';
 }

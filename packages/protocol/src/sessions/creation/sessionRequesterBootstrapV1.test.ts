@@ -254,7 +254,8 @@ describe('requester bootstrap installation confidentiality', () => {
       credentials: { token: 'requester-private-bearer' }, purpose: { kind: 'external_action' },
       installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes })).toThrow();
   });
-  it.each(['plain', 'e2ee'].flatMap(accountEncryptionMode => ['machines.managed.acquire', 'machines.managed.credentials.install']
+  it.each(['plain', 'e2ee'].flatMap(accountEncryptionMode => ['machines.managed.acquire', 'machines.managed.credentials.install',
+    'machines.managed.cancel', 'machines.managed.setup.skip']
     .map(actionId => ({ accountEncryptionMode, actionId }))))('seals only an invocation codec for $actionId ($accountEncryptionMode)', ({ accountEncryptionMode, actionId }) => {
     const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(13));
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-managed-root', binding: {
@@ -265,6 +266,8 @@ describe('requester bootstrap installation confidentiality', () => {
         homeId: 'home', managedId: 'managed', sessionId: 'session', bindingKey: 'binding',
         expectedResourceRevision: 1, expectedSourceRevision: 'source', expectedProviderTicket: 'ticket',
       } } } : {}),
+      ...(actionId === 'machines.managed.cancel' || actionId === 'machines.managed.setup.skip'
+        ? { managedAdmission: { actionId, input: { homeId: 'home', managedId: 'managed', expectedIntentRevision: 0 } } } : {}),
       target: { kind: 'machine', machineId: 'controller' },
     } });
     const material = { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) };

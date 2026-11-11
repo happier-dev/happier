@@ -13,7 +13,7 @@ import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionDaemonDispa
     prepareExternalActionResponseEnvelopeV1, prepareExternalActionResponseV2, openExternalActionRequestV2, openExternalActionResponseV2, sealExternalActionRequestV2,
     computeActionInputApprovalDigestV1, computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControlAdmissionInputV1Schema, ManagedControllerSubmitOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControlAdmissionInputV1Schema, ManagedControllerSubmitOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
@@ -664,6 +664,117 @@ describe('composed CLI managed Action origination', () => {
                 managedAcquireDelegation: true }, { input })).rejects.toMatchObject({ code: 'credential_scope_denied' });
             if (delegated) expect(await resolveMachineAccess({ actorAccountId: requester.account.id, machineId: target.machineId })).toBeNull();
         } finally { restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close(); }
+    });
+
+    it.each(['machines.managed.cancel', 'machines.managed.setup.skip'] as const)(
+        'preserves terminal CLI approval through Home and the real %s boundary', async actionId => {
+        const selected = await fixture(true);
+        const token = await auth.createToken(selected.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+        const credentials = { token, credentialProvenance: 'stored_session' as const, encryption: null };
+        const serverHttpBaseUrl = 'http://managed-seam.test';
+        const admitted = await admitManagedAcquire({ custodianAccountId: selected.account.id,
+            requesterAccountId: selected.account.id, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({
+                v: 1, requestId: selected.requestId, target: { kind: 'machine', machineId: selected.controller.machineId }, input: selected.input }),
+            input: { input: selected.input, requestId: selected.requestId, continuationPresent: false } });
+        if (actionId === 'machines.managed.setup.skip') {
+            // Provider enrollment is outside this authorization composition.
+            await db.managedMachine.update({ where: { id: admitted.machine.id }, data: {
+                allocation: 'bound', enrolledMachineId: selected.controller.machineId,
+                presetId: crypto.randomUUID(), presetRevision: 1, machineSetup: { setup: {}, state: 'pending' },
+                resource: { contributionRef: selected.input.selection.launch.provider, schemaVersion: 1, value: { id: 'retained-vm' } },
+            } });
+        }
+        const input = { homeId, managedId: admitted.machine.id, expectedIntentRevision: 0 };
+        const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } } });
+        const storedSettings = { actionsSettingsV1: settings };
+        let issuedAuthorization: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse> | undefined;
+        setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(storedSettings),
+            rawSettings: storedSettings, settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
+            scopeKey: resolveAccountSettingsScopeKey(credentials) });
+        const resolveTarget = createDaemonExternalActionTargetResolver({ credentials });
+        const prepareRequester = (authorization: Parameters<typeof prepareRequesterAccountActionContext>[0]['authorization']) =>
+            prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
+                machineId: selected.controller.machineId, installationId: selected.controller.installationId,
+                installationPrivateKey: selected.keys.secretKey, serverId: homeId, serverIdentityId: homeId,
+                serverHttpBaseUrl, ownCredentials: credentials, isCurrent: async () => true, createExecutor: () => receiver });
+        const receiver = createCliActionExecutor({ token, credentials, sessionId: '', mode: 'plain', ctx: null,
+            serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl,
+            externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+            externalActionMachineInstallationId: selected.controller.installationId,
+            managedMachineAction: createAccountServerActionDeps({ token, credentials, serverId: homeId,
+                serverIdentityId: homeId, serverHttpBaseUrl,
+                externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+                externalActionMachineInstallationId: selected.controller.installationId }).managedMachineAction,
+            isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({
+                accountId: selected.account.id, machineId: selected.controller.machineId, serverId: homeId,
+                resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: selected.controller.machineId }),
+                resolveTarget, isAccountCurrent: async () => true,
+                listAccountApiTokens: async () => { throw new Error('Terminal roots do not list PATs'); },
+                externalActionMachinePublicKey: selected.keys.publicKey,
+                verifyExternalExecutionAuthorization: request => verifyExternalActionExecutionAuthorizationCurrent({ ...request,
+                    privateKey: selected.keys.secretKey, installationId: selected.controller.installationId, serverHttpBaseUrl }),
+            }),
+            prepareApprovalExecutionAuthorization: async ({ authorization }) => {
+                const prepared = await prepareRequester(authorization);
+                if (!prepared) return null;
+                const { actionsSettings, ...context } = prepared;
+                return { ...context, ...(actionsSettings ? { actionsSettings } : {}) };
+            },
+        });
+        const instance = await app(async request => {
+            const dispatch = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+            issuedAuthorization = dispatch.executionAuthorization;
+            if (!issuedAuthorization) throw new Error('Missing Home authorization');
+            const result = await executeExternalAction({ ...dispatch, executor: receiver,
+                currentMachineId: selected.controller.machineId, currentInstallationId: selected.controller.installationId,
+                currentServerId: homeId, externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+                prepareRequesterAccountContext: request => prepareRequester(request.authorization),
+                verifyExecutionAuthorization: async ({ authorization }) => await verifyCurrentExternalActionPrincipal(authorization.binding) !== null,
+                resolveTarget });
+            if (result.kind !== 'response') throw new Error(`Daemon rejected creation recovery: ${result.kind}`);
+            return { ok: true, result: createExternalActionDaemonDispatchResponseV1(result.prepared) };
+        }, http => {
+            registerAccountProfileRoute(http); registerAccountEncryptionRoutes(http); artifactsRoutes(http);
+            http.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: storedSettings }, version: 1 }));
+        }, []);
+        const restoreHttp = installAxiosFastifyAdapter({ app: instance, origin: serverHttpBaseUrl });
+        const sockets = await createRequesterCurrentnessSocketHarness();
+        try {
+            const bare = await instance.inject({ method: 'POST', url: managedMachineActionEndpointPathV1(actionId),
+                headers: { authorization: `Bearer ${token}` }, payload: input });
+            expect(bare.statusCode, bare.body).toBe(403);
+            const other = await fixture(true);
+            const foreign = await instance.inject({ method: 'POST', url: `/v1/actions/${actionId}/execution-authorization`,
+                headers: { authorization: `Bearer ${other.token}` }, payload: { v: 1, machineId: selected.controller.machineId,
+                    envelope: { v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: selected.controller.machineId }, input } } });
+            expect(foreign.statusCode, foreign.body).toBe(409);
+            expect(foreign.json()).toMatchObject({ code: 'target_unavailable' });
+            const sender = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
+                serverId: homeId, serverIdentityId: homeId, serverApiUrl: serverHttpBaseUrl,
+                actionsSettingsProvider: { getActionsSettings: () => settings, getAccountSettings: () => accountSettingsParse(storedSettings) } });
+            const asked = await sender.execute(actionId, input, { surface: 'cli', authority: 'present_user' });
+            expect(asked, JSON.stringify(asked)).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId } });
+            if (!asked.ok || !asked.result || typeof asked.result !== 'object' || !('artifactId' in asked.result)
+                || typeof asked.result.artifactId !== 'string') throw new Error('Missing terminal approval');
+            const artifactId = asked.result.artifactId;
+            if (!issuedAuthorization) throw new Error('Missing Home authorization');
+            const path = managedMachineActionEndpointPathV1(actionId);
+            for (const tampered of [{ ...input, expectedIntentRevision: 99 }, { ...input, managedId: crypto.randomUUID() }]) {
+                const refused = await instance.inject({ method: 'POST', url: path, payload: tampered,
+                    headers: createExternalActionAuthorizedRequestHeaders({ authorization: issuedAuthorization,
+                        effectActionId: actionId, target: { kind: 'machine', machineId: selected.controller.machineId },
+                        installationId: selected.controller.installationId, privateKey: selected.keys.secretKey,
+                        method: 'POST', path, body: tampered }) });
+                expect(refused.statusCode, refused.body).toBe(401);
+            }
+            const decided = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => receiver.execute('approval.request.decide',
+                { artifactId, decision: 'approve' }, { surface: 'cli', authority: 'present_user',
+                    serverId: homeId, serverIdentityId: homeId, runtimeAccountId: selected.account.id }));
+            expect(decided).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+            expect(await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } }))
+                .toMatchObject(actionId === 'machines.managed.cancel' ? { creationState: 'canceled', intentRevision: 1 }
+                    : { machineSetup: { state: 'skipped' } });
+        } finally { restoreHttp(); await sockets.close(); resetActiveAccountSettingsSnapshotForTests(); await instance.close(); }
     });
 
     it.each(['cli', 'mcp'] as const)('preserves the admitted %s power root through Ask and approved controller admission', async surface => {

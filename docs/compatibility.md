@@ -1,5 +1,20 @@
 # Compatibility and version skew
 
+## Managed creation mutation admission (unreleased 0.3)
+
+Cancel and Continue without setup retain their resource's controller through CLI
+routing and approval replay. The existing closed managed recovery projection
+includes their exact Home, resource and intent revision. Home admits the creator
+or manager once; signed HTTP mutation purposes must match that projected input.
+A foreign controller receives the scoped invocation codec, without requester
+Account credentials. Bare terminal credentials retain their existing refusal.
+
+Protocol, CLI and Home readers reload together for these added authority-bearing
+union members. This corrects an unpublished development contract in place; it
+adds no persisted format, wire epoch, gate or predecessor adapter. The inspected
+`../0.2` frontier at `b825a99dfedcb68e223155a1ba0be84babe9e2d0`, including scoped
+working-tree changes, has no managed-machine admission contract.
+
 ## Session external identity (unreleased 0.3)
 
 `Session.externalIdentityTag` is a new nullable column with
@@ -201,6 +216,14 @@ data is excluded by the shared direct-response projector. Current CLI, Protocol
 and UI reload together; the existing V1 predecessor projection omits this failed
 result while retaining the ordinary operation error. No field, envelope, state or
 wire epoch is added.
+
+Managed native schema refusals now retain the actual contributed Action identity
+and canonical issue path/code in the existing `nativeCause` diagnostic, both in
+the managed observation and the failed operation. Rejected values, expected
+values and issue prose are excluded. Matching development Protocol, SDK, CLI
+and UI readers and regenerated bundled provisioner role-result declarations
+reload together because older strict native-cause readers reject the new variant.
+This does not change the provisioner input or add a wire epoch.
 
 ## Public preview exposure invalidation (unreleased 0.3)
 
@@ -7955,6 +7978,19 @@ predecessor adapter is introduced.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 plugin Session input sources and durable `pluginSession`
+provenance accept optional `displayNameSnapshot`, a descriptive source label
+using the existing NFC/128-code-point display snapshot contract. Actor names
+remain separate. Both envelopes stay closed; unknown fields are rejected,
+and the existing provenance envelope budget still applies. Omission remains
+readable with a generic integration byline. The field grants no identity,
+routing, permission or approval authority. Matching Protocol, SDK, Channels,
+CLI host and UI source reload together because earlier strict development
+readers reject the field. This direct development cut adds no wire epoch,
+capability, persistence migration or predecessor adapter. The inspected
+`../0.2` frontier `b825a99dfedcb68e223155a1ba0be84babe9e2d0` has neither the
+Session input admission schema at this path nor the plugin SDK package.
+
 Unreleased 0.3 committed user runtime events add optional `nativeContent`, a strict
 JSON array retained as opaque data in `raw.meta.nativeContent`. The V1 event and
 its identity, role and lifecycle fields remain closed; nested native values are
@@ -8052,8 +8088,10 @@ Within a supplied token or cost object, unavailable numeric measurements are
 same leaf. Matching development readers consume this contract together, without
 a legacy adapter or new wire epoch. The UsageEvent ledger stores the six token
 and three numeric cost columns as nullable measurements. Aggregation skips null
-operands, retains null when nothing was measured, and exposes incomplete facts
-through the existing accounting coverage projection. New migrations preserve
+operands. A nonempty population with no measured value retains null; an empty
+population publishes zero totals without attributing a report or tariff basis.
+Incomplete facts remain visible through the existing accounting coverage
+projection. New migrations preserve
 existing measured values; they do not reinterpret historical zeros as unknown.
 
 Unreleased 0.3 native Agent model snapshots and ACP model controls add optional

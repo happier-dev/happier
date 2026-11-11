@@ -48,7 +48,7 @@ import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRoo
 import { isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentObservationReadActionIdV1, isDeploymentDomainAddActionIdV1,
     isDeploymentDomainMetadataReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
-    isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema,
     DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/deployment-protocol';
 import { isMachineConnectorSecretGrantHttpPurpose } from '@/app/deployments/machineConnectorSecretGrantAuthorization';
@@ -102,7 +102,7 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { requireActiveManagedResizeInTx } from '@/app/machines/managed/managedRows';
-import { MANAGED_RESIZE_ACTION_ID_V1, isManagedControlAdmissionActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_RESIZE_ACTION_ID_V1, isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1, resolveManagedMachineEnrollmentAdminAccessV1,
     resolveManagedMachineEnrollmentAgentIsolationV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveMachineAdmission, resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
@@ -1191,8 +1191,10 @@ function isDeploymentReadPreparation(binding: ExternalActionExecutionAuthorizati
         return effectActionId === 'deployments.environments.get';
     if (rootActionId === 'deployments.receipts.observe') return effectActionId === 'deployments.environments.get'
         || effectActionId === 'deployments.receipts.get';
+    // Prune protects unsettled pre-migration captures, so it also lists its Environment's receipt history.
     if (rootActionId === 'deployments.backups.restore' || isDeploymentBackupActionIdV1(rootActionId)) return effectActionId === 'deployments.environments.get'
-        || effectActionId === 'deployments.receipts.get' || effectActionId === 'projects.sources.read';
+        || effectActionId === 'deployments.receipts.get' || effectActionId === 'projects.sources.read'
+        || rootActionId === DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1 && effectActionId === 'deployments.receipts.list';
     if (isDeploymentDomainChildActionIdV1(rootActionId)) return effectActionId === 'deployments.environments.get'
         || effectActionId === 'deployments.domains.get' || effectActionId === 'projects.sources.read';
     if (rootActionId === 'deployments.templates.instantiate') return effectActionId === 'projects.sources.read'
@@ -3373,11 +3375,14 @@ export async function verifyExternalActionDomainExecutionRequest(
         const authentication = { authenticationAuthority: verified.effectiveAuthority,
             authenticationEvidence: verified.principal.authenticationEvidence };
         const effectSpec = ActionIdSchema.safeParse(verified.effectActionId);
-        const declaredRead = effectSpec.success && getActionSpec(effectSpec.data).sideEffectClass === 'read';
+        // Declared sibling reads use the admitted read scope; the root's own
+        // preparation reads (such as Source defaults) stay with the preparation owner.
+        const declaredRead = verified.effectActionId !== verified.binding.actionId
+            && effectSpec.success && getActionSpec(effectSpec.data).sideEffectClass === 'read';
         // Mint owns preparation authority. This exact signed relay retains its
         // admitted input; it does not acquire Source, Machine or Environment access again.
-        const admitted = declaredRead
-            ? await isAdmittedDeclaredDeploymentReadInScope(verified.binding, verified.effectActionId, proof)
+        const admitted = isAdmittedRootRelay ? verified.binding.deploymentPreparationAdmission !== undefined
+            : declaredRead ? await isAdmittedDeclaredDeploymentReadInScope(verified.binding, verified.effectActionId, proof)
             : await isDeploymentPreparationHttpPurposeInTx(db, verified.binding, verified.effectActionId, proof, authentication,
                 isReadOnlyArtifactHttpPurpose, (_nativeProof, readActionId) => readActionId
                     ? isAccountActionHttpOperation(readActionId, proof)
@@ -3484,6 +3489,9 @@ export async function verifyExternalActionDomainExecutionRequest(
         const directPurpose = method === 'POST'
             && ['machines.managed.list', 'machines.managed.get', 'machines.managed.birth.get', 'machines.managed.cancel', 'machines.managed.setup.skip'].includes(managedRoot.data)
             && path === managedMachineActionEndpointPathV1(managedRoot.data);
+        // A retained controller may execute only the creator's reviewed revision.
+        if (directPurpose && isManagedCreationMutationActionIdV1(managedRoot.data)
+            && (!recovery || !sameManagedInput(body, recovery.input))) return null;
         const childPurpose = method === 'POST'
             && MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1.some(action =>
                 (managedRoot.data === 'machines.managed.acquire' || isManagedEnrollmentRecoveryChildV1(managedRoot.data, action)) && (

@@ -54,7 +54,7 @@ import { DeploymentChildExecutionProofV1Schema } from '../deployments/deployment
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '../auth/authToken.js';
 import { ActionRequiredAuthoritySchema } from './metadata.js';
 import { ManagedAcquireInputV1Schema, ManagedAdmissionComputeInputV1Schema, ManagedGetInputV1Schema, ManagedInspectInputV1Schema, ManagedMutationInputV1Schema, ManagedCredentialInstallInputV1Schema, ManagedPowerInputV1Schema, ManagedDeleteInputV1Schema, ManagedResizeInputV1Schema } from '../machines/managed/actionsV1.js';
-import { isManagedControlAdmissionActionIdV1 } from '../machines/managed/actionIdsV1.js';
+import { isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1, MANAGED_CREATION_MUTATION_ACTION_IDS_V1 } from '../machines/managed/actionIdsV1.js';
 import { ManagedControllerV1Schema } from '../machines/managed/managedMachineV1.js';
 import { ActionOperationListActionInputV1Schema, ActionOperationGetActionInputV1Schema } from './specs/actionOperations.js';
 import { AccountEncryptionModeSchema, type AccountEncryptionMode } from '../features/payload/capabilities/encryptionCapabilities.js';
@@ -733,6 +733,9 @@ const ExternalActionManagedInspectAdmissionV1Schema = lazyZodSchema(() => z.stri
 const ExternalActionManagedRetryAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
   actionId: z.literal('machines.managed.bootstrap.retry'), input: ManagedMutationInputV1Schema,
 }));
+const ExternalActionManagedCreationMutationAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
+  actionId: z.enum(MANAGED_CREATION_MUTATION_ACTION_IDS_V1), input: ManagedMutationInputV1Schema,
+}));
 const ExternalActionManagedCredentialInstallAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
   actionId: z.literal('machines.managed.credentials.install'), input: ManagedCredentialInstallInputV1Schema,
 }));
@@ -752,11 +755,13 @@ export type ExternalActionManagedControlAdmissionV1 = z.infer<typeof ExternalAct
 export const ExternalActionManagedRecoveryAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
   ExternalActionManagedCredentialInstallAdmissionV1Schema,
   ExternalActionManagedInspectAdmissionV1Schema, ExternalActionManagedRetryAdmissionV1Schema,
+  ExternalActionManagedCreationMutationAdmissionV1Schema,
   ExternalActionManagedOperationListAdmissionV1Schema, ExternalActionManagedOperationGetAdmissionV1Schema,
 ]));
 export const ExternalActionManagedAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
   ExternalActionManagedCredentialInstallAdmissionV1Schema,
   ExternalActionManagedAcquireAdmissionV1Schema, ExternalActionManagedInspectAdmissionV1Schema, ExternalActionManagedRetryAdmissionV1Schema,
+  ExternalActionManagedCreationMutationAdmissionV1Schema,
   ExternalActionManagedOperationListAdmissionV1Schema, ExternalActionManagedOperationGetAdmissionV1Schema,
   ...ExternalActionManagedControlAdmissionV1Schema.def.options,
 ]));
@@ -776,7 +781,9 @@ export function projectExternalActionManagedAdmissionV1(actionId: string, input:
     const { homeId, managedId } = ManagedInspectInputV1Schema.parse(input);
     return { actionId, input: { homeId, managedId } };
   }
-  if (actionId === 'machines.managed.bootstrap.retry') return { actionId, input: ManagedMutationInputV1Schema.parse(input) };
+  if (actionId === 'machines.managed.bootstrap.retry' || isManagedCreationMutationActionIdV1(actionId)) {
+    return { actionId, input: ManagedMutationInputV1Schema.parse(input) };
+  }
   if (actionId === 'action.operations.list') {
     const request = ActionOperationListActionInputV1Schema.parse(input);
     return request.managed ? { actionId, input: request.managed } : undefined;

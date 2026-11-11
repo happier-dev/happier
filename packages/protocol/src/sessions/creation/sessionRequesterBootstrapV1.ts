@@ -35,7 +35,7 @@ import { isProjectWorkspaceSyncPreparationActionV1 } from '../../actions/project
 import { DeploymentChildRpcV1Schema, readDeploymentChildRpcV1 } from '../../deployments/deploymentChildRpcV1.js';
 import { MachineSetupPlanInputV1Schema, isMachineSetupPlanRpcChildV1 } from '../../machines/managed/actionsV1.js';
 import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedOperationV1.js';
-import { MACHINE_SETUP_APPLY_ACTION_ID_V1, isManagedEnrollmentRecoveryChildV1 } from '../../machines/managed/actionIdsV1.js';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1, isManagedEnrollmentRecoveryChildV1, isManagedCreationMutationActionIdV1 } from '../../machines/managed/actionIdsV1.js';
 import { ActionIdSchema } from '../../actions/actionIds.js';
 import { getActionSpec } from '../../actions/actionSpecs.js';
 import { isPresentUserHostInvocation, isPluginActionInvokeConfirmationV1 } from '../../actions/invocationAuthority.js';
@@ -370,6 +370,7 @@ export function isManagedControllerCodecActionV1(binding: Readonly<{
     || actionId.success && getActionSpec(actionId.data).originalExecution?.requesterCredentials === 'none'
     || binding.actionId === 'machines.managed.acquire' || binding.actionId === 'machines.managed.inspect'
     || binding.actionId === 'machines.managed.bootstrap.retry'
+    || isManagedCreationMutationActionIdV1(binding.actionId)
     || binding.actionId === 'machines.managed.credentials.install'
       && binding.managedAdmission?.actionId === binding.actionId
     || (binding.actionId === 'action.operations.list' || binding.actionId === 'action.operations.get')

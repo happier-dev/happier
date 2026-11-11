@@ -118,6 +118,82 @@ describe('activated public Lima actions', () => {
     expect(calls.some(args => args[0] === 'delete')).toBe(false);
   });
 
+  it.each(['absent', 'unavailable'] as const)('retains the failed-create cause when the following native observation is %s', async observation => {
+    let issued = false;
+    const calls: string[][] = [];
+    const exec: Pick<ExecService, 'run'> = { run: async request => {
+      const args = [...(request.args ?? [])]; calls.push(args);
+      if (args[0] === 'info') return processResult(new TextEncoder().encode(JSON.stringify({
+        hostOS: 'darwin', hostArch: 'aarch64', vmTypes: ['vz'],
+      })));
+      if (args[0] === 'create') {
+        issued = true;
+        return { ...processResult(), termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } },
+          stderr: new TextEncoder().encode('instance name `happier-test` too long: `/private/secret/ssh.sock.1234567890123456` must be less than UNIX_PATH_MAX=108 characters, but is 126; token=private-token') };
+      }
+      if (issued && observation === 'unavailable') return { ...processResult(),
+        termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } },
+        stderr: new TextEncoder().encode('inspection unavailable'),
+      };
+      return processResult();
+    } };
+    const { handler, context } = await activatedAction('acquire', exec);
+    const { memoryBytes, diskBytes, instance: _instance, ...identity } = resource;
+    const result = LIMA_RECONCILIATION_SCHEMAS.result.parse(await handler({ managedId: 'test-row', launch: { ...identity,
+      memoryGiB: memoryBytes / 1024 ** 3, diskGiB: diskBytes / 1024 ** 3 } }, context));
+    expect(result).toMatchObject({ kind: 'unknown', recovery: { reason: 'lima_create_failed' }, nativeCause: {
+      localCause: 'native_command_failed', command: 'create', exitCode: 1, stderr: expect.stringContaining('UNIX_PATH_MAX=108'),
+    } });
+    expect(JSON.stringify(result)).not.toContain('private-token');
+    expect(JSON.stringify(result)).not.toContain('/private/secret');
+    expect(calls.filter(args => args[0] === 'create')).toHaveLength(1);
+    expect(calls.some(args => args[0] === 'delete' || args[0] === 'restart')).toBe(false);
+  });
+
+  it('binds the exact observed guest after a failed create reply without allocating again', async () => {
+    let issued = false;
+    const calls: string[][] = [];
+    const instance = 'happier-424cfeskscqixzgevqcbc981tdeoxvmc20zpn0akjnbxa3dg35';
+    const exec: Pick<ExecService, 'run'> = { run: async request => {
+      const args = [...(request.args ?? [])]; calls.push(args);
+      if (args[0] === 'info') return processResult(new TextEncoder().encode(JSON.stringify({
+        hostOS: 'darwin', hostArch: 'aarch64', vmTypes: ['vz'],
+      })));
+      if (args[0] === 'create') {
+        issued = true;
+        return { ...processResult(), termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } },
+          stderr: new TextEncoder().encode('create response unavailable') };
+      }
+      return processResult(new TextEncoder().encode(issued ? JSON.stringify({ ...native, name: instance,
+        dir: `${resource.store}/${instance}` }) : ''));
+    } };
+    const { handler, context } = await activatedAction('acquire', exec);
+    const { memoryBytes, diskBytes, instance: _instance, ...identity } = resource;
+    expect(LIMA_RECONCILIATION_SCHEMAS.result.parse(await handler({ managedId: 'test-row', launch: { ...identity,
+      memoryGiB: memoryBytes / 1024 ** 3, diskGiB: diskBytes / 1024 ** 3 } }, context)))
+      .toMatchObject({ kind: 'bound', resource: { value: { instance, store: resource.store } } });
+    expect(calls.filter(args => args[0] === 'create')).toHaveLength(1);
+    expect(calls.some(args => args[0] === 'delete' || args[0] === 'restart')).toBe(false);
+  });
+
+  it('keeps a successful create with unreadable followup unknown without inventing a create failure', async () => {
+    let issued = false;
+    const exec: Pick<ExecService, 'run'> = { run: async request => {
+      if (request.args?.[0] === 'info') return processResult(new TextEncoder().encode(JSON.stringify({
+        hostOS: 'darwin', hostArch: 'aarch64', vmTypes: ['vz'],
+      })));
+      if (request.args?.[0] === 'create') { issued = true; return processResult(); }
+      return issued ? { ...processResult(), termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } },
+        stderr: new TextEncoder().encode('inspection unavailable') } : processResult();
+    } };
+    const { handler, context } = await activatedAction('acquire', exec);
+    const { memoryBytes, diskBytes, instance: _instance, ...identity } = resource;
+    const result = LIMA_RECONCILIATION_SCHEMAS.result.parse(await handler({ managedId: 'test-row', launch: { ...identity,
+      memoryGiB: memoryBytes / 1024 ** 3, diskGiB: diskBytes / 1024 ** 3 } }, context));
+    expect(result).toMatchObject({ kind: 'unknown', recovery: { reason: 'LIMA_ACQUIRE_UNKNOWN' } });
+    expect(result).not.toHaveProperty('nativeCause');
+  });
+
   it('keeps native defaults when Lima reports inherited images instead of inline images', async () => {
     // Relevant fields captured from nl3 `limactl info`, v2.2.1, 2026-10-31.
     // info loads defaults without embedding base templates, so images and vmType are absent.

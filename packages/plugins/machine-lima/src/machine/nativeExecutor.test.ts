@@ -89,6 +89,8 @@ describe('public Lima process transport', () => {
   });
 
   it.each([
+    { command: 'create', code: 'lima_create_failed', cancelled: false },
+    { command: 'create', code: 'lima_create_failed', cancelled: true },
     { command: 'restart', code: 'lima_start_failed', cancelled: false },
     { command: 'restart', code: 'lima_start_failed', cancelled: true },
     { command: 'edit', code: 'lima_resize_failed', cancelled: false },

@@ -10,7 +10,8 @@ export type LimaProcessCommandResult = LimaCommandResult & Readonly<{ process: P
 
 export class LimaNativeCommandError extends PluginError {
   constructor(readonly nativeCause: Extract<MachineProvisionerNativeCauseV1, { localCause: 'native_command_failed' }>) {
-    super({ code: nativeCause.command === 'edit' ? 'lima_resize_failed'
+    super({ code: nativeCause.command === 'create' ? 'lima_create_failed'
+      : nativeCause.command === 'edit' ? 'lima_resize_failed'
       : nativeCause.command === 'stop' ? 'lima_stop_failed' : 'lima_start_failed', details: { nativeCause } });
   }
 }
@@ -33,7 +34,7 @@ export function createLimaSdkExecutor({ exec, executable, signal }: Readonly<{
     const observed = process.termination.observed;
     const exitCode = observed.kind === 'exit' && process.termination.requestedBy.kind === 'none' ? observed.exitCode : null;
     const command = args[0];
-    if ((command === 'start' || command === 'restart' || command === 'stop' || command === 'edit') && exitCode !== 0) {
+    if ((command === 'create' || command === 'start' || command === 'restart' || command === 'stop' || command === 'edit') && exitCode !== 0) {
       // Project the whole retained stderr before truncating, so a credential
       // crossing the excerpt boundary cannot leak a partial value.
       const err = new TextDecoder().decode(process.stderr).trim();

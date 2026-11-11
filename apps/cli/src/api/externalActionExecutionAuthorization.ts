@@ -6,7 +6,7 @@ import { deriveEd25519KeyPair, ED25519_PUBLIC_KEY_BYTES } from '@happier-dev/pro
 import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { isMachineTerminalOpenOrRestartActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
-import { isMachineSetupPlanOrApplyActionIdV1, isManagedEnrollmentRecoveryChildV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isMachineSetupPlanOrApplyActionIdV1, isManagedEnrollmentRecoveryChildV1, isManagedCreationMutationActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema } from '@happier-dev/protocol/daemon/agentInstallJobs';
 import { buildMachineAgentsDetectRequest, MachineAcpInventoryRequestSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
@@ -716,6 +716,7 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
     || actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' || isMachineTerminalActionId(actionId)
     || actionId === 'machines.managed.acquire' || actionId === 'machines.managed.inspect'
     || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.credentials.install'
+    || isManagedCreationMutationActionIdV1(actionId)
     || MANAGED_CONTROL_ACTION_IDS_V1.some(id => id === actionId);
 }
 

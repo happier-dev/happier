@@ -6,10 +6,12 @@ import { openExternalActionRequestV2, sealExternalActionRequestV2 } from './exte
 import { ApprovalRequestV2Schema } from '../approvals/approvalRequestV1.js';
 import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1 } from '../approvals/approvalArtifactHeaderV1.js';
 
-it.each(['stop', 'start', 'delete'] as const)('retains encrypted managed %s admission through the signed approval Artifact', intent => {
-  const actionId = intent === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set';
-  const input = { homeId: 'srv_home', managedId: 'managed', when: 'now', expectedRevision: 0,
-    ...(intent === 'delete' ? { intent, reviewedDependencies: true } : { intent }) };
+it.each(['stop', 'start', 'delete', 'cancel', 'skip'] as const)('retains encrypted managed %s admission through the signed approval Artifact', intent => {
+  const creation = intent === 'cancel' || intent === 'skip';
+  const actionId = intent === 'cancel' ? 'machines.managed.cancel' : intent === 'skip' ? 'machines.managed.setup.skip'
+    : intent === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set';
+  const input = { homeId: 'srv_home', managedId: 'managed', ...(creation ? { expectedIntentRevision: 0 }
+    : { when: 'now', expectedRevision: 0, ...(intent === 'delete' ? { intent, reviewedDependencies: true } : { intent }) }) };
   const target = { kind: 'machine' as const, machineId: 'controller' };
   const binding = { serverIdentityId: input.homeId, accountId: 'account', actionId, requestId: 'request', target,
     authentication: { kind: 'terminal' as const, tokenEpoch: 0 } };

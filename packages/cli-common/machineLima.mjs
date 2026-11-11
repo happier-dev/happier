@@ -141,14 +141,15 @@ export async function createLimaInstance({ executor, instance: rawInstance, stor
     throw limaError('LIMA_IDENTITY_MISMATCH', 'creation arguments do not name the requested instance');
   }
   let uncertain = false;
+  let creationFailure;
   try {
     const result = await runLimaCommand({ executor, store, args: createArgs, interactive: true });
     uncertain = result.exitCode !== 0;
-  } catch { uncertain = true; }
+  } catch (cause) { uncertain = true; creationFailure = cause; }
   let observed;
   try { observed = await inspectLimaInstance(options); }
-  catch (cause) { throw limaError('LIMA_ACQUIRE_UNKNOWN', 'creation outcome unavailable; inspect the same store and instance', cause); }
-  if (!observed) throw limaError('LIMA_ACQUIRE_UNKNOWN', 'creation outcome unconfirmed; inspect the same store and instance');
+  catch (cause) { throw creationFailure ?? limaError('LIMA_ACQUIRE_UNKNOWN', 'creation outcome unavailable; inspect the same store and instance', cause); }
+  if (!observed) throw creationFailure ?? limaError('LIMA_ACQUIRE_UNKNOWN', 'creation outcome unconfirmed; inspect the same store and instance');
   return { created: true, reconciled: uncertain, instance: observed };
 }
 
