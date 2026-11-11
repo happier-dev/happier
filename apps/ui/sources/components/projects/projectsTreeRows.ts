@@ -494,3 +494,15 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
     }
     return rows;
 }
+
+/**
+ * The Projects search: a Project stays when its name, its Team, or any checkout's Machine, label or path holds the
+ * query (case-insensitive). An empty query keeps the very same list, so the rows keep their identity.
+ */
+export function filterProjectsTreeByQuery(projects: readonly ProjectsTreeProject[], query: string): readonly ProjectsTreeProject[] {
+    const needle = query.trim().toLocaleLowerCase();
+    if (needle.length === 0) return projects;
+    const holds = (text: string | null | undefined) => typeof text === 'string' && text.toLocaleLowerCase().includes(needle);
+    return projects.filter((project) => holds(project.name) || holds(project.teamLabel)
+        || project.checkouts.some((checkout) => holds(checkout.machineName) || holds(checkout.label) || holds(checkout.path)));
+}

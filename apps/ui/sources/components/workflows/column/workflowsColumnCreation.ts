@@ -25,3 +25,18 @@ export const WorkflowsColumnHeadsPageContext = React.createContext(false);
 export function useWorkflowsColumnHeadsPage(): boolean {
     return React.useContext(WorkflowsColumnHeadsPageContext);
 }
+
+/**
+ * On a phone the column heads the page with the main-screen head, whose title is the library's space and whose
+ * magnifier searches it (owner 11-11). It lends the home the one library controller it reads, so
+ * the home draws neither a second scope line nor a second search and narrows through the same instance.
+ */
+export type WorkflowsColumnLentLibrary = Readonly<{
+    libraryView: import('../library/useWorkflowLibraryView').WorkflowLibraryViewController;
+}>;
+
+export const WorkflowsColumnLibraryContext = React.createContext<WorkflowsColumnLentLibrary | null>(null);
+
+export function useWorkflowsColumnLentLibrary(): WorkflowsColumnLentLibrary | null {
+    return React.useContext(WorkflowsColumnLibraryContext);
+}

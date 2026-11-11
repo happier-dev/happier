@@ -70,9 +70,9 @@ export function PhoneDestinationBackLine(props: Readonly<{ control: NavigationBa
 
 /**
  * The head line of a whole phone page with no native bar above it (Discussions, Boards): it stands under the
- * status bar, in every state the page shows (its list, or a whole-page state in the list's place). A main screen
- * keeps the line's height with nothing on it, so every main screen's title stands where My work's does; a page
- * it pushes carries its Back there. `page` false (a column beside a page) draws nothing.
+ * status bar, in every state the page shows (its list, or a whole-page state in the list's place). A page it pushes
+ * carries its Back there. A main screen has no Back, so it keeps no empty line (owner 11-11: the title sits right
+ * under the status bar); only the safe area stays. `page` false (a column beside a page) draws nothing.
  */
 export function PhonePageBackLine(props: Readonly<{ control: NavigationBackControl | null; page?: boolean }>) {
     const topInset = useChromeSafeAreaInsets().top;
@@ -80,7 +80,7 @@ export function PhonePageBackLine(props: Readonly<{ control: NavigationBackContr
     if (!props.control && !(props.page && phone)) return null;
     return (
         <View style={{ paddingTop: topInset }}>
-            {props.control ? <PhoneDestinationBackLine control={props.control} /> : <View style={backLineStyles.line} />}
+            {props.control ? <PhoneDestinationBackLine control={props.control} /> : null}
         </View>
     );
 }

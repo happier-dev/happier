@@ -19438,6 +19438,7 @@ settingsSession: {
         },
         emptyTitle: 'Noch keine Projekte',
         emptyDescription: 'Mit Projekten durchstöberst und bearbeitest du Dateien und nutzt Git auf deinen Rechnern – auch außerhalb von Sessions.',
+        searchPlaceholder: 'Projekte durchsuchen',
         noneOpenTitle: 'Kein Projekt geöffnet',
         noneOpenDescription: 'Wähle ein Projekt aus der Liste oder füge einen Ordner von einem deiner Rechner hinzu.',
         groups: {

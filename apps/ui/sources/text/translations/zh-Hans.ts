@@ -18949,6 +18949,7 @@ settingsSession: {
     },
     emptyTitle: "还没有项目",
     emptyDescription: "项目让你在不创建会话的情况下浏览和编辑机器上的文件，并使用 Git。",
+    searchPlaceholder: "搜索项目",
     noneOpenTitle: "未打开项目",
     noneOpenDescription: "从列表中选择一个项目，或从你的某台机器添加一个文件夹。",
     groups: {

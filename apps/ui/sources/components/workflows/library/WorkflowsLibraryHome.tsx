@@ -48,7 +48,7 @@ import { t } from '@/text';
 
 import { confirmWorkflowDocumentExport } from '../actions/confirmWorkflowDocumentExport';
 import { WORKFLOWS_IMPORT_ROUTE, WORKFLOWS_NEW_ROUTE } from '../workflowsRoutes';
-import { WorkflowsColumnCreationRefContext, useWorkflowsColumnHeadsPage, useWorkflowsColumnOwnsCreation } from '../column/workflowsColumnCreation';
+import { WorkflowsColumnCreationRefContext, useWorkflowsColumnHeadsPage, useWorkflowsColumnLentLibrary, useWorkflowsColumnOwnsCreation } from '../column/workflowsColumnCreation';
 import {
     dismissWorkflowLibraryDeletionReceipt,
     useWorkflowRunWindow,
@@ -131,10 +131,13 @@ export function WorkflowsLibraryHome(): React.ReactElement {
     const columnHeadsPage = useWorkflowsColumnHeadsPage();
     const phone = useViewportClass() === 'compact';
     const focused = useIsFocused();
-    // The one Workflow library controller (R8-7): the column beside this page narrows through the same draft.
-    const libraryView = useWorkflowLibraryView(focused);
+    // The one Workflow library controller (R8-7): the column beside this page narrows through the same draft. A phone's
+    // main-screen head lends its own instance, and then owns the scope line and search (owner 11-11).
+    const lent = useWorkflowsColumnLentLibrary();
+    const ownLibraryView = useWorkflowLibraryView(focused && lent === null);
+    const libraryView = lent?.libraryView ?? ownLibraryView;
     const { library, filter, needle, searchQuery: query } = libraryView;
-    const spaceHeader = useWorkflowLibrarySpaceHeader(libraryView, 'workflows-home-space', 'section');
+    const spaceHeader = useWorkflowLibrarySpaceHeader(ownLibraryView, 'workflows-home-space', 'section');
     React.useEffect(() => {
         const definitionId = library.deletedDefinitionId;
         if (!focused || definitionId === null) return;
@@ -251,6 +254,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
         </View> : null}
         {/* The space header (R9, R8-7): the same title chevron, filter, strip and condition tokens as the column, over one draft. */}
         {/* A phone keeps the strip on the line of the title it belongs to; the search takes its own line below. */}
+        {lent ? null : <>
         <View testID="workflows-home:scope-line" style={[styles.controlLine, phone ? styles.controlLinePhone : null]}>
             {spaceHeader.titleControl}
             {phone ? <View style={styles.spaceStripInline}>{spaceHeader.strip}</View> : <View style={styles.controlLineGrow} />}
@@ -260,6 +264,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
         {phone ? <View style={styles.controlLine}>{search}</View> : <View style={styles.spaceStrip}>{spaceHeader.strip}</View>}
         {spaceHeader.conditionRow ? <View style={styles.spaceStrip}>{spaceHeader.conditionRow}</View> : null}
         {spaceHeader.overlays}
+        </>}
     </>);
 
     const empty = library.status === 'failed' && library.definitions.length === 0 ? (

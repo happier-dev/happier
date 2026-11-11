@@ -20,6 +20,8 @@ import { WORKFLOWS_IMPORT_ROUTE, WORKFLOWS_NEW_ROUTE, WORKFLOWS_RUN_SETTINGS_ROU
 export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions(props: Readonly<{
     /** This surface owns saved-Workflow creation. */
     canCreate: boolean;
+    /** Receives the add menu's opener, so the phone bar's "+" opens the same menu as this "+". */
+    addOpenerRef?: React.MutableRefObject<(() => void) | null>;
 }>) {
     const router = useRouter();
     const openAgent = useWorkflowAgentAuthoring();
@@ -28,6 +30,13 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
     const [newTriggerOpen, setNewTriggerOpen] = React.useState(false);
     const [examplesOpen, setExamplesOpen] = React.useState(false);
     const addAnchorRef = React.useRef<View>(null);
+    const addOpenerRef = props.addOpenerRef;
+    const canCreate = props.canCreate;
+    React.useEffect(() => {
+        if (!addOpenerRef || !canCreate) return;
+        addOpenerRef.current = () => setAddOpen(true);
+        return () => { addOpenerRef.current = null; };
+    }, [addOpenerRef, canCreate]);
 
     const newTriggerItem: DropdownMenuItem = {
         id: 'trigger',

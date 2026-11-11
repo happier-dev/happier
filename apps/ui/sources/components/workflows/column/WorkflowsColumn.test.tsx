@@ -33,6 +33,17 @@ installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
 vi.mock('@/sync/domains/state/browserRecordStorage', async () =>
     (await import('@/dev/testkit/mocks/browserRecordStorage')).createBrowserRecordStorageModuleMock());
 
+const phoneWindow = vi.hoisted(() => ({ on: false }));
+// Window size is an environment adapter: a test may present a phone-sized window; otherwise the real reading stands.
+vi.mock('@/utils/platform/useViewportClass', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/utils/platform/useViewportClass')>();
+    return { ...original, useViewportClass: () => (phoneWindow.on ? 'compact' : original.useViewportClass()) };
+});
+vi.mock('@/utils/platform/responsive', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/utils/platform/responsive')>();
+    return { ...original, useDeviceType: () => (phoneWindow.on ? 'phone' : original.useDeviceType()) };
+});
+
 const searchRuntime = { open: () => {}, buildCommands: () => [] };
 
 function TestAuth({ children }: React.PropsWithChildren) {
@@ -127,6 +138,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
     standardCleanup();
+    // Only after the tree unmounts: a mounted tree re-rendering across the flip would change its hook order.
+    phoneWindow.on = false;
     resetSessionDraftRepositoryForTests();
     const { resetWorkflowLibraryReadsForTests } = await import('@/components/workflows/library/workflowLibraryReads');
     resetWorkflowLibraryReadsForTests();
@@ -152,6 +165,27 @@ describe('WorkflowsColumn', () => {
         expect(order()).toContain('workflows-column:view:definitions');
         await screen.pressByTestIdAsync('workflows-column:view:runs');
         expect(order()[0]).toBe('workflows-column:header');
+    });
+    it('heads the phone page with the space as its title, search behind the magnifier and the bar "+" (owner 11-11)', async () => {
+        // A phone-sized window: the window-size adapters are the boundary; the column decides from them.
+        phoneWindow.on = true;
+        {
+            const { WorkflowsLibraryHome } = await import('@/components/workflows/library/WorkflowsLibraryHome');
+            const { usePageCreateAction } = await import('@/components/navigation/mobile/chrome/pageCreateAction');
+            const { t } = await import('@/text');
+            const bar: { action: ReturnType<typeof usePageCreateAction> } = { action: null };
+            function Bar() { bar.action = usePageCreateAction(); return null; }
+            const screen = await renderScreen(<><Bar /><WorkflowsColumn surface="page" definitionsContent={<WorkflowsLibraryHome />} /></>, { wrapper: TestAuth });
+            // The title is the space ("All workflows ⌄") on the page's title row; the home draws no second scope line.
+            await vi.waitFor(() => expect(screen.findHostByTestId('workflows-column-space-title')).not.toBeNull());
+            expect(screen.findHostByTestId('workflows-home:scope-line')).toBeNull();
+            // Search waits behind the magnifier on the title row.
+            expect(screen.findHostByTestId('workflows-search')).toBeNull();
+            await screen.pressByTestIdAsync('workflows-search:toggle');
+            expect(screen.findHostByTestId('workflows-search')).not.toBeNull();
+            // The bar's "+" is the page's add.
+            expect(bar.action?.label).toBe(t('workflows.destination.addAccessibility'));
+        }
     });
     it.each([false, true])('reveals the Workflow filter search anchor from retained Runs (page=%s)', async page => {
         const content = page ? <View testID="workflow-definitions-content" /> : undefined;

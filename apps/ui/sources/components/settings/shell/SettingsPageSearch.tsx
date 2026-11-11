@@ -11,6 +11,7 @@ import { SettingsQueryResults, useSettingsSearch } from '@/components/settings/s
 import { useSettingsPageSearchQuery } from './SettingsPageSearchContext';
 import { SettingsPageHeader } from './SettingsPageHeader';
 import { CollectionSearchToggle } from '@/components/ui/lists/collection/CollectionList';
+import { useMainScreenSearch } from '@/components/navigation/shell/MainScreenHeader';
 import { NavigationTitleChromeProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
 import { PhonePageBackLine, usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
@@ -31,17 +32,11 @@ export const SettingsPageSearch = React.memo(function SettingsPageSearch(props: 
         queryState: useSettingsPageSearchQuery(),
         tag: 'SettingsPageSearch.open',
     });
-    const [opened, setOpened] = React.useState(false);
-    const fieldOpen = opened || search.query.length > 0;
-    const setQuery = search.setQuery;
-    const toggleField = React.useCallback(() => {
-        if (fieldOpen) {
-            setQuery('');
-            setOpened(false);
-        } else {
-            setOpened(true);
-        }
-    }, [fieldOpen, setQuery]);
+    // The magnifier's open/close rule is the main-screen head's (one owner for every main screen's search).
+    const searchPlaceholder = t('settingsSearch.placeholder');
+    const field = useMainScreenSearch(React.useMemo(() => ({
+        value: search.query, onChangeText: search.setQuery, placeholder: searchPlaceholder, testID: 'settings-page-search',
+    }), [search.query, search.setQuery, searchPlaceholder]));
     const phone = useDeviceType() === 'phone';
     const phoneBack = usePhoneDestinationBack('settings:back');
     const inheritedBack = useNavigationBackControl();
@@ -62,21 +57,21 @@ export const SettingsPageSearch = React.memo(function SettingsPageSearch(props: 
                         actions={(
                             <CollectionSearchToggle
                                 testID="settings-page-search-toggle"
-                                open={fieldOpen}
-                                onPress={toggleField}
+                                open={field.open}
+                                onPress={field.toggle}
                                 accessibilityLabel={t('settingsSearch.placeholder')}
                             />
                         )}
                     />
                 </NavigationBackChromeProvider>
-                {fieldOpen ? (
+                {field.open ? (
                     <CompactSearchField
                         testID="settings-page-search"
                         placement="page"
                         value={search.query}
                         onChangeText={search.setQuery}
                         placeholder={t('settingsSearch.placeholder')}
-                        autoFocus={opened && search.query.length === 0}
+                        autoFocus={field.focusOnOpen}
                     />
                 ) : null}
                 <PaneHeaderShade />

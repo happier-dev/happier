@@ -19155,6 +19155,7 @@ settingsSession: {
     },
     emptyTitle: "Brak projektów",
     emptyDescription: "Projekty pozwalają przeglądać i edytować pliki oraz używać Git na Twoich maszynach poza sesjami.",
+    searchPlaceholder: "Szukaj projektów",
     noneOpenTitle: "Nie otwarto projektu",
     noneOpenDescription: "Wybierz projekt z listy albo dodaj folder z jednej ze swoich maszyn.",
     groups: {

@@ -31,9 +31,9 @@ import { MACHINES_INDEX_SETTINGS, useMachinesIndexView, type MachinesIndexView }
 import { useMachinesSettingsViewModel } from '@/components/settings/machines/machinesSettingsViewModel';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
-import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Icon } from '@/components/ui/icons/Icon';
-import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { MainScreenHeader, type MainScreenSearch } from '@/components/navigation/shell/MainScreenHeader';
+import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
@@ -265,6 +265,13 @@ function AllMachinesIndexBody() {
     // The header says how current those summaries are; a page that shows none has nothing live to speak for.
     const freshnessKeys = holding || summarySetting.metrics.length === 0 ? NO_MACHINE_KEYS : demandKeys;
 
+    // The main-screen head (owner 11-11): the magnifier opens the search; the "+" and the bar's "+" open one add menu.
+    const addOpenerRef = React.useRef<(() => void) | null>(null);
+    const addLabel = t('settings.addMachine');
+    const addCreate = React.useMemo<PageCreateAction>(() => ({ label: addLabel, testID: 'machines-add', onPress: () => addOpenerRef.current?.() }), [addLabel]);
+    const searchPlaceholder = t('settingsMachines.searchPlaceholder');
+    const search = React.useMemo<MainScreenSearch>(() => ({ value: query, onChangeText: setQuery, placeholder: searchPlaceholder, testID: 'machines.index.search' }),
+        [query, searchPlaceholder]);
     const header = (
         <>
             <AllMachinesHeader
@@ -275,21 +282,14 @@ function AllMachinesIndexBody() {
                 freshnessKeys={freshnessKeys}
                 view={view}
                 onViewChange={setView}
-                addMenu={besideList ? null : <AddMachineMenu options={addOptions} replaceInCollection={false} />}
+                addMenu={besideList ? null : <AddMachineMenu options={addOptions} replaceInCollection={false} openerRef={addOpenerRef} />}
+                create={besideList || addOptions.length === 0 ? null : addCreate}
+                // Beside the machine list the list's own search finds every machine; a second field would repeat it.
+                search={searchable && !besideList ? search : null}
                 phone={deviceType === 'phone'}
             />
             {/* The list names each reason here; the grid states it in each machine's existing status line. */}
             {view === 'list' ? <MachinesNeedsYouList entries={holding ? NO_ATTENTION_ENTRIES : attention.entries} nowMs={nowMs} onOpen={openAttention} compact={deviceType === 'phone'} testID="machines.index.needs-you" /> : null}
-            {/* Beside the machine list the list's own search finds every machine; a second field would repeat it. */}
-            {searchable && !besideList ? (
-                <CompactSearchField
-                    testID="machines.index.search"
-                    value={query}
-                    onChangeText={setQuery}
-                    placeholder={t('settingsMachines.searchPlaceholder')}
-                    placement="page"
-                />
-            ) : null}
             {/* The table is the page's next section (lab `rm` F): one section gap under what leads, as every
                 sheet below a page header has. The phone's list and the grid bring their own group spacing. */}
             {view === 'list' && deviceType !== 'phone' ? <View style={stylesheet.beforeTable} /> : null}
@@ -410,7 +410,10 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
     view: MachinesIndexView;
     onViewChange: (next: MachinesIndexView) => void;
     addMenu: React.ReactNode;
-    /** A phone folds header actions into the navigation bar; List | Grid stays in the page, under the sentence (lab `rm` Fp). */
+    /** The page's add, lent to the phone bar's "+" (the title row's "+" is `addMenu`). */
+    create: PageCreateAction | null;
+    search: MainScreenSearch | null;
+    /** List | Grid stands under the title on a phone (lab `rm` Fp), beside the add on a wide page. */
     phone: boolean;
 }>) {
     const language = usePreferredLanguage();
@@ -440,28 +443,20 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
         </SettingAnchor>
     );
     return (
-        <>
-            <PageHeader
-                testID="machines.index.header"
-                alwaysShowTitle
-                title={t('settings.machines')}
-                // The page's generic purpose only stands while the fleet has nothing to say (owner 11-05).
-                description={[props.sentence === null ? props.description ?? t('settingsMachines.pageDescription')
-                    : [props.sentence, props.description].filter(Boolean).join('. '), props.scopeLabel].filter(Boolean).join(' · ')}
-                meta={meta}
-                actions={props.phone ? props.addMenu : (
-                    <View style={stylesheet.headerActions}>
-                        {viewSwitch}
-                        {props.addMenu}
-                    </View>
-                )}
-            />
-            {props.phone ? (
-                <ItemGroup header="none" surface="none">
-                    <View style={stylesheet.phoneViewSwitch}>{viewSwitch}</View>
-                </ItemGroup>
-            ) : null}
-        </>
+        <MainScreenHeader
+            testID="machines.index.header"
+            alwaysShowTitle
+            title={t('settings.machines')}
+            // The page's generic purpose only stands while the fleet has nothing to say (owner 11-05).
+            description={[props.sentence === null ? props.description ?? t('settingsMachines.pageDescription')
+                : [props.sentence, props.description].filter(Boolean).join('. '), props.scopeLabel].filter(Boolean).join(' · ')}
+            meta={meta}
+            search={props.search}
+            actions={props.phone ? undefined : viewSwitch}
+            create={props.create}
+            createTrigger={props.addMenu}
+            band={props.phone ? <View style={stylesheet.phoneViewSwitch}>{viewSwitch}</View> : undefined}
+        />
     );
 });
 
@@ -670,11 +665,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     phoneViewSwitch: {
         alignSelf: 'flex-start',
-    },
-    headerActions: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s8,
     },
     empty: {
         paddingTop: theme.space.s8,

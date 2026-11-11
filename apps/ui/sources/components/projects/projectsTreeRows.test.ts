@@ -202,3 +202,20 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
             .toEqual(['happier (Acme) >']);
     });
 });
+
+describe('filterProjectsTreeByQuery (the Projects main screen search)', () => {
+    it('keeps a Project whose name, Team, Machine or checkout matches, case-insensitively, and returns the same list for an empty query', async () => {
+        const { filterProjectsTreeByQuery } = await import('./projectsTreeRows');
+        const projects = [
+            project('happier', [checkout('h1', 'devbox', 'main')], 'Acme'),
+            project('docs', [checkout('d1', 'mbp', 'gh-pages')]),
+            project('site', [checkout('s1', 'devbox', 'release')]),
+        ];
+        expect(filterProjectsTreeByQuery(projects, '  ')).toBe(projects);
+        expect(filterProjectsTreeByQuery(projects, 'DOC').map(item => item.key)).toEqual(['docs']);
+        expect(filterProjectsTreeByQuery(projects, 'acme').map(item => item.key)).toEqual(['happier']);
+        expect(filterProjectsTreeByQuery(projects, 'macbook').map(item => item.key)).toEqual(['docs']);
+        expect(filterProjectsTreeByQuery(projects, 'release').map(item => item.key)).toEqual(['site']);
+        expect(filterProjectsTreeByQuery(projects, 'nothing')).toEqual([]);
+    });
+});

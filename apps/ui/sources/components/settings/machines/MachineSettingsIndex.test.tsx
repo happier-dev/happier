@@ -707,6 +707,8 @@ describe('All machines (the Settings door index)', () => {
       },
     ]);
     const tree = await renderPage();
+    // The main-screen head keeps the search behind its magnifier (owner 11-11).
+    await act(async () => tree.findAll((node) => node.props?.testID === 'machines.index.search:toggle' && typeof node.props?.onPress === 'function')[0]!.props.onPress());
     const search = tree.findAll(
       (node) => node.props?.testID === 'machines.index.search',
     )[0]!;
@@ -775,6 +777,7 @@ describe('All machines (the Settings door index)', () => {
 
     // A search reaches every machine, whatever the fold says.
     const fresh = await renderPage();
+    await act(async () => fresh.findAll((node) => node.props?.testID === 'machines.index.search:toggle' && typeof node.props?.onPress === 'function')[0]!.props.onPress());
     const search = fresh.findAll(
       (node) => node.props?.testID === 'machines.index.search',
     )[0]!;

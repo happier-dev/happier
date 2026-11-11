@@ -22799,6 +22799,7 @@ const enProjects = {
   emptyTitle: 'No projects yet',
   emptyDescription:
     'Projects let you browse and edit files, and use Git on your machines outside of sessions.',
+  searchPlaceholder: 'Search projects',
   noneOpenTitle: 'No project open',
   noneOpenDescription:
     'Choose a project from the list, or add a folder from one of your machines.',

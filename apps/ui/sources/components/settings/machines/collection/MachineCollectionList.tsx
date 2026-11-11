@@ -106,9 +106,18 @@ export const AddMachineMenu = React.memo(function AddMachineMenu(props: Readonly
     options: readonly MachineAddOption[];
     /** Beside a detail, an option inside the collection replaces the open detail. */
     replaceInCollection: boolean;
+    /** Receives the menu's opener, so a main screen's bar "+" opens the same menu as this "+". */
+    openerRef?: React.MutableRefObject<(() => void) | null>;
 }>) {
     const router = useRouter();
     const [open, setOpen] = React.useState(false);
+    const openerRef = props.openerRef;
+    const available = props.options.length > 0;
+    React.useEffect(() => {
+        if (!openerRef || !available) return;
+        openerRef.current = () => setOpen(true);
+        return () => { openerRef.current = null; };
+    }, [available, openerRef]);
     const items = React.useMemo((): ReadonlyArray<DropdownMenuItem> => props.options.map((option) => ({
         id: option.id,
         title: option.title,

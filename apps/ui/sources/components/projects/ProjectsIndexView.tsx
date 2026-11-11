@@ -2,6 +2,9 @@ import * as React from 'react';
 import { View } from 'react-native';
 
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
+import { PhoneMainTabLine, PhoneMainTabShell } from '@/components/navigation/shell/PhoneMainTabLine';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
@@ -24,8 +27,18 @@ export const ProjectsIndexView = React.memo(function ProjectsIndexView() {
     // A retained workspace tab stays mounted for an instant return, but its demand ends while it is not
     // presented: the page's live Projects model suspends until the tab is shown again.
     const presented = useLayoutPresentationActive();
+    const phone = useDeviceType() === 'phone';
+    const safeAreaTop = useChromeSafeAreaInsets().top;
     return <RetainedPanelSurface isActive={presented} suspendWhenHidden>
-        {columnVisible ? <ProjectsNoneOpen /> : <ProjectsListView />}
+        {columnVisible ? <ProjectsNoneOpen /> : phone ? (
+            // A phone's /projects is the Projects tab: the same Home line and main-screen head as the tab (owner 11-11).
+            <View style={{ flex: 1, paddingTop: safeAreaTop }}>
+                <PhoneMainTabShell>
+                    <PhoneMainTabLine />
+                    <ProjectsListView />
+                </PhoneMainTabShell>
+            </View>
+        ) : <ProjectsListView />}
     </RetainedPanelSurface>;
 });
 

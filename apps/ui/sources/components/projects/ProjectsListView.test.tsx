@@ -264,6 +264,29 @@ describe('ProjectsListView', () => {
         expect(elsewhere.tree.root.findAllByType(PageHeader)).toHaveLength(0);
     });
 
+    it('heads the phone main screen with search and "+" on the title row and lends the bar its "+" (owner 11-11)', async () => {
+        deviceTypeMock = 'phone';
+        machinesMock = [createMachine({ id: 'm1', host: 'studio' })];
+        const { PhoneTabNavRowProvider } = await import('@/components/navigation/shell/phoneTabNavRow');
+        const { usePageCreateAction } = await import('@/components/navigation/mobile/chrome/pageCreateAction');
+        const { ProjectsListView } = await import('./ProjectsListView');
+        const bar: { action: ReturnType<typeof usePageCreateAction> } = { action: null };
+        function Bar() { bar.action = usePageCreateAction(); return null; }
+        const screen = await renderProjects(<PhoneTabNavRowProvider leading={null} trailing={null}><Bar /><ProjectsListView /></PhoneTabNavRowProvider>);
+
+        // The "+" replaces the inline add row; the bar's "+" opens the same add menu.
+        expect(screen.findByTestId('projects-list:add-row')).toBeNull();
+        expect(screen.findByTestId('projects-add:header')).not.toBeNull();
+        expect(bar.action?.label).toBe(t('projects.actions.addProject'));
+        const menu = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'projects-list:add:menu');
+        expect(menu?.props.items.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining(['clone', 'manage']));
+
+        // The magnifier opens the field; closing it again clears the query.
+        expect(screen.findByTestId('projects-search')).toBeNull();
+        await act(async () => { screen.findByTestId('projects-search:toggle')!.props.onPress(); });
+        expect(screen.findByTestId('projects-search')).not.toBeNull();
+    });
+
     it('keeps hidden Projects reachable through the phone Hidden group without rendering checkout leaves', async () => {
         workspaceRefsV1Mock = [{ id: 'hidden-ref', serverId, machineId: 'machine', rootPath: '/work/hidden',
             createdAtMs: 1, projectKey: 'anchor' }];

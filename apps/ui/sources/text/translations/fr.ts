@@ -19204,6 +19204,7 @@ settingsSession: {
     },
     emptyTitle: "Pas encore de projets",
     emptyDescription: "Les projets te permettent de parcourir et modifier des fichiers, et d’utiliser Git sur tes machines en dehors des sessions.",
+    searchPlaceholder: "Rechercher des projets",
     noneOpenTitle: "Aucun projet ouvert",
     noneOpenDescription: "Choisis un projet dans la liste ou ajoute un dossier depuis l’une de tes machines.",
     groups: {

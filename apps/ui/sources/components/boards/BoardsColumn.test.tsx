@@ -180,6 +180,29 @@ describe('BoardsColumn collection search', () => {
         expect(await selectedRows('plane')).toHaveLength(1);
     });
 
+    it('draws the phone main screen\'s boards as page rows (card, mark, line, chevron) and the column\'s as navigation rows (owner 11-11)', async () => {
+        route.pathname = '/boards';
+        const boardRows = async (surface: 'page' | 'plane') => {
+            const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><BoardsColumn surface={surface} /></InjectedAuthProvider>);
+            await flushHookEffects({ runOnlyPendingTimers: true });
+            await flushHookEffects({ runOnlyPendingTimers: true });
+            const { Item } = await import('@/components/ui/lists/Item');
+            const { ItemGroup } = await import('@/components/ui/lists/ItemGroup');
+            expect(screen.findHostByTestId('boards-column:board:alpha')).not.toBeNull();
+            const row = screen.findAllByType(Item).find(node => node.props.testID === 'boards-column:board:alpha')!;
+            return { row, grouped: screen.findAllByType(ItemGroup).some(group => group.findAll(node => node.props.testID === 'boards-column:board:alpha').length > 0) };
+        };
+        deviceState.type = 'phone';
+        const page = await boardRows('page');
+        expect(page.grouped).toBe(true);
+        expect(page.row.props.showChevron).toBe(true);
+        expect(page.row.props.icon).toBeTruthy();
+        deviceState.type = 'tablet';
+        const column = await boardRows('plane');
+        expect(column.grouped).toBe(false);
+        expect(column.row.props.showChevron).toBe(false);
+    });
+
     it('gives the empty phone page the Boards empty state with its New board action', async () => {
         noBoards = true;
         deviceState.type = 'phone';

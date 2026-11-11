@@ -11,9 +11,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { CollectionList, CollectionListGroupLabel, CollectionNavigationRow, CollectionSkeletonRows, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
-import { NavigationLargeTitleProvider, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
+import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { PhoneMainTabLine } from '@/components/navigation/shell/PhoneMainTabLine';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
@@ -37,6 +36,7 @@ import { t, tLoose } from '@/text';
 import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '@/components/workflows/presentation/workflowProblemPresentation';
 
 import { WorkflowsColumnActions } from './WorkflowsColumnActions';
+import { WorkflowsPhonePage, type WorkflowsColumnView } from './WorkflowsPhonePage';
 import { WorkflowsColumnCreationRefContext, WorkflowsColumnHeadsPageContext, WorkflowsColumnOwnsCreationContext } from './workflowsColumnCreation';
 import { WorkflowsLibraryHeaderActions } from '../library/WorkflowsLibraryHeaderActions';
 import { PageFrame } from '@/components/ui/layout/PageFrame';
@@ -49,7 +49,6 @@ import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatu
 import { useSettingRevealRequested } from '@/components/settings/shell/SettingRow';
 import { collectionSpaceSettingRefs } from '@/components/settings/session/collectionSpaceSettings';
 
-type WorkflowsColumnView = 'definitions' | 'runs';
 
 function isRunPath(pathname: string): boolean {
     return /^\/workflows\/runs(?:\/|$)/.test(pathname);
@@ -107,19 +106,24 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
                 segmentSizing="equal"
                 />
             </View>
-            {props.definitionsContent === undefined || (headsPage && phone) ? null : <WorkflowsColumnActions canCreate={ownsCreation} />}
+            {props.definitionsContent === undefined ? null : <WorkflowsColumnActions canCreate={ownsCreation} />}
         </View>;
     // Without a shell column, Definitions is the full home, not a second compact navigation list.
     // The same view owner still reaches Runs; the home carries its own page identity, actions and spaces.
+    if (props.definitionsContent !== undefined && access.kind === 'workflows' && headsPage && phone) {
+        // A phone's main screen: the main-screen head owns the title (the library's space), search and "+" (owner 11-11).
+        return <WorkflowsColumnCreationRefContext.Provider value={creationRef}>
+            <WorkflowsColumnOwnsCreationContext.Provider value={ownsCreation}>
+                <WorkflowsColumnHeadsPageContext.Provider value={headsPage}>
+                    <WorkflowsPhonePage view={view} onSelectView={setView} ownsCreation={ownsCreation} pathname={pathname}
+                        definitionsContent={props.definitionsContent} />
+                </WorkflowsColumnHeadsPageContext.Provider>
+            </WorkflowsColumnOwnsCreationContext.Provider>
+        </WorkflowsColumnCreationRefContext.Provider>;
+    }
     if (props.definitionsContent !== undefined && access.kind === 'workflows') {
         return <WorkflowsColumnCreationRefContext.Provider value={creationRef}><View testID="workflows-column" style={styles.column}>
-            {headsPage && phone ? <View testID="workflows-column:header" style={{ paddingTop: safeAreaTop }}>
-                <PhoneMainTabLine />
-                <NavigationLargeTitleProvider largeTitle>
-                    <PageHeader title={t('workflows.title')} actionsPlacement="page" actions={<WorkflowsColumnActions canCreate={ownsCreation} />} />
-                </NavigationLargeTitleProvider>
-            </View> : null}
-            {headsPage && !phone ? (
+            {headsPage ? (
                 // The page's name, then the switch, on the library's own wide column, in both views (FIN-DESIGN-REVIEW L6).
                 <ListPresentationProvider value="page">
                     <PageFrame column="wide" content="column" style={styles.pageHead}>
@@ -131,7 +135,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
                     </PageFrame>
                 </ListPresentationProvider>
             ) : viewTabs}
-            {view === 'runs' ? (headsPage && !phone
+            {view === 'runs' ? (headsPage
                 // Runs sit in the same wide column as the page's name and switch above them.
                 ? <PageFrame column="wide" content="column" style={styles.pageRuns}><SessionsList fixedShow="runs" pathname={pathname} /></PageFrame>
                 : <SessionsList fixedShow="runs" pathname={pathname} />) : (

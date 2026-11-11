@@ -6,7 +6,7 @@ import type { WorkBoardArtifactSummaryV1 } from '@happier-dev/protocol/boards/wo
 
 import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
-import { CollectionList, CollectionNavigationRow, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
+import { CollectionList, CollectionNavigationRow, CollectionRows, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
 
@@ -28,7 +28,7 @@ import { BoardReadState } from './BoardReadState';
  */
 
 /** A board's row while it has a source: its live line, with the collection's trouble dot while it needs you. */
-const LiveBoardRow = React.memo(function LiveBoardRow(props: Readonly<{ board: WorkBoardV1; selected: boolean; onPress: () => void }>) {
+const LiveBoardRow = React.memo(function LiveBoardRow(props: Readonly<{ board: WorkBoardV1; selected: boolean; showDivider?: boolean; onPress: () => void }>) {
     const summary = useBoardLiveSummary(props.board);
     const line = describeBoardSummaryLine(summary);
     return (
@@ -41,16 +41,17 @@ const LiveBoardRow = React.memo(function LiveBoardRow(props: Readonly<{ board: W
                 ? <View testID={`boards-column:board:${props.board.id}:need-you`} style={collectionListStyles.troubleDot} />
                 : undefined}
             selected={props.selected}
+            showDivider={props.showDivider}
             onPress={props.onPress}
         />
     );
 });
 
-const BoardRow = React.memo(function BoardRow(props: Readonly<{ summary: WorkBoardArtifactSummaryV1; board: WorkBoardV1 | null; selected: boolean }>) {
+const BoardRow = React.memo(function BoardRow(props: Readonly<{ summary: WorkBoardArtifactSummaryV1; board: WorkBoardV1 | null; selected: boolean; showDivider?: boolean }>) {
     const router = useRouter();
     const { board, summary } = props;
     const onPress = React.useCallback(() => router.push(createBoardRoute(summary.id) as never), [summary.id, router]);
-    if (board && hasWorkBoardContent(board)) return <LiveBoardRow board={board} selected={props.selected} onPress={onPress} />;
+    if (board && hasWorkBoardContent(board)) return <LiveBoardRow board={board} selected={props.selected} showDivider={props.showDivider} onPress={onPress} />;
     return (
         <CollectionNavigationRow
             testID={`boards-column:board:${summary.id}`}
@@ -58,6 +59,7 @@ const BoardRow = React.memo(function BoardRow(props: Readonly<{ summary: WorkBoa
             title={summary.name}
             subtitle={board ? `${t('boards.meta.handPicked')} · ${t('boards.meta.empty')}` : undefined}
             selected={props.selected}
+            showDivider={props.showDivider}
             onPress={onPress}
         />
     );
@@ -92,7 +94,8 @@ export function BoardsEmptyState(props: Readonly<{ testID: string }>) {
     );
 }
 
-const BOARDS_PHONE_PAGE = Object.freeze({ backTestID: 'boards-column:back' });
+// On the phone main screen each board is a page row led by the Boards mark (owner 11-11).
+const BOARDS_PHONE_PAGE = Object.freeze({ backTestID: 'boards-column:back', rowMark: 'squares-four' as const });
 
 export const BoardsColumn = React.memo(function BoardsColumn(props: Readonly<{
     /** `page`: the column is the destination's first screen (a phone, or a collapsed column). */
@@ -131,8 +134,10 @@ export const BoardsColumn = React.memo(function BoardsColumn(props: Readonly<{
                 <BoardReadState place="column" size="line" retained={boards.length > 0} />
                 {/* The board rows share Inbox membership without mounting its detail rows. */}
                 <BoardsInboxBoundary boards={matchingBoards}>
-                    {matchingBoards.map((summary) => <BoardRow key={summary.id} summary={summary}
-                        board={bodies.find(board => board.id === summary.id) ?? null} selected={openId === summary.id} />)}
+                    {matchingBoards.length > 0 ? <CollectionRows>
+                        {matchingBoards.map((summary) => <BoardRow key={summary.id} summary={summary}
+                            board={bodies.find(board => board.id === summary.id) ?? null} selected={openId === summary.id} />)}
+                    </CollectionRows> : null}
                 </BoardsInboxBoundary>
                 {/* Beside the page, the page says it (BoardsIndex); as the page itself, the column does. */}
                 {empty && props.surface === 'page' ? <BoardsEmptyState testID="boards-column:empty" /> : null}

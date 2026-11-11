@@ -4,9 +4,11 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { t } from '@/text';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { NavigationTitleChromeProvider, PageHeader } from '@/components/ui/layout/PageHeader';
-import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
+import { NavigationTitleChromeProvider } from '@/components/ui/layout/PageHeader';
 import { usePhoneTabNavRow } from '@/components/navigation/shell/phoneTabNavRow';
+import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
+import { CollectionCreateButton } from '@/components/ui/lists/collection/CollectionList';
+import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
@@ -20,7 +22,7 @@ import { HappierTreeDisclosure } from '@happier-dev/plugin-ui/presentation';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { useProjectsListModel } from './useProjectsListModel';
-import { applyProjectsTreeCheckoutFacts, buildProjectsPhoneTreeRows, projectsTreeCheckoutKey, projectsTreeRowSubtitle, type ProjectsTreeProject, type ProjectsTreeRow } from './projectsTreeRows';
+import { applyProjectsTreeCheckoutFacts, buildProjectsPhoneTreeRows, filterProjectsTreeByQuery, projectsTreeCheckoutKey, projectsTreeRowSubtitle, type ProjectsTreeProject, type ProjectsTreeRow } from './projectsTreeRows';
 import { useProjectsTreeCheckoutFactsFor, useProjectsTreeCheckoutFactsSource, type ProjectsTreeCheckoutFactsSource } from './useProjectsTreeCheckoutFacts';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
@@ -58,7 +60,8 @@ export const ProjectsListView = React.memo(() => {
     ), [groups.projectGroups]);
     // The list keeps membership, order and disclosure; each row reads its own checkouts' live facts.
     const factsSource = useProjectsTreeCheckoutFactsSource(model.checkoutRefs);
-    const projects = model.treeProjects;
+    const [query, setQuery] = React.useState('');
+    const projects = React.useMemo(() => filterProjectsTreeByQuery(model.treeProjects, query), [model.treeProjects, query]);
     const projectGroupsByKey = React.useMemo(() => new Map([...groups.projectGroups, ...groups.hiddenProjectGroups]
         .map(group => [group.projectKey.projectKey, group] as const)), [groups.projectGroups, groups.hiddenProjectGroups]);
     const hidden = React.useMemo(() => ({
@@ -67,6 +70,25 @@ export const ProjectsListView = React.memo(() => {
         onShow: model.showHiddenProject,
     }), [model.hiddenItems, hiddenOpen, model.showHiddenProject]);
     const phoneTabShell = usePhoneTabNavRow() !== null;
+    // The page's one add (a folder, a clone, your Sources, each Team's, Manage): the title row's "+" opens it, and the
+    // bar's "+" opens the same menu (owner 11-11: it replaces the inline Add project row).
+    const openAddRef = React.useRef<(() => void) | null>(null);
+    const addLabel = t('projects.actions.addProject');
+    const create = React.useMemo<PageCreateAction>(() => ({
+        label: addLabel, testID: 'projects-add', onPress: () => openAddRef.current?.(),
+    }), [addLabel]);
+    const addMenu = (renderTrigger: (open: () => void) => React.ReactNode) => (
+        <ProjectsAddMenu
+            testID="projects-list:add"
+            machines={model.addFirstMachines}
+            onAdd={model.addProjectToMachine}
+            onClone={model.cloneRepository}
+            onNewApp={openNewApp}
+            sources={model.addSources}
+            fromSessions={model.fromSessions}
+            renderTrigger={renderTrigger}
+        />
+    );
     // Saved, not open (lab p-projects TREEp): the same composition as the column's.
     const { saved } = model;
     const rows = React.useMemo(
@@ -106,8 +128,17 @@ export const ProjectsListView = React.memo(() => {
             testID="projects-list"
             containerStyle={phoneTabShell ? undefined : { paddingTop: theme.space.s12 }}
         >
-            {/* The phone tab's head: the shell draws the Home line above, the page names itself here. */}
-            {phoneTabShell ? <NavigationLargeTitleProvider largeTitle><PageHeader title={t('tabs.projects')} /></NavigationLargeTitleProvider> : null}
+            {/* The phone tab's head: the shell draws the Home line above, the page names itself here (the main-screen head). */}
+            {phoneTabShell ? <MainScreenHeader
+                testID="projects-header"
+                title={t('tabs.projects')}
+                search={{ value: query, onChangeText: setQuery, placeholder: t('projects.searchPlaceholder'), testID: 'projects-search' }}
+                create={create}
+                createTrigger={addMenu((open) => {
+                    openAddRef.current = open;
+                    return <CollectionCreateButton create={{ ...create, onPress: open }} />;
+                })}
+            /> : null}
             {model.rowsUnconfirmed ? (
                 <ProjectOpenResolutionCard testID="projects-list:rows" issue={model.rowsUnconfirmed}
                     onChoose={() => {}} onRetry={rowsRetry} />
@@ -153,26 +184,24 @@ export const ProjectsListView = React.memo(() => {
                 />
             ) : null}
 
-            {/* The same "+" as the column and the none-open page: a folder, a clone, your Sources, each Team's, Manage. */}
-            <ItemGroup>
-                <ProjectsAddMenu
-                    testID="projects-list:add"
-                    machines={model.addFirstMachines}
-                    onAdd={model.addProjectToMachine}
-                    onClone={model.cloneRepository}
-                    onNewApp={openNewApp}
-                    sources={model.addSources}
-                    fromSessions={model.fromSessions}
-                    renderTrigger={(open) => (
+            {/* Without the main-screen head (a host that draws its own), the same "+" stays as the list's add row. */}
+            {phoneTabShell ? null : (
+                <ItemGroup>
+                    {addMenu((open) => (
                         <Item
                             testID="projects-list:add-row"
                             title={t('projects.actions.addProject')}
                             icon={<Icon name="plus" size={20} color={theme.colors.text.secondary} />}
                             onPress={open}
                         />
-                    )}
-                />
-            </ItemGroup>
+                    ))}
+                </ItemGroup>
+            )}
+            {query.trim().length > 0 && rows.length === 0 && !model.noProjects ? (
+                <ItemGroup>
+                    <Item testID="projects-list:no-matches" title={t('common.noMatches')} showChevron={false} />
+                </ItemGroup>
+            ) : null}
 
             <ProjectsTree testID="projects-list-organization" rows={[]} onOpenRef={model.openTreeRef} onToggle={() => {}} hidden={hidden} saved={saved} />
             <ProjectActionApprovalNotice testID="projects-list:approval" request={model.projectActionApproval} onDismiss={model.dismissProjectActionApproval} />

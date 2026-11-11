@@ -19436,6 +19436,7 @@ settingsSession: {
     },
     emptyTitle: "Ainda não há projetos",
     emptyDescription: "Os projetos permitem navegar e editar arquivos, e usar Git nas suas máquinas fora das sessões.",
+    searchPlaceholder: "Pesquisar projetos",
     noneOpenTitle: "Nenhum projeto aberto",
     noneOpenDescription: "Escolha um projeto na lista ou adicione uma pasta de uma das suas máquinas.",
     groups: {

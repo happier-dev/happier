@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     HAPPIER_COLLECTION_LIST_ROW_STYLE,
@@ -20,12 +20,17 @@ import {
     type HappierCollectionListProps,
     type HappierCollectionRowRole,
     HAPPIER_ICON_BUTTON_SIZE,
+    HAPPIER_FOCUS_RING_DELEGATED_STYLE,
+    happierFocusRingStyle,
+    resolveHappierFocusRingVisible,
     useHappierMaterialColorResolver,
 } from '@happier-dev/plugin-ui/presentation';
 
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { ICON_SIZE } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import type { IconName } from '@/components/ui/icons/iconRegistry.generated';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useHeaderControlMetrics, type HeaderControlMetrics } from '@/components/ui/icons/iconButtonGlyphSize';
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
@@ -239,7 +244,10 @@ function useCollectionListSurfaceStyle(): ViewStyle {
  */
 const PLANE_SURFACE: ViewStyle = Object.freeze({ backgroundColor: 'transparent' });
 function useCollectionListPlaneSurfaceStyle(): ViewStyle {
-    return PLANE_SURFACE;
+    // The same hooks as the page ground's (`useCollectionListSurfaceStyle`): a list that turns from a column into the page
+    // in place (Workflows' column becoming the phone page) swaps hosts without changing its hook order.
+    useUnistyles();
+    return React.useMemo(() => PLANE_SURFACE, []);
 }
 
 /** A group label's own glyphs (its disclosure chevron): the quiet tertiary ink of its count. */
@@ -281,7 +289,14 @@ export const CollectionList = React.memo(function CollectionList(props: Omit<Hap
      * The list is the whole phone page (a main screen: Boards, Discussions). Its head line stands under the status
      * bar, empty on a main screen and carrying the Back on a page it pushes (`usePhoneDestinationBack`).
      */
-    phonePage?: Readonly<{ backTestID: string }> | null;
+    phonePage?: Readonly<{
+        backTestID: string;
+        /**
+         * The kind's mark each row leads with on the phone page (owner 11-11): there the list is the screen's body, so its
+         * rows take the page row anatomy (inset card, mark, title, muted line, chevron) instead of the column's chip.
+         */
+        rowMark?: IconName;
+    }> | null;
     /**
      * The list's create action: the header "+" (unless `headerAction` names another), and on a phone main screen the
      * bar's "+" beside the tabs (`usePublishPageCreateAction`), so both run the same thing.
@@ -293,8 +308,11 @@ export const CollectionList = React.memo(function CollectionList(props: Omit<Hap
     const pageToolsInsetPx = React.useContext(CollectionPageToolsInsetContext);
     const resolvedToolsInsetPx = toolsInsetPx ?? pageToolsInsetPx;
     const createAction = headerAction ?? (create ? <CollectionCreateButton create={create} /> : undefined);
+    const phone = useDeviceType() === 'phone';
+    const rowMark = phone ? phonePage?.rowMark ?? null : null;
+    const pageRows = React.useMemo(() => rowMark ? { mark: rowMark } : null, [rowMark]);
     return (
-        <>
+        <CollectionPhonePageRowsContext.Provider value={pageRows}>
             {phonePage ? <CollectionPhonePageHead backTestID={phonePage.backTestID} create={create ?? null} /> : null}
             <HappierCollectionList
                 host={surface === 'plane' ? collectionListPlaneHost : phonePage || largeTitle ? collectionListPhonePageHost : collectionListHost}
@@ -302,9 +320,21 @@ export const CollectionList = React.memo(function CollectionList(props: Omit<Hap
                 {...(createAction === undefined ? {} : { headerAction: createAction })}
                 {...listProps}
             />
-        </>
+        </CollectionPhonePageRowsContext.Provider>
     );
 });
+
+/** Set while the list is a phone main screen's whole body: its rows draw the page row anatomy with this mark. */
+const CollectionPhonePageRowsContext = React.createContext<Readonly<{ mark: IconName }> | null>(null);
+
+/**
+ * A list's rows: on a phone main screen, one inset card (the page row anatomy, as Projects and Artifacts draw);
+ * in a column, the rows themselves on the plane.
+ */
+export function CollectionRows(props: Readonly<{ children: React.ReactNode }>) {
+    const pageRows = React.useContext(CollectionPhonePageRowsContext);
+    return pageRows ? <ItemGroup>{props.children}</ItemGroup> : <>{props.children}</>;
+}
 
 /** A whole phone page's head: its line under the status bar, and its create action lent to the bar's "+". */
 function CollectionPhonePageHead(props: Readonly<{ backTestID: string; create: PageCreateAction | null }>) {
@@ -354,7 +384,7 @@ export function CollectionListGroupLabel(props: Omit<React.ComponentProps<typeof
  * plugin's `NavigationList.Row` draws through `HappierListItem`. `leftElement` replaces the icon where
  * the row discloses children.
  */
-export const CollectionNavigationRow = React.memo(function CollectionNavigationRow(props: Readonly<{
+export type CollectionNavigationRowProps = Readonly<{
     /** A navigable destination: workspace menu, pointer and drag intent share the workspace owner. */
     href?: string | null;
     testID: string;
@@ -416,8 +446,47 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
     accessibilityLabel?: string;
     /** The row's own menu, at its end, outside the row's press (a project's rename, pin, remove). */
     rightElement?: React.ReactNode;
+    /** Handed down by the page card (`CollectionRows` on a phone main screen) between its rows. */
+    showDivider?: boolean;
     onPress: () => void;
-}>) {
+}>;
+
+export const CollectionNavigationRow = React.memo(function CollectionNavigationRow(props: CollectionNavigationRowProps) {
+    const pageRows = React.useContext(CollectionPhonePageRowsContext);
+    if (pageRows) return <CollectionPageRow {...props} mark={pageRows.mark} />;
+    return <CollectionColumnRow {...props} />;
+});
+
+/**
+ * A row of a phone main screen's body: the page row anatomy (owner 11-11) — the kind's mark (or the row's own), the
+ * title, its one muted line of real facts, and a chevron saying it opens. Selection and trees stay with the column.
+ */
+function CollectionPageRow(props: CollectionNavigationRowProps & Readonly<{ mark: IconName }>) {
+    const { theme } = useUnistyles();
+    const row = (
+        <Item
+            testID={props.testID}
+            title={props.title}
+            titleLines={1}
+            subtitle={props.subtitle}
+            subtitleLeading={props.needsYouStatus ? <WorkStatusRowMark status={props.needsYouStatus} testIDSuffix={props.testID} /> : props.subtitleLeading}
+            titleAccessory={props.titleAccessory}
+            titleQualifier={props.titleQualifier}
+            subtitleStyle={props.subtitleMono ? styles.monoSubtitle : undefined}
+            icon={props.icon ?? <Icon name={props.mark} size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+            accessibilityLabel={props.subtitle ? [props.accessibilityLabel ?? props.title, props.subtitle].join('. ') : props.accessibilityLabel}
+            detail={props.status ? undefined : props.detail}
+            rightElement={props.status ?? props.rightElement}
+            dimmed={props.dimmed === true}
+            showChevron
+            showDivider={props.showDivider}
+            onPress={props.onPress}
+        />
+    );
+    return props.href ? <WorkspaceDestinationRow href={props.href}>{actions => React.cloneElement(row, { onLongPress: actions.openMenu })}</WorkspaceDestinationRow> : row;
+}
+
+const CollectionColumnRow = React.memo(function CollectionColumnRow(props: CollectionNavigationRowProps) {
     const { theme } = useUnistyles();
     const reducedMotion = useReducedMotionPreference();
     const onPlane = props.surface !== 'page';
@@ -478,6 +547,15 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
         onBlur: () => { setFocused(false); props.treeItem?.onBlur?.(); },
     } : null;
     const indentPx = (props.indentPx ?? 0) + (props.child ? resolveHappierCollectionTreeChildIndentPx() : 0);
+    // On the web a tree row is one treeitem holding everything the row draws, its own controls included (its
+    // disclosure, its menu, its status), so the tree owns only treeitems (axe aria-required-children). The
+    // treeitem takes the roving tab stop, the keys and the tree state; the press target inside leaves the tab
+    // order and draws the focus ring the treeitem delegates to it.
+    const webTreeItem = Platform.OS === 'web' ? props.treeItem ?? null : null;
+    const [treeRingVisible, setTreeRingVisible] = React.useState(false);
+    const accessibilityLabel = props.subtitle ? [props.accessibilityLabel ?? props.title, props.subtitle].join('. ') : props.accessibilityLabel;
+    const basePressableStyle = props.selected && onPlane ? [HAPPIER_COLLECTION_LIST_ROW_STYLE, selectedFill] : HAPPIER_COLLECTION_LIST_ROW_STYLE;
+    const treeRing = webTreeItem && treeRingVisible ? happierFocusRingStyle({ visible: true, color: theme.colors.border.focus, placement: 'inset' }) : null;
     const row = (
         <Item
             testID={props.testID}
@@ -493,8 +571,8 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
             titleAccessory={props.titleAccessory}
             titleQualifier={props.titleQualifier}
             accessibilityExpanded={props.disclosure ? props.disclosure.expanded : undefined}
-            {...props.treeItem}
-            {...treeFocus}
+            {...(webTreeItem ? WEB_TREE_ROW_PRESS_PROPS : props.treeItem)}
+            {...(webTreeItem ? null : treeFocus)}
             subtitleStyle={props.subtitleMono ? styles.monoSubtitle : undefined}
             {...(treeLead
                 ? treeLead
@@ -504,12 +582,12 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
             // A described row's mark and end state belong to its title: they sit level with the title's line
             // rather than between the title and the line under it (owner 11-01).
             contentAlign={props.subtitle ? 'start' : undefined}
-            accessibilityLabel={props.subtitle ? [props.accessibilityLabel ?? props.title, props.subtitle].join('. ') : props.accessibilityLabel}
+            accessibilityLabel={accessibilityLabel}
             detail={props.status || hasCount ? undefined : props.detail}
             density="compact"
             selected={props.selected}
             showChevron={false}
-            pressableStyle={props.selected && onPlane ? [HAPPIER_COLLECTION_LIST_ROW_STYLE, selectedFill] : HAPPIER_COLLECTION_LIST_ROW_STYLE}
+            pressableStyle={treeRing ? [basePressableStyle, treeRing] : basePressableStyle}
             titleStyle={props.selected && onPlane ? styles.navigationRowTitleSelected : undefined}
             dimmed={props.dimmed === true && !(props.selected && onPlane)}
             style={resolveHappierCollectionListRowPadding(indentPx)}
@@ -517,8 +595,43 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
             onPress={props.onPress}
         />
     );
-    return props.href ? <WorkspaceDestinationRow href={props.href}>{actions => React.cloneElement(row, { onLongPress: actions.openMenu })}</WorkspaceDestinationRow> : row;
+    const rowNode = props.href ? <WorkspaceDestinationRow href={props.href}>{actions => React.cloneElement(row, { onLongPress: actions.openMenu })}</WorkspaceDestinationRow> : row;
+    if (!webTreeItem) return rowNode;
+    // The treeitem's own focus, not focus moving onto a control inside it (its disclosure, its menu).
+    const ownFocus = (event?: { target?: unknown; currentTarget?: unknown }) => !event || event.target === event.currentTarget;
+    const treeItemProps = {
+        role: 'treeitem' as const,
+        tabIndex: webTreeItem.webTabIndex ?? 0,
+        'aria-level': webTreeItem.accessibilityLevel,
+        'aria-posinset': webTreeItem.accessibilityPositionInSet,
+        'aria-setsize': webTreeItem.accessibilitySetSize,
+        'aria-expanded': webTreeItem.accessibilityExpanded ?? (props.disclosure ? props.disclosure.expanded : undefined),
+        'aria-selected': props.selected,
+        'aria-label': accessibilityLabel ?? props.title,
+        onKeyDown: webTreeItem.onKeyDown,
+        onFocus: (event?: { target?: unknown; currentTarget?: unknown }) => {
+            if (!ownFocus(event)) return;
+            setFocused(true);
+            setTreeRingVisible(resolveHappierFocusRingVisible(true));
+            webTreeItem.onFocus?.();
+        },
+        onBlur: (event?: { target?: unknown; currentTarget?: unknown }) => {
+            if (!ownFocus(event)) return;
+            setFocused(false);
+            setTreeRingVisible(false);
+            webTreeItem.onBlur?.();
+        },
+    };
+    return (
+        <View ref={webTreeItem.pressableRef as unknown as React.Ref<View>} testID={`${props.testID}:treeitem`}
+            style={HAPPIER_FOCUS_RING_DELEGATED_STYLE as StyleProp<ViewStyle>} {...(treeItemProps as object)}>
+            {rowNode}
+        </View>
+    );
 });
+
+/** A web tree row's press target: inside its treeitem, out of the tab order (the treeitem holds the roving stop). */
+const WEB_TREE_ROW_PRESS_PROPS = Object.freeze({ webTabIndex: -1 as const });
 
 /**
  * The plane's selected chip: `Item`'s own `surface.selected` is the plane's colour, so an open navigation row lifts to

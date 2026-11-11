@@ -18135,6 +18135,7 @@ La meva pregunta: `,
         },
         emptyTitle: 'Encara no hi ha projectes',
         emptyDescription: 'Els projectes et permeten navegar i editar fitxers, i fer servir Git a les teves màquines fora de les sessions.',
+        searchPlaceholder: 'Cerca projectes',
         noneOpenTitle: 'Cap projecte obert',
         noneOpenDescription: 'Tria un projecte de la llista o afegeix una carpeta d’una de les teves màquines.',
         groups: {

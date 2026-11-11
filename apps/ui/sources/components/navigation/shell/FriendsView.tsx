@@ -26,19 +26,16 @@ import type { UserProfile } from '@/sync/domains/social/friendTypes';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { useFriendsAddAction } from '@/hooks/friends/useFriendsAddAction';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
 import { PhonePageBackLine, usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
-import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { TeamPeopleSections } from '@/components/settings/teams/members/TeamPeopleSections';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
-import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
-import { CollectionCreateButton, CollectionSearchToggle } from '@/components/ui/lists/collection/CollectionList';
-import { usePublishPageCreateAction, type PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
+import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
+import { MainScreenHeader } from './MainScreenHeader';
 import { useDeviceType } from '@/utils/platform/responsive';
 
 /** A friend answers the page's search by their display name or username. */
@@ -69,17 +66,6 @@ export const FriendsView = React.memo(function FriendsView() {
     const isSessionVisible = useSessionRecordingVisibility();
     const phone = useDeviceType() === 'phone';
     const [query, setQuery] = React.useState('');
-    const [searchOpened, setSearchOpened] = React.useState(false);
-    // A query keeps the field open; closing it clears the query (the collection's collapsible search).
-    const searchOpen = searchOpened || query.length > 0;
-    const toggleSearch = React.useCallback(() => {
-        if (searchOpen) {
-            setQuery('');
-            setSearchOpened(false);
-        } else {
-            setSearchOpened(true);
-        }
-    }, [searchOpen]);
     const searching = query.trim().length > 0;
 
     const sharedSessions = React.useMemo(() => {
@@ -105,7 +91,9 @@ export const FriendsView = React.memo(function FriendsView() {
         testID: 'friends-add-friend',
         onPress: openSearch,
     } : null, [friendsIdentityReady, openSearch]);
-    usePublishPageCreateAction(phone ? create : null);
+    const peopleSearchPlaceholder = t('friends.peopleSearchPlaceholder');
+    const search = React.useMemo(() => ({ value: query, onChangeText: setQuery, placeholder: peopleSearchPlaceholder, testID: 'people-search' }),
+        [query, peopleSearchPlaceholder]);
     const friendsLoading = !friendsLoaded;
     const noFriendsYet = friendsLoaded && friends.length === 0 && friendRequests.length === 0 && requestedFriends.length === 0;
 
@@ -117,36 +105,13 @@ export const FriendsView = React.memo(function FriendsView() {
         <ItemList testID="people-page">
             <NavigationBackChromeProvider control={phone ? null : inheritedBack}>
                 {/* On a phone the page's name is its large title on the head line, as on Settings and every main screen. */}
-                <NavigationLargeTitleProvider largeTitle={phone}>
-                <PageHeader
+                <MainScreenHeader
                     title={t('tabs.friends')}
                     description={t('friends.peopleDescription')}
-                    actionsPlacement="page"
-                    actionsLayout="inline"
-                    actions={(
-                        <>
-                            <CollectionSearchToggle
-                                testID="people-search-toggle"
-                                open={searchOpen}
-                                onPress={toggleSearch}
-                                accessibilityLabel={t('friends.peopleSearchPlaceholder')}
-                            />
-                            {create ? <CollectionCreateButton create={create} /> : null}
-                        </>
-                    )}
+                    search={search}
+                    create={create}
                 />
-                </NavigationLargeTitleProvider>
             </NavigationBackChromeProvider>
-            {searchOpen ? (
-                <CompactSearchField
-                    testID="people-search"
-                    placement="page"
-                    value={query}
-                    onChangeText={setQuery}
-                    placeholder={t('friends.peopleSearchPlaceholder')}
-                    autoFocus={searchOpened && query.length === 0}
-                />
-            ) : null}
 
             <RequireFriendsIdentityForFriends>
                 {shownRequests.length > 0 && (

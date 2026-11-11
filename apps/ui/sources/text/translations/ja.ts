@@ -19244,6 +19244,7 @@ settingsSession: {
     },
     emptyTitle: "プロジェクトはまだありません",
     emptyDescription: "プロジェクトでは、セッション外でマシン上のファイルを閲覧・編集し、Git を使えます。",
+    searchPlaceholder: "プロジェクトを検索",
     noneOpenTitle: "開いているプロジェクトはありません",
     noneOpenDescription: "一覧からプロジェクトを選ぶか、マシン上のフォルダーを追加してください。",
     groups: {
