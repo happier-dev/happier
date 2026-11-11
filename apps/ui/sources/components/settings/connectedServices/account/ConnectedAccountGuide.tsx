@@ -19,19 +19,26 @@ export function splitConsoleStep(step: string): Readonly<{ before: string; label
     return match ? { before: match[1]!, label: match[2]!, after: match[3]! } : null;
 }
 
+/** A console title read as plain words: the destination marks are dropped. */
+function stripConsoleMarks(text: string): string {
+    const marked = splitConsoleStep(text);
+    return marked ? `${marked.before}${marked.label}${marked.after}` : text;
+}
+
 /** The step that opens the console: only the destination is the link, inline, with the leaving-the-app glyph. */
 function ConsoleStep(props: Readonly<{ step: string; wholeLine: boolean; linkLabel: string; onOpen: () => void }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const marked = props.wholeLine ? null : splitConsoleStep(props.step);
+    // The mark wins wherever it is: a one-line title links only its destination too.
+    const marked = splitConsoleStep(props.step);
     const link = (label: string) => (
         <Text testID="connected-account-manual:open-console" accessibilityRole="link" style={styles.link} onPress={props.onOpen}>
             {label}{'\u00a0'}<Icon name="arrow-square-out" size={12} color={theme.colors.text.secondary} />
         </Text>
     );
-    if (props.wholeLine) return <Text style={styles.stepText}>{link(props.step)}</Text>;
     if (marked) return <Text style={styles.stepText}>{marked.before}{link(marked.label)}{marked.after}</Text>;
-    return <Text style={styles.stepText}>{props.step}{' '}{link(props.linkLabel)}</Text>;
+    if (props.wholeLine) return <Text style={styles.stepText}>{link(props.step)}</Text>;
+    return <Text style={styles.stepText}>{props.step}{' '}{link(stripConsoleMarks(props.linkLabel))}</Text>;
 }
 
 /** The copy value's field is read-only; the field owner still takes a change handler. */

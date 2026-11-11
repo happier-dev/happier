@@ -133,7 +133,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
               kind: 'manual',
               setup: {
                 url: 'https://t.me/BotFather',
-                checklist: ['Open Telegram BotFather and send /newbot to create a bot, or select an existing bot.', 'Copy the bot API token issued by BotFather and paste it here.'],
+                checklist: ['Open [Telegram BotFather] and send /newbot to create a bot, or select an existing bot.', 'Copy the bot API token issued by BotFather and paste it here.'],
                 createKeyTitle: 'Open Telegram BotFather',
               },
               credentialOrigin: 'authentication',

@@ -124,7 +124,7 @@ export const GITLAB_PLUGIN = definePlugin({
             kind: 'manual',
             setup: {
               url: 'https://gitlab.com/-/user_settings/personal_access_tokens',
-              checklist: ['Create a legacy personal access token in your GitLab.com profile settings.', 'Select read_api for reads or api for mutations, and choose an expiration.', 'Copy the generated token and paste it here.'],
+              checklist: ['Create a legacy personal access token in your [GitLab.com profile settings].', 'Select read_api for reads or api for mutations, and choose an expiration.', 'Copy the generated token and paste it here.'],
               createKeyTitle: 'Open GitLab.com access tokens',
             },
             credentialOrigin: 'authentication',

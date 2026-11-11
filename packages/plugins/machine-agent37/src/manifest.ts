@@ -48,7 +48,7 @@ export const PLUGIN = definePlugin({
         id: 'token', title: 'API key', kind: 'manual', apiKey: true, outcomeReconciliation: 'none', credentialOrigin: 'authentication',
         browserReachability: 'unreachable',
         setup: { url: 'https://www.agent37.com/dashboard', createKeyTitle: 'Open Agent37 API keys',
-          checklist: ['Open API keys in the Agent37 dashboard.', 'Choose an existing Saved Secret for the API key, or enter a new key.'],
+          checklist: ['Open API keys in the [Agent37 dashboard].', 'Choose an existing Saved Secret for the API key, or enter a new key.'],
           shapeHint: 'Use an Agent37 API key.' },
         credentialFieldKeys: { token: 'token' }, directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
         fields: [{ id: 'token', title: 'API key', schema: { type: 'string', minLength: 1 }, secret: true }],

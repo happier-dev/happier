@@ -296,7 +296,7 @@ export const CLAUDE_PLUGIN = definePlugin({
             apiKey: true,
             setup: {
               url: 'https://platform.claude.com/settings/keys',
-              checklist: [{ key: 'connectedServicesSettings.keyCreateAnthropic', fallback: 'Create an API key in the Anthropic Console, then paste it here.' }],
+              checklist: [{ key: 'connectedServicesSettings.keyCreateAnthropic', fallback: 'Create an API key in the [Anthropic Console], then paste it here.' }],
               createKeyTitle: { key: 'connectedServicesSettings.keyCreateAnthropic', fallback: 'Create an API key in the Anthropic Console, then paste it here.' },
               billingNote: { key: 'connectedServicesSettings.keyBillingAnthropic', fallback: 'API usage is billed separately from a Claude subscription.' },
               shapeHint: { key: 'connectedServicesSettings.keyShapeAnthropic', fallback: 'This looks like an Anthropic API key.' },

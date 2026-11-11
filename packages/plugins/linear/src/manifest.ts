@@ -54,7 +54,7 @@ export const LINEAR_PLUGIN = definePlugin({
           id: LINEAR_PERSONAL_KEY, kind: 'manual', title: 'Personal API key', apiKey: true,
           setup: {
             url: 'https://linear.app',
-            checklist: ['In Linear, open Settings > Account > Security & Access and create a personal API key.', 'Give it Read access, the teams you need, and the write permissions for the issue and comment actions you want to use.', 'Copy the key and paste it here.'],
+            checklist: ['In [Linear], open Settings > Account > Security & Access and create a personal API key.', 'Give it Read access, the teams you need, and the write permissions for the issue and comment actions you want to use.', 'Copy the key and paste it here.'],
             createKeyTitle: 'Open Linear',
           },
           credentialOrigin: 'authentication',

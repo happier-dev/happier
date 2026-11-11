@@ -59,7 +59,7 @@ export const CURSOR_PLUGIN = definePlugin({
             id: 'api-key', kind: 'manual', apiKey: true, title: 'API key',
             setup: {
               url: 'https://cursor.com/dashboard',
-              checklist: ['Create a user or service API key in Cursor Dashboard → API Keys. Admin keys are not supported.', 'Copy the key and paste it here.'],
+              checklist: ['Create a user or service API key in [Cursor Dashboard → API Keys]. Admin keys are not supported.', 'Copy the key and paste it here.'],
               createKeyTitle: 'Open Cursor API keys',
             },
             accountDirectSave: { fieldKeys: { token: 'apiKey' } },

@@ -47,7 +47,7 @@ export const PLUGIN = definePlugin({
         id: 'token', title: 'API key', kind: 'manual', apiKey: true, outcomeReconciliation: 'none', credentialOrigin: 'authentication',
         browserReachability: 'unreachable',
         setup: { url: 'https://dash.freestyle.sh/', createKeyTitle: 'Open Freestyle dashboard',
-          checklist: ['Sign in to Freestyle and select the team that will own your VMs.', 'Create an API key in the dashboard, or use freestyle tokens create after signing in with freestyle login.', 'Copy the API key and paste it here.'],
+          checklist: ['Sign in to [Freestyle] and select the team that will own your VMs.', 'Create an API key in the dashboard, or use freestyle tokens create after signing in with freestyle login.', 'Copy the API key and paste it here.'],
           shapeHint: 'Use a team API key, not an end-user identity token.' },
         credentialFieldKeys: { token: 'token' }, directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
         fields: [{ id: 'token', title: 'API key', description: 'A Freestyle API key for VM create, exec, filesystem and deletion.', schema: { type: 'string', minLength: 1 }, secret: true }],

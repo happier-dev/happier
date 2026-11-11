@@ -48,7 +48,7 @@ export const PLUGIN = definePlugin({
         id: 'token', title: 'API key', kind: 'manual', apiKey: true, outcomeReconciliation: 'none', credentialOrigin: 'authentication',
         browserReachability: 'unreachable',
         setup: { url: 'https://console.superserve.ai/', createKeyTitle: 'Open Superserve console',
-          checklist: ['Select your team in the Superserve console, then open Settings → API keys.', 'Choose Create key, then copy the new key and paste it here.'],
+          checklist: ['Select your team in the [Superserve console], then open Settings → API keys.', 'Choose Create key, then copy the new key and paste it here.'],
           shapeHint: 'Superserve API keys start with ss_live_ and belong to one team.' },
         credentialFieldKeys: { token: 'token' }, directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
         fields: [{ id: 'token', title: 'API key', description: 'An API key from the Superserve dashboard.', schema: { type: 'string', minLength: 1 }, secret: true }],

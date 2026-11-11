@@ -46,7 +46,7 @@ export const PLUGIN = definePlugin({
       account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'token', modes: [{
         id: 'token', title: 'API key', kind: 'manual', apiKey: true, outcomeReconciliation: 'none', credentialOrigin: 'authentication',
         setup: { url: 'https://app.daytona.io/dashboard/keys', createKeyTitle: 'Open Daytona API keys',
-          checklist: ['Select your organization in the Daytona dashboard and choose Create Key.', 'Name the key and enable sandbox write and delete permissions, then create it.', 'Copy the new API key and paste it here.'] },
+          checklist: ['Select your organization in the [Daytona dashboard] and choose Create Key.', 'Name the key and enable sandbox write and delete permissions, then create it.', 'Copy the new API key and paste it here.'] },
         credentialFieldKeys: { token: 'token' }, directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
         fields: [{ id: 'token', title: 'API key', description: 'A Daytona organization key with sandbox write and delete permissions.', schema: { type: 'string', minLength: 1 }, secret: true }],
       }] } }, runtime: connectedAccountRuntime, accountRuntime: connectedAccountPortableRuntime,

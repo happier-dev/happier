@@ -29,6 +29,24 @@ describe('ConnectedAccountGuide', () => {
         expect(textOf(step)).not.toContain('[');
     });
 
+    it('links only the marked destination when the one step is also the console title, and never shows the marks', async () => {
+        const step = 'Create a key in the [Anthropic console]';
+        const screen = await renderScreen(<ConnectedAccountGuide guide={{ consoleUrl: 'https://anthropic.example/keys',
+            createKeyTitle: step, steps: [step] }} />);
+        const link = screen.tree.findAll((node) => node.props.testID === 'connected-account-manual:open-console' && typeof node.type === 'string')[0]!;
+        expect(textOf(link).replace(/\u00a0/g, '').trim()).toBe('Anthropic console');
+        const line = screen.tree.findAll((node) => node.props.testID === 'connected-account-manual:step:0' && typeof node.type === 'string')[0]!;
+        expect(textOf(line).replace(/\u00a0/g, '')).toContain('Create a key in the Anthropic console');
+        expect(textOf(line)).not.toMatch(/[[\]]/);
+    });
+
+    it('drops the marks from a console title offered as the short link', async () => {
+        const screen = await renderScreen(<ConnectedAccountGuide guide={{ consoleUrl: 'https://acme.example/keys',
+            createKeyTitle: 'Open [Acme keys]', steps: ['Create a key in the Acme console.', 'Paste it here.'] }} />);
+        const link = screen.tree.findAll((node) => node.props.testID === 'connected-account-manual:open-console' && typeof node.type === 'string')[0]!;
+        expect(textOf(link).replace(/\u00a0/g, '').trim()).toBe('Open Acme keys');
+    });
+
     it('keeps an unmarked first step plain and offers the console as a short link after it', async () => {
         const screen = await renderScreen(<ConnectedAccountGuide guide={{ consoleUrl: 'https://acme.example/keys',
             createKeyTitle: 'Open Acme keys', steps: ['Create a key in the Acme console.', 'Paste it here.'] }} />);

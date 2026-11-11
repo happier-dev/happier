@@ -10,7 +10,8 @@ export const setupFidelityCopy = {
     catalogGemini: 'API key or a Google Cloud service account.',
     catalogAnthropic: 'Pay per use, billed to your Anthropic organization.',
     catalogOpenAi: 'Pay per use, billed to your OpenAI organization.',
-    keyCreateAnthropic: 'Create a key in the Anthropic console',
+    // The bracketed destination is the only linked words (ConnectedAccountGuide); the title reads them plain.
+    keyCreateAnthropic: 'Create a key in the [Anthropic console]',
     keyBillingAnthropic: 'Use is billed to that Anthropic organization. API keys report no limits, so Happier can’t show what’s left.',
     keyShapeAnthropic: 'Looks like an Anthropic key',
     manualFieldInvalid: ({ field }: { field: string }) => `Enter a valid ${field}.`,

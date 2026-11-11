@@ -25,7 +25,7 @@ export const XAI_REALTIME_SETTINGS_SECTION = Object.freeze({
     titleKey: 'settingsVoice.realtimeProviders.credential.title',
     promptTitleKey: 'settingsVoice.realtimeProviders.credential.promptTitle',
     promptBodyKey: 'settingsVoice.realtimeProviders.xai.credential.promptBody',
-    checklist: Object.freeze(['Open API keys in the xAI Console', 'Create a key, then paste it below.']),
+    checklist: Object.freeze(['Open [API keys in the xAI Console]', 'Create a key, then paste it below.']),
   }),
   links: Object.freeze({
     account: 'https://console.x.ai',

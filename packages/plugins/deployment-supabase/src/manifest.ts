@@ -27,7 +27,7 @@ export const plugin = definePlugin({
         browserReachability: 'unreachable',
         setup: {
           url: 'https://supabase.com/dashboard/account/tokens',
-          checklist: ['Create a personal access token in your Supabase account access-token settings.', 'Choose the organizations, projects, and permissions needed for the actions you want to use.', 'Copy the management token and enter the matching organization slug and optional project reference here.'],
+          checklist: ['Create a personal access token in your [Supabase account access-token settings].', 'Choose the organizations, projects, and permissions needed for the actions you want to use.', 'Copy the management token and enter the matching organization slug and optional project reference here.'],
           createKeyTitle: 'Open Supabase access tokens',
         },
         directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },

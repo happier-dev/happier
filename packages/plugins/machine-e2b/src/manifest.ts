@@ -46,7 +46,7 @@ export const PLUGIN = definePlugin({
       account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'token', modes: [{
         id: 'token', title: 'API key', kind: 'manual', apiKey: true, outcomeReconciliation: 'none', credentialOrigin: 'authentication',
         setup: { url: 'https://console.e2b.dev/?tab=keys', createKeyTitle: 'Open E2B API keys',
-          checklist: ['Open the API keys tab in the E2B dashboard for the team that will own your sandboxes.', 'Copy an API key and paste it here.'],
+          checklist: ['Open the [API keys tab in the E2B dashboard] for the team that will own your sandboxes.', 'Copy an API key and paste it here.'],
           shapeHint: 'E2B API keys start with e2b_.' },
         credentialFieldKeys: { token: 'token' }, directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
         fields: [{ id: 'token', title: 'API key', schema: { type: 'string', minLength: 1 }, secret: true }],

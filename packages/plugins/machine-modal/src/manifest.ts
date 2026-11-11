@@ -71,7 +71,7 @@ export const MODAL_PLUGIN = definePlugin({
     declaration: { title: 'Modal', description: 'Run coding sessions in Modal Sandboxes.', ui: { category: 'cloud-machines' },
       authentication: { defaultModeId: 'token', modes: [{ id: 'token', kind: 'manual',
       setup: { url: 'https://modal.com/settings/tokens', createKeyTitle: 'Open Modal API tokens',
-        checklist: ['Open your workspace settings in the Modal Dashboard.', 'Create an API token, then paste its token ID and token secret here.'],
+        checklist: ['Open your workspace settings in the [Modal Dashboard].', 'Create an API token, then paste its token ID and token secret here.'],
         shapeHint: 'Use the API token ID (ak-…) and secret (as-…), not a Web Function proxy token.' },
       outcomeReconciliation: 'none', directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
       credentialFieldKeys: { tokenId: 'tokenId', tokenSecret: 'tokenSecret' },

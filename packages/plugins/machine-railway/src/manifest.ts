@@ -47,7 +47,7 @@ export const PLUGIN = definePlugin({
         id: 'token', title: 'Account API token', kind: 'manual', outcomeReconciliation: 'none', credentialOrigin: 'authentication',
         browserReachability: 'unreachable',
         setup: { url: 'https://railway.com/account/tokens', createKeyTitle: 'Open Railway account tokens',
-          checklist: ['Open Tokens in your Railway account settings and create a token.', 'Select No workspace to create an account token, then copy and paste it here.'],
+          checklist: ['Open [Tokens in your Railway account settings] and create a token.', 'Select No workspace to create an account token, then copy and paste it here.'],
           shapeHint: 'Use an account API token. Project and workspace tokens cannot perform the account check used here.' },
         credentialFieldKeys: { token: 'token' }, directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
         fields: [{ id: 'token', title: 'Account API token', description: 'A Railway Account API token with access to the selected environment. Project tokens are not supported.', schema: { type: 'string', minLength: 1 }, secret: true }],

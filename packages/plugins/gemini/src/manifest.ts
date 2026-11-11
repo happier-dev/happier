@@ -54,7 +54,7 @@ export const GEMINI_PLUGIN = definePlugin({
             apiKey: true,
             setup: {
               url: 'https://aistudio.google.com/apikey',
-              checklist: ['Create a Gemini API key in Google AI Studio for the project you want to use.', 'Copy the key and paste it here.'],
+              checklist: ['Create a Gemini API key in [Google AI Studio] for the project you want to use.', 'Copy the key and paste it here.'],
               createKeyTitle: 'Open Google AI Studio API keys',
             },
             accountDirectSave: { fieldKeys: { token: 'apiKey' } },
@@ -71,7 +71,7 @@ export const GEMINI_PLUGIN = definePlugin({
             kind: 'manual',
             setup: {
               url: 'https://console.cloud.google.com/iam-admin/serviceaccounts',
-              checklist: ['Select your Google Cloud project and a service account with the Vertex AI access you need.', 'Open its Keys tab, choose Add key > Create new key, and select JSON.', 'Paste the full downloaded JSON file here.'],
+              checklist: ['Select your Google Cloud project and a [service account] with the Vertex AI access you need.', 'Open its Keys tab, choose Add key > Create new key, and select JSON.', 'Paste the full downloaded JSON file here.'],
               createKeyTitle: 'Open Google Cloud service accounts',
             },
             directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },

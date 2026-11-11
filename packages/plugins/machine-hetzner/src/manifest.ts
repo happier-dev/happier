@@ -82,7 +82,7 @@ export const PLUGIN = definePlugin({
       account: { artifactId: 'account-runtime', exportName: 'activateAccount' }, defaultModeId: 'token', modes: [{
       id: 'token', kind: 'manual', title: 'API token', outcomeReconciliation: 'none',
       setup: { url: 'https://console.hetzner.com/', createKeyTitle: 'Open Hetzner Console',
-        checklist: ['Open your project in Hetzner Console, then choose Security → API tokens.', 'Generate a token with Read & Write access, then paste it here.'] },
+        checklist: ['Open your project in [Hetzner Console], then choose Security → API tokens.', 'Generate a token with Read & Write access, then paste it here.'] },
       credentialFieldKeys: { token: 'token' },
       credentialOrigin: 'authentication',
       directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },

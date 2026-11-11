@@ -13,7 +13,7 @@ export const ELEVENLABS_SETTINGS_SECTION = Object.freeze({
     titleKey: 'settingsVoice.byo.apiKeyTitle',
     promptTitleKey: 'settingsVoice.byo.apiKeyTitle',
     promptBodyKey: 'settingsVoice.byo.apiKeyDescription',
-    checklist: Object.freeze(['Open API keys in ElevenLabs', 'Create a key, then paste it below.']),
+    checklist: Object.freeze(['Open [API keys in ElevenLabs]', 'Create a key, then paste it below.']),
   }),
   links: Object.freeze({
     account: 'https://elevenlabs.io',

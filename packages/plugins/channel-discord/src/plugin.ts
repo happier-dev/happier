@@ -237,7 +237,7 @@ function createDiscordPlugin() {
               kind: 'manual',
               setup: {
                 url: 'https://discord.com/developers/applications',
-                checklist: ['Create or select an application in the Discord Developer Portal and open its Bot settings.', 'Copy its bot token; if it is no longer visible, Reset Token creates a replacement and invalidates the old token.', 'Paste the bot token here.'],
+                checklist: ['Create or select an application in the [Discord Developer Portal] and open its Bot settings.', 'Copy its bot token; if it is no longer visible, Reset Token creates a replacement and invalidates the old token.', 'Paste the bot token here.'],
                 createKeyTitle: 'Open Discord applications',
               },
               credentialOrigin: 'authentication',

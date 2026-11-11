@@ -146,7 +146,7 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
       setup: { url: 'https://boat.dev/dashboard', createKeyTitle: 'Open Boat dashboard',
         // https://docs.boat.dev/api-keys/scopes does not enumerate ci's
         // account.read membership; old ci keys do not acquire newer permissions.
-        checklist: ['Select the account or organization that should own the sandboxes in the Boat dashboard.',
+        checklist: ['Select the account or organization that should own the sandboxes in the [Boat dashboard].',
           'Create an API key with sandbox.create, sandbox.read, sandbox.update, sandbox.stop, sandbox.resume, sandbox.fork, sandbox.delete (or sandbox.delete-own for sandboxes created by this key), ssh, snapshot.read, and account.read.',
           'Ensure the key can access the selected source sandboxes and snapshots. Older ci keys may lack resume or ssh; verify account.read explicitly. Copy and paste the key here.'],
         shapeHint: 'New Boat API keys start with boat_. Existing box_ keys are also supported.' },

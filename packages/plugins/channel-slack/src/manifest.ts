@@ -57,7 +57,7 @@ function createSlackPlugin() {
           authentication: { defaultModeId: 'bot-tokens', modes: [{ id: 'bot-tokens', kind: 'manual',
             setup: {
               url: 'https://api.slack.com/apps',
-              checklist: ['Create or select your Slack app, add the bot scopes and event subscriptions you need, and install it to your workspace.', 'Copy its Bot User OAuth Token from OAuth & Permissions.', 'Enable Socket Mode and generate an app-level token with connections:write for the same app, then paste both tokens here.'],
+              checklist: ['Create or select your [Slack app], add the bot scopes and event subscriptions you need, and install it to your workspace.', 'Copy its Bot User OAuth Token from OAuth & Permissions.', 'Enable Socket Mode and generate an app-level token with connections:write for the same app, then paste both tokens here.'],
               createKeyTitle: 'Open Slack apps',
             },
             credentialOrigin: 'authentication',

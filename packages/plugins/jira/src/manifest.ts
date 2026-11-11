@@ -53,7 +53,7 @@ export const JIRA_PLUGIN = definePlugin({
                     id: 'api-token', kind: 'manual', title: 'Personal API token (without scopes)', outcomeReconciliation: 'none',
                     setup: {
                         url: 'https://id.atlassian.com/manage-profile/security/api-tokens',
-                        checklist: ['Create an API token without scopes in your Atlassian account; this connection uses your Jira site URL.', 'Copy the token and enter the email address of the Atlassian account that created it.', 'Enter the Jira Cloud site that account can access.'],
+                        checklist: ['Create an API token without scopes in your [Atlassian account]; this connection uses your Jira site URL.', 'Copy the token and enter the email address of the Atlassian account that created it.', 'Enter the Jira Cloud site that account can access.'],
                         createKeyTitle: 'Open Atlassian API tokens',
                     },
                     credentialOrigin: 'authentication',

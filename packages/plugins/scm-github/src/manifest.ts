@@ -2148,7 +2148,7 @@ function createGithubPlugin(): GithubPlugin {
             kind: 'manual',
             setup: {
               url: 'https://github.com/settings/personal-access-tokens/new',
-              checklist: ['Generate a fine-grained personal access token and choose its resource owner, repositories, and expiration.', 'Grant the repository and organization permissions needed for the actions you want to use; an organization may require approval.', 'Copy the generated token and paste it here.'],
+              checklist: ['Generate a [fine-grained personal access token] and choose its resource owner, repositories, and expiration.', 'Grant the repository and organization permissions needed for the actions you want to use; an organization may require approval.', 'Copy the generated token and paste it here.'],
               createKeyTitle: 'Open GitHub fine-grained tokens',
             },
             credentialOrigin: 'authentication',

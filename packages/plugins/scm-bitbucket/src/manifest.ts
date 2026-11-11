@@ -246,7 +246,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
             kind: 'manual',
             setup: {
               url: 'https://id.atlassian.com/manage-profile/security/api-tokens',
-              checklist: ['Create an API token with scopes in your Atlassian account and select Bitbucket as the app.', 'Grant the repository, pull request, and issue permissions needed for the actions you want to use.', 'Copy the token and enter the email address of the Atlassian account that created it.'],
+              checklist: ['Create an API token with scopes in your [Atlassian account] and select Bitbucket as the app.', 'Grant the repository, pull request, and issue permissions needed for the actions you want to use.', 'Copy the token and enter the email address of the Atlassian account that created it.'],
               createKeyTitle: 'Open Atlassian API tokens',
             },
             credentialOrigin: 'authentication',
