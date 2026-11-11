@@ -110,6 +110,12 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     if (code === 'profile_unavailable') return t('browserShell.profile.management.profileUnavailable');
     if (code === 'profile_purge_failed') return t('browserShell.profile.management.profilePurgeFailed');
     if (code === 'managed_browser_required') return t('browserShell.profile.management.managedBrowserRequired');
+    if (code === 'file_save_failed' || code === 'file_save_unavailable' || code === 'browser_download_unavailable') {
+        return t('files.fileWriteFailed');
+    }
+    if (code === 'navigation_placement_not_applied'
+        || code === 'space_reorder_not_applied'
+        || code === 'saved_view_reorder_not_applied') return t('entityDragDrop.reasons.generic');
     if (code === 'project_workspace_unavailable') return t('terminalEmbedded.errors.projectWorkspaceUnavailable');
     const nativeFailure = describeMachineNativeFailureCode(code);
     if (nativeFailure) {

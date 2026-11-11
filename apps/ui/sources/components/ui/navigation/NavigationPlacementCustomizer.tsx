@@ -26,6 +26,7 @@ import { usePopoverScrollSourceRef } from '@/components/ui/popover/PopoverScroll
 import { useProfile } from '@/sync/domains/state/storage';
 import { EMPTY_NAVIGATION_PLACEMENT_PREFERENCES, NavigationSurfacePlacementsV1Schema, navigationPlacementPatch, readNavigationPlacementPreferences, resolveNavigationPlacements, reorderNavigationPlacement, updateNavigationPlacement, type DetailNavigationAddress, type NavigationDefaultPlacement, type NavigationPlacementAddress, type NavigationPlacementPolicy, type NavigationPlacementPreferences, type NavigationSurfaceId, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
 import { t } from '@/text';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { SegmentedTabBar } from './SegmentedTabBar';
 import { useDetailPageTabsPosition, useDetailPageTabsPositionActionWriter, useNavigationSurfacePlacement, useNavigationSurfacePlacementActionWriter } from './useNavigationSurfacePlacement';
 
@@ -201,7 +202,10 @@ export function buildPlacementReorderBinding(input: Readonly<{
             if (!next) return { status: 'refused', reason: { code: 'invalid_navigation_placement', message: t('entityDragDrop.reasons.gone') } };
             const applied = await input.onChange(next);
             return applied === false
-                ? { status: 'refused', reason: { code: 'navigation_placement_not_applied', message: t('errors.operationFailed') } }
+                ? { status: 'refused', reason: {
+                    code: 'navigation_placement_not_applied',
+                    message: resolveActionExecutionFailureMessage({ ok: false, errorCode: 'navigation_placement_not_applied' }, t('errors.operationFailed'))!,
+                } }
                 : { status: 'applied' };
         },
     };

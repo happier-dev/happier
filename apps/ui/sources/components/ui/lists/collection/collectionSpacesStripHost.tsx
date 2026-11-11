@@ -16,6 +16,7 @@ import { KeyboardShortcutLabelsContext } from '@/keyboard/shortcutLabels';
 import { useSessionListSpaceKeyboardCommands } from '@/keyboard/sessionListSpaces';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -43,7 +44,10 @@ export function createPluginSavedViewsReorderBinding(input: Readonly<{
     items: input.items.map(item => ({ id: item.id, title: item.name })), axis: 'horizontal',
     executeMove: async (id, beforeId) => await input.onReorder?.(id, beforeId)
       ? { status: 'applied' }
-      : { status: 'refused', reason: { code: 'saved_view_reorder_not_applied', message: t('errors.operationFailed') } },
+      : { status: 'refused', reason: {
+          code: 'saved_view_reorder_not_applied',
+          message: resolveActionExecutionFailureMessage({ ok: false, errorCode: 'saved_view_reorder_not_applied' }, t('errors.operationFailed'))!,
+      } },
   });
 }
 

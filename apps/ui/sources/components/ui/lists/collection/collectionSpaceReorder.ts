@@ -18,6 +18,7 @@ import {
 import type { EntityFlatAxis } from '@/components/ui/treeDragDrop/geometry/entityFlatListStrategy';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 export type CollectionSpaceReorderMutation = Extract<
   CollectionSpaceMutationV1<CollectionEntityKindV1>,
@@ -121,7 +122,7 @@ export function useCollectionSpaceReorderBinding(
               status: 'refused',
               reason: {
                 code: 'space_reorder_not_applied',
-                message: t('errors.operationFailed'),
+                message: resolveActionExecutionFailureMessage({ ok: false, errorCode: 'space_reorder_not_applied' }, t('errors.operationFailed'))!,
               },
             };
       },

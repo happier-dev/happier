@@ -186,6 +186,20 @@ describe('Action failure presentation', () => {
             .toBe(t('widgetAdd.refusals.inputsInvalid'));
     });
 
+    it('keeps presentation-owned typed UI refusals specific through the shared Action-failure copy owner', () => {
+        for (const [errorCode, key] of [
+            ['file_save_failed', 'files.fileWriteFailed'],
+            ['file_save_unavailable', 'files.fileWriteFailed'],
+            ['browser_download_unavailable', 'files.fileWriteFailed'],
+            ['navigation_placement_not_applied', 'entityDragDrop.reasons.generic'],
+            ['space_reorder_not_applied', 'entityDragDrop.reasons.generic'],
+            ['saved_view_reorder_not_applied', 'entityDragDrop.reasons.generic'],
+        ] as const) {
+            expect(resolveActionExecutionFailureMessage({ ok: false, errorCode }, 'Operation failed')).toBe(t(key));
+            expect(resolveActionExecutionErrorMessage({ code: errorCode }, 'Operation failed')).toBe(t(key));
+        }
+    });
+
     it('retains ordinary Action failure and successful-result behavior', () => {
         expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: 'other_failure', error: 'Details' }, 'Fallback'))
             .toBe('Details');
