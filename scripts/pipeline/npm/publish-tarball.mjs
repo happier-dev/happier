@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { admitNpmPublication } from '../release/admit-release.mjs';
+import { formatPublicReleaseChannelChoices, normalizePublicReleaseChannel } from '../release/lib/public-release-rings.mjs';
 import { assertCliManagedRuntimeTarballPublication } from './cli-managed-runtime-tarball.mjs';
 
 const CLI_PACKAGE_NAME = '@happier-dev/cli';
@@ -267,12 +268,16 @@ function ensurePublication(opts) {
 
 /**
  * @param {string} channel
- * @returns {'latest' | 'next'}
+ * @returns {'latest' | 'next' | 'dev'}
  */
 function defaultDistTagForChannel(channel) {
-  if (channel === 'production') return 'latest';
-  if (channel === 'preview') return 'next';
-  fail(`--channel must be 'production' or 'preview' (got: ${channel})`);
+  const channelId = normalizePublicReleaseChannel(channel);
+  if (!channelId) {
+    fail(`--channel must be ${formatPublicReleaseChannelChoices({ stableAlias: 'production', preferredOrder: ['dev', 'preview', 'stable'] })} (got: ${channel})`);
+  }
+  if (channelId === 'stable') return 'latest';
+  if (channelId === 'preview') return 'next';
+  return 'dev';
 }
 
 /**

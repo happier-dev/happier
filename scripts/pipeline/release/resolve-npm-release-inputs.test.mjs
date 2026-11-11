@@ -25,6 +25,24 @@ test('resolveNpmReleaseInputs gives preview releases their sole permitted source
   );
 });
 
+test('resolveNpmReleaseInputs gives dev releases their sole permitted source and dist-tag', () => {
+  assert.deepEqual(
+    resolveNpmReleaseInputs({
+      channel: 'dev',
+      npmTag: 'dev',
+      sourceRef: 'auto',
+      authorizedSha: 'f'.repeat(40),
+      publishCli: true,
+      publishStack: false,
+      publishServer: false,
+      publishPluginSdk: false,
+      publishSdk: false,
+      publishChannelsProtocol: false,
+    }),
+    { channel: 'dev', npmTag: 'dev', sourceRef: 'dev', authorizedSha: 'f'.repeat(40) },
+  );
+});
+
 test('resolveNpmReleaseInputs admits a Channels-protocol-only publication request', () => {
     // The Channels protocol is a publication target in its own right: an
     // operator can select it without also publishing the CLI or an SDK, and

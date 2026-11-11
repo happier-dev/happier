@@ -18,7 +18,7 @@ export function usage(): string {
     `${chalk.bold('Channels:')}`,
     `  stable  → npm dist-tag ${cmd('latest')}`,
     `  preview → npm dist-tag ${cmd('next')}`,
-    `  dev     → npm dist-tag ${cmd('next')} (${chalk.gray('dev rolling binaries')})`,
+    `  dev     → npm dist-tag ${cmd('dev')}`,
     '',
     `${chalk.bold('Environment:')}`,
     `  HAPPIER_CLI_UPDATE_CHECK=0                 Disable update notice + background check`,

@@ -343,6 +343,26 @@ test('pipeline npm publish script supports dry-run and derives dist-tag from cha
 
   assert.match(outGithub, /\[dry-run\] npx -y npm@11\.5\.1 publish /);
   assert.match(outGithub, /--provenance/, 'GitHub Actions default should enable npm provenance');
+
+  const outDev = execFileSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'npm', 'publish-tarball.mjs'),
+      '--channel',
+      'dev',
+      '--tarball',
+      tarballPath,
+      '--dry-run',
+    ],
+    {
+      cwd: repoRoot,
+      env: { ...process.env, GITHUB_ACTIONS: '' },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+  assert.match(outDev, /--tag dev/);
 });
 
 test('pipeline npm publish uses isolated npmrc when NPM_TOKEN is provided', async () => {

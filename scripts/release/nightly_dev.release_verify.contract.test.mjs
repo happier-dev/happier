@@ -16,7 +16,7 @@ test('nightly-dev verifies exact immutable candidates before promoting any user-
   const workflow = YAML.parse(raw);
   const releaseVerifyWorkflow = YAML.parse(releaseVerifyRaw);
 
-  assert.deepEqual(workflow.jobs.release_verify.needs, ['prepare_release_candidate', 'cli', 'hstack', 'runner', 'server_runtime', 'ui_web', 'resolve_validation_risk', 'resolve_resume']);
+  assert.deepEqual(workflow.jobs.release_verify.needs, ['prepare_release_candidate', 'cli', 'hstack', 'runner', 'server_runtime', 'ui_web', 'resolve_validation_risk', 'resolve_resume', 'verify_source_ci']);
   assert.match(
     raw,
     /release_verify:[\s\S]*?channel:\s*dev/,
@@ -58,6 +58,21 @@ test('nightly-dev verifies exact immutable candidates before promoting any user-
     assert.equal(job.if, "${{ needs.prepare_release_candidate.outputs.release_needed == 'true' }}");
     assert.equal(job.with.source_ref, exactSha, `${jobName} must consume the exact nightly candidate SHA`);
   }
+
+  const npm = workflow.jobs.publish_npm;
+  assert.ok(npm, 'nightly must publish the promoted CLI candidate to npm');
+  assert.equal(npm.uses, './.github/workflows/release-npm.yml');
+  assert.deepEqual(npm.needs, ['prepare_release_candidate', 'cli', 'promote_cli', 'release_verify']);
+  assert.equal(npm.with.channel, 'dev');
+  assert.equal(npm.with.npm_tag, 'dev');
+  assert.equal(npm.with.source_ref, 'dev');
+  assert.equal(npm.with.authorized_sha, exactSha);
+  assert.equal(npm.with.cli_version, '${{ needs.cli.outputs.version }}');
+  assert.equal(npm.with.publish_cli, true);
+  assert.equal(npm.with.publish_stack, false);
+  assert.equal(npm.with.publish_server, false);
+  assert.match(String(npm.if), /needs\.release_verify\.result == 'success'/);
+  assert.match(String(npm.if), /needs\.promote_cli\.result == 'success'/);
   for (const jobName of ['cli', 'hstack', 'runner', 'server_runtime', 'ui_web', 'docker']) {
     assert.equal(
       workflow.jobs[jobName].with.authorized_sha,

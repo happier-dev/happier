@@ -28,6 +28,7 @@ import {
   resolveNpmPackageNameOverride,
 } from '@happier-dev/cli-common/update';
 import {
+  getReleaseRingCatalogEntry,
   normalizePublicReleaseRingId,
   resolvePublicReleaseRingLabelForId,
   type PublicReleaseRingId,
@@ -92,8 +93,18 @@ function readPackageJsonVersion(path: string): string | null {
   }
 }
 
-function resolveSelfNpmDistTag(channel: SelfChannel): 'latest' | 'next' {
-  return channel === 'stable' ? 'latest' : 'next';
+function resolveSelfNpmDistTag(channel: SelfChannel): 'latest' | 'next' | 'dev' {
+  if (channel === 'stable') return 'latest';
+  if (channel === 'preview') return 'next';
+  return 'dev';
+}
+
+export function resolveNpmInstalledCliChannel(params: Readonly<{ version: string; invokedPath: string }>): SelfChannel | null {
+  if (detectInstallSource(params.invokedPath) !== 'npm') return null;
+  const version = String(params.version ?? '').trim();
+  if (/-dev(?:[.-]|$)/i.test(version)) return 'publicdev';
+  if (/-preview(?:[.-]|$)/i.test(version)) return 'preview';
+  return null;
 }
 
 function resolveSelfReleaseChannel(params: Readonly<{
@@ -101,12 +112,25 @@ function resolveSelfReleaseChannel(params: Readonly<{
   rawArgv?: readonly string[];
   invokedPath?: string | null;
 }>): ReturnType<typeof resolveManagedCliReleaseChannelSync> {
-  return resolveManagedCliReleaseChannelSync({
+  const resolved = resolveManagedCliReleaseChannelSync({
     args: params.args,
     argv: params.rawArgv ?? process.argv,
     invokedPath: params.invokedPath ?? process.argv[1] ?? '',
     processEnv: process.env,
   });
+  const npmChannel = resolved.source === 'default'
+    ? resolveNpmInstalledCliChannel({
+        version: String(packageJson.version ?? ''),
+        invokedPath: params.invokedPath ?? process.argv[1] ?? '',
+      })
+    : null;
+  if (!npmChannel) return resolved;
+  return {
+    ...resolved,
+    ringId: npmChannel,
+    label: getReleaseRingCatalogEntry(npmChannel).publicLabel,
+    channelToolName: resolveManagedCliToolNameForRing(npmChannel),
+  };
 }
 
 export function parseSelfChannel(args: string[], invokedPath = process.argv[1] ?? ''): SelfChannel {
@@ -221,7 +245,7 @@ async function cmdCheck(argv: string[], rawArgv: readonly string[] = process.arg
   const invokerVersion = configuration.currentCliVersion;
   const current = runtimeVersion || invokerVersion || null;
 
-  // Rejects cross-channel results itself (preview/dev share the `next` dist-tag).
+  // Rejects cross-channel results itself; preview and dev use separate npm dist-tags.
   recordCliUpdateCheck({
     happierHomeDir: configuration.happyHomeDir,
     publicReleaseRing: channel,

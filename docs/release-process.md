@@ -29,6 +29,10 @@ line's development branch (`dev` for 0.2, `v0.3` for 0.3). GitHub runs schedules
 only when the workflow is present on the repository's default branch, so landing
 these edits on another branch alone does not activate its nightly schedule.
 
+The nightly dev workflow publishes the promoted CLI candidate to npm with the same `-dev.N`
+version used by the GitHub release and the explicit `dev` dist-tag. Stable and preview npm
+publication remain owned by `release-channel.yml` (`latest` and `next`, respectively).
+
 ## Contributing flow (recommended)
 
 1. Create a feature branch from `dev`.

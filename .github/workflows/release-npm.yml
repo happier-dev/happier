@@ -49,7 +49,7 @@ on:
         required: true
         type: string
       source_ref:
-        description: "Promotion — Source ref to release from (auto: preview→preview, production→main)"
+        description: "Promotion — Source ref to release from (auto: dev→dev, preview→preview, production→main)"
         required: false
         default: auto
         type: string
@@ -73,7 +73,7 @@ on:
         default: true
         type: boolean
       npm_tag:
-        description: "Publish (CLI) — npm dist-tag (production: latest, preview: next)"
+        description: "Publish (CLI) — npm dist-tag (production: latest, preview: next, dev: dev)"
         required: false
         default: latest
         type: string
@@ -424,7 +424,7 @@ jobs:
         env:
           AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
           PROMOTION_SOURCE_REF: ${{ inputs.promotion_source_ref }}
-          CANONICAL_REF: ${{ inputs.channel == 'production' && 'main' || 'preview' }}
+          CANONICAL_REF: ${{ inputs.channel == 'production' && 'main' || inputs.channel == 'dev' && 'dev' || 'preview' }}
         run: |
           set -euo pipefail
           source_ref="$CANONICAL_REF"

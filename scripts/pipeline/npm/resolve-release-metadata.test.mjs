@@ -61,6 +61,20 @@ test('resolveNpmReleaseMetadata returns only requested package versions and sour
   );
 });
 
+test('resolveNpmReleaseMetadata accepts dev candidate versions and the dev dist-tag', () => {
+  assert.deepEqual(
+    resolveNpmReleaseMetadata({
+      channel: 'dev',
+      sourceRef: 'dev',
+      sha: 'c'.repeat(40),
+      npmTag: 'dev',
+      versions: { cli: '1.2.3-dev.8' },
+      requested: { cli: true, stack: false, server: false, pluginSdk: false, sdk: false, channelsProtocol: false },
+    }),
+    { sha: 'c'.repeat(40), sourceRef: 'dev', channel: 'dev', npmTag: 'dev', versions: { cli: '1.2.3-dev.8' } },
+  );
+});
+
 test('resolveNpmReleaseMetadata emits the requested Channels protocol version', () => {
   assert.deepEqual(
     resolveNpmReleaseMetadata({

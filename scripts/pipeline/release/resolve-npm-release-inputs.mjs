@@ -34,8 +34,8 @@ function parseBoolean(value, name) {
  */
 export function resolveNpmReleaseInputs(input) {
   const channel = String(input.channel ?? '').trim();
-  if (channel !== 'preview' && channel !== 'production') {
-    throw new Error(`channel must be 'preview' or 'production' (got '${channel || '<empty>'}')`);
+  if (channel !== 'dev' && channel !== 'preview' && channel !== 'production') {
+    throw new Error(`channel must be 'dev', 'preview', or 'production' (got '${channel || '<empty>'}')`);
   }
 
   const requested = [
@@ -51,16 +51,16 @@ export function resolveNpmReleaseInputs(input) {
   }
 
   const npmTag = String(input.npmTag ?? '').trim();
-  const expectedTag = channel === 'preview' ? 'next' : 'latest';
+  const expectedTag = channel === 'dev' ? 'dev' : channel === 'preview' ? 'next' : 'latest';
   if (npmTag !== expectedTag) {
     throw new Error(`npm_tag must be '${expectedTag}' for channel='${channel}' (got '${npmTag}').`);
   }
 
   let sourceRef = String(input.sourceRef ?? '').trim();
-  if (sourceRef === 'auto') sourceRef = channel === 'preview' ? 'preview' : 'main';
-  const expectedSourceRef = channel === 'preview' ? 'preview' : 'main';
+  if (sourceRef === 'auto') sourceRef = channel === 'dev' ? 'dev' : channel === 'preview' ? 'preview' : 'main';
+  const expectedSourceRef = channel === 'dev' ? 'dev' : channel === 'preview' ? 'preview' : 'main';
   if (sourceRef !== expectedSourceRef && sourceRef !== String(input.authorizedSha ?? '').trim()) {
-    const label = channel === 'preview' ? 'Preview' : 'Production';
+    const label = channel === 'dev' ? 'Dev' : channel === 'preview' ? 'Preview' : 'Production';
     throw new Error(`${label} releases must run from ${expectedSourceRef} (got source_ref='${sourceRef}').`);
   }
 

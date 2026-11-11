@@ -443,6 +443,23 @@ jobs:
       allow_stable: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
+  publish_npm:
+    name: Publish CLI npm package (dev)
+    needs: [prepare_release_candidate, cli, promote_cli, release_verify]
+    if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'true' && needs.release_verify.result == 'success' && needs.promote_cli.result == 'success' }}
+    uses: ./.github/workflows/release-npm.yml
+    secrets: inherit
+    with:
+      channel: dev
+      source_ref: dev
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      publish_cli: true
+      publish_stack: false
+      publish_server: false
+      npm_tag: dev
+      cli_version: ${{ needs.cli.outputs.version }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
+
   promote_runner:
     name: Promote verified Runner candidate
     needs: [prepare_release_candidate, runner, release_verify, verify_source_ci]
@@ -517,7 +534,7 @@ jobs:
 
   verify_promoted:
     name: Verify promoted nightly references
-    needs: [prepare_release_candidate, promote_runner, ui_mobile, ui_desktop, docker, verify_source_ci]
+    needs: [prepare_release_candidate, promote_runner, publish_npm, ui_mobile, ui_desktop, docker, verify_source_ci]
     uses: ./.github/workflows/release-verify.yml
     secrets: inherit
     with:
@@ -568,7 +585,7 @@ jobs:
   release_status:
     name: Project terminal nightly release status
     if: ${{ always() && needs.prepare_release_candidate.outputs.release_needed != 'false' }}
-    needs: [prepare_release_candidate, cli, hstack, runner, server_runtime, ui_web, release_verify, verify_resume_candidates, promote_server, promote_hstack, promote_cli, promote_runner, promote_ui_web, ui_mobile, ui_desktop, docker, verify_promoted, advance_source_issues_to_dev]
+    needs: [prepare_release_candidate, cli, hstack, runner, server_runtime, ui_web, release_verify, verify_resume_candidates, promote_server, promote_hstack, promote_cli, promote_runner, promote_ui_web, publish_npm, ui_mobile, ui_desktop, docker, verify_promoted, advance_source_issues_to_dev]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -618,6 +635,7 @@ jobs:
           MOBILE_RESULT: ${{ needs.ui_mobile.result }}
           DESKTOP_RESULT: ${{ needs.ui_desktop.result }}
           DESKTOP_ORIGIN_RUN_ID: ${{ inputs.resume_run_id || github.run_id }}
+          NPM_RESULT: ${{ needs.publish_npm.result }}
           DOCKER_RESULT: ${{ needs.docker.result }}
           POST_PROMOTION_RESULT: ${{ needs.verify_promoted.result }}
         run: |

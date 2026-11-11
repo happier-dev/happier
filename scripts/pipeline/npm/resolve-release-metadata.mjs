@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 const VERSION_PATTERNS = Object.freeze({
   production: /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/,
   preview: /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-preview\.(?:[1-9]\d*)(?:\.(?:[1-9]\d*))?$/,
+  dev: /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-dev\.(?:[1-9]\d*)(?:\.(?:[1-9]\d*))?$/,
 });
 
 const RELEASE_PACKAGE_FIELDS = Object.freeze({
@@ -32,7 +33,7 @@ function parseBoolean(value, name) {
   throw new Error(`${name} must be true or false`);
 }
 
-/** @param {string} version @param {string} productId @param {'preview' | 'production'} channel */
+/** @param {string} version @param {string} productId @param {'dev' | 'preview' | 'production'} channel */
 function validateVersion(version, productId, channel) {
   if (version.includes('\n') || version.includes('\r') || !VERSION_PATTERNS[channel].test(version)) {
     throw new Error(`npm release metadata rejected non-canonical ${productId} version`);
@@ -65,7 +66,7 @@ export function resolveNpmVersionSources(input) {
  * use the identical contract.
  *
  * @param {{
- *   channel: 'preview' | 'production';
+ *   channel: 'dev' | 'preview' | 'production';
  *   sourceRef: string;
  *   sha: string;
  *   npmTag: string;
@@ -75,11 +76,11 @@ export function resolveNpmVersionSources(input) {
  */
 export function resolveNpmReleaseMetadata(input) {
   const channel = String(input.channel ?? '');
-  if (channel !== 'preview' && channel !== 'production') {
+  if (channel !== 'dev' && channel !== 'preview' && channel !== 'production') {
     throw new Error(`npm release metadata rejected unsupported channel '${channel || '<empty>'}'`);
   }
   const sourceRef = String(input.sourceRef ?? '').trim();
-  const expectedSourceRef = channel === 'preview' ? 'preview' : 'main';
+  const expectedSourceRef = channel === 'dev' ? 'dev' : channel === 'preview' ? 'preview' : 'main';
   if (sourceRef !== expectedSourceRef) {
     throw new Error(`npm release metadata rejected ${channel} source ref '${sourceRef}'`);
   }
@@ -88,7 +89,7 @@ export function resolveNpmReleaseMetadata(input) {
     throw new Error('npm release metadata rejected an invalid source SHA');
   }
   const npmTag = String(input.npmTag ?? '').trim();
-  const expectedTag = channel === 'preview' ? 'next' : 'latest';
+  const expectedTag = channel === 'dev' ? 'dev' : channel === 'preview' ? 'next' : 'latest';
   if (npmTag !== expectedTag) {
     throw new Error(`npm release metadata rejected npm tag '${npmTag}' for ${channel}`);
   }
@@ -98,7 +99,7 @@ export function resolveNpmReleaseMetadata(input) {
   for (const [key, productId] of Object.entries(RELEASE_PACKAGE_FIELDS)) {
     if (!input.requested[key]) continue;
     const version = String(input.versions[key] ?? '');
-    versions[key] = validateVersion(version, productId, /** @type {'preview' | 'production'} */ (channel));
+    versions[key] = validateVersion(version, productId, /** @type {'dev' | 'preview' | 'production'} */ (channel));
   }
   return { sha, sourceRef, channel, npmTag, versions };
 }
@@ -196,8 +197,8 @@ function main() {
   });
 
   const channel = String(values.channel ?? '').trim();
-  if (channel !== 'preview' && channel !== 'production') {
-    throw new Error(`--channel must be preview or production (got '${channel || '<empty>'}')`);
+  if (channel !== 'dev' && channel !== 'preview' && channel !== 'production') {
+    throw new Error(`--channel must be dev, preview, or production (got '${channel || '<empty>'}')`);
   }
   const requested = {
     cli: parseBoolean(values['publish-cli'], '--publish-cli'),
@@ -227,7 +228,7 @@ function main() {
   });
   /** @type {Record<string, string>} */
   let versions;
-  if (channel === 'preview') {
+  if (channel === 'dev' || channel === 'preview') {
     versions = readPreviewVersions(repoRoot, {
       ...allocationRequested,
       pluginSdk: requested.pluginSdk && !admittedVersions.pluginSdk,
