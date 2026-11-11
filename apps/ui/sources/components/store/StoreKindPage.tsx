@@ -13,7 +13,7 @@ import {
   type CollectionGroupAction,
   useHappierCollection,
 } from '@happier-dev/plugin-ui';
-import { HAPPIER_PICKS_SOURCE_ID, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
+import { HAPPIER_PICKS_SOURCE_ID, type RegistrySourceDescriptorV1, type RegistryKindV1 } from '@happier-dev/protocol/registries';
 import type { AccountProviderDeclarationV1 } from '@happier-dev/protocol/providers/catalog/accountModelProjectionV1';
 
 import { RegistryShelfAddControl } from '@/components/capabilities/add/RegistryShelf';
@@ -264,7 +264,7 @@ export function StoreKindFrame(
 /** Only registry-backed kinds choose a catalog (S40 §5); it narrows remote demand before fetching. */
 function CatalogSelect(
   props: Readonly<{
-    kind: 'app' | 'mcpServer' | 'skill' | 'agent' | 'browserExtension' | 'plugin';
+    kind: RegistryKindV1;
     presented: boolean;
     sourceId: string | null;
     onSourceChange: (sourceId: string | null) => void;

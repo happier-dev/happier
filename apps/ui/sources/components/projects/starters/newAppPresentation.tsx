@@ -29,7 +29,7 @@ function NewAppDialog(props: CustomModalInjectedProps & Readonly<{ onClone?: (()
 export function useOpenNewApp(onClone?: (() => void) | null): (starterId?: string | null) => void {
   const router = useRouter();
   const phone = useDeviceType() === 'phone';
-  return React.useCallback(() => {
+  return React.useCallback((starterId?: string | null) => {
     if (phone) {
       router.push({ pathname: '/projects/new-app', params: starterId ? { starterId } : {} } as never);
       return;

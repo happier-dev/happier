@@ -51,3 +51,27 @@ describe('installed packaged app registry sources', () => {
     } finally { await runtime.dispose(); }
   });
 });
+
+it('resolves the shipped starter source for a fresh Account through the daemon registry owner', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const shipped = JSON.parse(await readFile(new URL('../../assets/bundled-plugin-manifests/deployment-templates.json', import.meta.url), 'utf8'));
+  const text = await readFile(new URL('../../../../packages/plugins/deployment-templates/resources/registry/starters.json', import.meta.url), 'utf8');
+  // Only inert source declarations are consumed; this fixture has no author module.
+  const { entrypoints: _entrypoints, ...manifest } = shipped;
+  const runtime = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{ manifest,
+    files: { 'resources/registry/starters.json': text } }], coldStart: true });
+  try {
+    publishAccountRegistrySourcesFixture();
+    const cli = createCliRegistryHostV1({ pluginRuntime: runtime.controller });
+    const sourceId = shipped.id + '/starters';
+    const sources = await cli.readSources();
+    expect(sources).toContainEqual(expect.objectContaining({ id: sourceId, kinds: ['starter'],
+      packageContent: expect.objectContaining({ path: 'resources/registry/starters.json' }) }));
+    expect(sources.filter(source => source.enabled && source.kinds.includes('starter')).map(source => source.id)).toEqual([sourceId]);
+    const host = createRegistryHostV1({ host: 'node', ...cli.fetchContext, readSources: cli.readSources });
+    expect(await host.fetchRequest({ op: 'list', sourceId, kind: 'starter' })).toMatchObject({ op: 'list',
+      page: { status: { state: 'ok' }, items: expect.arrayContaining([expect.objectContaining({ itemId: 'static-website' })]) } });
+    expect(await host.fetchRequest({ op: 'read', sourceId, kind: 'starter', itemId: 'static-website' })).toMatchObject({ op: 'read',
+      item: { payload: { kind: 'starter', ref: { kind: 'packageContent', pluginId: shipped.id } } } });
+  } finally { await runtime.dispose(); resetActiveAccountSettingsSnapshotForTests(); vi.restoreAllMocks(); }
+});

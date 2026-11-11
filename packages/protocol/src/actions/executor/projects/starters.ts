@@ -1,6 +1,5 @@
 import { ScmRepositoryCloneOutputSchema } from '../../../scm/repositoryClone.js';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '../../../registries/registryActionsV1.js';
-import { RegistryItemV1Schema } from '../../../registries/registryItemsV1.js';
 import type { ProjectStarterCreateInputV1, ProjectStarterCreateOutputV1 } from '../../../projects/starters/createV1.js';
 import { ScmHostingRepositoryDescribePublishTargetsResponseSchema, ScmHostingRepositoryPublishResponseSchema, ScmHostingRepositorySummarySchema } from '../../../scm/repositoryProvisioning.js';
 import { ProjectSourcesCreateOutputV1Schema, projectSourceRepositorySelectorFromHostingSummaryV1 } from '../../../projects/sources/projectSourceV1.js';
@@ -18,7 +17,7 @@ export async function createProjectFromStarter(input: ProjectStarterCreateInputV
   const read = await execute('registries.items.read', { kind: 'starter', sourceId: summary.sourceId, itemId: summary.itemId, ...(summary.version ? { version: summary.version } : {}) });
   if (!read.ok) return read;
   const item = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(read.result).item;
-  const starter = RegistryItemV1Schema.parse(item).payload.kind === 'starter' ? item.payload.starter : null;
+  const starter = item.payload.kind === 'starter' ? item.payload.starter : null;
   let phase: Extract<ProjectStarterCreateOutputV1, { kind: 'failed' | 'partial' }>['phase'] = 'starter';
   let checkoutCreated = false;
   let directory: string | undefined;
@@ -45,14 +44,14 @@ export async function createProjectFromStarter(input: ProjectStarterCreateInputV
     repository: { nameWithOwner, cloneUrl: `${upstreamUrl.origin}/${nameWithOwner}.git`, webUrl: `${upstreamUrl.origin}/${nameWithOwner}` }, protocol: 'https',
     destinationParentPath: input.destinationParentPath, destinationDirectoryName: input.destinationDirectoryName,
     confirmed: true, authorizationToken: 'clone-repository' });
-  if (!cloned.ok) return cloned;
+  if (!cloned.ok) return cloned.errorCode === 'invalid_action_output' ? failed('checkout_failed') : cloned;
   const parsedClone = ScmRepositoryCloneOutputSchema.safeParse(cloned.result);
-  const clone = parsedClone.success ? parsedClone.data : cloned.result as { success?: unknown; destinationPath?: string; errorCode?: string; remediation?: unknown; snapshot?: { branch?: { headOid?: unknown } } };
+  if (!parsedClone.success) return failed('checkout_failed');
+  const clone = parsedClone.data;
   if (!clone.success) return failed(clone.errorCode ?? 'checkout_failed', clone.remediation);
   checkoutCreated = true;
-  if (typeof clone.destinationPath !== 'string') return failed('checkout_failed');
   directory = starter.path ? `${clone.destinationPath}/${starter.path}` : clone.destinationPath;
-  const resolvedCommit = parsedClone.success ? clone.snapshot?.branch.headOid : (typeof clone.snapshot?.branch?.headOid === 'string' ? clone.snapshot.branch.headOid : undefined);
+  const resolvedCommit = clone.snapshot?.branch.headOid;
   if (!resolvedCommit) return failed('checkout_revision_unavailable');
   phase = 'publish';
   const published = await execute('scm.hostingRepository.publish', { cwd: directory, providerKind: 'github',

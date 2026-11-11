@@ -259,3 +259,21 @@ describe('catalog registry production composition', () => {
     expect(await host.execute('registries.items.list', { kind: 'plugin', sourceIds: [source.id] })).toMatchObject({ pages: [{ status: { state: 'invalid_source' }, items: [] }] });
   });
 });
+
+
+it('lists and reads the shipped starter catalog through its advertised remote registry format', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const catalog = JSON.parse(await readFile(new URL('../../../../plugins/deployment-templates/resources/registry/starters.json', import.meta.url), 'utf8'));
+  const source = { id: 'starter-catalog', title: 'Project starters', format: 'happier-catalog' as const, kinds: ['starter' as const],
+    url: 'https://starters.example.test/catalog.json', enabled: true, addedAt: 0, origin: { kind: 'user' as const }, removable: true };
+  const host = createRegistryHostV1({ host: 'web', readSources: async () => [source], http: {
+    getJson: async () => ({ ok: true, value: catalog, fetchedAt: 1 }),
+    getText: async () => { throw new Error('A starter catalog is JSON'); },
+    getBytes: async () => { throw new Error('A starter catalog is JSON'); },
+  } });
+  const { pages } = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(await host.execute('registries.items.list', { kind: 'starter', sourceIds: [source.id] }));
+  expect(pages[0]?.status.state).toBe('ok');
+  expect(pages[0]?.items).toContainEqual(expect.objectContaining({ itemId: 'static-website' }));
+  const { item } = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await host.execute('registries.items.read', { kind: 'starter', sourceId: source.id, itemId: 'static-website' }));
+  expect(item.payload).toMatchObject({ kind: 'starter', starter: { title: expect.any(String) } });
+});

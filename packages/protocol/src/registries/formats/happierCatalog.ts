@@ -11,6 +11,8 @@ import { bindRegistryMarketplaceCatalogV1 } from './registryMarketplaceCatalogBi
 import { HappierAppCatalogV1Schema, latestHappierAppCatalogRefsV1, listHappierAppCatalogV1, readHappierAppCatalogItemV1 } from './happierAppCatalog.js';
 import { readHappierBrowserExtensionCatalogItemV1, registryBrowserExtensionSummaryV1 } from './happierBrowserExtensionCatalog.js';
 import { chromeWebStoreRegistryAdapterV1 } from './chromeWebStore.js';
+import { RegistryStarterCatalogV1Schema } from '../registryStarterV1.js';
+import { listHappierStarterCatalogV1, readHappierStarterCatalogItemV1, parseStarterCatalogV1 } from './happierStarterCatalog.js';
 import type { RegistryBrowserExtensionCatalogEntryV1 } from '../registryBrowserExtensionV1.js';
 
 async function readCatalog(ctx: RegistryFetchContextV1, source: RegistrySourceV1,
@@ -32,6 +34,8 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
     if (!response.ok) return null;
     const apps = HappierAppCatalogV1Schema.safeParse(response.value);
     if (apps.success) return { format: 'happier-catalog', kinds: ['app'], title: new URL(url).hostname, itemCount: apps.data.apps.length };
+    const starters = RegistryStarterCatalogV1Schema.safeParse(response.value);
+    if (starters.success) return { format: 'happier-catalog', kinds: ['starter'], title: new URL(url).hostname, itemCount: starters.data.starters.length };
     let catalog;
     try { catalog = parseMarketplaceIndexSourceSnapshotV1(response.value); }
     catch { return null; }
@@ -47,6 +51,12 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
   },
   async list(ctx, req) {
     try {
+      if (req.kind === 'starter') {
+        const response = await ctx.http.getJson(req.source.url, { source: req.source });
+        if (!response.ok) throw new RegistryFetchErrorV1(response.status);
+        return listHappierStarterCatalogV1({ sourceId: req.source.id, catalog: parseStarterCatalogV1(response.value),
+          fetchedAt: response.fetchedAt, query: req.query });
+      }
       let acquired: Readonly<{ value: unknown; fetchedAt: number }> | undefined;
       if (req.kind === 'app') {
         const response = await ctx.http.getJson(req.source.url, { source: req.source });
@@ -89,6 +99,12 @@ export const happierCatalogRegistryAdapterV1: RegistryFormatAdapterV1 = {
     } catch (error) { if (error instanceof RegistryFetchErrorV1) return { sourceId: req.source.id, status: error.status, items: [], nextCursor: null }; throw error; }
   },
   async read(ctx, req) {
+    if (req.kind === 'starter') {
+      const response = await ctx.http.getJson(req.source.url, { source: req.source });
+      if (!response.ok) throw new RegistryFetchErrorV1(response.status);
+      return readHappierStarterCatalogItemV1({ sourceId: req.source.id, catalog: parseStarterCatalogV1(response.value),
+        fetchedAt: response.fetchedAt, itemId: req.itemId });
+    }
     let acquired: Readonly<{ value: unknown; fetchedAt: number }> | undefined;
     if (req.kind === 'app') {
       const response = await ctx.http.getJson(req.source.url, { source: req.source });

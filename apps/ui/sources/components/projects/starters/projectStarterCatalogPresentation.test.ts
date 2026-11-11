@@ -1,31 +1,21 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { getBundledProjectStartersV1 } from '@happier-dev/protocol';
-import { SUPPORTED_LANGUAGE_CODES } from '@/text/_all';
-import { preloadLocaleBundle, readLocaleBundle } from '@/text/localeBundlesSync';
-import { PROJECT_STARTER_PREVIEW_ASSETS } from './projectStarterPreviewAssets';
+import { parseStarterCatalogV1, listHappierStarterCatalogV1, readHappierStarterCatalogItemV1 } from '@happier-dev/protocol/registries/formats/happierStarterCatalog';
+import { RegistryItemV1Schema } from '@happier-dev/protocol/registries/registryItemsV1';
 
-function readPath(root: unknown, key: string): unknown {
-  return key.split('.').reduce<unknown>((value, part) => value && typeof value === 'object' ? Reflect.get(value, part) : undefined, root);
-}
+const catalog = parseStarterCatalogV1(JSON.parse(readFileSync(new URL('../../../../../../packages/plugins/deployment-templates/resources/registry/starters.json', import.meta.url), 'utf8')));
 
-describe('bundled Project starter presentation data', () => {
-  it('resolves every bundled descriptor to local artwork and real copy in each supported locale', async () => {
-    const starters = getBundledProjectStartersV1();
-    for (const language of SUPPORTED_LANGUAGE_CODES) {
-      await preloadLocaleBundle(language);
-      const host = readLocaleBundle(language)?.host;
-      for (const starter of starters) {
-        for (const key of [starter.titleKey, starter.summaryKey]) {
-          const value = readPath(host, key);
-          expect(typeof value, `${language}: ${key}`).toBe('string');
-          expect(value).not.toBe(key);
-        }
-        const source = PROJECT_STARTER_PREVIEW_ASSETS[starter.previewAssetKey];
-        expect(source).toBeDefined();
-        expect(source).toBe(PROJECT_STARTER_PREVIEW_ASSETS[starter.previewAssetKey]);
-        expect(Object.isFrozen(source)).toBe(true);
-        expect(source.uri).toMatch(/^data:image\/svg\+xml;/);
-      }
+describe('registry Project starter presentation data', () => {
+  it('lists the shipped catalog and reads each displayed choice as a validated starter', () => {
+    const page = listHappierStarterCatalogV1({ sourceId: 'builtin:starters', catalog, fetchedAt: 1 });
+    expect(page.items.length).toBeGreaterThan(0);
+    for (const summary of page.items) {
+      const item = RegistryItemV1Schema.parse(readHappierStarterCatalogItemV1({ sourceId: page.sourceId, catalog, fetchedAt: 1, itemId: summary.itemId }));
+      expect(item.summary).toMatchObject(summary);
+      expect(item.payload.kind).toBe('starter');
+      if (item.payload.kind !== 'starter') throw new Error('Expected starter payload');
+      expect(item.payload.starter.title).toBe(summary.title);
+      expect(item.payload.starter.description).toBe(summary.description);
     }
   });
 });

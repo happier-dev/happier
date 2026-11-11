@@ -2,15 +2,27 @@ import { ApprovalRequestSchema, type ApprovalRequest } from '../../../approvals/
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '../../actionExecutor.js';
 import { getActionSpec } from '../../actionSpecs.js';
+import { listHappierStarterCatalogV1, readHappierStarterCatalogItemV1, parseStarterCatalogV1 } from '../../../registries/formats/happierStarterCatalog.js';
+import { ScmWorkingSnapshotSchema } from '../../../scm/workingSnapshot.js';
+import { createScmCapabilities } from '../../../scm/capabilities.js';
 import { RegistryStarterV1Schema } from '../../../registries/registryStarterV1.js';
 
 const input = { serverId: 'home', machineId: 'machine', requestKey: 'starter-1', starterId: 'static-website',
   description: '\nBuild a bakery website.\nKeep this first message unchanged.\n', destinationParentPath: '/projects', destinationDirectoryName: 'bakery',
   repository: { owner: 'alice', name: 'bakery' } };
 const starter = RegistryStarterV1Schema.parse({ repository: 'https://github.com/mdn/beginner-html-site-styled', title: 'Static website', description: 'A small HTML and CSS website starter.', tags: ['website'], buildGoal: 'Build a website.' });
+const catalog = parseStarterCatalogV1({ schemaVersion: 1, starters: [{ itemId: 'static-website', starter }] });
 const registryActionExecute = ({ actionId }: { actionId: string }) => Promise.resolve(actionId === 'registries.items.list'
-  ? { pages: [{ sourceId: 'builtin:starters', status: { state: 'ok', fetchedAt: 1 }, items: [{ sourceId: 'builtin:starters', kind: 'starter' as const, itemId: 'static-website', title: starter.title, description: starter.description, version: '1' }], total: 1, nextCursor: null }] }
-  : { item: { summary: { sourceId: 'builtin:starters', kind: 'starter' as const, itemId: 'static-website', title: starter.title, description: starter.description, version: '1' }, payload: { kind: 'starter' as const, starter, ref: { kind: 'content' as const, digest: `sha256:${'a'.repeat(64)}` } }, fetchedAt: 1 } });
+  ? { pages: [listHappierStarterCatalogV1({ sourceId: 'builtin:starters', catalog, fetchedAt: 1 })] }
+  : { item: readHappierStarterCatalogItemV1({ sourceId: 'builtin:starters', catalog, fetchedAt: 1, itemId: 'static-website' }) });
+const snapshot = ScmWorkingSnapshotSchema.parse({
+  projectKey: 'machine:/projects/bakery', fetchedAt: 1,
+  repo: { isRepo: true, rootPath: '/projects/bakery', backendId: 'git', mode: '.git' },
+  capabilities: createScmCapabilities(),
+  branch: { head: 'main', headOid: '6c7a360ddb4a0d75be06044bf8a914f260ff10c7', upstream: null, ahead: 0, behind: 0, detached: false },
+  hasConflicts: false, entries: [],
+  totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+});
 
 describe('starter creation public Action', () => {
   it('admits the reviewed operands and defaults to a private repository', () => {
@@ -37,7 +49,7 @@ it.each([{ surface: 'ui', sourceFailure: false, publishFailure: false }, { surfa
   let approvals = 0;
   const calls: { actionId: string; input: unknown; context?: unknown }[] = [];
   // Publication returns its pre-push hosted summary. Default-branch metadata
-  // may be absent; the SCM clone and push owners establish main at the pin.
+  // may be absent; the SCM clone and push owners establish the current branch.
   const hostedRepository = { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
     nameWithOwner: 'alice/bakery', visibility: 'private', webUrl: 'https://github.com/alice/bakery', cloneUrl: 'https://github.com/alice/bakery.git' };
   const executor = createActionExecutor({
@@ -53,7 +65,7 @@ it.each([{ surface: 'ui', sourceFailure: false, publishFailure: false }, { surfa
       if (args.actionId === 'scm.repository.clone') return { success: true, destinationPath: '/projects/bakery',
         cloneProtocol: 'https', cloneUrl: 'https://github.com/mdn/beginner-html-site-styled.git', repository: {
           provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
-          nameWithOwner: 'mdn/beginner-html-site-styled', webUrl: 'https://github.com/mdn/beginner-html-site-styled', visibility: 'public' }, snapshot: { branch: { headOid: '6c7a360ddb4a0d75be06044bf8a914f260ff10c7' } } };
+          nameWithOwner: 'mdn/beginner-html-site-styled', webUrl: 'https://github.com/mdn/beginner-html-site-styled', visibility: 'public' }, snapshot };
       return publishFailure ? { success: false, errorCode: 'COMMAND_FAILED', error: 'Push failed', repository: hostedRepository }
         : { success: true, pushed: true, remote: { name: 'origin' }, repository: hostedRepository };
     },
@@ -104,4 +116,20 @@ it('refuses disconnected SCM before workspace or repository mutation with the ex
     { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } })).toMatchObject({ ok: true, result: {
       kind: 'failed', phase: 'account', code: 'scm_account_required', remediation: { action: 'connect_github' },
     } });
+});
+
+
+it('returns checkout_failed for an unparseable clone result before publication', async () => {
+  const executor = createActionExecutor({
+    registryActionExecute,
+    scmActionExecute: async ({ actionId }) => {
+      if (actionId === 'scm.hostingRepository.describePublishTargets') return { success: true,
+        auth: { state: 'authenticated', profileKind: 'connected_account' }, defaultRepositoryName: 'bakery', targets: [] };
+      if (actionId === 'scm.repository.clone') return { success: true, destinationPath: '/projects/bakery' };
+      throw new Error('must not publish an unvalidated checkout');
+    },
+  });
+  expect(await executor.execute('projects.starters.create', input,
+    { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } })).toMatchObject({ ok: true,
+      result: { kind: 'failed', phase: 'checkout', code: 'checkout_failed' } });
 });

@@ -47,7 +47,7 @@ export async function readCliRegistrySourcesV1(input:Readonly<{credentials?:Stor
     if(lease&&controller.isRuntimeRegistryCurrent(lease.registry)) {
       for(const entry of lease.registry.contributes.registrySources??[]) {
         const occurrenceId=lease.registry.contributes.occurrenceIdsByPluginId?.[entry.pluginId];
-        if(!entry.definition.kinds.some(kind=>kind==='app')||!entry.pluginVersion||!occurrenceId)continue;
+        if((!('packageContent' in entry.definition)&&!entry.definition.kinds.includes('app'))||!entry.pluginVersion||!occurrenceId)continue;
         const source=createPluginRegistrySourceDescriptorV1({pluginId:entry.pluginId,pluginVersion:entry.pluginVersion,occurrenceId,
           definition:entry.definition,suppliers:[]});
         pluginSources.set(source.id,source);

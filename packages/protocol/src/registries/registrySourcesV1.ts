@@ -169,7 +169,7 @@ export function readRegistrySourcesRecordV1(raw: unknown): RegistrySourcesRecord
 }
 // Other built-ins co-land with their format's first consuming unit.
 export const BUILT_IN_REGISTRY_SOURCES_V1: readonly RegistrySourceDescriptorV1[] = [{
-  id: HAPPIER_PICKS_SOURCE_ID, title: DEFAULT_CURATED_MARKETPLACE_SOURCE_TITLE, format: 'happier-catalog', kinds: [...REGISTRY_FORMAT_KINDS_V1['happier-catalog']],
+  id: HAPPIER_PICKS_SOURCE_ID, title: DEFAULT_CURATED_MARKETPLACE_SOURCE_TITLE, format: 'happier-catalog', kinds: REGISTRY_FORMAT_KINDS_V1['happier-catalog'].filter(kind => kind !== 'starter'),
   url: DEFAULT_CURATED_MARKETPLACE_SOURCE_URL, enabled: true, addedAt: 0, origin: { kind: 'built_in' }, removable: false,
 }, {
   id: 'builtin:chrome-web-store', title: 'Chrome Web Store', format: 'chrome-web-store', kinds: ['browserExtension'], url: 'https://chromewebstore.google.com', enabled: true, addedAt: 0, origin: { kind: 'built_in' }, removable: false,

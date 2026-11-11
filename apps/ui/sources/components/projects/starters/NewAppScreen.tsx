@@ -60,6 +60,7 @@ import { projectCheckoutParentPath } from '../activation/projectOpenChoices';
 
 type Step = 'start' | 'describe' | 'create';
 const STEPS: readonly Step[] = ['start', 'describe', 'create'];
+const STARTER_PREVIEW_ASPECT_RATIO = 3.2;
 
 /** The Action each control uses (lab s1 NOTES "actions"). */
 const CREATE_ACTION = 'projects.starters.create' as const;
