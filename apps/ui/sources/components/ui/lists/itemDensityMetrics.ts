@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 import { HAPPIER_COLLECTION_LIST_METRICS, resolveHappierTypeScale } from '@happier-dev/plugin-ui/presentation';
 
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
-export { HAPPIER_MENU_ROW_METRICS as MENU_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
+export { HAPPIER_MENU_ROW_METRICS as MENU_ROW_METRICS, HAPPIER_MENU_ROW_SHAPE as MENU_ROW_SHAPE } from '@happier-dev/plugin-ui/presentation';
 import type { ResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
 
 function selectValue<T>(values: { ios?: T; default: T }): T {

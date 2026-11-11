@@ -12,7 +12,7 @@ import { HappierPressable } from '../interaction/Pressable.js';
 import { settleHappierRaisedEdge } from '../layout/raisedEdge.js';
 import { HappierScrollArea } from '../layout/Layout.js';
 import { HappierSurface } from '../layout/Surface.js';
-import { HAPPIER_MENU_ROW_METRICS, matchesHappierMenuQuery } from '../interaction/Menu.js';
+import { HAPPIER_MENU_ROW_METRICS, HAPPIER_MENU_ROW_SHAPE, matchesHappierMenuQuery } from '../interaction/Menu.js';
 import {
   useOptionalPluginUiPopoverScrollSource,
   useOptionalPluginUiPresentationHost,
@@ -183,7 +183,7 @@ export function HappierChoiceField<Value = string>(
           ? {
               minHeight: HAPPIER_MENU_ROW_METRICS.minHeightPx,
               justifyContent: 'center',
-              paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx,
+              ...HAPPIER_MENU_ROW_SHAPE,
               paddingVertical: HAPPIER_MENU_ROW_METRICS.paddingVerticalPx,
             }
           : {

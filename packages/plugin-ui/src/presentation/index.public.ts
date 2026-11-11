@@ -999,6 +999,7 @@ export { isEligibleFocusTarget, listWebFocusableElements } from './interaction/w
 export {
   resolveHappierMenuKeyAction,
   HAPPIER_MENU_ROW_METRICS,
+  HAPPIER_MENU_ROW_SHAPE,
   HAPPIER_MENU_ROW_TEXT,
   resolveHappierMenuContent,
   resolveHappierMenuRadioGroups,

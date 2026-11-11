@@ -12,6 +12,14 @@ describe('glass material preferences', () => {
         expect(glassPresetMaterials('solid').card).toEqual({ blur: 'off', opacity: 1 });
     });
 
+    // Owner 2026-11-11 (desktop #25a): no sidebar plate. Under Auto the sidebar column stands on the chrome coat.
+    it('gives the Auto sidebar exactly the chrome coat at every blur step (no W3 lift)', () => {
+        for (const intensity of ['light', 'regular', 'strong'] as const) {
+            const auto = glassPresetMaterials('auto', intensity);
+            expect(auto.sidebar).toEqual(auto.chrome);
+        }
+    });
+
     it('keeps the selected preset when only Elements changes, and changes no other group', () => {
         const settings = { glassBlurEnabled: true, glassSurfaceMaterials: glassPresetMaterials('auto') };
         const delta = resolveGlassSurfaceModeSettingsDelta(settings, 'card', 'solid');

@@ -40,11 +40,11 @@ export function glassPresetMaterials(preset: GlassPreset, intensity: 'light' | '
         card: { blur: 'strong', opacity: 0.15 },
         floating,
     };
-    // W3: the sidebar's 18% paper lift over chrome is represented as its own
-    // equivalent coat, so callers never need to compose or repeat the tint.
+    // The sidebar column stands on the chrome coat: no separate lighter plate under the title bar (owner
+    // 2026-11-11, desktop #25a; replaces W3's 18% paper lift). Stored Auto tables with the old lift read as Custom.
     return {
         chrome: glass,
-        sidebar: { blur: intensity, opacity: 1 - (1 - glass.opacity) * 0.82 },
+        sidebar: glass,
         content: { blur: intensity, opacity: CONTENT_OPACITY[intensity] },
         card,
         floating,

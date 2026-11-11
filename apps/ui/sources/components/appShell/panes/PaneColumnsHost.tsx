@@ -3,7 +3,7 @@ import { PaneRegionProvider } from './paneRegion';
 import * as React from 'react';
 import { Animated, Platform, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+import { AppShellMaterialPlane, useAppShellCanvasCoat } from '@/components/navigation/shell/appShellMaterialPlane';
 
 import { MultiPaneHostWithBottom } from '@/components/ui/panels/MultiPaneHostWithBottom';
 import { resolveDestinationListYields, resolvePaneLayout, type ResolvePaneLayoutInput, type ResolvedPaneLayout, type PaneArrangement } from '@/components/ui/panels/paneBreakpoints';
@@ -108,6 +108,7 @@ const EMPTY_EDITOR = <></>;
 export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneColumnsHostProps) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const railCoat = useAppShellCanvasCoat();
     const deviceType = useDeviceType();
     const multiPaneDeviceType = resolveMultiPaneDeviceType({ platform: Platform.OS, deviceType });
     const { width: windowWidthPx, height: windowHeightPx } = useWindowDimensions();
@@ -676,11 +677,10 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                     style={[styles.railColumn, railVacant ? styles.railColumnVacant : null]}
                 >
                     {/* On the canvas the rail paints nothing of its own: it coats the canvas around its panel's tab
-                        (R11-1/R11-2). Inside a page (native, Editor first, a split pane) the rail and its side column are
-                        one surface (OR-2): it takes the column's material, so a page's atmosphere (a Project's planet and
-                        band) stays on the page and never shows through the rail. */}
-                    {railTail ? null : <GlassSurface surfaceGroup="content" solidColor={theme.colors.surface.base}
-                        finishRole={null} nested style={StyleSheet.absoluteFillObject} children={null} />}
+                        (R11-1/R11-2). Inside a page (native, Editor first, a split pane) it stands on the same chrome coat
+                        as the app rail, never on a content plate (owner 2026-11-11, desktop #25a). */}
+                    {railTail ? null : <AppShellMaterialPlane group={railCoat.group} color={railCoat.color}
+                        translucentColor={railCoat.translucentColor} style={StyleSheet.absoluteFillObject} />}
                     {/* One parent in every placement, so a placement change never remounts the rail. */}
                     <View style={styles.railSurface}>
                         <PaneRegionProvider region="main">{props.actionRail}</PaneRegionProvider>

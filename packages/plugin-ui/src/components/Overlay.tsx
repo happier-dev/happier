@@ -15,6 +15,7 @@ import { HappierText } from '../presentation/text/Text.js';
 import { HappierBadge } from '../presentation/content/Foundation.js';
 import {
   HAPPIER_MENU_ROW_METRICS,
+  HAPPIER_MENU_ROW_SHAPE,
   HAPPIER_MENU_ROW_TEXT,
   matchesHappierMenuQuery,
   resolveHappierMenuContent,
@@ -715,7 +716,8 @@ function MenuRows({
         style={(state) => ({
           minHeight: HAPPIER_MENU_ROW_METRICS.minHeightPx,
           paddingVertical: HAPPIER_MENU_ROW_METRICS.paddingVerticalPx,
-          paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx,
+          // The menu's inset rounded highlight, words on the menu's text edge.
+          ...HAPPIER_MENU_ROW_SHAPE,
           borderWidth: 0,
           borderColor: 'transparent',
           // Inset: menu rows span the floating surface, whose scroll area clips anything outside it.
@@ -883,7 +885,7 @@ function MenuPresentation({
 }
 
 const FLOATING_SURFACE_INSET = SURFACE_PADDING_BY_SIZE.small;
-/** In the host's phone sheet, menu rows run edge to edge like every menu (owner 2026-11-08). */
+/** In the host's phone sheet, menu rows take the menu's own inset highlight like every menu. */
 const sheetRowsInsetStyle = {} as const;
 /** An anchored sheet's footer sits on the menu rows' own edge, a row's rhythm below them. */
 const anchoredSheetFooterStyle = {
@@ -908,7 +910,7 @@ const FLOATING_SURFACE_SCROLL_INSET = Object.freeze({
   paddingHorizontal: FLOATING_SURFACE_INSET.horizontal,
   paddingVertical: FLOATING_SURFACE_INSET.vertical,
 });
-/** A menu's rows run edge to edge inside its surface (owner 2026-11-08); the rows pad their own words. */
+/** A menu keeps one even inset: top and bottom here, the sides on each row's inset highlight (HAPPIER_MENU_ROW_SHAPE). */
 const FLOATING_MENU_SCROLL_INSET = Object.freeze({
   paddingVertical: HAPPIER_MENU_ROW_METRICS.sectionPaddingVerticalPx,
 });

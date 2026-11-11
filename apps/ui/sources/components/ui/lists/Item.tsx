@@ -37,7 +37,7 @@ import {
     ITEM_CHEVRON_SIZE,
     ITEM_ICON_BOX_SIZE,
     ITEM_ICON_GLYPH_SIZE,
-    MENU_ROW_METRICS,
+    MENU_ROW_METRICS, MENU_ROW_SHAPE,
     ITEM_ICON_MARGIN_RIGHT,
     ITEM_ROW_PADDING_HORIZONTAL,
     ITEM_ROW_WITH_SUBTITLE_PADDING_VERTICAL_PX,
@@ -337,11 +337,13 @@ const PANE_ROW_INSET_STYLE = { paddingHorizontal: PANE_TEXT_INSET_PX } as const;
 // A list row in a widget body stands on the body's edge: the frame's inset is the only one, so its glyph sits under
 // the frame's mark and its meta on the frame's edge (lab `rw` C).
 const BODY_EDGE_ROW_INSET_STYLE = { paddingHorizontal: 0 } as const;
-// The inset too: a host menu row and a plugin menu row (and the state line among them) start on one edge.
+// The inset too: a host menu row and a plugin menu row (and the state line among them) start on one edge. The
+// highlight is the menu's inset rounded fill (MENU_ROW_SHAPE), so the words keep the menu's text edge inside it.
 const MENU_ROW_PADDING_STYLE = {
     paddingVertical: MENU_ROW_METRICS.paddingVerticalPx,
-    paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
+    paddingHorizontal: MENU_ROW_SHAPE.paddingHorizontal,
 } as const;
+const MENU_ROW_HIGHLIGHT_SHAPE = { marginHorizontal: MENU_ROW_SHAPE.marginHorizontal, borderRadius: MENU_ROW_SHAPE.borderRadius } as const;
 
 type PageRowStyles = Readonly<{
     box: Readonly<{ minHeight: number }>;
@@ -475,7 +477,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         ...ICON_LABEL_OPTICAL_NUDGE_STYLE,
     },
     iconContainerCompact: {
-        marginRight: theme.space.s10,
+        // The list's row gap (the gap owner the text and divider insets read), never a second number.
+        marginRight: ITEM_ICON_MARGIN_RIGHT.compact,
         width: ITEM_ICON_BOX_SIZE.compact,
         height: ITEM_ICON_BOX_SIZE.compact,
     },
@@ -1941,7 +1944,7 @@ export const Item = React.memo<ItemProps>((props) => {
         ? PAGE_LIST_METRICS.rowLeadingColumnPx + resolvedIconMarginRight
         : 0;
     const bottomPaddingLeft = menuBottomText
-        ? MENU_ROW_METRICS.paddingHorizontalPx + MENU_ROW_METRICS.iconBoxSizePx + MENU_ROW_METRICS.iconMarginRightPx
+        ? MENU_ROW_SHAPE.paddingHorizontal + MENU_ROW_METRICS.iconBoxSizePx + MENU_ROW_METRICS.iconMarginRightPx
         : listBottomTextStart ?? PAGE_LIST_METRICS.rowPaddingHorizontalPx + bottomTextInset;
     const bottom = bottomElement ? <View style={{ paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx, paddingLeft: bottomPaddingLeft, paddingBottom: PAGE_LIST_METRICS.rowPaddingVerticalPx }}>{bottomElement}</View> : null;
     // The row's own activation covers the row alone; its bottom content and divider follow it as siblings.
@@ -2001,6 +2004,7 @@ export const Item = React.memo<ItemProps>((props) => {
             { backgroundColor: paintColor(backgroundColor), opacity: disabled ? isCatalogRow ? HAPPIER_COLLECTION_LIST_METRICS.dimmedOpacity : 0.5 : 1 },
             isWeb && (disabled || loading) ? ({ cursor: 'not-allowed' } as any) : null,
             roundedCornersStyle,
+            isMenuRow ? MENU_ROW_HIGHLIGHT_SHAPE : null,
             pressableStyle,
             typeof pressableBackground === 'string' ? { backgroundColor: paintColor(pressableBackground) } : null,
             focusRing,
@@ -2009,6 +2013,7 @@ export const Item = React.memo<ItemProps>((props) => {
         theme.colors.border.focus,
         disabled,
         isCatalogRow,
+        isMenuRow,
         paintColor,
         groupCornerRadius,
         hoverBackgroundColor,

@@ -8,7 +8,7 @@ import { Text } from "@/components/ui/text/Text";
 import { normalizeNodeForView } from "@/components/ui/rendering/normalizeNodeForView";
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { AgentInputChipPickerTopSelector } from "./AgentInputChipPickerTopSelector";
-import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
+import { MENU_ROW_METRICS, MENU_ROW_SHAPE } from '@/components/ui/lists/itemDensityMetrics';
 import {
   createAgentInputChipPickerOptionTransientStyles,
   type AgentInputChipPickerOptionTransientStyles,
@@ -336,7 +336,7 @@ function AgentInputChipPickerOptionButton(
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
-  // The Agent rail is a list picker: its rows run edge to edge like every menu (owner 2026-11-08).
+  // The Agent rail is a list picker: its rows take the menu's inset rounded highlight like every menu.
   // The panel's rail frame owns the rail's fill (its material); the list adds none of its own.
   railContainer: {
     width: "100%",
@@ -362,7 +362,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   optionRow: {
     minHeight: PICKER_OPTION_ROW_MIN_HEIGHT,
     borderWidth: 0,
-    paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
+    ...MENU_ROW_SHAPE,
     paddingVertical: theme.space.s6,
     flexDirection: "row",
     alignItems: "center",

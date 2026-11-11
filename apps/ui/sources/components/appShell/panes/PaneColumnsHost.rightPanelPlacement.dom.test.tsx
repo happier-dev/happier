@@ -214,3 +214,13 @@ it('gives a vacant rail no column only where its More has a home in the title st
     expect(railVisibleInPage).toBe(true);
     expect(moreHost).toBeNull();
 });
+
+// Owner 2026-11-11 (desktop #25a): the right rail stands on the chrome coat like the app rail, never on a content plate.
+it('backs an in-page action rail with the chrome coat, not a content plate', async () => {
+    const { root } = mountRoot();
+    await act(async () => root.render(<PaneColumnsHost testID="host" main={<div data-testid="main" />} actionRail={<div data-testid="rail-body" />} />));
+    const column = document.querySelector<HTMLElement>('[data-testid="pane-action-rail-column"]')!;
+    const paints = [...column.querySelectorAll<HTMLElement>('*')].map(node => node.getAttribute('style') ?? '').join(' ');
+    expect(paints).toContain('--happier-glass-chrome');
+    expect(paints).not.toContain('--happier-glass-content');
+});

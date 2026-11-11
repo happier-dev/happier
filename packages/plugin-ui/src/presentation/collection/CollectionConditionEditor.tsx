@@ -20,6 +20,7 @@ import {
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { useOptionalHappierUiTheme } from '../../environment/context.js';
 import { useHappierMaterialColorResolver } from '../layout/Surface.js';
+import { HAPPIER_MENU_ROW_METRICS } from '../interaction/Menu.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 import type {
   CollectionConditionEdit,
@@ -215,15 +216,16 @@ const isMultiValue = (field: CollectionConditionField) => field.kind === 'set';
 
 /** The words of an open value list stand one disclosure box in from their field's name, under the field. */
 const VALUE_INDENT = HAPPIER_DISCLOSURE_CHEVRON_METRICS.boxPx;
-// A field or value list is a list picker: its rows run edge to edge across the popover (owner 2026-11-08),
-// stepping out of the body's padding while their words stay on the group titles' edge.
+// A field or value list is a list picker: its rows take the menu's inset rounded highlight (HAPPIER_MENU_ROW_METRICS),
+// stepping out of the body's padding to the menu inset while their words stay on the group titles' edge.
 const OPTION_ROW = {
   flexDirection: 'row',
   alignItems: 'center',
   gap: 8,
   minHeight: M.optionMinHeight,
-  marginHorizontal: -M.padding,
-  paddingHorizontal: M.padding + 8,
+  marginHorizontal: -M.padding + HAPPIER_MENU_ROW_METRICS.insetPx,
+  paddingHorizontal: M.padding + 8 - HAPPIER_MENU_ROW_METRICS.insetPx,
+  borderRadius: HAPPIER_MENU_ROW_METRICS.highlightRadiusPx,
 } as const satisfies HappierPortableStyle;
 
 const styles = Object.freeze({

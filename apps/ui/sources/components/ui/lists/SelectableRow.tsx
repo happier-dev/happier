@@ -3,7 +3,7 @@ import { Platform, Pressable, StyleProp, ViewStyle, TextStyle, StyleSheet as RNS
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
-import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
+import { MENU_ROW_METRICS, MENU_ROW_SHAPE } from '@/components/ui/lists/itemDensityMetrics';
 import { HAPPIER_MENU_ROW_TEXT } from '@happier-dev/plugin-ui/presentation';
 import { Text } from '@/components/ui/text/Text';
 import { buildActionRowAccessibilityLabel } from './actionRowAccessibility';
@@ -56,9 +56,8 @@ export type SelectableRowProps = Readonly<{
 
     variant?: SelectableRowVariant;
     /**
-     * `menu`: a row of a floating menu (dropdown, action list). Whatever the variant's density, it
-     * runs edge to edge across the menu (`MENU_ROW_METRICS`, owner 2026-11-08), and its highlight is a
-     * fill, never an outline.
+     * `menu`: a row of a floating menu (dropdown, action list). Whatever the variant's density, its
+     * highlight is the menu's inset rounded fill (`MENU_ROW_SHAPE`), never an outline.
      */
     presentation?: 'menu';
     onPress?: () => void;
@@ -133,11 +132,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     rowMenu: {
         alignSelf: 'stretch',
-        // Edge to edge whatever row variant a menu picks (owner 2026-11-08): no side inset, no pill.
-        marginHorizontal: 0,
+        // Whatever row variant a menu picks, its highlight is the menu's inset rounded fill (MENU_ROW_SHAPE).
+        ...MENU_ROW_SHAPE,
         marginVertical: 0,
-        paddingHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
-        borderRadius: 0,
         borderWidth: 0,
     },
     rowMenuSelected: {
