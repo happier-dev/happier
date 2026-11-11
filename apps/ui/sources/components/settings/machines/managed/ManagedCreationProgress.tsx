@@ -52,7 +52,9 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     /** Check now is running: its button shows the work until the check settles. */
     checking?: boolean;
     /** Start is running: its button shows the work. */
-    starting?: boolean }>) {
+    starting?: boolean;
+    /** The controller's current guest payload differs from the enrolled guest identity. */
+    guestPayloadStale?: boolean }>) {
     const { machine } = props;
     const name = props.title ?? machine.launch.name;
     const state = managedCreationState(machine, { controller: props.controller, provider: props.provider,
@@ -64,6 +66,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     const operation = currentManagedCreationOperation(machine, props.operation, props);
     const status = operation ? resolveActionOperationStatus(operation.snapshot, operation.observation) : null;
     const canRetryInstallation = canRetryManagedInstallation(machine, props.operation, props);
+    const installationActionLabel = props.guestPayloadStale ? t('common.update') : t('managedMachines.creation.retryInstall');
     const prompt = readManagedInstallationPrompt(operation);
     const trustPrompt = prompt?.kind === 'ssh.trustHost' || prompt?.kind === 'ssh.replaceHostKey' ? prompt : null;
     // A host key is asked in the one trust sheet (lab af-ssh Kp), never inline: the row names the question and opens it.
@@ -134,9 +137,9 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
             : <RoundButton title={t('managedMachines.inspect.checkNow')} display="inverted" size="small"
                 loading={props.checking === true} testID="managed-machine.observation-check" onPress={checkNow} />} /> : null;
     const installationRetry = canRetryInstallation && props.handlers?.reinstall ?
-        <RoundButton title={t('managedMachines.creation.retryInstall')} display="secondary" size="small"
+        <RoundButton title={installationActionLabel} display="secondary" size="small"
             testID="managed-machine.installation-retry" onPress={props.handlers.reinstall} /> : undefined;
-    const failureAction = canRetryInstallation && props.handlers?.reinstall ? { label: t('managedMachines.creation.retryInstall'),
+    const failureAction = canRetryInstallation && props.handlers?.reinstall ? { label: installationActionLabel,
         onPress: props.handlers.reinstall, testID: 'managed-machine.installation-retry' }
         : checkNow && !stateRowChecks ? { label: t('managedMachines.inspect.checkNow'), onPress: checkNow,
             testID: 'managed-machine.installation-check', busy: props.checking === true } : undefined;

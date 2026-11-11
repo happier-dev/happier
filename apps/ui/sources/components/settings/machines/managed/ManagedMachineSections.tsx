@@ -73,7 +73,7 @@ import { describeManagedActionFailureDiagnostic } from './managedNativeFailurePr
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { describeManagedLifecycleState, resolveManagedNativeEndState } from './managedLifecyclePresentation';
 import { answerManagedCreationEstablish } from './managedCreationPrompt';
-import { managedCreationState, canRetryManagedInstallation, currentManagedCreationOperation, describeManagedCreation, isManagedCreationCanceledBeforeMade, isManagedMachineResourceAbsent, managedCreationSetup, managedReceiptPowerIntents, readManagedInstallationPrompt, type ManagedCreationContext } from './managedCreationPresentation';
+import { managedCreationState, canRetryManagedInstallation, currentManagedCreationOperation, describeManagedCreation, isManagedCreationCanceledBeforeMade, isManagedMachineResourceAbsent, managedCreationSetup, managedReceiptPowerIntents, readManagedInstallationPrompt, isManagedGuestPayloadStale, type ManagedCreationContext } from './managedCreationPresentation';
 import { useManagedMachineActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import { publishActionOperationObservation, reconcileActionOperationsOnce } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
@@ -664,6 +664,10 @@ export function ManagedMachineSections(props: SectionProps) {
     const nativeExpiryDescription = nativeEndState ? describeManagedLifecycleState(nativeEndState).line : undefined;
     const providerName = provisionerPresentation.title ?? policyParent?.providerTitle;
     const enrolledDaemonState = StoredMachinePublishedDaemonStateV1Schema.safeParse(enrolledMachine?.daemonState);
+    const guestPayloadStale = isManagedGuestPayloadStale({
+        installedVersion: enrolledDaemonState.success ? enrolledDaemonState.data.cliVersion : null,
+        payloadVersion: controller?.daemonState?.cliVersion,
+    });
     // The consequence says what the rule means for the bill, from the provider's own billing facts.
     // A provider that parks by suspending says Suspend, from the same resolver that picks the native intent.
     const parking = retentionParking(supportedIntents);
@@ -672,7 +676,7 @@ export function ManagedMachineSections(props: SectionProps) {
             ...(billing.storageCharges ? { storageCharges: billing.storageCharges } : {}),
             parking, ...(provisionerPresentation.kindTitle ? { kind: provisionerPresentation.kindTitle } : {}) })
         : describeRetention(retention, undefined, parking);
-    const creationContext: ManagedCreationContext = { provider: providerName, operation,
+    const creationContext: ManagedCreationContext = { provider: providerName, operation, guestPayloadStale,
         ...(reachabilityScope && enrolledMachine?.installationId ? { enrolledMachine: {
             machineId: enrolledMachine.id, installationId: enrolledMachine.installationId,
             online: describeMachinePresenceLine(enrolledMachine, presenceNowMs, undefined, reachabilityScope).online,
@@ -802,6 +806,7 @@ export function ManagedMachineSections(props: SectionProps) {
             : null}
         <ManagedCreationProgress machine={machine} operation={operation} setupRecovery={setupRecovery} provider={providerName}
             enrolledMachine={creationContext.enrolledMachine} title={machineName}
+            guestPayloadStale={guestPayloadStale}
             {...(props.staleRead ? { staleRead: props.staleRead } : {})}
             {...(!pendingDeleteApprovalId ? { reviewApproval: (artifactId: string) => router.push(
                 `/inbox/approvals/${encodeURIComponent(artifactId)}?serverId=${encodeURIComponent(props.serverId)}` as never) } : {})}

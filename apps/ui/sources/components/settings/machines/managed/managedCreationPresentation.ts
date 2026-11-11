@@ -51,7 +51,16 @@ export type ManagedCreationContext = Readonly<{
     provider?: string;
     providerAvailable?: boolean;
     operation?: ActionOperationProjection | null;
+    /** The controller has a newer guest payload than the enrolled guest reports. */
+    guestPayloadStale?: boolean;
 }>;
+
+/** Compare the two identities already published by the controller and enrolled guest. */
+export function isManagedGuestPayloadStale(input: Readonly<{ installedVersion?: string | null; payloadVersion?: string | null }>): boolean {
+    const installed = typeof input.installedVersion === 'string' ? input.installedVersion.trim() : '';
+    const payload = typeof input.payloadVersion === 'string' ? input.payloadVersion.trim() : '';
+    return Boolean(installed && payload && installed !== payload);
+}
 
 /** A request canceled before any resource was bound never made anything: it did not end, it never began. */
 export function isManagedCreationCanceledBeforeMade(machine: Pick<ManagedMachineV1, 'allocation' | 'creationState' | 'resource'>): boolean {
@@ -175,14 +184,14 @@ export function managedReceiptPowerIntents(machine: Pick<ManagedMachineV1, 'obse
 
 /** Retained resources whose installation is incomplete remain recoverable when controller history is lost. */
 export function canRetryManagedInstallation(machine: ManagedMachineV1, operation?: ActionOperationProjection | null,
-    context: Pick<ManagedCreationContext, 'providerAvailable' | 'enrolledMachine'> = {}): boolean {
+    context: Pick<ManagedCreationContext, 'providerAvailable' | 'enrolledMachine' | 'guestPayloadStale'> = {}): boolean {
     const lifecycle = managedCreationState(machine, { ...context, operation });
     if (context.providerAvailable === false || machine.creationState !== 'active' || machine.archivedAt !== undefined || machine.desired === 'delete'
         || machine.allocation !== 'bound' || !machine.resource || machine.cleanup
         || lifecycle.kind === 'cleanupPending' || lifecycle.kind === 'absent' || lifecycle.kind === 'volumeLost'
         || lifecycle.kind === 'credentialRefused') return false;
     const needsInstallation = !machine.enrolledMachineId || isManagedMachineBootstrapIncomplete(machine);
-    if (!operation) return needsInstallation;
+    if (!operation) return needsInstallation || context.guestPayloadStale === true;
     operation = currentManagedCreationOperation(machine, operation, context);
     if (!operation) return false;
     const snapshot = operation?.snapshot;
@@ -192,7 +201,7 @@ export function canRetryManagedInstallation(machine: ManagedMachineV1, operation
     // receipt after a failed install. They do not enroll the retained resource
     // and must not erase its same-resource Retry install affordance.
     if (snapshot.actionId !== 'machines.managed.acquire'
-        && snapshot.actionId !== 'machines.managed.bootstrap.retry') return needsInstallation;
+        && snapshot.actionId !== 'machines.managed.bootstrap.retry') return needsInstallation || context.guestPayloadStale === true;
     return operation?.observation === 'available' && !operation.isUnavailableProjection
         && snapshot?.state === 'failed'
         && (snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry')

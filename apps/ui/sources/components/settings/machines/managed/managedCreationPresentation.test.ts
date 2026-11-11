@@ -12,6 +12,7 @@ import {
   managedCreationSetup,
   managedReceiptPowerIntents,
   isManagedCreationStateRowVisible,
+  isManagedGuestPayloadStale,
 } from './managedCreationPresentation';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import {
@@ -45,6 +46,17 @@ const machine = {
 } satisfies ManagedMachineV1;
 
 describe('managed creation presentation', () => {
+  it('offers retained guest update when the installed CLI identity is older than the controller payload', () => {
+    expect(isManagedGuestPayloadStale({ installedVersion: 'local-stable-1794304155359', payloadVersion: 'local-stable-1794304155360' })).toBe(true);
+    const enrolled = { ...machine, enrolledMachineId: 'guest', bootstrapInstalled: true };
+    expect(canRetryManagedInstallation(enrolled, undefined, { guestPayloadStale: true })).toBe(true);
+  });
+
+  it('does not offer retained guest update when installed identity matches the controller payload', () => {
+    expect(isManagedGuestPayloadStale({ installedVersion: 'local-stable-1794304155359', payloadVersion: 'local-stable-1794304155359' })).toBe(false);
+    const enrolled = { ...machine, enrolledMachineId: 'guest', bootstrapInstalled: true };
+    expect(canRetryManagedInstallation(enrolled, undefined, { guestPayloadStale: false })).toBe(false);
+  });
   it.each(['missing', 'failed', 'unavailable', 'projection-unavailable'] as const)('offers Reconnect for retained bootstrap credential refusal with %s operation history', history => {
     const refused: ManagedMachineV1 = { ...machine,
       observation: { observedAt: 3, availability: 'unavailable', reason: 'bootstrap.credential_unavailable' } };
