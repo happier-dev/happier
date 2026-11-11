@@ -19,7 +19,7 @@ export function isRetryableHomeOperationError(error: unknown): boolean {
 
 /** Only repeatable Home work belongs here; never replay a one-shot claim or native effect. */
 export async function retryHomeOperation<T>(
-  lifetime: HomeOperationRetry,
+  lifetime: HomeOperationRetry | Readonly<{ deadlineMs?: never; signal: AbortSignal; pollIntervalMs: number }>,
   operation: () => Promise<T>,
 ): Promise<T> {
   while (true) {
@@ -31,13 +31,14 @@ export async function retryHomeOperation<T>(
       const failure = classifyServerEndpointError(error);
       // A retired admission (409) is authoritative, not transient Home unavailability.
       if (!isRetryableHomeOperationError(error)) throw error;
-      const remainingMs = lifetime.deadlineMs - Date.now();
-      if (remainingMs <= 0) throw error;
-      await delay(Math.min(failure.retryAfterMs ?? lifetime.pollIntervalMs, remainingMs), undefined,
+      const remainingMs = lifetime.deadlineMs === undefined ? undefined : lifetime.deadlineMs - Date.now();
+      if (remainingMs !== undefined && remainingMs <= 0) throw error;
+      const retryDelayMs = failure.retryAfterMs ?? lifetime.pollIntervalMs;
+      await delay(remainingMs === undefined ? retryDelayMs : Math.min(retryDelayMs, remainingMs), undefined,
         { signal: lifetime.signal });
       lifetime.signal?.throwIfAborted();
       // Preserve the last Home failure when its existing lifetime runs out.
-      if (Date.now() >= lifetime.deadlineMs) throw error;
+      if (lifetime.deadlineMs !== undefined && Date.now() >= lifetime.deadlineMs) throw error;
     }
   }
 }

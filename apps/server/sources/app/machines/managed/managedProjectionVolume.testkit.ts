@@ -97,9 +97,10 @@ export async function measure<T>(phase: string, operation: () => Promise<T>) {
 }
 
 /** Use Prisma's ordered SQL event stream, including the transaction owner's raw publication work. */
-async function measurePostgresCreate<T>(operation: () => Promise<T>) {
+export async function measurePostgresCreate<T>(operation: () => Promise<T>) {
     const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
     const statements: string[] = [];
+    const transactionDurationsMs: number[] = [];
     let finishBarrier: (() => void) | undefined;
     client.$on('query', event => {
         if (event.query.includes('managed_create_cost_barrier')) finishBarrier?.();
@@ -108,8 +109,10 @@ async function measurePostgresCreate<T>(operation: () => Promise<T>) {
     await client.$connect();
     const original = db.$transaction;
     // Rebind the genuine database boundary; admission, queries and publication stay real.
-    db.$transaction = new Proxy(original, { apply(_owner, _receiver, args) {
-        return Reflect.apply(client.$transaction, client, args);
+    db.$transaction = new Proxy(original, { async apply(_owner, _receiver, args) {
+        const start = performance.now();
+        try { return await Reflect.apply(client.$transaction, client, args); }
+        finally { transactionDurationsMs.push(performance.now() - start); }
     } });
     try {
         const start = performance.now();
@@ -122,7 +125,7 @@ async function measurePostgresCreate<T>(operation: () => Promise<T>) {
             groups[key] = (groups[key] ?? 0) + 1;
         }
         console.info('managed-create-sql-cost', JSON.stringify({ elapsedMs: performance.now() - start,
-            statements: statements.length, groups }));
+            statements: statements.length, groups, transactionDurationsMs }));
         return { value, statements };
     } finally {
         db.$transaction = original;

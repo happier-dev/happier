@@ -22,7 +22,7 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { resolveExternalActionServerRequestHeaders, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import type { ManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import type { StoredCredentials } from '@/persistence';
-import { retryHomeOperation, isRetryableHomeOperationError, type HomeOperationRetry } from '@/api/client/retryHomeOperation';
+import { retryHomeOperation, isRetryableHomeOperationError, REMOTE_HOME_ENROLLMENT_POLL_INTERVAL_MS, type HomeOperationRetry } from '@/api/client/retryHomeOperation';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
@@ -132,6 +132,25 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
         return new ManagedMachineControllerError(details.code ?? 'managed_controller_request_failed', status, details);
     }
     async function request<T>(path: string, body: unknown, headers: Readonly<Record<string, string>>, schema: { parse(data: unknown): T }, signal?: AbortSignal | null): Promise<T> {
+        const run = () => requestOnce(path, body, headers, schema, signal);
+        try { return await run(); }
+        catch (error) {
+            const result = body && typeof body === 'object' && 'result' in body ? body.result : null;
+            // Preserve the first factual report even after cancellation. Once
+            // Home has rolled back, redelivery belongs to the admitted operation
+            // lifetime, without replaying native work or a credential claim.
+            if (path !== '/v1/machines/managed/controller/report'
+                || !body || typeof body !== 'object' || 'credentialDelivery' in body
+                || !result || typeof result !== 'object' || !('kind' in result) || result.kind !== 'bound'
+                || !options.signal || options.signal.aborted
+                || !(error instanceof ManagedMachineControllerError) || error.status !== 503
+                || error.code !== 'database_transaction_timeout') throw error;
+            return await retryHomeOperation({ signal: options.signal,
+                pollIntervalMs: REMOTE_HOME_ENROLLMENT_POLL_INTERVAL_MS },
+                () => requestOnce(path, body, headers, schema, options.signal));
+        }
+    }
+    async function requestOnce<T>(path: string, body: unknown, headers: Readonly<Record<string, string>>, schema: { parse(data: unknown): T }, signal?: AbortSignal | null): Promise<T> {
         const managedId = readManagedId(body);
         const response = await axios.post<unknown>(`${input.serverUrl.replace(/\/+$/, '')}${path}`, body, {
             headers: { ...headers, 'Content-Type': 'application/json' },

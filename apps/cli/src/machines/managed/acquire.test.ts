@@ -165,7 +165,7 @@ function driver() {
     return createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: 'home', controller, runtimeRegistry, ...accountInputs });
 }
 describe('creation environment stage', () => {
-    it('retries a transient final report on the enrolled resource and applies default isolation', async () => {
+    it('retries a transient final report on the enrolled resource without changing isolation', async () => {
         let retained = ManagedMachineV1Schema.parse({ ...machine, homeId: 'srv_retained_report', allocation: 'bound', enrolledMachineId: 'guest', bootstrapInstalled: true,
             enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'deployTarget', adminAccessAtCreation: 'preauthorized' },
             resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} },
@@ -225,15 +225,15 @@ describe('creation environment stage', () => {
         const failure = await retry().then(() => null, error => error);
         expect(failure, JSON.stringify({ writes, stack: failure?.stack })).toMatchObject({ code: 'database_transaction_timeout', details: { status: 503 } });
         expect(retained.observation?.reason).toBe('bootstrap.incomplete');
-        expect(isolationApplied).toBe(true);
+        expect(isolationApplied).toBe(false);
         await expect(retry()).resolves.toMatchObject({ managedId: retained.id });
-        expect(isolationApplied).toBe(true);
-        expect(isolationWrites).toBe(1);
+        expect(isolationApplied).toBe(false);
+        expect(isolationWrites).toBe(0);
         expect(retained).toMatchObject({ enrolledMachineId: 'guest', resource, observation: { availability: 'present' } });
         expect(retained.observation?.reason).toBeUndefined();
         expect(writes.some(path => path.endsWith('/admit') || path.endsWith('/submit') || path.endsWith('/enrollment-context'))).toBe(false);
     });
-    it('previews isolation on an E2EE bootstrap retry with retained creation identity and requester custody', async () => {
+    it('preserves isolation on an E2EE bootstrap retry with retained creation identity and requester custody', async () => {
         const channel = await createRequesterCurrentnessSocketHarness();
         const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(42));
         const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(43) };
@@ -305,13 +305,13 @@ describe('creation environment stage', () => {
                     externalActionTarget: root.binding.target, externalActionExecutionAuthorization: authorization,
                     operationAcceptance: { operationId: 'bootstrap-operation', accept() {} } },
             })).resolves.toMatchObject({ managedId: retained.id, operation: { operationId: 'bootstrap-operation' } });
-            expect(previews).toBe(1);
-            expect(installationReads).toBe(1);
+            expect(previews).toBe(0);
+            expect(installationReads).toBe(0);
         } finally { await admitted.dispose(); await channel.close(); }
     });
 
     it.each(['machines.managed.bootstrap.retry', 'machines.managed.inspect'] as const)(
-        'finishes retained enrollment isolation before report failure and recovers on %s without another acquisition', async recoveryAction => {
+        'preserves retained enrollment isolation across report failure and recovery on %s', async recoveryAction => {
         const identity = { kind: 'dedicatedDaemonUser' as const, username: 'happier' as const, serviceMode: 'user' as const,
             role: 'deployTarget' as const, adminAccessAtCreation: 'preauthorized' as const };
         let retained = ManagedMachineV1Schema.parse({ ...machine, homeId: 'srv_bootstrap_policy', enrollmentIdentity: identity, allocation: 'bound', enrolledMachineId: 'guest',
@@ -346,7 +346,7 @@ describe('creation environment stage', () => {
             }
             if (path.endsWith('/controller/report')) {
                 reports++;
-                expect(isolated).toBe(true);
+                expect(isolated).toBe(false);
                 if (unavailable) return { status: 503, data: { error: 'database_transaction_timeout' } };
                 const report = ManagedControllerReportV1Schema.parse(body);
                 retained = ManagedMachineV1Schema.parse({ ...retained, observation: report.observation });
@@ -373,14 +373,14 @@ describe('creation environment stage', () => {
             });
         };
         await expect(run('machines.managed.bootstrap.retry')).rejects.toMatchObject({ code: 'database_transaction_timeout' });
-        expect(isolated).toBe(true);
+        expect(isolated).toBe(false);
         expect(reports).toBeGreaterThan(0);
         unavailable = false;
         await run(recoveryAction);
         expect(retained).toMatchObject({ enrolledMachineId: 'guest', bootstrapInstalled: true,
             resource: { value: {} }, observation: { availability: 'present', power: 'running' } });
         expect(retained.observation?.reason).toBeUndefined();
-        expect(isolationWrites).toBe(1);
+        expect(isolationWrites).toBe(0);
     });
 
     it.each([
@@ -392,7 +392,8 @@ describe('creation environment stage', () => {
         { action: 'machines.managed.acquire', outcome: 'isolationUnavailable', storedEnabled: false },
         { action: 'machines.managed.bootstrap.retry', outcome: 'applied', storedEnabled: false },
         { action: 'machines.managed.bootstrap.retry', outcome: 'applied', storedEnabled: true },
-        { action: 'machines.managed.bootstrap.retry', outcome: 'conflict', storedEnabled: false },
+        { action: 'machines.managed.inspect', outcome: 'applied', storedEnabled: false },
+        { action: 'machines.managed.inspect', outcome: 'applied', storedEnabled: true },
         { action: 'machines.managed.bootstrap.retry', outcome: 'isolationUnavailable', storedEnabled: false },
         { action: 'machines.managed.bootstrap.retry', outcome: 'applied', storedEnabled: false, freshEnrollment: true },
     ] as const)('records the reviewed administrator policy and isolation through the enrolled guest Action ($action/$outcome/$storedEnabled)', async (scenario) => {
@@ -402,7 +403,9 @@ describe('creation environment stage', () => {
             role: 'deployTarget' as const, adminAccessAtCreation: 'preauthorized' as const };
         const retained = ManagedMachineV1Schema.parse({ ...machine, homeId: 'srv_bootstrap_policy', enrollmentIdentity: identity, allocation: 'bound', enrolledMachineId: 'guest',
             resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
-        const isRetry = action === 'machines.managed.bootstrap.retry';
+        if (action === 'machines.managed.inspect') retained.observation = { observedAt: 0, availability: 'unavailable', reason: 'bootstrap.approval_canceled' };
+        const isRetry = action !== 'machines.managed.acquire';
+        const initializesPolicy = !isRetry || freshEnrollment;
         const childRequestId = isRetry ? 'retry-policy' : 'creation-policy';
         const original = originAuthorization('srv_bootstrap_policy', childRequestId);
         const wire = { ...original, binding: { ...original.binding, actionId: action } };
@@ -457,6 +460,7 @@ describe('creation environment stage', () => {
                     status: { kind: 'applying', phase: 'runtime_replacement' },
                 } } } };
             }
+            if (String(url).endsWith('/actions/get')) return { status: 200, data: retained };
             // Enrollment completes before the next bootstrap boundary; the
             // original recovery row still owns first-enrollment policy setup.
             return { status: 200, data: { machine: freshEnrollment && String(url).endsWith('/context')
@@ -478,13 +482,15 @@ describe('creation environment stage', () => {
             homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: 'srv_bootstrap_policy', canonicalServerUrl: 'https://home.example',
                 revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) });
         const phases: string[] = [];
-        const execution = enrolledDriver.execute(action, isRetry ? { homeId: 'srv_bootstrap_policy', managedId: retained.id, expectedIntentRevision: 0 }
+        const execution = enrolledDriver.execute(action, isRetry ? { homeId: 'srv_bootstrap_policy', managedId: retained.id,
+            ...(action === 'machines.managed.bootstrap.retry' ? { expectedIntentRevision: 0 } : {}) }
             : { ...input, selection: { ...input.selection, homeId: 'srv_bootstrap_policy' }, enrollmentIdentity: identity }, {
             requestId: childRequestId, context: { surface: 'cli', externalActionExecutionAuthorization: authorization, operationOwnerUpdate: { update() {} },
                 operationProgress: { update: progress => { if (progress.phase) phases.push(progress.phase); } },
                 operationAcceptance: { operationId: 'creation-operation', accept() {} } },
         });
-        if (outcome === 'applied' || outcome === 'isolationUnavailable') await expect(execution).resolves.toMatchObject({ managedId: 'managed', operation: { operationId: 'creation-operation' } });
+        if (action === 'machines.managed.inspect') await expect(execution).resolves.toMatchObject({ machine: { id: retained.id } });
+        else if (outcome === 'applied' || outcome === 'isolationUnavailable') await expect(execution).resolves.toMatchObject({ managedId: 'managed', operation: { operationId: 'creation-operation' } });
         else if (outcome === 'previewRefusal') {
             await expect(execution).rejects.toMatchObject({ name: 'ManagedMachineControllerError', code: 'RPC_FORBIDDEN', failureCause: {
                 errorClass: 'ManagedMachineControllerError', errorCode: 'RPC_FORBIDDEN', phase: 'machines.agentIsolation.preview',
@@ -495,7 +501,9 @@ describe('creation environment stage', () => {
         else await expect(execution).rejects.toMatchObject({ code: outcome === 'conflict' ? 'conflict'
             : outcome === 'adminApproval' || outcome === 'isolationApproval' ? 'approval_context_unavailable' : 'action_outcome_unknown' });
         expect(policyWritten).toBe(!isRetry || freshEnrollment);
-        expect(isolationWritten).toBe(outcome !== 'outcomeUnknown' && outcome !== 'adminApproval' && outcome !== 'previewRefusal' && outcome !== 'isolationUnavailable');
+        // ISO-UPDATE-1111: retained Update/Inspect must not replay creation policy.
+        if (!initializesPolicy) expect(isolationInputs).toEqual([]);
+        expect(isolationWritten).toBe(initializesPolicy && outcome !== 'outcomeUnknown' && outcome !== 'adminApproval' && outcome !== 'previewRefusal' && outcome !== 'isolationUnavailable');
         for (const requestedPolicy of isolationInputs) {
             // OWNER-RULINGS 2026-11-07: creation children carry the dedicated member default.
             expect(requestedPolicy).toMatchObject({ enabled: true, memberProvisioning: 'linuxUsersV1' });
@@ -2677,6 +2685,27 @@ describe('managed acquisition durable custody', () => {
         } }, { requestId: 'start-request', context: { operationAcceptance: { operationId: 'start-operation', accept() {} } } }))
             .rejects.toMatchObject({ code: 'admission_unavailable' });
         expect(post).not.toHaveBeenCalled();
+    });
+    it.each([503, 403, 409])('recovers only transient report delivery within the operation lifetime (HTTP %s)', async status => {
+        const stop = new AbortController();
+        const bound = ManagedMachineV1Schema.parse({ ...machine, allocation: 'bound', resource: {
+            contributionRef: input.selection.launch.provider, schemaVersion: 1, value: { id: 'retained' },
+        } });
+        const post = vi.spyOn(axios, 'post').mockResolvedValueOnce({ status, data: { error: 'database_transaction_timeout' } })
+            .mockResolvedValue({ status: 200, data: { machine: bound } });
+        const client = createManagedMachineControllerClient({ token: 'token', serverUrl: 'https://home.example', homeId: 'home', controller,
+            runtimeRegistry: { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry, ...accountInputs,
+        }, { requestId: 'report-recovery', signal: stop.signal }, 'machines.managed.bootstrap.retry');
+        const report = client.row('report', { ...client.correlation(bound), result: { kind: 'bound', resource: bound.resource } }, null);
+        if (status === 503) {
+            await expect(report).resolves.toMatchObject({ resource: bound.resource });
+            expect(post.mock.calls.map(call => call[1])).toEqual([post.mock.calls[0]![1], post.mock.calls[0]![1]]);
+            expect(post.mock.calls[0]![2]?.signal).toBeUndefined();
+            expect(post.mock.calls[1]![2]?.signal).toBe(stop.signal);
+        } else {
+            await expect(report).rejects.toMatchObject({ status });
+            expect(post).toHaveBeenCalledTimes(1);
+        }
     });
     it('keeps cancellation from discarding a returned native identity report', async () => {
         const canceled = new AbortController();

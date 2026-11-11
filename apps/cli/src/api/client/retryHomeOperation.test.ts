@@ -6,6 +6,13 @@ import { retryHomeOperation } from './retryHomeOperation';
 afterEach(() => vi.restoreAllMocks());
 
 describe('post-claim Home recovery', () => {
+  it('redelivers repeatable work until success within a cancellable operation without a separate deadline', async () => {
+    const controller = new AbortController();
+    const request = vi.fn().mockRejectedValueOnce(createHttpStatusError(503, 'Home unavailable')).mockResolvedValue('recorded');
+    await expect(retryHomeOperation({ signal: controller.signal, pollIntervalMs: 0 }, request)).resolves.toBe('recorded');
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
   it.each([401, 403, 409])('does not replay an authoritative refusal (HTTP %s)', async status => {
     const refusal = createHttpStatusError(status, 'Home refused enrollment');
     // Substitute only the Home request boundary; the retry policy is real.
