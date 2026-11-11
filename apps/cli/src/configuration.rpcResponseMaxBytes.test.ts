@@ -71,16 +71,21 @@ describe('configuration rpc response max bytes', () => {
     process.env.HAPPIER_HOME_DIR = homeDir;
     delete process.env.HAPPIER_RPC_RESPONSE_MAX_BYTES;
     process.env.HAPPIER_FILES_READ_MAX_BYTES = String(20_000_000);
+    process.env.HAPPIER_FILES_TRANSFER_CHUNK_BYTES = String(20_000_000);
 
     const configMod = await import('./configuration');
     configMod.reloadConfiguration();
 
     const config = configMod.configuration as unknown as {
       filesReadMaxBytes: number;
+      filesTransferChunkBytes: number;
       rpcResponseMaxBytes: number;
     };
     expect(config.filesReadMaxBytes).toBeLessThanOrEqual(config.rpcResponseMaxBytes);
-    // base64 expands ~4/3, so the raw payload ceiling must leave that headroom.
-    expect(config.filesReadMaxBytes).toBe(6_000_000);
+    // File reads and chunk downloads embed the RAW payload as base64 inside the JSON reply,
+    // then the whole reply is encrypted and base64-encoded again for the wire: two ~4/3
+    // expansions, so the raw ceiling must leave 16/9 headroom (8M × 9/16 = 4.5M).
+    expect(config.filesReadMaxBytes).toBe(4_500_000);
+    expect(config.filesTransferChunkBytes).toBe(4_500_000);
   });
 });

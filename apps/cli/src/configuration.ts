@@ -488,7 +488,8 @@ class Configuration {
     );
 
     // Default: 2.5MB. Defensive minimum: 1 byte. Max: the largest raw payload a single
-    // RPC reply can carry inside the wire ceiling (base64 expands ~4/3), so a supported
+    // RPC reply can carry inside the wire ceiling across both base64 expansions (payload
+    // embedded as base64, reply encrypted and base64 on the wire), so a supported
     // configuration cannot produce a reply the wire guard must refuse.
     this.filesReadMaxBytes = resolveIntEnvWithBounds('HAPPIER_FILES_READ_MAX_BYTES', {
       min: 1, max: MAX_SINGLE_REPLY_PAYLOAD_BYTES, default: 2_500_000,
@@ -505,9 +506,10 @@ class Configuration {
       min: 1, max: 10_000_000, default: 2_500_000,
     });
 
-    // Default: 256KB. Defensive min: 1KB; max: 5MB.
+    // Default: 256KB. Defensive min: 1KB; max: the single-reply raw payload ceiling (chunk
+    // replies embed the raw chunk as base64 and are encrypted + base64 again on the wire).
     this.filesTransferChunkBytes = resolveIntEnvWithBounds('HAPPIER_FILES_TRANSFER_CHUNK_BYTES', {
-      min: 1024, max: 5_000_000, default: 256_000,
+      min: 1024, max: MAX_SINGLE_REPLY_PAYLOAD_BYTES, default: 256_000,
     });
 
     // Default: 10 minutes. Defensive min: 1s; max: 60 minutes.

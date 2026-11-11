@@ -19,8 +19,10 @@
  * prove a higher relay cap may raise the ceiling with HAPPIER_RPC_RESPONSE_MAX_BYTES.
  *
  * Largest legitimate single replies (encoded/encrypted, not pre-encryption objects):
- * - files read: bounded by MAX_SINGLE_REPLY_PAYLOAD_BYTES (raw) → ~8 MB base64 at the bound;
- * - transfer chunk download: filesTransferChunkBytes env max 5 MB → ~6.7 MB base64;
+ * - files read: bounded by MAX_SINGLE_REPLY_PAYLOAD_BYTES (raw); the reply carries the payload
+ *   as base64 inside the JSON, and the encrypted reply is base64 again on the wire — two ~4/3
+ *   expansions, so the raw bound is ceiling × 9/16 (4.5 MB at the 8 MB default);
+ * - transfer chunk download: bounded by the same constant (raw chunk → double expansion);
  * - transcript / session-event pages: maxPayloadChars capped at 32,768 chars;
  * - prompt asset/registry and workspace blob transfers cross the wire in chunked transfer
  *   sessions, so their per-reply size is chunk-sized, not asset/pack-sized.
@@ -28,12 +30,14 @@
 export const DEFAULT_RPC_RESPONSE_MAX_BYTES = 8_000_000;
 
 /**
- * Largest RAW payload a single reply may carry, derived from the wire ceiling: base64 (plus
- * encryption envelope) expands a payload by ~4/3, so a raw payload must stay under 3/4 of
- * the frame ceiling to be deliverable. Single-reply payload knobs are bounded by this, so a
- * supported configuration cannot produce a reply the wire guard would have to refuse.
+ * Largest RAW payload a single reply may carry when the payload is embedded as base64 in the
+ * reply JSON and the whole reply is then encrypted and base64-encoded for the wire (files read,
+ * chunk download). Two sequential ~4/3 expansions bound the raw payload to ceiling × 9/16,
+ * rounded down; the small fixed encryption-envelope and JSON overhead fits inside the rounding
+ * margin. Payload knobs are bounded by this so a supported configuration cannot produce a
+ * reply the wire guard would have to refuse.
  */
-export const MAX_SINGLE_REPLY_PAYLOAD_BYTES = Math.floor(DEFAULT_RPC_RESPONSE_MAX_BYTES * 3 / 4);
+export const MAX_SINGLE_REPLY_PAYLOAD_BYTES = Math.floor(DEFAULT_RPC_RESPONSE_MAX_BYTES * 9 / 16);
 
 /** Upper env bound: the relay's code-side Socket.IO frame cap; never configure above it. */
 export const RPC_RESPONSE_MAX_BYTES_ENV_MAX = 25_000_000;
