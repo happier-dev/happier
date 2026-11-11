@@ -10,6 +10,7 @@ import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/Se
 import { useSessionGettingStartedGuidanceBaseModel } from '@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel';
 import { isSessionGettingStartedGuidanceHome } from '@/components/sessions/guidance/gettingStartedModel';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { PhonePageBackLine, usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
 import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { GlassEnvironmentHold } from '@/components/ui/glass/glassRuntimeEnvironment';
@@ -454,6 +455,9 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     const phone = !useIsTablet();
     // Home as the phone's Sessions tab on a first run draws the tab shell's line itself.
     const phoneTabShell = usePhoneTabNavRow() !== null;
+    // Pushed on a phone (no native bar), Home's way back is on its own head line, as on every page that hides the
+    // header: it scrolls away with the head instead of floating over the cards (owner 1111). Null on wider hosts.
+    const phoneBack = usePhoneDestinationBack('home-back');
     const listRef = React.useRef<ScrollView>(null);
     const contentRef = React.useRef<View>(null);
     // A section's "⋯ → Customize" opens the header's popover; bring the header into view first so
@@ -711,8 +715,11 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                                 lookTarget={HOME_LOOK_TARGET} inline />
                         )} />
                     ) : (
-                        <AtmosphereTopChips picture={atmosphere.source === 'picture' ? atmosphere.builtinPicture : null}
-                            lookTarget={HOME_LOOK_TARGET} />
+                        <>
+                            <PhonePageBackLine control={phoneBack} />
+                            <AtmosphereTopChips picture={atmosphere.source === 'picture' ? atmosphere.builtinPicture : null}
+                                lookTarget={HOME_LOOK_TARGET} />
+                        </>
                     )}
                     <HomeHero title={title} titleAccessory={briefEntry} phone={phone} paneHeight={heroFrame.pane.height} frame={heroFrame}
                         rise={planetSource && placement === 'rise'} suggestions={atmosphereSuggestions}
@@ -735,7 +742,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                         // The greeting heads the reading column it shares with the composer, Needs your
                         // attention and Get set up; the cards below keep the wider dashboard grid.
                         <HomeHubReadingColumn key="header">
-                            <PhoneTabNavRowLine testID="home-hub-phone-nav-row" />
+                            {phoneTabShell ? <PhoneTabNavRowLine testID="home-hub-phone-nav-row" /> : <PhonePageBackLine control={phoneBack} />}
                             <NavigationLargeTitleProvider largeTitle={phone}>
                                 <PageHeader
                                     title={title}

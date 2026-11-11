@@ -282,9 +282,9 @@ export function createRootStackRouteOptions(newSessionPresentationMode: 'auto' |
         'auth/password/reset/[token]': options.hiddenHeader,
         'changelog': options.changelog,
         'server': options.server,
-        // Home paints its own Atmosphere picture; neither an opaque screen background nor an opaque header may cover it,
-        // and the picture runs to the top edge under the Back control rather than starting below an empty header band.
-        'home': { ...options.visibleBlankBack, contentStyle: { backgroundColor: 'transparent' }, headerStyle: { backgroundColor: 'transparent' }, headerTransparent: true },
+        // Home paints its own Atmosphere picture, so no opaque screen background covers it. It has no native header: its
+        // Back is on its own head line (HomeHub), so the cards never scroll under a fixed Back (owner 1111).
+        'home': { ...options.hiddenHeader, contentStyle: { backgroundColor: 'transparent' } },
         'homes/index': options.accountHomes,
         'artifacts/index': options.artifactsIndex,
         'artifacts/[id]': options.artifactsId,

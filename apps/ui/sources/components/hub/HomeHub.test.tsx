@@ -545,6 +545,26 @@ describe('HomeHub', () => {
         } finally { await screen.unmount(); }
     });
 
+    it('carries the phone Back on its own head line, inside the page, so cards never scroll under a fixed Back (owner 1111)', async () => {
+        settings.viewport = { width: 390, height: 900 };
+        // Pushed on a phone (the Sessions logo opens it at /home): not a main screen, so it has a way back.
+        function PushedPhoneHome(props: React.PropsWithChildren) {
+            const focused = useNativeIsFocused();
+            const navigation = useRouter();
+            return <DestinationInstanceContext.Provider value={{ tabId: 'home', ref: { kind: 'home', params: {} }, pathname: '/home',
+                visible: true, focused, isFocused: () => widgets.focused, navigation }}>{props.children}</DestinationInstanceContext.Provider>;
+        }
+        const screen = await renderHome(undefined, 'stored', PushedPhoneHome);
+        try {
+            await flushHookEffects({ cycles: 10 });
+            const back = screen.findByTestId('home-back');
+            expect(back).not.toBeNull();
+            let inPage = false;
+            for (let node = back?.parent ?? null; node; node = node.parent) if (node.props?.testID === 'home-hub') inPage = true;
+            expect(inPage).toBe(true);
+        } finally { await screen.unmount(); }
+    });
+
     it('reserves the phone sections while its acknowledged layout is unknown, then replaces the placeholder', async () => {
         settings.viewport = { width: 390, height: 900 };
         settings.layout = { order: ['attention', 'automations', 'start'], hidden: ['setup'] };

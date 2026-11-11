@@ -50,11 +50,11 @@ describe('root route identity ownership', () => {
         expect(options['session/recent']).toMatchObject({ headerShown: true, headerTitle: 'sessionHistory.title' });
         expect(options['workflows/index'].headerShown).toBe(false);
     });
-    it('lets the phone Home route show the Atmosphere wallpaper instead of painting an opaque sheet over it', () => {
+    it('lets the phone Home route show the Atmosphere wallpaper, with no fixed header Back over its cards', () => {
+        // Home's Back is on its own head line (HomeHub), so it scrolls away with the head instead of floating over
+        // the cards; the route paints no opaque sheet over the picture (owner 1111).
         expect(createRootStackRouteOptions('auto')['home']).toMatchObject({
-            contentStyle: { backgroundColor: 'transparent' }, headerStyle: { backgroundColor: 'transparent' },
-            // The picture runs to the top edge, under the Back control, instead of starting below an empty band.
-            headerTransparent: true,
+            headerShown: false, contentStyle: { backgroundColor: 'transparent' },
         });
     });
     it.each([

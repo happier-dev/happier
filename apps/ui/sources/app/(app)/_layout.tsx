@@ -154,7 +154,6 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
         theme.colors.surface.base,
     ]);
     const rootStackRouteOptions = useRootStackRouteOptions();
-    const homeScreenOptions = React.useMemo(() => withSessionsFallbackBack(rootStackRouteOptions['home'], 'home-back'), [rootStackRouteOptions]);
     const accountHomesScreenOptions = React.useMemo(() => withSessionsFallbackBack(rootStackRouteOptions['homes/index'], 'account-homes-back'), [rootStackRouteOptions]);
     const workflowEditorScreenOptions = React.useCallback(() => ({
         ...rootStackRouteOptions['workflows/[id]/index'],
@@ -506,7 +505,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                 <Stack.Screen
                     name="home"
                     // The phone's Home, opened from the Sessions header logo: the page is its own title.
-                    options={homeScreenOptions}
+                    options={rootStackRouteOptions['home']}
                 />
                 <Stack.Screen
                     name="changelog"
