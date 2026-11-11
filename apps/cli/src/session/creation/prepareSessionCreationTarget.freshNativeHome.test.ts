@@ -13,6 +13,9 @@ import { createCliActionDeps, type MachineActionDirectTargetTransport } from '@/
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { accountSettingsParse, createActionExecutor } from '@happier-dev/protocol';
 import { createMachineSessionDirectTargetTransport } from '@/rpc/handlers/sessionServerStartLifecycleAdapter';
 import { SessionSpawnNewInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -104,10 +107,22 @@ describe('fresh native Session directory preflight', () => {
       await invokeNative(request.method, request.request, { signal: request.signal }));
     const ordinaryHomeRpc = vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(async request =>
       await invokeNative(request.method, request.request, { signal: request.signal }));
+    const homeRequest = vi.spyOn(axios, 'request').mockImplementation(async config => {
+    const path = new URL(String(config.url)).pathname;
+    if (path === '/v1/home/governance/get') return { status: 200, data: { homeDefaults: null } };
+    throw new Error(`Unexpected Home Action read: ${path}`);
+  });
+    const settings = accountSettingsParse({ memoryUpkeepInNewBots: false });
     const params = { token, credentials: { token, encryption: null },
       sessionId: 'fresh-session', serverId: 'fresh-home', mode: 'plain', ctx: null,
       serverIdentityId: 'fresh-home', serverHttpBaseUrl: 'https://home.test',
-      actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({ memoryUpkeepInNewBots: false }) }),
+      actionsSettingsProvider: createActionSettingsProvider({ accountSettings: settings }),
+      savedSecretOperationContext: createInvocationSavedSecretOperationContextV1({ credentials: { token, encryption: null },
+      serverHttpBaseUrl: 'https://home.test', isCurrent: async () => true,
+      snapshot: { settings, settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], source: 'network',
+        scopeKey: resolveAccountSettingsScopeKeyForToken(token), whenRefreshed: null,
+        connectedPurposeCatalog: { status: 'ready', revision: 1, record: { key: 'purposes',
+          value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: [] }) } } } }),
       sessionSpawnDirectTargetTransport: createMachineSessionDirectTargetTransport({ machineId: 'fresh-guest',
         spawnLifecycleHandler: async request => {
           if (request && typeof request === 'object' && 'directory' in request && typeof request.directory === 'string')
@@ -172,7 +187,7 @@ describe('fresh native Session directory preflight', () => {
       expect(directoryPreflights - beforeReplay).toBe(1);
       expect(launched).toEqual([root, root, join(root, 'approved-child')]);
     } finally {
-      homeGet.mockRestore(); homePost.mockRestore(); homeRpc.mockRestore(); ordinaryHomeRpc.mockRestore();
+      homeGet.mockRestore(); homePost.mockRestore(); homeRequest.mockRestore(); homeRpc.mockRestore(); ordinaryHomeRpc.mockRestore();
       nativeAccess.mockRestore(); vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true });
     }
   });

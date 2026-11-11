@@ -11,19 +11,16 @@ import { incompatibleSessionSpawnTarget, projectSessionInitialAccessEnvelopeHost
 import { SessionSpawnNewIncompatibleTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { createPrepareSessionCreationAuthorization, createReviewedSecondOpinionSessionCreationAuthorization } from '@/api/externalActionExecutionAuthorization';
 import type { readManagedMachine } from '@/machines/managed/readManagedMachine';
-import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import type { resolveCliPromptStackSystemAppendBlocks } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
 import { PromptStackPreparationError } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
 import { AgentStartRefusalV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import type { SessionFollowSourceKeyPreparationResultV1, ActionExecutorDeps, ActionExecutorContext, SessionSpawnNewResultV1, SessionCreationTargetPreparationRequestV1, SessionCreationTargetPreparationResultV1 } from '@happier-dev/protocol';
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
-import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { normalizeSessionCreationOrganizationPlacementV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import type { buildSessionCreationCorrespondence } from '@/session/shared/sessionCreationCorrespondence';
 import { projectDiscussionModelParticipantLaunchV1 } from '@happier-dev/protocol/discussions/modelParticipantLaunch';
 import { readSessionCreationTargetPreparationResultV1, projectSessionCreationTargetPreparationRpcFailureV1, SessionCreationDirectoryApprovalV1Schema, needsSessionCreationDirectoryApprovalPreflightV1, projectSessionCreationDirectoryApprovalV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
-import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { SessionAuthoringTerminalV1Schema } from '@happier-dev/protocol/sessions/authoring/creationFieldsV1';
 import { projectSessionAuthoringTerminalForSpawn } from '@/terminal/runtime/terminalConfig';
 import { normalizeSpawnSessionErrorDetail, SessionCreationTerminalSpawnErrorDetailSchema, SPAWN_SESSION_ERROR_DETAIL_KINDS, isSessionCreationCorrespondenceConflictSpawnErrorDetail, isSessionCreationOrganizationInvalidSpawnErrorDetail } from '@happier-dev/protocol/spawnSession';
@@ -31,7 +28,6 @@ import { supportsMachineOperationProtocolCapabilityV1, supportsMachineSessionSpa
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import type { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import type { createStableSpawnNonce } from '@/session/shared/spawnNonce';
-import type { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { configuration } from '@/configuration';
 import type { MachineAdmissionTransportUnavailableError } from '@/daemon/machineAdmissionTransport';
 import type { isAuthenticationError } from '@/api/client/httpStatusError';
@@ -42,13 +38,12 @@ import type { createCliWorkflowTriggerActions } from '../actions/workflowTrigger
 import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { type RoleSourceReader } from '@/session/roles/roleSources';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import type { StoredCredentials } from '@/persistence';
+import { readStoredCredentials } from '@/persistence';
 import type { createSpawnedSession, ReplaySeededSessionCreationV1 } from '@/session/services/createSpawnedSession';
 import type { buildReplaySeededSpawnRecipe } from '@/session/replay/buildReplaySeededSpawnRecipe';
 import type { resolveReplaySourceContextAuthority } from '@/session/replay/resolveReplaySourceContextAuthority';
-import type { ResolveSpawnConnectedServicesTeamResourceCatalog, mergeSessionTeamCredentialBindingIntents, resolveSessionSpawnConnectedServicesDefaultsPayload } from '@/session/services/spawnConnectedServicesDefaults';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
-import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readRequesterAccountActionContext, resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { resolveRolesSnapshotV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import type { buildPluginSessionInputAttachmentDraftsV1 } from '@/session/composer/admitPluginSessionInputAttachmentsV1';
 import type { buildSessionSpawnInitialInputAdmissionForLocalIdV1, requiresMachineAdmissionForSessionInput } from '@/session/services/sessionInputAdmissionIdentity';
@@ -63,29 +58,15 @@ import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machi
 import type { AccountRoleOverridesReadV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
 import { buildHostOnboardingInput } from './hostOnboardingInput';
 import { createTemplateHostOnboardingAdmissionTransport } from '@/api/session/templateHostOnboardingAdmission';
+import { resolveSessionSpawnManagedDefaults } from './resolveSessionSpawnManagedDefaults';
+import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { refreshConnectedAccountCatalogForAdmission } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
+import { agentSupportsSpawnConnectedServicesDefaults, ConnectedServicesDefaultUnavailableError } from '@/session/services/spawnConnectedServicesDefaults';
 
 
-async function resolveSpawnConnectedServicesDefaultPayload(params: Readonly<{
-  backendTarget: NonNullable<ReturnType<typeof readBackendTargetRefV2>>;
-  credentials: StoredCredentials;
-  signal?: AbortSignal;
-  operationContext?: SavedSecretOperationContextV1;
-  resolveTeamCredentialResourceCatalog?: ResolveSpawnConnectedServicesTeamResourceCatalog;
-}>): Promise<Awaited<ReturnType<typeof resolveSessionSpawnConnectedServicesDefaultsPayload>>> {
-  if (params.backendTarget.sourceKind !== 'built_in') return null;
-  // ONE defaulting owner (QA2-F02): session spawn and execution-run start resolve defaults
-  // through the same fresh-bootstrap owner; no local settings-snapshot path.
-  const { resolveSessionSpawnConnectedServicesDefaultsPayload } = await import("@/session/services/spawnConnectedServicesDefaults");
-  return await resolveSessionSpawnConnectedServicesDefaultsPayload({
-    agentId: params.backendTarget.backendId,
-    credentials: params.credentials,
-    signal: params.signal,
-    ...(params.operationContext ? { operationContext: params.operationContext } : {}),
-    ...(params.resolveTeamCredentialResourceCatalog
-      ? { resolveTeamCredentialResourceCatalog: params.resolveTeamCredentialResourceCatalog }
-      : {}),
-  });
-}
 type SpawnActionDeps = Pick<ActionExecutorDeps, 'sessionSpawnNewDirectoryApprovalPreflight'>
   & Required<Pick<ActionExecutorDeps, 'sessionSpawnNew'>>;
 
@@ -375,15 +356,15 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       placementOrigin,
       authoringOrigin,
       agentTarget,
-      modelSelection,
+      modelSelection: requestedModelSelection,
       profileId,
       secretReferenceOverlay,
-      permissionMode,
+      permissionMode: requestedPermissionMode,
       allowedTools,
       unlistedTools,
       agentModeId,
       configuration: configurationSnapshot,
-      connectedServices,
+      connectedServices: requestedConnectedServices,
       capabilitySelection,
       transcriptStorage,
       terminal,
@@ -556,7 +537,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       if (resumeActionRequest === true && !normalizedActionRequestId) {
         return { type: 'error', code: 'invalid_input', retryable: false };
       }
-      const [{ createStableSpawnNonce }, { mergeSessionTeamCredentialBindingIntents }, { buildSessionCreationCorrespondence }] = await Promise.all([import("@/session/shared/spawnNonce"), import("@/session/services/spawnConnectedServicesDefaults"), import("@/session/shared/sessionCreationCorrespondence")]);
+      const [{ createStableSpawnNonce }, { buildSessionCreationCorrespondence }] = await Promise.all([import("@/session/shared/spawnNonce"), import("@/session/shared/sessionCreationCorrespondence")]);
       const spawnNonce = normalizedActionRequestId
         ? createStableSpawnNonce('session.spawn_new.action', { actionRequestId: normalizedActionRequestId })
         : undefined;
@@ -650,12 +631,76 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         };
       }
 
-      const [{ parsePermissionIntentAlias }, { resolveSessionCreationAgentTarget }] = await Promise.all([import("@happier-dev/agents"), import("@/session/creation/resolveSessionCreationAgentTarget")]);
+      const { resolveSessionCreationAgentTarget } = await import("@/session/creation/resolveSessionCreationAgentTarget");
       const resolvedAgentTarget = resolveSessionCreationAgentTarget(agentTarget);
       if (!resolvedAgentTarget) {
         return { type: 'error', code: 'target_unavailable', retryable: false };
       }
       const { backendTarget } = resolvedAgentTarget;
+      // The receiving daemon resolves unset facets once. UI preview values
+      // already sent by New Session are explicit choices; file policy locks
+      // still win at this canonical effect owner.
+      const admittedRequester = readRequesterAccountActionContext(context?.externalActionExecutionAuthorization);
+      if (externalRequest && !admittedRequester && requesterAccountId
+        && requesterAccountId !== readAccountIdFromToken(params.credentials.token)) {
+        return { type: 'error', code: 'permission_denied', retryable: false };
+      }
+      const defaultsCustody = resolveRequesterSavedSecretActionCustody({
+        authorization: context?.externalActionExecutionAuthorization, credentials: params.credentials,
+        operationContext: params.savedSecretOperationContext,
+      });
+      const defaultsCredentials = defaultsCustody.credentials;
+      const defaultsOperation = defaultsCustody.operation;
+      const retainedSettings = defaultsOperation?.readSnapshot();
+      if (defaultsOperation && !retainedSettings) {
+        return { type: 'error', code: 'permission_denied', retryable: false };
+      }
+      const defaultsContext = retainedSettings ?? await runWithServerHttpBaseUrl(machineReferenceServerUrl,
+        () => bootstrapAccountSettingsContext({ credentials: defaultsCredentials, mode: 'blocking', publication: 'invocation',
+          deps: { applySideEffects: () => undefined }, ...(signal ? { signal } : {}) }));
+      const operation = defaultsOperation ?? createInvocationSavedSecretOperationContextV1({
+        credentials: defaultsCredentials, snapshot: defaultsContext, serverHttpBaseUrl: machineReferenceServerUrl,
+        isCurrent: async () => admittedRequester ? admittedRequester.isCurrent()
+          : params.isCredentialCurrent ? params.isCredentialCurrent()
+          : (await readStoredCredentials())?.token === defaultsCredentials.token,
+      });
+      const purposeCatalog = agentSupportsSpawnConnectedServicesDefaults(resolvedAgentTarget.agentId)
+        ? defaultsContext.connectedPurposeCatalog?.status === 'ready' ? defaultsContext.connectedPurposeCatalog
+          : await refreshConnectedAccountCatalogForAdmission({ credentials: defaultsCredentials, key: 'purposes',
+            operationContext: operation, ...(signal ? { signal } : {}) })
+        : undefined;
+      if (purposeCatalog && purposeCatalog.status !== 'ready') {
+        throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding',
+          purposeCatalog.status === 'unavailable' ? purposeCatalog.reason : undefined);
+      }
+      const defaultsSettings = operation.readSnapshot()?.settings ?? defaultsContext.settings;
+      const homeActions = createAccountServerActionDeps({ token: defaultsCredentials.token, credentials: defaultsCredentials,
+        serverId: executionTarget.serverId, serverHttpBaseUrl: machineReferenceServerUrl });
+      const homeReadContext = { surface: 'cli' as const, serverId: executionTarget.serverId };
+      const { createSpawnConnectedServicesTeamResourceCatalogResolver } = await import('@/session/services/spawnConnectedServicesDefaults');
+      const defaults = await resolveSessionSpawnManagedDefaults({ executionTarget, agentTarget, primaryTeamId, initialAccess, teamCredentialBindings,
+        permissionMode: requestedPermissionMode, modelSelection: requestedModelSelection,
+        configuration: configurationSnapshot, connectedServices: requestedConnectedServices }, {
+        agentId: resolvedAgentTarget.agentId, accountSettings: defaultsSettings,
+        ...(purposeCatalog ? { purposeCatalog } : {}),
+        organizationPolicy: configuration.organizationPolicy,
+        readTeam: teamId => homeActions.homeDomainAction!({ actionId: 'teams.get', input: { v: 1, teamId }, context: homeReadContext,
+          ...(signal ? { signal } : {}) }),
+        readHome: () => homeActions.homeDomainAction!({ actionId: 'home.governance.get', input: { projection: 'session_defaults' }, context: homeReadContext,
+          ...(signal ? { signal } : {}) }),
+        resolveTeamCredentialResourceCatalog: createSpawnConnectedServicesTeamResourceCatalogResolver({
+          homeDomainAction: homeActions.homeDomainAction!, serverId: executionTarget.serverId,
+          accountId: readAccountIdFromToken(defaultsCredentials.token) ?? '',
+        }),
+        ...(signal ? { signal } : {}),
+      });
+      // Admission already selected this exact daemon. A file lock may refuse
+      // that target, but cannot redirect its admitted credentials elsewhere.
+      if (defaults.placement.lock && (defaults.placement.value?.kind !== 'machine'
+        || !sameStrictJsonValue(defaults.placement.value.target, executionTarget))) {
+        return { type: 'error', code: 'permission_denied', retryable: false };
+      }
+      const { permissionMode, modelSelection, connectedServices } = defaults;
       // Root starts have no lead snapshot. Bind the selected Account role at
       // the native spawn owner before the launch contract drops Action roleId.
       if (roleId && initialSessionRolesV1 === undefined) {
@@ -671,29 +716,12 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         if (!roles[roleId]) return { ok: false, errorCode: 'role_target_unavailable', error: 'role_target_unavailable' };
         initialSessionRolesV1 = { roleId, overrides: {}, sessionRoles: roles, notes: '' };
       }
-      const connectedServicesDefaults = connectedServices === undefined
-        ? await resolveSpawnConnectedServicesDefaultPayload({
-            credentials: params.credentials,
-            backendTarget,
-            signal,
-            ...(params.savedSecretOperationContext ? { operationContext: params.savedSecretOperationContext } : {}),
-            ...(params.resolveTeamCredentialResourceCatalog
-              ? { resolveTeamCredentialResourceCatalog: params.resolveTeamCredentialResourceCatalog }
-              : {}),
-          })
-        : null;
       if (signal?.aborted) {
         return { type: 'error', code: 'cancelled', retryable: true };
       }
-      const resolvedConnectedServices = connectedServices
-        ?? connectedServicesDefaults?.connectedServices;
-      const resolvedConnectedServicesUpdatedAt = connectedServicesDefaults?.connectedServicesUpdatedAt;
-      // Defaulted Team targets reach the Session only through its own Team
-      // slot bindings; an explicit slot choice wins.
-      const resolvedTeamCredentialBindings = mergeSessionTeamCredentialBindingIntents({
-        explicit: teamCredentialBindings,
-        admitted: connectedServicesDefaults?.teamCredentialBindings ?? null,
-      });
+      const resolvedConnectedServices = connectedServices;
+      const resolvedConnectedServicesUpdatedAt = defaults.connectedServicesUpdatedAt;
+      const resolvedTeamCredentialBindings = defaults.teamCredentialBindings;
       const normalizedPlacement =
         normalizeSessionCreationOrganizationPlacementV1(organizationPlacement);
       const normalizedTerminal = terminal === undefined
@@ -720,27 +748,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             ),
           })
         : undefined;
-      const resolvedModelSelection = modelSelection
-        ?? (configurationSnapshot?.model.value
-          ? SessionModelSelectionV1Schema.parse({
-              v: 1,
-              updatedAt: configurationSnapshot.model.updatedAtMs,
-              ref: {
-                agentTargetKey: buildBackendTargetKeyV2(backendTarget),
-                providerConnectionId: null,
-                modelId: configurationSnapshot.model.value,
-              },
-            })
-          : undefined);
-      const requestedPermissionMode = permissionMode
-        ?? configurationSnapshot?.permissionIntent.value
-        ?? undefined;
-      const resolvedPermissionMode = requestedPermissionMode
-        ? parsePermissionIntentAlias(requestedPermissionMode)
-        : undefined;
-      if (requestedPermissionMode && !resolvedPermissionMode) {
-        return { type: 'error', code: 'invalid_input', retryable: false };
-      }
+      const resolvedModelSelection = modelSelection;
+      const resolvedPermissionMode = permissionMode;
       const resolvedAgentModeId = agentModeId
         ?? configurationSnapshot?.mode.value
         ?? undefined;
@@ -972,8 +981,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           ...(requesterHttpAuthorization ? { authorizeRequest: requesterHttpAuthorization } : {}),
           ...(accountEncryptionCurrentness ? { accountEncryptionCurrentness } : {}),
           serverId: executionTarget.serverId,
-          ...(params.actionsSettingsProvider?.getAccountSettings
-            ? { accountSettings: params.actionsSettingsProvider.getAccountSettings() ?? undefined } : {}),
+          accountSettings: defaultsSettings,
           ...(workDepth !== undefined ? { workDepth } : {}),
           ...(discussionParticipant ? { originKind: 'discussion' as const, discussionParticipant, discussionParticipantLaunch }
             : originKind !== undefined ? { originKind, originSessionId, originRunId } : {}),

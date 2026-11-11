@@ -423,9 +423,27 @@ Team-change push and member-qualified Team snapshots supply updates; no addition
 or defaults storage is introduced by the precedence resolver. Home defaults are stored in
 `HomeGovernancePolicy.sessionDefaults` and projected in Team policy as `homeDefaults`;
 machine policy remains a separate source.
+
+The receiving daemon's `session.spawn_new` admission fills unset permission, model and
+qualified connected-service facets through that same resolver. It reads the acting Account's
+saved settings and member-qualified Team/Group or Home projection; requester credentials and
+catalogs stay bound to that Account. New Session keeps its preview resolution and sends those
+values as explicit choices. The existing configuration snapshot carries an explicit Automatic
+model as `model.value: null`; it remains explicit at admission. Persisted defaults do not gain
+nullable model entries.
+
+Every spawn request already names an exact execution target, so placement is explicit at this
+boundary. A conflicting locked policy placement returns `permission_denied`; admission never
+redirects the selected daemon or creates a preset. Unlocked placement defaults remain part of
+selection before that exact-target request. File-policy locks retain their machine-local owner.
+
 Home, Team and Group Machine defaults share one eligibility owner: saving requires
-the Machine to be usable by every active member receiving that layer. If access later
-changes, New Session falls back to a Machine in the member's own usable inventory.
+the Machine to be usable by every active member receiving that layer. In unreleased
+0.3, a refused save returns `managed_default_machine_not_member_usable` through the
+policy route and Action. The defaults editor asks the administrator to share the
+Machine with the members or choose another. Sharing with the administrator alone
+does not establish member access. If access later changes, New Session falls back
+to a Machine in the member's own usable inventory.
 
 ### Accepted authentication
 

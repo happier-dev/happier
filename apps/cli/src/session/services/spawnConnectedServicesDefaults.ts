@@ -183,53 +183,17 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
       throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding', 'scope-retired');
     }
     const accountSettings = admittedSnapshot.settings;
-    const teamIds = readTeamResourceDefaultTeamIds({
-      accountSettings,
-      agentId, purposeCatalog,
+    const payload = await materializeSessionSpawnConnectedServicesDefaults({
+      agentId,
+      purposeDefaults: readAgentPurposeDefaults({ accountSettings, agentId, purposeCatalog }),
+      ...(params.resolveTeamCredentialResourceCatalog ? { resolveTeamCredentialResourceCatalog: params.resolveTeamCredentialResourceCatalog } : {}),
+      ...(params.signal ? { signal: params.signal } : {}),
     });
-    let teamCredentialResourceCatalog: SpawnConnectedServicesTeamResourceCatalog | undefined;
-    if (teamIds.length > 0) {
-      try {
-        teamCredentialResourceCatalog = await params.resolveTeamCredentialResourceCatalog?.({ teamIds, signal: params.signal }) ?? undefined;
-      } catch (error) {
-        params.signal?.throwIfAborted();
-        throw new ConnectedServicesDefaultUnavailableError(
-          readTeamCredentialLaunchFailureCode(error) ?? 'provider_catalog_unavailable',
-          error instanceof SessionTeamCredentialLaunchUnavailableError ? error.phase : 'resource_catalog',
-        );
-      }
-      if (!teamCredentialResourceCatalog) {
-        throw new ConnectedServicesDefaultUnavailableError(
-          'connected_services_team_default_requires_current_resource',
-        );
-      }
-    }
-    const disposition = resolveSpawnConnectedServicesDefaultDisposition({
-      accountSettings,
-      agentId, purposeCatalog,
-      ...(teamCredentialResourceCatalog ? { teamCredentialResourceCatalog } : {}),
-    });
-    if (disposition.kind === 'unavailable') {
-      throw new ConnectedServicesDefaultUnavailableError(disposition.reason, 'purpose_binding', disposition.catalogReason);
-    }
-    if (disposition.kind === 'native') return null;
-    const teamCredentialBindings = resolvePurposeTeamCredentialBindingIntents({
-      teamResourceSelections: readAgentPurposeDefaults({ accountSettings, agentId, purposeCatalog })
-        .flatMap((entry) => (
-          entry.teamResource
-            ? [{ purpose: entry.purpose, services: [entry.service], ...entry.teamResource }]
-            : []
-        )),
-      teamCredentialResourceCatalog,
-    });
+    if (!payload) return null;
     if (!await operationContext.isCurrent()) {
       throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding', 'scope-retired');
     }
-    return {
-      connectedServices: disposition.bindings,
-      connectedServicesUpdatedAt: Date.now(),
-      ...(teamCredentialBindings.length > 0 ? { teamCredentialBindings } : {}),
-    };
+    return payload;
   } catch (error) {
     if (isAccountSettingsContentInvalidError(error)) {
       throw new ConnectedServicesDefaultUnavailableError('connected_services_default_settings_invalid');
@@ -248,7 +212,8 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
  * forward on read). The Agent's purposes come from its current
  * contribution projection — the same declarations its Session materializes.
  */
-function readAgentPurposeDefaults(params: Readonly<{
+export function readAgentPurposeDefaults(params: Readonly<{
+  onlySavedDefaults?: boolean;
   accountSettings: unknown;
   agentId: string;
   purposeCatalog?: ConnectedAccountCatalogSnapshotV1;
@@ -264,6 +229,7 @@ function readAgentPurposeDefaults(params: Readonly<{
     : {};
   return resolveAgentConnectedAccountPurposeDefaults({
     settings,
+    ...(params.onlySavedDefaults ? { onlySavedDefaults: true } : {}),
     ...(params.purposeCatalog?.status === 'ready' && params.purposeCatalog.record.key === 'purposes'
       ? { purposeBindings: params.purposeCatalog.record.value } : {}),
     agentId: params.agentId,
@@ -274,14 +240,42 @@ function readAgentPurposeDefaults(params: Readonly<{
   });
 }
 
-function readTeamResourceDefaultTeamIds(params: Readonly<{
-  accountSettings: unknown;
+/** Materialize already resolved purposes through the same Team readiness and slot owners. */
+export async function materializeSessionSpawnConnectedServicesDefaults(params: Readonly<{
   agentId: string;
-  purposeCatalog?: ConnectedAccountCatalogSnapshotV1;
-}>): readonly string[] {
-  return Array.from(new Set(readAgentPurposeDefaults(params).flatMap((entry) => (
-    entry.teamResource ? [entry.teamResource.teamId] : []
-  ))));
+  purposeDefaults: readonly AgentConnectedAccountPurposeDefault[];
+  resolveTeamCredentialResourceCatalog?: ResolveSpawnConnectedServicesTeamResourceCatalog;
+  signal?: AbortSignal;
+}>): Promise<Readonly<{
+  connectedServices: ConnectedServiceBindingsV2;
+  connectedServicesUpdatedAt: number;
+  teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
+}> | null> {
+  const teamIds = [...new Set(params.purposeDefaults.flatMap(entry => entry.teamResource ? [entry.teamResource.teamId] : []))];
+  let teamCredentialResourceCatalog: SpawnConnectedServicesTeamResourceCatalog | undefined;
+  if (teamIds.length > 0) {
+    try {
+      teamCredentialResourceCatalog = await params.resolveTeamCredentialResourceCatalog?.({ teamIds, signal: params.signal }) ?? undefined;
+    } catch (error) {
+      params.signal?.throwIfAborted();
+      throw new ConnectedServicesDefaultUnavailableError(readTeamCredentialLaunchFailureCode(error) ?? 'provider_catalog_unavailable',
+        error instanceof SessionTeamCredentialLaunchUnavailableError ? error.phase : 'resource_catalog');
+    }
+    if (!teamCredentialResourceCatalog) throw new ConnectedServicesDefaultUnavailableError('connected_services_team_default_requires_current_resource');
+  }
+  const disposition = resolveSpawnConnectedServicesDefaultDisposition({
+    agentId: params.agentId, accountSettings: {}, purposeDefaults: params.purposeDefaults,
+    ...(teamCredentialResourceCatalog ? { teamCredentialResourceCatalog } : {}),
+  });
+  if (disposition.kind === 'unavailable') throw new ConnectedServicesDefaultUnavailableError(disposition.reason, 'purpose_binding', disposition.catalogReason);
+  if (disposition.kind === 'native') return null;
+  const teamCredentialBindings = resolvePurposeTeamCredentialBindingIntents({
+    teamResourceSelections: params.purposeDefaults.flatMap(entry => entry.teamResource
+      ? [{ purpose: entry.purpose, services: [entry.service], ...entry.teamResource }] : []),
+    teamCredentialResourceCatalog,
+  });
+  return { connectedServices: disposition.bindings, connectedServicesUpdatedAt: Date.now(),
+    ...(teamCredentialBindings.length > 0 ? { teamCredentialBindings } : {}) };
 }
 
 function normalizeBindingForSpawn(
@@ -428,6 +422,7 @@ export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly
   agentId: string;
   purposeCatalog?: ConnectedAccountCatalogSnapshotV1;
   teamCredentialResourceCatalog?: SpawnConnectedServicesTeamResourceCatalog;
+  purposeDefaults?: readonly AgentConnectedAccountPurposeDefault[];
 }>): SpawnConnectedServicesDefaultDisposition {
   const supportedServiceIds = resolveCatalogAgentConnectedAccountServiceIds(params.agentId);
   if (supportedServiceIds.length === 0) return { kind: 'native' };
@@ -440,7 +435,7 @@ export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly
     };
   }
 
-  const defaults = readAgentPurposeDefaults(params);
+  const defaults = params.purposeDefaults ?? readAgentPurposeDefaults(params);
   const configuredBindings = projectAgentConnectedAccountPurposeDefaultsToSessionBindings(defaults)
     ?.bindingsByServiceId ?? {};
   const teamIdByServiceId = new Map(defaults.flatMap((entry) => (

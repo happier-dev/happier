@@ -12,6 +12,9 @@ import { socketRpcCodec } from '@happier-dev/sync-client';
 import { io } from 'socket.io-client';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { createApiSessionSocketStub, bindApiSessionSocketMock } from '@/testkit/backends/apiSessionSocketHarness';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { createProbeTempDir, writeExecutableScript } from '@/capabilities/probes/agentModelsProbe.testkit';
@@ -194,11 +197,23 @@ it.each([
       capabilities: { encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } }));
     throw new Error(`Unexpected fetch ${url}`);
   }));
+  vi.spyOn(axios, 'request').mockImplementation(async config => {
+    const path = new URL(String(config.url)).pathname;
+    if (path === '/v1/home/governance/get') return { status: 200, data: { homeDefaults: null } };
+    throw new Error(`Unexpected Home Action read: ${path}`);
+  });
+  const settings = accountSettingsParse({ memoryUpkeepInNewBots: false,
+    actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.agents.install': ['cli'] } },
+  });
   const executor = createCliActionExecutor({ credentials, token, sessionId: '', mode: 'plain', ctx: null,
     serverId: 'home-a', serverIdentityId: 'home-a', serverHttpBaseUrl: 'https://home-a.example.test',
-    actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({ memoryUpkeepInNewBots: false,
-      actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.agents.install': ['cli'] } },
-    }) }),
+    actionsSettingsProvider: createActionSettingsProvider({ accountSettings: settings }),
+    savedSecretOperationContext: createInvocationSavedSecretOperationContextV1({ credentials: { token, encryption: null },
+      serverHttpBaseUrl: 'https://home-a.example.test', isCurrent: async () => true,
+      snapshot: { settings, settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], source: 'network',
+        scopeKey: resolveAccountSettingsScopeKeyForToken(token), whenRefreshed: null,
+        connectedPurposeCatalog: { status: 'ready', revision: 1, record: { key: 'purposes',
+          value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: [] }) } } } }),
     sessionSpawnDirectTargetTransport: { machineId, prepare: async () => ({ ok: true, directory: '/remote/project',
       directoryKind: 'path', directoryCreationRequired: false, checkout: null }), spawnedSession: {
       // The native process boundary performs birth and launch together.
