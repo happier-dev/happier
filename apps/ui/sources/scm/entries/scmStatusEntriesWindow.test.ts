@@ -382,3 +382,4 @@ describe('ScmStatusEntriesWindow', () => {
         expect(listener.mock.calls.length).toBe(callsAfterUnsubscribe);
     });
 });
+
