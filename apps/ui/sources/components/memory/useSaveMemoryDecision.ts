@@ -8,7 +8,7 @@ import type { MemoryScopeTargetV1 } from '@happier-dev/protocol/actions/executor
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { leadingCandidateId, type DuplicateChoiceKind, type DuplicateReview } from './MemoryDocumentBody';
-import type { SaveMemoryDecisionSeed } from './SaveMemoryDecisionSheet';
+import type { SaveMemoryDecisionSeed } from './memoryDecisionSeed';
 import { useMemoryCreationReceipt } from './useMemoryCreationReceipt';
 
 type Notice = 'pending' | 'conflict' | 'refused' | 'disclosure' | 'sourceUnavailable' | 'saved_unattached' | null;

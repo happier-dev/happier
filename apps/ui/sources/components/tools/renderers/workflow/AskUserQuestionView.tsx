@@ -48,7 +48,8 @@ import {
 import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 import { ToolFindText } from '../core/ToolFindText';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { SaveMemoryDecisionSheet, type SaveMemoryDecisionSeed } from '@/components/memory/SaveMemoryDecisionSheet';
+import { SaveMemoryDecisionSheet } from '@/components/memory/SaveMemoryDecisionSheet';
+import type { SaveMemoryDecisionSeed } from '@/components/memory/memoryDecisionSeed';
 import { readAnsweringClientCategory } from '@/sync/ops/sessions';
 import { resolveAskUserQuestionFooterHint, resolveAskUserQuestionLead, type AskUserQuestionFooterHint, type AskUserQuestionLead } from './askUserQuestionCardState';
 import { useAskUserQuestionAnsweredByLabel, useAskUserQuestionHandler } from './useAskUserQuestionHandler';

@@ -921,10 +921,7 @@ function UserTextBlock(props: {
   const findActive = useTranscriptFindActive();
   const findSourceRanges = find?.blocks.find((block) => block.id === 'text')?.sourceRanges;
   const { isHovered: isMessageHovered, hoverProps } = useRowActionHoverHost();
-  const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const [isActionRowFocused, setIsActionRowFocused] = React.useState(false);
-  const handleActionHoverIn = React.useCallback(() => setIsCopyButtonHovered(true), []);
-  const handleActionHoverOut = React.useCallback(() => setIsCopyButtonHovered(false), []);
   const handleActionsFocus = React.useCallback(() => setIsActionRowFocused(true), []);
   const handleActionsBlur = React.useCallback(() => setIsActionRowFocused(false), []);
   const isWeb = Platform.OS === 'web';
@@ -1064,7 +1061,6 @@ function UserTextBlock(props: {
   const rowActionVisibilityInput = {
     platformOS: Platform.OS,
     isRowHovered: isMessageHovered,
-    isActionHovered: isCopyButtonHovered,
     isRowFocused: isActionRowFocused,
     coarsePrimaryPointer,
     selectionModeActive: selectionModeActionsVisible,
@@ -1108,8 +1104,6 @@ function UserTextBlock(props: {
       showActions={showMessageActions} showPinAction={showPinButton}
       timestampText={timestampText} timestampGlyph={timestampGlyph} invertTimestampAndActions={timestampPresentation.invertTimestampAndActions}
       onActionsFocus={handleActionsFocus} onActionsBlur={handleActionsBlur}
-      onActionHoverIn={isWeb ? handleActionHoverIn : undefined}
-      onActionHoverOut={isWeb ? handleActionHoverOut : undefined}
       hoverProps={hoverProps}
       touchRevealKey={touchRevealKey}
 >
@@ -1253,8 +1247,6 @@ function UserTextBlock(props: {
       showActions={showMessageActions} showPinAction={showPinButton}
       timestampText={timestampText} timestampGlyph={timestampGlyph} invertTimestampAndActions={timestampPresentation.invertTimestampAndActions}
       onActionsFocus={handleActionsFocus} onActionsBlur={handleActionsBlur}
-      onActionHoverIn={isWeb ? handleActionHoverIn : undefined}
-      onActionHoverOut={isWeb ? handleActionHoverOut : undefined}
       hoverProps={hoverProps}
       touchRevealKey={touchRevealKey}
 >
@@ -1333,10 +1325,7 @@ function AgentTextBlock(props: {
     if (findRevealId !== undefined && props.message.isThinking) props.onThinkingExpandedChange?.(true);
   }, [findRevealId, props.message.isThinking, props.onThinkingExpandedChange]);
   const { isHovered: isMessageHovered, hoverProps } = useRowActionHoverHost();
-  const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const [isActionRowFocused, setIsActionRowFocused] = React.useState(false);
-  const handleActionHoverIn = React.useCallback(() => setIsCopyButtonHovered(true), []);
-  const handleActionHoverOut = React.useCallback(() => setIsCopyButtonHovered(false), []);
   const handleActionsFocus = React.useCallback(() => setIsActionRowFocused(true), []);
   const handleActionsBlur = React.useCallback(() => setIsActionRowFocused(false), []);
   const isWeb = Platform.OS === 'web';
@@ -1447,7 +1436,6 @@ function AgentTextBlock(props: {
   const rowActionVisibilityInput = {
     platformOS: Platform.OS,
     isRowHovered: isMessageHovered,
-    isActionHovered: isCopyButtonHovered,
     isRowFocused: isActionRowFocused,
     coarsePrimaryPointer,
     selectionModeActive: selectionModeActionsVisible,
@@ -1604,8 +1592,6 @@ function AgentTextBlock(props: {
       showActions={showMessageActions} showPinAction={showPinButton}
       timestampText={timestampText} timestampGlyph={timestampGlyph} invertTimestampAndActions={timestampPresentation.invertTimestampAndActions}
       onActionsFocus={handleActionsFocus} onActionsBlur={handleActionsBlur}
-      onActionHoverIn={isWeb ? handleActionHoverIn : undefined}
-      onActionHoverOut={isWeb ? handleActionHoverOut : undefined}
       hoverProps={hoverProps}
       touchRevealKey={touchRevealKey}
     >
@@ -1916,7 +1902,6 @@ function ToolCallBlock(props: {
           revealed={shouldShowTranscriptRowPinAction({
             platformOS: Platform.OS,
             isRowHovered: structuredPinHost.isHovered,
-            isActionHovered: false,
             coarsePrimaryPointer,
             pinned: toolPinAction.pinned,
           })}
@@ -1969,7 +1954,7 @@ function ToolCallBlock(props: {
           details={{
             routeMessageId: buildToolCallMessageRouteId({ toolId: typeof message.tool.id === 'string' ? message.tool.id : null, fallbackMessageId: toolRouteMessageId }),
             revealed: shouldShowTranscriptRowActions({ platformOS: Platform.OS, isRowHovered: structuredPinHost.isHovered,
-              isActionHovered: false, coarsePrimaryPointer }),
+              coarsePrimaryPointer }),
           }} />
       ) : null}
     </TranscriptFindMessageProvider>

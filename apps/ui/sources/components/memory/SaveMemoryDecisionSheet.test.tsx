@@ -12,13 +12,20 @@ import { memoryDocumentActions } from '@/sync/ops/promptLibrary/memoryDocuments'
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 installDisconnectedServerSocketBoundary();
 
-const { SaveMemoryDecisionForm, seedMemoryDecisionFromMessage } = await import('./SaveMemoryDecisionSheet');
+const { SaveMemoryDecisionForm } = await import('./SaveMemoryDecisionSheet');
+const { seedMemoryDecisionFromMessage } = await import('./memoryDecisionSeed');
 afterEach(standardCleanup);
+
+/** The answer's first sentence is the decision; the person writes why (Reason starts empty). */
+const seedWithReason = (source: CoordinationMessageRefV1) => ({
+  ...seedMemoryDecisionFromMessage(source, 'Retry cap stays at 5. Backoff ran out too early.'),
+  reason: 'Backoff ran out too early.',
+});
 
 async function mount(fixture: Awaited<ReturnType<typeof createMemoryDecisionHomeFixture>>, onSaved = vi.fn()) {
   const source: CoordinationMessageRefV1 = { kind: 'discussion',
     discussion: { serverId: fixture.serverId, discussionId: 'discussion-1' }, messageId: 'committed-source' };
-  const seed = seedMemoryDecisionFromMessage(source, 'Retry cap stays at 5\nBackoff ran out too early.');
+  const seed = seedWithReason(source);
   const screen = await renderScreen(<SaveMemoryDecisionForm seed={seed} onClose={vi.fn()} onSaved={onSaved} />);
   return { screen, onSaved, source };
 }
@@ -29,6 +36,22 @@ async function save(screen: Awaited<ReturnType<typeof renderScreen>>) {
 }
 
 describe('Save as decision from a Discussion message', () => {
+  it('opens a code-only answer with the decision left to write and the answer quoted beneath (owner 03)', async () => {
+    const f = await createMemoryDecisionHomeFixture();
+    const source: CoordinationMessageRefV1 = { kind: 'discussion',
+      discussion: { serverId: f.serverId, discussionId: 'discussion-1' }, messageId: 'committed-source' };
+    const screen = await renderScreen(<SaveMemoryDecisionForm
+      seed={seedMemoryDecisionFromMessage(source, 'Result:\n```json\n{ "listPinned": false }\n```')}
+      onClose={vi.fn()} onSaved={vi.fn()} />);
+    try {
+      expect(screen.findByTestId('save-memory-decision.text')?.props.value).toBe('');
+      expect(screen.findByTestId('save-memory-decision.reason')?.props.value).toBe('');
+      expect(screen.findByTestId('save-memory-decision.source')).toBeTruthy();
+      const button = screen.find(node => node.props?.testID === 'save-memory-decision.save' && typeof node.props.action === 'function');
+      expect(button.props.disabled).toBe(true);
+    } finally { await screen.unmount(); await f.home.dispose(); }
+  });
+
   it('opens the reviewed revision after a CAS conflict without losing the decision draft', async () => {
     const f = await createMemoryDecisionHomeFixture();
     const first = await mount(f);
@@ -214,7 +237,7 @@ describe('Session-owned Save-to default', () => {
     const source: CoordinationMessageRefV1 = { kind: 'session',
       session: { serverId: f.serverId, sessionId: f.session.id }, messageId: 'committed-source' };
     const screen = await renderScreen(<SaveMemoryDecisionForm
-      seed={seedMemoryDecisionFromMessage(source, 'Retry cap stays at 5\nBackoff ran out too early.')}
+      seed={seedWithReason(source)}
       onClose={vi.fn()} onSaved={vi.fn()} />);
     try {
       await vi.waitFor(() => expect(screen.findByTestId(`save-memory-decision.target:project:${f.serverId}:payments`)).toBeTruthy());
@@ -240,7 +263,7 @@ describe('Session-owned Save-to default', () => {
     const source: CoordinationMessageRefV1 = { kind: 'session',
       session: { serverId: f.serverId, sessionId: f.session.id }, messageId: 'committed-source' };
     const screen = await renderScreen(<SaveMemoryDecisionForm
-      seed={seedMemoryDecisionFromMessage(source, 'Retry cap stays at 5\nBackoff ran out too early.')}
+      seed={seedWithReason(source)}
       onClose={vi.fn()} onSaved={vi.fn()} />);
     try {
       const payments = `save-memory-decision.target:project:${f.serverId}:payments`;
@@ -271,7 +294,7 @@ describe('Session-owned Save-to default', () => {
       session: { serverId: f.serverId, sessionId: f.session.id }, messageId: 'committed-source' };
     const onSaved = vi.fn();
     const screen = await renderScreen(<SaveMemoryDecisionForm
-      seed={seedMemoryDecisionFromMessage(source, 'Retry cap stays at 5\nBackoff ran out too early.')}
+      seed={seedWithReason(source)}
       onClose={vi.fn()} onSaved={onSaved} />);
     try {
       const onlyMe = 'save-memory-decision.target:account';
@@ -309,7 +332,7 @@ describe('Session-owned Save-to default', () => {
         session: { serverId: f.serverId, sessionId: f.session.id }, messageId: 'committed-source' };
       const onSaved = vi.fn();
       const screen = await renderScreen(<SaveMemoryDecisionForm
-        seed={seedMemoryDecisionFromMessage(source, 'Retry cap stays at 5\nBackoff ran out too early.')}
+        seed={seedWithReason(source)}
         onClose={vi.fn()} onSaved={onSaved} />);
       try {
         await vi.waitFor(() => expect(screen.findByTestId('save-memory-decision.target')).toBeTruthy());

@@ -4,18 +4,19 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { HappierPressable, happierFocusRingStyle } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
-import { IconButton } from '@/components/ui/buttons/IconButton';
 import { resolveMessageActionNeighbourGapPx } from './messageActionNeighbourGap';
 import { ContextMenu, type ContextMenuItem } from '@/components/ui/forms/dropdown/ContextMenu';
+import { MessageActionIconButton } from './MessageActionIconButton';
 import { SelectMessageButton } from '../messageSelection/SelectMessageButton';
 import { useSessionTranscriptSource } from '../source/SessionTranscriptSourceContext';
 import { MessageActionRow } from './MessageActionRow';
 import { MessagePinButton } from './MessagePinButton';
 import { PluginMessageActionsView } from './PluginMessageActions';
-import { useCommittedMessageActions, type CommittedMessageActionInput } from './useCommittedMessageActions';
+import { useCommittedMessageActions, type CommittedMessageAction, type CommittedMessageActionInput } from './useCommittedMessageActions';
 import { SaveMessageAsPrompt } from './SaveMessageAsPrompt';
 import { DiscussionSourceMarkers } from '@/components/discussions/SessionDiscussionSourceLinks';
-import { SaveMemoryDecisionSheet, seedMemoryDecisionFromMessage } from '@/components/memory/SaveMemoryDecisionSheet';
+import { SaveMemoryDecisionSheet } from '@/components/memory/SaveMemoryDecisionSheet';
+import { seedMemoryDecisionFromMessage } from '@/components/memory/memoryDecisionSeed';
 import type { SessionMessageRefV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageRefV1';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -39,8 +40,6 @@ type Props = Omit<CommittedMessageActionInput, 'openSavePrompt' | 'openSaveDecis
     hoverProps?: RowActionHoverHost['hoverProps'];
     /** On a touch host, the message key that a tap or long-press opens; null where hover reveals the row. */
     touchRevealKey: string | null;
-    onActionHoverIn?: () => void;
-    onActionHoverOut?: () => void;
     children: (row: React.ReactNode) => React.ReactNode;
 }>;
 
@@ -68,11 +67,11 @@ export function CommittedMessageActions(props: Props) {
     const { theme } = useUnistyles();
     const source = useSessionTranscriptSource();
     const anchorRef = React.useRef<View>(null);
-    const saveAnchorRef = React.useRef<View>(null);
+    // Save as prompt and Save as decision open from the ⋯ (or the native hold), anchored to it.
+    const overflowAnchorRef = React.useRef<View>(null);
     const [menuOpen, setMenuOpen] = React.useState(false);
     const [saveOpen, setSaveOpen] = React.useState(false);
     const [savedArtifactId, setSavedArtifactId] = React.useState<string | null>(null);
-    const decisionAnchorRef = React.useRef<View>(null);
     const [decisionSeedSource, setDecisionSeedSource] = React.useState<SessionMessageRefV1 | null>(null);
     const [decisionSaved, setDecisionSaved] = React.useState(false);
     const { actions, pinAvailability, pluginActions, makeRepeatableSource, setMakeRepeatableCapability, committedMessage,
@@ -83,11 +82,13 @@ export function CommittedMessageActions(props: Props) {
     const availableActions = actions.filter((action) => action.available);
     const saveAvailable = availableActions.some((action) => action.id === 'savePrompt');
     React.useEffect(() => { if (!saveAvailable) setSaveOpen(false); }, [saveAvailable]);
-    const items: ContextMenuItem[] = availableActions.flatMap((action) => action.menuItems
+    /** One menu row per action, for the native hold (every action) and the row's ⋯ (its overflow actions). */
+    const toMenuItems = (list: readonly CommittedMessageAction[]): ContextMenuItem[] => list.flatMap((action) => action.menuItems
         ? [...action.menuItems]
         : action.id === 'pin' && props.settings.transcriptMessagePinActionEnabled === false
             ? [] : [{
                 id: action.id, title: action.title,
+                testID: `${actionTestIdPrefix(action.id)}:${props.message.id}`,
                 disabled: action.disabled,
                 icon: <Icon name={action.icon} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
                 ...(action.id === 'savePrompt' ? { subtitle: t('committedMessageActions.savePromptHint') } : {}),
@@ -96,6 +97,13 @@ export function CommittedMessageActions(props: Props) {
                 id: `${action.id}:recovery`, title: action.disabledRecovery.title,
                 icon: <Icon name="gear" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
             }] : [])]);
+    const items = toMenuItems(availableActions);
+    // A saved prompt or decision confirms in the row until the row is recycled.
+    const savedInRow = (id: string) => (id === 'savePrompt' && savedArtifactId !== null) || (id === 'saveDecision' && decisionSaved);
+    const rowActions = availableActions.filter((action) => action.id !== 'plugins' && action.id !== 'pin'
+        && (action.placement === 'row' || savedInRow(action.id)));
+    const overflowItems = toMenuItems(availableActions.filter((action) => action.id !== 'plugins'
+        && action.placement === 'overflow' && !savedInRow(action.id)));
     // The gap to the neighbouring action (its `marginRight`) is split between the two hit areas.
     const actionGapPx = props.invertTimestampAndActions ? theme.space.s2 : theme.space.s6;
     const neighbourGapPx = resolveMessageActionNeighbourGapPx(theme);
@@ -132,25 +140,26 @@ export function CommittedMessageActions(props: Props) {
         if (recovery) { recovery.onPress(); return; }
         if (action && !action.disabled) void action.onPress();
     };
-    const pinAction = availableActions.find((action) => action.id === 'pin');
+    // A pinned message keeps its pin in the row (the pinned state, and Unpin); Pin itself waits under ⋯.
+    const pinAction = availableActions.find((action) => action.id === 'pin' && action.placement === 'row');
+    const focusChange = (focused: boolean) => focused ? props.onActionsFocus() : props.onActionsBlur();
     const row = <MessageActionRow
         isWeb={Platform.OS === 'web'} messageId={props.message.id}
         showActions={props.showActions} showPinAction={props.showPinAction}
         pinAction={pinAction ? <MessagePinButton availability={pinAvailability} onTogglePin={props.onToggleMessagePin}
             testID={`transcript-message-pin:${props.message.id}`} invertedActionsLayout={props.invertTimestampAndActions}
-            onHoverIn={props.onActionHoverIn} onHoverOut={props.onActionHoverOut} /> : null}
+            onFocusChange={focusChange} /> : null}
         onActionsFocus={props.onActionsFocus} onActionsBlur={props.onActionsBlur}
         onOpenActions={touchRevealKey !== null && !props.showActions ? openActions : undefined}
         timestampText={props.timestampText} timestampGlyph={props.timestampGlyph
             ? <Icon name={props.timestampGlyph} size={ICON_SIZE.xxs} color={theme.colors.text.tertiary} /> : undefined}
         invertTimestampAndActions={props.invertTimestampAndActions}
     >
-        {availableActions.filter((action) => action.id !== 'pin').map((action) => {
-            if (action.id === 'plugins') return <PluginMessageActionsView key={action.id} actions={pluginActions} invertedActionsLayout={props.invertTimestampAndActions} />;
+        {rowActions.map((action) => {
             if (action.id === 'select') return <SelectMessageButton key={action.id} messageId={props.message.id}
                 enabled visible role={props.selectableText?.role} previewText={props.selectableText?.text}
                 testID={`transcript-message-select:${props.message.id}`} invertedActionsLayout={props.invertTimestampAndActions}
-                onHoverIn={props.onActionHoverIn} onHoverOut={props.onActionHoverOut} />;
+                onFocusChange={focusChange} />;
             if (action.id === 'savePrompt' && savedArtifactId) return <HappierPressable key={action.id}
                 testID={`transcript-message-saved-prompt:${props.message.id}`} accessibilityRole="button"
                 accessibilityLabel={t('committedMessageActions.savedOpen')}
@@ -165,23 +174,20 @@ export function CommittedMessageActions(props: Props) {
             </HappierPressable>;
             if (action.id === 'saveDecision' && decisionSaved) return <View key={action.id} testID={`transcript-message-saved-decision:${props.message.id}`}
                 style={styles.saved} accessibilityLiveRegion="polite">
-                <Icon name="check" size={ICON_SIZE.xs} color={theme.colors.state.success.foreground} />
+                <Icon name="seal-check" size={ICON_SIZE.xs} color={theme.colors.state.success.foreground} />
                 <Text style={styles.savedText} numberOfLines={1}>{t('memoryContext.memory.savedAsDecision')}</Text>
             </View>;
-            return <View key={action.id} ref={action.id === 'savePrompt' ? saveAnchorRef : action.id === 'saveDecision' ? decisionAnchorRef : undefined} collapsable={false}
-                style={props.invertTimestampAndActions ? styles.inverted : styles.button}><IconButton testID={`transcript-message-${action.id === 'savePrompt' ? 'save-prompt' : action.id === 'saveDecision' ? 'save-decision' : action.id === 'makeRepeatable' ? 'repeatable' : action.id}:${props.message.id}`}
-                size={28}
-                icon={<Icon name={action.icon} size={ICON_SIZE.xs} color={action.id === 'copy' && action.icon === 'check'
-                    ? theme.colors.state.success.foreground : theme.colors.text.secondary} />}
-                accessibilityLabel={action.title}
-                accessibilityHint={action.accessibilityHint}
+            return <MessageActionIconButton key={action.id} testID={`${actionTestIdPrefix(action.id)}:${props.message.id}`}
+                icon={action.icon}
+                stateColor={action.id === 'copy' && action.icon === 'check' ? theme.colors.state.success.foreground : undefined}
+                accessibilityLabel={action.title} accessibilityHint={action.accessibilityHint}
                 disabled={action.disabled} disabledReason={action.disabledReason}
                 onDisabledPress={action.disabledRecovery?.onPress}
-                tooltip={action.title} interactiveTargetGapPx={actionGapPx} interactiveTargetVerticalGapPx={neighbourGapPx}
-                variant="plain" onPress={action.onPress}
-                onFocusChange={(focused) => focused ? props.onActionsFocus() : props.onActionsBlur()}
-            /></View>;
+                invertedActionsLayout={props.invertTimestampAndActions}
+                onPress={action.onPress} onFocusChange={focusChange} />;
         })}
+        <PluginMessageActionsView actions={pluginActions} invertedActionsLayout={props.invertTimestampAndActions}
+            hostOverflowItems={overflowItems} onSelectHostOverflow={perform} overflowAnchorRef={overflowAnchorRef} />
     </MessageActionRow>;
     // A Discussion started on this answer (lab T3-D) stays under the answer, ahead of its hover actions.
     const markers = <DiscussionSourceMarkers source={committedMessage} navigate={source.navigate} />;
@@ -193,11 +199,11 @@ export function CommittedMessageActions(props: Props) {
         /> : null}
         {saveOpen && saveAvailable ? <SaveMessageAsPrompt
             messageId={props.message.id} text={props.selectableText!.text} serverId={props.serverId ?? source.serverId}
-            anchorRef={saveAnchorRef} onClose={() => setSaveOpen(false)}
+            anchorRef={overflowAnchorRef} onClose={() => setSaveOpen(false)}
             onSaved={(artifactId) => { setSavedArtifactId(artifactId); setSaveOpen(false); }} /> : null}
         {decisionSeedSource && props.selectableText ? <SaveMemoryDecisionSheet
             seed={seedMemoryDecisionFromMessage(decisionSeedSource, props.selectableText.text)}
-            anchorRef={decisionAnchorRef} onClose={() => setDecisionSeedSource(null)}
+            anchorRef={overflowAnchorRef} onClose={() => setDecisionSeedSource(null)}
             onSaved={() => { setDecisionSeedSource(null); setDecisionSaved(true); }} /> : null}
     </>;
     return <>
@@ -220,9 +226,13 @@ export function CommittedMessageActions(props: Props) {
     </>;
 }
 
+/** The row and menu testID of each action (stable for tests and QA). */
+function actionTestIdPrefix(id: CommittedMessageAction['id']): string {
+    const name = id === 'savePrompt' ? 'save-prompt' : id === 'saveDecision' ? 'save-decision' : id === 'makeRepeatable' ? 'repeatable' : id;
+    return `transcript-message-${name}`;
+}
+
 const styles = StyleSheet.create((theme) => ({
-    button: { marginRight: theme.space.s6 },
-    inverted: { marginRight: theme.space.s2 },
     saved: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, height: 28, paddingHorizontal: theme.space.s6, marginRight: theme.space.s6, borderRadius: 14 },
     savedPressed: { backgroundColor: theme.colors.surface.pressed },
     savedText: { ...Typography.variant('meta'), color: theme.colors.text.secondary },

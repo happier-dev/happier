@@ -211,6 +211,7 @@ import { RocketIcon } from 'phosphor-react-native/src/icons/Rocket';
 import { RocketLaunchIcon } from 'phosphor-react-native/src/icons/RocketLaunch';
 import { ScalesIcon } from 'phosphor-react-native/src/icons/Scales';
 import { ScissorsIcon } from 'phosphor-react-native/src/icons/Scissors';
+import { SealCheckIcon } from 'phosphor-react-native/src/icons/SealCheck';
 import { SelectionIcon } from 'phosphor-react-native/src/icons/Selection';
 import { ShareIcon } from 'phosphor-react-native/src/icons/Share';
 import { ShareNetworkIcon } from 'phosphor-react-native/src/icons/ShareNetwork';
@@ -488,6 +489,7 @@ export const ICON_REGISTRY = {
     'rocket-launch': RocketLaunchIcon,
     'scales': ScalesIcon,
     'scissors': ScissorsIcon,
+    'seal-check': SealCheckIcon,
     'selection': SelectionIcon,
     'share': ShareIcon,
     'share-network': ShareNetworkIcon,

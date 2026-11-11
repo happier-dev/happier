@@ -37,6 +37,8 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
     fill?: boolean;
     /** The field's words while nothing is chosen; without it the first choice stands in. */
     placeholder?: string;
+    /** A search field atop the menu, for a list long enough to look through (a person's Projects). */
+    searchPlaceholder?: string;
 }>) {
     const { theme } = useUnistyles();
     const [open, setOpen] = React.useState(false);
@@ -67,6 +69,7 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
             matchTriggerWidth={props.fill === true}
             {...(props.fill ? {} : { maxWidthCap: 320 })}
             showCategoryTitles={false}
+            {...(props.searchPlaceholder ? { search: true, searchPlaceholder: props.searchPlaceholder } : {})}
             popoverPortalWebTarget="body"
             trigger={({ toggle }) => (
                 <HappierPressable

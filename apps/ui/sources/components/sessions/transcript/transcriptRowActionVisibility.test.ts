@@ -8,14 +8,12 @@ import {
 const hiddenOnFinePointerWeb = {
     platformOS: 'web' as const,
     isRowHovered: false,
-    isActionHovered: false,
 };
 
 describe('shouldShowTranscriptRowActions', () => {
-    it('hides actions on fine-pointer web until the row or an action is hovered', () => {
+    it('hides actions on fine-pointer web until the row is hovered', () => {
         expect(shouldShowTranscriptRowActions(hiddenOnFinePointerWeb)).toBe(false);
         expect(shouldShowTranscriptRowActions({ ...hiddenOnFinePointerWeb, isRowHovered: true })).toBe(true);
-        expect(shouldShowTranscriptRowActions({ ...hiddenOnFinePointerWeb, isActionHovered: true })).toBe(true);
     });
 
     it('reveals actions when keyboard focus enters the row action group', () => {

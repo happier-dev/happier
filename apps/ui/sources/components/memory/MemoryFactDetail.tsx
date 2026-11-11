@@ -54,7 +54,7 @@ export const MemoryFactDetail = React.memo(function MemoryFactDetail(
         meta={[
           {
             key: 'kind',
-            icon: decision ? 'check-circle' : 'note',
+            icon: decision ? 'seal-check' : 'note',
             text: decision
               ? t('memoryContext.memory.decision')
               : t('memoryContext.memory.note'),

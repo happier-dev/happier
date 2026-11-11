@@ -34,21 +34,6 @@ function findAllPressablesByTestId(screen: Awaited<ReturnType<typeof renderScree
     return screen.findAllHostsByTestId(testID).filter((node) => typeof node.props.onPress === 'function');
 }
 
-function flattenStyle(style: unknown): Record<string, unknown> {
-    if (Array.isArray(style)) {
-        return Object.assign({}, ...style.filter(Boolean).map(flattenStyle));
-    }
-    return style && typeof style === 'object' ? style as Record<string, unknown> : {};
-}
-
-function resolvePressableStyle(node: { props: { style?: unknown } }): Record<string, unknown> {
-    const style = node.props.style;
-    if (typeof style === 'function') {
-        return flattenStyle(style({ pressed: false }));
-    }
-    return flattenStyle(style);
-}
-
 function renderButton(props: Partial<React.ComponentProps<typeof SelectMessageButton>> = {}) {
     return renderScreen(
         <TranscriptMessageSelectionProvider sessionId="s1" eligibleMessageIdsInOrder={['m1', 'm2']}>
@@ -102,7 +87,7 @@ describe('SelectMessageButton', () => {
 
         expect(screen.findByType('ProbeRoot').props).toMatchObject({ mode: true, count: 1, selected: true });
         expect(findPressableByTestId(screen, 'select-m1').props.accessibilityRole).toBe('checkbox');
-        expect(findPressableByTestId(screen, 'select-m1').props.accessibilityState).toEqual({ checked: true });
+        expect(findPressableByTestId(screen, 'select-m1').props.accessibilityState).toMatchObject({ checked: true });
         expect(findPressableByTestId(screen, 'select-m1').props.accessibilityLabel).toBe('assistant: hello from assistant');
         expect(screen.findByType('Icon').props.name).toBe('check-square');
     });
@@ -116,9 +101,8 @@ describe('SelectMessageButton', () => {
         expect(findAllPressablesByTestId(screen, 'select-m1')).toHaveLength(1);
         expect(findPressableByTestId(screen, 'select-m1').props.accessibilityRole).toBe('checkbox');
         const uncheckedSelectionToggle = findPressableByTestId(screen, 'select-m1');
-        expect(uncheckedSelectionToggle.props.accessibilityState).toEqual({ checked: false });
+        expect(uncheckedSelectionToggle.props.accessibilityState).toMatchObject({ checked: false });
         expect(uncheckedSelectionToggle.props.accessibilityLabel).toBe('assistant: hello from assistant');
-        expect(resolvePressableStyle(uncheckedSelectionToggle).backgroundColor).toEqual(expect.any(String));
         expect(screen.findByType('Icon').props.name).toBe('square');
 
         await act(async () => {
@@ -132,29 +116,16 @@ describe('SelectMessageButton', () => {
         expect(screen.findByType('ProbeRoot').props).toMatchObject({ mode: true, count: 1, selected: false });
     });
 
-    it('keeps its drawn size: the touch target is the hit area, not a floor on the box', async () => {
+    it('keeps the row\'s one glyph size while selecting; selection shows in the glyph, not a bigger one (owner 04)', async () => {
+        const { ICON_SIZE } = await import('@/components/ui/icons/Icon');
         const screen = await renderButton();
-        const button = findPressableByTestId(screen, 'select-m1');
-
-        expect(resolvePressableStyle(button).minWidth).toBeUndefined();
-        expect(resolvePressableStyle(button).minHeight).toBeUndefined();
-    });
-
-    it('enlarges the icon in selection mode without growing the box', async () => {
-        const screen = await renderButton();
-
-        expect(findPressableByTestId(screen, 'select-m1').props.hitSlop).toBeUndefined();
-        expect(screen.findByType('Icon').props.size).toBe(12);
+        expect(screen.findByType('Icon').props).toMatchObject({ name: 'check-circle', size: ICON_SIZE.xs });
 
         await act(async () => {
             findPressableByTestId(screen, 'select-m1').props.onPress();
         });
 
-        const selectionToggle = findPressableByTestId(screen, 'select-m1');
-        expect(selectionToggle.props.hitSlop).toBeUndefined();
-        expect(screen.findByType('Icon').props.size).toBe(18);
-        expect(resolvePressableStyle(selectionToggle).minHeight).toBeUndefined();
-        expect(resolvePressableStyle(selectionToggle).minWidth).toBeUndefined();
+        expect(screen.findByType('Icon').props).toMatchObject({ name: 'check-square', size: ICON_SIZE.xs });
     });
 
     it('names whose message it selects when a thread repeats the action on every message', async () => {

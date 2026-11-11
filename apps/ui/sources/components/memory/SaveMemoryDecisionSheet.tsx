@@ -4,7 +4,6 @@ import { StyleSheet } from 'react-native-unistyles';
 import {
   HAPPIER_PAGE_METRICS,
 } from '@happier-dev/plugin-ui/presentation';
-import type { CoordinationMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { LocalDateTimeEditor } from '@/components/ui/dateTime/LocalDateTimeEditor';
@@ -26,6 +25,9 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import type { MemoryCreationReceipt } from '@/sync/ops/promptLibrary/memoryDocuments';
 import { t } from '@/text';
 
+import { MarkdownExcerpt } from '@/components/markdown/MarkdownExcerpt';
+
+import type { SaveMemoryDecisionSeed } from './memoryDecisionSeed';
 import { MemoryDuplicateChoice } from './MemoryDocumentBody';
 import { MemoryDuplicateSavedFact } from './MemoryDuplicateSavedFact';
 import { SaveMemoryDecisionSaved } from './SaveMemoryDecisionSaved';
@@ -37,14 +39,6 @@ import {
 } from './SaveMemoryDecisionTarget';
 import { useSaveMemoryDecision } from './useSaveMemoryDecision';
 
-/** What opens the sheet: the exact committed message, and what to prefill from it. */
-export type SaveMemoryDecisionSeed = Readonly<{
-  sourceMessageRef: CoordinationMessageRefV1;
-  /** The decision as one line; the person edits it before saving. */
-  text: string;
-  reason?: string;
-}>;
-
 type FormProps = Readonly<{
   seed: SaveMemoryDecisionSeed;
   onClose: () => void;
@@ -55,23 +49,6 @@ type FormProps = Readonly<{
 
 type Expiry = 'never' | 'date';
 
-/** First line of the answer as the decision, the rest as its reason; both stay editable. */
-export function seedMemoryDecisionFromMessage(
-  sourceMessageRef: CoordinationMessageRefV1,
-  message: string,
-): SaveMemoryDecisionSeed {
-  const trimmed = message.trim();
-  const [first = '', ...rest] = trimmed.split(/\r?\n/);
-  return {
-    sourceMessageRef,
-    text: first
-      .replace(/^[#>*\-\s]+/, '')
-      .replace(/\*\*/g, '')
-      .trim(),
-    reason: rest.join('\n').trim(),
-  };
-}
-
 /**
  * Save as decision (lab K2 `S`/`Sd`, C6 §5): the decision, its reason, the exact message it was decided
  * in and an expiry (Never or a date). It saves through `memory.decision.save`: a Session's message to that
@@ -80,11 +57,13 @@ export function seedMemoryDecisionFromMessage(
  */
 export function SaveMemoryDecisionForm(props: FormProps) {
   const model = useSaveMemoryDecision(props);
-  return <SaveMemoryDecisionFormContent model={model} onClose={props.onClose} onSaved={props.onSaved} />;
+  return <SaveMemoryDecisionFormContent model={model} quote={props.seed.quote} onClose={props.onClose} onSaved={props.onSaved} />;
 }
 
 function SaveMemoryDecisionFormContent(props: Readonly<{
   model: ReturnType<typeof useSaveMemoryDecision>;
+  /** The source message, quoted under the fields; absent when the seed has no message text to show. */
+  quote?: string;
   onClose: () => void;
   onSaved: () => void;
 }>) {
@@ -121,7 +100,7 @@ function SaveMemoryDecisionFormContent(props: Readonly<{
   return (
     <View testID="save-memory-decision" style={styles.form}>
       <View style={styles.header}>
-        <Icon name="check-circle" />
+        <Icon name="seal-check" />
         <View style={styles.headerText}>
           <Text style={styles.heading} accessibilityRole="header">
             {t('memoryContext.memory.sheetTitle')}
@@ -217,6 +196,7 @@ function SaveMemoryDecisionFormContent(props: Readonly<{
           <FieldTextInput
             testID="save-memory-decision.text"
             accessibilityLabel={t('memoryContext.memory.sheetDecisionLabel')}
+            placeholder={t('memoryContext.memory.sheetDecisionPlaceholder')}
             value={text}
             onChangeText={setText}
             multiline
@@ -235,18 +215,29 @@ function SaveMemoryDecisionFormContent(props: Readonly<{
             onChangeText={setReason}
             multiline
             minLines={2}
+            growWithText
           />
         </FieldItem>
-        <View style={styles.source}>
-          <Icon name="quotes" size={14} />
-          <Text style={styles.meta}>
-            {t(
-              sessionSource
-                ? 'memoryContext.memory.sheetSource'
-                : 'memoryContext.memory.sheetSourceMessage',
-            )}
-          </Text>
-        </View>
+        {props.quote ? (
+          <MarkdownExcerpt
+            testID="save-memory-decision.source"
+            markdown={props.quote}
+            source={t(sessionSource ? 'memoryContext.memory.sheetSource' : 'memoryContext.memory.sheetSourceMessage')}
+            showMore={t('memoryContext.memory.sheetSourceShowMore')}
+            showLess={t('memoryContext.memory.sheetSourceShowLess')}
+          />
+        ) : (
+          <View style={styles.source}>
+            <Icon name="quotes" size={14} />
+            <Text style={styles.meta}>
+              {t(
+                sessionSource
+                  ? 'memoryContext.memory.sheetSource'
+                  : 'memoryContext.memory.sheetSourceMessage',
+              )}
+            </Text>
+          </View>
+        )}
         <SaveMemoryDecisionTargetChooser model={model} />
         <SegmentedChoiceItem<Expiry>
           title={t('memoryContext.memory.sheetExpires')}
@@ -343,6 +334,7 @@ export function SaveMemoryDecisionSheet(
         <View style={[styles.sheetBody, { maxHeight }]}>
           <SaveMemoryDecisionFormContent
             model={model}
+            quote={props.seed.quote}
             onClose={props.onClose}
             onSaved={props.onSaved}
           />
@@ -352,6 +344,7 @@ export function SaveMemoryDecisionSheet(
           <View style={[styles.popoverBody, { maxHeight }]}>
             <SaveMemoryDecisionFormContent
               model={model}
+              quote={props.seed.quote}
               onClose={props.onClose}
               onSaved={props.onSaved}
             />

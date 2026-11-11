@@ -39,7 +39,7 @@ export function DiscussionMessageMenu(
               title: t('memoryContext.memory.saveAsDecision'),
               icon: (
                 <Icon
-                  name="check-circle"
+                  name="seal-check"
                   size={ICON_SIZE.xs}
                   color={iconColor}
                 />

@@ -91,7 +91,6 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
     const rowActionVisibility = {
         platformOS: Platform.OS,
         isRowHovered: isHovered,
-        isActionHovered: false,
         coarsePrimaryPointer: useCoarsePrimaryPointer(),
     } as const;
     // A pinned row keeps its pin visible; the open-details icon still waits for

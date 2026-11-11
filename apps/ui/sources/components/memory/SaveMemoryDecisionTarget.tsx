@@ -4,8 +4,9 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { MemoryScopeTargetV1 } from '@happier-dev/protocol/actions/executor/types';
 
 import { resolveWorkspaceRefDisplayName, resolveWorkspaceRefDisplayNames } from '@/components/projects/resolveWorkspaceRefDisplayName';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { Icon } from '@/components/ui/icons/Icon';
+import { Item } from '@/components/ui/lists/Item';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Text } from '@/components/ui/text/Text';
@@ -111,7 +112,6 @@ function TargetChoice(
 ) {
   const { model, natural } = props;
   const { targets, selectedTarget, selectTarget, clearTarget, targetCoverage } = model;
-  const [menuOpen, setMenuOpen] = React.useState(false);
   const activeId = selectedTarget
     ? memoryDecisionTargetId(selectedTarget)
     : natural.id;
@@ -130,7 +130,6 @@ function TargetChoice(
         if (id === natural.id) clearTarget();
         else selectTarget(row.target);
       }
-      setMenuOpen(false);
     },
     [clearTarget, natural.id, selectTarget, targets],
   );
@@ -166,33 +165,27 @@ function TargetChoice(
           disabled={locked}
         />
       ) : control === 'menu' ? (
-        <DropdownMenu
-          testID="save-memory-decision.targetMenu"
-          open={menuOpen}
-          onOpenChange={setMenuOpen}
-          items={options.map((option) => ({
-            id: option.id,
-            title: option.label,
-            testID: `save-memory-decision.target:${option.id}`,
-          }))}
-          selectedId={
-            active ? memoryDecisionTargetId(active.target) : undefined
-          }
-          onSelect={choose}
-          search
-          searchPlaceholder={t('common.search')}
-          itemTrigger={{
-            title: t('memoryContext.memory.sheetSaveTo'),
-            // A select with nothing chosen still names where the save goes.
-            detailFormatter: (selected) => selected?.title
-              ?? (sessionDefault ? t('memoryContext.memory.sheetSaveToSessionDefault') : null),
-            itemProps: {
-              accessoryLayout: 'adaptive',
-              disabled: locked,
-              showDivider: false,
-              style: memoryDecisionSheetRowStyle,
-            },
-          }}
+        // The form's bordered field under the row's title, like Expires below it; its menu opens at the field's width.
+        <Item
+          title={t('memoryContext.memory.sheetSaveTo')}
+          subtitle={overrideNote}
+          accessoryLayout="stacked"
+          showDivider={false}
+          style={memoryDecisionSheetRowStyle}
+          rightElement={(
+            <ValueFieldSelect
+              testID="save-memory-decision.targetMenu"
+              label={t('memoryContext.memory.sheetSaveTo')}
+              items={options.map((option) => ({ id: option.id, title: option.label }))}
+              selectedId={active ? memoryDecisionTargetId(active.target) : null}
+              onSelect={choose}
+              disabled={locked}
+              fill
+              // A select with nothing chosen still names where the save goes.
+              {...(sessionDefault ? { placeholder: t('memoryContext.memory.sheetSaveToSessionDefault') } : {})}
+              searchPlaceholder={t('common.search')}
+            />
+          )}
         />
       ) : null}
       {active ? (
@@ -212,7 +205,7 @@ function TargetChoice(
         />
       ) : null}
       {targetCoverage === 'partial' ? (
-        <Text style={styles.meta}>
+        <Text style={styles.hint}>
           {t('memoryContext.memory.sheetSaveToPartial')}
         </Text>
       ) : null}
@@ -276,4 +269,5 @@ const styles = StyleSheet.create((theme) => ({
   target: { gap: theme.space.s6 },
   audience: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 },
   meta: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
+  hint: { ...Typography.variant('meta'), color: theme.colors.text.tertiary },
 }));

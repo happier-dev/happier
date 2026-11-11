@@ -25,7 +25,8 @@ vi.mock('react-native-safe-area-context', () => ({
   initialWindowMetrics: null,
 }));
 
-const { SaveMemoryDecisionSheet, seedMemoryDecisionFromMessage } = await import('./SaveMemoryDecisionSheet');
+const { SaveMemoryDecisionSheet } = await import('./SaveMemoryDecisionSheet');
+const { seedMemoryDecisionFromMessage } = await import('./memoryDecisionSeed');
 afterEach(() => { standardCleanup(); viewport.width = 1440; });
 
 async function open() {

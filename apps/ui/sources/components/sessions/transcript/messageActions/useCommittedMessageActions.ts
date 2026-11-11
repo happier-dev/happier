@@ -37,9 +37,16 @@ import { useOptionalSessionTranscriptSource } from '../source/SessionTranscriptS
 const executeSpeechAction = createFrontDoorUiActionExecutor();
 
 export type CommittedMessageActionId = 'copy' | 'fork' | 'rollback' | 'select' | 'pin' | 'savePrompt' | 'plugins' | 'makeRepeatable' | 'secondOpinion' | 'discuss' | 'saveDecision' | 'readAloud';
+/**
+ * Where an action shows on a revealed row: the few a person reaches for on most answers stay visible
+ * (owner 05: copy, select, undo, and Read aloud while it can speak; a pin while the message is pinned);
+ * everything else waits under the row's ⋯. The native long-press menu lists both.
+ */
+export type CommittedMessageActionPlacement = 'row' | 'overflow';
 export type CommittedMessageAction = Readonly<{
     id: CommittedMessageActionId;
     available: boolean;
+    placement: CommittedMessageActionPlacement;
     title: string;
     accessibilityHint?: string;
     disabled?: boolean;
@@ -148,35 +155,11 @@ export function useCommittedMessageActions(input: CommittedMessageActionInput, p
             Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
         }
     };
+    // Row order, leading to trailing; Read aloud leads so its arrival when speech turns ready shifts nothing after it.
     const actions: readonly CommittedMessageAction[] = [
-        { id: 'rollback', available: input.rollbackAction != null && settings.transcriptMessageRollbackActionEnabled !== false,
-            icon: 'arrow-arc-left', title: input.rollbackAction?.target?.type === 'before_user_message'
-                ? t('session.rollback.beforeUserMessageA11y') : t('session.rollback.latestTurnA11y'),
-            onPress: async () => {
-                if (!input.rollbackAction || !rollbackExecutor) return;
-                try {
-                    await executeTranscriptRollbackAction({ executor: rollbackExecutor, sessionId: input.sessionId,
-                        ...input.rollbackAction });
-                } catch (error) { Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.unknownError')); }
-            } },
-        { id: 'fork', available: settings.transcriptMessageForkActionEnabled !== false && input.canFork && canForkFromMessage({
-            session: input.forkCommon.sessionForkSupportSource, messageSeq: seq,
-            replayEnabled: input.forkCommon.sessionReplayEnabled, agentSwitchingEnabled: input.forkCommon.agentSwitchingEnabled,
-            currentAgentCapabilities: input.forkCommon.currentAgentCapabilities,
-        }), icon: 'git-branch', title: t('session.forking.forkFromMessageA11y'), onPress: fork },
-        { id: 'select', available: settings.transcriptMessageSelectionEnabled === true && input.selectableText != null && selectionActions != null,
-            icon: 'check-circle', title: t('transcript.selection.enterA11y'), onPress: () => {
-                if (selectionRow.isSelectionMode) selectionRow.toggle(); else selectionActions?.enter(message.id);
-            } },
-        { id: 'plugins', available: settings.transcriptMessagePluginActionsEnabled !== false,
-            icon: 'dots-three', title: t('common.moreActions'), onPress: () => undefined,
-            menuItems: pluginActions.menuActions.map((action) => ({ id: `plugin:${action.qualifiedActionId}`, title: action.title })) },
-        { id: 'savePrompt', available: settings.transcriptMessageSavePromptActionEnabled !== false && message.kind === 'user-text'
-            && !input.isStructuredOnly && !input.hasUnsupportedContent && input.selectableText != null,
-            icon: 'bookmark-plus', title: t('committedMessageActions.savePrompt'), onPress: input.openSavePrompt },
-        { id: 'copy', available: settings.transcriptMessageCopyActionEnabled !== false && input.copyText.trim().length > 0,
-            icon: copied ? 'check' : 'copy', title: t('common.copy'), onPress: copy },
         { id: 'readAloud', available: readAloudEligible, disabled: readAloudReadiness?.status !== 'ready',
+            // Speech the voice owner has not found ready waits under ⋯ with its reason (owner 05), never a dead glyph in the row.
+            placement: readAloudReadiness?.status === 'ready' ? 'row' : 'overflow',
             disabledReason: readAloudReadiness?.status === 'ready' ? undefined
                 : [translateVoiceReadiness(readAloudReadiness?.reasonKey ?? 'voice.readiness.runtime_unknown'),
                     readAloudRecovery?.title].filter(Boolean).join(' · '),
@@ -191,21 +174,48 @@ export function useCommittedMessageActions(input: CommittedMessageActionInput, p
                 } catch { /* The Action owns typed refusal; presentation never exposes transport or provider prose. */ }
                 Modal.alert(t('common.error'), t('settingsVoice.local.machineErrors.tts_failed'));
             } },
-        { id: 'makeRepeatable', available: makeRepeatable?.available === true,
-            icon: 'arrows-clockwise', title: t('workflows.authoring.repeatable'),
-            accessibilityHint: t('workflows.authoring.repeatableDescription'), onPress: () => makeRepeatable?.openRepeatable() },
-        { id: 'secondOpinion', available: committedSource !== null,
-            icon: 'scales', title: t('workflows.page.fields.secondOpinion'),
-            onPress: () => { if (committedSource) input.openDiscussionSource?.({ kind: 'session', message: committedSource }, 'second_opinion'); } },
-        { id: 'discuss', available: committedSource !== null,
-            icon: 'chats-circle', title: t('workflows.review.discuss'),
-            onPress: () => { if (committedSource) input.openDiscussionSource?.({ kind: 'session', message: committedSource }, 'discuss'); } },
-        { id: 'saveDecision', available: committedMessage !== null && memoryEnabled && input.openSaveDecision != null,
-            icon: 'check-circle', title: t('memoryContext.memory.saveAsDecision'),
-            onPress: () => { if (committedMessage) input.openSaveDecision?.(committedMessage); } },
-        { id: 'pin', available: input.onToggleMessagePin != null && pinAvailability.status === 'available',
+        { id: 'copy', placement: 'row', available: settings.transcriptMessageCopyActionEnabled !== false && input.copyText.trim().length > 0,
+            icon: copied ? 'check' : 'copy', title: t('common.copy'), onPress: copy },
+        { id: 'select', placement: 'row', available: settings.transcriptMessageSelectionEnabled === true && input.selectableText != null && selectionActions != null,
+            icon: 'check-circle', title: t('transcript.selection.enterA11y'), onPress: () => {
+                if (selectionRow.isSelectionMode) selectionRow.toggle(); else selectionActions?.enter(message.id);
+            } },
+        { id: 'rollback', placement: 'row', available: input.rollbackAction != null && settings.transcriptMessageRollbackActionEnabled !== false,
+            icon: 'arrow-arc-left', title: input.rollbackAction?.target?.type === 'before_user_message'
+                ? t('session.rollback.beforeUserMessageA11y') : t('session.rollback.latestTurnA11y'),
+            onPress: async () => {
+                if (!input.rollbackAction || !rollbackExecutor) return;
+                try {
+                    await executeTranscriptRollbackAction({ executor: rollbackExecutor, sessionId: input.sessionId,
+                        ...input.rollbackAction });
+                } catch (error) { Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.unknownError')); }
+            } },
+        { id: 'fork', placement: 'overflow', available: settings.transcriptMessageForkActionEnabled !== false && input.canFork && canForkFromMessage({
+            session: input.forkCommon.sessionForkSupportSource, messageSeq: seq,
+            replayEnabled: input.forkCommon.sessionReplayEnabled, agentSwitchingEnabled: input.forkCommon.agentSwitchingEnabled,
+            currentAgentCapabilities: input.forkCommon.currentAgentCapabilities,
+        }), icon: 'git-branch', title: t('session.forking.forkFromMessageA11y'), onPress: fork },
+        { id: 'pin', placement: pinned ? 'row' : 'overflow', available: input.onToggleMessagePin != null && pinAvailability.status === 'available',
             icon: pinned ? 'push-pin-slash' : 'push-pin', title: pinned ? t('session.transcriptNavigation.unpinMessageA11y') : t('session.transcriptNavigation.pinMessageA11y'),
             onPress: () => { if (pinAvailability.status === 'available') input.onToggleMessagePin?.(buildSessionMessagePinAtPressTime(pinAvailability.pinTarget)); } },
+        { id: 'savePrompt', placement: 'overflow', available: settings.transcriptMessageSavePromptActionEnabled !== false && message.kind === 'user-text'
+            && !input.isStructuredOnly && !input.hasUnsupportedContent && input.selectableText != null,
+            icon: 'bookmark-plus', title: t('committedMessageActions.savePrompt'), onPress: input.openSavePrompt },
+        { id: 'saveDecision', placement: 'overflow', available: committedMessage !== null && memoryEnabled && input.openSaveDecision != null,
+            icon: 'seal-check', title: t('memoryContext.memory.saveAsDecision'),
+            onPress: () => { if (committedMessage) input.openSaveDecision?.(committedMessage); } },
+        { id: 'discuss', placement: 'overflow', available: committedSource !== null,
+            icon: 'chats-circle', title: t('workflows.review.discuss'),
+            onPress: () => { if (committedSource) input.openDiscussionSource?.({ kind: 'session', message: committedSource }, 'discuss'); } },
+        { id: 'secondOpinion', placement: 'overflow', available: committedSource !== null,
+            icon: 'scales', title: t('workflows.page.fields.secondOpinion'),
+            onPress: () => { if (committedSource) input.openDiscussionSource?.({ kind: 'session', message: committedSource }, 'second_opinion'); } },
+        { id: 'makeRepeatable', placement: 'overflow', available: makeRepeatable?.available === true,
+            icon: 'arrows-clockwise', title: t('workflows.authoring.repeatable'),
+            accessibilityHint: t('workflows.authoring.repeatableDescription'), onPress: () => makeRepeatable?.openRepeatable() },
+        { id: 'plugins', placement: 'overflow', available: settings.transcriptMessagePluginActionsEnabled !== false,
+            icon: 'dots-three', title: t('common.moreActions'), onPress: () => undefined,
+            menuItems: pluginActions.menuActions.map((action) => ({ id: `plugin:${action.qualifiedActionId}`, title: action.title })) },
     ];
     return { actions, pinAvailability, pluginActions, makeRepeatableSource, setMakeRepeatableCapability, committedMessage,
         observeReadAloudReadiness, setReadAloudReadiness };

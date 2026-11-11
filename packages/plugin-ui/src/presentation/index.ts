@@ -6,3 +6,6 @@ export * from './index.public.js';
 // Host-only: the one roving tab-stop rule, for app composites that bind their own focus targets (the composer's
 // Agent rail). Not part of the governed public plugin API.
 export { resolveHappierRovingTabStop } from './collection/semantics.js';
+// Host-only: the one clipped-preview owner, for core content excerpts (a quoted source message). Plugins use
+// `ContentPreview` from the components barrel.
+export { HappierCollapsibleBody, type HappierCollapsibleBodyActionProps } from './content/CollapsibleBody.js';

@@ -33,7 +33,6 @@ const { getStorage } = await import('@/sync/domains/state/storageStore');
 const featuresClient = await import('@/sync/api/capabilities/serverFeaturesClient');
 const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
 const { CommittedMessageActions } = await import('./CommittedMessageActions');
-const { IconButton } = await import('@/components/ui/buttons/IconButton');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { createPluginMessageActionHost, PluginMessageActionHostProvider } = await import('./PluginMessageActions');
@@ -148,7 +147,45 @@ function element(kind: 'user-text' | 'agent-text', overrides: Partial<typeof set
     </TranscriptMessageSelectionProvider></InjectedAuthProvider>, createTestSessionTranscriptSource({ sessionId: 's1', serverId }));
 }
 
+type Screen = Awaited<ReturnType<typeof renderScreen>>;
+type MenuItem = { id: string; testID?: string; disabled?: boolean; subtitle?: string };
+/** The row's ⋯ menu (closed or open): the host's overflow actions, then plugin Actions. */
+function overflow(screen: Screen) {
+    return screen.findAll((node) => node.props?.testID === 'plugin-message-actions-overflow-menu' && Array.isArray(node.props.items))[0] ?? null;
+}
+const overflowItems = (screen: Screen): MenuItem[] => overflow(screen)?.props.items ?? [];
+/** An action the revealed row offers: its row button, or its row under ⋯. */
+function offered(screen: Screen, testID: string) {
+    return screen.findHostByTestId(testID) ?? overflowItems(screen).find((item) => item.testID === testID) ?? null;
+}
+
 describe('Committed row and native menu availability', () => {
+    it('keeps the most-used actions in the row, one glyph control each, and the rest under one ⋯ (owner 04/05)', async () => {
+        const { MessageActionIconButton } = await import('./MessageActionIconButton');
+        const ownerMetadata = { ...createSessionFixture().metadata!, work: { memoryEnabled: true } };
+        const { projectSessionSharedMetadataV1 } = await import('@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1');
+        const previousState = getStorage().getState();
+        getStorage().getState().applySessions([createSessionFixture({ id: 's1', serverId, metadataLayoutVersion: 1,
+            metadata: projectSessionSharedMetadataV1({ metadata: ownerMetadata }) as unknown as NonNullable<ReturnType<typeof createSessionFixture>['metadata']>,
+            ownerMetadataView: ownerMetadata })]);
+        const screen = await renderScreen(element('agent-text', { transcriptMessageSelectionEnabled: true }, false, 'answer', false,
+            'Quoted answer', false, false, undefined, vi.fn(), 'answer'));
+        try {
+            const rowIds = screen.findAllByType(MessageActionIconButton).map((button) => button.props.testID);
+            // The test voice runtime is ready, so Read aloud leads the row.
+            expect(rowIds).toEqual(['transcript-message-readAloud:answer', 'transcript-message-copy:answer', 'transcript-message-select:answer',
+                'transcript-message-rollback:answer', 'plugin-message-actions-overflow']);
+            expect(overflowItems(screen).map((item) => item.id)).toEqual(expect.arrayContaining([
+                'fork', 'pin', 'saveDecision', 'discuss', 'secondOpinion']));
+            // One menu lists them: no second ⋯ and no action both in the row and under it.
+            expect(overflowItems(screen).some((item) => ['readAloud', 'copy', 'select', 'rollback'].includes(item.id))).toBe(false);
+        } finally {
+            await screen.unmount();
+            getStorage().setState(previousState, true);
+        }
+    });
+
+
     it.each(['machine', 'engine'] as const)('offers the canonical %s recovery from unavailable read-aloud', async (failure) => {
         const { writeLocalConversationVoiceSettings, readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
         const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
@@ -172,11 +209,11 @@ describe('Committed row and native menu availability', () => {
             } }),
         }, getStorage().getState().settings));
         const screen = await renderScreen(element('agent-text'));
-        const action = screen.findAllByType(IconButton).find(button => button.props.testID === 'transcript-message-readAloud:m1')!;
-        expect(action.props.disabled).toBe(true);
-        expect(action.props.onDisabledPress).toEqual(expect.any(Function));
+        // Speech that is not ready is no dead glyph in the row: it waits under ⋯ with its reason and recovery.
+        expect(screen.findHostByTestId('transcript-message-readAloud:m1')).toBeNull();
+        expect(overflowItems(screen).find((item) => item.id === 'readAloud')).toMatchObject({ disabled: true, subtitle: expect.any(String) });
         const destination = failure === 'machine' ? VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET : VOICE_SETTINGS_PROVIDER_FOCUS_TARGET;
-        await screen.pressByTestIdAsync('transcript-message-readAloud:m1');
+        await act(async () => { await overflow(screen)!.props.onSelect('readAloud:recovery'); });
         expect(router.push).toHaveBeenLastCalledWith(destination);
         const menu = screen.findByType(ContextMenu);
         const recovery = menu.props.items.find((item: { id: string }) => item.id === 'readAloud:recovery');
@@ -200,15 +237,13 @@ describe('Committed row and native menu availability', () => {
         } });
         const screen = await renderScreen(element('agent-text'));
         expect(readLocalConversationVoiceSettings(getStorage().getState().settings.voice).tts.provider).toBe('local_neural');
-        const action = screen.findAllByType(IconButton).find(button => button.props.testID === 'transcript-message-readAloud:m1');
-        expect(action).toBeDefined();
-        expect(action!.props.disabled).toBe(true);
-        expect(action!.props.disabledReason).toBeTruthy();
-        expect(screen.findHostByTestId('transcript-message-readAloud:m1')?.props.accessibilityHint).toBe(action!.props.disabledReason);
+        expect(screen.findHostByTestId('transcript-message-readAloud:m1')).toBeNull();
+        const action = overflowItems(screen).find((item) => item.id === 'readAloud');
+        expect(action).toMatchObject({ disabled: true, subtitle: expect.any(String) });
         // The same descriptor feeds the native menu, including its unavailable reason.
         const menu = screen.findByType(ContextMenu);
         const item = menu.props.items.find((candidate: { id: string }) => candidate.id === 'readAloud');
-        expect(item).toMatchObject({ disabled: true, subtitle: action!.props.disabledReason });
+        expect(item).toMatchObject({ disabled: true, subtitle: action!.subtitle });
         for (const [kind, structured, text, unsupported, thinking] of [
             ['user-text', false, 'A person’s message', false, false],
             ['agent-text', true, 'Structured output', false, false],
@@ -217,7 +252,7 @@ describe('Committed row and native menu availability', () => {
             ['agent-text', false, '   ', false, false],
         ] as const) {
             await screen.update(element(kind, {}, structured, 'm1', false, text, unsupported, thinking));
-            expect(screen.findByTestId('transcript-message-readAloud:m1')).toBeNull();
+            expect(offered(screen, 'transcript-message-readAloud:m1')).toBeNull();
         }
     });
 
@@ -289,7 +324,7 @@ describe('Committed row and native menu availability', () => {
             screen = await renderScreen(element('agent-text', { transcriptMessageMakeRepeatableActionEnabled: false }));
             const menuHasDecision = () => screen!.findAllByType(ContextMenu)[0]?.props.items.some((item: { id: string }) => item.id === 'saveDecision');
             expect(menuHasDecision()).toBe(true);
-            expect(screen.findHostByTestId('transcript-message-save-decision:m1')).not.toBeNull();
+            expect(offered(screen, 'transcript-message-save-decision:m1')).not.toBeNull();
             const renders = bodyRenders;
             await act(async () => {
                 getStorage().getState().applySessions([createSessionFixture({ id: 'unrelated', serverId })]);
@@ -301,7 +336,7 @@ describe('Committed row and native menu availability', () => {
                     getStorage().setState(state => ({ sessions: { ...state.sessions, s1: { ...session, ownerMetadataView } } }));
                 });
                 const enabled = ownerMetadataView?.work.memoryEnabled === true;
-                expect(screen.findHostByTestId('transcript-message-save-decision:m1') !== null).toBe(enabled);
+                expect(offered(screen, 'transcript-message-save-decision:m1') !== null).toBe(enabled);
                 expect(menuHasDecision()).toBe(enabled);
             }
         } finally {
@@ -313,13 +348,12 @@ describe('Committed row and native menu availability', () => {
     it('opens the exact committed answer source through the shared row and native menu entry', async () => {
         const open = vi.fn();
         const screen = await renderScreen(element('agent-text', {}, false, 'answer', false, 'Quoted answer', false, false, undefined, open, 'committed-answer'));
-        const button = screen.findHostByTestId('transcript-message-secondOpinion:answer');
-        expect(button).not.toBeNull();
-        await act(async () => { await button!.props.onPress(); });
+        expect(offered(screen, 'transcript-message-secondOpinion:answer')).not.toBeNull();
+        await act(async () => { await overflow(screen)!.props.onSelect('secondOpinion'); });
         expect(open).toHaveBeenCalledWith({ kind: 'session', message: {
             kind: 'session', session: { serverId, sessionId: 's1' }, messageId: 'committed-answer',
         } }, 'second_opinion');
-        expect(screen.findHostByTestId('transcript-message-discuss:answer')).not.toBeNull();
+        expect(offered(screen, 'transcript-message-discuss:answer')).not.toBeNull();
         const menu = screen.findAllByType(ContextMenu)[0];
         expect(menu?.props.items.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining(['secondOpinion', 'discuss']));
         await act(async () => { await menu!.props.onSelect('discuss'); });
@@ -327,7 +361,7 @@ describe('Committed row and native menu availability', () => {
             kind: 'session', session: { serverId, sessionId: 's1' }, messageId: 'committed-answer',
         } }, 'discuss');
         await screen.update(element('agent-text', {}, false, 'thinking', false, 'Thinking', false, true, undefined, open));
-        expect(screen.findHostByTestId('transcript-message-secondOpinion:thinking')).toBeNull();
+        expect(offered(screen, 'transcript-message-secondOpinion:thinking')).toBeNull();
         expect(home.requestsFor('/v1/discussions/second-opinion/preview')).toHaveLength(0);
     });
 
@@ -484,7 +518,7 @@ describe('Committed row and native menu availability', () => {
         await featuresClient.getServerFeaturesSnapshot({ serverId, force: true });
         const screen = await renderScreen(element('agent-text', {}, false, 'm1', false, 'Useful prompt', false, false,
             undefined, undefined, 'm1', false));
-        expect(screen.findHostByTestId('transcript-message-repeatable:m1')).toBeNull();
+        expect(offered(screen, 'transcript-message-repeatable:m1')).toBeNull();
         expect(screen.findAllByType(ContextMenu)[0]?.props.items.some((item: { id: string }) => item.id === 'makeRepeatable')).toBe(false);
         expect(bodyRenders).toBe(1);
     });
@@ -498,7 +532,7 @@ describe('Committed row and native menu availability', () => {
         expect(activeFeatureSubscriptions).toBe(speechSubscriptions);
         await screen.update(element('agent-text', {}, false, 'm1', false, 'Useful prompt', false, false, undefined, undefined, undefined, true));
         expect(activeFeatureSubscriptions).toBeGreaterThan(speechSubscriptions);
-        expect(screen.findHostByTestId('transcript-message-repeatable:m1')).not.toBeNull();
+        expect(offered(screen, 'transcript-message-repeatable:m1')).not.toBeNull();
     });
 
     it('subscribes only while Make repeatable is eligible, preserving a view-only recycled body and row/menu parity', async () => {
@@ -507,19 +541,19 @@ describe('Committed row and native menu availability', () => {
         const bodyIdentity = screen.findHostByTestId('committed-message-body')?.props.accessibilityLabel;
         const menu = () => screen.findAllByType(ContextMenu)[0]?.props.items ?? [];
         const speechSubscriptions = activeFeatureSubscriptions;
-        expect(screen.findHostByTestId('transcript-message-repeatable:m1')).toBeNull();
+        expect(offered(screen, 'transcript-message-repeatable:m1')).toBeNull();
         await screen.update(element('agent-text'));
-        expect(screen.findHostByTestId('transcript-message-repeatable:m1')).not.toBeNull();
+        expect(offered(screen, 'transcript-message-repeatable:m1')).not.toBeNull();
         expect(menu().some((item: { id: string }) => item.id === 'makeRepeatable')).toBe(true);
         expect(activeFeatureSubscriptions).toBeGreaterThan(speechSubscriptions);
         await screen.update(element('agent-text', off));
-        expect(screen.findHostByTestId('transcript-message-repeatable:m1')).toBeNull();
+        expect(offered(screen, 'transcript-message-repeatable:m1')).toBeNull();
         expect(menu().some((item: { id: string }) => item.id === 'makeRepeatable')).toBe(false);
         expect(activeFeatureSubscriptions).toBe(speechSubscriptions);
         await screen.update(element('agent-text', off, false, 'recycled'));
-        expect(screen.findHostByTestId('transcript-message-repeatable:recycled')).toBeNull();
+        expect(offered(screen, 'transcript-message-repeatable:recycled')).toBeNull();
         await screen.update(element('agent-text', {}, false, 'recycled'));
-        expect(screen.findHostByTestId('transcript-message-repeatable:recycled')).not.toBeNull();
+        expect(offered(screen, 'transcript-message-repeatable:recycled')).not.toBeNull();
         for (const next of [
             element('agent-text', {}, false, 'thinking', false, 'Thinking', false, true),
             element('user-text', {}, false, 'user'),
@@ -541,7 +575,7 @@ describe('Committed row and native menu availability', () => {
             transcriptMessageMakeRepeatableActionEnabled: false, transcriptMessagePluginActionsEnabled: false,
         }));
         expect(screen.findByType(ContextMenu).props.items.map((item: { id: string }) => item.id)).toEqual(['readAloud']);
-        expect(screen.findHostByTestId('transcript-message-repeatable:m1')).toBeNull();
+        expect(offered(screen, 'transcript-message-repeatable:m1')).toBeNull();
     });
 
     it.each([
@@ -553,13 +587,13 @@ describe('Committed row and native menu availability', () => {
         for (const [kind, structured] of [['user-text', false], ['user-text', true], ['agent-text', false]] as const) {
             if (id === 'savePrompt' && (structured || kind === 'agent-text')) continue;
             const screen = await renderScreen(element(kind, {}, structured));
-            expect(screen.findHostByTestId(`transcript-message-${testSuffix}:m1`) !== null).toBe(true);
+            expect(offered(screen, `transcript-message-${testSuffix}:m1`) !== null).toBe(true);
             expect(screen.findAllByType(ContextMenu)[0].props.items.some((item: { id: string }) => item.id === id)).toBe(true);
             await screen.update(element(kind, { [setting]: false }, structured));
-            expect(screen.findHostByTestId(`transcript-message-${testSuffix}:m1`) === null).toBe(true);
+            expect(offered(screen, `transcript-message-${testSuffix}:m1`) === null).toBe(true);
             expect(screen.findAllByType(ContextMenu)[0].props.items.some((item: { id: string }) => item.id === id)).toBe(false);
             await screen.update(element(kind, { [setting]: false }, structured, 'recycled'));
-            expect(screen.findHostByTestId(`transcript-message-${testSuffix}:recycled`) === null).toBe(true);
+            expect(offered(screen, `transcript-message-${testSuffix}:recycled`) === null).toBe(true);
             await screen.unmount();
         }
     });
@@ -572,19 +606,19 @@ describe('Committed row and native menu availability', () => {
 
     it('does not offer Save for assistant or structured-only text', async () => {
         const screen = await renderScreen(element('agent-text'));
-        expect(screen.findHostByTestId('transcript-message-save-prompt:m1') === null).toBe(true);
+        expect(offered(screen, 'transcript-message-save-prompt:m1') === null).toBe(true);
         await screen.update(element('user-text', {}, true));
-        expect(screen.findHostByTestId('transcript-message-save-prompt:m1') === null).toBe(true);
+        expect(offered(screen, 'transcript-message-save-prompt:m1') === null).toBe(true);
     });
 
     it.each(['   ', '[attachments]\nfile\n[/attachments]'])('does not offer Save for empty or attachment-only text', async (text) => {
         const screen = await renderScreen(element('user-text', {}, false, 'm1', false, text));
-        expect(screen.findHostByTestId('transcript-message-save-prompt:m1')).toBeNull();
+        expect(offered(screen, 'transcript-message-save-prompt:m1')).toBeNull();
     });
 
     it('does not save an unsupported-content placeholder as a prompt', async () => {
         const screen = await renderScreen(element('user-text', {}, false, 'm1', false, 'Useful prompt', true));
-        expect(screen.findHostByTestId('transcript-message-save-prompt:m1')).toBeNull();
+        expect(offered(screen, 'transcript-message-save-prompt:m1')).toBeNull();
     });
 
     it('removes plugin row and long-press actions on mounted and recycled rows', async () => {

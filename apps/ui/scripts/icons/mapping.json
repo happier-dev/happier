@@ -350,6 +350,7 @@
   "split-pane-down": "square-split-vertical",
   "kanban": "kanban",
   "scales": "scales",
+  "seal-check": "seal-check",
   "binoculars": "binoculars",
   "widget-group": "layout",
   "widget-ungroup": "exclude-square",

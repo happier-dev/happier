@@ -5,6 +5,7 @@ import { useSetting } from '@/sync/domains/state/storage';
 import { useTranscriptSelectionState } from './TranscriptMessageSelectionContext';
 import { TranscriptSelectionToolbar, type TranscriptSelectionToolbarMessage } from './TranscriptSelectionToolbar';
 import { resolveTranscriptSelectionToolbarMessages } from './resolveTranscriptSelectionToolbarMessages';
+import { TranscriptSelectionToolbarSeat } from './TranscriptSelectionToolbarSeat';
 import { useSessionDebugInformationEnabled } from '@/sync/runtime/useSessionDebugInformationEnabled';
 import { useSessionTranscriptSource } from '../source/SessionTranscriptSourceContext';
 
@@ -41,13 +42,15 @@ function TranscriptSelectionToolbarSourceContent(props: TranscriptSelectionToolb
     );
 
     return (
-        <TranscriptSelectionToolbar
-            selectableMessagesInOrder={selectableMessages}
-            bulkCopyFormat={props.bulkCopyFormat}
-            roleLabels={props.roleLabels}
-            sendToSessionEnabled={props.sendToSessionEnabled}
-            maxWidth={props.maxWidth}
-            onSendToSession={props.onSendToSession}
-        />
+        <TranscriptSelectionToolbarSeat>
+            <TranscriptSelectionToolbar
+                selectableMessagesInOrder={selectableMessages}
+                bulkCopyFormat={props.bulkCopyFormat}
+                roleLabels={props.roleLabels}
+                sendToSessionEnabled={props.sendToSessionEnabled}
+                maxWidth={props.maxWidth}
+                onSendToSession={props.onSendToSession}
+            />
+        </TranscriptSelectionToolbarSeat>
     );
 }

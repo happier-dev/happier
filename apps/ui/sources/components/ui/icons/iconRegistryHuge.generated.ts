@@ -48,6 +48,7 @@ import ChartLineData01Icon from '@hugeicons/core-free-icons/ChartLineData01Icon'
 import ChartRelationshipIcon from '@hugeicons/core-free-icons/ChartRelationshipIcon';
 import Chatting01Icon from '@hugeicons/core-free-icons/Chatting01Icon';
 import CheckListIcon from '@hugeicons/core-free-icons/CheckListIcon';
+import CheckmarkBadge01Icon from '@hugeicons/core-free-icons/CheckmarkBadge01Icon';
 import CheckmarkCircle01Icon from '@hugeicons/core-free-icons/CheckmarkCircle01Icon';
 import CheckmarkSquare01Icon from '@hugeicons/core-free-icons/CheckmarkSquare01Icon';
 import CircleArrowDown01Icon from '@hugeicons/core-free-icons/CircleArrowDown01Icon';
@@ -474,6 +475,7 @@ export const HUGE_ICON_REGISTRY = {
     'rocket-launch': Rocket01Icon,
     'scales': JusticeScale01Icon,
     'scissors': Scissor01Icon,
+    'seal-check': CheckmarkBadge01Icon,
     'selection': CursorRectangleSelection01Icon,
     'share': Share01Icon,
     'share-network': PeerToPeer01Icon,

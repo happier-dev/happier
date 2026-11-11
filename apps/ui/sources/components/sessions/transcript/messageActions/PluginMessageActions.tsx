@@ -23,6 +23,7 @@ import {
     usePluginUiClientExecutableRegistrationRevision,
 } from '@/components/plugins/reactNative/clientExecutableContributions';
 import { useMessageActionHitArea } from './useMessageActionHitArea';
+import { MessageActionIconButton } from './MessageActionIconButton';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { createPluginLocalizedTextResolver, usePluginLocalizedTextResolver, type PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
@@ -141,20 +142,22 @@ function PluginMessageActionButton(props: Readonly<{
 }
 
 /**
- * The incumbent DropdownMenu owns keyboard, screen-reader, touch, and
- * responsive overflow behavior. This adapter contributes only already-admitted
- * message Actions and sends their selection back through the shared controller.
+ * The row's one ⋯ (owner 05): the host's own overflow actions first, then the already-admitted plugin message
+ * Actions. The incumbent DropdownMenu owns keyboard, screen-reader, touch, and responsive overflow behavior; a
+ * plugin selection goes back through the shared controller, a host one to the host.
  */
-function PluginMessageActionOverflow(props: Readonly<{
+function MessageActionOverflow(props: Readonly<{
     actions: readonly PluginContributedActionDescriptor[];
+    hostItems: readonly DropdownMenuItem[];
+    onSelectHost: (id: string) => void;
+    anchorRef?: React.Ref<View>;
     open: boolean;
     onOpenChange: (open: boolean) => void;
     invertedActionsLayout: boolean;
     onPress: (action: PluginContributedActionDescriptor, anchor?: PopoverAnchor) => void;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
-    const hitArea = useMessageActionHitArea(props.invertedActionsLayout);
-    const items = React.useMemo((): readonly DropdownMenuItem[] => props.actions.map((action) => ({
+    const pluginItems = React.useMemo((): readonly DropdownMenuItem[] => props.actions.map((action) => ({
         id: action.qualifiedActionId,
         testID: `plugin-message-action-menu:${action.qualifiedActionId}`,
         title: action.title,
@@ -167,11 +170,13 @@ function PluginMessageActionOverflow(props: Readonly<{
             />
         ),
     })), [props.actions, theme.colors.text.secondary]);
-    const handleSelect = React.useCallback((qualifiedActionId: string, selection?: DropdownMenuSelection) => {
+    const items = React.useMemo(() => [...props.hostItems, ...pluginItems], [pluginItems, props.hostItems]);
+    const handleSelect = React.useCallback((id: string, selection?: DropdownMenuSelection) => {
         props.onOpenChange(false);
-        const action = props.actions.find((candidate) => candidate.qualifiedActionId === qualifiedActionId);
+        const action = props.actions.find((candidate) => candidate.qualifiedActionId === id);
         if (action) props.onPress(action, selection?.anchor);
-    }, [props.actions, props.onOpenChange, props.onPress]);
+        else props.onSelectHost(id);
+    }, [props.actions, props.onOpenChange, props.onPress, props.onSelectHost]);
 
     return (
         <DropdownMenu
@@ -187,23 +192,17 @@ function PluginMessageActionOverflow(props: Readonly<{
             maxWidthCap={260}
             showCategoryTitles={false}
             trigger={({ toggle }) => (
-                <Pressable
+                <MessageActionIconButton
                     testID="plugin-message-actions-overflow"
-                    accessibilityRole="button"
+                    icon="dots-three"
                     accessibilityLabel={t('common.moreActions')}
                     accessibilityHint={t('common.moreActionsHint')}
+                    hasPopup="menu"
+                    expanded={props.open}
+                    anchorRef={props.anchorRef}
+                    invertedActionsLayout={props.invertedActionsLayout}
                     onPress={toggle}
-                    hitSlop={hitArea.hitSlop}
-                    onLayout={hitArea.onLayout}
-                    style={({ pressed }) => [
-                        styles.overflowButton,
-                        props.invertedActionsLayout ? styles.overflowButtonInverted : null,
-                        pressed ? styles.buttonPressed : null,
-                    ]}
-                >
-                    {hitArea.frame}
-                    <Icon name="dots-three" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
-                </Pressable>
+                />
             )}
         />
     );
@@ -301,13 +300,22 @@ export function PluginMessageActions(props: Readonly<{
     return <PluginMessageActionsView actions={actions} invertedActionsLayout={props.invertedActionsLayout} />;
 }
 
+const NO_HOST_ITEMS: readonly DropdownMenuItem[] = Object.freeze([]);
+const noHostSelection = () => undefined;
+
 export function PluginMessageActionsView(props: Readonly<{
     invertedActionsLayout: boolean;
     actions: ReturnType<typeof usePluginMessageActions>;
+    /** The host's own overflow actions, listed first under the same ⋯. */
+    hostOverflowItems?: readonly DropdownMenuItem[];
+    onSelectHostOverflow?: (id: string) => void;
+    /** Where a sheet opened from the ⋯ anchors. */
+    overflowAnchorRef?: React.Ref<View>;
 }>): React.ReactElement | null {
     const { rowActions, mergedOverflowActions, openAction, overflowOpen, setOverflowOpen } = props.actions;
+    const hostItems = props.hostOverflowItems ?? NO_HOST_ITEMS;
 
-    if (rowActions.length === 0 && mergedOverflowActions.length === 0) return null;
+    if (rowActions.length === 0 && mergedOverflowActions.length === 0 && hostItems.length === 0) return null;
     return (
         <View testID="plugin-message-actions" style={styles.container}>
             {rowActions.map((action) => (
@@ -318,9 +326,12 @@ export function PluginMessageActionsView(props: Readonly<{
                     onPress={openAction}
                 />
             ))}
-            {mergedOverflowActions.length > 0 ? (
-                <PluginMessageActionOverflow
+            {mergedOverflowActions.length > 0 || hostItems.length > 0 ? (
+                <MessageActionOverflow
                     actions={mergedOverflowActions}
+                    hostItems={hostItems}
+                    onSelectHost={props.onSelectHostOverflow ?? noHostSelection}
+                    anchorRef={props.overflowAnchorRef}
                     open={overflowOpen}
                     onOpenChange={setOverflowOpen}
                     invertedActionsLayout={props.invertedActionsLayout}
@@ -349,17 +360,6 @@ const styles = StyleSheet.create((theme) => ({
         cursor: 'pointer',
     },
     buttonInverted: {
-        marginRight: theme.space.s2,
-    },
-    overflowButton: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: theme.space.s6,
-        borderRadius: 6,
-        marginRight: theme.space.s6,
-        cursor: 'pointer',
-    },
-    overflowButtonInverted: {
         marginRight: theme.space.s2,
     },
     buttonPressed: {

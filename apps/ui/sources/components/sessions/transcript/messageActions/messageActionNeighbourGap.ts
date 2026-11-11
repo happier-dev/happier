@@ -1,5 +1,6 @@
-/** The tallest button drawn in a message's action row. */
-const TALLEST_ACTION_PX = 28;
+/** The square every control in a message's action row draws (`MessageActionIconButton`), and so the row's tallest. */
+export const MESSAGE_ACTION_BUTTON_PX = 28;
+const TALLEST_ACTION_PX = MESSAGE_ACTION_BUTTON_PX;
 
 /**
  * The free vertical gap between a message's action row buttons and the next card's first control.

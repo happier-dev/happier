@@ -253,6 +253,7 @@
   "square-split-vertical": "LayoutTwoRowIcon",
   "kanban": "KanbanIcon",
   "scales": "JusticeScale01Icon",
+  "seal-check": "CheckmarkBadge01Icon",
   "binoculars": "BinocularsIcon",
   "layout": "GroupItemsIcon",
   "exclude-square": "UngroupItemsIcon",

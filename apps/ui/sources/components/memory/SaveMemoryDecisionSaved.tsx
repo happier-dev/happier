@@ -33,7 +33,7 @@ export function SaveMemoryDecisionSaved(
   return (
     <View testID="save-memory-decision.saved" style={styles.root}>
       <View style={styles.titleRow}>
-        <Icon name="check-circle" size={16} />
+        <Icon name="seal-check" size={16} />
         <Text style={styles.title} accessibilityRole="header">
           {t('memoryContext.memory.sheetSavedUnattachedTitle')}
         </Text>

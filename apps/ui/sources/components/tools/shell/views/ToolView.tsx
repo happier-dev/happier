@@ -491,7 +491,6 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                             revealed={shouldShowTranscriptRowPinAction({
                                 platformOS: Platform.OS,
                                 isRowHovered: headerActionHost.isHovered,
-                                isActionHovered: false,
                                 coarsePrimaryPointer,
                                 pinned: props.headerAction.pinned,
                             })}

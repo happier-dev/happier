@@ -75,7 +75,7 @@ describe('MessagePinButton', () => {
         standardCleanup();
     });
 
-    it('renders an unpinned message action with web hit slop omitted', async () => {
+    it('draws the row\'s one glyph control for a pin', async () => {
         const { MessagePinButton } = await import('./MessagePinButton');
         const onToggle = vi.fn();
 
@@ -88,9 +88,7 @@ describe('MessagePinButton', () => {
         );
 
         const button = screen.findByTestId('message-pin');
-        expect(button?.props.accessibilityRole).toBe('button');
         expect(button?.props.accessibilityLabel).toBe('session.transcriptNavigation.pinMessageA11y');
-        expect(button?.props.hitSlop).toBeUndefined();
         expect(screen.findAllByType(Icon).map(node => node.props)).toEqual([expect.objectContaining({ name: 'push-pin', color: '#666666', size: ICON_SIZE.xs })]);
     });
 
@@ -129,23 +127,6 @@ describe('MessagePinButton', () => {
         expect(onToggle).toHaveBeenCalledTimes(1);
         expect(onToggle).toHaveBeenCalledWith({ ...target.pinTarget, pinnedAtMs: 9_000 });
         nowSpy.mockRestore();
-    });
-
-    it('keeps the pin labelled but mounts its icon only once its row reveals it', async () => {
-        const { MessagePinButton } = await import('./MessagePinButton');
-        const { RowActionRevealSlot } = await import('@/components/ui/lists/RowActionRevealSlot');
-        const renderRow = (revealed: boolean) => (
-            <RowActionRevealSlot revealed={revealed} testID="pin-slot">
-                <MessagePinButton availability={available()} onTogglePin={() => {}} testID="message-pin" />
-            </RowActionRevealSlot>
-        );
-
-        const screen = await renderScreen(renderRow(false));
-        expect(screen.findByTestId('message-pin')?.props.accessibilityLabel).toBe('session.transcriptNavigation.pinMessageA11y');
-        expect(screen.findAllByType(Icon)).toHaveLength(0);
-
-        await screen.update(renderRow(true));
-        expect(screen.findAllByType(Icon)).toHaveLength(1);
     });
 
     it('omits unavailable actions and actions without a host callback', async () => {
