@@ -114,6 +114,16 @@ describe('neutral capacity and ranked data through public presentation', () => {
     } finally { mount.unmount(); }
   });
 
+  it('omits an empty annotation from the shared accessible row label', () => {
+    const mount = mountThroughReactNativeWeb(<HappierDataRows theme={createSurfaceContext().theme}
+      label="Models" testID="models" showProportionShares={false}
+      columns={[{ label: 'Model' }, { label: 'Models', proportion: true }, { label: 'Annotation' }]}
+      rows={[["Unknown", 0, '']]} />);
+    try {
+      expect(mount.container.querySelector('[data-testid="models-row-0"]')?.getAttribute('aria-label')).toBe('Unknown, Models: 0');
+    } finally { mount.unmount(); }
+  });
+
   it('draws a set-aside part as its colour\'s hatch and can name each part by its amount in a compact legend', () => {
     const mount = mountThroughReactNativeWeb(<CompositionStrip theme={createSurfaceContext().theme}
       label="Disk" total={100} testID="disk" valueFormatter={value => `${value} GB`}

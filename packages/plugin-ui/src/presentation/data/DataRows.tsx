@@ -67,8 +67,8 @@ function RowMark(props: Readonly<{ mark: NonNullable<HappierDataRowsProps['marks
   </View>;
 }
 
-function readable(column: HappierDataColumn, value: HappierDataValue | undefined, locale: string | undefined): string {
-  return `${column.label}: ${value === undefined ? '' : formatHappierDataValue(value, locale)}`;
+function readable(column: HappierDataColumn, value: HappierDataValue | undefined, locale: string | undefined): string | null {
+  return value === undefined || value === '' ? null : `${column.label}: ${formatHappierDataValue(value, locale)}`;
 }
 
 function IncompleteLine(props: Readonly<{ text: string; styles: HappierDataTextStyles; testID?: string }>) {
@@ -136,7 +136,7 @@ export function HappierDataRows(props: HappierDataRowsProps) {
             key={props.rowIds?.[rowIndex] ?? rowIndex}
             role="listitem"
             accessible={!(props.renderIdentity || interactive && hiddenPrecision)}
-            accessibilityLabel={[title, ...(mark ? [mark.label] : []), ...props.columns.slice(1).map((column, index) => readable(column, row[index + 1], text.locale)),
+            accessibilityLabel={[title, ...(mark ? [mark.label] : []), ...props.columns.slice(1).map((column, index) => readable(column, row[index + 1], text.locale)).filter((value): value is string => value !== null),
               ...(shownShare === null ? [] : [formatHappierDataShare(shownShare, text.locale)])].join(', ')}
             testID={props.testID ? `${props.testID}-row-${rowIndex}` : undefined}
           >
@@ -246,7 +246,7 @@ export function HappierDataTable(props: HappierDataRowsProps) {
           role="row"
           accessible
           accessibilityLabel={[...(props.marks?.[rowIndex] ? [props.marks[rowIndex]!.label] : []),
-            ...props.columns.map((column, index) => readable(column, row[index], text.locale))].join(', ')}
+            ...props.columns.map((column, index) => readable(column, row[index], text.locale)).filter((value): value is string => value !== null)].join(', ')}
           testID={props.testID ? `${props.testID}-row-${rowIndex}` : undefined}
           style={{ flexDirection: 'row', columnGap: HAPPIER_DATA_METRICS.columnGapPx, paddingVertical: HAPPIER_DATA_METRICS.cellPaddingVerticalPx,
             ...(rowIndex < props.rows.length - 1 ? divider : {}) }}
