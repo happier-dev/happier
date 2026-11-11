@@ -320,8 +320,7 @@ it('leaves a localPersistent rule in the synthetic native policy file across pro
                         }]) }));
                     const requirementId = fixture.host.getAgentStateSnapshot()!.requests![requestId]!.nativeChoices!.requirementId;
                     expect(await invokeHomeRpc(fixture, RPC_METHODS.SESSION_PERMISSION_RESPOND, {
-                        id: requestId, turnId: fixture.host.getAgentStateSnapshot()!.requests![requestId]!.turnId,
-                        approved: true, decision: 'approved_execpolicy_amendment',
+                        id: requestId, // Exact r1111c Action payload: choice only, no decision or turn override.
                         nativeChoice: { requirementId, choiceId: 'allow_local_prefix' },
                     })).toBeUndefined();
                     await fixture.waitForAudit(audit => audit.decisionCount === 1);
@@ -481,4 +480,22 @@ it('preserves opaque native approval arguments on the canonical generic card', a
         await events.until('turn-complete');
         events.expectExactlyOneTerminalEvent({ turnId: 'opaque-approval-turn' });
     } finally { events.dispose(); await fixture.dispose(); await rm(scratch, { recursive: true, force: true }); }
+});
+
+it('interrupts the owning Muse turn for a pending input through the active-input binding', async () => {
+    const fixture = await createAdmittedMuseSessionFixture({ native: { scenario: 'approval-abort' } });
+    try {
+        const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd() });
+        await session.send({ inputIds: ['interrupt-input'], input: { text: 'Run the retained controlled write.' },
+            delivery: { kind: 'newTurn', turnId: 'interrupt-turn' } });
+        await fixture.waitForAudit(audit => audit.receiptCount === 1);
+        const binding = fixture.publications.readActiveInputBinding();
+        expect(binding).not.toBeNull();
+        expect(await binding!.interruptPendingInputAndRun({ localId: 'queued-input' }))
+            .toMatchObject({ ok: true, status: 'interrupted' });
+        const audit = await fixture.readAudit();
+        expect(audit.commandTargets.find(target => target.method === 'turn/interrupt'))
+            .toMatchObject({ sessionId: session.runtimeDescriptorV1!.agent.providerSessionId,
+                turnId: expect.any(String) });
+    } finally { await fixture.dispose(); }
 });

@@ -2,7 +2,7 @@ import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { canonicalAbsolutePathsEqual } from '@happier-dev/plugin-sdk/fs';
 import { classifyJsonRpcSubmissionFailure } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type { AgentRuntime, AgentSessionCatalogControl, AgentSessionConfigurationUpdate, AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeContext,
-  AgentSessionHostServices, AgentSessionCompactResult, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+  AgentSessionHostServices, AgentSessionCompactResult, AgentSessionCancelResult, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentRuntimeJsonValueSchema, createExecutionRunHostBackendFromConversationRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import { ACTIVITY_SESSION_SYSTEM_RECORD_KINDS, SESSION_SYSTEM_RECORD_ACTIVITY_NAMESPACE,
   buildWorkflowRunSystemRecordLocalId, createWorkflowActivityPublisher, SessionWorkflowRunSnapshotV1Schema,
@@ -290,6 +290,22 @@ async function openMuseConversation<SessionId extends string | undefined>(
     }
     catalogSessionId = nativeSessionId;
     projection.observeSession(opened.session);
+    async function interruptTurn(hostTurnId?: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<AgentSessionCancelResult> {
+        const turnId = projection.readOwningTurn(hostTurnId);
+        if (!turnId) return { status: 'notRunning' };
+        try {
+          const result = readMuseRecord(await msp.command('turn/interrupt', { sessionId: nativeSessionId, turnId },
+            { signal: options?.signal }));
+          if (result.status === 'accepted') return { status: 'requested', turnId: hostTurnId ?? turnId };
+          return { status: 'unavailable', diagnostic: { code: 'PLUGIN_EXEC_PROTOCOL_ERROR', severity: 'error' } };
+        } catch (error) {
+          const failure = classifyJsonRpcSubmissionFailure(error, { method: 'turn/interrupt', effectObserved: false });
+          return { status: 'unavailable', diagnostic: {
+            code: failure.kind === 'rejected_before_effect' ? 'provider_request_rejected' : 'PLUGIN_EXEC_FAILED',
+            severity: 'error', ...(failure.kind === 'rejected_before_effect' ? { details: { ...failure.details } } : {}),
+          } };
+        }
+    }
     inputBinding = sessionServices?.activeInput.bind({
       isTurnInFlight: () => activity === 'active',
       waitForInputReady() {
@@ -307,7 +323,13 @@ async function openMuseConversation<SessionId extends string | undefined>(
           : { status: 'failed', reason: result.diagnostic.code };
       },
       clearTerminalComposer: () => ({ ok: false, status: 'unsupported' }),
-      interruptPendingInputAndRun() { throw new PluginError({ code: 'unsupported' }); },
+      async interruptPendingInputAndRun() {
+        const result = await interruptTurn(undefined, { signal: context.signal });
+        return result.status === 'requested'
+          ? { ok: true, status: 'interrupted' }
+          : { ok: false, status: result.status === 'notRunning' ? 'not_safe' : 'interrupt_failed',
+            ...('diagnostic' in result ? { error: result.diagnostic.code } : {}) };
+      },
     });
     if (typeof native.providerId === 'string' && typeof native.modelId === 'string') {
       catalog.applyCurrentModel({ providerId: native.providerId, modelId: native.modelId });
@@ -449,22 +471,7 @@ async function openMuseConversation<SessionId extends string | undefined>(
           return { status: 'unavailable', diagnostic, retryable: true };
         }
       },
-      async cancel(request, options) {
-        const turnId = projection.readOwningTurn(request.turnId);
-        if (!turnId) return { status: 'notRunning' };
-        try {
-          const result = readMuseRecord(await msp.command('turn/interrupt', { sessionId: nativeSessionId, turnId },
-            { signal: options?.signal }));
-          if (result.status === 'accepted') return { status: 'requested', turnId: request.turnId };
-          return { status: 'unavailable', diagnostic: { code: 'PLUGIN_EXEC_PROTOCOL_ERROR', severity: 'error' } };
-        } catch (error) {
-          const failure = classifyJsonRpcSubmissionFailure(error, { method: 'turn/interrupt', effectObserved: false });
-          return { status: 'unavailable', diagnostic: {
-            code: failure.kind === 'rejected_before_effect' ? 'provider_request_rejected' : 'PLUGIN_EXEC_FAILED',
-            severity: 'error', ...(failure.kind === 'rejected_before_effect' ? { details: { ...failure.details } } : {}),
-          } };
-        }
-      },
+      cancel: (request, options) => interruptTurn(request.turnId, options),
       async compact(request, options): Promise<AgentSessionCompactResult> {
         if (request.trigger !== 'manual' || request.instructions) return { status: 'unsupported', retryable: false,
           diagnostic: { code: 'unsupported', severity: 'error' } };

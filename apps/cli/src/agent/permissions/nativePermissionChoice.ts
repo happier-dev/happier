@@ -50,6 +50,25 @@ export function resolveNativePermissionChoice(offeredValue: unknown, answerValue
     } };
 }
 
+/** Translate simple mediation only when the native offer has one exact decision/scope match. */
+export function resolveMediatedNativePermissionChoice(
+    offered: NativePermissionChoicesV1 | undefined,
+    decision: 'allow' | 'deny' | undefined,
+    scope: 'request' | 'session' | undefined,
+) {
+    if (!offered || !decision || !scope) return undefined;
+    const matches = offered.choices.filter(choice => {
+        if (choice.scope !== (scope === 'session' ? 'session' : 'once')) return false;
+        return decision === 'allow'
+            ? choice.decision === 'approved' || choice.decision === 'approved_for_session'
+            : choice.decision === 'denied' || choice.decision === 'abort';
+    });
+    // A simple chat command cannot select between distinct native offers.
+    return matches.length === 1
+        ? { requirementId: offered.requirementId, choiceId: matches[0]!.id }
+        : undefined;
+}
+
 /** Native approval requires a selection from its offer even when host policy allows the tool. */
 export function resolveNativePermissionImmediateDecision<T extends Readonly<{ decision: string }>>(
     decision: T | null,
