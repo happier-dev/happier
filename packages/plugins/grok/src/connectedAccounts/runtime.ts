@@ -198,14 +198,22 @@ export function createXaiConnectedAccountRuntime(): ConnectedAccountRuntime {
       }
       if (request.kind !== 'httpHeaders') throw new Error('Unsupported xAI materialization');
       const base = BASES[credential.mode];
-      if (request.origin !== new URL(base).origin) throw new Error('xAI mode does not permit this origin');
+      if (!Object.values(BASES).some(value => request.origin === new URL(value).origin)) throw new Error('xAI mode does not permit this origin');
       const available: Readonly<Record<string, string>> = { Authorization: `Bearer ${credential.accessToken}`,
         ...(credential.mode === 'subscription' ? { 'X-XAI-Token-Auth': 'xai-grok-cli' } : {}) };
       const wanted = new Set(request.headerNames.map(name => name.toLowerCase()));
       return { kind: 'httpHeaders', headers: Object.fromEntries(Object.entries(available).filter(([name]) => wanted.has(name.toLowerCase()))),
         ...(credential.expiresAtMs !== undefined ? { expiresAt: credential.expiresAtMs } : {}),
-        facts: { mode: credential.mode, base } };
+        facts: { mode: credential.mode, usingApi: credential.mode === 'api-key', base } };
     },
   };
 }
 export const xaiConnectedAccountRuntime = createXaiConnectedAccountRuntime();
+
+// Native import reads the selected Machine's local CLI state. Keep that mode
+// on the daemon while the app owns the browser/device/API-key modes.
+const { 'native-import': _nativeImport, ...xaiPortableAuthenticationModes } = xaiConnectedAccountRuntime.authentication.modes;
+export const xaiPortableConnectedAccountRuntime: ConnectedAccountRuntime = {
+  ...xaiConnectedAccountRuntime,
+  authentication: { modes: xaiPortableAuthenticationModes },
+};

@@ -4,6 +4,7 @@ import { createConnectedAccountAuthenticationAttemptOwner, createConnectedAccoun
 import { PluginConnectedAccountAuthenticationModeV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { museAccountDescriptor, museNativeConnectedAccountPurpose, MUSE_ACCOUNT_SERVICE } from './declarations.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
 import { museAccountConnectedResult, museConnectedAccountRuntime as runtime } from './museAccountRuntime.js';
 
 function fixture(responses: unknown[] = []) {
@@ -33,6 +34,10 @@ function deviceMode() {
 }
 
 describe('Muse account runtime', () => {
+  it('declares an Account-side authentication artifact for app-runnable modes', () => {
+    expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.find(entry => entry.id === MUSE_ACCOUNT_SERVICE.localId)?.authentication)
+      .toMatchObject({ account: { artifactId: 'connected-account-authentication', exportName: 'activate' } });
+  });
   it.each([
     { kind: 'environment', keys: ['MUSE_CODE_CREDENTIAL'] },
     { kind: 'files', fileIds: ['muse/auth.json'] },

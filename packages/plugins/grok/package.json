@@ -6,6 +6,11 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./happier-plugin-ui/connected-account-authentication": {
+      "happier-source": "./src/connectedAccounts/account.ts",
+      "types": "./dist/connectedAccounts/account.d.ts",
+      "default": "./dist/connectedAccounts/account.js"
+    },
     ".": {
       "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",

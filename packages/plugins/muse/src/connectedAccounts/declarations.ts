@@ -18,6 +18,7 @@ export const museAccountDescriptor = {
   title: 'Muse',
   usageIdentity: { providerId: 'meta' },
   authentication: {
+    account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
     defaultModeId: 'device',
     modes: [
       { id: 'device', kind: 'oauthDeviceCode', title: 'Sign in with Meta', scopes: [], outcomeReconciliation: 'none' },

@@ -22,6 +22,10 @@ function fixture(modeId = 'api-key') {
 }
 
 describe('xAI selected credential runtime', () => {
+  it('declares Account placement for app-runnable device and API-key modes', () => {
+    expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.find(entry => entry.id === 'xai')?.authentication)
+      .toMatchObject({ account: { artifactId: 'connected-account-authentication', exportName: 'activate' } });
+  });
   it('connects an explicit paid API key with no OAuth or subscription usage request', async () => {
     const f = fixture(); const runtime = createXaiConnectedAccountRuntime();
     const mode = runtime.authentication.modes['api-key'];
@@ -32,22 +36,26 @@ describe('xAI selected credential runtime', () => {
     const purpose = PLUGIN_MANIFEST.contributes.agents?.find(agent => agent.id === 'grok')?.connectedAccounts?.[0];
     expect(purpose?.credentialKinds).toContain(connected.credentialKind);
     expect(await runtime.materialize({ kind: 'httpHeaders', origin: 'https://api.x.ai', headerNames: ['authorization'] }, f.read))
-      .toMatchObject({ kind: 'httpHeaders', headers: { Authorization: 'Bearer fake-paid-key' }, facts: { mode: 'api-key', base: 'https://api.x.ai/v1' } });
+      .toMatchObject({ kind: 'httpHeaders', headers: { Authorization: 'Bearer fake-paid-key' }, facts: { mode: 'api-key', usingApi: true, base: 'https://api.x.ai/v1' } });
     expect(runtime.quota).toBeTypeOf('function');
     await runtime.quota?.(f.read);
     expect(await runtime.materialize({ kind: 'environment', keys: ['GROK_CONNECTED_ACCOUNT_MODE', 'XAI_API_KEY', 'GROK_OAUTH2_ISSUER', 'GROK_OAUTH2_CLIENT_ID'] }, f.read)).toEqual({ kind: 'environment', env: { GROK_CONNECTED_ACCOUNT_MODE: 'api-key', XAI_API_KEY: 'fake-paid-key' } });
     expect(f.request).not.toHaveBeenCalled();
-    await expect(runtime.materialize({ kind: 'httpHeaders', origin: 'https://cli-chat-proxy.grok.com', headerNames: ['authorization'] }, f.read)).rejects.toThrow();
+    expect(await runtime.materialize({ kind: 'httpHeaders', origin: 'https://cli-chat-proxy.grok.com', headerNames: ['authorization'] }, f.read))
+      .toMatchObject({ facts: { usingApi: true, base: 'https://api.x.ai/v1' } });
+    await expect(runtime.materialize({ kind: 'httpHeaders', origin: 'https://foreign.example', headerNames: ['authorization'] }, f.read)).rejects.toThrow();
   });
   it('materializes subscription headers and facts without paid fallback or refresh', async () => {
     const f = fixture(); const runtime = createXaiConnectedAccountRuntime();
     await f.credentials.set('xaiCredential', JSON.stringify({ mode: 'subscription', accessToken: 'fake-subscription', refreshToken: 'fake-refresh', expiresAtMs: 5000, clientId: 'fake-native-client' }));
     const material = await runtime.materialize({ kind: 'httpHeaders', origin: 'https://cli-chat-proxy.grok.com', headerNames: ['authorization', 'x-xai-token-auth'] }, f.read);
-    expect(material).toMatchObject({ headers: { Authorization: 'Bearer fake-subscription', 'X-XAI-Token-Auth': 'xai-grok-cli' }, expiresAt: 5000, facts: { mode: 'subscription', base: 'https://cli-chat-proxy.grok.com/v1' } });
+    expect(material).toMatchObject({ headers: { Authorization: 'Bearer fake-subscription', 'X-XAI-Token-Auth': 'xai-grok-cli' }, expiresAt: 5000, facts: { mode: 'subscription', usingApi: false, base: 'https://cli-chat-proxy.grok.com/v1' } });
     expect(JSON.stringify(material)).not.toContain('fake-refresh');
     expect(await runtime.materialize({ kind: 'environment', keys: ['GROK_CONNECTED_ACCOUNT_MODE', 'XAI_API_KEY', 'GROK_OAUTH2_ISSUER', 'GROK_OAUTH2_CLIENT_ID'] }, f.read)).toMatchObject({ env: { GROK_CONNECTED_ACCOUNT_MODE: 'subscription', GROK_OAUTH2_ISSUER: 'https://auth.x.ai', GROK_OAUTH2_CLIENT_ID: 'fake-native-client' } });
     expect(f.request).not.toHaveBeenCalled();
-    await expect(runtime.materialize({ kind: 'httpHeaders', origin: 'https://api.x.ai', headerNames: ['authorization'] }, f.read)).rejects.toThrow();
+    expect(await runtime.materialize({ kind: 'httpHeaders', origin: 'https://api.x.ai', headerNames: ['authorization'] }, f.read))
+      .toMatchObject({ facts: { usingApi: false, base: 'https://cli-chat-proxy.grok.com/v1' } });
+    await expect(runtime.materialize({ kind: 'httpHeaders', origin: 'https://foreign.example', headerNames: ['authorization'] }, f.read)).rejects.toThrow();
   });
 });
 
