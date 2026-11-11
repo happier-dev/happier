@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { View } from 'react-native';
 
 import type { HappierStyleProp } from '../portableTypes.js';
+import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 
 export type HappierActionPanelProps = Readonly<{
   /** Names the related action set for assistive technology. */
@@ -35,7 +36,7 @@ export function HappierActionPanel({ title, children, testID, style }: HappierAc
           flexDirection: 'row',
           alignItems: 'center',
           flexWrap: 'wrap',
-          gap: 8,
+          gap: HAPPIER_PAGE_METRICS.actionGapPx,
         },
         style,
       ]}
@@ -61,7 +62,7 @@ export function HappierActionPanelSection({ title, children, testID, style }: Ha
           flexWrap: 'wrap',
           flexShrink: 1,
           maxWidth: '100%',
-          gap: 4,
+          gap: HAPPIER_PAGE_METRICS.actionCompactGapPx,
         },
         style,
       ]}

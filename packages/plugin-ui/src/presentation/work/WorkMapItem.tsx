@@ -6,6 +6,7 @@ import { resolveHappierWorkStatusSurfaceStyle, softenHappierWorkColor, type Happ
 import type { HappierWorkColors, HappierWorkHost, HappierWorkTextRole, HappierWorkTheme } from './workTheme.js';
 import type { HappierWorkMapNodeAppearance, HappierWorkMapNodePresentation, WorkMapStyles } from './WorkMapView.js';
 import { useMapNodeSelected, type MapSelection } from './mapSelection.js';
+import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 
 /**
  * The open card keeps its own ground and tone and is ringed (lab `.wm-node.on`, `.wm-node.need.on`): a
@@ -69,6 +70,8 @@ function WorkMapItemView<TNode extends HappierWorkMapNode>(props: Omit<WorkMapIt
   const { node, presentation, readOnly, disabled, theme, Text, styles, testIDPrefix,
     compact, inLane, wrapRow, copyMinWidth, stackStatus, leading, subtitle } = props;
   const selected = useMapNodeSelected(props.selection, node.nodeId);
+  const resolveMaterialColor = useHappierMaterialColorResolver();
+  const surfaceColor = resolveMaterialColor(theme.colors.surface, theme.colors.border);
   const appearance = presentation.appearance ?? 'card';
   const tone = presentation.tone ?? 'neutral';
   const role = labelRole(appearance, compact);
@@ -85,7 +88,7 @@ function WorkMapItemView<TNode extends HappierWorkMapNode>(props: Omit<WorkMapIt
         wrapRow ? styles.rowWrap : null,
         appearance === 'card' ? resolveHappierWorkStatusSurfaceStyle(tone, theme.colors) as ViewStyle | null : null,
         presentation.muted ? styles.cardMuted : null,
-        selected ? appearance === 'card' ? selectedCardRing(theme.colors, tone) : styles.rowSelected : null,
+        selected ? appearance === 'card' ? selectedCardRing({ ...theme.colors, surface: surfaceColor }, tone) : styles.rowSelected : null,
         pressed && !disabled ? styles.rowPressed : null,
       ]}
     >

@@ -1,6 +1,7 @@
 import { useCallback, useState, type ReactNode } from 'react';
 import { ScrollView, View } from 'react-native';
 import { HappierSegmentedChoice, type HappierSegmentedChoiceColors } from '../form/SegmentedChoice.js';
+import { HAPPIER_PAGE_METRICS } from './pageMetrics.js';
 
 export type WidgetSizePickerChoice = Readonly<{
   key: string;
@@ -79,7 +80,7 @@ export function WidgetSizePicker(props: WidgetSizePickerProps) {
   }
   const maxRows = Math.max(...props.choices.map(choice => choice.footprint.rowSpan));
   return (
-    <View testID={testID ? `${testID}.room` : undefined} onLayout={onRoomLayout} style={{ alignSelf: 'stretch', alignItems: 'center', gap: 6 }}>
+    <View testID={testID ? `${testID}.room` : undefined} onLayout={onRoomLayout} style={{ alignSelf: 'stretch', alignItems: 'center', gap: HAPPIER_PAGE_METRICS.rowCompactGapPx }}>
       {props.label === undefined ? null : <View style={{ alignSelf: 'stretch' }}>{props.label}</View>}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxWidth: '100%', flexGrow: 0 }}>
         <View testID={testID ? `${testID}.track` : undefined} onLayout={onTrackLayout} style={{ flexDirection: 'row' }}>

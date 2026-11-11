@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import type { HappierPortableStyle } from '../portableTypes.js';
+import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 import type { WorkBoardPreviewLayoutV1 } from '@happier-dev/plugin-sdk/ui';
 
 export type HappierArtifactPreview =
@@ -28,8 +29,8 @@ export type HappierArtifactPreviewCardProps = Readonly<{
 
 type PreviewLine = Readonly<{ kind: 'heading' | 'text' | 'bullet' | 'check'; text: string; done?: boolean }>;
 const PREVIEW_LINES = 7;
-const STRUCTURE_TOP = 14;
-const STRUCTURE_GAP = 6;
+const STRUCTURE_TOP = HAPPIER_PAGE_METRICS.cardPaddingPx;
+const STRUCTURE_GAP = HAPPIER_PAGE_METRICS.rowCompactGapPx;
 
 /** Admit the next row only after the preceding row's actual wrapped/scaled height is known. */
 function useVisibleStructure(rows: readonly unknown[] | undefined, hasSummary: boolean) {
@@ -97,12 +98,12 @@ export const HappierArtifactPreviewCard = React.memo(function HappierArtifactPre
   const { preview, colors, host } = props;
   const structure = useVisibleStructure(preview.kind === 'workflow' ? preview.steps : preview.kind === 'board' ? preview.layout.widgets : undefined,
     preview.kind === 'board' && props.boardLabels !== undefined);
-  const band = { flex: 1, paddingHorizontal: 16, paddingTop: STRUCTURE_TOP, gap: 3, overflow: 'hidden' as const };
+  const band = { flex: 1, paddingHorizontal: HAPPIER_PAGE_METRICS.cardPaddingPx, paddingTop: STRUCTURE_TOP, gap: 3, overflow: 'hidden' as const };
   const text = (value: string, style: HappierPortableStyle, numberOfLines?: number, typography?: 'semiBold' | 'mono') => host.renderText({ text: value, style, numberOfLines, typography });
   if (preview.kind === 'markdown') return <View style={band} testID={props.testID} aria-hidden accessible={false} importantForAccessibility="no-hide-descendants">
     {readMarkdownPreviewLines(preview.text).map((line, index) => line.kind === 'heading'
       ? <React.Fragment key={index}>{text(line.text, { flexShrink: 0, fontSize: 12, lineHeight: 16, color: colors.primary, marginTop: index === 0 ? 0 : 4, marginBottom: 2 }, 1, 'semiBold')}</React.Fragment>
-      : <View key={index} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+      : <View key={index} style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_PAGE_METRICS.rowCompactGapPx, flexShrink: 0 }}>
         {line.kind === 'bullet' ? text('•', { fontSize: 11, lineHeight: 15, color: colors.tertiary }) : null}
         {line.kind === 'check' ? host.renderIcon({ name: line.done ? 'check-square' : 'square', size: 11, color: colors.tertiary }) : null}
         {text(line.text, { flexShrink: 1, fontSize: 11, lineHeight: 15, color: line.done ? colors.tertiary : colors.secondary,
@@ -139,7 +140,7 @@ export const HappierArtifactPreviewCard = React.memo(function HappierArtifactPre
     </View>)}
   </View>;
   const caption = { fontSize: 11, color: colors.tertiary };
-  return <View style={[band, { alignItems: 'center', justifyContent: 'center', paddingTop: 0, gap: 8 }]}
+  return <View style={[band, { alignItems: 'center', justifyContent: 'center', paddingTop: 0, gap: HAPPIER_PAGE_METRICS.cardContentGapPx }]}
     testID={props.testID} aria-hidden accessible={false} importantForAccessibility="no-hide-descendants">
     {host.renderIcon({ name: preview.kind === 'image' ? 'image' : preview.kind === 'html' ? 'code' : preview.kind === 'file' ? 'file' : 'fallback', size: 26, color: colors.tertiary })}
     {(preview.kind === 'image' || preview.kind === 'file' || preview.kind === 'html') && preview.name ? text(preview.name, caption, 1) : null}

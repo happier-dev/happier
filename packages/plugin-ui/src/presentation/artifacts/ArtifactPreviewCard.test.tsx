@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('react-native', () => ({ View: 'View' }));
 
 import { HappierArtifactPreviewCard, type HappierArtifactPreview, type HappierArtifactPreviewCardProps } from './ArtifactPreviewCard.js';
+import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 
 const colors = { primary: 'black', secondary: 'gray', tertiary: 'gray', paper: 'white', paperBorder: 'gray' };
 let textRenders = 0;
@@ -61,6 +62,14 @@ async function layoutRows(rowHeight: number, summaryHeight?: number) {
 }
 
 describe('HappierArtifactPreviewCard visible structure', () => {
+  it('does not mount a second row below the band after the shared card inset', async () => {
+    await act(async () => { tree = create(card({ kind: 'workflow', steps: [{ title: 'First' }, { title: 'Second' }] })); });
+    await layoutBand(HAPPIER_PAGE_METRICS.cardPaddingPx + 16 + HAPPIER_PAGE_METRICS.rowCompactGapPx - 1);
+    await layoutRows(16);
+    expect(rows()).toHaveLength(1);
+    expect(JSON.stringify(tree.toJSON())).not.toContain('Second');
+  });
+
   it('mounts only steps intersecting the measured band, including its partially visible last row', async () => {
     const preview = { kind: 'workflow', steps: Array.from({ length: 1000 }, (_, index) => ({ title: `Step ${index + 1}` })) } as const;
     textRenders = 0;

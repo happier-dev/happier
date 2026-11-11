@@ -15,6 +15,7 @@ import {
   type HappierWorkTextRole,
   type HappierWorkTheme,
 } from './workTheme.js';
+import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 
 /**
  * A Work update card: what came back from one unit of agent work, as a transcript or a feed states
@@ -94,33 +95,33 @@ const styles = StyleSheet.create({
   head: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: HAPPIER_PAGE_METRICS.headerGapPx,
     minWidth: 0,
-    paddingHorizontal: 14,
-    paddingTop: 11,
+    paddingHorizontal: HAPPIER_PAGE_METRICS.cardPaddingPx,
+    paddingTop: HAPPIER_PAGE_METRICS.cardPaddingPx,
   },
-  headAlone: { paddingBottom: 11 },
+  headAlone: { paddingBottom: HAPPIER_PAGE_METRICS.cardPaddingPx },
   mark: { flexShrink: 0, alignItems: 'center', justifyContent: 'center' },
   // The title keeps its words; the state word and the kind give way first.
   title: { flexShrink: 1, minWidth: 0, maxWidth: '62%' },
   word: { flexShrink: 2, minWidth: 0 },
   grow: { flexGrow: 1 },
   kind: { flexShrink: 3, minWidth: 0 },
-  body: { paddingHorizontal: 14, paddingTop: 6, paddingBottom: 13 },
+  body: { paddingHorizontal: HAPPIER_PAGE_METRICS.cardPaddingPx, paddingTop: 6, paddingBottom: 13 },
   footer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
-    columnGap: 6,
-    rowGap: 6,
+    columnGap: HAPPIER_PAGE_METRICS.rowCompactGapPx,
+    rowGap: HAPPIER_PAGE_METRICS.rowCompactGapPx,
     minWidth: 0,
-    paddingLeft: 14,
-    paddingRight: 10,
-    paddingVertical: 8,
+    paddingLeft: HAPPIER_PAGE_METRICS.cardPaddingPx,
+    paddingRight: HAPPIER_PAGE_METRICS.cardPaddingPx,
+    paddingVertical: HAPPIER_PAGE_METRICS.rowCompactGapPx,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
-  fact: { flexDirection: 'row', alignItems: 'center', gap: 5, marginRight: 8, minWidth: 0, flexShrink: 1 },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 6, rowGap: 6 },
+  fact: { flexDirection: 'row', alignItems: 'center', gap: 5, marginRight: HAPPIER_PAGE_METRICS.rowContentGapPx, minWidth: 0, flexShrink: 1 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: HAPPIER_PAGE_METRICS.rowCompactGapPx, rowGap: HAPPIER_PAGE_METRICS.rowCompactGapPx },
 });
 
 export const HappierWorkUpdateCard = memo(function HappierWorkUpdateCard(props: HappierWorkUpdateCardProps) {

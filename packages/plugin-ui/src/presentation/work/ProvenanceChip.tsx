@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { useOptionalHappierUiTheme } from '../../environment/context.js';
+import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 import { HAPPIER_BADGE_CAPSULE_RADIUS_PX, HappierBadge } from '../content/Foundation.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
@@ -31,17 +32,23 @@ export type HappierProvenanceChipProps = Readonly<{
  */
 export function HappierProvenanceChip(props: HappierProvenanceChipProps) {
   const theme = useOptionalHappierUiTheme();
+  const resolveMaterialColor = useHappierMaterialColorResolver();
   const colors = props.colors ?? (theme ? {
-    foreground: theme.colors.secondaryText, background: theme.colors.surface,
-    border: theme.colors.border, focus: theme.colors.focus,
+    foreground: theme.colors.secondaryText, background: theme.colors.canvas,
+    border: theme.colors.divider, focus: theme.colors.focus,
   } : null);
   if (!colors) throw new Error('ProvenanceChip requires a mounted theme or explicit colors.');
-  const content = <HappierBadge shape="capsule" color={colors.foreground} backgroundColor={colors.background}
-    borderColor={colors.border} leading={props.leading} trailing={props.trailing} style={props.badgeStyle}>
+  const materialColors = {
+    ...colors,
+    background: resolveMaterialColor(colors.background, theme?.colors.divider ?? 'transparent'),
+    border: colors.border === undefined ? undefined : resolveMaterialColor(colors.border, theme?.colors.divider ?? 'transparent'),
+  };
+  const content = <HappierBadge shape="capsule" color={materialColors.foreground} backgroundColor={materialColors.background}
+    borderColor={materialColors.border} leading={props.leading} trailing={props.trailing} style={props.badgeStyle}>
     {props.labelContent ?? props.label}
   </HappierBadge>;
   if (!props.onPress) return <HappierBadge shape="capsule" testID={props.testID} accessibilityLabel={props.accessibilityLabel ?? props.label}
-    color={colors.foreground} backgroundColor={colors.background} borderColor={colors.border}
+    color={materialColors.foreground} backgroundColor={materialColors.background} borderColor={materialColors.border}
     leading={props.leading} trailing={props.trailing} style={[{ maxWidth: '100%' }, props.badgeStyle, props.style]}>
     {props.labelContent ?? props.label}
   </HappierBadge>;
@@ -49,7 +56,7 @@ export function HappierProvenanceChip(props: HappierProvenanceChipProps) {
     accessibilityLabel={props.accessibilityLabel ?? props.label} onPress={props.onPress}
     style={({ pressed, focused }) => [
       { maxWidth: '100%', borderRadius: HAPPIER_BADGE_CAPSULE_RADIUS_PX }, props.style,
-      happierFocusRingStyle({ visible: focused, color: colors.focus }),
+      happierFocusRingStyle({ visible: focused, color: materialColors.focus }),
       pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null,
     ]}>{content}</HappierPressable>;
 }

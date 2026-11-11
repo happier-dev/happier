@@ -71,6 +71,16 @@ export const HAPPIER_PAGE_METRICS = Object.freeze({
   cardPaddingPx: 16,
   /** Between cards or tiles in a grid. */
   cardGapPx: 12,
+  /** Shared plugin card anatomy: the internal rhythm used by cards, rows, headers and action groups. */
+  cardContentGapPx: 8,
+  cardSectionGapPx: 10,
+  cardRadiusPx: 12,
+  rowContentGapPx: 8,
+  rowCompactGapPx: 6,
+  rowInsetPx: 10,
+  headerGapPx: 8,
+  actionGapPx: 8,
+  actionCompactGapPx: 4,
   /** A long reading block inside a sheet (a skill's instructions) shows this much before "Show all". */
   readingClipHeightPx: 420,
   /** Settings lab .page/.detail: 80px; work-document lab: 60px. Pages use the settings measure. */

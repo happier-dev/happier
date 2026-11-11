@@ -2,6 +2,7 @@ import type { ComponentType, ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
+import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 
 export type HappierPublicLinkCardProps = Readonly<{
   testID: string;
@@ -101,16 +102,16 @@ export function HappierPublicLinkCard(props: HappierPublicLinkCardProps) {
 }
 
 const styles = StyleSheet.create({
-  inline: { gap: 10 },
-  card: { marginHorizontal: 12, marginBottom: 12, padding: 12, gap: 10, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth },
-  top: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  status: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  url: { minHeight: 34, paddingLeft: 10, paddingRight: 4, borderRadius: 9, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  actions: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  inline: { gap: HAPPIER_PAGE_METRICS.cardSectionGapPx },
+  card: { marginHorizontal: 12, marginBottom: 12, padding: HAPPIER_PAGE_METRICS.cardPaddingPx, gap: HAPPIER_PAGE_METRICS.cardContentGapPx, borderRadius: HAPPIER_PAGE_METRICS.cardRadiusPx, borderWidth: StyleSheet.hairlineWidth },
+  top: { flexDirection: 'row', alignItems: 'center', gap: HAPPIER_PAGE_METRICS.headerGapPx },
+  status: { flexDirection: 'row', alignItems: 'center', gap: HAPPIER_PAGE_METRICS.rowCompactGapPx },
+  url: { minHeight: 34, paddingLeft: HAPPIER_PAGE_METRICS.rowInsetPx, paddingRight: 4, borderRadius: 9, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: HAPPIER_PAGE_METRICS.rowCompactGapPx },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: HAPPIER_PAGE_METRICS.actionCompactGapPx, flexWrap: 'wrap' },
   grow: { flex: 1 },
   qr: { alignItems: 'center', paddingVertical: 4 },
-  options: { gap: 10 },
-  optionGroup: { gap: 6 },
-  consent: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  options: { gap: HAPPIER_PAGE_METRICS.cardSectionGapPx },
+  optionGroup: { gap: HAPPIER_PAGE_METRICS.rowCompactGapPx },
+  consent: { flexDirection: 'row', alignItems: 'center', gap: HAPPIER_PAGE_METRICS.rowContentGapPx },
   consentText: { flex: 1, minWidth: 0, gap: 2 },
 });
