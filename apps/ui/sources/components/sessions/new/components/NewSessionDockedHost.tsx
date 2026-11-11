@@ -13,7 +13,7 @@ import { NewSessionScreen } from '../NewSessionScreen';
 import { NewSessionEmbeddedHostProvider, type NewSessionEmbeddedHost } from '../navigation/newSessionHost';
 import { useNewSessionShellHost } from '../navigation/newSessionEntry';
 import { resolveNewSessionDockPaneElement } from './newSessionDockPane';
-import { SIMPLE_NEW_SESSION_SCRIM_RAMP_HEIGHT } from './NewSessionSimplePanel';
+import { resolveDockedBandGeometry } from './dockedBandGeometry';
 import { useFloatingComposerEntrance } from './useFloatingComposerEntrance';
 import { requestRegisteredComposerBlur } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { ComposerKeyboardScaffold } from '@/components/sessions/keyboardAvoidance';
@@ -46,11 +46,6 @@ import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayout
 import { t } from '@/text';
 import { blurActiveElementOnWeb } from '@/utils/platform/deferOnWeb';
 
-/**
- * How far the band runs above the dock on a desktop: it holds the page colour from the card's top edge down
- * and dissolves over the rest, so a longer run than the phone's keeps that dissolve soft over a wide page.
- */
-const DESKTOP_DOCK_RAMP_HEIGHT = 200;
 /** A narrowed card stops at the dialog width (or the pane's composer width, when that is narrower). */
 const DOCK_MIN_WIDTH = PAGE_LIST_METRICS.dialogWidthPx.default;
 
@@ -122,7 +117,9 @@ function useDockSeat() {
     // Session page it never covers the composer; where the band is narrower it rests on the column's bottom edge.
     const bandBelowComposer = sessionComposerGap + SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX;
     const pillBottom = height - pane.bottom + Math.max(0, (bandBelowComposer - OVERLAY_CAPSULE_BUTTON_SIZE) / 2);
-    return { phone, pane, reach, pillBottom, clearedChrome, dockGap, composerWidth, columnWidth, windowWidth: width };
+    // What stands above the dock (a Session composer) ends this far above it: its own gap and bottom padding.
+    const clearanceAbove = sessionComposerGap + SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX;
+    return { phone, pane, reach, pillBottom, clearedChrome, dockGap, clearanceAbove, composerWidth, columnWidth, windowWidth: width };
 }
 
 /** The folded dock: a capsule in the card's seat that names it and marks a draft with text. Pressing it is New again. */
@@ -147,13 +144,15 @@ function DockedPill() {
  * the card's edge as 0.2's did; seated on the header it started a header-plus-gap too high. A desktop band
  * seats the whole dock: its header stands inside the band's held tier.
  */
-function DockedBackdrop(props: Readonly<{ shown: boolean; progress: SharedValue<number>; phone: boolean; cardTop: number; reach: Readonly<{ left?: number; right: number; bottom: number }> }>) {
+function DockedBackdrop(props: Readonly<{ shown: boolean; progress: SharedValue<number>; phone: boolean; cardTop: number; clearanceAbove: number; reach: Readonly<{ left?: number; right: number; bottom: number }> }>) {
     const stage = useAtmosphereStageSnapshot().stage;
     const picture = useFloatingBackdropPicture(stage?.backdrop ?? null);
     const strength = useSetting('newSessionBackdropStrengthV1');
+    // One seat rule for every width: the band holds the docked stack's measured content and dissolves upward
+    // from its top over the same short ramp (owner 2026-11-11, item 20).
+    const geometry = resolveDockedBandGeometry({ phone: props.phone, cardTop: props.cardTop, clearanceAbove: props.clearanceAbove });
     return <ScrimBand testID="new-session-docked-band" shown={props.shown} progress={props.progress} picture={picture} strength={strength} reach={props.reach}
-        seatTop={props.phone ? props.cardTop : 0}
-        axes={props.phone ? 'top' : 'centre'} rampHeight={props.phone ? SIMPLE_NEW_SESSION_SCRIM_RAMP_HEIGHT : DESKTOP_DOCK_RAMP_HEIGHT} />;
+        seatTop={geometry.seatTop} axes={geometry.axes} rampHeight={geometry.rampHeight} />;
 }
 
 /** The root keeps the card above the navigator and consumes only the first outside keyboard-dismissal tap. */
@@ -178,7 +177,7 @@ export function NewSessionDockedHost(props: React.PropsWithChildren) {
 function DockedComposer() {
     const shell = useNewSessionShellHost()!;
     const router = useRouter();
-    const { phone, pane, reach, clearedChrome, dockGap, composerWidth, columnWidth, windowWidth: width } = useDockSeat();
+    const { phone, pane, reach, clearedChrome, dockGap, clearanceAbove, composerWidth, columnWidth, windowWidth: width } = useDockSeat();
     const portalTarget = useModalPortalTarget();
     const composerRef = React.useRef<View | null>(null);
     const [webFocused, setFocused] = React.useState(false);
@@ -320,7 +319,7 @@ function DockedComposer() {
         style={phone ? [styles.phone, { marginBottom: reach.bottom }] : resizable ? null : { width: dockWidth }}
     >
         {/* The card clears the bar; its paint reaches only through the gap above that bar. */}
-        <DockedBackdrop shown={!leaving} progress={entrance.enterProgress} phone={phone} cardTop={cardTop}
+        <DockedBackdrop shown={!leaving} progress={entrance.enterProgress} phone={phone} cardTop={cardTop} clearanceAbove={clearanceAbove}
             reach={phone ? { right: reach.right, bottom: reach.bottom - clearedChrome } : { left: sideRoom, right: sideRoom, bottom: reach.bottom }} />
         {resizable ? (
             <ResizableDockedPane testID="new-session-docked-resize" resizeEdge="both"

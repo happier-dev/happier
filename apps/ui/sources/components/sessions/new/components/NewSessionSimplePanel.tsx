@@ -48,18 +48,10 @@ import { NewSessionComposerCard } from '@/components/sessions/new/components/New
 import type { NewSessionComposerDocument } from '@/components/sessions/new/hooks/screenModel/useNewSessionComposerDocument';
 import type { SessionModelPicker } from '@/components/sessions/modelPicker/SessionModelPicker';
 import type { NewSessionManagedMachineDraftModel } from '../hooks/newSessionScreenModelTypes';
+import { DOCKED_BAND_RAMP_HEIGHT } from './dockedBandGeometry';
 
 const SIMPLE_NEW_SESSION_MIN_TOP_GAP = 8;
 
-/**
- * How far the composer's frosted band reaches above the card.
- *
- * Taller than the shared `OVERLAY_SCRIM_RAMP_HEIGHT` default: this composer floats over the session
- * list rather than over a single quiet surface, so it needs a longer run to settle against busy,
- * scrolling content. Still far short of veiling the list - keeping it readable while you type is the
- * reason this is a floating composer and not a sheet.
- */
-export const SIMPLE_NEW_SESSION_SCRIM_RAMP_HEIGHT = 128;
 
 export type NewSessionSimplePanelProps = Readonly<{
     popoverBoundaryRef: React.RefObject<View>;
@@ -255,7 +247,7 @@ function NewSessionFloatingBand(props: Readonly<{ progress: SharedValue<number>;
     const strength = useSetting('newSessionBackdropStrengthV1');
     const picture = useFloatingBackdropPicture(useAtmosphereBandBoundary()?.backdrop ?? null);
     return <ScrimBand shown progress={props.progress} strength={strength} picture={picture}
-        rampHeight={SIMPLE_NEW_SESSION_SCRIM_RAMP_HEIGHT} axes="top"
+        rampHeight={DOCKED_BAND_RAMP_HEIGHT} axes="top"
         reach={{ right: props.sidePadding, bottom: props.bottomReach }} testID="new-session-scrim" />;
 }
 
