@@ -90,8 +90,10 @@ export const SessionPaneHeader = React.memo(function SessionPaneHeader(props: Se
         : identityMode === 'agentLogo' ? props.agentIdentity ?? null
             : props.botFace ? (props.editBotFace
                 // A Bot this header may edit offers its face chooser from the face itself (lab R6 header).
-                ? <SessionBotFaceMark sessionId={props.editBotFace.sessionId} serverId={props.editBotFace.serverId} facts={props.botFace} size={32} mood={props.botActivity} />
-                : <SessionBotFace facts={props.botFace} size={32} mood={props.botActivity} />)
+                // The same lively face the sidebar rows draw (owner 0936 #15): still until hovered or touched, its mood
+                // change played once, never an idle loop (the Bots roster alone lives on its own).
+                ? <SessionBotFaceMark sessionId={props.editBotFace.sessionId} serverId={props.editBotFace.serverId} facts={props.botFace} size={32} mood={props.botActivity} motion="interaction" />
+                : <SessionBotFace facts={props.botFace} size={32} mood={props.botActivity} motion="interaction" />)
                 : props.avatarId ? <Avatar id={props.avatarId} size={32} monochrome={!isConnected} flavor={props.flavor} /> : null;
     const pullable = props.onPullAllTabs !== undefined;
     const titleControl = (

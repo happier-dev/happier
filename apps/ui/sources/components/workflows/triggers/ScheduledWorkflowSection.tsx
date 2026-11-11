@@ -9,7 +9,6 @@ import {
     type SessionListRowDensity,
 } from '@/components/sessions/shell/resolveSessionListDensityViewState';
 import { useIsTablet } from '@/utils/platform/responsive';
-import { WORKER_KIND_GLYPHS } from '@/components/sessions/work/workerKindGlyphs';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { SessionAvatar } from '@/components/sessions/bots/face/SessionAvatar';
 import { Item } from '@/components/ui/lists/Item';
@@ -179,9 +178,9 @@ const ScheduledRow = React.memo(function ScheduledRow(props: Readonly<{
         formatNextScheduledRunAccessibilityLabel(row.trigger.nextRunAt, enabled, nowMs)].join('. ');
     // One occurrence row for both hosts. The next run is the trailing meta, in the column where Runs
     // show their state word; the quiet line says which step writes where and on what schedule.
-    // In a Session's "Writes here" the row sits beside the Runs that already write there, so it leads
-    // with the workflow mark (lab lane12-final `b-habit T`); in the session list every row is
-    // scheduled, so the event glyph tells a schedule from an event, and the destinations follow.
+    // In a Session's Triggers section the row writes into that Session, so it leads with the inbound glyph its
+    // Writes-here Runs share (owner 0936 #14); in the session list every row is scheduled, so the event glyph
+    // tells a schedule from an event, and the destinations follow.
     const destinations = props.sessionId === undefined ? row.set.destinations?.targetSessionIds ?? [] : [];
     const listDensity = props.sessionId === undefined ? props.density : undefined;
     // In the session list the row takes the density, mark slot and title size of the session rows around
@@ -197,6 +196,7 @@ const ScheduledRow = React.memo(function ScheduledRow(props: Readonly<{
             // One line in the compact list, like the Session rows around it.
             ...(listDensity === 'minimal' ? { titleLines: 1 } : {}),
             pressableStyle: SESSION_LIST_GROUP_ROW_PROPS.pressableStyle,
+            showDivider: SESSION_LIST_GROUP_ROW_PROPS.showDivider,
             style: [SESSION_LIST_GROUP_ROW_PROPS.style, { minHeight: geometry.densityViewState.rowHeight }] };
     })() : {};
     const quiet = [...steps, formatTriggerSummary(row.trigger)].join(' · ');
@@ -212,7 +212,7 @@ const ScheduledRow = React.memo(function ScheduledRow(props: Readonly<{
         subtitleTestID={oneLine ? undefined : `scheduled-workflow:${row.key}-subtitle`}
         detail={formatNextScheduledRunTime(row.trigger.nextRunAt, enabled, nowMs)}
         detailTestID={`scheduled-workflow:${row.key}-next`}
-        icon={<Icon name={props.sessionId !== undefined ? WORKER_KIND_GLYPHS.workflow_run : resolveTriggerEventGroup(row.trigger).glyph} />}
+        icon={<Icon name={props.sessionId !== undefined ? 'sign-in' : resolveTriggerEventGroup(row.trigger).glyph} />}
         {...listRow}
         accessibilityLabel={label} showChevron={false} onPress={() => props.onOpen(row)} />;
 });

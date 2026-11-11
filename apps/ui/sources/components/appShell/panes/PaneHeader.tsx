@@ -339,6 +339,19 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
     // On the desktop shell's title row the title line itself centres on the band (level with the rail's first icon
     // and every column title) and the live line hangs beneath it, instead of the pair centring together.
     const titleOnRow = React.useContext(HappierShellTitleRowContext) && hasTitle && !large;
+    // There the identity mark centres on the words it heads (overline, title and live line), not on the band:
+    // it moves down by what hangs below the title less what stands above it (owner 0936 #15). The title keeps
+    // its row. The live line starts at its type-scale height, the laid-out height at the default text size.
+    const [aboveTitlePx, setAboveTitlePx] = React.useState(0);
+    const [belowTitlePx, setBelowTitlePx] = React.useState<number | null>(null);
+    const measureAboveTitle = React.useCallback((event: LayoutChangeEvent) => {
+        const { height: measured } = event.nativeEvent.layout;
+        if (measured > 0) setAboveTitlePx(Math.round(measured));
+    }, []);
+    const measureBelowTitle = React.useCallback((event: LayoutChangeEvent) => {
+        const { height: measured } = event.nativeEvent.layout;
+        if (measured > 0) setBelowTitlePx(Math.round(measured));
+    }, []);
     const titleText = (
         <Text
             ref={props.headingRef}
@@ -354,7 +367,14 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
     // A band over a centred content column keeps the pane-wide paint and shade; its contents stand on the column's edges.
     const columnMaxWidthPx = !large && props.columnMaxWidthPx !== undefined && Number.isFinite(props.columnMaxWidthPx)
         ? resolvePaneHeaderColumnMaxWidthPx(props.columnMaxWidthPx) : null;
-    const lineView = (line && (line.segments.length > 0 || line.leading)) || props.lineTrailing ? (
+    const hasLineView = Boolean((line && (line.segments.length > 0 || line.leading)) || props.lineTrailing);
+    // The centred mark shifts by half its top margin: onto the centre of its words.
+    const markOffsetPx = titleOnRow && props.leading
+        ? (hasLineView ? belowTitlePx ?? HEADER_BAND_SUBTITLE_TEXT.lineHeight + HEADER_BAND_SUBTITLE_TEXT.marginTop : 0)
+            - (props.overline ? aboveTitlePx : 0)
+        : 0;
+    const markOnRowStyle = React.useMemo(() => (markOffsetPx === 0 ? null : { marginTop: markOffsetPx }), [markOffsetPx]);
+    const lineView = hasLineView ? (
         <PaneHeaderLineView
             line={line}
             large={large}
@@ -366,9 +386,11 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
     const identity = (
         <View style={large ? styles.largeIdentityRow : titleOnRow ? [styles.identity, styles.identityOnRow] : styles.identity}>
         {chipVisible ? <PaneMainRestoreChip /> : null}
-        {props.leading ? <View style={large ? styles.identityMark : styles.identityMarkCentered}>{props.leading}</View> : null}
+        {props.leading ? <View style={large ? styles.identityMark : [styles.identityMarkCentered, markOnRowStyle]}>{props.leading}</View> : null}
         <View style={titleOnRow ? styles.titleBlockOnRow : styles.titleBlock}>
-            {titleOnRow ? <View style={styles.aboveTitle}>{props.overline ?? null}</View> : props.overline ?? null}
+            {titleOnRow ? <View style={styles.aboveTitle}>
+                {props.overline ? <View onLayout={measureAboveTitle}>{props.overline}</View> : null}
+            </View> : props.overline ?? null}
             {/* A host that already names the thing (a breadcrumb ending on it) passes no title: the live line stands alone. */}
             {hasTitle ? <View style={styles.titleRow}>
             {typeof props.titleControl === 'function' ? props.titleControl(titleText) : props.titleControl ?? titleText}
@@ -380,7 +402,9 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
                 </View>
             ) : null}
             </View> : null}
-            {large ? null : titleOnRow ? <View style={styles.belowTitle}>{lineView}</View> : lineView}
+            {large ? null : titleOnRow ? <View style={styles.belowTitle}>
+                {lineView ? <View onLayout={measureBelowTitle}>{lineView}</View> : null}
+            </View> : lineView}
         </View>
         </View>
     );

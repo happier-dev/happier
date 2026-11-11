@@ -3,6 +3,7 @@ import { usePluginLocalizedTextResolver } from "@/sync/domains/plugins/ui/i18n";
 import { isEmbedWindowContext } from "@/embed/isEmbedWindowContext";
 import { useAppPaneActionRailVisible } from "@/components/appShell/panes/hooks/useAppPaneActionRailVisible";
 import { useSessionCockpitChromeRegistration } from "@/components/workspaceCockpit/session/SessionCockpitChromeRegistry";
+import { requestSessionWorkTriggersReveal } from '@/components/sessions/work/sessionWorkTriggersReveal';
 import { useOpenSessionCollaboration } from "@/components/sessions/collaboration/useOpenSessionCollaboration";
 import { useSessionCollaborationDestinationEntryAdmitted } from "@/hooks/session/useSessionCollaborationAvailability";
 import { normalizeSessionAddress, sessionAddressKey, type SessionAddress } from "@/sync/domains/session/sessionAddress";
@@ -1387,7 +1388,11 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
             return true;
         }
         if (actionId === 'header.openAutomations') {
-            navigateWithBlurOnWeb(() => routerRef.current.push(buildCurrentSessionHref('/triggers') as any));
+            // A Session's workflows live on its Work tab (Triggers, what writes here, its runs): open that tab
+            // through the pane owner, which also switches a phone cockpit, and reveal Triggers there (owner 0936 #16).
+            if (sessionRouteAddress) requestSessionWorkTriggersReveal(sessionRouteAddress);
+            paneRef.current.openRight({ tabId: 'agents' });
+            paneRef.current.setRightTab('agents');
             return true;
         }
         if (actionId === 'header.automateExactTurnCompletion') {
@@ -1426,6 +1431,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         mobileWorkspaceExperience,
         pathname,
         sessionId,
+        sessionRouteAddress,
         showWorkspaceExperienceToggle,
     ]);
 

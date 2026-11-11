@@ -184,6 +184,7 @@ it('expands and pages addressed B trigger History while A stays focused, and kee
                 testIDPrefix="addressed-history" set={set} draft={EMPTY_WORKFLOW_TRIGGER_DRAFT} onChangeDraft={() => {}}
                 status="ready" onRetry={() => {}} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />
         </WorkflowAccountLifetimeProvider>);
+        await screen.pressByTestIdAsync('addressed-history-trigger:saved:b-trigger-more');
         await screen.pressByTestIdAsync('addressed-history-trigger:saved:b-trigger-history');
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('B first Run'));
         await screen.pressByTestIdAsync('session-work-trigger-history:b-history-automation-loadMore');

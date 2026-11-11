@@ -26,9 +26,14 @@ export function SessionTemplateSection(props: Readonly<{ session: Session; serve
     const instance = metadata ? readSessionStateFieldFromMetadata(metadata, 'intent.templateInstance') : null;
     if (!instance && !open) return null;
     const name = getSessionName(props.session, props.serverId);
-    const authorRow = open ? <Item testID={instance ? 'bot-template-author-door' : 'bot-template-author-row'} icon={<Icon name="file-text" />}
+    // One action row on the section's grid (owner 0936 #14): "Give a copy…" with the copy glyph its ⋯ menu entry
+    // uses, and the chevron of the page it opens. Where the section's description already says what a copy is,
+    // the action carries no second sentence; a private draft names itself and says it is one.
+    const subtitle = draft ? t('botTemplates.privateDraft') : instance ? t('botTemplates.giveCopyDescription') : undefined;
+    const authorRow = open ? <Item testID={instance ? 'bot-template-author-door' : 'bot-template-author-row'}
+        icon={<Icon name={draft ? 'file-text' : 'copy'} />}
         title={draft ? t('botTemplates.namedTemplate', { name }) : t('botTemplates.giveCopyEllipsis')}
-        subtitle={t(draft ? 'botTemplates.privateDraft' : 'botTemplates.giveCopyDescription')}
+        {...(subtitle ? { subtitle } : {})}
         onPress={() => { void open(); }} /> : null;
     return <ItemGroup testID="session-template-section" title={t('botTemplates.templateSection')}
         description={instance ? undefined : t('botTemplates.templateSectionDescription', { name })}>

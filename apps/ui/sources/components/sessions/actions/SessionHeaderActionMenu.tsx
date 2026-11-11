@@ -1026,14 +1026,6 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
           }, followEditor.triggerRef);
           return;
         }
-        if (actionId === 'header.openAutomations') {
-          navigateWithBlurOnWeb(() => router.push(buildScopedSessionRouteHref({
-            sessionId: props.sessionId,
-            serverId: sessionServerId,
-            suffix: '/automations',
-          }) as any));
-          return;
-        }
         if (actionId === 'voice.teleport') {
           fireAndForget(teleportVoiceAgentToSessionRoot({ sessionId: props.sessionId }), {
             tag: 'SessionHeaderActionMenu.execute.voiceTeleport',

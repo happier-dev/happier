@@ -113,7 +113,7 @@ describe('SessionTriggersSectionView', () => {
         expect(screen.getTextContent()).toContain('minutesAgoShort(count=2)');
         expect(vi.getTimerCount()).toBe(1);
     });
-    it('puts History, Run now and the switch on the habit row\'s own actions line (lab b-habit T)', async () => {
+    it('keeps History and Run now in the row\'s ⋯ beside its switch, never as loose buttons (owner 0936 #14)', async () => {
         const history = vi.fn();
         const runNow = vi.fn();
         const onOpen = vi.fn();
@@ -122,15 +122,14 @@ describe('SessionTriggersSectionView', () => {
             pendingKeys={new Set()} onToggle={toggle} onOpen={onOpen} onAdd={vi.fn()} onRetry={vi.fn()}
             onHistory={history} onRunNow={runNow} />);
         const row = GROUPS[1]!.rows[0]!;
-        const actions = screen.findByTestId('session-work-trigger:ci:t3-actions');
-        expect(actions).not.toBeNull();
-        // The switch is the line's last control, not a second one beside the title.
-        const inActions = (testID: string) => actions!.findAll((node) => node.props.testID === testID).length > 0;
-        expect(inActions('session-work-trigger:ci:t3-history')).toBe(true);
-        expect(inActions('session-work-trigger:ci:t3-runNow')).toBe(true);
-        expect(inActions('session-work-trigger:ci:t3-switch')).toBe(true);
+        // No actions line under the row: its secondary actions wait behind ⋯ until asked for.
+        expect(screen.findByTestId('session-work-trigger:ci:t3-actions')).toBeNull();
+        expect(screen.findByTestId('session-work-trigger:ci:t3-history')).toBeNull();
+        expect(screen.findByTestId('session-work-trigger:ci:t3-more')).not.toBeNull();
+        await screen.pressByTestIdAsync('session-work-trigger:ci:t3-more');
         await screen.pressByTestIdAsync('session-work-trigger:ci:t3-history');
         expect(history).toHaveBeenCalledWith(row);
+        await screen.pressByTestIdAsync('session-work-trigger:ci:t3-more');
         await screen.pressByTestIdAsync('session-work-trigger:ci:t3-runNow');
         expect(runNow).toHaveBeenCalledWith(row);
         await act(async () => { screen.findByTestId('session-work-trigger:ci:t3-switch')?.props.onValueChange(true); });
@@ -144,6 +143,7 @@ describe('SessionTriggersSectionView', () => {
             pendingKeys={new Set()} onToggle={vi.fn()} onOpen={vi.fn()} onAdd={vi.fn()} onRetry={vi.fn()}
             onHistory={vi.fn()} onRunNow={vi.fn()} />);
         expect(screen.getTextContent()).toContain('Failed');
+        await screen.pressByTestIdAsync('session-work-trigger:ci:t3-more');
         expect(screen.findByTestId('session-work-trigger:ci:t3-history')).not.toBeNull();
         expect(screen.findByTestId('session-work-trigger:ci:t3-runNow')).toBeNull();
     });
@@ -152,8 +152,8 @@ describe('SessionTriggersSectionView', () => {
         const screen = await renderScreen(<SessionTriggersSectionView groups={[]} status="ready"
             pendingKeys={new Set()} onToggle={vi.fn()} onOpen={vi.fn()} onAdd={onAdd} onRetry={vi.fn()} />);
         expect(screen.findByTestId('session-work-triggers-empty')).not.toBeNull();
-        // The empty starts group is labelled like its "Writes here" sibling.
-        expect(screen.findByTestId('session-work-triggers-starts-label')).not.toBeNull();
+        // The section's description already says what belongs here: no sub-heading over the empty line.
+        expect(screen.findByTestId('session-work-triggers-starts-label')).toBeNull();
         expect(screen.getTextContent()).not.toContain('workflows.triggers.section.add');
         expect(screen.findByTestId('session-work-triggers-add')).not.toBeNull();
     });
@@ -193,7 +193,7 @@ describe('SessionTriggersSectionView', () => {
         expect(screen.getTextContent()).toContain('m1 · /repo · Next: tomorrow');
         expect(screen.findByTestId('session-work-trigger:review:t1-switch')?.props.disabled).toBe(true);
     });
-    it('draws the owner-approved section: "Triggers · {n} on · ⓘ", one sheet group per event, rows named by what they run', async () => {
+    it('draws the section: "Triggers · {n} on · ⓘ", one row per trigger, named by what it runs and led by its event', async () => {
         const onToggle = vi.fn();
         const onOpen = vi.fn();
         const screen = await renderScreen(
@@ -215,16 +215,15 @@ describe('SessionTriggersSectionView', () => {
         expect(screen.findByTestId('session-work-triggers-info')?.props.accessibilityLabel).toBe('workflows.triggers.section.info');
         expect(screen.findByTestId('session-work-triggers-add')).not.toBeNull();
 
-        // Each event heads its rows, in order; only the group boundary draws a line.
-        expect(text.indexOf('When a turn ends')).toBeLessThan(text.indexOf('Review & converge'));
-        expect(text.indexOf('Notify me')).toBeLessThan(text.indexOf('Every day at 09:00'));
-        expect(text.indexOf('Every day at 09:00')).toBeLessThan(text.indexOf('Summarize overnight CI'));
-        expect(separators(screen)).toHaveLength(1);
-        // A group counts its rows only when there is more than one.
-        const groupLabel = (id: string) => screen.findAll((node) => node.props.testID === `session-work-triggers-group:${id}` && 'title' in node.props)[0];
-        expect(groupLabel('lifecycle:turnEnds')?.props.count).toBe(2);
-        expect(groupLabel('schedule:daily')?.props.count).toBeUndefined();
-        expect(groupLabel('schedule:daily')?.props.title).toBe('Every day at 09:00');
+        // One row per trigger on the section's row grid (owner 0936 #14): no event sub-headings. The event's
+        // glyph leads the row in the icon column, the title is what runs, and when it fires opens its quiet line.
+        expect(screen.findAll((node) => typeof node.props.testID === 'string' && node.props.testID.startsWith('session-work-triggers-group:'))).toHaveLength(0);
+        expect(separators(screen)).toHaveLength(0);
+        expect(text.indexOf('Review & converge')).toBeLessThan(text.indexOf('When a turn ends'));
+        expect(text.indexOf('Summarize overnight CI')).toBeLessThan(text.indexOf('Every day at 09:00'));
+        const rowIcon = (testID: string) => screen.findAll((node) => node.props.testID === testID && 'icon' in node.props)[0]?.props.icon;
+        expect(rowIcon('session-work-trigger:review:t1')?.props.name).toBe('arrows-clockwise');
+        expect(rowIcon('session-work-trigger:ci:t3')?.props.name).toBe('clock');
 
         // Off names the schedule state; it does not erase the actual last result.
         expect(text).toContain('workflows.triggers.row.off');

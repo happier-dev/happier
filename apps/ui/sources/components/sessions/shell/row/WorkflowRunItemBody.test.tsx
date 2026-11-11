@@ -167,6 +167,7 @@ describe('opened habit History result', () => {
             draft={EMPTY_WORKFLOW_TRIGGER_DRAFT} onChangeDraft={() => {}} status="ready" onRetry={() => {}}
             runsOn={null} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
         expect(screen.getTextContent()).toContain('common.done');
+        await screen.pressByTestIdAsync('missed-once-trigger:saved:timer-more');
         await screen.pressByTestIdAsync('missed-once-trigger:saved:timer-history');
         await waitForHomeGovernance(() => expect(screen.findHostByTestId('workflow-run-row:habit-run')).not.toBeNull());
         expect(screen.getTextContent()).toContain(errorCode === 'machine_offline'
@@ -188,8 +189,10 @@ describe('opened habit History result', () => {
         await flushHookEffects();
         expect(http.requests.slice(before).filter(request => request.path === route)).toHaveLength(0);
         expect(screen.findHostByTestId('workflow-run-row:habit-run')).toBeNull();
-        const history = screen.findHostByTestId('saved-workflow-trigger:saved:timer-history');
-        expect(history).not.toBeNull();
+        // History waits behind the row's ⋯ (owner 0936 #14), and opening the menu reads nothing.
+        await screen.pressByTestIdAsync('saved-workflow-trigger:saved:timer-more');
+        expect(screen.findHostByTestId('saved-workflow-trigger:saved:timer-history')).not.toBeNull();
+        expect(http.requests.slice(before).filter(request => request.path === route)).toHaveLength(0);
         await screen.pressByTestIdAsync('saved-workflow-trigger:saved:timer-history');
         await waitForHomeGovernance(() => expect(screen.findHostByTestId('workflow-run-row:habit-run')).not.toBeNull());
         expect(screen.getTextContent()).toContain('workflows.run.editedByYou');
@@ -200,6 +203,7 @@ describe('opened habit History result', () => {
         expect(reads.length).toBeGreaterThan(0);
         for (const request of reads) expect(request.input).toMatchObject({ request: { triggerId: 'timer' } });
         const beforeSibling = http.requests.length;
+        await screen.pressByTestIdAsync('saved-workflow-trigger:saved:sibling-timer-more');
         await screen.pressByTestIdAsync('saved-workflow-trigger:saved:sibling-timer-history');
         await waitForHomeGovernance(() => expect(http.requests.slice(beforeSibling).some(request => request.path === route)).toBe(true));
         await flushHookEffects();

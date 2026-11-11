@@ -9,6 +9,7 @@ import { useWorkRelativeTime } from '@/components/sessions/agents/presentation/a
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { isTerminalWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { normalizeResultPreview } from '@/components/workflows/presentation/resultPreview';
+import { resolveWorkflowRunProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
 import { describeWorkflowRunDestinationProgress, describeWorkflowRunProgress } from '@/components/workflows/presentation/workflowRunProgress';
@@ -162,7 +163,7 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
     const machinePresence = useMachinePresenceSummary(props.serverId, dataActive ? summary?.machineId ?? '' : '', props.accountLifetime);
     const machineReachable = machinePresence.reachability === 'unknown' ? undefined : machinePresence.reachability === 'reachable';
     const machineName = machinePresence.name;
-    const resultEnabled = props.includeResult === true && dataActive && summary != null
+    const resultEnabled = props.includeResult === true && dataActive && summary != null && summary.state !== 'missed'
         && isTerminalWorkflowRunState(summary.state);
     const result = useOpenedWorkflowRunResult({ runId: props.runId, scopeKey, enabled: resultEnabled, row, accountLifetime: props.accountLifetime });
     const readablePhone = useTouchCompactRow(props.density === 'minimal');
@@ -179,13 +180,14 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
     const status = resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(summary, { machineReachable, machineName }) });
     const word = status.word;
     const destinationProgress = props.destinationSessionId
-        ? describeWorkflowRunDestinationProgress(summary.stepProgress, props.destinationSessionId) : [];
+        ? describeWorkflowRunDestinationProgress(summary.stepProgress, props.destinationSessionId, name) : [];
     const starterLabel = summary.startedBy === 'trigger' ? t('workflows.list.startedByTrigger')
         : summary.startedBy === 'agent' ? t('workflows.list.startedByAgent') : null;
     // A Writes-here row leads with the step that writes into this Session, then the Run's aggregate
     // progress; when the Run began is not what this row is for. Without a known destination step the
     // work row keeps its start time, so it never reads bare.
-    const context = [...destinationProgress,
+    const runProblem = resolveWorkflowRunProblemPresentation(summary);
+    const context = [runProblem?.message, ...destinationProgress,
         props.presentation === 'work' && destinationProgress.length === 0 ? formatAsOfTime(Date.parse(summary.createdAt)) : null,
         describeWorkflowRunProgress(summary.stepProgress),
         props.presentation !== 'work' ? starterLabel : null, unreadable].filter(Boolean).join(' · ');
@@ -219,7 +221,9 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
         <Item testID={`workflow-run-row:${props.runId}`}
             rowRole="item"
             title={name} subtitle={[resultLine ?? context, starterLabel, editedBy].filter(Boolean).join(' · ')}
-            icon={<Icon name={WORKER_KIND_GLYPHS.workflow_run} />}
+            // A Run writing into this Session leads with the inbound glyph, the way a trigger row leads with its
+            // event, so the Session's Triggers section tells what writes here from what starts here (owner 0936 #14).
+            icon={<Icon name={props.destinationSessionId ? 'sign-in' : WORKER_KIND_GLYPHS.workflow_run} />}
             rightElement={statusControl}
             rightElementOutsidePressable={requestRef !== null}
             showChevron={false}

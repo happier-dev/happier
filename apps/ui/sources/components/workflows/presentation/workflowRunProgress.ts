@@ -14,11 +14,14 @@ export function describeWorkflowRunProgress(progress: WorkflowRunSummaryV1['step
 /**
  * Accepted destination identity for a lean Run row, never a guessed loop total.
  * The row's Run status owns its lifecycle word; destination observations belong in Run detail.
+ * A step named like the Run row it qualifies (`runName`) adds nothing and is left out, as the scheduled
+ * occurrence row leaves it out.
  */
-export function describeWorkflowRunDestinationProgress(progress: WorkflowRunSummaryV1['stepProgress'], sessionId: string): string[] {
+export function describeWorkflowRunDestinationProgress(progress: WorkflowRunSummaryV1['stepProgress'], sessionId: string, runName?: string): string[] {
     return progress?.destinations?.flatMap(leaf => {
         if (!leaf.sessionIds.includes(sessionId) || leaf.ordinal === undefined) return [];
-        return [t('sessionWork.scheduled.step', { ordinal: leaf.ordinal,
-            title: leaf.name?.trim() || t('message.provenanceWorkflow') })];
+        const title = leaf.name?.trim() || t('message.provenanceWorkflow');
+        if (runName !== undefined && title === runName.trim()) return [];
+        return [t('sessionWork.scheduled.step', { ordinal: leaf.ordinal, title })];
     }) ?? [];
 }

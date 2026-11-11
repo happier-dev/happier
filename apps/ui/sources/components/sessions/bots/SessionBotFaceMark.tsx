@@ -73,6 +73,8 @@ export const SessionBotFaceMark = React.memo(function SessionBotFaceMark(
     facts: SessionBotFaceFacts;
     size: number;
     mood?: BotFaceMood;
+    /** The face's motion at this surface (`SessionBotFace`'s), e.g. the header's hover perk. */
+    motion?: React.ComponentProps<typeof SessionBotFace>['motion'];
     testID?: string;
   }>,
 ) {
@@ -101,6 +103,7 @@ export const SessionBotFaceMark = React.memo(function SessionBotFaceMark(
           facts={editor.shown}
           size={props.size}
           mood={props.mood}
+          motion={props.motion}
         />
       </HappierPressable>
       <BotFacePicker

@@ -24,6 +24,10 @@ export type HappierTriggerRowBodyProps = Readonly<{
   presentation?: 'sheet' | 'column';
   onPress?: () => void;
   toggle: ReactNode;
+  /** The row's ⋯ (secondary actions), drawn just before the switch in the trailing column. */
+  menu?: ReactNode;
+  /** The enclosing sheet's hairline decision for this row; rows draw none by default. */
+  showDivider?: boolean;
 }>;
 
 export type HappierTriggerRowToggleProps = Readonly<{
@@ -65,19 +69,26 @@ export type HappierTriggerRowProps = Readonly<{
   presentation?: 'sheet' | 'column';
   icon?: ReactNode;
   actions?: ReactNode;
+  /** The row's ⋯ menu trigger: secondary actions wait behind it, beside the switch, instead of on a line of their own. */
+  menu?: ReactNode;
+  /** The enclosing sheet's hairline decision for this row. */
+  showDivider?: boolean;
   /** Core's theme/text/row binding; ordinary plugin surfaces use the mounted environment. */
   host?: HappierTriggerRowHost;
 }>;
 
+const TRAILING_CONTROLS = Object.freeze({ flexDirection: 'row', alignItems: 'center', gap: 8 } as const);
+
 function DefaultRow(props: HappierTriggerRowBodyProps) {
+  const accessory = props.menu ? <View style={TRAILING_CONTROLS}>{props.menu}{props.toggle}</View> : props.toggle;
   return <HappierListItem testID={props.testID} title={props.title}
     titleContent={!props.enabled && !props.attention ? <HappierText variant="label" tone="muted">{props.title}</HappierText> : undefined}
     subtitle={props.subtitleText || undefined}
     subtitleContent={props.subtitle ? <HappierText variant="micro" tone={props.attention ? 'attention' : props.enabled ? 'secondary' : 'muted'}>{props.subtitle}</HappierText> : undefined}
     accessibilityLabel={props.accessibilityLabel}
-    icon={props.icon} onPress={props.onPress} accessory={props.toggle} accessoryOutsidePressable
+    icon={props.icon} onPress={props.onPress} accessory={accessory} accessoryOutsidePressable
     titleNumberOfLines={props.multiline ? 0 : 1} subtitleNumberOfLines={props.multiline ? 0 : 2}
-    density={props.presentation === 'column' ? 'compact' : undefined} showDivider={false} />;
+    density={props.presentation === 'column' ? 'compact' : undefined} showDivider={props.showDivider === true} />;
 }
 
 function DefaultToggle(props: HappierTriggerRowToggleProps) {
@@ -128,7 +139,8 @@ export function HappierTriggerRow(props: HappierTriggerRowProps) {
         ? [props.title, lead, props.qualifierAccessibilityLabel, outcome?.text, provenance].filter(Boolean).join('. ')
         : undefined}
       enabled={props.enabled} attention={props.attention === true} multiline={props.multiline}
-      presentation={props.presentation} icon={props.icon} onPress={props.onPress} toggle={toggleOnActions ? null : toggle} />
+      presentation={props.presentation} icon={props.icon} onPress={props.onPress} toggle={toggleOnActions ? null : toggle}
+      menu={toggleOnActions ? undefined : props.menu} showDivider={props.showDivider} />
     {props.actions ? <View testID={`${props.testID}-actions`} style={actionsStyle ?? {
       flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap',
       paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset,

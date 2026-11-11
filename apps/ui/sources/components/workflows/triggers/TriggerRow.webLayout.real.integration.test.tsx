@@ -16,9 +16,8 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createT
 installWebLayoutBridge();
 
 const { TriggerRow } = await import('./TriggerRow');
-const { TextLinkButton } = await import('@/components/ui/buttons/TextLinkButton');
 
-it('ends the habit row before its actions line begins, so the row and the line never share a tap', async () => {
+it('keeps the ⋯ and the switch in the row\'s trailing column, each the topmost target at its centre (owner 0936 #14)', async () => {
     const host = document.createElement('div');
     document.body.append(host);
     const root = createRoot(host);
@@ -28,20 +27,24 @@ it('ends the habit row before its actions line begins, so the row and the line n
     document.documentElement.style.setProperty('--colors-border-focus', createThemeFixture().colors.border.focus);
     try {
         await act(async () => root.render(
-            <TriggerRow testID="habit" title="Memory upkeep" qualifier="Every day" enabled onToggle={() => {}} onPress={() => {}}
-                actions={<><TextLinkButton testID="habit-history" label="History" onPress={() => {}} />
-                    <TextLinkButton testID="habit-run" label="Run now" onPress={() => {}} /></>} />,
+            <TriggerRow testID="habit" title="Memory upkeep" when="Every Sunday at 9:00 AM" qualifier="Next run: in 4 days"
+                glyph="clock" enabled onToggle={() => {}} onPress={() => {}}
+                menuActions={[{ id: 'habit-history', title: 'History', icon: 'clock-counter-clockwise', onPress: () => {} },
+                    { id: 'habit-run', title: 'Run now', icon: 'play', onPress: () => {} }]} />,
         ));
         for (const width of [390, 900]) {
             const layout = await measureWebLayout(host, { viewport: { width, height: 700 } });
             const row = layout.rect('habit');
-            const actions = layout.rect('habit-actions');
-            // The row's press region ends where the actions line starts: nothing the line draws is under the row.
-            expect(row.bottom).toBeLessThanOrEqual(actions.top);
-            // And each control of the line is the topmost target at its own centre.
-            for (const id of ['habit-history', 'habit-run', 'habit-switch']) {
-                expect(layout.rect(id).receivesPointer).toBe(true);
+            // No actions line: the row's secondary actions wait behind ⋯ on the row itself.
+            expect(host.querySelector('[data-testid="habit-actions"]')).toBeNull();
+            for (const id of ['habit-more', 'habit-switch']) {
+                const control = layout.rect(id);
+                expect(control.top).toBeGreaterThanOrEqual(row.top);
+                expect(control.bottom).toBeLessThanOrEqual(row.bottom);
+                expect(control.receivesPointer).toBe(true);
             }
+            // The ⋯ stands just before the switch, which closes the row.
+            expect(layout.rect('habit-more').right).toBeLessThanOrEqual(layout.rect('habit-switch').left);
         }
     } finally {
         await act(async () => root.unmount());

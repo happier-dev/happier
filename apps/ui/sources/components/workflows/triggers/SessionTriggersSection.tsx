@@ -1,4 +1,3 @@
-import { HappierPageSheetGroup } from '@happier-dev/plugin-ui/presentation';
 import type { TriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import * as React from 'react';
@@ -9,10 +8,9 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { WorkSection } from '@/components/sessions/work/WorkSection';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
-import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -76,14 +74,15 @@ export type SessionTriggersSectionViewProps = Readonly<{
 }>;
 
 /**
- * The session's Triggers section in the Work tab (FIN 04 §5.5; 07 S16 and its owner-approved
- * presentation; lab `convo-W9`, phone `convo-P9`): flat, grouped by event under a glyph and a
- * legible label, rows named by what they run, header "Triggers · {n} on · ⓘ · +". Built on I4-W's
- * `WorkSection anatomy="page"` and one `HappierPageSheetGroup` per event, whose group boundary draws
- * the only separators. With none it says so and offers the first trigger (07 S16 empty state).
+ * The session's Triggers section (FIN 04 §5.5; 07 S16; owner 2026-11-11 desktop #14), on the same row
+ * grammar as the rows above it: one row per trigger, the event's glyph in the icon column, the title
+ * naming what it runs, one quiet line saying when it fires, its next run and last outcome, and the switch
+ * (with History and Run now behind the row's ⋯) in the trailing column. Events still order the rows
+ * (`projectSessionTriggerGroups`), but no sub-heading interrupts the grid. Header "Triggers · {n} on · ⓘ · +"
+ * on `WorkSection anatomy="page"`, whose sheet decides the hairlines. With none it says so and offers the
+ * first trigger (07 S16 empty state).
  */
 export const SessionTriggersSectionView = React.memo(function SessionTriggersSectionView(props: SessionTriggersSectionViewProps) {
-    const { theme } = useUnistyles();
     const ownAddAnchorRef = React.useRef<View>(null);
     const addAnchorRef = props.addAnchorRef ?? ownAddAnchorRef;
     const onCount = props.groups.reduce((count, group) => count + group.rows.filter((row) => row.enabled).length, 0);
@@ -140,64 +139,43 @@ export const SessionTriggersSectionView = React.memo(function SessionTriggersSec
                 <SurfaceFreshnessLine testID="session-work-triggers-refreshing" busy reason={t('common.loading')} />
             ) : null}
             {empty && props.status === 'ready' ? (
-                // What starts here is a group like "Writes here", labelled the same way even while it is empty.
-                <HappierPageSheetGroup
-                    header={(
-                        <CollectionListGroupLabel
-                            testID="session-work-triggers-starts-label"
-                            title={t('workflows.triggers.section.startsHere')}
-                            mark={<Icon name="sign-out" size={16} color={theme.colors.text.secondary} />}
-                        />
-                    )}
-                >
-                    <EmptyState
-                        testID="session-work-triggers-empty"
-                        layout="line"
-                        title={t('workflows.triggers.section.emptyTitle')}
-                        subtitle={t('workflows.triggers.section.emptyBody')}
-                    />
-                </HappierPageSheetGroup>
-            ) : props.groups.map((group) => (
-                <HappierPageSheetGroup
-                    key={group.id}
-                    header={(
-                        <CollectionListGroupLabel
-                            testID={`session-work-triggers-group:${group.id}`}
-                            title={group.title}
-                            count={group.rows.length > 1 ? group.rows.length : undefined}
-                            mark={<Icon name={group.glyph} size={16} color={theme.colors.text.secondary} />}
-                        />
-                    )}
-                >
-                    {group.rows.map((row) => (
-                        <AnchoredTriggerRow
-                            key={row.key}
-                            row={row}
-                            sourceProfile={props.sourceProfiles === undefined ? undefined
-                                : props.sourceProfiles.get(row.sourceSavedBy?.accountId ?? '')?.profile ?? null}
-                            viewerAccountId={props.viewerAccountId}
-                            pending={props.pendingKeys.has(row.key)}
-                            deepLink={row === deepLinkedRow}
-                            onToggle={props.onToggle}
-                            onOpen={props.onOpen}
-                            onHistory={props.onHistory}
-                            onRunNow={props.onRunNow}
-                            history={props.historyRowKey === row.key ? props.history : undefined}
-                        />
-                    ))}
-                </HappierPageSheetGroup>
-            ))}
+                <EmptyState
+                    testID="session-work-triggers-empty"
+                    layout="line"
+                    title={t('workflows.triggers.section.emptyTitle')}
+                    subtitle={t('workflows.triggers.section.emptyBody')}
+                />
+            ) : props.groups.flatMap((group) => group.rows.map((row) => (
+                <AnchoredTriggerRow
+                    key={row.key}
+                    row={row}
+                    when={group.title}
+                    glyph={group.glyph}
+                    sourceProfile={props.sourceProfiles === undefined ? undefined
+                        : props.sourceProfiles.get(row.sourceSavedBy?.accountId ?? '')?.profile ?? null}
+                    viewerAccountId={props.viewerAccountId}
+                    pending={props.pendingKeys.has(row.key)}
+                    deepLink={row === deepLinkedRow}
+                    onToggle={props.onToggle}
+                    onOpen={props.onOpen}
+                    onHistory={props.onHistory}
+                    onRunNow={props.onRunNow}
+                    history={props.historyRowKey === row.key ? props.history : undefined}
+                />
+            )))}
             {props.children}
         </WorkSection>
     );
 });
 
-/** The actions line tucks under its row, which owns the space above it, and the group below owns the space under it: its buttons reach only sideways. */
-const ACTIONS_LINE_HIT_REACH = Object.freeze({ top: 0, bottom: 0 });
-
 /** A row that anchors its own popover beside it. */
 const AnchoredTriggerRow = React.memo(function AnchoredTriggerRow(props: Readonly<{
     row: SessionTriggerRowModel;
+    /** When it fires (the event's summary) and its glyph: the row says them itself, under no sub-heading. */
+    when: string;
+    glyph: SessionTriggerGroupModel['glyph'];
+    /** The section sheet's hairline decision, cloned onto this row. */
+    showDivider?: boolean;
     sourceProfile?: TriggerRowProps['sourceProfile'];
     viewerAccountId?: string | null;
     pending: boolean;
@@ -222,7 +200,15 @@ const AnchoredTriggerRow = React.memo(function AnchoredTriggerRow(props: Readonl
         void Promise.resolve(onRunNow(row)).finally(() => setRunning(false));
     }, [onRunNow, row]);
     const canRun = !row.legacy && !row.sourceUnavailable && onRunNow !== undefined;
-    const hasActions = props.onHistory !== undefined || canRun;
+    const onHistory = props.onHistory;
+    const historyOpen = props.history !== undefined;
+    // History and Run now are secondary: they wait behind the row's ⋯, beside its switch (owner 0936 #14).
+    const menuActions = React.useMemo((): readonly ItemAction[] => [
+        ...(onHistory ? [{ id: `session-work-trigger:${row.key}-history`, title: t('workflows.destination.history.title'),
+            icon: 'clock-counter-clockwise' as const, selected: historyOpen, onPress: () => onHistory(row) }] : []),
+        ...(canRun ? [{ id: `session-work-trigger:${row.key}-runNow`, title: t('workflows.editor.runNow'),
+            icon: 'play' as const, disabled: running, onPress: runNow }] : []),
+    ], [onHistory, historyOpen, canRun, running, runNow, row]);
     return (
         <View ref={anchorRef} collapsable={false}>
             <TriggerRow
@@ -234,22 +220,15 @@ const AnchoredTriggerRow = React.memo(function AnchoredTriggerRow(props: Readonl
                 qualifierAccessibilityLabel={row.qualifierAccessibilityLabel}
                 sourceSavedBy={row.sourceSavedBy} sourceSavedAt={row.sourceSavedAt}
                 sourceProfile={props.sourceProfile} viewerAccountId={props.viewerAccountId}
-                // The event sub-header carries the glyph; rows start on its text edge (lab `convo-W9`,
-                // `b-habit T`), so a row never repeats its group's mark.
+                when={props.when}
+                glyph={props.glyph}
+                showDivider={props.showDivider}
                 multiline={row.legacy}
                 enabled={row.enabled}
                 toggleDisabled={props.pending || row.sourceUnavailable || row.legacy}
                 onToggle={(next) => props.onToggle(row, next)}
                 onPress={() => props.onOpen(row, anchorRef)}
-                // The habit's own line (lab `b-habit T`, plan 65 §8): History · Run now, then its switch.
-                actions={hasActions ? <>
-                {props.onHistory ? <ToolbarButton testID={`session-work-trigger:${row.key}-history`}
-                    hitReach={ACTIONS_LINE_HIT_REACH} label={t('workflows.destination.history.title')} active={props.history !== undefined}
-                    onPress={() => props.onHistory?.(row)} /> : null}
-                {canRun ? <ToolbarButton testID={`session-work-trigger:${row.key}-runNow`}
-                    hitReach={ACTIONS_LINE_HIT_REACH} label={t('workflows.editor.runNow')} busy={running} disabled={running}
-                    onPress={runNow} /> : null}
-                </> : undefined}
+                menuActions={menuActions}
             />
             {props.history}
         </View>

@@ -9,9 +9,9 @@ import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup, ItemGroupDefaultSurfaceProvider } from '@/components/ui/lists/ItemGroup';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SidePaneInspectorSections } from '@/components/ui/lists/SidePaneInspectorSections';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { PageRowDensityProvider } from '@/components/ui/lists/useResolvedItemDensity';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -1273,8 +1273,7 @@ function SessionInfoContent({
     <SessionInfoSectionSummaryProvider value={sectionSummaries.host}>
     <ItemList style={{ paddingTop: 0 }}>
       {/* An inspector, not a settings page (lab csinfo I2): flat sections, small type, 36px rows. */}
-      <PageRowDensityProvider value="inspector">
-      <ItemGroupDefaultSurfaceProvider value="flat">
+      <SidePaneInspectorSections>
       <SessionInfoIdentity
         presentation={presentation}
         session={session}
@@ -1683,8 +1682,7 @@ function SessionInfoContent({
           </View>
         </ItemGroup>
       ) : null}
-      </ItemGroupDefaultSurfaceProvider>
-      </PageRowDensityProvider>
+      </SidePaneInspectorSections>
     </ItemList>
     </SessionInfoSectionSummaryProvider>
   );

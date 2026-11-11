@@ -1,11 +1,7 @@
 import * as React from 'react';
 import { useReportSessionInfoSectionSummary } from '@/components/sessions/info/sessionInfoSectionSummaries';
 import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
-import { HappierPageSheetGroup } from '@happier-dev/plugin-ui/presentation';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { Icon } from '@/components/ui/icons/Icon';
-import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { ManagedRunMiniMap, useWorkRowOnScreen } from '@/components/sessions/work/WorkItemRow';
 import { WorkflowRunItemBody } from '@/components/sessions/shell/row/WorkflowRunItemBody';
 import type { WorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
@@ -21,8 +17,9 @@ import { useRunsListedInTriggerHistory } from './SessionTriggerHistoryScope';
 /**
  * Destination is the accepted graph relation, not the Run's initiating Session.
  *
- * One group of the Session's Triggers section (lab P1-I: what starts from here, and what writes into
- * it). The group exists only while something writes into this Session: a run that did, a scheduled one
+ * Rows of the Session's Triggers section (lab P1-I: what starts from here, and what writes into it; owner
+ * 0936 #14): on the section's row grid, each led by the inbound glyph that tells it from a trigger, under no
+ * sub-heading. They exist only while something writes into this Session: a run that did, a scheduled one
  * that will. The Habits owner presents read failures once. With nothing to show it draws nothing — no bare
  * heading, and no placeholder while it reads, since a section that may not exist would only collapse
  * and move the sections under it.
@@ -37,7 +34,6 @@ export const SessionWritesHereSection = React.memo(function SessionWritesHereSec
 });
 
 const WritesHere = React.memo(function WritesHere(props: Readonly<{ sessionId: string; serverId: string; scheduled: ScheduledWorkflowRowsRead; read: WorkflowRunWindow }>) {
-    const { theme } = useUnistyles();
     const read = props.read;
     const scheduled = props.scheduled;
     const hasScheduled = scheduled.available && scheduled.rows.length > 0;
@@ -57,20 +53,15 @@ const WritesHere = React.memo(function WritesHere(props: Readonly<{ sessionId: s
         count: heldCount,
     } : null);
     if (runIds.length === 0 && !hasScheduled) return null;
-    const count = runIds.length + (hasScheduled ? scheduled.rows.length : 0);
     // What is next leads, then what already wrote here, newest first; Load more closes the Runs it extends.
-    return <HappierPageSheetGroup testID="session-work-writes-here" header={(
-        <CollectionListGroupLabel testID="session-work-writes-here-label" title={t('sessionWork.scheduled.writesHere')}
-            count={count > 1 ? count : undefined}
-            mark={<Icon name="sign-in" size={16} color={theme.colors.text.secondary} />} />
-    )}>
+    return <View testID="session-work-writes-here">
         {hasScheduled ? <ScheduledWorkflowRows read={scheduled} sessionId={props.sessionId} /> : null}
         {runIds.map((runId) => <DestinationRun key={runId} runId={runId} serverId={props.serverId}
             sessionId={props.sessionId} />)}
         {/* A full-width button between rows: the rows above and below own the space around it. */}
         {read.hasMore ? <ToolbarButton testID="session-work-writes-here-more" label={t('workflows.destination.history.loadMore')}
             hitReach={0} disabled={read.loadingMore} onPress={read.loadMore} /> : null}
-    </HappierPageSheetGroup>;
+    </View>;
 });
 
 const DestinationRun = React.memo(function DestinationRun(props: Readonly<{

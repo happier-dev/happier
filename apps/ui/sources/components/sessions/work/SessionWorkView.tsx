@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
+import { ScrollView, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { usePaneHeaderSlotContent } from '@/components/appShell/panes/paneHeaderSlot';
@@ -72,6 +72,8 @@ import { SessionWorkDigest } from './SessionWorkDigest';
 import { deriveSessionCoordinatorV1 } from '@happier-dev/protocol/sessions/follow/sessionCoordinatorV1';
 import { WorkFlatSheet, WorkSection } from './WorkSection';
 import { SessionHabitsSection } from './SessionSetupSections';
+import { useSessionWorkTriggersReveal } from './sessionWorkTriggersReveal';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import type { SessionTriggersSectionActions } from '@/components/workflows/triggers/SessionTriggersSection';
 import {
     groupWorkByState, resolveWorkMachineNotices, resolveWorkReadPresentation, resolveWorkTitleTailStarts,
@@ -103,6 +105,11 @@ const stylesheet = StyleSheet.create(() => ({
         flex: 1,
         minHeight: 0,
         minWidth: 0,
+    },
+    // A flat page section (Triggers, as Session Info lays it) keeps the pane's own text edge: it spans the
+    // pane, not the work list's inset column.
+    paneEdgeSection: {
+        marginHorizontal: -HAPPIER_WORK_PANE_METRICS.contentInsetPx,
     },
     content: {
         paddingHorizontal: HAPPIER_WORK_PANE_METRICS.contentInsetPx,
@@ -256,6 +263,20 @@ export const SessionWorkView = React.memo((props: Readonly<{
     // "Add a trigger…" (the "+" menu) opens the Triggers section's popover right here, anchored at that
     // menu (07 S16, W9): the person stays in the Work pane, and the new trigger appears in the section below.
     const scrollRef = React.useRef<ScrollView>(null);
+    // The header's "Open session workflows" opens this tab and asks once for its Triggers (owner 0936 #16): the
+    // section's offset in the scroll content, then one scroll to it when both are known.
+    const triggersReveal = useSessionWorkTriggersReveal(sessionServerId ? { serverId: sessionServerId, sessionId: props.sessionId } : null);
+    const [triggersOffsetY, setTriggersOffsetY] = React.useState<number | null>(null);
+    const onTriggersLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const y = Math.round(event.nativeEvent.layout.y);
+        setTriggersOffsetY((current) => (current === y ? current : y));
+    }, []);
+    const revealReducedMotion = useReducedMotionPreference();
+    React.useEffect(() => {
+        if (!triggersReveal.requested || triggersOffsetY === null) return;
+        scrollRef.current?.scrollTo({ y: triggersOffsetY, animated: !revealReducedMotion });
+        triggersReveal.consume();
+    }, [triggersReveal.requested, triggersReveal.consume, triggersOffsetY, revealReducedMotion]);
     const triggersActionsRef = React.useRef<SessionTriggersSectionActions>(null);
     const addMenuAnchorRef = React.useRef<View>(null);
     const openTriggers = React.useCallback(() => {
@@ -638,7 +659,9 @@ export const SessionWorkView = React.memo((props: Readonly<{
                     ) : null}
                     {/* The session's Triggers live with its work (07 S16, lab W9); "+" and rows open popovers in place. */}
                     {sessionServerId ? (
-                        <SessionHabitsSection sessionId={props.sessionId} serverId={sessionServerId} actionsRef={triggersActionsRef} />
+                        <View collapsable={false} onLayout={onTriggersLayout} style={styles.paneEdgeSection}>
+                            <SessionHabitsSection sessionId={props.sessionId} serverId={sessionServerId} actionsRef={triggersActionsRef} />
+                        </View>
                     ) : null}
                     </>)}
                 </ScrollView>

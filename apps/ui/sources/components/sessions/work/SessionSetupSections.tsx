@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { SidePaneInspectorSections } from '@/components/ui/lists/SidePaneInspectorSections';
 import { SessionTemplateSection } from '@/components/sessions/bots/templates/SessionTemplateSection';
 import { View } from 'react-native';
 import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
@@ -172,6 +173,9 @@ function SessionHabitsContent(props: SessionHabitsSectionProps) {
   const status = read.status === 'failed' || destination.status === 'failed' || destination.loadMoreFailed
     ? 'failed' : read.status === 'loading' || destination.status === 'loading' ? 'loading' : 'ready';
   return (
+    // One Triggers section for Info and the Work tab (owner 0936 #16). Both hosts are side panes, so it always
+    // takes Session Info's inspector anatomy, never the grouped card a bare Work scroll would give it.
+    <SidePaneInspectorSections>
     <WorkSectionPlacementProvider value="page">
       <SessionTriggerHistoryScope>
         <View nativeID={SESSION_SETUP_TRIGGERS_ANCHOR_ID} collapsable={false}>
@@ -191,5 +195,6 @@ function SessionHabitsContent(props: SessionHabitsSectionProps) {
         </View>
       </SessionTriggerHistoryScope>
     </WorkSectionPlacementProvider>
+    </SidePaneInspectorSections>
   );
 }

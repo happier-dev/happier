@@ -384,6 +384,12 @@ const WorkflowTriggerRowView = React.memo(function WorkflowTriggerRowView(props:
     const { row } = props;
     // The Event editor opens the exact private source only after the user chooses to edit.
     const editable = row.schedule !== null || row.trigger.kind === 'pluginEvent';
+    const onHistory = props.onHistory;
+    const historyOpen = props.history !== undefined;
+    // History waits behind the row's ⋯ beside its switch, as on every trigger row.
+    const historyActions = React.useMemo(() => onHistory ? [{ id: `${props.testID}-history`,
+        title: t('workflows.destination.history.title'), icon: 'clock-counter-clockwise' as const,
+        selected: historyOpen, onPress: onHistory }] : undefined, [onHistory, historyOpen, props.testID]);
     return (
         <View ref={anchorRef} collapsable={false}>
             <TriggerRow
@@ -396,9 +402,7 @@ const WorkflowTriggerRowView = React.memo(function WorkflowTriggerRowView(props:
                 glyph={row.trigger.kind === 'schedule' ? 'clock' : 'lightning'}
                 enabled={row.enabled}
                 onToggle={props.onToggle}
-                actions={props.onHistory ? <ToolbarButton testID={`${props.testID}-history`}
-                    label={t('workflows.destination.history.title')} active={props.history !== undefined}
-                    onPress={props.onHistory} /> : undefined}
+                menuActions={historyActions}
                 {...(editable ? { onPress: () => props.onOpen(anchorRef) } : {})}
             />
             {props.history}
