@@ -1115,7 +1115,7 @@ describe('workspace sync broker authentication and attach rules', () => {
     },
   );
 
-  it('recovers only the pending operation own refusal from the native .11 generic error', async () => {
+  it('settles only the pending operation whose endpoint refused and retains no error history', async () => {
     const fixture = await useFixture(await startBroker({ openExternalStream: async () => {
       throw Object.assign(new Error('Authenticated Iroh machine carrier is unavailable'), { code: 'machine_carrier_unavailable' });
     } }));
@@ -1138,12 +1138,26 @@ describe('workspace sync broker authentication and attach rules', () => {
         { operationId: 'carrier-operation' })).rejects.toMatchObject({ code: 'machine_carrier_unavailable',
         message: 'Authenticated Iroh machine carrier is unavailable' });
       nativeCode = 'git_selection_unavailable';
+      refuse = false;
       await expect(fixture.broker.command({ t: 'resume', requestId: 'typed-native', sessionIdentifier: 'session' },
         { operationId: 'carrier-operation' })).rejects.toMatchObject({ code: 'git_selection_unavailable' });
       nativeCode = 'engine_unavailable';
-      refuse = false;
       await expect(fixture.broker.command({ t: 'resume', requestId: 'retry', sessionIdentifier: 'session' },
         { operationId: 'carrier-operation' })).rejects.toMatchObject({ code: 'engine_unavailable' });
+    } finally { await client.close(); }
+  });
+
+  it.each(['resume', 'pause', 'terminate'] as const)('allows %s to retire an already attached endpoint', async commandType => {
+    const fixture = await useFixture(await startBroker());
+    const client = await connectClient(fixture);
+    try {
+      const pipe = await client.openStream(deriveWorkspaceSyncEndpointId('retiring', 'alpha'));
+      client.onCommand(async () => {
+        await pipe.close();
+        return { ok: true };
+      });
+      await expect(fixture.broker.command({ t: commandType, requestId: 'retire', sessionIdentifier: 'session' },
+        { operationId: 'retiring' })).resolves.toEqual({ ok: true });
     } finally { await client.close(); }
   });
 

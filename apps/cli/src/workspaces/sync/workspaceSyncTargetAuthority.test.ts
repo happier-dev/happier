@@ -1942,6 +1942,24 @@ async function waitForCondition(predicate: () => boolean | Promise<boolean>, tim
 }
 
 describe('workspace sync target authority', () => {
+  it('refuses a signed relationship reconnect without exact READY custody', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'ws-ready-'));
+    const alphaRoot = join(fixture, 'alpha');
+    const betaRoot = join(fixture, 'beta');
+    await Promise.all([mkdir(alphaRoot), mkdir(betaRoot)]);
+    await writeFile(join(betaRoot, 'existing.txt'), 'preserved');
+    const harness = createAuthorityHarness({ getProjectSnapshot: () => snapshot(alphaRoot, betaRoot) });
+    try {
+      await expect(harness.authority.prepareBootstrapHere(prepareRequest({ targetBootstrap: undefined })))
+        .rejects.toMatchObject({ code: 'target_bootstrap_required' });
+      expect(await readFile(join(betaRoot, 'existing.txt'), 'utf8')).toBe('preserved');
+    } finally {
+      await harness.authority.releaseAllRetainedBootstraps();
+      await harness.cleanup();
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
   it.each(['stage', 'apply', 'discard', 'recover'] as const)('keeps cancellation local while validating the %s conflict wire request', async phase => {
     const cancellation = new AbortController();
     const actionInput = {

@@ -169,7 +169,6 @@ type PendingCommand = {
   reject: (error: Error) => void;
   abortCleanup?: () => void;
   endpointIds?: readonly string[];
-  openError?: BrokerProtocolError;
   trace?: WebLatencyTracePoint;
 };
 
@@ -350,7 +349,7 @@ export class WorkspaceSyncBroker {
         options.signal?.addEventListener('abort', abort, { once: true });
         this.commands.set(command.requestId, { resolve, reject, abortCleanup,
           trace: readWebLatencyTracePoint(),
-          ...(options.operationId ? { endpointIds: [
+          ...(options.operationId && (command.t === 'create' || command.t === 'resume' || command.t === 'flush') ? { endpointIds: [
             deriveWorkspaceSyncEndpointId(options.operationId, 'alpha'),
             deriveWorkspaceSyncEndpointId(options.operationId, 'beta'),
           ] } : {}),
@@ -584,16 +583,17 @@ export class WorkspaceSyncBroker {
     const socket = stream.control;
     const failExternal = (failure: BrokerProtocolError): void => {
       if (stream.closed) return;
+      // The endpoint failure is already terminal for these transfer commands.
+      // Cancel native work so its per-session queue can also advance.
+      for (const [requestId, command] of this.commands) {
+        if (!command.endpointIds?.includes(message.endpointId)) continue;
+        this.settleCommand(requestId, undefined, failure);
+        const control = this.authenticatedControl;
+        if (control && !control.destroyed) this.send(control, { t: 'cancel', requestId });
+      }
       if (stream.attached) {
         void this.closePending(stream);
         return;
-      }
-      // Native .11 drops broker refusal codes in brokerResponseError and sends
-      // engine_unavailable from Resume. Retain only this pending operation's
-      // own refusal; no prose parsing or error history survives settlement.
-      // Remove this recovery once supported engines preserve broker codes.
-      for (const command of this.commands.values()) {
-        if (command.endpointIds?.includes(message.endpointId)) command.openError ??= failure;
       }
       this.failPending(stream, failure.code, failure.message);
     };
@@ -799,10 +799,8 @@ export class WorkspaceSyncBroker {
     if (!command) return;
     this.commands.delete(requestId);
     command.abortCleanup?.();
-    if (error) {
-      command.reject(error instanceof BrokerProtocolError && error.code === 'engine_unavailable'
-        ? command.openError ?? error : error);
-    } else command.resolve(result);
+    if (error) command.reject(error);
+    else command.resolve(result);
   }
 
   private failCommands(error: Error): void {

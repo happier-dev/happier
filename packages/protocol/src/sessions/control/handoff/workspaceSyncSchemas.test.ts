@@ -859,6 +859,9 @@ describe('workspace sync protocol schemas', () => {
     };
 
     expect(WorkspaceSyncTargetBootstrapPrepareV1Schema.parse(request)).toEqual(request);
+    const { targetBootstrap: _bootstrap, targetReplacementApproval: _approval,
+      targetReplacementApprovalReceiptId: _receipt, targetReplacementApprovalActionInput: _input, ...reconnect } = request;
+    expect(WorkspaceSyncTargetBootstrapPrepareV1Schema.parse(reconnect)).toEqual(reconnect);
     expect(WorkspaceSyncTargetBootstrapPrepareV1Schema.safeParse({
       ...request,
       targetReplacementApprovalReceiptId: undefined,

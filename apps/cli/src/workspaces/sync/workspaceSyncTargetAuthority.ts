@@ -875,10 +875,10 @@ function retainedBootstrapMatchesOwner(
 
 /**
  * Relationship creation prepares the target from transient intent, then the
- * same operation re-enters after that exact definition is published to
- * Account Settings. Bootstrap mechanics are intentionally absent on the
- * settings-owned replay; every stable relationship/endpoint fact must still
- * match the retained authority.
+ * same operation re-enters after that exact definition is published. SOURCE
+ * also carries that row in its signed transient projection on reconnect.
+ * Bootstrap mechanics are absent on replay, and every stable relationship
+ * and endpoint fact must still match the retained authority.
  */
 function isExactPersistedRelationshipReentry(
   entry: RetainedBootstrap,
@@ -886,7 +886,6 @@ function isExactPersistedRelationshipReentry(
   request: WorkspaceSyncTargetBootstrapPrepareV1,
 ): boolean {
   return request.owner.kind === 'relationship'
-    && request.transientRelationship === undefined
     && request.targetBootstrap === undefined
     && request.targetReplacementApproval === undefined
     && entry.bootstrapOperationId === request.bootstrapOperationId
@@ -3279,6 +3278,7 @@ export function createWorkspaceSyncTargetAuthority(
             endpointRole: owner.endpointRole,
             targetWorkspace: owner.targetWorkspace,
             sourceWorkspace: owner.sourceWorkspace,
+            ...(requesterCopyCustody ? { requesterCopyCustody } : {}),
           });
           if (!rehydrated) {
             throw authorityError('target_bootstrap_required', 'Existing workspace relationship has no verified target bootstrap');
@@ -3349,6 +3349,7 @@ export function createWorkspaceSyncTargetAuthority(
             bootstrapOperationId: request.bootstrapOperationId,
             definition,
             result: reboundResult,
+            transientAuthority: sourceInvocation !== undefined || retainedBasis.transientAuthority,
             ...(targetRouting ? { targetRouting } : {}),
             ...(sourceWriterTargetRouting ? { sourceWriterTargetRouting } : {}),
           });

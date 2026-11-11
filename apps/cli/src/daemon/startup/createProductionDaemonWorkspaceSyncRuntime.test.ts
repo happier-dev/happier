@@ -184,6 +184,11 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       execution: { credentials, accountRowsCustody: { serverId: fixture.serverId, accountId: 'bob',
         serverHttpBaseUrl: 'https://bind-child-home.invalid', isCurrent: async () => true },
       getSnapshot: () => snapshot, replaceSnapshot: async next => { snapshot = next; },
+      // The signed TARGET RPC is the network boundary. Composed requester
+      // tests exercise its receiver and exact READY recovery before ingress.
+      callTargetPhase: async () => ({ v: 1, bootstrapOperationId: operationId,
+        targetWorkspaceRefId: fixture.targetRef.id, state: 'ready', created: false,
+        rootFingerprint: 'a'.repeat(64), policyDigest: contentPolicy.policyDigest }),
       assertTransferCurrent: async () => undefined, release: async () => undefined },
     });
     await fixture.parent.handoffAdapter.bindPrivateExecutionRelationship!(operationId, operationId);

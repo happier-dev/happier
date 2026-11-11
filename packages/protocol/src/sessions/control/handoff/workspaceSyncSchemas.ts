@@ -646,8 +646,8 @@ export const WorkspaceSyncTargetBootstrapPrepareV1Schema = lazyZodSchema(() => z
   bootstrapOperationId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_RELATIONSHIP_ID_LENGTH)),
   owner: WorkspaceSyncTargetBootstrapOwnerV1Schema,
   /**
-   * Operation-scoped definition used only while a newly-created relationship
-   * is being proven before its durable Account-settings commit.
+   * SOURCE-signed relationship projection used during initial preparation or
+   * exact READY custody recovery when TARGET cannot read the requester's graph.
    */
   transientRelationship: z.optional(WorkspaceSyncRelationshipV1Schema),
   targetWorkspaceRefId: z.string().check(z.trim(), z.minLength(1), z.maxLength(MAX_WORKSPACE_REF_ID_LENGTH)),
@@ -670,8 +670,10 @@ export const WorkspaceSyncTargetBootstrapPrepareV1Schema = lazyZodSchema(() => z
   targetReplacementApprovalActionInput: z.optional(z.unknown()),
 }).check(z.superRefine((value, context) => {
   const transient = value.transientRelationship;
-  const createsTarget = (value.owner.kind === 'copy_once' && value.createIfMissing) || transient !== undefined;
-  if (createsTarget !== (value.targetBootstrap !== undefined)) {
+  // A signed SOURCE projection can also name an established relationship.
+  // Its target owner verifies READY custody when bootstrap choice is absent.
+  const createsTarget = value.owner.kind === 'copy_once' && value.createIfMissing;
+  if (transient === undefined && createsTarget !== (value.targetBootstrap !== undefined)) {
     context.addIssue({
       code: "custom",
       path: ['targetBootstrap'],

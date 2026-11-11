@@ -532,7 +532,7 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
         t: 'create',
         requestId: this.requestId(),
         session: sessionDefinition(relationship),
-      }, signal), relationship, signal);
+      }, signal, relationship.relationshipId), relationship, signal);
     } catch (error) {
       this.definitions.delete(relationship.relationshipId);
       throw error;
@@ -609,13 +609,13 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
         if (!existing.generic.paused) {
           return await this.project(await this.options.send({
             t: 'flush', requestId: this.requestId(), sessionIdentifier: existing.generic.identifier,
-          }, signal), operation, 'operation', signal, true);
+          }, signal, operation.operationId), operation, 'operation', signal, true);
         }
       } else {
         cleanupRequired = true;
         await this.project(await this.options.send({
           t: 'create', requestId: this.requestId(), session: sessionDefinition(operation),
-        }, signal), operation, 'none');
+        }, signal, operation.operationId), operation, 'none');
       }
       const sessionIdentifier = this.requireSessionIdentifier(operation.operationId);
       await this.project(await this.options.send({
@@ -623,7 +623,7 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
       }, signal, operation.operationId), operation, 'none');
       return await this.project(await this.options.send({
         t: 'flush', requestId: this.requestId(), sessionIdentifier,
-      }, signal), operation, 'operation', signal, true);
+      }, signal, operation.operationId), operation, 'operation', signal, true);
     } catch (error) {
       operationError = error;
       retainForRecovery = isIndeterminate(error);

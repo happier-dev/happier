@@ -257,7 +257,7 @@ describe('WorkspaceSyncMutagenAdapterClient', () => {
         extraIgnorePatterns: maximalPolicyInput.extraIgnorePatterns,
         extraIncludePatterns: maximalPolicyInput.extraIncludePatterns,
       }) }),
-    }), undefined);
+    }), undefined, 'r1');
   });
 
   it('creates a persistent session paused, resumes it, then projects the bounded generic Session', async () => {

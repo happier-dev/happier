@@ -9,7 +9,7 @@ import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, MachineUpdateO
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, createDirectRouteGrantSigningInputV2 } from '@happier-dev/protocol';
 import { ProjectAccountRowV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createPlainProjectAccountRefRow } from '@/workspaces/projectAccountRows.testkit';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
@@ -23,6 +23,8 @@ import { createRequesterWorkspaceSyncFixture } from './createRequesterWorkspaceS
 import { registerMachineWorkspaceSyncRpcHandlers } from '@/api/machine/rpcHandlers.workspaceSync';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { WorkspaceSyncRelationshipCreateResultV1Schema, WorkspaceSyncRelationshipsListRpcResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { WorkspaceSyncController } from '@/workspaces/sync/workspaceSyncController';
+import { deriveWorkspaceSyncEndpointId } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
 
 const socketIo = vi.hoisted(() => vi.fn());
 const executionBoundary = vi.hoisted(() => ({ member: true, recovery: undefined as undefined | { pending: boolean; root: string; calls: number } }));
@@ -507,6 +509,59 @@ it.skipIf(process.platform !== 'linux').each([
     actionInput: { ...setup.request.actionInput, targetPath: secondPath } });
   expect(await setup.executeRelationshipAction(second)).toMatchObject({ ok: true, result: { created: true } });
   expect(await readFile(join(secondPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+});
+
+it.skipIf(process.platform !== 'linux')('restores requester target custody through the controller reconnect after target daemon restart', async () => {
+  executionBoundary.member = false;
+  const signingKey = tweetnacl.sign.keyPair();
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', sourceCustodianAccountId: 'member-a',
+    remoteTarget: true, targetCustodianAccountId: 'target-owner', remoteSeed: true, socketIo, allowRelationshipAction: true,
+    nativeCarrierHome: {
+      // Home HTTP and native tunnel opening are external process/network boundaries.
+      resolveTrustRoots: () => [{ keyId: 'reconnect-home', publicKey: Buffer.from(signingKey.publicKey).toString('base64url') }],
+      readTargetMachine: async id => ({ id, operationProtocolCapabilitiesRevision: 1,
+        operationProtocolCapabilities: { irohMachineEndpoint: { protocolVersions: [1],
+          endpointId: (id === 'target-parent' ? 'b' : 'a').repeat(64), directAddresses: ['127.0.0.1:7777'] } } }),
+      mintGrant: async request => {
+        const { kind, ttlMs, ...binding } = request;
+        const now = Date.now();
+        const payload = { ...binding, grantId: 'reconnect-grant', accountId: 'member-a', iat: now, exp: now + ttlMs,
+          aud: 'happier-daemon-route-grant' as const, proofKind: kind };
+        return { payload, signature: { keyId: 'reconnect-home', alg: 'Ed25519' as const,
+          valueBase64Url: Buffer.from(tweetnacl.sign.detached(Buffer.from(createDirectRouteGrantSigningInputV2(payload)),
+            signingKey.secretKey)).toString('base64url') } };
+      },
+      admitNativeTunnel: async ({ handshake }) => {
+        const target = setup.fixture.targetParent;
+        if (!target || handshake.flow !== 'workspace_sync' || handshake.initiator.kind !== 'machine') {
+          throw new Error('Target native boundary is unavailable');
+        }
+        return await target.acquireWorkspaceSyncMachineIngress({ operationId: handshake.operationId,
+          sourceMachineId: handshake.initiator.machineId, targetMachineId: handshake.target.machineId,
+          actorAccountId: handshake.accountId });
+      },
+    } });
+  const targetBefore = [...setup.targetAccountRows];
+  const created = await setup.executeRelationshipAction();
+  expect(created).toMatchObject({ ok: true, result: { created: true } });
+  if (!created.ok) throw new Error('Sync creation failed');
+  const { relationshipId } = WorkspaceSyncRelationshipCreateResultV1Schema.parse(created.result);
+  await setup.restartTargetParent();
+  const unclaimed = await setup.fixture.probeTarget();
+  expect(unclaimed).not.toHaveProperty('kind');
+  if (!('kind' in unclaimed)) await unclaimed.release();
+  const controller = setup.fixture.parentManagedWorkspaceSync;
+  if (!(controller instanceof WorkspaceSyncController)) throw new Error('Source controller is unavailable');
+  const stream = await controller.openExternalStream({ endpointId: deriveWorkspaceSyncEndpointId(relationshipId, 'beta') });
+  try {
+    const recovered = await setup.fixture.probeTarget();
+    if (!('kind' in recovered)) await recovered.release();
+    expect(recovered).toMatchObject({ kind: 'overlap' });
+    expect(setup.targetAccountRows).toEqual(targetBefore);
+  } finally {
+    stream.destroy();
+    await setup.fixture.parent.workspaceSync.relationshipOwner.stop(relationshipId);
+  }
 });
 
 it.skipIf(process.platform !== 'linux').each([false, true])(

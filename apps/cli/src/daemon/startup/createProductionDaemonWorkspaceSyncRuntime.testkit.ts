@@ -416,7 +416,6 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
   } }));
   const productions: Awaited<ReturnType<typeof createProductionDaemonWorkspaceSyncRuntime>>[] = [];
-  let targetMaterializationDirectory: string | undefined;
   const daemonRuntimes = new Map<string, DaemonWorkspaceSyncRuntime>();
   const nativeCarrierRuntimes = new Map<string, DaemonMachineIrohRuntime>();
   let parentManagedWorkspaceSync: DaemonWorkspaceSyncRuntime['managedWorkspaceSync'] | undefined;
@@ -739,7 +738,6 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
         // on-demand blob authorization and file materialization remain real.
         openMachineCarrierTunnel: options.nativeCarrierRefusal || options.nativeCarrierHome ? openFixtureTunnel : openSeedTunnel,
       } : {}) };
-    if (machineId === targetRef.machineId) targetMaterializationDirectory = join(productionInput.activeServerDir, 'workspace-sync', 'materialization');
     const production = await runWithServerHttpBaseUrl(localHomeTarget.applicationUrl, async () => {
       if (options.projectRowsFromHttp) {
         options.onCompositionPhase?.(`Project row read for ${machineId}`);
@@ -820,7 +818,6 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     },
     sourceRef, childRef, childInstallationId, targetRef, projection, managedChild, callWorkspaceSourcePhase, parentRpcHandlers: handlers,
     get targetParent() { return targetParent; },
-    targetMaterializationDirectory,
     restartTargetParent: async () => {
       if (!targetParent) throw new Error('Physical target runtime is unavailable');
       await targetParent.stop();

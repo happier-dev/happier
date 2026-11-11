@@ -1390,6 +1390,52 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       });
   };
 
+  const prepareRelationshipTarget: NonNullable<DaemonWorkspaceSyncRuntimeDependencies['prepareRelationshipTarget']> = async (relationship, signal, preparation, admitted) => {
+    const retained = runtime?.handoffAdapter.resolvePrivateExecution?.({ relationshipId: relationship.relationshipId });
+    const target = resolveRelationshipBootstrapTarget(admitted ?? retained?.execution.getSnapshot?.() ?? factories.getProjectSnapshot(), relationship, semanticServerId);
+    const prepare = {
+      v: 1,
+      bootstrapOperationId: relationship.relationshipId,
+      owner: { kind: 'relationship', relationshipId: relationship.relationshipId },
+      ...(preparation?.transient || retained && target.machineId !== input.localMachineId
+        ? { transientRelationship: relationship } : {}),
+      targetWorkspaceRefId: target.workspaceRefId,
+      targetMachineId: target.machineId,
+      endpointRole: target.endpointRole,
+      policyDigest: relationship.contentPolicy.policyDigest,
+      createIfMissing: true,
+      ...(preparation ? { targetBootstrap: preparation.targetBootstrap } : {}),
+      ...(preparation?.targetReplacementApproval
+        ? {
+            targetReplacementApproval: preparation.targetReplacementApproval,
+            targetReplacementApprovalReceiptId: preparation.targetReplacementApprovalReceiptId,
+            targetReplacementApprovalActionInput: preparation.targetReplacementApprovalActionInput,
+          }
+        : {}),
+      ...(signal ? { signal } : {}),
+    } satisfies Parameters<typeof targetAuthority.prepareBootstrapAtTarget>[0];
+    if (retained) {
+      const { targetMachineId: _targetMachineId, signal: _signal, ...wire } = prepare;
+      if (retained.execution.nativeSync && target.machineId === input.localMachineId) {
+        const prepared = await retained.execution.nativeSync.prepareBootstrapAtTarget(prepare);
+        return prepared.ownershipHandles ? { ownershipHandles: prepared.ownershipHandles } : undefined;
+      } else if (!retained.execution.executionIdentity && target.machineId === input.localMachineId) {
+        const prepared = await targetAuthority.prepareBootstrapAtTarget(prepare);
+        return prepared.ownershipHandles ? { ownershipHandles: prepared.ownershipHandles } : undefined;
+      } else {
+        if (!retained.execution.callTargetPhase) throw compositionError('workspace_sync_update_required', 'Private Sync target transport is unavailable');
+        await retained.execution.callTargetPhase({ machineId: target.machineId,
+          method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE, request: wire,
+          routing: { v: 1, phase: 'prepare', operationId: retained.input.operationId, accountServerId: semanticServerId,
+            targetMachineId: retained.input.targetMachineId, targetRootPath: retained.input.targetRootPath },
+          ...(signal ? { signal } : {}) });
+      }
+      return;
+    }
+    const prepared = await targetAuthority.prepareBootstrapAtTarget(prepare);
+    return prepared.ownershipHandles ? { ownershipHandles: prepared.ownershipHandles } : undefined;
+  };
+
   runtime = factories.createDaemonRuntime({
     resolveHandoffRelationshipOwner: async (request, context) => {
       const retained = runtime?.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId });
@@ -1476,53 +1522,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       return connectWorkspaceSyncMachineTunnel({ localPort: ingress.port, localCapability: ingress.localCapability,
         observedPath: 'direct', close: ingress.close }, request.signal);
     },
-    prepareRelationshipTarget: async (relationship, signal, preparation, admitted) => {
-      const retained = runtime?.handoffAdapter.resolvePrivateExecution?.({ relationshipId: relationship.relationshipId });
-      const target = resolveRelationshipBootstrapTarget(admitted ?? retained?.execution.getSnapshot?.() ?? factories.getProjectSnapshot(), relationship, semanticServerId);
-      // Established local targets lend their retained bootstrap handle back to
-      // the controller. Remote targets keep custody through their carrier.
-      if (retained && !preparation?.transient && target.machineId !== input.localMachineId) return;
-      const prepare = {
-        v: 1,
-        bootstrapOperationId: relationship.relationshipId,
-        owner: { kind: 'relationship', relationshipId: relationship.relationshipId },
-        ...(preparation?.transient ? { transientRelationship: relationship } : {}),
-        targetWorkspaceRefId: target.workspaceRefId,
-        targetMachineId: target.machineId,
-        endpointRole: target.endpointRole,
-        policyDigest: relationship.contentPolicy.policyDigest,
-        createIfMissing: true,
-        ...(preparation ? { targetBootstrap: preparation.targetBootstrap } : {}),
-        ...(preparation?.targetReplacementApproval
-          ? {
-              targetReplacementApproval: preparation.targetReplacementApproval,
-              targetReplacementApprovalReceiptId: preparation.targetReplacementApprovalReceiptId,
-              targetReplacementApprovalActionInput: preparation.targetReplacementApprovalActionInput,
-            }
-          : {}),
-        ...(signal ? { signal } : {}),
-      } satisfies Parameters<typeof targetAuthority.prepareBootstrapAtTarget>[0];
-      if (retained) {
-        const { targetMachineId: _targetMachineId, signal: _signal, ...wire } = prepare;
-        if (retained.execution.nativeSync && target.machineId === input.localMachineId) {
-          const prepared = await retained.execution.nativeSync.prepareBootstrapAtTarget(prepare);
-          return prepared.ownershipHandles ? { ownershipHandles: prepared.ownershipHandles } : undefined;
-        } else if (!retained.execution.executionIdentity && target.machineId === input.localMachineId) {
-          const prepared = await targetAuthority.prepareBootstrapAtTarget(prepare);
-          return prepared.ownershipHandles ? { ownershipHandles: prepared.ownershipHandles } : undefined;
-        } else {
-          if (!retained.execution.callTargetPhase) throw compositionError('workspace_sync_update_required', 'Private Sync target transport is unavailable');
-          await retained.execution.callTargetPhase({ machineId: target.machineId,
-            method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE, request: wire,
-            routing: { v: 1, phase: 'prepare', operationId: retained.input.operationId, accountServerId: semanticServerId,
-              targetMachineId: retained.input.targetMachineId, targetRootPath: retained.input.targetRootPath },
-            ...(signal ? { signal } : {}) });
-        }
-        return;
-      }
-      const prepared = await targetAuthority.prepareBootstrapAtTarget(prepare);
-      return prepared.ownershipHandles ? { ownershipHandles: prepared.ownershipHandles } : undefined;
-    },
+    prepareRelationshipTarget,
     recoverCopyOnceTarget: async (operation) => {
       const target = resolveWorkspaceRefById(
         factories.getProjectSnapshot()?.workspaceRefs ?? [],
@@ -1808,6 +1808,11 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           if (retained) {
             if (transferAdmission) await transferAdmission;
             else await admitPrivateTransfer(request.operationId, request.signal);
+            const snapshot = retained.execution.getSnapshot?.();
+            const relationship = snapshot?.relationships.find(candidate => candidate.relationshipId === request.operationId);
+            // Native reconnect outlives the target daemon. Re-enter its existing
+            // signed SOURCE preparation to restore exact READY custody first.
+            if (relationship?.enabled) await prepareRelationshipTarget(relationship, request.signal, undefined, snapshot);
             const open = input.createRequesterMachineCarrierTunnel?.({ credentials: retained.execution.credentials,
               accountId: retained.execution.accountRowsCustody.accountId });
             if (!open) throw compositionError('machine_carrier_unavailable', 'Requester Workspace Sync carrier is unavailable');
@@ -2173,6 +2178,15 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
             homeServerIdentityId: semanticServerId,
             machineAdmission: { custodianAccountId: admission.custodianAccountId, role: admission.role } });
           native?.retainForRelationship();
+          // The create Action's request lifetime ends here. Later signed
+          // preparation belongs to the retained relationship's SOURCE custody.
+          const boundary = input.requesterMachineAdmissionBoundary;
+          targetPhaseContext = { ...targetPhaseContext, verifyMachineAdmissionCurrent: async () => {
+            if (!boundary) return false;
+            return await verifyWorkspaceSyncSourceMachineAdmissionCurrent({ credentials: requester.credentials,
+              sessionId: id, attribution: executionIdentity.requester, serverHttpBaseUrl: requester.serverHttpBaseUrl,
+              boundary });
+          } };
           retained = true;
         },
         release: async () => { try { await native?.release(); } finally { await custody.release(); } },
