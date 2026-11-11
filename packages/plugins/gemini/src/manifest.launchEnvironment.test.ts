@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { GEMINI_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Gemini launch-environment authority', () => {
@@ -9,17 +10,7 @@ describe('Gemini launch-environment authority', () => {
     );
 
     expect(processAccess?.scope.envKeys).toEqual([
-      'GEMINI_API_KEY',
-      'GOOGLE_API_KEY',
-      'GOOGLE_GENAI_USE_VERTEXAI',
-      'GOOGLE_CLOUD_PROJECT',
-      'GOOGLE_CLOUD_LOCATION',
-      'GOOGLE_APPLICATION_CREDENTIALS',
-      'HAPPIER_GEMINI_ACP_AUTH_METHOD',
-      'HAPPIER_GEMINI_ACP_AUTH_META',
-      'GEMINI_CLI_HOME',
-      'HOME',
-      'XDG_CONFIG_HOME',
+      ...GEMINI_PROVIDER_OWNED_ENV_KEYS, 'GEMINI_CLI_HOME', 'HOME', 'XDG_CONFIG_HOME',
     ]);
   });
 });

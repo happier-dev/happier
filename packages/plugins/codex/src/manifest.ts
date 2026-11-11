@@ -29,7 +29,7 @@ import { readCodexMcpConfigServers } from './agent/mcp/configServers.js';
 import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
 import { createCodexAgentRuntime } from './agent/runtime/factory.js';
 import { CODEX_KEY_DECLARATIONS, CODEX_KEY_ENVIRONMENT_USES } from './agent/runtime/connectedAccountKeys.js';
-import { CODEX_PROVIDER_SECRET_ENV_KEY } from './agent/providerBinding/adapter.js';
+import { CODEX_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding/adapter.js';
 import { CODEX_NATIVE_UPSTREAM_CONFIG_ENV } from './agent/providerBinding/runtimeConfig.js';
 import {
   createCodexConnectedAccountNativeAuthCodec,
@@ -92,7 +92,7 @@ export const CODEX_PLUGIN = definePlugin({
           { kind: 'systemTool', id: 'codex-cli' },
           { kind: 'managedDependency', id: 'codex-acp' },
         ],
-        envKeys: ['CODEX_HOME', 'CODEX_SQLITE_HOME', CODEX_PROVIDER_SECRET_ENV_KEY, CODEX_NATIVE_UPSTREAM_CONFIG_ENV,
+        envKeys: ['CODEX_HOME', 'CODEX_SQLITE_HOME', ...CODEX_PROVIDER_OWNED_ENV_KEYS, CODEX_NATIVE_UPSTREAM_CONFIG_ENV,
           ...CODEX_KEY_ENVIRONMENT_USES.map(use => use.environmentKey)],
       },
     }, {

@@ -27,7 +27,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
       scope: {
         executables: [{ kind: 'systemTool', id: 'grok-cli' }],
         envKeys: [...new Set([
-          'XAI_API_KEY',
+          ...GROK_PROVIDER_OWNED_ENV_KEYS,
           ...GROK_CONNECTED_ACCOUNT_LAUNCH.environmentUses.map(use => use.environmentKey),
           ...GROK_CONNECTED_ACCOUNT_LAUNCH.environmentUnsetUses.map(use => use.environmentKey),
           GROK_CONNECTED_ACCOUNT_LAUNCH.stateSharingDescriptor.nativeHome.environmentKey,

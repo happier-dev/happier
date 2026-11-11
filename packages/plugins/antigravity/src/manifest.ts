@@ -37,7 +37,8 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
       id: 'antigravity-acp-process',
       capability: 'process',
       reason: 'Launch the pinned official Antigravity ACP server through host-mediated execution.',
-      scope: { executables: [{ kind: 'managedDependency', id: 'agy-acp-server' }], envKeys: ['GEMINI_HOME', 'GEMINI_API_KEY', 'AGY_ACP_FORCE_FILE_STORAGE'] },
+      scope: { executables: [{ kind: 'managedDependency', id: 'agy-acp-server' }], envKeys: ['GEMINI_HOME', 'GEMINI_API_KEY', 'AGY_ACP_FORCE_FILE_STORAGE',
+        ...(antigravityConnectedAccountLaunch.environmentUnsetUses ?? []).map(use => use.environmentKey)] },
     }, {
       id: 'antigravity-cli-process',
       capability: 'process',
