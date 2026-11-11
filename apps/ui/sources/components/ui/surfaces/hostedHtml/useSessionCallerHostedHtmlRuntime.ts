@@ -43,7 +43,6 @@ export function useSessionCallerHostedHtmlRuntime(
     const surfaceCurrentRef = React.useRef(isSurfaceCurrent);
     surfaceCurrentRef.current = isSurfaceCurrent;
     const hostOrigin = resolveHostedFrameHostOrigin();
-    const isAccountCurrent = React.useCallback(() => binding?.isCurrent() === true, [binding]);
     const resolveMode = React.useCallback(async (signal: AbortSignal) => {
         if (!binding?.isCurrent()) throw new Error('caller_account_unavailable');
         const account = await captureLazyActionAccountContext(binding.serverId, signal);
@@ -57,7 +56,6 @@ export function useSessionCallerHostedHtmlRuntime(
     const accountMode = usePluginSurfaceAccountEncryptionMode({
         accountLifetime: binding,
         resolveMode,
-        isCurrent: isAccountCurrent,
     });
     const accountModeRef = React.useRef(accountMode);
     accountModeRef.current = accountMode;

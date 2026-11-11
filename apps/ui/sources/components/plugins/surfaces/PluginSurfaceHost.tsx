@@ -10,7 +10,7 @@ import type { PluginPageLaunchOpen } from '@/components/plugins/pages/pluginPage
 import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { usePluginSurfaceActionApproval } from './usePluginSurfaceActionApproval';
-import { areServerProfileIdentifiersEquivalent, captureServerProfileScopeResolver, getServerProfileById, subscribeServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, getServerProfileById, subscribeServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { useFindSurfaceRegistrationHost } from '@/keyboard/KeyboardShortcutProvider';
 import { usePluginHostReadiness, useWidgetPresentation } from '@happier-dev/plugin-ui';
 import type { PluginUiResourceStore, PluginUiWidgetAreaPresentation } from '@happier-dev/plugin-ui/advanced';
@@ -288,7 +288,7 @@ import { usePaneHeaderSlotBinding } from '@/components/appShell/panes/paneHeader
 import { resolvePluginUiFrameworkTranslations } from './pluginUiFrameworkTranslations';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { HEADER_BAND_HORIZONTAL_PADDING_PX } from '@/components/ui/layout/headerBand';
-import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
+import { openPluginConnectedAccountSheet } from './openPluginConnectedAccountSheet';
 
 type PluginSurfaceHostDescriptor = PluginUiPhysicalSurfacePlacementProjection | PluginUiSettingsPageProjection;
 
@@ -2965,21 +2965,8 @@ function PluginSurfaceHostMount(props: Readonly<(
     }, []);
     const readActionInputAnchor = React.useCallback(() => pressTriggerAnchor.current, []);
     const openConnectedAccounts = React.useCallback(async (request: PluginUiOpenConnectedAccountsRequestV1) => {
-        const result = await presentConnectSheet({
-            scope: accountLifetime?.scope ?? null,
-            anchor: pressTriggerAnchor.current,
-            ...(machineId && serverId ? { initialMachineTarget: {
-                serverIdentityId: captureServerProfileScopeResolver()(serverId), machineId,
-            } } : {}),
-            ...('purpose' in request && request.purpose && accountLifetime ? {
-                purpose: request.purpose,
-                purposeSettlement: 'resourceDefault',
-                purposeRequest: { scope: accountLifetime.scope, purpose: request.purpose, ...(machineId ? { machineId } : {}) },
-            } : {}),
-            ...(request.service ? { service: request.service,
-                ...(request.accountId ? { account: { service: request.service, accountId: request.accountId } } : {}) } : {}),
-        });
-        return result.kind === 'dismissed' ? { kind: result.kind } : { kind: result.kind, account: result.account };
+        return openPluginConnectedAccountSheet({ request, scope: accountLifetime?.scope ?? null,
+            machineId, serverId, anchor: pressTriggerAnchor.current });
     }, [accountLifetime, machineId, serverId]);
     const controllerBindingWithConnectedAccounts = React.useMemo<BoundPluginSurfaceBinding>(() => Object.freeze({
         ...(controllerBinding ?? {}),
@@ -3319,19 +3306,10 @@ function PluginSurfaceHostMount(props: Readonly<(
             </PluginUiBoundary>
         );
     };
-    // The Account-mode cache is the sole reader/value owner. This mount keeps
-    // only its own currentness fence: the captured Account lifetime and the
-    // controller must both still name this physical mount
-    // before its resolved disclosure can become public context.
-    const isAccountEncryptionModeCurrent = React.useCallback((): boolean => {
-        return Boolean(
-            accountLifetime?.isCurrent() === true
-            && controller.isCurrent(),
-        );
-    }, [accountLifetime, controller.isCurrent]);
+    // Account mode belongs to the captured Account, independently of the
+    // controller's source execution admission and daemon reachability.
     const accountEncryptionModeReadiness = usePluginSurfaceAccountEncryptionMode({
         accountLifetime,
-        isCurrent: isAccountEncryptionModeCurrent,
     });
     const accountEncryptionMode = accountEncryptionModeReadiness.status === 'ready'
         ? accountEncryptionModeReadiness.mode

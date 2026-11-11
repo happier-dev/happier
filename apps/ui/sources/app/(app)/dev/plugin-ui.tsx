@@ -153,7 +153,6 @@ function useDemoSurfaceContext(): DemoSurfaceContext {
     const accountEncryptionModeReadiness = usePluginSurfaceAccountEncryptionMode({
         accountLifetime,
         credentials,
-        isCurrent: isAccountEncryptionModeCurrent,
     });
     // The hook reports readiness; only a ready disclosure carries the Account mode.
     const accountEncryptionMode = accountEncryptionModeReadiness.status === 'ready'

@@ -422,7 +422,7 @@ type ResolvedAccountEncryptionMode = Readonly<{
 
 /**
  * Resolve public disclosure through the canonical Account-mode reader while
- * keeping request currentness local to this physical surface mount. This state
+ * binding disclosure to its captured Account lifetime. This state
  * is not a second cache: invalidation immediately withholds the value, and an
  * exact-Home reader uses its captured transport instead of the focused Home.
  */
@@ -431,8 +431,6 @@ export function usePluginSurfaceAccountEncryptionMode(input: Readonly<{
     credentials?: AuthCredentials | null;
     /** An exact-Home reader uses the same disclosure lifetime, never the focused Home's transport. */
     resolveMode?: (signal: AbortSignal) => Promise<SurfaceContext['accountEncryptionMode']>;
-    /** Gates disclosure through the incumbent physical mount. */
-    isCurrent: () => boolean;
 }>): PluginSurfaceAccountEncryptionModeReadiness {
     const serverId = input.accountLifetime?.scope.serverId;
     const subscribe = React.useCallback((listener: () => void) =>
@@ -447,16 +445,13 @@ export function usePluginSurfaceAccountEncryptionMode(input: Readonly<{
     const credentialScopeKey = input.credentials ? resolveAuthCredentialsScopeKey(input.credentials) : null;
     const credentialsRef = React.useRef(input.credentials);
     credentialsRef.current = input.credentials;
-    const isCurrentRef = React.useRef(input.isCurrent);
-    isCurrentRef.current = input.isCurrent;
     const [resolved, setResolved] = React.useState<ResolvedAccountEncryptionMode | null>(null);
     // A person's Retry restarts the read; the settled state stays until the new attempt answers.
     const [attempt, setAttempt] = React.useState(0);
     const retry = React.useCallback(() => setAttempt(value => value + 1), []);
-    // Currentness callbacks can retain their identity while their captured
-    // mount becomes ready or retires. Reconcile that transition on this render.
-    const canReadMode = input.accountLifetime?.isCurrent() === true
-        && input.isCurrent();
+    // Source execution readiness cannot withdraw the persisted Account mode.
+    // This hook owns its request cancellation; the Account owns disclosure.
+    const canReadMode = input.accountLifetime?.isCurrent() === true;
 
     React.useEffect(() => {
         const accountLifetime = input.accountLifetime;
@@ -502,7 +497,7 @@ export function usePluginSurfaceAccountEncryptionMode(input: Readonly<{
         };
         const onUnavailable = (result: AccountEncryptionModeReadinessUnavailable) => {
             if (requestRevisionRef.current === requestRevision && !readAbort.signal.aborted
-                && accountLifetime.isCurrent() && isCurrentRef.current()) {
+                && accountLifetime.isCurrent()) {
                 setResolved(previous => previous?.accountLifetime === accountLifetime && previous.result.status === 'unavailable'
                     && previous.result.retrying === true && previous.credentialScopeKey === credentialScopeKey
                     && previous.resolveMode === resolveMode && previous.cacheRevision === cacheRevision
@@ -514,7 +509,7 @@ export function usePluginSurfaceAccountEncryptionMode(input: Readonly<{
             ? fetchAccountEncryptionMode(credentials, { onUnavailable }).then(({ mode }) => mode)
             : readAccountEncryptionModeReadiness(
                 () => resolveMode ? resolveMode(readAbort.signal) : readCapturedMode(),
-                () => !readAbort.signal.aborted && accountLifetime.isCurrent() && isCurrentRef.current()
+                () => !readAbort.signal.aborted && accountLifetime.isCurrent()
                     && cacheRevision === getAccountEncryptionModeCacheRevision(accountLifetime.scope.serverId),
                 onUnavailable,
             );
@@ -523,7 +518,6 @@ export function usePluginSurfaceAccountEncryptionMode(input: Readonly<{
                 if (
                     requestRevisionRef.current !== requestRevision
                     || !accountLifetime.isCurrent()
-                    || !isCurrentRef.current()
                 ) {
                     return;
                 }
@@ -533,7 +527,6 @@ export function usePluginSurfaceAccountEncryptionMode(input: Readonly<{
                 if (
                     requestRevisionRef.current === requestRevision
                     && accountLifetime.isCurrent()
-                    && isCurrentRef.current()
                 ) {
                     setResolved({ accountLifetime, credentialScopeKey, resolveMode, cacheRevision, result: {
                         status: 'unavailable',
@@ -548,8 +541,8 @@ export function usePluginSurfaceAccountEncryptionMode(input: Readonly<{
             retirement.dispose();
         };
         // Material/Account/transport changes restart acquisition. Reallocating
-        // equal credentials or a mount predicate changes no encryption fact;
-        // disclosure still checks the latest predicate on render and settlement.
+        // equal credentials change no encryption fact; disclosure checks the
+        // captured Account lifetime on render and settlement.
     }, [attempt, cacheRevision, canReadMode, credentialScopeKey, input.accountLifetime, input.resolveMode, retry]);
 
     if (!canReadMode) return ACCOUNT_MODE_UNAVAILABLE;
@@ -560,7 +553,6 @@ export function usePluginSurfaceAccountEncryptionMode(input: Readonly<{
         && resolved.resolveMode === input.resolveMode
         && resolved.cacheRevision === cacheRevision
         && input.accountLifetime?.isCurrent() === true
-        && isCurrentRef.current()
         ? resolved.result
         : ACCOUNT_MODE_LOADING;
 }

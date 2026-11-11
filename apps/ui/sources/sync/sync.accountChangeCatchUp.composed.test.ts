@@ -3354,10 +3354,9 @@ describe('sync AccountChange catch-up projection', () => {
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime || !harness.credentials) throw new Error('Restoration must establish the Account');
         const credentials = harness.credentials;
-        const isCurrent = () => lifetime.isCurrent();
         const disclosures: Array<ReturnType<typeof usePluginSurfaceAccountEncryptionMode>> = [];
         const hook = await renderHook(() => {
-            const mode = usePluginSurfaceAccountEncryptionMode({ accountLifetime: lifetime, credentials, isCurrent });
+            const mode = usePluginSurfaceAccountEncryptionMode({ accountLifetime: lifetime, credentials });
             disclosures.push(mode);
             return mode;
         });
