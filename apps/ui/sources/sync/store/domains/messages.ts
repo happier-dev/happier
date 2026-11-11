@@ -4,6 +4,7 @@ import { isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/
 
 import { createReducer, reducer, type ReducerState } from '../../reducer/reducer';
 import { persistEvictedSessionTranscript } from '@/sync/domains/state/sessionTranscriptDiskCache';
+import type { ToolCall } from '../../domains/messages/messageTypes';
 import type { Message } from '../../domains/messages/messageTypes';
 import type { NormalizedMessage } from '../../typesRaw';
 import type { Session } from '../../domains/state/storageTypes';
@@ -1148,7 +1149,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
             // retention only evicts quiescent sessions, so late in-place tool updates are no-ops.
             const reducerState = base.reducerState;
             for (const id of insertIds) {
-                const message = messagesById[id] as (Message & { tool?: { id?: string } }) | undefined;
+                const message = messagesById[id] as (Message & { tool?: ToolCall }) | undefined;
                 if (!message) continue;
                 if (typeof message.localId === 'string' && message.localId) {
                     reducerState.localIds.set(message.localId, id);
@@ -1158,6 +1159,33 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 }
                 if (message.kind === 'tool-call' && typeof message.tool?.id === 'string' && message.tool.id) {
                     reducerState.toolIdToMessageId.set(message.tool.id, id);
+                    // Reconstruct the reducer's message row too: the tool-results phase looks up
+                    // `state.messages` for the mapped tool id and silently drops the result when
+                    // the row is missing — a long-running tool finishing after eviction+reopen
+                    // would otherwise lose its outcome. The tool copy is independent (the reducer
+                    // mutates its row in place), so the hydrated store row stays untouched until
+                    // the next projection.
+                    let toolCopy: ToolCall;
+                    try {
+                        toolCopy = structuredClone(message.tool);
+                    } catch {
+                        // structuredClone can only fail on non-cloneable tool input (not wire JSON);
+                        // a shallow copy still satisfies the result-update contract.
+                        toolCopy = { ...message.tool };
+                    }
+                    reducerState.messages.set(id, {
+                        id,
+                        realID: typeof message.realID === 'string' ? message.realID : null,
+                        seq: typeof message.seq === 'number' ? message.seq : null,
+                        transcriptBlockIndex: typeof message.transcriptBlockIndex === 'number' ? message.transcriptBlockIndex : null,
+                        localId: typeof message.localId === 'string' ? message.localId : null,
+                        createdAt: message.createdAt,
+                        role: 'agent',
+                        text: null,
+                        event: null,
+                        tool: toolCopy,
+                        ...(message.meta ? { meta: message.meta } : {}),
+                    } as (typeof reducerState.messages) extends Map<string, infer R> ? R : never);
                 }
             }
             const latestThinkingMessageId = findLatestThinkingMessageId({ idsOldestFirst: nextIds, messagesById });

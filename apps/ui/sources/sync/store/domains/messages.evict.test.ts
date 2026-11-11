@@ -86,6 +86,62 @@ describe('messages domain: evictSessionMessages', () => {
         expect((entry.messageIdsOldestFirst as string[])).toEqual(originalIds);
     });
 
+    it('hydrated tool calls keep receiving late tool results after eviction and reopen', async () => {
+        await prepareWarmCacheEncryptionKey();
+        const scope = { serverId: 'server-a', accountId: 'account-a' } as any;
+        const { get, domain } = createHarness({
+            sessions: { 'tool-hydrate-s1': buildSessionRow('tool-hydrate-s1') },
+            sessionLocalStateScope: scope,
+        });
+
+        const toolCallWire = {
+            id: 'wire-agent-1',
+            localId: null,
+            createdAt: 100,
+            isSidechain: false,
+            role: 'agent',
+            content: [{
+                type: 'tool-call',
+                id: 'tool-use-1',
+                name: 'Agent',
+                input: { description: 'long-running task' },
+                description: null,
+            }],
+        } as any;
+        domain.applyMessages('tool-hydrate-s1', [toolCallWire]);
+        domain.applyMessagesLoaded('tool-hydrate-s1');
+
+        domain.evictSessionMessages('tool-hydrate-s1');
+        const baseline = readEvictedSessionTranscript(scope, 'tool-hydrate-s1');
+        expect(baseline).not.toBeNull();
+        domain.hydrateSessionMessages('tool-hydrate-s1', baseline!);
+
+        // The long-running tool finishes after the session was evicted and reopened: the
+        // late result must update the hydrated tool-call row, not be silently dropped.
+        const toolResultWire = {
+            id: 'wire-agent-2',
+            localId: null,
+            createdAt: 200,
+            isSidechain: false,
+            role: 'agent',
+            content: [{
+                type: 'tool-result',
+                tool_use_id: 'tool-use-1',
+                content: 'done after reopen',
+                is_error: false,
+            }],
+        } as any;
+        domain.applyMessages('tool-hydrate-s1', [toolResultWire]);
+
+        const entry = get().sessionMessages['tool-hydrate-s1'];
+        const toolRow = (entry.messageIdsOldestFirst as string[])
+            .map((id: string) => entry.messagesById[id])
+            .find((message: any) => message?.kind === 'tool-call');
+        expect(toolRow).toBeDefined();
+        expect(toolRow.tool.state).toBe('completed');
+        expect(String(toolRow.tool.result)).toContain('done after reopen');
+    });
+
     it('removes the sessionMessages entry entirely so a re-open follows the first-open load pipeline', () => {
         const { get, domain } = createHarness({
             sessions: { s1: buildSessionRow('s1'), s2: buildSessionRow('s2') },
