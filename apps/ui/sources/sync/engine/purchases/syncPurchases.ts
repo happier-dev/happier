@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import { config } from '@/config';
-import { RevenueCat, LogLevel, PaywallResult } from '@/sync/domains/purchases';
+import { LogLevel, PaywallResult } from '@/sync/domains/purchases/types';
 import { log } from '@/log';
 
 export async function syncPurchases(params: {
@@ -16,6 +16,7 @@ export async function syncPurchases(params: {
     const shouldContinue = params.shouldContinue ?? (() => true);
 
     try {
+        const { RevenueCat } = await import('@/sync/domains/purchases');
         if (!shouldContinue()) return;
         // Initialize RevenueCat if not already done
         if (!revenueCatInitialized) {
@@ -77,6 +78,7 @@ export async function purchaseProduct(params: {
     const shouldContinue = params.shouldContinue ?? (() => true);
 
     try {
+        const { RevenueCat } = await import('@/sync/domains/purchases');
         if (!shouldContinue()) {
             return { success: false, error: 'Purchase scope changed' };
         }
@@ -128,6 +130,7 @@ export async function getOfferings(params: {
         }
 
         // Fetch offerings
+        const { RevenueCat } = await import('@/sync/domains/purchases');
         const offerings = await RevenueCat.getOfferings();
 
         // Return the offerings data
@@ -165,6 +168,7 @@ export async function presentPaywall(params: {
     const shouldContinue = params.shouldContinue ?? (() => true);
 
     try {
+        const { RevenueCat } = await import('@/sync/domains/purchases');
         if (!shouldContinue()) {
             return { success: false, error: 'Paywall scope changed' };
         }
