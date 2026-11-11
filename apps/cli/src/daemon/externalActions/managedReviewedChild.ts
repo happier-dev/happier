@@ -8,11 +8,13 @@ import { createHostReviewedChildPortV1, type HostReviewedParentV1, type HostRevi
 import type { ActionExecutorContext, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/socketRpc';
-import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcquireInputV1Schema, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { readPublishedMachineRow } from '@/api/machine/readPublishedMachineRow';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { readProjectServiceMoveChildMachineV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
+import { projectServiceMoveOriginalAccountChildren, readProjectServiceMoveReviewedStopInput } from '@/daemon/local/services/actions/projectServiceMoveChildren';
 
 /** Restore signed native child consent through the single reviewed-child issuer. */
 export async function invokeAdmittedReviewedChild(input: Readonly<{
@@ -50,13 +52,12 @@ export async function invokeAdmittedReviewedChild(input: Readonly<{
       ...(input.receivingAdmission ? { receivingAdmission: input.receivingAdmission } : {}),
       execute: input.execute });
   }
+  if (parent?.actionId === 'projects.service.relocate') return invokeMoveReviewedChild(input, parent);
   const continuation = binding?.managedContinuation;
   if (!parent || parent.actionId !== 'machines.managed.acquire' || !binding || !continuation) return null;
   const acquired = ManagedAcquireInputV1Schema.safeParse(parent.input);
   if (!acquired.success) return null;
-  const controller = acquired.data.selection.kind === 'one-off'
-    ? ('controller' in acquired.data.selection ? acquired.data.selection.controller : undefined)
-    : acquired.data.controller;
+  const controller = resolveManagedAcquireReviewV1(acquired.data).controller;
   if (acquired.data.selection.homeId !== binding.serverIdentityId
     || !sameStrictJsonValue(controller, continuation.controller)) return null;
   const requester = readRequesterAccountActionContext(context.externalActionExecutionAuthorization);
@@ -64,15 +65,34 @@ export async function invokeAdmittedReviewedChild(input: Readonly<{
   // A SOURCE packet alone cannot assert consent for another Account. The
   // original Account's private invocation already has that Account's custody.
   if (!input.requesterOwnedReview) {
-    if (!continuation.controller) return null;
+    const continuationController = continuation.controller;
+    if (!continuationController) return null;
     const controllerRow = await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl, () =>
-      readPublishedMachineRow(continuation.controller.machineId, requester.credentials, { signal: context.signal })).catch(() => null);
-    if (controllerRow?.id !== continuation.controller.machineId
+      readPublishedMachineRow(continuationController.machineId, requester.credentials, { signal: context.signal })).catch(() => null);
+    if (controllerRow?.id !== continuationController.machineId
       || controllerRow.access?.custodian.accountId !== binding.accountId) return null;
   }
   const declaration = getActionSpec('machines.managed.acquire').hostReviewedChildren;
   const children = typeof declaration === 'function' ? declaration(acquired.data) : declaration ?? [];
   return invokeReviewedChild({ input, parent, parentInput: acquired.data, children, role: input.actionId });
+}
+
+/** A Move's own Account reviewed this exact incumbent Stop at SOURCE; the receiver recomputes it from the parent alone. */
+async function invokeMoveReviewedChild(input: Parameters<typeof invokeAdmittedReviewedChild>[0],
+  parent: HostReviewedParentV1): Promise<ActionExecuteResult | null> {
+  const { context } = input;
+  const binding = context.externalActionExecutionAuthorization?.binding;
+  // Only the parent Account's private invocation carries its review; Home
+  // bound this exact Action to this receiving Machine, which Move names.
+  if (!input.requesterOwnedReview || !binding || binding.actionId !== input.actionId
+    || !readRequesterAccountActionContext(context.externalActionExecutionAuthorization)) return null;
+  const machineId = readProjectServiceMoveChildMachineV1(parent.input, input.actionId);
+  if (!machineId || machineId !== context.defaultSessionMachineId
+    || binding.target.kind !== 'machine' || binding.target.machineId !== machineId) return null;
+  const children = projectServiceMoveOriginalAccountChildren(parent.input);
+  const child = children.find(candidate => candidate.action === input.actionId);
+  return child ? invokeReviewedChild({ input: { ...input, actionInput: readProjectServiceMoveReviewedStopInput(input.actionInput) },
+    parent, parentInput: parent.input, children, role: child.role }) : null;
 }
 
 async function invokeReviewedChild(params: Readonly<{

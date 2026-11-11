@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { createProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
-import type { ProjectServiceRelocateInputV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
+import { createProjectServiceDeclarationTargetIdV1, isLocalServiceActionConfirmationNonceV1,
+    LocalServiceActionRequestV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import { ProjectServiceRelocateInputV1Schema, type ProjectServiceRelocateInputV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -43,6 +44,27 @@ export function projectServiceMoveStartInput(request: ProjectServiceRelocateInpu
         ...(request.setupReview ? { setupReview: request.setupReview } : {}),
         choice: request.destination.kind === 'primary' ? { kind: 'primary' as const }
             : { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: destination.machineId } } };
+}
+
+type ProjectServiceMoveChild = HostReviewedChildrenPlanV1['children'][number];
+
+function projectServiceMoveChild(action: ActionId, value: unknown): ProjectServiceMoveChild {
+    const normalized = projectNativeJsonValueForTransport(getActionSpec(action).inputSchema.parse(value));
+    return { action, role: projectServiceMoveChildRole(action, normalized), input: normalized };
+}
+
+/** The reviewed children an incumbent receives as this Account's own Stop; derived from the parent alone. */
+export function projectServiceMoveOriginalAccountChildren(parentInput: unknown): ProjectServiceMoveChild[] {
+    const request = ProjectServiceRelocateInputV1Schema.safeParse(parentInput);
+    return request.success ? [projectServiceMoveChild('localServices.actions.stopManaged', projectServiceMoveStopInput(request.data))] : [];
+}
+
+/** Execution stamps Stop's derived confirmation nonce after review; drop it only when it binds this exact request. */
+export function readProjectServiceMoveReviewedStopInput(value: unknown): unknown {
+    const request = LocalServiceActionRequestV1Schema.safeParse(value);
+    if (!request.success || !request.data.confirmationNonce || !isLocalServiceActionConfirmationNonceV1(request.data)) return value;
+    const { confirmationNonce: _derived, ...reviewed } = value as Readonly<Record<string, unknown>>;
+    return reviewed;
 }
 
 export function projectServiceMoveChildRole(actionId: string, input: unknown): string {
@@ -94,11 +116,8 @@ export async function prepareProjectServiceMoveChildren(input: Readonly<{
         return fail('project_setup_effect_changed');
     }
     const preparedInput = setup?.setupReview ? { ...request, setupReview: setup.setupReview } : request;
-    const children: HostReviewedChildrenPlanV1['children'][number][] = [];
-    const add = (action: ActionId, value: unknown) => {
-        const normalized = projectNativeJsonValueForTransport(getActionSpec(action).inputSchema.parse(value));
-        children.push({ action, role: projectServiceMoveChildRole(action, normalized), input: normalized });
-    };
+    const children: ProjectServiceMoveChild[] = [];
+    const add = (action: ActionId, value: unknown) => { children.push(projectServiceMoveChild(action, value)); };
     add('localServices.launcher.snapshot', projectServiceMoveSnapshotInput(request, incumbent));
     add('projects.service.placement.set', request.desiredPlacement);
     if (relocates) {
@@ -109,7 +128,7 @@ export async function prepareProjectServiceMoveChildren(input: Readonly<{
         }
         add('projects.worker.status', projectServiceMoveStatusInput(request, basis.target.machineId));
         add('projects.inspect', projectServiceMoveInspectionInput(basis.source, true));
-        add('localServices.actions.stopManaged', projectServiceMoveStopInput(request));
+        children.push(...projectServiceMoveOriginalAccountChildren(request));
         add('localServices.launcher.start', projectServiceMoveStartInput(preparedInput, basis.target));
     }
     return { children, input: projectNativeJsonValueForTransport(preparedInput) } satisfies HostReviewedChildrenPreparationV1;
