@@ -2427,6 +2427,70 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
+    it('re-admits a person-presented restart relay as new work while the daemon step stays bound to its Machine', async () => {
+        const f = await fixture('team');
+        const other = await fixture('team');
+        const actionId = 'deployments.restart' as const;
+        const target = { kind: 'machine' as const, machineId: f.member.id };
+        const input = { serverId, environmentId: f.environment.id, deploymentId: f.receipt.id,
+            targetLinkId: f.link.id, machineId: f.member.id, installationId: f.member.installationId,
+            service: { kind: 'deployment' as const, machineId: f.member.id, environmentId: f.environment.id,
+                environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' }, expectedGeneration: 'generation' };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
+        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: f.receipt.id } });
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id, serverIdentityId: serverId,
+            authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch }, actionId,
+            machineId: f.member.id, target, requestId: envelope.requestId, admittedMachineRole: 'use',
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        await db.machine.update({ where: { id: f.member.id }, data: { operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
+        let forwarded = 0;
+        const dispatch = createExternalActionDaemonDispatcher({ io: createSocketRoomDiscoveryHarness(async () => {
+            forwarded += 1;
+            return [];
+        }) });
+        const relayPath = `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${actionId}`;
+        const relayBody = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1,
+            machineId: f.member.id, envelope, executionAuthorization: authorization });
+        const signed = (method: string, path: string, body: unknown, signer: { installationId: string; keys: { secretKey: Uint8Array } } = f.member,
+            resolvedTarget: typeof target = target) => ({
+            [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+            [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+            [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(resolvedTarget),
+            [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                effectActionId: actionId, target: resolvedTarget, installationId: signer.installationId,
+                requestId: authorization.binding.requestId, method, path, body, privateKey: signer.keys.secretKey }),
+        });
+        await db.teamMembership.update({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } },
+            data: { status: 'suspended' } });
+        const bearer = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        await withAuthenticatedTestApp(app => { registerExternalActionRoutes(app, { dispatch }); }, async app => {
+            // The revoked member presenting the old root starts new work: full admission refuses it.
+            const replay = await app.inject({ method: 'POST', url: relayPath, payload: relayBody,
+                headers: { authorization: `Bearer ${bearer}` } });
+            expect(replay.statusCode, replay.body).not.toBe(200);
+            expect(forwarded).toBe(0);
+            // The daemon's own step of the admitted root continues.
+            const step = await app.inject({ method: 'POST', url: relayPath, payload: relayBody,
+                headers: signed('POST', relayPath, relayBody) });
+            expect(step.json()).toMatchObject({ actionId, execution: { ok: false, errorCode: 'target_unavailable' } });
+            expect(forwarded).toBeGreaterThan(0);
+            // That step cannot move to another Machine, installation or Environment.
+            const elsewhere = { ...relayBody, machineId: other.member.id };
+            expect((await app.inject({ method: 'POST', url: relayPath, payload: elsewhere,
+                headers: signed('POST', relayPath, elsewhere) })).statusCode).not.toBe(200);
+            expect((await app.inject({ method: 'POST', url: relayPath, payload: relayBody,
+                headers: signed('POST', relayPath, relayBody, other.member) })).statusCode).toBe(401);
+            const redirected = { kind: 'machine' as const, machineId: other.member.id };
+            expect((await app.inject({ method: 'POST', url: relayPath, payload: relayBody,
+                headers: signed('POST', relayPath, relayBody, f.member, redirected) })).statusCode).toBe(401);
+            const otherEnvironment = { ...relayBody, envelope: { ...envelope, input: { ...input, environmentId: other.environment.id } } };
+            expect((await app.inject({ method: 'POST', url: relayPath, payload: otherEnvironment,
+                headers: signed('POST', relayPath, otherEnvironment) })).statusCode).not.toBe(200);
+        }, { authentication: 'real' });
+    });
+
     it('admits readiness reads only for the signed Project and selected Environments', async () => {
         const f = await fixture();
         const actionId = 'projects.readiness.read' as const;

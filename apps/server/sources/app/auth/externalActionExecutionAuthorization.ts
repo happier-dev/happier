@@ -450,6 +450,28 @@ function projectAcceptedDeploymentPrincipal(binding: ExternalActionExecutionAuth
     return bound ? { ...captured, ...bound } : null;
 }
 
+/**
+ * A later step of an admitted finite native operation (restart, restore, backup)
+ * carries the identity its mint admitted. Home keeps no job row for these, so the
+ * signed root (expiry, exact Action, Environment, Machine and installation) and
+ * the executor's local cancel signal are the whole authority: no per-step
+ * principal, Session-source, Source, Team or Machine re-admission. A Workflow
+ * root keeps its active-Run lookup instead, and a person-presented relay is new
+ * work that the relay route re-admits before dispatch.
+ */
+export function readAdmittedFiniteOperationPrincipal(binding: ExternalActionExecutionAuthorizationBindingV1,
+    authorityCeiling?: ExternalActionServerPrincipalV1['authority']): VerifiedExternalActionPrincipal | null {
+    const native = binding.deploymentNativeAdmission;
+    if (binding.workflowActionOrigin || binding.handoffAdmission || !native || !('kind' in native)
+        || native.kind !== 'restart' && native.kind !== 'restore' && native.kind !== 'backup'
+        || binding.actionId !== native.actionId || native.environmentId !== binding.environmentId
+        || native.machineId !== binding.machineId || native.installationId !== binding.installationId
+        || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId) return null;
+    const captured = projectAcceptedDeploymentPrincipal(binding);
+    const principal = captured && projectExternalActionBoundPrincipal(binding, captured, authorityCeiling);
+    return captured && principal ? { ...captured, ...principal } : null;
+}
+
 /** The installed publisher transports an admitted Run; its credential never becomes the requester. */
 export async function verifyWorkflowExternalActionRequesterAuthorization(input: Readonly<{
     authorization: ExternalActionExecutionAuthorizationV1;
@@ -1471,6 +1493,7 @@ async function verifyCommon(
             : retainedDiscussionSource ? { kind: 'retained-discussion-publication', source: retainedDiscussionSource } : undefined;
     const domainContinuation = domainPurpose && domainPurpose.kind !== 'admission' && binding.actionId !== 'deployments.domains.verify'
         ? domainPurpose : null;
+    const admittedFiniteOperation = readAdmittedFiniteOperationPrincipal(binding);
     const machine = await db.machine.findFirst({
         where: { id: binding.machineId, accountId: binding.custodianAccountId, installationId: binding.installationId },
         select: {
@@ -1625,7 +1648,7 @@ async function verifyCommon(
             ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : null;
     }
     if (deploymentContinuation) return null;
-    if (!purpose && !nativeTransition && !domainContinuation && !await hasCurrentExternalActionSessionSource(binding, proof.resolveCurrentSessionMachine)) return refuseExternalActionExecutionRequest('source_before_principal', proof);
+    if (!purpose && !nativeTransition && !domainContinuation && !admittedFiniteOperation && !await hasCurrentExternalActionSessionSource(binding, proof.resolveCurrentSessionMachine)) return refuseExternalActionExecutionRequest('source_before_principal', proof);
 
     // The installed generic issuer carries reviewed child consent on the original
     // credential. Create children consume the allocated Environment; retention
@@ -1671,6 +1694,11 @@ async function verifyCommon(
             effectiveAuthority: principal.authority, ...reviewedAdmission }
             : refuseExternalActionExecutionRequest('principal', proof);
     }
+
+    // A step of an admitted finite native operation spends its signed admission;
+    // the native operation owner stops it through the executor's local signal.
+    if (admittedFiniteOperation && !machineNpmProfilePurpose) return { binding, signedChildPurpose, effectActionId: effectActionId.data,
+        target, principal: admittedFiniteOperation, effectiveAuthority: admittedFiniteOperation.authority, ...reviewedAdmission };
 
     // One signed request admits each fact once. A change after this point applies
     // at the next request; the holder stops already-admitted work on its local signal.

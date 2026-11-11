@@ -1340,8 +1340,11 @@ async function readAdmittedTemplateInstantiationScopeInTx(tx: Tx,
     const environmentId = await readTemplateEnvironmentId(tx, binding, admission);
     if (!environmentId) return admission.environment.kind === 'create' && admission.target.kind === 'new'
         ? { source, environment: null } : null;
+    // Mint decided controller and Link placement. A later controller or Link edit
+    // carries its own revision CAS, which the admitted effect still has to pass.
     const environment = await tx.deploymentEnvironment.findUnique({ where: { id: environmentId } });
-    return environment !== null && await matchesTemplateEnvironmentScopeInTx(tx, binding, admission, environment)
+    return environment !== null && !environment.deletedAt
+        && (!admission.source || environment.projectSourceId === admission.source.id)
         ? { source, environment } : null;
 }
 

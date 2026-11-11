@@ -29,7 +29,8 @@ import { verifyCurrentExternalActionPrincipal, verifyCurrentExternalActionPrinci
     hasCurrentExternalActionSessionSource, isExternalActionAuthorizationBoundToEnvelope,
     projectExternalActionBoundPrincipal, isOriginalAccountHandoffAction,
     readCurrentExternalActionHandoffBindingInTx,
-    resolveExternalActionExecutionMachineAdmissionInTx, type WorkflowExternalActionAdmission } from '@/app/auth/externalActionExecutionAuthorization';
+    resolveExternalActionExecutionMachineAdmissionInTx, readAdmittedFiniteOperationPrincipal,
+    type WorkflowExternalActionAdmission } from '@/app/auth/externalActionExecutionAuthorization';
 import { readMachineScopedSocketIdentity } from "@/app/machines/machineDaemonPresence";
 import { readCurrentCommittedSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
 import {
@@ -40,7 +41,7 @@ import {
 import { db } from "@/storage/db";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { resolveMachineAdmission } from "@/app/machines/machineAccess";
-import { readAdmittedExternalActionHandoffMachineInTx } from '@/app/auth/externalActionHandoffAdmission';
+import { readAdmittedExternalActionHandoffMachineInTx, readAdmittedExternalActionMachineInTx } from '@/app/auth/externalActionHandoffAdmission';
 import type { MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
 import { getAccountSessionSocketRoom } from "@/app/api/socketRooms";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
@@ -377,8 +378,15 @@ async function resolveMachineFromServer(params: Parameters<ResolveMachine>[0]): 
         // External Action issuance and dispatch must resolve the same carrier
         // admission. In particular, an approval decision executes the private
         // replay effect (`use`), not the public decision RPC (`custodian_only`).
+        // The relay route already decided an admitted finite native root's carrier;
+        // dispatch only proves that exact installation is still the custodian's.
+        const finiteRoot = params.executionBinding && params.actionId === params.executionBinding.actionId
+            && params.accountId === params.executionBinding.accountId && params.machineId === params.executionBinding.machineId
+            && readAdmittedFiniteOperationPrincipal(params.executionBinding) ? params.executionBinding : undefined;
         const admission = retainedHandoff
             ? await readAdmittedExternalActionHandoffMachineInTx(db, retainedHandoff, params.machineId)
+            : finiteRoot
+            ? await readAdmittedExternalActionMachineInTx(db, finiteRoot, finiteRoot.machineId, finiteRoot.installationId)
             : handoff
             ? await resolveMachineAdmission({ actorAccountId: params.accountId,
                 machineId: params.machineId, requiredRole: 'use',
@@ -753,11 +761,14 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
 
         let executionAuthorization = request.executionAuthorization;
         let capturedMachineAdmission: SocketRpcMachineAdmissionContextV1 | undefined;
+        let admittedFiniteOperation: ReturnType<typeof readAdmittedFiniteOperationPrincipal> = null;
         if (executionAuthorization) {
             // Dispatch is also an internal ingress: prove its supplied root token.
-            // Its only producer, the person-presented relay, already re-ran admission.
+            // Its only producer, the relay route, already decided admission once:
+            // fresh for a person-presented relay, the signed step for the daemon's.
             const root = await auth.verifyExternalActionExecutionAuthorization(executionAuthorization.token);
-            const current = root ? await verifyCurrentExternalActionPrincipalInTx(db, root) : null;
+            admittedFiniteOperation = root && readAdmittedFiniteOperationPrincipal(root, request.principal.authority);
+            const current = admittedFiniteOperation ?? (root ? await verifyCurrentExternalActionPrincipalInTx(db, root) : null);
             const principal = root && current
                 ? projectExternalActionBoundPrincipal(root, current, request.principal.authority) : null;
             if (!root || !principal || root.serverIdentityId !== await getServerIdentityId()
@@ -992,7 +1003,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             refusalBranch: 'execution_authorization_invalid', requestId: request.envelope.requestId, machineId });
 
         // No provider/login HTTP await follows these original-source checks.
-        if (request.executionAuthorization || currentAuthorization.binding.sessionActionOrigin) {
+        if (!admittedFiniteOperation && (request.executionAuthorization || currentAuthorization.binding.sessionActionOrigin)) {
             const sourceCurrent = await runDispatchPhase('target_currentness', machineId, () => (
                 hasCurrentExternalActionSessionSource(currentAuthorization.binding, resolveSessionMachine)
             ), request.envelope.requestId);
