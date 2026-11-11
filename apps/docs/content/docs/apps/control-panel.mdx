@@ -111,6 +111,29 @@ A local Cua sandbox or Space that is unused for the selected time is parked with
 
 Installation retry uses the retained guest. An unreachable controller or failed native read does not prove that it has been deleted. For a created Cua Space, removing its registry entry alone is incomplete cleanup: the owned sandbox must also be deleted. Existing VMs and Spaces use ordinary connection setup and do not acquire managed deletion authority.
 
+#### Coder workspaces (unreleased development)
+
+The Coder machine integration is under development for 0.3 and is not released.
+It runs Happier inside a selected workspace agent. Files, SCM and Agent execution
+therefore use that workspace's computer.
+
+Setup uses a reachable controller computer, the managed Coder executable, and a
+Connected Account containing your deployment URL and personal Coder token.
+The guest must provide the POSIX shell commands used by native installation.
+Choose a template or template version, an explicit agent name, and the template's
+parameter values. Template presets can supply values; required parameters still
+need values accepted by Coder. Full conditional template forms and resizing are
+outside this first version.
+
+Start, Stop and Delete affect the whole Coder workspace, including sibling
+resources. Storage retention depends on the template: use a persistent home to
+retain Happier's Machine identity across Stop and Start. Coder's own scheduling
+and dormancy rules still apply; Happier does not keep the workspace awake or
+automatically reactivate a dormant workspace. A running workspace with a
+disconnected agent remains running, while Happier reports its connection
+separately. Reconnect the Coder account if its token is rejected or the deployment
+configuration changes.
+
 #### Cloud Machines (0.3 development)
 
 Hetzner, DigitalOcean Droplets and Fly Machines integration is under development

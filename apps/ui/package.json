@@ -192,6 +192,7 @@
     "@happier-dev/plugins-machine-digitalocean": "0.0.0",
     "@happier-dev/plugins-machine-docker-sandboxes": "0.0.0",
     "@happier-dev/plugins-machine-e2b": "0.0.0",
+    "@happier-dev/plugins-machine-coder": "0.0.0",
     "@happier-dev/plugins-machine-freestyle": "0.0.0",
     "@happier-dev/plugins-machine-fly": "0.0.0",
     "@happier-dev/plugins-machine-hetzner": "0.0.0",
