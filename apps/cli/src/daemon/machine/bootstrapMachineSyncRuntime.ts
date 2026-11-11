@@ -1,4 +1,6 @@
 import fs from 'fs/promises';
+import { reconcileSessionManagerNotice } from '../sessions/sessionManagerNotice';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
 import { projectDeploymentReceiptInvalidationsForHost } from '@/deployments/receiptEventInvalidation';
 import { projectAccountEntitiesInvalidationForHost } from '@/daemon/events/accountEntityInvalidation';
 import { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
@@ -1730,6 +1732,16 @@ export async function bootstrapMachineSyncRuntime(
         get serverUrl() { return readFollowHomeServerUrl(); } };
       const followAccountId = readAccountIdFromToken(credentials.token);
       const followLifetime = new AbortController();
+      const reconcileManagerNoticeAtHome = async (sessionId: string, context?: RequesterSessionRuntimeContext): Promise<void> => {
+        const home = context?.bootstrap.serverHttpBaseUrl ?? followHome.serverUrl;
+        await runWithServerHttpBaseUrl(home, () => reconcileSessionManagerNotice({
+          credentials: context?.bootstrap.credentials ?? credentials, sessionId, machineId: params.machineId,
+          signal: followLifetime.signal,
+          machineAdmissionTransport: (request, options) => followMachine.enqueueSessionPendingByMachine(request, options),
+        })).catch(error => logger.warn('[DAEMON RUN] Manager notice remains unconfirmed', {
+          sessionId, error: serializeAxiosErrorForLog(error),
+        }));
+      };
       const reconcileFollowReceiverAtHome = async (sessionId: string, context?: RequesterSessionRuntimeContext, sourceSessionId?: string): Promise<void> => {
         // The Account daemon owns resource material even when a restricted
         // native host is alive. Shared receiver admission chooses next-turn;
@@ -1756,6 +1768,7 @@ export async function bootstrapMachineSyncRuntime(
             sourceSessionId, observations: [] });
           return;
         }
+        await reconcileManagerNoticeAtHome(sessionId, context);
         const installation = readInstallationIdentityIfExistsSync();
         if (!installation) return;
         const credentials = context?.bootstrap.credentials ?? storedCredentials;
@@ -1919,6 +1932,21 @@ export async function bootstrapMachineSyncRuntime(
         token: credentials.token,
         activate: activatePendingSession,
         visitOwnedSessions: async sessions => {
+          if (sessions.length) {
+            try {
+              const accountEncryptionCurrentness = await fetchAccountEncryptionCurrentness({ credentials,
+                token: credentials.token, signal: followLifetime.signal });
+              await Promise.all(sessions.map(rawSession => reconcileSessionManagerNotice({ credentials,
+                sessionId: rawSession.id, observation: { rawSession, accountEncryptionCurrentness },
+                machineId: params.machineId, signal: followLifetime.signal,
+                machineAdmissionTransport: (request, options) => followMachine.enqueueSessionPendingByMachine(request, options),
+              }).catch(error => logger.warn('[DAEMON RUN] Reconnect manager notice remains unconfirmed', {
+                sessionId: rawSession.id, error: serializeAxiosErrorForLog(error),
+              }))));
+            } catch (error) {
+              logger.warn('[DAEMON RUN] Reconnect manager observation unavailable', serializeAxiosErrorForLog(error));
+            }
+          }
           await recoverFollowReceivers();
           await inactiveUsageLimitRecoveryCheckOwner.restoreSessions({
             sessions,
@@ -1970,6 +1998,14 @@ export async function bootstrapMachineSyncRuntime(
             }
           })).catch(error => logger.warn('[DAEMON RUN] Requester Follow recovery remains pending', serializeAxiosErrorForLog(error)));
           const pendingRecovery = Promise.all(discovery.bindings.map(async binding => {
+            if (binding.attribution.machineId === params.machineId && params.resolveRequesterSessionRuntimeContext
+              && params.releaseRequesterSessionRuntimeContext) {
+              const context = await params.resolveRequesterSessionRuntimeContext(binding.sessionId, binding.attribution);
+              if (context) {
+                try { await reconcileManagerNoticeAtHome(binding.sessionId, context); }
+                finally { await params.releaseRequesterSessionRuntimeContext(context); }
+              }
+            }
             await connectedApiMachine.requestSessionMessageReplyRecoveryForSession(binding.sessionId, { retryFailedPublications: true })
               .catch(error => logger.warn('[DAEMON RUN] Requester reply recovery remains in original custody', error));
             await inactiveUsageLimitRecoveryScheduler.reconcilePendingResetStarts(binding.sessionId)

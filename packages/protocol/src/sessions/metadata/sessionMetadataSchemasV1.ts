@@ -2147,12 +2147,7 @@ const SYSTEM_OWNER_KEYS = [
   'voiceProviderConversationsV1',
 ] as const;
 const HANDOFF_OWNER_KEYS = ['handoffV1', 'acpTransportV1'] as const;
-const CURSOR_OWNER_KEYS = [
-  'externalSessionAttentionV1',
-  'readStateV1',
-  'discardedCommittedMessageLocalIds',
-  'locallyConsumedUserMessageSeqsV1',
-] as const;
+const CURSOR_OWNER_KEYS = Object.keys(SessionOwnerCursorsV1Schema.shape);
 
 const REMOVAL_ONLY_OWNER_KEYS = new Set([
   'runtimeActivitySourceClass',

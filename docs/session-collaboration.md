@@ -343,6 +343,20 @@ rule matches do not create enrollment rows. Other Accounts' identities, rules, p
 delivery receipts are never part of that census.
 Revoking source access refuses the read; revoking receiver access withdraws that receiver.
 
+In 0.3 development, a committed immediate-manager change is announced by the
+child's hosting daemon through the existing Session pending-input sender. The
+manager owner publishes the exact receiver invalidation; the daemon reads the
+committed manager projection and sends its canonical Session id and reporting
+route, or a detach notice. This informational input changes no role, permission
+or execution mode. The existing sender enforces Account/content encryption.
+The Session owner metadata cursor `lastNotifiedManagerSessionId` suppresses a
+repeated manager. Reconnect reuses owned Session snapshots and retained requester
+contexts: an offline daemon announces the latest changed manager when it next
+connects, without a separate sender, bridge, table or retry loop. Refused and
+no-op mutations change no manager projection and produce no new notice. The
+cursor is optional for retained Sessions and stays out of shared metadata;
+matching development Protocol and Session owner readers reload together.
+
 Generic Follow source references in 0.3 development use the strict `sourceRef` JSON query
 on the shared Account/Session get, set and remove transports and reverse follower read.
 The Action transport owns encoding and exact signed-purpose matching; source identity

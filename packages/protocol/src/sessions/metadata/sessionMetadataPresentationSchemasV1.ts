@@ -37,6 +37,8 @@ export const SessionOwnerWorkspaceV1Schema = lazyZodSchema(() => z.strictObject(
 }));
 
 export const SessionOwnerCursorsV1Schema = lazyZodSchema(() => z.strictObject({
+  /** Last immediate manager whose notice was accepted into this Session. Null is detached. */
+  lastNotifiedManagerSessionId: z.optional(OptionalOwnerIdentifierSchema),
   externalSessionAttentionV1: z.optional(z.strictObject({
     v: z.literal(1),
     observedProgressToken: z.optional(z.string().check(z.maxLength(20_000))),
