@@ -189,11 +189,13 @@ describe('present-user UI approval origin at the Action host', () => {
 
     it.each(['recoverable', 'persistent', 'claimed'] as const)('reconciles a failed approval claim through the real UI decision owner (%s)', async failure => {
         const serverId = await harness.addHome({ name: 'Approval recovery', serverUrl: 'https://claim-recovery.test', accountId: 'alice' });
-        await harness.requireUiApproval(serverId, 'roles.create');
-        const proposed = await createDefaultActionExecutor().execute('roles.create', {
-            roleId: 'recovered-role', role: BUILT_IN_ROLES_V1.builder,
+        // A person's own UI Ask is a native confirmation, not an Artifact. The deferred
+        // review that this claim reconciles is opened through the explicit request owner.
+        const proposed = await createDefaultActionExecutor().execute('approval.request.create', {
+            actionId: 'roles.create', actionArgs: { roleId: 'recovered-role', role: BUILT_IN_ROLES_V1.builder },
+            summary: 'Create a role', createdBy: { surface: 'system' },
         }, { surface: 'ui', serverId });
-        expect(proposed).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+        expect(proposed).toMatchObject({ ok: true, result: { artifactId: expect.any(String) } });
         const store = harness.artifacts(serverId);
         const artifact = store.list()[0];
         if (!artifact) throw new Error('Expected the deferred approval');
@@ -246,13 +248,15 @@ describe('present-user UI approval origin at the Action host', () => {
         expect(failedClaims).toBeGreaterThan(0);
     });
 
+    // Only an irreversible declaration confirms a person's own UI press by default; a
+    // reversible one confirms when the person saved Ask (docs/actions.md native confirmation).
     it.each([
-        ['localServices.actions.stopManaged', 'stop_managed'],
-        ['localServices.actions.restartManaged', 'restart_managed'],
-        ['localServices.actions.terminateDetected', 'terminate_detected'],
-        ['projects.trust.revoke', null],
-    ] as const)('declining the default UI confirmation prevents %s effects', async (actionId, action) => {
+        ['localServices.actions.stopManaged', 'stop_managed', 'ask'],
+        ['localServices.actions.terminateDetected', 'terminate_detected', 'default'],
+        ['projects.trust.revoke', null, 'ask'],
+    ] as const)('declining the UI confirmation prevents %s effects', async (actionId, action, confirmation) => {
         const serverId = await harness.addHome({ name: 'Danger Home', serverUrl: 'https://danger-origin.test', accountId: 'alice' });
+        if (confirmation === 'ask') await harness.requireUiApproval(serverId, actionId);
         const input = getActionSpec(actionId).inputSchema.parse(action === null
             ? { project: { serverId, projectId: 'project-a' }, expectedRevision: 1, expectedEffectDigest: 'effect-a' }
             : { requestId: 'service-request', action, target: action === 'terminate_detected'
@@ -265,9 +269,39 @@ describe('present-user UI approval origin at the Action host', () => {
         expect(harness.artifacts(serverId).list()).toEqual([]);
     });
 
-    it('executes the real Project trust mutation once after accepting its default confirmation', async () => {
+    it('recovers a native Restart review through the receiving Machine before replacing the running Service', async () => {
+        const actionId = 'localServices.actions.restartManaged' as const;
+        const machineId = 'restart-machine';
+        const serverId = await harness.addHome({ name: 'Restart Home', serverUrl: 'https://restart-review.test', accountId: 'alice',
+            serverIdentityId: 'srv_restart_review', currentAccount: true });
+        await installOwnMachineApprovalReplayBoundary({ harness, serverId, accountId: 'alice', machineId });
+        const input = getActionSpec(actionId).inputSchema.parse({ requestId: 'restart-native-review', action: 'restart_managed',
+            target: { kind: 'managed_service', managedServiceId: 'running-service', machineId } });
+        const received: string[] = [];
+        vi.mocked(Modal.confirm).mockResolvedValue(true);
+        harness.answer(serverId, `/v1/actions/${actionId}`, { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+            received.push(actionId);
+            return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId, requestId: envelope.requestId,
+                execution: { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' } }) };
+        } });
+        harness.answer(serverId, '/v1/actions/approval.request.create', { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+            expect(envelope.input).toMatchObject({ actionId, actionArgs: input, createdBy: { surface: 'system' } });
+            received.push('approval.request.create');
+            return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'approval.request.create',
+                requestId: envelope.requestId, execution: { ok: true, result: { artifactId: 'native-restart-review' } } }) };
+        } });
+        const result = await createDefaultActionExecutor().execute(actionId, input, { surface: 'ui', serverId });
+        expect(result, JSON.stringify({ result, received })).toMatchObject({ ok: true,
+            result: { kind: 'approval_request_created', actionId, artifactId: 'native-restart-review' } });
+        expect(received).toEqual([actionId, 'approval.request.create']);
+    });
+
+    it('executes the real Project trust mutation once after accepting its Ask confirmation', async () => {
         const actionId = 'projects.trust.revoke' as const;
         const serverId = await harness.addHome({ name: 'Trust Home', serverUrl: 'https://trust-origin.test', accountId: 'alice' });
+        await harness.requireUiApproval(serverId, actionId);
         const project = { serverId, projectId: 'project-a' };
         const input = getActionSpec(actionId).inputSchema.parse({ project, expectedRevision: 1, expectedEffectDigest: 'effect-a' });
         harness.answer(serverId, `${PROJECT_TRUST_ROUTE_V1}/read`, { body: ProjectTrustReadResponseV1Schema.parse({
@@ -284,8 +318,9 @@ describe('present-user UI approval origin at the Action host', () => {
         expect(harness.artifacts(serverId).list()).toEqual([]);
     });
 
-    it('returns cancellation without effects when its invocation aborts during default UI confirmation', async () => {
+    it('returns cancellation without effects when its invocation aborts during UI confirmation', async () => {
         const serverId = await harness.addHome({ name: 'Canceled Home', serverUrl: 'https://canceled-origin.test', accountId: 'alice' });
+        await harness.requireUiApproval(serverId, 'projects.trust.revoke');
         const controller = new AbortController();
         vi.mocked(Modal.confirm).mockImplementation(async () => {
             controller.abort();
@@ -323,7 +358,6 @@ describe('present-user UI approval origin at the Action host', () => {
             harness.answer(serverId, '/v2/account/settings', settingsAnswer);
             const executor = createDefaultActionExecutor();
             if (actionId === 'artifact.access.grants.set') {
-                vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
                 const seeded = await executor.execute('roles.create', { roleId: 'shared-role', role: BUILT_IN_ROLES_V1.builder }, { serverId });
                 expect(seeded, JSON.stringify(seeded))
                     .toMatchObject({ ok: true, result: { roleId: 'shared-role' } });
@@ -370,24 +404,33 @@ describe('present-user UI approval origin at the Action host', () => {
                     } });
                     if (request.v !== 2) throw new Error('Expected durable approval provenance');
                     expect(request.executionOriginV1.requestId).not.toBe('');
-                    const { presentApprovalFailure, useApprovalDecisionHandler } = await import('@/components/tools/shell/approvals/useApprovalDecisionHandler');
-                    const hook = await renderHook(() => useApprovalDecisionHandler({ id: created.id, header: null }, request, '', serverId));
-                    const decision = hook.getCurrent()('approve');
-                    await expect(decision).rejects.toMatchObject({ code: 'present_user_required' });
-                    const failure: unknown = await decision.catch((error: unknown) => error);
-                    expect(presentApprovalFailure(failure).reason).toBe(t('approvals.decisionAuthorityError'));
-                    expect(presentApprovalFailure(failure).reason).not.toBe(t('approvals.decisionError'));
-                    expect(JSON.parse(harness.artifacts(serverId).readPlainBody(created.id) ?? 'null')).toMatchObject({ status: 'open' });
+                    // Nothing ran before the decision. The authenticated person's UI decision is
+                    // admitted (no terminal present-user floor) and runs the operation exactly once.
                     expect(harness.artifacts(serverId).readPlainBody('new-role')).toBeNull();
                     expect(harness.requests.some(({ path }) => path.endsWith('/access/grants'))).toBe(false);
+                    const { useApprovalDecisionHandler } = await import('@/components/tools/shell/approvals/useApprovalDecisionHandler');
+                    const hook = await renderHook(() => useApprovalDecisionHandler({ id: created.id, header: null }, request, '', serverId));
+                    await hook.getCurrent()('approve');
+                    await waitForHomeGovernance(() => expect(JSON.parse(harness.artifacts(serverId).readPlainBody(created.id) ?? 'null'))
+                        .toMatchObject({ status: 'executed' }));
+                    if (actionId === 'roles.create') {
+                        expect(JSON.parse(harness.artifacts(serverId).readPlainBody('new-role') ?? 'null')).toMatchObject({ name: BUILT_IN_ROLES_V1.builder.name });
+                    } else {
+                        expect(harness.requestsFor('/v1/artifacts/shared-role/access/grants').filter(({ input }) => input !== null)).toHaveLength(1);
+                    }
                 } finally {
                     controller.abort();
                     await pending;
                 }
                 return;
             }
-            const result = await executor.execute(actionId, input, { surface: 'ui', serverId });
-            expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+            // The person's own press answers the saved Ask in place; declining it has no effect.
+            const declined = await executor.execute(actionId, input, { surface: 'ui', serverId });
+            expect(declined, JSON.stringify(declined)).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+            expect(harness.artifacts(serverId).list().filter(({ id }) => id !== 'shared-role')).toEqual([]);
+            const result = await executor.execute('approval.request.create', { actionId, actionArgs: input, summary: 'Review',
+                createdBy: { surface: 'system' } }, { surface: 'ui', serverId });
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { artifactId: expect.any(String) } });
             if (!result.ok) throw new Error(result.error);
             const created = result.result as { artifactId: string };
             const body = harness.artifacts(serverId).readPlainBody(created.artifactId);
@@ -415,10 +458,17 @@ describe('present-user UI approval origin at the Action host', () => {
     it('preserves an existing request identity through prepared UI approval admission', async () => {
         const serverId = await harness.addHome({ name: 'Prepared Home', serverUrl: 'https://prepared-origin.test', accountId: 'alice' });
         await harness.requireUiApproval(serverId, 'roles.create');
-        const prepared = await createDefaultActionExecutor().prepare('roles.create', {
-            roleId: 'prepared-role', role: BUILT_IN_ROLES_V1.builder,
-        }, { serverId, actionRequestId: 'stable-human-request' });
-        expect(prepared).toMatchObject({ kind: 'settled', result: { ok: true, result: { kind: 'approval_request_created' } } });
+        const executor = createDefaultActionExecutor();
+        // Preparation has no mounted presenter: a saved UI Ask refuses rather than minting an Artifact.
+        await expect(executor.prepare('roles.create', { roleId: 'prepared-role', role: BUILT_IN_ROLES_V1.builder },
+            { serverId, actionRequestId: 'stable-human-request' })).resolves.toMatchObject({ kind: 'settled',
+            result: { ok: false, errorCode: 'action_interactive_review_required' } });
+        expect(harness.artifacts(serverId).list()).toEqual([]);
+        const prepared = await executor.prepare('approval.request.create', { actionId: 'roles.create',
+            actionArgs: { roleId: 'prepared-role', role: BUILT_IN_ROLES_V1.builder }, summary: 'Create a role',
+            createdBy: { surface: 'system' } }, { serverId, actionRequestId: 'stable-human-request' });
+        if (prepared.kind !== 'ready') throw new Error(JSON.stringify(prepared));
+        expect(await prepared.invocation.run()).toMatchObject({ ok: true, result: { artifactId: expect.any(String) } });
         const request = ApprovalRequestSchema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(harness.artifacts(serverId).list()[0]!.id) ?? 'null'));
         expect(request).toMatchObject({ v: 2, executionOriginV1: { authority: 'present_user', requestId: 'stable-human-request', accountId: 'alice' } });
     });
