@@ -30,6 +30,7 @@ export type UsageWeekTideLabels = Readonly<{
  */
 export function UsageWeekTide(props: UsageChartBaseProps & Readonly<{ model: UsageWeekHourModel; labels: UsageWeekTideLabels }>) {
   const [width, onLayout] = useUsageChartWidth(props.width);
+  const unknown = formatHappierDataValue(null, undefined, props.labels.values.unknownLabel);
   const svgText = useUsageChartSvgText(props.theme);
   const grid = props.model.grid;
   const height = 186;
@@ -46,7 +47,7 @@ export function UsageWeekTide(props: UsageChartBaseProps & Readonly<{ model: Usa
     return { base, points, curve, area: `${curve}L${r1(axis + plot)},${r1(base)}L${axis},${r1(base)}Z` };
   });
   const columns = Array.from({ length: 24 }, (_, hour) => props.labels.clock(hour));
-  const rows = grid.map((row, index) => [props.labels.weekdays[index] ?? '', ...row.map((value) => value === null ? '—'
+  const rows = grid.map((row, index) => [props.labels.weekdays[index] ?? '', ...row.map((value) => value === null ? unknown
     : props.model.encoding === 'ordinal' ? props.labels.values.levelNames[value] ?? '' : props.labels.values.formatValue(value))] as const);
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
     <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
@@ -79,7 +80,7 @@ export function UsageWeekTide(props: UsageChartBaseProps & Readonly<{ model: Usa
       {width !== null ? grid.flatMap((row, rowIndex) => row.map((value, hour) => {
         const shape = drawing[rowIndex]!;
         const [x, y] = shape.points[hour]!;
-        const datum = { label: `${props.labels.weekdays[rowIndex] ?? ''} · ${props.labels.clock(hour)}`, value: value === null ? '—' : props.model.encoding === 'ordinal' ? props.labels.values.levelNames[value] ?? '—' : formatHappierDataValue(value), subtitle: value !== null && props.model.encoding === 'amount' ? props.labels.values.formatValue(value) : undefined, color: props.paint.accent };
+        const datum = { label: `${props.labels.weekdays[rowIndex] ?? ''} · ${props.labels.clock(hour)}`, value: value === null ? unknown : props.model.encoding === 'ordinal' ? props.labels.values.levelNames[value] ?? unknown : formatHappierDataValue(value), subtitle: value !== null && props.model.encoding === 'amount' ? props.labels.values.formatValue(value) : undefined, color: props.paint.accent };
         const left = Math.max(axis, x - plot / 46), right = Math.min(axis + plot, x + plot / 46);
         return <View key={`${rowIndex}-${hour}`} pointerEvents="box-none" style={{ position: 'absolute', left: 0, top: 0, width, height }}>
           <ChartPathMark datum={datum} d={shape.area} hitMode="fill" strokeWidth={1.2} bounds={{ x: left, y: 0, width: right - left, height }} focusBounds={{ x: x - 4, y: y - 4, width: 8, height: 8 }} />
@@ -115,6 +116,7 @@ export type UsageDaylightLabels = Readonly<{
  */
 export function UsageDaylight(props: UsageChartBaseProps & Readonly<{ model: UsageDaylightModel; labels: UsageDaylightLabels }>) {
   const [width, onLayout] = useUsageChartWidth(props.width);
+  const unknown = formatHappierDataValue(null, undefined, props.labels.values.unknownLabel);
   const ink = resolveUsageChartInk(props.theme, props.paint);
   const svgText = useUsageChartSvgText(props.theme);
   const hours = props.model.hours.map((value) => value ?? 0);
@@ -133,7 +135,7 @@ export function UsageDaylight(props: UsageChartBaseProps & Readonly<{ model: Usa
     const at = night.fromHour > night.toHour ? night.toHour / 2 * column : (night.fromHour + night.toHour) / 2 * column;
     return { text, half, x: Math.min(width - half, Math.max(half, at)) };
   })() : null;
-  const rows = props.model.hours.map((value, hour) => [props.labels.clock(hour), value === null ? '—'
+  const rows = props.model.hours.map((value, hour) => [props.labels.clock(hour), value === null ? unknown
     : props.model.encoding === 'ordinal' ? props.labels.values.levelNames[value] ?? '' : props.labels.values.formatValue(value)] as const);
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
     <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
@@ -162,9 +164,9 @@ export function UsageDaylight(props: UsageChartBaseProps & Readonly<{ model: Usa
           return out;
         })()}
       </Svg> : null}
-      {width !== null && night && nightLabel ? <ChartMark datum={{ label: nightLabel.text, value: night.share === null ? '—' : formatHappierDataExactShare(night.share), color: nightInk }}
+      {width !== null && night && nightLabel ? <ChartMark datum={{ label: nightLabel.text, value: night.share === null ? unknown : formatHappierDataExactShare(night.share), color: nightInk }}
         bounds={{ x: Math.max(0, nightLabel.x - nightLabel.half), y: 0, width: Math.min(width, nightLabel.half * 2), height: 22 }} /> : null}
-      {width !== null ? props.model.hours.map((value, hour) => <ChartMark key={hour} datum={{ label: props.labels.clock(hour), value: value === null ? '—' : props.model.encoding === 'ordinal' ? props.labels.values.levelNames[value] ?? '—' : formatHappierDataValue(value), subtitle: value !== null && props.model.encoding === 'amount' ? `${props.labels.values.valueColumn} · ${props.labels.values.formatValue(value)}` : undefined, color: inNight(hour) ? nightInk : props.paint.accent }}
+      {width !== null ? props.model.hours.map((value, hour) => <ChartMark key={hour} datum={{ label: props.labels.clock(hour), value: value === null ? unknown : props.model.encoding === 'ordinal' ? props.labels.values.levelNames[value] ?? unknown : formatHappierDataValue(value), subtitle: value !== null && props.model.encoding === 'amount' ? `${props.labels.values.valueColumn} · ${props.labels.values.formatValue(value)}` : undefined, color: inNight(hour) ? nightInk : props.paint.accent }}
         bounds={{ x: hour * width / 24, y: 22, width: width / 24, height: height - 40 }} />) : null}
     </ChartDrawing>
     <UsageChartCaption theme={props.theme}>{props.labels.caption(peakHour, night?.share ?? null)}</UsageChartCaption>

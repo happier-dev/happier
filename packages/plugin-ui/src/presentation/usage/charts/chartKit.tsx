@@ -170,7 +170,7 @@ export function UsageChartCaption(props: Readonly<{ theme: HappierUiTheme; child
 }
 
 /** Localized wording of the exact-values disclosure, supplied by the host. */
-export type UsageChartValuesLabels = Readonly<{ show: string; hide: string }>;
+export type UsageChartValuesLabels = Readonly<{ show: string; hide: string; unknownLabel?: string }>;
 export type UsageChartValuesTable = Readonly<{
   columns: readonly HappierDataColumn[]; rows: readonly (readonly HappierDataValue[])[];
   rowLeads?: readonly (ReactNode | undefined)[];

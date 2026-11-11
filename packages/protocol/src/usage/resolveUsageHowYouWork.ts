@@ -145,11 +145,14 @@ function privateDetailState(detail: UsageHowYouWorkDetailInput): UsagePrivateDet
     return state;
 }
 function projectUsagePrivateIntervals(detail: UsageHowYouWorkDetailInput, input: UsageWorkIntervalsInput) {
-    return projectPreparedUsageWorkIntervals(input, () => {
+    const intervals = projectPreparedUsageWorkIntervals(input, () => {
         const sources = (detail as PartitionedPrivateDetail)[privateDetailPartitions]?.sources ?? [detail];
         const allowed = new Set(input.facts);
         return sources.flatMap(source => prepareUsagePrivateIntervals(source, input.period)).filter(row => allowed.has(row.source));
     });
+    // An empty partial read cannot establish zero work; complete observed emptiness can.
+    return detail.status === 'partial' && intervals.coverage === 'complete_for_supplied_facts' && intervals.lanes.length === 0
+        ? null : intervals;
 }
 function prepareUsagePrivateIntervals(detail: UsageHowYouWorkDetailInput, period: UsageWorkIntervalsInput['period']) {
     const state = privateDetailState(detail);

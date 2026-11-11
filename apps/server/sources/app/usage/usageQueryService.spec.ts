@@ -40,6 +40,29 @@ function row(id: string, total: number, metadata: CapturedRow['metadata'], optio
 }
 
 describe('captured usage query projection', () => {
+    it('keeps empty accounting unreported while preserving measured zero and witnessed coverage failures', () => {
+        const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 200 }, includeSeries: false });
+        const snapshot: UsageAnalyticsSnapshot = { rows: [], legacyReports: [],
+            priceCatalog: { fetchEnabled: false, stored: null }, messageCountsBySession: undefined };
+        const empty = projectUsageAnalytics(snapshot, query);
+        expect(empty.totals).toMatchObject({ eventCount: 0, tokens: { total: null, input: null, output: null },
+            cost: { reportedUsd: null, estimatedUsd: null } });
+        expect(empty.coverage).toMatchObject({ status: 'unknown', reasons: [], sources: [], range: { complete: false } });
+
+        const measuredZero = { ...row('measured-zero', 0,
+            { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } }), modelId: 'known-model' };
+        const known = projectUsageAnalytics({ ...snapshot, rows: [measuredZero] }, query);
+        expect(known.totals).toMatchObject({ eventCount: 1, tokens: { total: 0 }, cost: { reportedUsd: 0 } });
+        expect(known.coverage).toMatchObject({ status: 'complete', reasons: [], range: { complete: true } });
+
+        const partial = projectUsageAnalytics({ ...snapshot, rows: [{ ...measuredZero,
+            metadata: { usageAccounting: { path: 'runtime', status: 'partial', historyComplete: false } } }] }, query);
+        expect(partial.coverage).toMatchObject({ status: 'partial', reasons: ['incomplete_history'],
+            sources: [expect.objectContaining({ eventCount: 1, historyComplete: false })] });
+        const unknownSource = projectUsageAnalytics({ ...snapshot, rows: [{ ...measuredZero, metadata: null }] }, query);
+        expect(unknownSource.coverage?.reasons).toContain('unknown_source');
+        expect(unknownSource.coverage?.sources).toEqual([expect.objectContaining({ eventCount: 1, status: 'unknown' })]);
+    });
     it('delivers complete scope identities independently of ranked topLimit without event detail', async () => {
         const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 200 },
             breakdowns: ['project', 'agent', 'machine', 'source'], topLimit: 1, includeSeries: false });

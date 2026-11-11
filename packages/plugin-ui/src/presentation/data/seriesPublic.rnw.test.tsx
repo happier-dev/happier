@@ -37,7 +37,8 @@ it.each(['bar', 'line', 'area'] as const)('renders the same native and Session d
     const rows = (container: HTMLElement) => [...container.querySelectorAll('[data-testid*="-values-row-"]')].map(row => row.getAttribute('aria-label'));
     expect(rows(declarative.container)).toEqual(rows(native.container));
     expect(rows(declarative.container).join(';')).toContain('North: 0.00004');
-    expect(rows(declarative.container).join(';')).toContain('North: —');
+    expect(rows(declarative.container).join(';')).toContain('North: Not reported');
+    expect(rows(declarative.container).join(';')).toContain('South: 0');
   } finally { native.unmount(); declarative.unmount(); }
 });
 
@@ -77,6 +78,6 @@ it('draws supplied observed, projected and target facts without calculating a fo
     expect(mount.container.querySelectorAll('svg path')).toHaveLength(3);
     expect(mount.container.querySelector('path[stroke-dasharray="4,4"]')).not.toBeNull();
     expect(mount.container.querySelector('[aria-label*="Projected 25"]')).not.toBeNull();
-    expect(mount.container.querySelector('[aria-label*="Observed —"]')).not.toBeNull();
+    expect(mount.container.querySelector('[aria-label*="Observed Not reported"]')).not.toBeNull();
   } finally { mount.unmount(); }
 });

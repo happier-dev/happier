@@ -133,7 +133,7 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
       .map((highlight): UsageRecapHighlight => {
         const base = { id: highlight.id, testID: highlight.testID, label: highlight.label,
           value: formatIdentifierLabel(highlight.value), detail: highlight.subtitle };
-        const tokens = viewModel.overview.totalTokens === null ? '—' : formatHappierDataValue(viewModel.overview.totalTokens, getPreferredLanguage());
+        const tokens = formatHappierDataValue(viewModel.overview.totalTokens, getPreferredLanguage(), t('usage.board.plans.cellUnknown'));
         const amount = viewModel.pageCost?.amountUsd;
         if (highlight.id === 'usage') {
           const money = amount === null || amount === undefined ? null : formatHappierDataValue(amount, getPreferredLanguage());

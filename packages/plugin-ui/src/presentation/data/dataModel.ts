@@ -24,7 +24,8 @@ export type HappierDataColumn = Readonly<{
  * retain every digit. Fractional readings keep the existing fifteen-significant-digit suppression of
  * binary accumulation noise ("0.30000000000000004" reads as "0.3").
  */
-export function formatHappierDataValue(value: HappierDataValue, locale?: string): string {
+export function formatHappierDataValue(value: HappierDataValue | null, locale?: string, missingMeasurementText = 'Not reported'): string {
+  if (value === null) return missingMeasurementText;
   if (typeof value !== 'number') return String(value);
   try {
     return new Intl.NumberFormat(locale === undefined ? undefined : [locale], Number.isInteger(value)

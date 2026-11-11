@@ -23,6 +23,10 @@ describe('resolveUsageDayStreaks', () => {
         expect(resolveUsageDayStreaks(input)).toEqual({ activeDays: null, currentStreakDays: null, longestStreakDays: null, coverage: 'unknown' });
         expect(resolveUsageDayStreaks({ ...input, days: [], coverage: 'complete' })).toEqual({ activeDays: 0,
             currentStreakDays: 0, longestStreakDays: 0, coverage: 'complete' });
+        expect(resolveUsageDayStreaks({ ...input, days: [{ date: '2026-07-06', eventCount: null }], coverage: 'unknown' }))
+            .toEqual({ activeDays: null, currentStreakDays: null, longestStreakDays: null, coverage: 'unknown' });
+        expect(resolveUsageDayStreaks({ ...input, days: [{ date: '2026-07-06', eventCount: 0 }], coverage: 'partial' }))
+            .toEqual({ activeDays: 0, currentStreakDays: 0, longestStreakDays: 0, coverage: 'partial' });
         expect(resolveUsageDayStreaks({ ...input, days: [{ date: '2026-07-05', eventCount: 1 }, { date: '2026-07-06', eventCount: null }],
             coverage: 'complete' })).toEqual({ activeDays: 1, currentStreakDays: 1, longestStreakDays: 1, coverage: 'partial' });
     });

@@ -1,4 +1,4 @@
-import { act, createElement, type ComponentType } from 'react';
+import { act, createElement, type ComponentProps, type ComponentType } from 'react';
 import { describe, expect, it } from 'vitest';
 
 import * as Presentation from '@happier-dev/plugin-ui/presentation';
@@ -27,12 +27,16 @@ describe('neutral public grids', () => {
       const candidate: unknown = Reflect.get(Presentation, name);
       expect(typeof candidate).toBe('function');
       if (typeof candidate !== 'function') throw new Error(`Missing public ${name} renderer`);
-      const Grid = candidate as ComponentType<typeof props & { size?: 'inline' | 'tile' | 'full'; order?: 'rows' | 'columns' }>;
+      const Grid = candidate as ComponentType<ComponentProps<typeof Presentation.Heatmap>>;
       const mount = mountThroughReactNativeWeb(createElement(Grid, props));
       try {
         const query = (id: string) => mount.container.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
         expect(query('samples-cell-red-zero').getAttribute('aria-label')).toContain('0');
         expect(query('samples-cell-red-unknown').getAttribute('aria-label')).toContain('Unknown');
+        await mount.render(createElement(Grid, { ...props, unknownLabel: undefined }));
+        expect(query('samples-cell-red-unknown').getAttribute('aria-label')).toContain('Not reported');
+        expect(query('samples-cell-red-zero').getAttribute('aria-label')).toContain('0');
+        await mount.render(createElement(Grid, props));
         const selected = query('samples-cell-blue-result');
         act(() => selected.click());
         expect(query('samples-readout').textContent).toContain('37 milligrams');

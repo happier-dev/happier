@@ -388,7 +388,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
             minimumMaximum={100}
             reference={{ value: 100, label: t('usage.board.plans.burnLimit') }}
             valueFormatter={(value) => `${Math.round(value)}%`}
-            unknownLabel="—"
+            unknownLabel={t('usage.board.plans.cellUnknown')}
             valuesLabel={t('usage.showAll')}
             valuesCollapseLabel={t('usage.showLess')}
             // The range is said once, by its own line under the chart.
@@ -586,7 +586,7 @@ function SmallMultiple(
         series={series}
         minimumMaximum={100}
         valueFormatter={(value) => `${Math.round(value)}%`}
-        unknownLabel="—"
+        unknownLabel={t('usage.board.plans.cellUnknown')}
         summary={statement.text}
         showAxis={false}
         showLegend={false}

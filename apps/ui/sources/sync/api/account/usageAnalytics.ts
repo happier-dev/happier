@@ -3,7 +3,7 @@ import { resolveUsageBucketBounds, resolveUsageCalendarInstant } from '@happier-
 import { resolveUsageDayStreaks } from '@happier-dev/protocol/usage/usageActivitySummary';
 import { resolveUsageTokenCategories } from '@happier-dev/protocol/usage/usageTokenCategories';
 import { normalizeLegacyUsageTokens } from '@happier-dev/protocol/usage/legacyUsageTokens';
-import { addUsageMeasurements, createEmptyUsageCost, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
+import { addUsageMeasurements, compareUsageMeasurementsDescending, createEmptyUsageCost, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import type { UsageAccountingMetric } from '@happier-dev/protocol/inputs/usageQuery';
 import { agentIdFromEngineKey } from '@happier-dev/protocol/usage/usageFilterOptions';
 import type {
@@ -379,7 +379,7 @@ function resolveCostForMode(
     return resolveEffectiveUsageCostUsd(cost, mode);
 }
 
-function resolveAnalyticsCost(
+export function resolveAnalyticsCost(
     cost: ProtocolUsageAnalyticsTotals['cost'],
     modeOrPresentation?: UsageCostMode | NonNullable<UsageAnalyticsViewModel['costPresentation']> | null,
 ): number | null {
@@ -477,10 +477,10 @@ function isSeriesBucketWithinWindow(
 function sortBreakdownRows(rows: UsageBreakdownRow[]): UsageBreakdownRow[] {
     return [...rows].sort((left, right) => {
         if (right.totalTokens !== left.totalTokens) {
-            return (right.totalTokens ?? -1) - (left.totalTokens ?? -1);
+            return compareUsageMeasurementsDescending(left.totalTokens, right.totalTokens);
         }
         if (right.totalCost !== left.totalCost) {
-            return (right.totalCost ?? -1) - (left.totalCost ?? -1);
+            return compareUsageMeasurementsDescending(left.totalCost, right.totalCost);
         }
         return left.label.localeCompare(right.label);
     });
@@ -550,10 +550,10 @@ function buildLegacyBucketRows(totals: Pick<UsageTotals, 'tokenBreakdown' | 'cos
         contextUsedTokens: null,
     })).sort((left, right) => {
         if (right.totalTokens !== left.totalTokens) {
-            return (right.totalTokens ?? -1) - (left.totalTokens ?? -1);
+            return compareUsageMeasurementsDescending(left.totalTokens, right.totalTokens);
         }
         if (right.totalCost !== left.totalCost) {
-            return (right.totalCost ?? -1) - (left.totalCost ?? -1);
+            return compareUsageMeasurementsDescending(left.totalCost, right.totalCost);
         }
         return left.label.localeCompare(right.label);
     });
@@ -1181,7 +1181,7 @@ export function buildUsageLeaderTrend(
 ): (number | null)[] {
     return timeline.map((bucket) => {
         const leader = bucket.leaders.find((entry) => entry.key === key);
-        return leader ? leader.totalTokens : 0;
+        return leader ? leader.totalTokens : null;
     });
 }
 
@@ -1355,7 +1355,7 @@ export function buildUsagePivotView(
     // instead of ranking by tokens; every other dimension is a leaderboard.
     const ranked = dimension === 'week'
         ? [...source]
-        : [...source].sort((left, right) => (right.totalTokens ?? -1) - (left.totalTokens ?? -1));
+        : [...source].sort((left, right) => compareUsageMeasurementsDescending(left.totalTokens, right.totalTokens));
     const total = ranked.reduce<number | null>((sum, row) => addUsageMeasurements(sum, row.totalTokens), null);
     // The accent marks the single busiest row (true max), even when the order
     // is chronological rather than ranked.
@@ -1434,7 +1434,7 @@ export function buildUsageModelMix(
     }
     const ranked = [...totalsByKey.entries()]
         .map(([key, value]) => ({ key, label: value.label, totalTokens: value.tokens }))
-        .sort((left, right) => (right.totalTokens ?? -1) - (left.totalTokens ?? -1) || left.key.localeCompare(right.key));
+        .sort((left, right) => compareUsageMeasurementsDescending(left.totalTokens, right.totalTokens) || left.key.localeCompare(right.key));
 
     const grandTotal = ranked.reduce<number | null>((sum, entry) => addUsageMeasurements(sum, entry.totalTokens), null);
     const cap = Math.max(1, maxSeries);
@@ -1458,7 +1458,7 @@ export function buildUsageModelMix(
     // 2) Normalize each bucket into per-key shares (largest first; tail → other).
     const buckets: UsageModelMixBucket[] = timeline.map((bucket) => {
         const tokensByKey = new Map<string, number | null>();
-        let bucketTotal: number | null = bucket.leaders.length === 0 ? 0 : null;
+        let bucketTotal: number | null = null;
         for (const leader of bucket.leaders) {
             tokensByKey.set(leader.key, addUsageMeasurements(tokensByKey.get(leader.key) ?? null, leader.totalTokens));
             bucketTotal = addUsageMeasurements(bucketTotal, leader.totalTokens);
@@ -1473,7 +1473,7 @@ export function buildUsageModelMix(
                 }
                 return otherTokens;
             }
-            return tokensByKey.has(seriesKey.key) ? tokensByKey.get(seriesKey.key)! : 0;
+            return tokensByKey.has(seriesKey.key) ? tokensByKey.get(seriesKey.key)! : null;
         });
         const shares = tokens.map((amount) => bucketTotal === null || amount === null ? null : bucketTotal > 0 ? amount / bucketTotal : 0);
         return { startMs: bucket.bucketStartMs, endMs: bucket.bucketEndMs, total: bucketTotal, tokens, shares };

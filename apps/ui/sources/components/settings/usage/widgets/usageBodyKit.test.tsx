@@ -647,6 +647,24 @@ describe('shared Usage identity and dependent coverage', () => {
         const date = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
         expect(label).toBe(`${date.format(new Date(Date.UTC(2024, 3, 22)))} – ${date.format(new Date(Date.UTC(2024, 4, 2)))}`);
     });
+    it('keeps empty accounting coverage unknown without claiming missing history or missing-source events', () => {
+        const query = normalizeUsageQuery({ period: { startMs: 1000, endMs: 2000 } });
+        const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: {
+            v: 1, totals: { tokens: { total: null, input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null },
+                cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD' }, eventCount: 0 },
+            coverage: { status: 'unknown', reasons: [], sources: [], missingDimensions: [],
+                range: { startMs: 1000, endMs: 2000, complete: false }, ranked: [] },
+        } }] }).results[0]!;
+        expect(readUsageCoverageGaps(slice, ['accounting'])).toEqual([{ source: 'accounting', status: 'unknown' }]);
+        expect(usageCoverageDescription(slice, ['accounting'])).toBe(t('usage.board.sources.coverageUnknown'));
+        expect(usageCoverageSummary(slice, ['accounting'])).toBe(t('usage.board.sources.coverageUnknown'));
+        for (const status of ['pending', 'not_loaded'] as const) {
+            const mixed = { ...slice, comparison: { query: resolveUsageComparisonQuery(query)!, source: { source: 'comparison', status } } };
+            expect(readUsageCoverageGaps(mixed, ['accounting', 'comparison']).map(gap => gap.status)).toEqual(['unknown', status]);
+            expect(usageCoverageDescription(mixed, ['accounting', 'comparison'])).toBe(t('usage.board.sources.coverageUnknown'));
+            expect(usageCoverageSummary(mixed, ['accounting', 'comparison'])).toBe(t('usage.board.sources.coverageUnknown'));
+        }
+    });
     it('exposes incomplete native history and unsupported sources even with available accounting transport', async () => {
         const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 } });
         const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: {
@@ -708,5 +726,7 @@ describe('shared Usage identity and dependent coverage', () => {
             v: 1, totals: { tokens: { total: 5, input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }, cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' }, eventCount: 1 },
         } }] }).results[0]!;
         expect(readUsageCoverageGaps(slice, ['accounting'])).toEqual([{ source: 'accounting', status: 'unknown' }]);
+        expect(usageCoverageDescription(slice, ['accounting'])).toBe(t('usage.board.sources.coverageUnknown'));
+        expect(usageCoverageSummary(slice, ['accounting'])).toBe(t('usage.board.sources.coverageUnknown'));
     });
 });

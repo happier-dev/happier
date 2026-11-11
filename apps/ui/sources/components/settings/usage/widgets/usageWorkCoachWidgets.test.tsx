@@ -523,9 +523,9 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.findHostByTestId('coverage-coach.summary.sessions')?.props.accessibilityLabel)
       .toContain(`${t('usage.board.coach.summarySessions')}: 2`);
     await screen.update(<UsageCoachWidget {...props} slice={{ ...slice, accounting: undefined }} id="usage_coach" testID="coverage-coach" />);
-    expect(metric('sessions')).toBe('—');
+    expect(metric('sessions')).toBe(t('usage.board.plans.cellUnknown'));
     expect(screen.findHostByTestId('coverage-coach.summary.sessions')?.props.accessibilityLabel)
-      .toContain(`${t('usage.board.coach.summarySessions')}: —`);
+      .toContain(`${t('usage.board.coach.summarySessions')}: ${t('usage.board.plans.cellUnknown')}`);
   });
   it('does not reserve a second cold-read room inside the Coach widget', async () => {
     const pendingSlice = resolveUsagePageAggregation({ queries: [query],

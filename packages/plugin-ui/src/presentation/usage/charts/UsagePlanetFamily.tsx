@@ -67,6 +67,7 @@ export function UsageAgentMoons(
     }>,
 ) {
   const [width, onLayout] = useUsageChartWidth(props.width);
+  const unknown = formatHappierDataValue(null, undefined, props.labels.values.unknownLabel);
   const ink = resolveUsageChartInk(props.theme, props.paint);
   const text = useUsageChartSvgText(props.theme).styles;
   const members = props.model.agents;
@@ -101,8 +102,8 @@ export function UsageAgentMoons(
     (member) =>
       [
         name(member),
-        member.share === null ? '—' : props.labels.percent(member.share),
-        daysText(member) ?? '—',
+        member.share === null ? unknown : props.labels.percent(member.share),
+        daysText(member) ?? unknown,
       ] as const,
   );
   return (
@@ -163,7 +164,7 @@ export function UsageAgentMoons(
                       />
                     </Svg>
                   )}
-                  <ChartMark datum={{ label: name(member), value: member.share === null ? '—' : formatHappierDataExactShare(member.share), subtitle: [member.share === null ? null : `${props.labels.values.shareColumn} · ${props.labels.percent(member.share)}`, daysText(member)].filter(Boolean).join(' · ') || undefined, color: colour }} bounds={{ x: (box - size) / 2, y: (box - size) / 2, width: size, height: size }} />
+                  <ChartMark datum={{ label: name(member), value: member.share === null ? unknown : formatHappierDataExactShare(member.share), subtitle: [member.share === null ? null : `${props.labels.values.shareColumn} · ${props.labels.percent(member.share)}`, daysText(member)].filter(Boolean).join(' · ') || undefined, color: colour }} bounds={{ x: (box - size) / 2, y: (box - size) / 2, width: size, height: size }} />
                 </View>
                 <HappierText
                   numberOfLines={1}
@@ -179,7 +180,7 @@ export function UsageAgentMoons(
                   {[
                     daysText(member),
                     member.share === null
-                      ? '—'
+                      ? unknown
                       : props.labels.percent(member.share),
                   ]
                     .filter((part): part is string => part !== null)

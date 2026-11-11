@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings } from '@/text';
+import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 
 import {
     formatPercent,
@@ -31,15 +31,16 @@ describe('usage number formatting', () => {
         expect(formatTokenCount(1_100_000_000)).toBe('1.1B');
     });
 
-    it('uses an em dash for invalid token counts', () => {
-        expect(formatTokenCount(null)).toBe('—');
-        expect(formatTokenCountLong(null)).toBe('—');
-        expect(formatUsageCost(null, 'USD')).toBe('—');
-        expect(formatTokenCount(-1)).toBe('—');
-        expect(formatTokenCount(Number.NaN)).toBe('—');
-        expect(formatTokenCount(Number.POSITIVE_INFINITY)).toBe('—');
-        expect(formatTokenCountLong(-1)).toBe('—');
-        expect(formatTokenCountLong(Number.NaN)).toBe('—');
+    it('uses localized explicit text for unknown or invalid token counts', () => {
+        const missingMeasurementText = t('usage.board.plans.cellUnknown');
+        expect(formatTokenCount(null)).toBe(missingMeasurementText);
+        expect(formatTokenCountLong(null)).toBe(missingMeasurementText);
+        expect(formatUsageCost(null, 'USD')).toBe(missingMeasurementText);
+        expect(formatTokenCount(-1)).toBe(missingMeasurementText);
+        expect(formatTokenCount(Number.NaN)).toBe(missingMeasurementText);
+        expect(formatTokenCount(Number.POSITIVE_INFINITY)).toBe(missingMeasurementText);
+        expect(formatTokenCountLong(-1)).toBe(missingMeasurementText);
+        expect(formatTokenCountLong(Number.NaN)).toBe(missingMeasurementText);
     });
 
     it('formats long token counts with locale grouping', () => {
@@ -59,8 +60,8 @@ describe('usage number formatting', () => {
         expect(formatUsageCost(0.0012, 'USD')).toBe('$0.0012');
         expect(formatUsageCost(1, 'USD')).toBe('$1.00');
         expect(formatUsageCost(12.4567, 'USD')).toBe('$12.46');
-        expect(formatUsageCost(-1, 'USD')).toBe('—');
-        expect(formatUsageCost(Number.NaN, 'USD')).toBe('—');
+        expect(formatUsageCost(-1, 'USD')).toBe(t('usage.board.plans.cellUnknown'));
+        expect(formatUsageCost(Number.NaN, 'USD')).toBe(t('usage.board.plans.cellUnknown'));
     });
 
     it('formats finite non-negative percentages and rejects invalid values', () => {

@@ -136,7 +136,7 @@ export function usageAxisTicks(labels: readonly string[], lastLabel?: string): r
 }
 
 export function usageMixSeries(mix: UsageCalendarMix, label: (value: string) => string, color: (index: number, key: string) => string, timeZoneOffsetMinutes = 0): readonly HappierSeries[] {
-    return mix.keys.map((key, index) => ({ id: key.key, label: label(key.label), color: color(index, key.key), detail: `${formatTokenCount(key.totalTokens)} · ${mix.total === null || key.totalTokens === null ? '—' : `${mix.total > 0 ? Math.round(key.totalTokens / mix.total * 100) : 0}%`}`, points: mix.buckets.map((bucket) => ({
+    return mix.keys.map((key, index) => ({ id: key.key, label: label(key.label), color: color(index, key.key), detail: `${formatTokenCount(key.totalTokens)} · ${mix.total === null || key.totalTokens === null ? t('usage.board.plans.cellUnknown') : `${mix.total > 0 ? Math.round(key.totalTokens / mix.total * 100) : 0}%`}`, points: mix.buckets.map((bucket) => ({
         id: String(bucket.startMs), x: bucket.startMs,
         label: formatUsageCalendarDate(bucket.startMs, timeZoneOffsetMinutes, { month: 'short', day: 'numeric' }),
         y: bucket.tokens[index] ?? null,

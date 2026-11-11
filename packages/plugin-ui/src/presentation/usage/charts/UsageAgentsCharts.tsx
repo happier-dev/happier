@@ -109,7 +109,7 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
 
 export type UsageAgentShare = Readonly<{
   agentId: string | null;
-  /** Null = no measured denominator or not shared: drawn as "—", never a source-method claim. */
+  /** Null = no measured denominator or not shared: disclosed as unknown, never a source-method claim. */
   share: number | null;
   /** How this Agent's usage is measured, as the host names it ("Measured · Happier and its logs"). */
   coverage?: Readonly<{ long: string; short: string }>;
@@ -168,11 +168,12 @@ export function UsageOrbit(props: AgentsProps & Readonly<{ model: readonly Usage
   </UsageChartColumn>;
 }
 
-export type UsageCrewLabels = Readonly<{ percent: (share: number) => string; days: (activeDays: number) => string; unknownAgent: string }>;
+export type UsageCrewLabels = Pick<UsageChartValuesLabels, 'unknownLabel'> & Readonly<{ percent: (share: number) => string; days: (activeDays: number) => string; unknownAgent: string }>;
 
 /** Crew (Breakdowns · Style Crew): every Agent with its share, how it is measured and (when shared) its active days. */
 export function UsageCrew(props: AgentsProps & Readonly<{ model: readonly UsageAgentShare[]; labels: UsageCrewLabels }>) {
   const [width, onLayout] = useUsageChartWidth(props.width);
+  const unknown = formatHappierDataValue(null, undefined, props.labels.unknownLabel);
   const ink = resolveUsageChartInk(props.theme, props.paint);
   const svgText = useUsageChartSvgText(props.theme);
   const text = svgText.styles;
@@ -194,12 +195,12 @@ export function UsageCrew(props: AgentsProps & Readonly<{ model: readonly UsageA
         {!compact ? <View style={{ width: 100, height: 4, borderRadius: 2, backgroundColor: ink.track, overflow: 'hidden' }}>
           {entry.share !== null ? <View style={{ width: `${Math.round(Math.sqrt(entry.share) * 100)}%`, height: 4, borderRadius: 2, backgroundColor: agent?.color ?? ink.neutral }} /> : null}
         </View> : null}
-        <ChartDatum datum={{ label: fullName(props.agents, entry.agentId, props.labels.unknownAgent), value: entry.share === null ? '—' : exactPercent(entry.share),
+        <ChartDatum datum={{ label: fullName(props.agents, entry.agentId, props.labels.unknownAgent), value: entry.share === null ? unknown : exactPercent(entry.share),
           subtitle: entry.coverage?.long, color: agent?.color ?? ink.neutral }} testID={`${props.testID}.agent.${entry.agentId}`}>
-          <HappierText tabularNumbers style={{ ...text.strong, minWidth: 40, textAlign: 'right' }}>{entry.share === null ? '—' : props.labels.percent(entry.share)}</HappierText>
+          <HappierText tabularNumbers style={{ ...text.strong, minWidth: 40, textAlign: 'right' }}>{entry.share === null ? unknown : props.labels.percent(entry.share)}</HappierText>
         </ChartDatum>
         {showDays ? <HappierText tabularNumbers style={{ ...text.body, color: props.theme.colors.mutedText, minWidth: compact ? 56 : 88, textAlign: 'right' }}>
-          {entry.activeDays === null || entry.activeDays === undefined ? '—' : props.labels.days(entry.activeDays)}</HappierText> : null}
+          {entry.activeDays === null || entry.activeDays === undefined ? unknown : props.labels.days(entry.activeDays)}</HappierText> : null}
       </View>;
     })}
   </View>;
@@ -212,7 +213,8 @@ export type UsageRiverModel = Readonly<{
   width: 'amount' | 'level' | 'share';
   /** Null in composition-only mode: equal width, with no implied weekly amount. */
   weeks: readonly Readonly<{ start: string; end: string; partial: boolean; total: number | null;
-    shares: readonly Readonly<{ agentId: string | null; share: number }>[] }>[];
+    /** Null is an unreported composition; an empty array is a measured week with no shares. */
+    shares: readonly Readonly<{ agentId: string | null; share: number }>[] | null }>[];
 }>;
 export type UsageRiverLabels = Readonly<{ week: (start: string) => string; inline: (name: string, share: number) => string; caption: string; unknownAgent: string;
   /** A week the period clips, named by the days it covers ("13–15 Jul · part week"); its shares are of those days only. */
@@ -221,17 +223,21 @@ export type UsageRiverLabels = Readonly<{ week: (start: string) => string; inlin
 
 export function UsageAgentRiver(props: AgentsProps & Readonly<{ model: UsageRiverModel; labels: UsageRiverLabels }>) {
   const [width, onLayout] = useUsageChartWidth(props.width);
+  const unknown = formatHappierDataValue(null, undefined, props.labels.values.unknownLabel);
   const svgText = useUsageChartSvgText(props.theme);
   const weeks = props.model.weeks;
-  const shareOf = (week: UsageRiverModel['weeks'][number], id: string | null) => week.shares.find(entry => entry.agentId === id)?.share ?? 0;
+  const shareOf = (week: UsageRiverModel['weeks'][number], id: string | null) => week.shares === null ? null : week.shares.find(entry => entry.agentId === id)?.share ?? 0;
   const weight = (week: UsageRiverModel['weeks'][number]) => props.model.width === 'share' ? 1 : week.total ?? 0;
   const height = width !== null && width < 480 ? 150 : 190;
   // Every member with a share, the unattributed one included (it is part of the composition, never dropped).
-  const members: (string | null)[] = [...props.agents.map((agent) => agent.id), ...(weeks.some((week) => shareOf(week, null) > 0) ? [null] : [])];
-  const order = members.filter((id) => weeks.some((week) => shareOf(week, id) > 0))
-    .sort((a, b) => weeks.reduce((sum, week) => sum + shareOf(week, a) * weight(week), 0) - weeks.reduce((sum, week) => sum + shareOf(week, b) * weight(week), 0));
-  const rows = weeks.map((week) => [week.partial ? props.labels.partialWeek(week.start, week.end) : props.labels.week(week.start), week.total === null ? '—' : props.labels.values.formatTotal(week.total),
-    ...order.slice().reverse().map((id) => props.labels.values.percent(shareOf(week, id)))] as const);
+  const members: (string | null)[] = [...props.agents.map((agent) => agent.id), ...(weeks.some((week) => (shareOf(week, null) ?? 0) > 0) ? [null] : [])];
+  const order = members.filter((id) => weeks.some((week) => (shareOf(week, id) ?? 0) > 0))
+    .sort((a, b) => weeks.reduce((sum, week) => sum + (shareOf(week, a) ?? 0) * weight(week), 0) - weeks.reduce((sum, week) => sum + (shareOf(week, b) ?? 0) * weight(week), 0));
+  const rows = weeks.map((week) => [week.partial ? props.labels.partialWeek(week.start, week.end) : props.labels.week(week.start), week.total === null ? unknown : props.labels.values.formatTotal(week.total),
+    ...order.slice().reverse().map((id) => {
+      const share = shareOf(week, id);
+      return share === null ? unknown : props.labels.values.percent(share);
+    })] as const);
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
     <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
       {width !== null && weeks.length >= 2 ? (() => {
@@ -240,7 +246,7 @@ export function UsageAgentRiver(props: AgentsProps & Readonly<{ model: UsageRive
         let floor = weeks.map((week) => -(weight(week) / max) * half);
         const bands = order.map((id) => {
           const low = floor.slice();
-          const high = weeks.map((week, index) => low[index]! + (shareOf(week, id) * weight(week) / max) * half * 2);
+          const high = weeks.map((week, index) => low[index]! + ((shareOf(week, id) ?? 0) * weight(week) / max) * half * 2);
           floor = high;
           const top = high.map((value, index) => [x(index), mid - value] as const);
           const bottom = low.map((value, index) => [x(index), mid - value] as const).reverse();
@@ -262,8 +268,10 @@ export function UsageAgentRiver(props: AgentsProps & Readonly<{ model: UsageRive
               const room = (at: number) => (band.high[at]! - band.low[at]!) * (weeks.length > 2 && (at === 0 || at === weeks.length - 1) ? 0.6 : 1);
               for (let at = 0; at < weeks.length; at++) if (!used.has(at) && (index < 0 || room(at) > room(index))) index = at;
               if (index < 0 || band.high[index]! - band.low[index]! < 16) return null;
+              const share = shareOf(weeks[index]!, id);
+              if (share === null) return null;
               used.add(index);
-              const text = props.labels.inline(shortName(props.agents, id, props.labels.unknownAgent), shareOf(weeks[index]!, id));
+              const text = props.labels.inline(shortName(props.agents, id, props.labels.unknownAgent), share);
               // The label is drawn semibold in the body role; it keeps the card's inset from either edge of the river.
               const half = (text.length * (svgText.styles.body.fontSize ?? 13) * 0.66) / 2;
               const inset = HAPPIER_WIDGET_FRAME_METRICS.cardInsetPx;
@@ -274,11 +282,12 @@ export function UsageAgentRiver(props: AgentsProps & Readonly<{ model: UsageRive
           {weeks.map((week, index) => index % 3 === 0 || index === weeks.length - 1 ? svgText.draw({ x: x(index), y: height - 3,
             anchor: index === weeks.length - 1 ? 'end' : index === 0 ? 'start' : 'middle', text: props.labels.week(week.start) }, `w${index}`) : null)}
         </Svg>{bands.flatMap((band) => weeks.map((week, index) => {
+          const share = shareOf(week, band.id);
           const left = index === 0 ? 0 : (x(index - 1) + x(index)) / 2;
           const right = index === weeks.length - 1 ? width : (x(index) + x(index + 1)) / 2;
           return <ChartPathMark key={`${band.id}-${index}`} testID={`${props.testID}.week.${index}.${band.id}`} d={band.d} strokeWidth={0} hitMode="fill"
             datum={{ label: `${fullName(props.agents, band.id, props.labels.unknownAgent)} · ${week.partial ? props.labels.partialWeek(week.start, week.end) : props.labels.week(week.start)}`,
-              value: exactPercent(shareOf(week, band.id)), subtitle: week.total === null ? undefined : `${props.labels.values.totalColumn}: ${formatHappierDataValue(week.total)} · ${props.labels.values.formatTotal(week.total)}`, color: colour(band.id) }}
+              value: share === null ? unknown : exactPercent(share), subtitle: week.total === null ? undefined : `${props.labels.values.totalColumn}: ${formatHappierDataValue(week.total)} · ${props.labels.values.formatTotal(week.total)}`, color: colour(band.id) }}
             bounds={{ x: left, y: 0, width: right - left, height }}
             focusBounds={{ x: left, y: mid - band.high[index]!, width: right - left, height: band.high[index]! - band.low[index]! }} />;
         }))}</>;
@@ -384,13 +393,14 @@ export type UsageConstellationModel = Readonly<{
   edges: readonly Readonly<{ from: string; to: string; kind: 'session' | 'run' | 'native'; count: number }>[] | null;
   unknownStarts: number | null;
 }>;
-export type UsageConstellationLabels = Readonly<{ kinds: Readonly<{ session: string; run: string; native: string }>; arrowNote: string;
+export type UsageConstellationLabels = Pick<UsageChartValuesLabels, 'unknownLabel'> & Readonly<{ kinds: Readonly<{ session: string; run: string; native: string }>; arrowNote: string;
   unknownStarts: (count: number) => string; nodesOnly: string; unknownAgent: string }>;
 const EDGE_DASH = { session: undefined, run: '5 3', native: '1.5 3' } as const;
 const CONSTELLATION_SLOTS = 7;
 
 export function UsageConstellation(props: AgentsProps & Readonly<{ model: UsageConstellationModel; labels: UsageConstellationLabels; renderPlanet?: UsagePlanetSlot }>) {
   const [width, onLayout] = useUsageChartWidth(props.width);
+  const unknown = formatHappierDataValue(null, undefined, props.labels.unknownLabel);
   const ink = resolveUsageChartInk(props.theme, props.paint);
   const svgText = useUsageChartSvgText(props.theme);
   // Marker ids are document-global; each drawing owns its own so another edition on the page can't supply its arrows.
@@ -466,7 +476,7 @@ export function UsageConstellation(props: AgentsProps & Readonly<{ model: UsageC
           {nodes.map((node) => {
             const [x, y] = position.get(node.agentId)!, r = radius(node.agentId);
             return <ChartMark key={`datum-${node.agentId}`} testID={`${props.testID}.node.${node.agentId}`}
-              datum={{ label: fullName(props.agents, node.agentId, props.labels.unknownAgent), value: node.share === null ? '—' : exactPercent(node.share), color: colour(node.agentId) }}
+              datum={{ label: fullName(props.agents, node.agentId, props.labels.unknownAgent), value: node.share === null ? unknown : exactPercent(node.share), color: colour(node.agentId) }}
               bounds={{ x: x - r, y: y - r, width: r * 2, height: r * 2 }} />;
           })}
           {props.renderPlanet ? nodes.map((node) => {

@@ -21,7 +21,7 @@ function mount(chart: ReactNode) {
   </ChartInteractionProvider>);
 }
 function target(root: HTMLElement, label: string) {
-  const result = root.querySelector<HTMLElement>(`button[aria-label="${label}"]`);
+  const result = root.querySelector<HTMLElement>(`button[aria-label="${common.label} · ${label}"]`);
   expect(result, `Missing inspectable datum: ${label}`).not.toBeNull();
   expect(result!.closest('svg')).toBeNull();
   return result!;
@@ -48,7 +48,7 @@ describe('Agent chart exact data targets', () => {
         windows.push(hit!.closest('svg')!.getAttribute('viewBox')!.split(' ').map(Number));
         act(() => { hit!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); });
       }
-      expect(hovered).toEqual(['Claude Code · First: 1%', 'Claude Code · Next: 99%']);
+      expect(hovered).toEqual(['Usage · Claude Code · First: 1%', 'Usage · Claude Code · Next: 99%']);
       expect(windows[0]![0]).toBe(0);
       expect(windows[0]![0]! + windows[0]![2]!).toBe(windows[1]![0]);
       expect(windows[1]![0]! + windows[1]![2]!).toBe(common.width);
@@ -88,7 +88,7 @@ describe('Agent chart exact data targets', () => {
     </WidgetPresentationProvider>);
     try {
       expect(chart.container.querySelector('svg')).not.toBeNull();
-      expect(chart.container.querySelector('button[aria-label^="Claude Code · Monday"]')).not.toBeNull();
+      expect(chart.container.querySelector('button[aria-label^="Usage · Claude Code · Monday"]')).not.toBeNull();
     } finally { chart.unmount(); }
   });
 
@@ -102,7 +102,7 @@ describe('Agent chart exact data targets', () => {
     try {
       // The hour is said once, in the value beside its minutes, not again in the title.
       target(chart.container, 'Claude Code · Monday: 0:00 12.345 min');
-      expect(chart.container.querySelectorAll('button[aria-label*="Claude Code · Monday"]')).toHaveLength(1);
+      expect(chart.container.querySelectorAll('button[aria-label*="Usage · Claude Code · Monday"]')).toHaveLength(1);
     } finally { chart.unmount(); }
   });
 
@@ -113,9 +113,21 @@ describe('Agent chart exact data targets', () => {
       const chart = mount(body);
       try {
         target(chart.container, 'Claude Code: 12.35%');
-        expect(chart.container.querySelector('button[aria-label="Codex: 0%"]')).toBeNull();
+        expect(chart.container.querySelector('button[aria-label="Usage · Codex: 0%"]')).toBeNull();
       } finally { chart.unmount(); }
     }
+  });
+
+  it('discloses unreported Crew shares and days while retaining measured zero', () => {
+    const chart = mount(<UsageCrew {...common} model={[
+      { agentId: 'claude', share: 0, activeDays: 0 }, { agentId: 'codex', share: null, activeDays: null },
+    ]} labels={{ percent, days: count => `${count} days`, unknownAgent: 'Unknown', unknownLabel: 'Not measured by source' }} />);
+    try {
+      target(chart.container, 'Claude Code: 0%');
+      target(chart.container, 'Codex: Not measured by source');
+      expect(chart.container.textContent).toContain('0 days');
+      expect(chart.container.textContent).not.toContain('—');
+    } finally { chart.unmount(); }
   });
 
   it('exposes each River week share with its own total and partial-week label', () => {
@@ -129,6 +141,27 @@ describe('Agent chart exact data targets', () => {
       expect(target(chart.container, 'Claude Code · first–last partial: 12.35%').dataset.subtitle).toContain('1.2k tokens');
       target(chart.container, 'Unknown · first–last partial: 87.65%');
       expect(target(chart.container, 'Claude Code · next: 100%').dataset.subtitle).toBeUndefined();
+      act(() => chart.container.querySelector<HTMLButtonElement>('[aria-expanded="false"]')!.click());
+      expect(chart.container.textContent).toContain('Not reported');
+      expect(chart.container.textContent).not.toContain('—');
+    } finally { chart.unmount(); }
+  });
+
+  it('keeps an unknown River composition distinct from a measured zero share in marks and values', () => {
+    const chart = mount(<UsageAgentRiver {...common} model={{ width: 'amount', weeks: [
+      { start: 'Known', end: 'Known end', partial: false, total: 10, shares: [{ agentId: 'claude', share: 1 }] },
+      { start: 'Unknown', end: 'Unknown end', partial: false, total: null, shares: null },
+      { start: 'Quiet', end: 'Quiet end', partial: false, total: 0, shares: [] },
+    ] }} labels={{ week: String, partialWeek: String, inline: String, caption: '', unknownAgent: 'Unknown agent',
+      values: { ...values, weekColumn: 'Week', totalColumn: 'Total', formatTotal: String, percent } }} />);
+    try {
+      target(chart.container, 'Claude Code · Known: 100%');
+      target(chart.container, 'Claude Code · Quiet: 0%');
+      target(chart.container, 'Claude Code · Unknown: Not reported');
+      act(() => chart.container.querySelector<HTMLButtonElement>('[aria-expanded="false"]')!.click());
+      const rows = [...chart.container.querySelectorAll('[role="row"]')].map(row => row.textContent);
+      expect(rows).toContain('UnknownNot reportedNot reported');
+      expect(rows).toContain('Quiet00%');
     } finally { chart.unmount(); }
   });
 
@@ -152,7 +185,7 @@ describe('Agent chart exact data targets', () => {
       labels={{ kinds: { session: 'Session', run: 'Run', native: 'Native' }, arrowNote: '', unknownStarts: String, nodesOnly: 'Nodes only', unknownAgent: 'Unknown' }} />);
     try {
       target(chart.container, 'Claude Code: 12.35%');
-      target(chart.container, 'Codex: —');
+      target(chart.container, 'Codex: Not reported');
       target(chart.container, 'Claude Code → Codex · Session: 1,234');
       target(chart.container, 'Claude Code → Claude Code · Run: 2');
     } finally { chart.unmount(); }

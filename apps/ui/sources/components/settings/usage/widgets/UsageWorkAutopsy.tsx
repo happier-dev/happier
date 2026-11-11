@@ -16,6 +16,7 @@ import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresentation';
 import { formatUsageCost } from '@/utils/format/usageNumbers';
+import { compareUsageMeasurementsDescending } from '@happier-dev/protocol/usage/usageAggregation';
 import { usageMeterFill, usageSignatureAccent } from '../usageAccent';
 import {
   UsageBodyInsufficient,
@@ -200,7 +201,7 @@ export function UsageWorkAutopsy(
   const metricLabel = metric === 'cost' ? t('usage.cost') : t('usage.tokens');
   const outcomes = autopsy?.outcomes ?? [];
   // The answer to "why is this Session expensive": where it went, largest first; the timeline above keeps the order.
-  const ranked = [...turns].sort((left, right) => (right.amount ?? -1) - (left.amount ?? -1));
+  const ranked = [...turns].sort((left, right) => compareUsageMeasurementsDescending(left.amount, right.amount));
   const largest = ranked[0]?.amount != null && ranked[0].amount > 0 && ranked[0].turnId !== null ? ranked[0] : null;
   const largestShare = largest && autopsy?.amount ? Math.round((largest.amount! / autopsy.amount) * 100) : null;
   // A long Session leads with its largest turns; the rest fold behind the Usage show-all footer (R135 item 3).

@@ -1187,15 +1187,15 @@ describe('usage dashboard derivations', () => {
     });
 
     describe('buildUsageLeaderTrend', () => {
-        it('projects a per-bucket token series for one leader, zero-filling absent buckets', () => {
+        it('preserves missing leaders as unknown and measured zero as zero', () => {
             const timeline = [
                 { bucketStartMs: 0, bucketEndMs: 1, leaders: [{ key: 'a', label: 'A', eventCount: 1, totalTokens: 100, totalCost: 1 }] },
                 { bucketStartMs: 1, bucketEndMs: 2, leaders: [{ key: 'b', label: 'B', eventCount: 1, totalTokens: 5, totalCost: 1 }] },
-                { bucketStartMs: 2, bucketEndMs: 3, leaders: [{ key: 'a', label: 'A', eventCount: 1, totalTokens: 250, totalCost: 1 }] },
+                { bucketStartMs: 2, bucketEndMs: 3, leaders: [{ key: 'a', label: 'A', eventCount: 1, totalTokens: 0, totalCost: 1 }] },
             ];
-            expect(buildUsageLeaderTrend(timeline, 'a')).toEqual([100, 0, 250]);
-            expect(buildUsageLeaderTrend(timeline, 'b')).toEqual([0, 5, 0]);
-            expect(buildUsageLeaderTrend(timeline, 'missing')).toEqual([0, 0, 0]);
+            expect(buildUsageLeaderTrend(timeline, 'a')).toEqual([100, null, 0]);
+            expect(buildUsageLeaderTrend(timeline, 'b')).toEqual([null, 5, null]);
+            expect(buildUsageLeaderTrend(timeline, 'missing')).toEqual([null, null, null]);
         });
     });
 
@@ -1204,6 +1204,16 @@ describe('usage dashboard derivations', () => {
             bucketStartMs: startMs,
             bucketEndMs: startMs + 1,
             leaders: leaders.map((l) => ({ key: l.key, label: l.key.toUpperCase(), eventCount: 1, totalTokens: l.totalTokens, totalCost: 0 })),
+        });
+
+        it('preserves missing leaders in model shares and measured zero as zero', () => {
+            const mix = buildUsageModelMix([
+                bucket(0, [{ key: 'a', totalTokens: 100 }]),
+                bucket(1, [{ key: 'b', totalTokens: 5 }]),
+                bucket(2, [{ key: 'a', totalTokens: 0 }]),
+            ]);
+            expect(mix.buckets.map((entry) => entry.tokens[0])).toEqual([100, null, 0]);
+            expect(mix.buckets.map((entry) => entry.shares[0])).toEqual([1, null, 0]);
         });
 
         it('ranks series by total tokens (largest first) and normalizes per-bucket shares to 1', () => {
@@ -1235,13 +1245,13 @@ describe('usage dashboard derivations', () => {
             expect(mix.hasData).toBe(false);
         });
 
-        it('emits all-zero shares for an empty bucket (a gap, never a fabricated band)', () => {
+        it('preserves missing leaders in an empty bucket until coverage proves a quiet zero', () => {
             const mix = buildUsageModelMix([
                 bucket(0, [{ key: 'a', totalTokens: 10 }]),
                 bucket(1, []),
             ]);
-            expect(mix.buckets[1]!.total).toBe(0);
-            expect(mix.buckets[1]!.shares).toEqual([0]);
+            expect(mix.buckets[1]!.total).toBeNull();
+            expect(mix.buckets[1]!.shares).toEqual([null]);
         });
     });
 

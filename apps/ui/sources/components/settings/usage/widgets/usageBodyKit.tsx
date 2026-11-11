@@ -746,8 +746,9 @@ export function readUsageCoverageGaps(
 
 function usageCoverageHeadlineKey(gaps: readonly Pick<UsageQuerySourceState, 'status'>[]) {
   return gaps.some(gap => gap.status === 'error') ? 'usage.board.page.coverageFailed' as const
-    : gaps.every(gap => gap.status === 'pending' || gap.status === 'not_loaded') ? 'usage.board.page.coveragePending' as const
-      : 'usage.board.page.coveragePartial' as const;
+    : gaps.some(gap => gap.status === 'partial') ? 'usage.board.page.coveragePartial' as const
+      : gaps.some(gap => gap.status !== 'pending' && gap.status !== 'not_loaded') ? 'usage.board.sources.coverageUnknown' as const
+        : 'usage.board.page.coveragePending' as const;
 }
 
 /**

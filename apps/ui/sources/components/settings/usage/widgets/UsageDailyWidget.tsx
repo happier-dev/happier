@@ -259,7 +259,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
         gapLabel: metric === 'cost' ? t('usage.board.page.factUnpriced') : t('usage.board.howYouWork.notRecorded'),
         ...dailyContext,
         ...motion,
-        unknownLabel: '—',
+        unknownLabel: t('usage.board.plans.cellUnknown'),
         showReadout: false,
         valuesLabel: t('usage.showAll'),
         valuesCollapseLabel: t('usage.showLess'),

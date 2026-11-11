@@ -323,7 +323,7 @@ export function UsageSkyOfDays(props: UsageSkyOfDaysProps) {
             : ordinal
               ? (levelNames[day.level ?? 0] ?? '')
               : day.value == null
-                ? '—'
+                ? labels.values.notRecorded
                 : labels.formatValue(day.value),
         ...(byAgent
           ? [day.state === 'active' ? leaderName(day.leader) : '']
@@ -582,7 +582,7 @@ export function UsageSkyOfDays(props: UsageSkyOfDaysProps) {
           ...geometry.floor.map(point => ({ index: point.index, x: point.x, y: geometry.bottom, radius: 2 }))].map(point => {
           const day = model.days[point.index]!;
           const value = day.state === 'unknown' ? labels.values.notRecorded : day.state === 'inactive' ? labels.values.noActivity
-            : ordinal ? levelNames[day.level ?? 0] ?? '—' : day.value == null ? '—' : formatHappierDataValue(day.value);
+            : ordinal ? levelNames[day.level ?? 0] ?? labels.values.notRecorded : day.value == null ? labels.values.notRecorded : formatHappierDataValue(day.value);
           return <ChartMark key={`datum-${point.index}`} datum={{ label: labels.day(day.date), value,
             subtitle: [!ordinal && day.state === 'active' && day.value != null ? `${labels.values.valueColumn} · ${labels.formatValue(day.value)}` : null, byAgent ? leaderName(day.leader) : null].filter(Boolean).join(' · ') || undefined,
             color: day.leader?.kind === 'agent' ? colourOf(day.leader.agentId) : props.paint.accent }}

@@ -5,6 +5,7 @@ import type {
 import type { UsageHowYouWork } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { resolveUsageDayStreaks, projectUsageOrdinalLevels } from '@happier-dev/protocol/usage/usageActivitySummary';
+import { compareUsageMeasurementsDescending } from '@happier-dev/protocol/usage/usageAggregation';
 import { resolveUsageCalendarInstant, resolveUsageBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
 import { isUsageNightHour, summarizeUsageConcurrency } from '@happier-dev/protocol/usage/usageWorkIntervals';
 import { UsagePresentationMetricSchema } from '@happier-dev/protocol/inputs/usageQuery';
@@ -154,10 +155,15 @@ export function projectUsageDaylight(calendar: UsageAgentCalendar, metric: Usage
   const window = slice.howYouWork?.nightShift ?? null;
   // Keep the private observed Agent-time share on the same basis as these columns,
   // not the separate elapsed busy union. Public Q17 retains its recorded-activity owner.
-  const busyTotal = metric === 'busy' ? calendar.hourOfDayBuckets.reduce((sum, bucket) => sum + (bucket.totals.busyMs ?? 0), 0) : 0;
-  const nightBusy = window && metric === 'busy' ? calendar.hourOfDayBuckets.reduce((sum, bucket) =>
-    sum + (isUsageNightHour(bucket.hour, window) ? bucket.totals.busyMs ?? 0 : 0), 0) : 0;
-  const share = window && busyTotal > 0 ? nightBusy / busyTotal : null;
+  let busyTotal: number | null = 0;
+  let nightBusy = 0;
+  if (metric === 'busy') for (const bucket of calendar.hourOfDayBuckets) {
+    const amount = bucket.totals.busyMs;
+    if (amount === null) { busyTotal = null; break; }
+    busyTotal += amount;
+    if (window && isUsageNightHour(bucket.hour, window)) nightBusy += amount;
+  }
+  const share = window && busyTotal !== null && busyTotal > 0 ? nightBusy / busyTotal : null;
   return { encoding: 'amount', hours, night: window ? { fromHour: window.startHour, toHour: window.endHour, share } : null };
 }
 
@@ -256,7 +262,7 @@ export function projectUsageAgentShares(calendar: UsageAgentCalendar, metric: Us
     activeDays: days.get(entry.agentId) ?? null,
     ...(formatCoverage ? { coverage: formatCoverage(entry.coverage.accounting) } : {}),
   }))
-    .sort((a, b) => (b.share ?? -1) - (a.share ?? -1));
+    .sort((a, b) => compareUsageMeasurementsDescending(a.share, b.share));
 }
 
 export function projectUsageRiverModel(calendar: UsageAgentCalendar, metric: UsageChartMetric): UsageRiverModel | null {
@@ -264,10 +270,10 @@ export function projectUsageRiverModel(calendar: UsageAgentCalendar, metric: Usa
     const total = readUsageCalendarMetric(week.totals, metric);
     const tokenMix = calendar.weeklyAgentMix.find(mix => mix.startMs === week.startMs);
     return { ...projectUsageRiverWeekRange(week, calendar.timeZoneOffsetMinutes), total,
-      shares: metric === 'tokens' ? (tokenMix?.mix.map(({ agentId, share }) => ({ agentId, share })) ?? [])
+      shares: total === null ? null : metric === 'tokens' ? (tokenMix?.mix.map(({ agentId, share }) => ({ agentId, share })) ?? [])
         : week.agents.flatMap(entry => {
           const value = readUsageCalendarMetric(entry.metrics, metric);
-          return value !== null && total !== null && total > 0 ? [{ agentId: entry.agentId, share: value / total }] : [];
+          return value !== null && total > 0 ? [{ agentId: entry.agentId, share: value / total }] : [];
         }),
     };
   });
@@ -275,15 +281,16 @@ export function projectUsageRiverModel(calendar: UsageAgentCalendar, metric: Usa
 }
 
 /** The private portrait consumes the same day/streak and interval facts as the other Usage charts. */
-export function projectUsagePortraitModel(calendar: UsageAgentCalendar, peakParallel: number | null, referenceMs: number): UsagePortraitModel {
-  const activityKnown = calendar.coverage.accounting !== 'unavailable';
+export function projectUsagePortraitModel(calendar: UsageAgentCalendar, referenceMs: number): UsagePortraitModel {
   const total = countUsageChartCalendarDates(calendar.period, calendar.timeZoneOffsetMinutes);
+  const peakParallel = calendar.periodSummary.totals.peakParallel;
   const streaks = resolveUsageDayStreaks({ referenceMs, timeZoneOffsetMinutes: calendar.timeZoneOffsetMinutes, range: calendar.period,
-    days: calendar.days.map(day => ({ date: day.date, eventCount: day.totals.eventCount })) });
+    days: calendar.days.map(day => ({ date: day.date, eventCount: day.totals.eventCount })),
+    coverage: calendar.coverage.accounting === 'complete_for_supplied_facts' ? 'complete' : 'partial' });
   return {
-    ...(activityKnown && streaks.activeDays !== null ? { activeDays: { active: streaks.activeDays, of: total } } : {}),
+    ...(streaks.activeDays !== null ? { activeDays: { active: streaks.activeDays, of: total } } : {}),
     ...(peakParallel === null ? {} : { peakParallel }),
-    ...(activityKnown && streaks.currentStreakDays !== null ? { streak: { current: streaks.currentStreakDays, best: streaks.longestStreakDays } } : {}),
+    ...(streaks.currentStreakDays !== null ? { streak: { current: streaks.currentStreakDays, best: streaks.longestStreakDays } } : {}),
   };
 }
 

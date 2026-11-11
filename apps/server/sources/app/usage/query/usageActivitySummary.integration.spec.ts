@@ -1,9 +1,9 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Prisma } from '@prisma/client';
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema, UsageEventIngestRequestSchema,
-    type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+    getUsageAnalyticsQueryRequestKey, type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery } from '@happier-dev/protocol/usage/usageAnalyticsBatchDelivery';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { readUsageActivityProjectionOperand, type UsageActivityProjectionOperand } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
@@ -177,6 +177,34 @@ describe('compact Usage activity summary read cache', () => {
             () => db.usageEvent.deleteMany(), () => db.usageReport.deleteMany(),
             () => db.session.deleteMany(), () => db.machine.deleteMany(), () => db.account.deleteMany(),
         ]);
+    });
+
+    it('rebuilds legacy empty coverage instead of reusing a stale warm summary', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const query = compactQuery();
+        const control = await read(account.id, query, false);
+        const result = control.delivery.results[0];
+        if (!result || !('value' in result) || !result.value.coverage) throw new Error('Expected empty accounting coverage');
+        // Version 6 persisted this false reason even with no canonical events or source witnesses.
+        const legacy = { version: 6, format: 'selective-day-facts', queryKey: getUsageAnalyticsQueryRequestKey(query), query,
+            subjectCount: 0, sourceDigest: '', response: { ...result.value,
+                coverage: { ...result.value.coverage, reasons: ['unknown_source'] } },
+            sourceDays: [], subjectKeys: [], sessionKeys: [], sourceCoverage: [], reportSources: [],
+            legacyReports: [], projectionDays: [], days: [] };
+        const recordKey = createHash('sha256').update(JSON.stringify([
+            'usage-activity-summary-v6', account.id, 'actSummary6', 0,
+        ])).digest('hex');
+        await db.usageAccountingProjection.create({ data: { accountId: account.id, recordKey, kind: 'actSummary6',
+            observedAtMs: 0n, validFromMs: 0n, payload: JSON.stringify(legacy) } });
+        const actual = await read(account.id, query);
+        const projected = actual.delivery.results[0];
+        if (!projected || !('value' in projected)) throw new Error('Expected rebuilt empty accounting');
+        expect(projected.value.coverage).toMatchObject({ status: 'unknown', reasons: [], sources: [] });
+        expect(total(actual)).toBeNull();
+        expectSameWire(actual.serialized, control.serialized);
+        const warm = await read(account.id, query);
+        expectSameWire(warm.serialized, control.serialized);
+        expect(warm.capture.activitySummary?.stats.eventsRead).toBe(0);
     });
 
     it('preserves unknown-only and mixed measurement totals across cold and warm compact reads', async () => {

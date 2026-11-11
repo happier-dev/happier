@@ -28,7 +28,6 @@ export function mergeUsageCoverageEvidence(parts: readonly UsageCoverageEvidence
         }
         for (const reason of part.reasons) reasons.add(reason);
     }
-    if (sources.size === 0) reasons.add('unknown_source');
     return { sources: [...sources.values()], reasons: [...reasons] };
 }
 
@@ -59,6 +58,5 @@ export function projectUsageCoverageEvidence(rows: readonly Pick<ScopedUsageEven
         if (path === 'unknown' || status === 'unknown' || source === 'unknown') reasons.add('unknown_source');
         if (accounting?.historyComplete !== true || status !== 'available') reasons.add('incomplete_history');
     }
-    if (sources.size === 0) reasons.add('unknown_source');
     return { sources: [...sources.values()], reasons: [...reasons] };
 }

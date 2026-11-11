@@ -327,7 +327,7 @@ export function RecapStorySurface(props: RecapStorySurfaceProps): React.ReactEle
             barAppearance={{ minimumVisibleFraction: 0.1, fillOpacity: 0.92, zeroFillOpacity: 0.25, trackColor: theme.colors.background.canvas }}
             rows={slide.visual.rows.map(row => ({ ...row, id: row.label, color: accentColor }))}
             renderRow={(row, rowVisual) => <ChartTooltip triggerTestID={`usage-rank-bar-${row.label}`} title={row.label}
-                value={row.value?.toLocaleString() ?? '—'} accentColor={accentColor}>{rowVisual}</ChartTooltip>} />;
+                value={row.value?.toLocaleString() ?? t('usage.board.plans.cellUnknown')} accentColor={accentColor}>{rowVisual}</ChartTooltip>} />;
     }
 
     return (

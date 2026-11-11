@@ -180,11 +180,11 @@ describe('neutral series dataset', () => {
       expect(name).toContain('time 398');
       expect(name).toContain('Used 41.5 GB');
       expect(name).toContain('Critical 60.0 GB');
-      expect(name).not.toContain('Used —');
+      expect(name).not.toContain('Used Not reported');
       // The plot control keeps the exact sample it reads.
       const control = find(mount.container, 'named-history-control');
       act(() => control.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })));
-      expect(control.getAttribute('aria-label')).toContain('Used —');
+      expect(control.getAttribute('aria-label')).toContain('Used Not reported');
       expect(image.getAttribute('aria-label')).toBe(name);
       // Walking the keyboard says each reading in the caller's units, as the image and the lens do.
       act(() => control.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })));
@@ -215,7 +215,7 @@ describe('neutral series dataset', () => {
       expect(find(mount.container, 'facts-values').querySelectorAll('[data-testid^="facts-values-row-"]')).toHaveLength(400);
       expect(find(mount.container, 'facts-values-row-0').getAttribute('aria-label')).toContain('Used: 0.00004');
       expect(find(mount.container, 'facts-values-row-0').textContent).toContain('time 0');
-      expect(find(mount.container, 'facts-values-row-1').getAttribute('aria-label')).toContain('Used: —');
+      expect(find(mount.container, 'facts-values-row-1').getAttribute('aria-label')).toContain('Used: Not reported');
       expect(find(mount.container, 'facts-values-row-2').getAttribute('aria-label')).toContain('Used: 0');
       expect(find(mount.container, 'facts-values-row-399').textContent).toContain('time 399');
     } finally { mount.unmount(); }
@@ -295,7 +295,7 @@ describe('neutral series dataset', () => {
       expect(find(mount.container, 'rain').getAttribute('aria-label')).toContain('Typical active day 2–6');
       expect(find(mount.container, 'rain').getAttribute('aria-label')).toContain('Average 6');
       act(() => find(mount.container, 'rain-values-toggle').click());
-      expect(find(mount.container, 'rain-values-row-1').getAttribute('aria-label')).toContain('Rainfall: —');
+      expect(find(mount.container, 'rain-values-row-1').getAttribute('aria-label')).toContain('Rainfall: Not reported');
       expect(find(mount.container, 'rain-values-row-2').getAttribute('aria-label')).toContain('Rainfall: 0');
     } finally { mount.unmount(); }
   });
@@ -397,7 +397,7 @@ describe('neutral series dataset', () => {
       expect(toned.every((path) => path.getAttribute('stroke') === theme.colors.danger && path.getAttribute('fill') === 'none')).toBe(true);
       expect(toned.map((path) => path.getAttribute('d'))).toEqual(['M0 80 L50 20', 'M150 10 L200 70']);
       expect(find(mount.container, 'memory').getAttribute('aria-label')).toContain('Critical 6');
-      expect(find(mount.container, 'memory-bucket-2').getAttribute('aria-label')).toContain('Memory —');
+      expect(find(mount.container, 'memory-bucket-2').getAttribute('aria-label')).toContain('Memory Not reported');
     } finally { mount.unmount(); }
   });
   it('mirrors uploads below the baseline while every readout retains their absolute magnitude', () => {
@@ -552,7 +552,7 @@ describe('neutral series dataset', () => {
         'M50 20 L60 10 L60 30 L50 40 Z',
         'M80 30 L90 20 L90 40 L80 50 Z',
       ]);
-      expect(find(mount.container, 'temperature-bucket-2').getAttribute('aria-label')).toContain('Low —');
+      expect(find(mount.container, 'temperature-bucket-2').getAttribute('aria-label')).toContain('Low Not reported');
       expect(find(mount.container, 'temperature-bucket-4').getAttribute('aria-label')).toContain('Low 5');
     } finally { mount.unmount(); }
   });
@@ -703,7 +703,7 @@ describe('neutral series dataset', () => {
       expect(find(mount.container, 'orders-values-row-0').getAttribute('aria-label')).toContain('Sold: 0.00004');
       expect(find(mount.container, 'orders-bucket-mon').getAttribute('aria-label')).toContain('2.3456789');
       expect(find(mount.container, 'orders-values-row-0').textContent).toContain('2.3456789');
-      expect(find(mount.container, 'orders-values-row-1').getAttribute('aria-label')).toContain('Sold: —');
+      expect(find(mount.container, 'orders-values-row-1').getAttribute('aria-label')).toContain('Sold: Not reported');
       expect(find(mount.container, 'orders-values-row-2').getAttribute('aria-label')).toContain('Sold: 0');
     } finally { mount.unmount(); }
   });
@@ -724,7 +724,7 @@ describe('neutral series dataset', () => {
       expect(find(mount.container, 'orders-readout').textContent).toContain('0.00004');
       act(() => find(mount.container, 'orders-bucket-mon').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
       expect(document.activeElement).toBe(find(mount.container, 'orders-bucket-tue'));
-      expect(find(mount.container, 'orders-readout').textContent).toContain('Sold · —');
+      expect(find(mount.container, 'orders-readout').textContent).toContain('Sold · Not reported');
       act(() => find(mount.container, 'orders-bucket-tue').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
       expect(find(mount.container, 'orders-readout').textContent).toContain('Wed');
       expect(find(mount.container, 'orders-readout').textContent).toContain('Sold · 0');

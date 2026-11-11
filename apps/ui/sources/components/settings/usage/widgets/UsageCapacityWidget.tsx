@@ -604,7 +604,7 @@ function CapacityCell(
     ?? (noAllowance ? t('usage.board.plans.cellNoAllowance') : unread ? t('usage.board.plans.paceNotLoaded') : null);
   const value =
     remaining === null
-      ? '—'
+      ? t('usage.board.plans.cellUnknown')
       : formatPlanPercent(remaining);
   const valueInk = (
     <Text

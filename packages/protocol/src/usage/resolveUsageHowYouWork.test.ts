@@ -118,9 +118,10 @@ describe('How-you-work admitted projection', () => {
             period: { startMs: day - 24 * hour, endMs: day + hour }, timeZoneOffsetMinutes: 0, nowMs: day,
             detail: { status, facts: [], permissions: [] },
         });
-        expect(project('partial')).toMatchObject({ detailStatus: 'partial', todayInParallel: null, permissions: null });
+        expect(project('partial')).toMatchObject({ detailStatus: 'partial', intervals: null, todayInParallel: null, permissions: null });
         // A genuinely complete empty observation can establish zero; partial historical coverage cannot.
-        expect(project('available')).toMatchObject({ todayInParallel: { agentTimeMs: 0, maxParallel: 0 },
+        expect(project('available')).toMatchObject({ intervals: { agentTimeMs: 0, elapsedBusyMs: 0, maxParallel: 0 },
+            todayInParallel: { agentTimeMs: 0, maxParallel: 0 },
             permissions: { requestCount: 0 } });
         const olderRuns = resolveUsageHowYouWork({
             period: { startMs: day - 24 * hour, endMs: day + hour }, timeZoneOffsetMinutes: 0, nowMs: day,

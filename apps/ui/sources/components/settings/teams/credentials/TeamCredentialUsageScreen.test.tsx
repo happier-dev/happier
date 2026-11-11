@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoveryPageV1Schema } from '@happier-dev/protocol/teams';
+import { createEmptyUsageCost, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
 
 import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialResourceFixture, teamGroupFixture, teamMembershipFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -415,7 +416,7 @@ describe('TeamCredentialUsageScreen', () => {
         });
     });
 
-    it('says whether a cost is reported or estimated and lets the reader ask for either', async () => {
+    it('uses the selected cost mode and says whether cost is reported or estimated', async () => {
         const serverId = await addHome();
         harness.answer(serverId, USAGE_QUERY_PATH, {
             body: usageResult({ estimatedUsd: 3, reportedUsd: 2 }),
@@ -426,16 +427,28 @@ describe('TeamCredentialUsageScreen', () => {
         // A mixed automatic total names both of its components.
         expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.subtitle)
             .toBe('usage.reported + usage.estimated');
+        expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.detail).toBe('$2.00');
         expect(harness.requestsFor(USAGE_QUERY_PATH).at(-1)?.input).toMatchObject({ costMode: 'auto' });
 
         harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult({ estimatedUsd: 3, reportedUsd: 2 }) });
-        screen.pressByTestId('team-credential-usage-cost-mode:estimated');
+        await screen.pressByTestIdAsync('team-credential-usage-cost-mode:estimated');
         await vi.waitFor(() => {
             expect(harness.requestsFor(USAGE_QUERY_PATH).at(-1)?.input).toMatchObject({ costMode: 'estimated' });
         });
         await vi.waitFor(() => {
             expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.subtitle).toBe('usage.estimated');
         });
+        expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.detail).toBe('$3.00');
+
+        harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult({ estimatedUsd: 3, reportedUsd: 2 }) });
+        await screen.pressByTestIdAsync('team-credential-usage-cost-mode:reported');
+        await vi.waitFor(() => {
+            expect(harness.requestsFor(USAGE_QUERY_PATH).at(-1)?.input).toMatchObject({ costMode: 'reported' });
+        });
+        await vi.waitFor(() => {
+            expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.subtitle).toBe('usage.reported');
+        });
+        expect(screen.findAllByTestId('team-credential-usage-cost')[0]?.props.detail).toBe('$2.00');
     });
 
     it('keeps a real zero a real zero when the Home priced the whole period', async () => {
@@ -653,15 +666,16 @@ describe('TeamCredentialUsageScreen', () => {
 
     it('shows request-only external admission without rendering absent token or cost observations as zero', async () => {
         const serverId = await addHome({ deliveryMode: 'brokered' });
+        const requestOnly = usageResult({
+            requestCount: 3,
+            requestCountCoverage: 'complete',
+            tokenCoverage: 'unavailable',
+            costCoverage: 'unavailable',
+            unobservedExternalRequestCount: 3,
+        });
         harness.answer(serverId, USAGE_QUERY_PATH, {
-            body: usageResult({
-                requestCount: 3,
-                totalTokens: 0,
-                requestCountCoverage: 'complete',
-                tokenCoverage: 'unavailable',
-                costCoverage: 'unavailable',
-                unobservedExternalRequestCount: 3,
-            }),
+            body: { ...requestOnly, totals: { ...requestOnly.totals,
+                tokens: createEmptyUsageTokens(), cost: createEmptyUsageCost() } },
         });
 
         const screen = await renderUsage(serverId);

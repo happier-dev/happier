@@ -153,8 +153,7 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
               color: block.dimension === 'agent' ? getAgentIdentityColor(theme, row.id) : usageMeterFill(theme, index === 0),
             })),
             total,
-            // An unknown value is a quiet dash in the value column, never a bold word (states: unknowns stay quiet).
-            unknownLabel: '—',
+            unknownLabel: t('usage.board.plans.cellUnknown'),
             testID: `${props.testID}.${block.dimension}`,
             valueFormatter:
               metric === 'cost'

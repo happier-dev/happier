@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildUsageAnalyticsViewModel } from '@/sync/api/account/usageAnalytics';
+import { formatUsageWeekdayHourLabel } from '@/sync/api/account/formatUsageRhythmLabel';
 import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 
@@ -105,13 +106,22 @@ describe('buildUsageRecapCardModels', () => {
                 cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, activity: { calendarDays: [] } }), filters, 0);
         expect(buildUsageRecapCardModels({ viewModel: empty, filters, query })).toEqual([]);
     });
-    it('keeps an unavailable day summary out of numeric streak copy', () => {
+    it('discloses unavailable streak and rhythm measurements while retaining known zero and a witnessed window', () => {
         const filters = { period: '7days', metric: 'tokens', focus: null, costMode: 'auto' } as const;
         const viewModel = buildUsageAnalyticsViewModel({ ...response, activity: undefined, insights: undefined }, filters);
         const cards = buildUsageRecapCardModels({ viewModel, filters });
         const card = cards.find(value => value.id === 'streak');
-        expect(card).toMatchObject({ value: '—', subtitle: t('common.unavailable') });
+        expect(card).toMatchObject({ value: t('usage.board.plans.cellUnknown'), subtitle: t('common.unavailable') });
+        expect(cards.find(value => value.id === 'rhythm')?.value).toBe(t('usage.board.plans.cellUnknown'));
         expect(cards.find(value => value.id === 'usage')?.visual).toBeNull();
+        const known = buildUsageAnalyticsViewModel({ ...response, insights: undefined, activity: {
+            calendarDays: [{ date: '2026-04-01', eventCount: 4 }, { date: '2026-04-02', eventCount: 0 }],
+            weekdayHourBuckets: [{ weekday: 6, hour: 8, eventCount: 4 }],
+        } }, filters);
+        const knownCards = buildUsageRecapCardModels({ viewModel: known, filters });
+        expect(knownCards.find(value => value.id === 'streak')?.value).toBe('0d');
+        expect(knownCards.find(value => value.id === 'rhythm')?.value)
+            .toBe(formatUsageWeekdayHourLabel(6, 8));
     });
 
     it('uses the witnessed favorite model even when unattributed usage leads the ranking', () => {

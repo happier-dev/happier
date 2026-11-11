@@ -200,7 +200,7 @@ export function buildUsageRecapCardModels(input: Readonly<{
             testID: 'usage-recap-streak-card',
             shareTestID: 'usage-recap-share-streak',
             label: t('usage.summary.currentStreak'),
-            value: summary.currentStreakDays === null ? '—' : `${summary.currentStreakDays}d`,
+            value: summary.currentStreakDays === null ? t('usage.board.plans.cellUnknown') : `${summary.currentStreakDays}d`,
             subtitle: summary.activeDays === null ? t('common.unavailable') : input.query
                 ? t('usage.summary.currentStreakSubtitleForPeriod', { count: summary.activeDays, period: selectedPeriod })
                 : buildUsageCurrentStreakSubtitle(filters.period, summary.activeDays),
@@ -248,7 +248,7 @@ export function buildUsageRecapCardModels(input: Readonly<{
             testID: 'usage-recap-rhythm-card',
             shareTestID: 'usage-recap-share-rhythm',
             label: t('usage.busiestWindow'),
-            value: summary.busiestWindowLabel ?? '—',
+            value: summary.busiestWindowLabel ?? t('usage.board.plans.cellUnknown'),
             subtitle: rhythmRows[0] ? `${formatTokenCount(rhythmRows[0].value)} ${t('usage.events')}` : t('common.unavailable'),
             valueTone: 'compact',
             accentTone: 'green',

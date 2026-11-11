@@ -54,6 +54,7 @@ const FOUR_ACROSS_FROM_PX = 720;
  * Ratios need their basis; without one the fact is absent rather than a misleading zero.
  */
 export function UsageEfficiencyWidget(props: UsageBodyProps) {
+  const unknownValue = t('usage.board.plans.cellUnknown');
   const { theme } = useUnistyles();
   const chartTheme = useUsagePluginTheme();
   const view = useUsageAnalyticsView(props.slice, props.query);
@@ -117,7 +118,7 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
   const exactCacheBasis = view.cacheSavings?.cacheSavingsUsd != null
     ? `USD ${formatHappierDataValue(view.cacheSavings.cacheSavingsUsd, getPreferredLanguage())}` : `${formatTokenCountLong(efficiency.cachedReadTokens)} ${t('usage.board.page.tokensUnit')}`;
   const cacheFigure = <HappierDataMetric testID={`${props.testID}.cacheHit`} theme={chartTheme} size="stat" showLabel
-    label={t('usage.board.page.cacheHit')} value={efficiency.cacheHitRatePct ?? UNKNOWN_VALUE}
+    label={t('usage.board.page.cacheHit')} value={efficiency.cacheHitRatePct ?? unknownValue}
     valueFormatter={value => `${Math.round(value)}%`} caption={cacheCaption} />;
   const cacheHidden = exactCacheRate !== null && (`${Math.round(efficiency.cacheHitRatePct!)}%` !== exactCacheRate
     || !cacheCaption.includes(formatHappierDataValue(view.cacheSavings?.cacheSavingsUsd ?? efficiency.cachedReadTokens!, getPreferredLanguage())));
@@ -136,7 +137,7 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
             size="stat"
             showLabel
             label={t('usage.board.page.perMillionTokens')}
-            value={efficiency.costPerMtokUsd ?? UNKNOWN_VALUE}
+            value={efficiency.costPerMtokUsd ?? unknownValue}
             caption={
               efficiency.costPerMtokUsd === null
                 ? unpriced
@@ -167,7 +168,7 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
             size="stat"
             showLabel
             label={t('usage.board.page.perMergedPr')}
-            value={perMergedPrUsd ?? UNKNOWN_VALUE}
+            value={perMergedPrUsd ?? unknownValue}
             valueFormatter={(value) => formatUsageCost(value, efficiency.currency)}
             caption={
               !merged
@@ -185,7 +186,7 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
             size="stat"
             showLabel
             label={t('usage.board.page.noKeptChange')}
-            value={UNKNOWN_VALUE}
+            value={unknownValue}
             caption={t('usage.board.page.notMeasuredYet')}
           />
         </View>
@@ -204,7 +205,7 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
           segmentGap={2}
           valueFormatter={formatTokenCount}
           shareFormatter={usageCompositionShareLabel}
-          unknownLabel="—"
+          unknownLabel={t('usage.board.plans.cellUnknown')}
           testID={`${props.testID}.mix`}
           renderBarSegment={(segment, visual, share) => (
             <ChartTooltip
@@ -215,12 +216,12 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
               }
               value={
                 segment.value === null
-                  ? '—'
+                  ? t('usage.board.plans.cellUnknown')
                   : formatTokenCountLong(segment.value)
               }
               accentColor={segment.color ?? chartTheme.colors.accent}
-            >
               triggerStyle={MIX_SEGMENT_TRIGGER_STYLE}
+            >
               {visual}
             </ChartTooltip>
           )}
@@ -244,7 +245,6 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
   );
 }
 
-const UNKNOWN_VALUE = '—';
 
 const styles = StyleSheet.create((theme) => ({
   body: { gap: 18 },

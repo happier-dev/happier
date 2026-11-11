@@ -347,7 +347,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
     const target = denseLine ? historyControlRef.current : controls.current.get(selectedId ?? geometry.buckets[0]?.id ?? '');
     target?.focus();
   }, [denseLine, selectedId, geometry.buckets]);
-  const unknown = props.unknownLabel ?? '—';
+  const unknown = formatHappierDataValue(null, text.locale, props.unknownLabel);
   const gapKey = props.gapLabel && props.variant === 'bar'
     && geometry.buckets.some(bucket => bucket.values.every(entry => entry.value === null)) ? props.gapLabel : null;
   const magnitude = (value: number) => props.mirrored ? Math.abs(value) : value;

@@ -74,7 +74,7 @@ export function usageOrbitLabels(): UsageOrbitLabels {
 
 /** `activeDays` is the period's active-day total when known; Agent days then read "12 of 40". */
 export function usageCrewLabels(activeDays: number | null): UsageCrewLabels {
-  return { percent: usageChartPercent, unknownAgent: usageAgentTitle(''),
+  return { percent: usageChartPercent, unknownAgent: usageAgentTitle(''), unknownLabel: usageChartValuesLabels().unknownLabel,
     days: (days) => activeDays === null ? t('usage.board.charts.daysCount', { count: days }) : t('usage.board.charts.daysOf', { count: days, total: activeDays }) };
 }
 

@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { formatTokenCount, formatUsageCost, formatUsageCalendarDate, formatUsageCalendarRange, formatUsageChartClock, formatUsageDuration,
+import { formatTokenCount, formatTokenCountLong, formatUsageCost, formatUsageCalendarDate, formatUsageCalendarRange, formatUsageChartClock, formatUsageDuration,
     formatUsageDurationCompact, formatUsageSharePercent, formatUsageUtcOffset, isUnattributedUsageAgentId } from './usageFormatting.js';
 
 describe('shared Usage formatting', () => {
     it('keeps unknown quantities distinct from measured zero', () => {
-        expect(formatTokenCount(null)).toBe('—');
-        expect(formatUsageCost(null, 'USD')).toBe('—');
+        expect(formatTokenCount(null)).toBe('Not reported');
+        expect(formatTokenCountLong(null)).toBe('Not reported');
+        expect(formatUsageCost(null, 'USD')).toBe('Not reported');
         expect(formatTokenCount(0, 'en')).toBe('0');
+        expect(formatTokenCountLong(0, 'en')).toBe('0');
         expect(formatUsageCost(0, 'USD', 'en')).toBe('$0.00');
+        expect(formatTokenCount(null, 'fr', 'Non signalé')).toBe('Non signalé');
+        expect(formatTokenCountLong(null, 'fr', 'Non signalé')).toBe('Non signalé');
+        expect(formatUsageCost(null, 'USD', 'fr', 'Non signalé')).toBe('Non signalé');
     });
     it('formats money and compact quantities in the supplied reader locale', () => {
         expect(formatTokenCount(321_900_000, 'fr')).toBe('321,9\u00a0M');

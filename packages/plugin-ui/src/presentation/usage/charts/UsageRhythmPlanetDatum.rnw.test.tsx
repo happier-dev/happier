@@ -11,7 +11,7 @@ import { UsageAroundThePeriod, UsageDaysOnSurface, UsageNinetyPlanets, UsageRing
 
 const paint = { accent: '#007aff', paper: '#ffffff', dark: false };
 const base = { theme, paint, width: 480, label: 'Activity', testID: 'chart' };
-const values = { show: 'Values', hide: 'Hide' };
+const values = { show: 'Values', hide: 'Hide', unknownLabel: 'Not measured by source' };
 const agents = [{ id: 'codex', name: 'Codex', color: '#007aff' }];
 const levels = ['No activity', 'Quiet', 'Steady', 'Busy', 'Busiest'];
 const formatted = (value: number) => `${Math.round(value)} tokens`;
@@ -39,7 +39,12 @@ const calendar = { period: { startMs: Date.UTC(2026, 8, 1), endMs: Date.UTC(2026
 ] };
 function datums(children: ReactNode) {
   const mount = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual) => <button data-datum-label={datum.label} data-datum-value={datum.value} data-datum-subtitle={datum.subtitle}>{visual}</button>}>{children}</ChartInteractionProvider>);
-  return { ...mount, values: () => [...mount.container.querySelectorAll<HTMLButtonElement>('button[data-datum-value]')].map(node => ({ label: node.dataset.datumLabel, value: node.dataset.datumValue, subtitle: node.dataset.datumSubtitle })) };
+  return { ...mount, values: () => {
+    const entries = [...mount.container.querySelectorAll<HTMLButtonElement>('button[data-datum-value]')].map(node => ({ label: node.dataset.datumLabel, value: node.dataset.datumValue, subtitle: node.dataset.datumSubtitle }));
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries.every(entry => entry.label === base.label || entry.label?.startsWith(`${base.label} · `))).toBe(true);
+    return entries;
+  } };
 }
 
 describe('Rhythm and planet chart datum targets', () => {
@@ -47,7 +52,7 @@ describe('Rhythm and planet chart datum targets', () => {
     const mount = datums(<UsageDayInAgents {...base} style={style} agents={agents} labels={dayLabels} model={{ date: '2026-09-01', lanes: [{ agentId: 'codex', agentTimeMs: 1234, spans: [{ fromHour: 2, toHour: 4, waits: [[3, 3.5]] }] }], atOnce: [0, 3], peak: { count: 3, atHour: 18, byAgent: [{ agentId: 'codex', count: 3 }] }, waitCount: 1 }} />);
     try {
       const entries = mount.values();
-      expect(entries).toEqual(expect.arrayContaining([expect.objectContaining({ value: '3' }), expect.objectContaining({ label: 'Codex', value: '1,234 ms' }), expect.objectContaining({ value: '2–4' }), expect.objectContaining({ value: '3–3.5' })]));
+      expect(entries).toEqual(expect.arrayContaining([expect.objectContaining({ value: '3' }), expect.objectContaining({ label: 'Activity · Codex', value: '1,234 ms' }), expect.objectContaining({ value: '2–4' }), expect.objectContaining({ value: '3–3.5' })]));
       expect(mount.container.querySelector('svg button')).toBeNull();
     } finally { mount.unmount(); }
   });
@@ -56,21 +61,30 @@ describe('Rhythm and planet chart datum targets', () => {
     for (const encoding of ['amount', 'ordinal'] as const) {
       const hours = [encoding === 'amount' ? 1234.56789 : 4, null, 0];
       const mount = datums(style === 'week' ? <UsageWeekTide {...base} labels={labels} model={{ encoding, grid: [hours] }} /> : <UsageDaylight {...base} labels={labels} model={{ encoding, hours, night: null }} />);
-      try { expect(mount.values().map(entry => entry.value)).toEqual(expect.arrayContaining([encoding === 'amount' ? '1,234.56789' : 'Busiest', '—', encoding === 'amount' ? '0' : 'No activity'])); } finally { mount.unmount(); }
+      try {
+        expect(mount.values().map(entry => entry.value)).toEqual(expect.arrayContaining([encoding === 'amount' ? '1,234.56789' : 'Busiest', values.unknownLabel, encoding === 'amount' ? '0' : 'No activity']));
+        act(() => mount.container.querySelector<HTMLButtonElement>('[aria-expanded="false"]')!.click());
+        expect(mount.container.textContent).toContain(values.unknownLabel);
+        expect(mount.container.textContent).not.toContain('—');
+      } finally { mount.unmount(); }
     }
   });
   it('discloses sky stars and floor marks without exposing ordinal levels as private amounts', () => {
     for (const encoding of ['amount', 'ordinal'] as const) {
       const mount = datums(<UsageSkyOfDays {...base} agents={agents} labels={skyLabels} model={{ encoding, colourBy: 'intensity', days: [
         { date: '2026-09-01', state: 'active', value: 1234.56789, level: 4 }, { date: '2026-09-02', state: 'unknown' }, { date: '2026-09-03', state: 'inactive' },
+        { date: '2026-09-04', state: 'active', value: null, level: 1 },
       ] }} />);
-      try { expect(mount.values().map(entry => entry.value)).toEqual(expect.arrayContaining([encoding === 'amount' ? '1,234.56789' : 'Busiest', 'Not recorded', 'No activity'])); } finally { mount.unmount(); }
+      try {
+        expect(mount.values().map(entry => entry.value)).toEqual(expect.arrayContaining([encoding === 'amount' ? '1,234.56789' : 'Busiest', 'Not recorded', 'No activity']));
+        if (encoding === 'amount') expect(mount.values()).toContainEqual(expect.objectContaining({ label: 'Activity · 2026-09-04', value: 'Not recorded' }));
+      } finally { mount.unmount(); }
     }
   });
   it('keeps exact night-window share on its existing label, and never turns an unknown share into zero', () => {
     for (const share of [0.123456789, null]) {
       const mount = datums(<UsageDaylight {...base} labels={{ clock: String, night: () => 'Night window', caption: () => '', values: { ...values, hourColumn: 'Hour', valueColumn: 'Tokens', formatValue: formatted, levelNames: levels } }} model={{ encoding: 'amount', hours: [10], night: { fromHour: 23, toHour: 7, share } }} />);
-      try { expect(mount.values()).toContainEqual(expect.objectContaining({ label: 'Night window', value: share === null ? '—' : '12.35%' })); } finally { mount.unmount(); }
+      try { expect(mount.values()).toContainEqual(expect.objectContaining({ label: 'Activity · Night window', value: share === null ? values.unknownLabel : '12.35%' })); } finally { mount.unmount(); }
     }
   });
   it.each(['planets', 'thread', 'skyline', 'orbit', 'surface', 'rings'] as const)('makes %s calendar marks disclose their admitted day level or run length', style => {
@@ -86,11 +100,16 @@ describe('Rhythm and planet chart datum targets', () => {
   });
   it('discloses exact moon shares and missing attribution without inventing hidden days', () => {
     const mount = datums(<UsageAgentMoons {...base} agents={agents} model={{ agents: [{ agentId: 'codex', share: 0.123456789 }, { agentId: null, share: null }], periodDays: 90 }} labels={{ percent: value => `${Math.round(value * 100)}%`, days: (days, total) => `${days}/${total}`, unknownAgent: 'Unknown agent', caption: () => 'Moons', values: { ...values, agentColumn: 'Agent', shareColumn: 'Share', daysColumn: 'Days' } }} />);
-    try { expect(mount.values()).toEqual(expect.arrayContaining([expect.objectContaining({ label: 'Codex', value: '12.35%' }), expect.objectContaining({ label: 'Unknown agent', value: '—' })])); } finally { mount.unmount(); }
+    try {
+      expect(mount.values()).toEqual(expect.arrayContaining([expect.objectContaining({ label: 'Activity · Codex', value: '12.35%' }), expect.objectContaining({ label: 'Activity · Unknown agent', value: values.unknownLabel })]));
+      act(() => mount.container.querySelector<HTMLButtonElement>('[aria-expanded="false"]')!.click());
+      expect(mount.container.textContent).toContain(values.unknownLabel);
+      expect(mount.container.textContent).not.toContain('—');
+    } finally { mount.unmount(); }
   });
   it('discloses machine counts and exact shares, project destinations and weekly atmosphere peaks', () => {
     const mount = datums(<><UsageMachines {...base} model={{ kinds: [{ kind: 'laptop', count: 2, agentTimeShare: 0.123456789, coverage: { status: 'partial', method: 'runtime' } }], coverage: { status: 'partial', method: 'runtime' } }} labels={{ kind: kind => kind, percent: value => `${Math.round(value * 100)}%`, unavailable: 'Unavailable', empty: 'Empty', values: { ...values, kindColumn: 'Kind', countColumn: 'Count', shareColumn: 'Share' } }} /><UsageProjects {...base} model={{ links: [{ label: 'Garden', url: 'https://example.com/garden' }] }} labels={{ empty: 'Empty' }} /><UsageAtmosphere {...base} model={{ weeks: [{ startMs: 1, endMs: 2, peak: 3, coverage: { status: 'partial', method: 'runtime' } }, { startMs: 2, endMs: 3, peak: 0, coverage: { status: 'unknown', method: 'unknown' } }] }} labels={{ week: start => `Week ${start}`, peak: count => `${count} at once`, firstWeek: 'First', caption: () => 'Atmosphere', values: { ...values, weekColumn: 'Week', peakColumn: 'Peak', notRecorded: 'Not recorded' } }} /></>);
-    try { expect(mount.values()).toEqual(expect.arrayContaining([expect.objectContaining({ value: '12.35%' }), expect.objectContaining({ label: 'Garden', value: 'https://example.com/garden' }), expect.objectContaining({ label: 'Week 1', value: '3' }), expect.objectContaining({ label: 'Week 2', value: 'Not recorded' })])); expect(mount.container.querySelector('a[href="https://example.com/garden"]')).not.toBeNull(); } finally { mount.unmount(); }
+    try { expect(mount.values()).toEqual(expect.arrayContaining([expect.objectContaining({ value: '12.35%' }), expect.objectContaining({ label: 'Activity · Garden', value: 'https://example.com/garden' }), expect.objectContaining({ label: 'Activity · Week 1', value: '3' }), expect.objectContaining({ label: 'Activity · Week 2', value: 'Not recorded' })])); expect(mount.container.querySelector('a[href="https://example.com/garden"]')).not.toBeNull(); } finally { mount.unmount(); }
   });
   it('exposes interactive marks separately to assistive technology and scales sky targets with its drawing', () => {
     const mount = datums(<UsageSkyOfDays {...base} labels={skyLabels} agents={agents} model={{ encoding: 'ordinal', colourBy: 'intensity', days: [{ date: '2026-09-01', state: 'active', level: 4 }] }} />);

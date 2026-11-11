@@ -151,6 +151,18 @@ describe('Usage chart models', () => {
     expect(models.projects.links).toBeNull();
     expect(models.galaxy).toBeNull();
   });
+  it.each([
+    [null, 'unknown', {}],
+    [0, 'complete_for_supplied_facts', { activeDays: { active: 0, of: 1 }, peakParallel: 0, streak: { current: 0, best: 0 } }],
+  ] as const)('keeps unrecorded portrait activity distinct from a measured %s', (eventCount, accountingCoverage, expected) => {
+    const value = calendar({
+      period: { startMs: START, endMs: START + DAY },
+      coverage: { ...coverage, accounting: accountingCoverage },
+      days: [bucket(0, { eventCount })],
+      periodSummary: { totals: metrics({ eventCount, peakParallel: eventCount }), leaders: leaders(), agents: [] },
+    });
+    expect(projectUsagePortraitModel(value, START + DAY - 1)).toEqual(expected);
+  });
   it.each([7, 30])(
     'counts all %s calendar dates including the partial current day in the private portrait',
     (days) => {
@@ -164,7 +176,7 @@ describe('Usage chart models', () => {
         ),
       });
       expect(
-        projectUsagePortraitModel(value, null, value.period.endMs).activeDays,
+        projectUsagePortraitModel(value, value.period.endMs).activeDays,
       ).toEqual({ active: days, of: days });
     },
   );
@@ -178,7 +190,7 @@ describe('Usage chart models', () => {
       timeZoneOffsetMinutes: 120,
     });
     expect(
-      projectUsagePortraitModel(value, null, value.period.endMs).activeDays?.of,
+      projectUsagePortraitModel(value, value.period.endMs).activeDays?.of,
     ).toBe(2);
   });
   it('keeps unavailable phone-answer observations unknown beside observed zero steering', () => {
@@ -582,6 +594,25 @@ describe('Usage chart models', () => {
         'cost',
       )!.weeks,
     ).toHaveLength(2);
+  });
+
+  it('preserves unknown River compositions separately from measured empty weeks', () => {
+    const usd = (amountUsd: number) => ({ amountUsd, currency: 'USD', source: 'provider', kind: 'reported' as const });
+    const weeks = [
+      bucket(0, {}),
+      bucket(7, { tokens: 0, cost: usd(0) }),
+      bucket(14, { tokens: 10, cost: usd(2) }, [['claude', { tokens: 10, cost: usd(2) }]]),
+    ].map(week => ({ ...week, endMs: week.startMs + 7 * DAY }));
+    const value = calendar({
+      period: { startMs: START, endMs: START + 21 * DAY }, weeks,
+      coverage: { ...coverage, accounting: 'partial' },
+      weeklyAgentMix: [{ startMs: weeks[2]!.startMs, endMs: weeks[2]!.endMs,
+        mix: [{ agentId: 'claude', share: 1, coverage: 'partial' }] }],
+    });
+    for (const metric of ['tokens', 'cost'] as const) {
+      expect(projectUsageRiverModel(value, metric)?.weeks.map(week => week.shares))
+        .toEqual([null, [], [{ agentId: 'claude', share: 1 }]]);
+    }
   });
 
   it('retains both clipped weeks and nullable members from the canonical weekly mix', () => {
@@ -1003,6 +1034,18 @@ describe('Usage chart models', () => {
     expect(model.hours[0]).toBe(2 * hour);
     expect(model.hours[12]).toBe(hour);
     expect(model.night?.share).toBeCloseTo(2 / 3);
+  });
+
+  it.each([[100, null, null], [100, 0, 1], [0, 100, 0], [100, 100, 0.5]] as const)('preserves the busy-window share for hourly observations of %s and %s', (nightBusyMs, dayBusyMs, share) => {
+    const value = calendar({
+      coverage: { ...coverage, busy: 'partial' },
+      hourOfDayBuckets: [
+        { hour: 0, totals: metrics({ busyMs: nightBusyMs }), agents: [], leaders: leaders() },
+        { hour: 1, totals: metrics({ busyMs: dayBusyMs }), agents: [], leaders: leaders() },
+      ],
+    });
+    const slice = { howYouWork: { nightShift: { startHour: 0, endHour: 1 } } } as unknown as UsageQueryResultSlice;
+    expect(projectUsageDaylight(value, 'busy', slice)!.night?.share).toBe(share);
   });
 
   it('draws only collaboration between Agents and says when no collaboration summary exists', () => {

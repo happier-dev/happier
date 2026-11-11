@@ -28,8 +28,9 @@ import { HomeAdministrationSection } from '@/components/settings/home/governance
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import {
     resolveAvailableCostModes,
-    resolveDisplayCost,
+    resolveAnalyticsCost,
     type UsageCostMode,
+    type UsageTrendPoint,
 } from '@/sync/api/account/usageAnalytics';
 import {
     getUsagePeriodDefinition,
@@ -291,7 +292,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
         && (coverage.requestCountCoverage === 'complete' || coverage.requestAdmissionCount > 0);
     const tokenChartAvailable = coverage !== null
         && coverage.tokenCoverage !== 'unavailable';
-    const resolvedCost = result === null ? null : resolveDisplayCost(result.totals.cost);
+    const resolvedCost = result === null ? null : resolveAnalyticsCost(result.totals.cost, costMode);
     const costChartAvailable = coverage !== null
         && coverage.costCoverage !== 'unavailable';
     const chartMetrics: readonly UsageVolumeMetric[] = coverage === null
@@ -340,7 +341,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
     const series = result?.series.map((bucket) => ({
         timestamp: Math.floor(bucket.bucketStartMs / 1000),
         tokens: bucket.totals.tokens.total,
-        cost: resolveDisplayCost(bucket.totals.cost),
+        cost: resolveAnalyticsCost(bucket.totals.cost, costMode),
         requests: bucket.totals.requestCount,
         reportCount: bucket.totals.eventCount,
     })) ?? [];
@@ -595,7 +596,7 @@ export function TeamCredentialUsageSummary(props: Readonly<{
     showRequests: boolean;
     completeness: string;
     costUsd: number | null;
-    series: readonly { timestamp: number; tokens: number; cost: number; requests: number; reportCount: number }[];
+    series: readonly (UsageTrendPoint & { requests: number })[];
     chartMetrics: readonly UsageVolumeMetric[];
     selectedMetric: UsageVolumeMetric;
     seriesMotion: ReturnType<typeof useUsageSeriesMotion>;

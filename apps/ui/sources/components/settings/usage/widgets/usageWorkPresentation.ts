@@ -1,4 +1,4 @@
-import { addUsageCostForMode, addUsageMeasurements, aggregateUsageContributionCosts, createEmptyUsageCost } from '@happier-dev/protocol/usage/usageAggregation';
+import { addUsageCostForMode, addUsageMeasurements, aggregateUsageContributionCosts, compareUsageMeasurementsDescending, createEmptyUsageCost } from '@happier-dev/protocol/usage/usageAggregation';
 import { resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';
 import type { RepositoryCheckpointCommitEvidence } from '@happier-dev/protocol/sessions/changes/types';
 import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
@@ -172,7 +172,7 @@ export type UsageWorkSummary = MoneyDisplay & Readonly<{
 
 const sorted = (values: Iterable<string>) => [...new Set(values)].sort();
 const byAmount = <T extends { amount: number | null }>(left: T, right: T) =>
-  (right.amount ?? -1) - (left.amount ?? -1);
+  compareUsageMeasurementsDescending(left.amount, right.amount);
 type AmountAccumulator = { amount: number | null;
   contributions?: UsageWorkAllocation['contribution'][]; moneyBasis: UsageWorkMoneyBasis | null };
 const newAmount = (): AmountAccumulator => ({ amount: 0, moneyBasis: null });

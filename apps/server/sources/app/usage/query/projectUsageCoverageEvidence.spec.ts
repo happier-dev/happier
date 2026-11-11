@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 import * as coverage from './projectUsageCoverageEvidence';
 
 describe('Usage coverage evidence partitions', () => {
+    it('does not invent unknown-source events from an empty evidence population or empty partitions', () => {
+        expect(coverage.projectUsageCoverageEvidence([])).toEqual({ sources: [], reasons: [] });
+        expect(coverage.mergeUsageCoverageEvidence([])).toEqual({ sources: [], reasons: [] });
+        expect(coverage.mergeUsageCoverageEvidence([coverage.projectUsageCoverageEvidence([])]))
+            .toEqual({ sources: [], reasons: [] });
+    });
     it('merges ordered day and report evidence with the same sources and reasons as the complete population', () => {
         const complete = (machineId: string, asOfMs: number) => ({ source: 'runtime', machineId,
             metadata: { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true, asOfMs } } });

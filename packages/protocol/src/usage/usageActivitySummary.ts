@@ -37,13 +37,20 @@ export function resolveUsageDayStreaks(input: UsageDayStreakInput): UsageDayStre
     const todayStartMs = resolveUsageBucketBounds('day', input.referenceMs, input.timeZoneOffsetMinutes).bucketStartMs;
     const active = new Set<number>();
     let coverage = input.coverage ?? 'unknown';
+    let measured = false;
     for (const day of input.days) {
         const startMs = resolveUsageCalendarDateStart(day.date, input.timeZoneOffsetMinutes);
         if (startMs > todayStartMs || input.range?.startMs !== undefined && startMs + DAY_MS <= input.range.startMs
             || input.range?.endMs !== undefined && startMs >= input.range.endMs) continue;
         if (day.eventCount === null) {
             if (coverage === 'complete') coverage = 'partial';
-        } else if (day.eventCount > 0) active.add(startMs);
+        } else {
+            measured = true;
+            if (day.eventCount > 0) active.add(startMs);
+        }
+    }
+    if (!measured && coverage !== 'complete') {
+        return { activeDays: null, currentStreakDays: null, longestStreakDays: null, coverage };
     }
     let run = 0;
     let longestStreakDays = 0;
