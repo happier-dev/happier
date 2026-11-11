@@ -725,6 +725,12 @@ export function annotateSnapshotAsStale(
   };
 }
 
+/** A provider 429 refusal of a quota fetch. */
+export function isQuotaRateLimitError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  return (error as Readonly<{ status?: unknown }>).status === 429;
+}
+
 export function isQuotaUnknownFallbackSnapshot(snapshot: ConnectedServiceQuotaSnapshotV1): boolean {
   const meters = Array.isArray(snapshot.meters) ? snapshot.meters : [];
   return meters.length > 0 && meters.every((meter) => (
