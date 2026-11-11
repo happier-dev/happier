@@ -58,6 +58,34 @@ describe('messages domain: evictSessionMessages', () => {
         }
     });
 
+    it('hydrating a persisted baseline restores reducer identity so the first-open refetch does not duplicate rows', async () => {
+        await prepareWarmCacheEncryptionKey();
+        const scope = { serverId: 'server-a', accountId: 'account-a' } as any;
+        const { get, domain } = createHarness({
+            sessions: { 'rehydrate-s1': buildSessionRow('rehydrate-s1') },
+            sessionLocalStateScope: scope,
+        });
+
+        domain.applyMessages('rehydrate-s1', [userMessage('w1', 1, 'hello')]);
+        domain.applyMessagesLoaded('rehydrate-s1');
+        const originalIds = (get().sessionMessages['rehydrate-s1'].messageIdsOldestFirst as string[]).slice();
+        expect(originalIds).toHaveLength(1);
+
+        domain.evictSessionMessages('rehydrate-s1');
+        const baseline = readEvictedSessionTranscript(scope, 'rehydrate-s1');
+        expect(baseline).not.toBeNull();
+        domain.hydrateSessionMessages('rehydrate-s1', baseline!);
+        expect((get().sessionMessages['rehydrate-s1'].messageIdsOldestFirst as string[]).length).toBe(1);
+
+        // The first-open fetch re-applies the same wire rows. The reducer must recognize them
+        // through the hydrated baseline's identity maps instead of allocating duplicates.
+        domain.applyMessages('rehydrate-s1', [userMessage('w1', 1, 'hello')]);
+
+        const entry = get().sessionMessages['rehydrate-s1'];
+        expect((entry.messageIdsOldestFirst as string[]).length).toBe(1);
+        expect((entry.messageIdsOldestFirst as string[])).toEqual(originalIds);
+    });
+
     it('removes the sessionMessages entry entirely so a re-open follows the first-open load pipeline', () => {
         const { get, domain } = createHarness({
             sessions: { s1: buildSessionRow('s1'), s2: buildSessionRow('s2') },

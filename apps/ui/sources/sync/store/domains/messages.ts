@@ -1138,6 +1138,28 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 messagesById,
             );
             const nextIds = merged.messageIdsOldestFirst;
+
+            // Restore the reducer's identity maps for the hydrated rows. The first-open refetch
+            // re-applies the same wire rows; without these marks the reducer sees them as new and
+            // allocates duplicate processed rows alongside the baseline (sidechain wire rows are
+            // deliberately left unmarked: their children are not root-level store rows, so letting
+            // them re-process rebuilds the sidechain chains without duplicating anything).
+            // `messages` itself is NOT restored: it holds reducer-internal role-form objects, and
+            // retention only evicts quiescent sessions, so late in-place tool updates are no-ops.
+            const reducerState = base.reducerState;
+            for (const id of insertIds) {
+                const message = messagesById[id] as (Message & { tool?: { id?: string } }) | undefined;
+                if (!message) continue;
+                if (typeof message.localId === 'string' && message.localId) {
+                    reducerState.localIds.set(message.localId, id);
+                }
+                if (typeof message.realID === 'string' && message.realID) {
+                    reducerState.messageIds.set(message.realID, id);
+                }
+                if (message.kind === 'tool-call' && typeof message.tool?.id === 'string' && message.tool.id) {
+                    reducerState.toolIdToMessageId.set(message.tool.id, id);
+                }
+            }
             const latestThinkingMessageId = findLatestThinkingMessageId({ idsOldestFirst: nextIds, messagesById });
             const renderableMessages = nextIds
                 .map((id) => messagesById[id])
