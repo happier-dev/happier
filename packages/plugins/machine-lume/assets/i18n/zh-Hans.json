@@ -29,5 +29,7 @@
   "machineLume.presentation.lume_not_installed": "未安装 · 请从 cua.ai/docs/lume 获取",
   "machineLume.presentation.lume_transport": "Lume 未运行 · 请用 lume serve 启动",
   "machineLume.presentation.lume_http": "连接不可用",
-  "machineLume.presentation.lume_response": "运行环境响应不可用"
+  "machineLume.presentation.lume_response": "运行环境响应不可用",
+"machineLume.configure.keepPasswordLogin": "保留密码登录",
+"machineLume.configure.keepPasswordLoginDescription": "允许使用镜像密码通过 SSH 登录。关闭后仅使用 SSH 密钥。适用于 macOS 客户机。"
 }

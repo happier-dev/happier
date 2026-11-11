@@ -29,5 +29,7 @@
   "machineLume.presentation.lume_not_installed": "Не установлено · скачайте на cua.ai/docs/lume",
   "machineLume.presentation.lume_transport": "Lume не запущен · запустите командой lume serve",
   "machineLume.presentation.lume_http": "Соединение недоступно",
-  "machineLume.presentation.lume_response": "Ответ среды недоступен"
+  "machineLume.presentation.lume_response": "Ответ среды недоступен",
+"machineLume.configure.keepPasswordLogin": "Сохранить вход по паролю",
+"machineLume.configure.keepPasswordLoginDescription": "Разрешить вход по SSH с паролем образа. Отключите, чтобы использовать только ключи SSH. Применяется к гостевым системам macOS."
 }

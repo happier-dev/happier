@@ -29,5 +29,7 @@
   "machineLume.presentation.lume_not_installed": "Não instalado · baixe em cua.ai/docs/lume",
   "machineLume.presentation.lume_transport": "Lume não está em execução · inicie com lume serve",
   "machineLume.presentation.lume_http": "Conexão indisponível",
-  "machineLume.presentation.lume_response": "Resposta do ambiente indisponível"
+  "machineLume.presentation.lume_response": "Resposta do ambiente indisponível",
+"machineLume.configure.keepPasswordLogin": "Manter início de sessão com palavra-passe",
+"machineLume.configure.keepPasswordLoginDescription": "Permitir o início de sessão SSH com a palavra-passe da imagem. Deixe desativado para usar apenas chaves SSH. Aplica-se a convidados macOS."
 }

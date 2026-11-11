@@ -21,5 +21,7 @@
   "machineVercel.confirmTitle": "创建 Vercel 沙箱？",
   "machineVercel.confirmBody": "Vercel 会对运行中的计算资源和保留的快照计费。文件可在多次运行之间保留，但进程内存不能。",
   "machineVercel.deleteTitle": "删除此沙箱？",
-  "machineVercel.deleteBody": "删除此沙箱及其拥有的快照。删除后将无法恢复其中的文件。"
+  "machineVercel.deleteBody": "删除此沙箱及其拥有的快照。删除后将无法恢复其中的文件。",
+"machineVercel.nativeCredentialConfirmTitle": "应用 Vercel 凭据传递？",
+"machineVercel.nativeCredentialConfirmBody": "所选凭据密钥可能会被披露给 Vercel 控制平面，与配置令牌分开。Vercel 将密钥保存在客户机之外，但源负责人和 Vercel 仍需被信任。已安装的请求会绕过 Happier 的逐请求授权、正文/模型策略以及请求、令牌或成本限制。供应商匹配器会缩小密钥替换范围，但不会检查模型 JSON，也不会拒绝不匹配的请求。请在 Gateway/供应商处配置预算和密钥限制；这里不验证覆盖范围。控制器离线时，已安装规则仍可能继续运行，此时无法保证变更和移除。供应商密钥轮换或撤销是独立的最终停止手段；已披露的字节无法收回。归因仅基于观察，不代表经过认证的成员身份或费用分摊。共享同一操作系统用户的成员可以读取并复用彼此的占位符；这些内容在成员之间并不私密。"
 }

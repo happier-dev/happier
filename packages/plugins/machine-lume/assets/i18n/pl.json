@@ -29,5 +29,7 @@
   "machineLume.presentation.lume_not_installed": "Nie zainstalowano · pobierz z cua.ai/docs/lume",
   "machineLume.presentation.lume_transport": "Lume nie działa · uruchom poleceniem lume serve",
   "machineLume.presentation.lume_http": "Połączenie niedostępne",
-  "machineLume.presentation.lume_response": "Odpowiedź środowiska niedostępna"
+  "machineLume.presentation.lume_response": "Odpowiedź środowiska niedostępna",
+"machineLume.configure.keepPasswordLogin": "Zachowaj logowanie hasłem",
+"machineLume.configure.keepPasswordLoginDescription": "Zezwalaj na logowanie SSH hasłem obrazu. Wyłącz, aby używać wyłącznie kluczy SSH. Dotyczy gości macOS."
 }

@@ -29,5 +29,7 @@
   "machineLume.presentation.lume_not_installed": "未安裝 · 請從 cua.ai/docs/lume 取得",
   "machineLume.presentation.lume_transport": "Lume 未執行 · 請用 lume serve 啟動",
   "machineLume.presentation.lume_http": "連線不可用",
-  "machineLume.presentation.lume_response": "執行環境回應不可用"
+  "machineLume.presentation.lume_response": "執行環境回應不可用",
+"machineLume.configure.keepPasswordLogin": "保留密碼登入",
+"machineLume.configure.keepPasswordLoginDescription": "允許使用映像檔密碼透過 SSH 登入。關閉後僅使用 SSH 金鑰。適用於 macOS 客體。"
 }

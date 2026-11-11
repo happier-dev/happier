@@ -29,5 +29,7 @@
   "machineLume.presentation.lume_not_installed": "Nicht installiert · auf cua.ai/docs/lume holen",
   "machineLume.presentation.lume_transport": "Lume läuft nicht · mit lume serve starten",
   "machineLume.presentation.lume_http": "Verbindung nicht verfügbar",
-  "machineLume.presentation.lume_response": "Laufzeitantwort nicht verfügbar"
+  "machineLume.presentation.lume_response": "Laufzeitantwort nicht verfügbar",
+"machineLume.configure.keepPasswordLogin": "Passwortanmeldung beibehalten",
+"machineLume.configure.keepPasswordLoginDescription": "SSH-Anmeldung mit dem Image-Passwort zulassen. Deaktiviert lassen, um nur SSH-Schlüssel zu verwenden. Gilt für macOS-Gäste."
 }

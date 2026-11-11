@@ -29,5 +29,7 @@
   "machineLume.presentation.lume_not_installed": "未インストール · cua.ai/docs/lume から入手",
   "machineLume.presentation.lume_transport": "Lume が実行されていません · lume serve で起動",
   "machineLume.presentation.lume_http": "接続利用不可",
-  "machineLume.presentation.lume_response": "ランタイムの応答を取得できません"
+  "machineLume.presentation.lume_response": "ランタイムの応答を取得できません",
+"machineLume.configure.keepPasswordLogin": "パスワードログインを維持",
+"machineLume.configure.keepPasswordLoginDescription": "イメージのパスワードでの SSH ログインを許可します。SSH キーのみを使う場合はオフにしてください。macOS ゲストに適用されます。"
 }
