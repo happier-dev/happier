@@ -15,7 +15,7 @@ Default model: grok-4.5
 
 Available models:
   * grok-4.5 (default)
-    grok-code-fast-1
+  - grok-code-fast-1
 `)).toEqual([
       { id: 'grok-4.5', name: 'Grok 4.5' },
       { id: 'grok-code-fast-1', name: 'Grok Code Fast 1' },

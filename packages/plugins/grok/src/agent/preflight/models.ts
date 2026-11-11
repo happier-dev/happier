@@ -43,7 +43,7 @@ export function parseGrokModelsOutput(outputRaw: string): readonly GrokPreflight
   for (const rawLine of lines.slice(sectionIndex + 1)) {
     const line = rawLine.trim();
     if (!line) continue;
-    const match = /^(?:\*\s+)?([^\s]+)(?:\s+\(default\))?$/u.exec(line);
+    const match = /^(?:[*-]\s+)?([^\s]+)(?:\s+\(default\))?$/u.exec(line);
     const modelId = match?.[1] ?? '';
     if (!isSafeModelId(modelId) || seen.has(modelId)) return null;
     seen.add(modelId);
