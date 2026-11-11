@@ -92,6 +92,28 @@ describe('neutral capacity and ranked data through public presentation', () => {
     } finally { mount.unmount(); }
   });
 
+  it.each([
+    { name: 'a hidden zero share', amount: 0, showProportionShares: false, rowShares: undefined, expectedShare: null },
+    { name: 'a visible positive proportion', amount: 25, showProportionShares: true, rowShares: undefined, expectedShare: '100%' },
+    { name: 'a supplied positive share', amount: 25, showProportionShares: false, rowShares: [0.25], expectedShare: '25%' },
+  ])('announces the same percentage shown for $name', ({ amount, showProportionShares, rowShares, expectedShare }) => {
+    const mount = mountThroughReactNativeWeb(<HappierDataRows theme={createSurfaceContext().theme}
+      label="Samples" testID="samples" columns={[{ label: 'Sample' }, { label: 'Amount', proportion: true }]}
+      rows={[["Tank", amount]]} showProportionShares={showProportionShares} rowShares={rowShares} />);
+    try {
+      const row = mount.container.querySelector('[data-testid="samples-row-0"]');
+      expect(row?.textContent).toContain(String(amount));
+      expect(row?.getAttribute('aria-label')).toContain(`Amount: ${amount}`);
+      if (expectedShare === null) {
+        expect(row?.textContent).not.toContain('%');
+        expect(row?.getAttribute('aria-label')).not.toContain('%');
+      } else {
+        expect(row?.textContent).toContain(expectedShare);
+        expect(row?.getAttribute('aria-label')).toContain(expectedShare);
+      }
+    } finally { mount.unmount(); }
+  });
+
   it('draws a set-aside part as its colour\'s hatch and can name each part by its amount in a compact legend', () => {
     const mount = mountThroughReactNativeWeb(<CompositionStrip theme={createSurfaceContext().theme}
       label="Disk" total={100} testID="disk" valueFormatter={value => `${value} GB`}

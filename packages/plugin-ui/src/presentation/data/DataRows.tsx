@@ -137,7 +137,7 @@ export function HappierDataRows(props: HappierDataRowsProps) {
             role="listitem"
             accessible={!(props.renderIdentity || interactive && hiddenPrecision)}
             accessibilityLabel={[title, ...(mark ? [mark.label] : []), ...props.columns.slice(1).map((column, index) => readable(column, row[index + 1], text.locale)),
-              ...(rowShare !== null ? [formatHappierDataShare(rowShare, text.locale)] : share === null ? [] : [formatHappierDataShare(share, text.locale)])].join(', ')}
+              ...(shownShare === null ? [] : [formatHappierDataShare(shownShare, text.locale)])].join(', ')}
             testID={props.testID ? `${props.testID}-row-${rowIndex}` : undefined}
           >
             <View style={{ flexDirection: 'row', alignItems: 'baseline', columnGap: HAPPIER_DATA_METRICS.columnGapPx }}>
