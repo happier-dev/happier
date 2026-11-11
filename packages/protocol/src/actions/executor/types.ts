@@ -1286,6 +1286,8 @@ export type ManagedBootstrapCredentialInvocationBinding = Readonly<{
 
 /** In-process host binding supplied after the parent's ordinary Domain admission. */
 export type HostReviewedChildInvocationServicesV1 = Readonly<{
+  /** Exact planned Domain fact captured by the admitted preview parent. */
+  deploymentPreviewDomain?: import('../../deployments/deploymentPreviewTemplateV1.js').DeploymentPreviewDomainFactV1;
   /** Trusted composition callback retained by the reviewed parent; never a public spawn operand. */
   sessionCreation?: SessionCreationHostContinuationV1;
   /** Explicit recipient inclusion for a template's new skill; never an Everywhere default. */

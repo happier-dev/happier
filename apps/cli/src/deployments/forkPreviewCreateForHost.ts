@@ -1,8 +1,9 @@
 import type { ActionExecutorContext, ActionExecutorDeps, DeploymentEnvironmentCreateInputV1,
     HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol';
-import { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentListResultV1Schema,
-    DeploymentDomainMutationResultV1Schema, DeploymentDomainListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,
+    DeploymentDomainMutationResultV1Schema, DeploymentDomainListResultV1Schema,
+    resolveDeploymentPreviewExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentReceiptAcceptedResultV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { readHostAdmittedReviewedParentV1, readHostAdmittedReviewedRootV1 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -25,7 +26,7 @@ export async function admitForkPreviewDeploymentForHost(input: Readonly<{
 }>, open: (artifactId: string) => Promise<Open>): Promise<void> {
     const root = readHostAdmittedReviewedParentV1(input.context.hostReviewedChild)
         ?? readHostAdmittedReviewedRootV1(input.context);
-    if (root?.actionId !== 'deployments.environments.create') return refuse('present_user_required');
+    if (root?.actionId !== DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1) return refuse('present_user_required');
     // This is the exact private Create operand already admitted by the issuer.
     const prepared = DeploymentEnvironmentCreateInputV1Schema.parse(root.input);
     if (!prepared.preview || prepared.projectSourceId !== input.environment.environment.projectSourceId
@@ -44,7 +45,7 @@ export async function admitForkPreviewDeploymentForHost(input: Readonly<{
 export async function prepareForkPreviewCreateForHost(input: Readonly<{
     prepared: DeploymentEnvironmentCreateInputV1; content: DeploymentEnvironmentContentV1; context: ActionExecutorContext;
     bindings?: readonly EnvironmentVariableBindingV1[];
-    domain?: Readonly<{ content: DeploymentDomainContentV1; url: string }>;
+    domain?: Readonly<{ domainId: string; content: DeploymentDomainContentV1; url: string }>;
 }>, host: Readonly<{
     storage: Storage;
     readEnvironment(request: Parameters<typeof readDeploymentEnvironmentForHost>[0]): ReturnType<typeof readDeploymentEnvironmentForHost>;
@@ -59,22 +60,14 @@ export async function prepareForkPreviewCreateForHost(input: Readonly<{
         || content.bindings.length || content.template || prepared.previewDataTargetLinks?.length
         || prepared.copyFrom || prepared.copyPlan) return refuse('deployment_access_denied');
     const sha = content.definition.ref;
-    let existing: Environment | undefined;
-    let cursor: string | null = null;
-    do {
-        const page = DeploymentEnvironmentListResultV1Schema.parse(await host.storage('deployments.environments.list', {
-            serverId: prepared.serverId, projectSourceId: prepared.projectSourceId,
-            previewRepository: provenance.repository, previewPullRequestIds: [provenance.pullRequestId],
-            previewTemplateEnvironmentId: preview.templateEnvironmentId, ...(cursor ? { cursor } : {}),
-        }, context));
-        if (!page.ok) return refuse(page.error);
-        if (page.coverage !== 'complete') return refuse('deployment_access_denied');
-        for (const row of page.items) {
-            if (existing) return refuse('deployment_conflict');
-            existing = await host.readEnvironment({ environmentId: row.id, context });
-        }
-        cursor = page.nextCursor;
-    } while (cursor);
+    const placement = await resolveDeploymentPreviewExecutionMachineIdV1({ serverId: prepared.serverId,
+        projectSourceId: prepared.projectSourceId, preview: { ...preview, provenance, headSha: sha } }, {
+        listEnvironments: input => host.storage('deployments.environments.list', input, context),
+        readTemplateController: async () => ({ ok: true, machineId: prepared.controllerMachineId }),
+    });
+    if (!placement.ok) return refuse(placement.errorCode);
+    const retained = placement.environment;
+    const existing = retained ? await host.readEnvironment({ environmentId: retained.id, context }) : undefined;
     if (existing && (existing.environment.protection !== 'nonProduction'
         || existing.environment.previewTemplateEnvironmentId !== preview.templateEnvironmentId
         || existing.environment.previewPullRequestId !== preview.pullRequestId
@@ -101,7 +94,7 @@ export async function prepareForkPreviewCreateForHost(input: Readonly<{
         requiredByPolicy: true,
         approvalPreview: normalizeStrictJsonValue({ preview: { headSha: sha, provenance,
             ...(input.bindings?.length ? { bindings: input.bindings } : {}),
-            ...(input.domain ? { domain: input.domain.content, domainUrl: input.domain.url } : {}) } }),
+            ...(input.domain ? { domain: input.domain.content, domainId: input.domain.domainId, domainUrl: input.domain.url } : {}) } }),
         executeAdmittedAction: async ({ context: admittedContext }) => {
             if (!readHostAdmittedReviewedParentV1(admittedContext.hostReviewedChild)) return refuse('present_user_required');
             const retained = existing ? { environmentId: existing.environment.id,
@@ -114,7 +107,9 @@ export async function prepareForkPreviewCreateForHost(input: Readonly<{
             if (!created.ok) return { ok: false, errorCode: created.error, error: created.error };
             if (!created.runtimeTargetLinkId) return refuse('target_mismatch');
             const deployed = await admittedContext.hostReviewedChild!.invoke({ action: DEPLOYMENT_DEPLOY_ACTION_ID_V1,
-                role: 'preview.deploy', input: normalizeStrictJsonValue({ serverId: prepared.serverId,
+                role: 'preview.deploy', ...(input.domain ? { invocationServices: { deploymentPreviewDomain: {
+                    domainId: input.domain.domainId, url: input.domain.url } } } : {}),
+                input: normalizeStrictJsonValue({ serverId: prepared.serverId,
                     environmentId: created.environmentId, targetLinkId: created.runtimeTargetLinkId,
                     requestKey: `${prepared.requestKey}-deploy`, sha }) });
             if (!deployed.ok) return deployed;

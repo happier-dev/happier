@@ -61,6 +61,8 @@ export async function prepareOwnServerDeploymentCandidate(input: Readonly<{
                 const { images } = await project.prepareImages({ planOnly: true, signal });
                 await runtime.assertCurrent();
                 return DeploymentOwnServerContentV1Schema.parse({ sourceIntent: intent, machines: link.machines,
+                    ...(input.context.invocationServices?.deploymentPreviewDomain
+                        ? { previewDomain: input.context.invocationServices.deploymentPreviewDomain } : {}),
                     ...(input.services ? { services: input.services } : {}),
                     buildMachineId: environment.environment.buildMachineId,
                     ...(environment.content.ingress ? { ingress: environment.content.ingress } : {}),

@@ -1,5 +1,6 @@
 import { z } from 'zod/mini';
 import { DeploymentPreviewCleanupV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentPreviewDomainFactV1Schema } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
 import { DeploymentDataCreationReferenceV1Schema, DeploymentReceiptFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
@@ -149,6 +150,7 @@ export { DeploymentReceiptFailureV1Schema, type DeploymentReceiptFailureV1 } fro
 /** The existing native serialized arm retains its exact builder/member/image proofs. */
 export const DeploymentOwnServerContentV1Schema = z.strictObject({
     sourceIntent: ownServerSourceIntentV1Schema,
+    previewDomain: z.optional(DeploymentPreviewDomainFactV1Schema),
     services: z.optional(DeploymentServiceSubsetV1Schema),
     commitSubject: z.optional(z.string()), failure: z.optional(DeploymentReceiptFailureV1Schema),
     sourceMethod: z.optional(DeploymentSourceMethodV1Schema),

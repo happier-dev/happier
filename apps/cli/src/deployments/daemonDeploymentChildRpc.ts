@@ -13,6 +13,7 @@ import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/re
 import type { AdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
 import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/ownServerDeploymentHostRuntime';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 type InstalledRuntime = Readonly<{ serverId: string; machineId: string; accountId: string;
     credentials: StoredCredentials; serverHttpBaseUrl: string; isCurrent(): Promise<boolean> }>;
@@ -103,16 +104,19 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
                 serverId: job.input.serverId, serverHttpBaseUrl: installed.serverHttpBaseUrl, machineId: host.machineId,
                 acquirePluginRuntimeRegistryLease: host.acquirePluginRuntimeRegistryLease, assertInstalledCurrent,
                 ...(host.signal ? { signal: host.signal } : {}) }) });
-        if (authority.binding.actionId === 'deployments.environments.create' && job.actionId === 'deployments.deploy') {
+        const previewDomain = job.kind === 'prepare' && job.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1 ? job.previewDomain : undefined;
+        if (authority.binding.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && job.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1) {
             const parent = await readReviewedDeploymentChildRoot({ authorization: requesterRuntime.accountAuthorization,
                 envelope: ingress.originalActionEnvelope, actionId: job.actionId, machineId: host.machineId,
                 params: job, signal: ingress.signal, reviewedChild: packet.externalActionExecution.reviewedChild });
             if (!parent) return ingress.signal.aborted ? failure('cancelled') : deploymentAuthorizationFailure('child_root_not_reviewed');
             return invokeHostReviewedChildV1({ parent, context, receivingAdmission: admission,
-                child: { action: job.actionId, role: 'template.deploy',
+                ...(previewDomain ? { invocationServices: { deploymentPreviewDomain: previewDomain } } : {}),
+                child: { action: job.actionId, role: packet.externalActionExecution.reviewedChild?.role ?? 'template.deploy',
                     input: projectNativeJsonValueForTransport(job.input) },
                 execute: (_input, childContext) => deps.deploymentChild(job, childContext) });
         }
-        return deps.deploymentChild(job, context);
+        return deps.deploymentChild(job, previewDomain ? { ...context,
+            invocationServices: { deploymentPreviewDomain: previewDomain } } : context);
     });
 }

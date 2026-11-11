@@ -18,7 +18,7 @@ import { ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol/artifa
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
-import { createSavedSecretResourceInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
+import { createSavedSecretResourceInTx, deleteSavedSecretResourceInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { createArtifact, updateArtifact } from '@/app/artifacts/artifactWriteService';
 import { readArtifactForCallerInTx } from '@/app/artifacts/artifactAccessService';
 import { ArtifactJsonUpdateHttpInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, computeDeploymentTransitionRequestDigestV1, readDeploymentAccountChangeV1, type DeploymentTransitionInputV1 } from '@happier-dev/protocol';
@@ -54,6 +54,154 @@ describe('deployment storage real SQLite boundary', () => {
             env: { HAPPIER_SERVER_IDENTITY_ID: serverId, AUTH_REQUIRED_LOGIN_PROVIDERS: '' } });
     }, 180_000);
     afterAll(async () => { if (harness) await harness.close(); });
+
+    it.each((['plain', 'e2ee'] as const).flatMap(mode => [false, true].map(existing => ({ mode, existing }))))(
+        'retains incomplete template bindings until the binding writer completes ($mode; existing=$existing)', async ({ mode, existing }) => {
+        const { sealSavedSecretResourceStoredContentV1 } = await import('@happier-dev/protocol/account/settings/savedSecretResourceContentV1');
+        const { computeContentPublicKeyFingerprint } = await import('@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint');
+        const keys = nacl.box.keyPair();
+        const owner = await db.account.create({ data: { encryptionMode: mode,
+            ...(mode === 'e2ee' ? createSignedAccountContentBinding(keys.publicKey) : {}) } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId,
+            requestKey: crypto.randomUUID(), name: 'Template binding preparation', audience: [] }));
+        if (!source.ok) throw new Error(source.error);
+        const machineId = crypto.randomUUID(), installationId = crypto.randomUUID();
+        await db.machine.create({ data: { id: machineId, accountId: owner.id,
+            ...(mode === 'plain' ? plainMachineContent : { metadata: '{}' }),
+            installationId, installationPublicKey: new Uint8Array(nacl.sign.keyPair().publicKey) } });
+        const key = nacl.randomBytes(32);
+        const artifact = async (kind: string, body: unknown) => {
+            const seal = async (value: unknown) => mode === 'plain' ? privacyKit.decodeBase64(encodePlainArtifactStoredContent(value))
+                : new Uint8Array(await sealSessionDataKeyBundleV0(value, key));
+            const created = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(), kind: `v1:other:${kind}`,
+                header: await seal({ kind, title: 'Template binding preparation' }), body: await seal({ body: JSON.stringify(body) }),
+                dataEncryptionKey: mode === 'plain' ? privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)
+                    : sealEncryptedDataKeyEnvelopeV1({ dataKey: key, recipientPublicKey: keys.publicKey, randomBytes: nacl.randomBytes }) });
+            if (!created.ok) throw new Error(created.error);
+            return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        };
+        const content = DeploymentEnvironmentContentV1Schema.parse({ name: 'Template binding preparation', retainPreviousDeployments: 1,
+            definition: { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [] } }, bindings: [] });
+        const resourceId = crypto.randomUUID();
+        const secret = { v: 1 as const, name: 'Template password', kind: 'password' as const, value: 'private-boundary-value' };
+        const resource = await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
+            displayName: secret.name, kind: secret.kind, encryptionMode: mode,
+            storedContent: sealSavedSecretResourceStoredContentV1(mode === 'plain' ? { resourceId, mode, content: secret }
+                : { resourceId, mode, content: secret, resourceDataKey: key, randomBytes: nacl.randomBytes }),
+            ...(mode === 'e2ee' ? { keyEnvelopes: [{ recipientAccountId: owner.id,
+                encryptedDataKey: sealEncryptedDataKeyEnvelopeV1({ dataKey: key,
+                    recipientPublicKey: keys.publicKey, randomBytes: nacl.randomBytes }),
+                recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(keys.publicKey) }] } : {}) }));
+        if (!resource.ok) throw new Error(resource.error);
+        const unrelated = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const unrelatedResourceId = crypto.randomUUID();
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: unrelated.id, resourceId: unrelatedResourceId,
+            displayName: 'Unrelated key', kind: 'token', encryptionMode: 'plain',
+            storedContent: { t: 'plain', v: { v: 1, name: 'Unrelated key', kind: 'token', value: 'private-test-boundary' } } })))
+            .toMatchObject({ ok: true });
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const headers = { 'x-test-user-id': owner.id };
+            const createBody = {
+                serverId, projectSourceId: source.source.id, requestKey: crypto.randomUUID(),
+                controllerMachineId: machineId, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+                ...await artifact('deployment-environment.v1', content),
+                ...(!existing ? { referencedSavedSecretRevisions: [{ resourceId, revision: 1 }] } : {}),
+                firstTargetLink: { ...await artifact('deployment-target-link.v1', {}), machines: [{ machineId, installationId }] },
+            };
+            // Public storage cannot turn a forged foreign ID into a Used-by reference.
+            const forged = await app.inject({ method: 'POST', url: '/v1/deployments/environments', headers,
+                payload: { ...createBody, requestKey: crypto.randomUUID(),
+                    referencedSavedSecretRevisions: [{ resourceId: unrelatedResourceId, revision: 1 }] } });
+            expect(forged.statusCode, forged.body).toBe(409);
+            expect(forged.json()).toMatchObject({ ok: false, error: 'deployment_conflict' });
+            const created = await app.inject({ method: 'POST', url: '/v1/deployments/environments', headers, payload: createBody });
+            expect(created.statusCode, created.body).toBe(200);
+            const { environmentId } = created.json() as { environmentId: string };
+            let revision = (created.json() as { revision: number }).revision;
+            const base = `/v1/deployments/environments/${environmentId}`;
+            const read = async () => (await app.inject({ method: 'GET', url: `${base}?serverId=${serverId}`, headers })).json();
+            const binding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'PASSWORD',
+                source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } };
+            const grant: MachineSecretGrantV1 = { v: 1, kind: 'secret', environmentId, machineId, installationId,
+                resourceId, resourceRevision: 1, sealedContent: 'installation-boundary-ciphertext' };
+            const bind = async (bindings: typeof binding[]) => {
+                const response = await app.inject({ method: 'POST', url: `${base}/bindings`, headers, payload: {
+                    serverId, environmentId, expectedRevision: revision, ...await artifact('deployment-environment.v1', { ...content, bindings }),
+                    referencedSavedSecretRevisions: [{ resourceId, revision: 1, requiredBindings: [{ purpose: 'variable', phase: 'runtime' }] }],
+                    grants: [grant],
+                } });
+                expect(response.statusCode, response.body).toBe(200);
+                revision = (response.json() as { revision: number }).revision;
+            };
+            let retainedSharedResourceId: string | undefined;
+            if (existing) {
+                // Ordinary binding-free Compose is ready, then the first app binds this resource.
+                expect(await read()).toMatchObject({ secretScope: { status: 'ready' } });
+                await bind([binding]);
+                expect(await read()).toMatchObject({ secretScope: { status: 'ready', requiredGrantCount: 1 } });
+                if (mode === 'plain') {
+                    await makeShareEligibleForTest(unrelated.id, owner.id);
+                    const sharedResourceId = crypto.randomUUID();
+                    expect(await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: unrelated.id, resourceId: sharedResourceId,
+                        displayName: 'Retained shared key', kind: 'token', encryptionMode: 'plain', accountGrants: [owner.id],
+                        storedContent: { t: 'plain', v: { v: 1, name: 'Retained shared key', kind: 'token', value: 'private-test-boundary' } } })))
+                        .toMatchObject({ ok: true });
+                    // Retained unplaced metadata is a real persistence boundary: no Machine grant holds this reference.
+                    await db.deploymentEnvironment.update({ where: { id: environmentId }, data: { referencedSavedSecretRevisions: [
+                        { resourceId, revision: 1, requiredBindings: [{ purpose: 'variable', phase: 'runtime' }] },
+                        { resourceId: sharedResourceId, revision: 1 },
+                    ] } });
+                    expect(await db.machineSecretGrant.count({ where: { environmentId, resourceId: sharedResourceId } })).toBe(0);
+                    retainedSharedResourceId = sharedResourceId;
+                }
+                const forgedUpdate = await app.inject({ method: 'PATCH', url: base, headers, payload: {
+                    serverId, environmentId, expectedRevision: revision, ...await artifact('deployment-environment.v1', { ...content, bindings: [binding] }),
+                    referencedSavedSecretRevisions: [{ resourceId: unrelatedResourceId, revision: 1 }],
+                } });
+                expect(forgedUpdate.statusCode, forgedUpdate.body).toBe(409);
+                // A second app needs the SAME resource under a NEW variable name.
+                // Existing routing/grant coverage cannot prove that binding was saved.
+                const pending = await app.inject({ method: 'PATCH', url: base, headers, payload: {
+                    serverId, environmentId, expectedRevision: revision,
+                    ...await artifact('deployment-environment.v1', { ...content, bindings: [binding] }),
+                    referencedSavedSecretRevisions: [{ resourceId, revision: 1 }],
+                } });
+                expect(pending.statusCode, pending.body).toBe(200);
+                revision = (pending.json() as { revision: number }).revision;
+            }
+            expect(await read()).toMatchObject({ secretScope: {
+                status: 'unavailable', reason: 'secret_scope_requirements_unavailable',
+            } });
+            const pendingCaptures = (await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environmentId } }))
+                .referencedSavedSecretRevisions;
+            expect(pendingCaptures).toEqual(expect.arrayContaining([{ resourceId, revision: 1 }]));
+            if (retainedSharedResourceId) {
+                expect(pendingCaptures).toEqual(expect.arrayContaining([{ resourceId: retainedSharedResourceId, revision: 1 }]));
+                expect(await inTx(tx => deleteSavedSecretResourceInTx(tx, { accountId: unrelated.id,
+                    resourceId: retainedSharedResourceId!, expectedRevision: 1, expectedSettingsVersion: 0,
+                    referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] },
+                        catalogs: { mcp: 'absent', acp: 'absent', providerConnections: 'absent', connectedConfigurations: 'absent',
+                            connectedPurposes: 'absent', registrySources: 'absent' } } })))
+                    .toEqual({ ok: false, error: 'resource_in_use' });
+            }
+            // Account X's incomplete private install must not block Account Y's unused key.
+            expect(await inTx(tx => deleteSavedSecretResourceInTx(tx, { accountId: unrelated.id,
+                resourceId: unrelatedResourceId, expectedRevision: 1, expectedSettingsVersion: 0,
+                referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] },
+                    catalogs: { mcp: 'absent', acp: 'absent', providerConnections: 'absent', connectedConfigurations: 'absent',
+                        connectedPurposes: 'absent', registrySources: 'absent' } } })))
+                .toEqual({ ok: true, value: { resourceId: unrelatedResourceId } });
+            // A refused/absent bindings child leaves this exact projection incomplete.
+            // Only the canonical binding writer completes it, preserving the first app.
+            await bind(existing ? [binding, { ...binding, name: 'SECOND_PASSWORD' }] : [binding]);
+            expect(await read()).toMatchObject({ secretScope: {
+                status: 'ready', reason: 'secret_scope_current', requiredGrantCount: 1, missingGrantCount: 0,
+            } });
+            const stored = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environmentId } });
+            expect(stored.referencedSavedSecretRevisions).toEqual([{ resourceId, revision: 1,
+                requiredBindings: [{ purpose: 'variable', phase: 'runtime' }] }]);
+        });
+    });
 
     it('creates and reloads a platform Environment without Compose or a native target through manager admission', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });

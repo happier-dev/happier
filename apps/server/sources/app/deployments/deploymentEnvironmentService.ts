@@ -213,6 +213,51 @@ export async function readCreatedDeploymentEnvironmentIdInTx(tx: Tx, actorAccoun
     return value ? parseEnvironmentCreationRepeatValue(value)?.environmentId ?? null : null;
 }
 
+/** Binding writers and pending template captures share one Saved Secret reference admission. */
+async function admitDeploymentBindingReferencesInTx(tx: Tx, actorAccountId: string,
+    principal: DeploymentSourceAdmission['owner'],
+    captures: DeploymentBindingsSetStorageInputV1['referencedSavedSecretRevisions'], authentication: DeploymentAuthentication,
+) {
+    const references = captures.map(ref => formatSharedSavedSecretRefV1(ref.resourceId));
+    const savedSecretRevisions = captures.map(ref => ({ resourceId: ref.resourceId, expectedRevision: ref.revision }));
+    const actorResources = savedSecretRevisions.length === 0 ? [] : await readSavedSecretResourcesForAccountInTx(tx, actorAccountId,
+        authentication.authenticationAuthority ? { ...authentication, authenticationAuthority: authentication.authenticationAuthority } : undefined,
+        savedSecretRevisions.map(ref => ref.resourceId));
+    if (!validateSavedSecretResourceReferenceCapturesV1(actorResources, { references, savedSecretRevisions })) {
+        return deploymentFailure('deployment_conflict');
+    }
+    // Selecting one's own resource records workload consent in this link, not
+    // in a separate grant exposing the resource to the entire Source audience.
+    const ownedReferences = new Set(actorResources.flatMap(resource => 'ref' in resource && resource.relationship === 'owner'
+        ? [resource.ref] : []));
+    const foreignRevisions = savedSecretRevisions.filter(ref => !ownedReferences.has(formatSharedSavedSecretRefV1(ref.resourceId)));
+    if (foreignRevisions.length > 0 && (principal.kind !== 'account' || principal.accountId !== actorAccountId)
+        && !validateSavedSecretResourceReferenceCapturesV1(await readSavedSecretResourcesForPrincipalInTx(tx, principal,
+            foreignRevisions.map(ref => ref.resourceId)), {
+            references: foreignRevisions.map(ref => formatSharedSavedSecretRefV1(ref.resourceId)), savedSecretRevisions: foreignRevisions,
+        })) {
+        return deploymentFailure('deployment_conflict');
+    }
+    return null;
+}
+
+/** Keep known reference identities while pending binding routing remains incomplete. */
+async function preparePendingDeploymentBindingCapturesInTx(tx: Tx, actorAccountId: string,
+    admission: DeploymentSourceAdmission, incoming: DeploymentBindingsSetStorageInputV1['referencedSavedSecretRevisions'],
+    previous: unknown, authentication: DeploymentAuthentication,
+) {
+    const retained = readDeploymentBindingSavedSecretRevisionsV1(previous);
+    if (!retained) return deploymentFailure('deployment_conflict');
+    const resourceIds = [...new Set([...retained, ...incoming].map(capture => capture.resourceId))];
+    await acquireSavedSecretReferencePublicationAccountsInTx(tx, { accountId: actorAccountId, resourceIds,
+        publicationAccountIds: await resolveProjectSourceAudienceInTx(tx, [admission.source]) });
+    const denied = await admitDeploymentBindingReferencesInTx(tx, actorAccountId, admission.owner, incoming, authentication);
+    if (denied) return denied;
+    const captures = new Map(retained.map(capture => [capture.resourceId, capture]));
+    for (const { resourceId, revision } of incoming) captures.set(resourceId, { resourceId, revision });
+    return { ok: true as const, captures: normalizeDeploymentBindingSavedSecretRevisionsV1([...captures.values()]) };
+}
+
 /** Create an independent private-content relationship after destination management and optional copy-source admission. */
 export async function createDeploymentEnvironmentInTx(tx: Tx, actorAccountId: string, input: DeploymentEnvironmentCreateStorageInputV1,
     authentication: DeploymentAuthentication = {},
@@ -296,14 +341,17 @@ async function createDeploymentEnvironmentForSourceInTx(tx: Tx, actorAccountId: 
             reference, expectedStoredKind: DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 })));
     const linkContentFailure = linkContentFailures.find(item => item !== null);
     if (linkContentFailure) return linkContentFailure;
+    const pending = input.referencedSavedSecretRevisions ? await preparePendingDeploymentBindingCapturesInTx(tx,
+        actorAccountId, source.admission, input.referencedSavedSecretRevisions, [], authentication) : undefined;
+    if (pending && !pending.ok) return pending;
     const row = await tx.deploymentEnvironment.create({ data: {
         projectSourceId: input.projectSourceId, createdByAccountId: actorAccountId,
         protection: input.protection, purpose: input.purpose, deployerMode: input.deployerMode,
         ...preview.relation,
         deployers: { create: (input.deployerPrincipals ?? []).map(principal => ({ ...principal, createdByAccountId: actorAccountId })) },
         controllerMachineId: input.controllerMachineId, buildMachineId: input.buildMachineId,
-        // Opened client preparation admits only an empty initial binding set.
-        referencedSavedSecretRevisions: [],
+        // Pending identities are admitted without claiming completed routing or grants.
+        referencedSavedSecretRevisions: pending?.captures ?? [],
         ...deploymentContentReference(input),
     }, include: { deployers: { select: { principalKind: true, principalId: true } } } });
     let revision = row.revision;
@@ -332,6 +380,7 @@ async function createDeploymentEnvironmentForSourceInTx(tx: Tx, actorAccountId: 
         previewDataTargets.push({ templateDataTargetLinkId: sourceLink.id,
             targetLinkId: linked.targetLinkId, targetLinkRevision: linked.targetLinkRevision });
     }
+    if (pending) await publishSavedSecretUsageChangesInTx(tx, pending.captures.map(capture => capture.resourceId));
     await saveRepeatKey(tx, repeatKey, `${digest}:${row.id}${previewDataTargets.length ? `:${JSON.stringify(previewDataTargets)}` : ''}`, defaultRepeatKeyExpiresAt(now));
     // The link owner has already published the final Environment revision.
     if (!input.firstTargetLink && !dataRequests.length) await publishDeploymentChangesInTx(tx, source.admission, row.id, revision);
@@ -454,9 +503,13 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
         ]);
         if (denied) return denied;
     }
+    const pending = input.referencedSavedSecretRevisions ? await preparePendingDeploymentBindingCapturesInTx(tx,
+        actorAccountId, loaded.admission, input.referencedSavedSecretRevisions, loaded.row.referencedSavedSecretRevisions, authentication) : undefined;
+    if (pending && !pending.ok) return pending;
     if (!principalsChanged && deployerMode === loaded.row.deployerMode
         && buildMachineId === loaded.row.buildMachineId && edgeMachineId === loaded.row.edgeMachineId && protection === loaded.row.protection
-        && !input.preparedBindings && isDeepStrictEqual(deploymentContentReference(loaded.row), deploymentContentReference(input))) {
+        && !input.preparedBindings && (!pending || isDeepStrictEqual(pending.captures, loaded.row.referencedSavedSecretRevisions))
+        && isDeepStrictEqual(deploymentContentReference(loaded.row), deploymentContentReference(input))) {
         return { ok: true as const, environmentId: loaded.row.id, revision: loaded.row.revision };
     }
     if (buildChanged && !buildMachineId) return deploymentFailure('deployment_invalid');
@@ -476,6 +529,7 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
     }
     const changed = await tx.deploymentEnvironment.updateMany({ where: { id: loaded.row.id, revision: input.expectedRevision },
         data: { ...deploymentContentReference(input),
+            ...(pending ? { referencedSavedSecretRevisions: pending.captures } : {}),
             ...(input.patch?.buildMachineId !== undefined ? { buildMachineId: input.patch.buildMachineId } : {}),
             ...(ingress !== undefined ? { edgeMachineId } : {}),
             ...(input.patch?.protection !== undefined ? { protection: input.patch.protection } : {}),
@@ -484,6 +538,9 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
     if (changed.count !== 1) throw new Error('Locked deployment Environment changed during content CAS');
     if (principalsChanged && input.patch?.deployerPrincipals !== undefined) {
         await replaceDeploymentDeployerPrincipalsInTx(tx, loaded.row.id, actorAccountId, loaded.row.deployers, input.patch.deployerPrincipals);
+    }
+    if (pending && !isDeepStrictEqual(pending.captures, loaded.row.referencedSavedSecretRevisions)) {
+        await publishSavedSecretUsageChangesInTx(tx, pending.captures.map(capture => capture.resourceId));
     }
     await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, loaded.row.revision + 1, undefined, false, publicationAccountIds);
     return { ok: true as const, environmentId: loaded.row.id, revision: loaded.row.revision + 1 };
@@ -706,27 +763,9 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         const denied = await admitMutation();
         if (denied) return denied;
     }
-    const references = input.referencedSavedSecretRevisions.map(ref => formatSharedSavedSecretRefV1(ref.resourceId));
-    const savedSecretRevisions = input.referencedSavedSecretRevisions.map(ref => ({ resourceId: ref.resourceId, expectedRevision: ref.revision }));
-    const principal = loaded.admission.owner;
-    const actorResources = savedSecretRevisions.length === 0 ? [] : await readSavedSecretResourcesForAccountInTx(tx, actorAccountId,
-        authentication.authenticationAuthority ? { ...authentication, authenticationAuthority: authentication.authenticationAuthority } : undefined,
-        savedSecretRevisions.map(ref => ref.resourceId));
-    if (!validateSavedSecretResourceReferenceCapturesV1(actorResources, { references, savedSecretRevisions })) {
-        return deploymentFailure('deployment_conflict');
-    }
-    // Selecting one's own resource records workload consent in this link, not
-    // in a separate grant exposing the resource to the entire Source audience.
-    const ownedReferences = new Set(actorResources.flatMap(resource => 'ref' in resource && resource.relationship === 'owner'
-        ? [resource.ref] : []));
-    const foreignRevisions = savedSecretRevisions.filter(ref => !ownedReferences.has(formatSharedSavedSecretRefV1(ref.resourceId)));
-    if (foreignRevisions.length > 0 && (principal.kind !== 'account' || principal.accountId !== actorAccountId)
-        && !validateSavedSecretResourceReferenceCapturesV1(await readSavedSecretResourcesForPrincipalInTx(tx, principal,
-            foreignRevisions.map(ref => ref.resourceId)), {
-            references: foreignRevisions.map(ref => formatSharedSavedSecretRefV1(ref.resourceId)), savedSecretRevisions: foreignRevisions,
-        })) {
-        return deploymentFailure('deployment_conflict');
-    }
+    const referenceFailure = await admitDeploymentBindingReferencesInTx(tx, actorAccountId,
+        loaded.admission.owner, input.referencedSavedSecretRevisions, authentication);
+    if (referenceFailure) return referenceFailure;
     const previousCaptures = loaded.row.referencedSavedSecretRevisions;
     // Enriching capture metadata does not change the immutable content or the
     // resource revisions held by an already admitted builder.

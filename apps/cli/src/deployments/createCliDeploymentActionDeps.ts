@@ -1,3 +1,4 @@
+import { type DeploymentBindingSavedSecretRevisionV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { readDeploymentReceiptFailureCodeV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
@@ -33,6 +34,9 @@ import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/re
 import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { acquireRequesterAccountEncryptionCurrentness, type RequesterEnvironmentAccessObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
 
+type DeploymentStoragePreparation = DeploymentEnvironmentCreationReviewV1 & Readonly<{
+  templateBindingCaptures?: readonly DeploymentBindingSavedSecretRevisionV1[];
+}>;
 type ReceiptSuccess = Extract<DeploymentReceiptResultV1, { ok: true; deploymentId: string }>;
 type ReceiptAction = 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown';
 export type DeploymentReceiptDispatchV1 = { [TAction in ReceiptAction]: Readonly<{
@@ -184,13 +188,13 @@ export function createCliDeploymentActionDeps(params: Readonly<{
   };
   function request(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1,
     context: ActionExecutorContext, authorizationActionId?: DeploymentTransportActionIdV1,
-    creationReview?: DeploymentEnvironmentCreationReviewV1): Promise<DeploymentActionOutputV1 | ActionExecuteFailure>;
+    creationReview?: DeploymentStoragePreparation): Promise<DeploymentActionOutputV1 | ActionExecuteFailure>;
   function request(actionId: 'deployments.environments.get', input: DeploymentActionInputV1,
     context: ActionExecutorContext, authorizationActionId: DeploymentTransportActionIdV1,
     creationReview: undefined, approvalMetadata: true): Promise<DeploymentApprovalEnvironmentResultV1 | ActionExecuteFailure>;
   async function request(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1,
     context: ActionExecutorContext, authorizationActionId: DeploymentTransportActionIdV1 = actionId,
-    creationReview?: DeploymentEnvironmentCreationReviewV1, approvalMetadata = false): Promise<DeploymentActionOutputV1 | DeploymentApprovalEnvironmentResultV1 | ActionExecuteFailure> {
+    creationReview?: DeploymentStoragePreparation, approvalMetadata = false): Promise<DeploymentActionOutputV1 | DeploymentApprovalEnvironmentResultV1 | ActionExecuteFailure> {
     let issued = false;
     let method = 'POST';
     let preparedBindingArtifact: Pick<PreparedDeploymentBindingStorageV1, 'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'> | undefined;
@@ -314,6 +318,10 @@ export function createCliDeploymentActionDeps(params: Readonly<{
           authoredInputDigest: authoredEnvironmentInputDigest };
       }
       if (actionId === 'deployments.cancel') body = { ...transportInput, kind: 'cancel' };
+      if ((actionId === 'deployments.environments.create' || actionId === 'deployments.environments.update')
+        && creationReview?.templateBindingCaptures?.length) {
+        body = { ...body, referencedSavedSecretRevisions: creationReview.templateBindingCaptures };
+      }
       if (actionId === 'deployments.deploy' || actionId === 'deployments.rollback' || actionId === 'deployments.promote'
         || actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && !('detachKeepRunning' in transportInput) && !('nothingDeployed' in transportInput)) {
         const actionOperationId = context.operationAcceptance?.operationId;

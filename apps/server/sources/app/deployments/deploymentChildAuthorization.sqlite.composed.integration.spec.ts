@@ -1,7 +1,14 @@
+import { createSavedSecretResourceInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { createPrepareEnvironmentContentForHost } from '../../../../cli/src/deployments/prepareEnvironmentContentForHost';
 import { createDaemonDeploymentActionDeps } from '../../../../cli/src/deployments/createDaemonDeploymentActionDeps';
+import { createAdmittedPluginRuntimeFixture } from '../../../../cli/src/plugins/testkit/admittedRuntime';
+import { createDaemonExternalActionContributedInvoker } from '../../../../cli/src/daemon/externalActions/createDaemonExternalActionContributedInvoker';
+import { createUnavailableActionTransportDeps } from '../../../../cli/src/testkit/actionTransportDeps';
+import { createActionSettingsProvider } from '../../../../cli/src/settings/actionsSettingsProvider';
+import { withConfiguredDaemonTestHome } from '../../../../cli/src/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createFilesystemEffectAdmission } from '../../../../cli/src/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -2587,6 +2594,7 @@ describe('deployment children retain their controller Action authority', () => {
         const root = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
             accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
             actionId: 'action.invoke', machineId: f.controller.id, target, requestId: envelope.requestId,
+            admittedMachineRole: 'manage',
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
         const exchanges: Array<{ method: string; path: string; status: number }> = [];
         await withAuthenticatedTestApp(app => {
@@ -2602,6 +2610,8 @@ describe('deployment children retain their controller Action authority', () => {
             });
         }, async app => {
             const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+            await withConfiguredDaemonTestHome({ prefix: 'health-sdk-signed-home-',
+                env: { HAPPIER_SERVER_URL: origin, HAPPIER_ACTIVE_SERVER_ID: serverId } }, async () => {
             const channel = await createRequesterCurrentnessSocketHarness();
             let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
             try {
@@ -2626,12 +2636,40 @@ describe('deployment children retain their controller Action authority', () => {
                     { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
                         contentArtifactId: f.environment.contentArtifactId, contentHeaderVersion: f.environment.contentHeaderVersion,
                         contentBodyVersion: f.environment.contentBodyVersion, mode: 'preview', defaultsFor: 'alerts' }, context);
-                expect(preview, JSON.stringify(exchanges)).toMatchObject({ ok: true, creationDefaults: { values: { alertChannels: [] } } });
+                expect(preview, JSON.stringify({ exchanges, preview })).toMatchObject({ ok: true,
+                    environmentId: f.environment.id, revision: f.environmentRevision });
+                const nativeExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...native });
+                const sdkAuthorization = Object.defineProperties({ ...authorization }, Object.getOwnPropertyDescriptors(authorization));
+                Object.defineProperty(sdkAuthorization, 'requesterAccountExecutor', { value: nativeExecutor, enumerable: false });
+                const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: {
+                    pluginIds: ['happier.machine.services'], resolveCurrentMachineId: () => f.controller.id,
+                    resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: serverId, machineId: f.controller.id }),
+                    externalActionHomeBinding: { serverId, serverIdentityId: serverId,
+                        externalActionMachineInstallationId: f.controller.installationId,
+                        externalActionMachineRequestPrivateKey: f.controller.keys.secretKey },
+                    scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider({
+                        getAccountSettings: () => null, allowEnvironmentOverride: false }) },
+                } });
+                try {
+                    const sdk = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+                        invokeContributedAction: createDaemonExternalActionContributedInvoker({
+                            acquireRuntimeRegistryLease: () => runtime.controller.acquireRuntimeRegistry(),
+                        }) });
+                    const result = await sdk.execute('action.invoke', input, { surface: 'api', authority: 'present_user',
+                        serverId, serverIdentityId: serverId, runtimeAccountId: f.account.id,
+                        actionRequestId: envelope.requestId, actionCaller: { kind: 'host' },
+                        externalActionExecutionAuthorization: sdkAuthorization, externalActionTarget: target });
+                    expect(result, JSON.stringify({ result, exchanges })).toMatchObject({ ok: true, result: {
+                        mode: 'preview', sourceConfig: { subject: input.input.subject },
+                        destinationSelectionContext: { serverId, machineId: f.controller.id },
+                    } });
+                } finally { await runtime.dispose(); }
                 expect(await native.deploymentAction!('deployments.environments.get',
                     { serverId, environmentId: foreign.environment.id }, context)).toMatchObject({ ok: false });
                 expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } })).revision)
                     .toBe(f.environmentRevision);
             } finally { await requester?.dispose(); await channel.close(); }
+            });
         }, { authentication: 'real' });
     });
 
@@ -2662,6 +2700,7 @@ describe('deployment children retain their controller Action authority', () => {
             // DeploymentBackupSetup prepares defaults before any destination
             // mutation or native source review. These are its real Home reads.
             for (const [path, effect] of [
+                [`/v1/deployments/environments/${f.environment.id}?serverId=${serverId}`, actionId],
                 [`/v1/projects/sources/${f.environment.projectSourceId}?serverId=${serverId}`, 'projects.sources.read'],
                 [`/v1/projects/${f.environment.projectSourceId}/deployment-defaults?serverId=${serverId}`, actionId],
                 [`/v1/artifacts/${f.environment.contentArtifactId}`, actionId],
@@ -2669,6 +2708,9 @@ describe('deployment children retain their controller Action authority', () => {
                 const read = await app.inject({ method: 'GET', url: path, headers: headers(path, effect) });
                 expect(read.statusCode, read.body).toBe(200);
             }
+            const otherEnvironment = `/v1/deployments/environments/${foreign.environment.id}?serverId=${serverId}`;
+            expect((await app.inject({ method: 'GET', url: otherEnvironment, headers: headers(otherEnvironment, actionId) })).statusCode)
+                .toBe(401);
             const other = `/v1/projects/sources/${foreign.environment.projectSourceId}?serverId=${serverId}`;
             expect((await app.inject({ method: 'GET', url: other, headers: headers(other, 'projects.sources.read') })).statusCode)
                 .toBe(401);
@@ -2678,6 +2720,92 @@ describe('deployment children retain their controller Action authority', () => {
             const unrelatedContent = `/v1/artifacts/${unrelated.contentArtifactId}`;
             expect((await app.inject({ method: 'GET', url: unrelatedContent, headers: headers(unrelatedContent, actionId) })).statusCode)
                 .toBe(401);
+        }, { authentication: 'real' });
+    });
+
+    it.each((['plain', 'e2ee'] as const).flatMap(contentMode => [false, true].map(existing => ({ contentMode, existing }))))
+    ('persists incomplete template captures through signed storage HTTP ($contentMode; existing=$existing)', async ({ contentMode, existing }) => {
+        const f = await fixture('account', 'account', { templateRoot: true, readableEnvironment: true, contentMode });
+        const resourceId = crypto.randomUUID(), resourceKey = nacl.randomBytes(32);
+        const resourceContent = { v: 1 as const, name: 'Template key', kind: 'password' as const, value: 'private-test-boundary' };
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: f.account.id, resourceId,
+            displayName: resourceContent.name, kind: resourceContent.kind, encryptionMode: contentMode,
+            storedContent: sealSavedSecretResourceStoredContentV1(contentMode === 'plain'
+                ? { resourceId, mode: contentMode, content: resourceContent }
+                : { resourceId, mode: contentMode, content: resourceContent, resourceDataKey: resourceKey, randomBytes: nacl.randomBytes }),
+            ...(contentMode === 'e2ee' ? { keyEnvelopes: [{ recipientAccountId: f.account.id,
+                encryptedDataKey: sealEncryptedDataKeyEnvelopeV1({ dataKey: resourceKey, recipientPublicKey: f.accountKeys.publicKey,
+                    randomBytes: nacl.randomBytes }), recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(f.accountKeys.publicKey) }] } : {}) })))
+            .toMatchObject({ ok: true });
+        const requestKey = crypto.randomUUID();
+        const input = existing ? { ...f.templateInput, environment: { ...f.templateInput.environment, expectedRevision: f.environmentRevision } } : { ...f.templateInput,
+            environment: { kind: 'create' as const, requestKey, name: 'Store secret preparation', protection: 'nonProduction' as const,
+                purpose: 'standard' as const, deployerMode: 'managers' as const, controllerMachineId: f.controller.id },
+            target: { kind: 'new' as const, installationId: f.member.installationId }, destination: { kind: 'stored' as const } };
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const root = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId: 'deployments.templates.instantiate', machineId: f.controller.id, target, requestId: envelope.requestId,
+            deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('deployments.templates.instantiate', input),
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        const content = await f.content('deployment-environment.v1');
+        const body = existing ? { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision, ...content,
+            referencedSavedSecretRevisions: [{ resourceId, revision: 1 }] } : { serverId, projectSourceId: f.environment.projectSourceId, requestKey,
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: f.controller.id,
+            buildMachineId: f.member.id, ...content, referencedSavedSecretRevisions: [{ resourceId, revision: 1 }],
+            firstTargetLink: { ...await f.content('deployment-target-link.v1'),
+                machines: [{ machineId: f.member.id, installationId: f.member.installationId }] } };
+        const method = existing ? 'PATCH' as const : 'POST' as const;
+        const path = `/v1/deployments/environments${existing ? `/${f.environment.id}` : ''}`;
+        const effectActionId = existing ? 'deployments.environments.update' : 'deployments.environments.create';
+        const headers = (payload: unknown) => ({
+            ...currentAccountStoredContentCompatibilityHeaders,
+            [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
+            [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+            [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+            [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                effectActionId, target, installationId: f.controller.installationId, requestId: envelope.requestId,
+                method, path, body: payload, privateKey: f.controller.keys.secretKey }),
+        });
+        const { referencedSavedSecretRevisions: _pending, ...publicBody } = body;
+        // Control: the same signed template scope accepts its ordinary public storage operand.
+        expect(await verifyExternalActionDomainExecutionRequest({ authorizationToken: root.token,
+            effectActionId, encodedTarget: encodeExternalActionResolvedTargetV1(target), method, path, body: publicBody,
+            routeInput: publicBody, machineSignature: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                effectActionId, target, installationId: f.controller.installationId, requestId: envelope.requestId,
+                method, path, body: publicBody, privateKey: f.controller.keys.secretKey }) })).not.toBeNull();
+        const unrelatedStorageOperands = existing
+            ? [{ ...body, preparedBindings: { grants: [], referencedSavedSecretRevisions: [] } },
+                { ...body, authoredInputDigest: 'a'.repeat(43) }]
+            : [{ ...body, copyFrom: { environmentId: f.environment.id, expectedRevision: f.environmentRevision },
+                copyIntentCommitment: 'a'.repeat(43) }];
+        for (const payload of unrelatedStorageOperands) {
+            expect(await verifyExternalActionDomainExecutionRequest({ authorizationToken: root.token,
+                effectActionId, encodedTarget: encodeExternalActionResolvedTargetV1(target), method, path, body: payload,
+                routeInput: payload, machineSignature: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                    effectActionId, target, installationId: f.controller.installationId, requestId: envelope.requestId,
+                    method, path, body: payload, privateKey: f.controller.keys.secretKey }) })).toBeNull();
+        }
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const substituted = existing ? { ...body, expectedRevision: f.environmentRevision + 1 }
+                : { ...body, requestKey: crypto.randomUUID() };
+            expect((await app.inject({ method, url: path, payload: substituted, headers: headers(substituted) })).statusCode).toBe(401);
+            if (existing) {
+                // This broad fixture retains a legacy null capture column. Unknown references cannot be discarded.
+                const legacy = await app.inject({ method, url: path, payload: body, headers: headers(body) });
+                expect(legacy.statusCode, legacy.body).toBe(409);
+                expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } }))
+                    .referencedSavedSecretRevisions).toBeNull();
+                // Ordinary binding-free creation writes a complete empty array.
+                await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { referencedSavedSecretRevisions: [] } });
+            }
+            const result = await app.inject({ method, url: path, payload: body, headers: headers(body) });
+            expect(result.statusCode, result.body).toBe(200);
+            expect(result.json()).toMatchObject({ ok: true });
+            const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: result.json().environmentId } });
+            expect(row.referencedSavedSecretRevisions).toEqual([{ resourceId, revision: 1 }]);
+            expect(row.contentArtifactId).toBe(content.contentArtifactId);
         }, { authentication: 'real' });
     });
 

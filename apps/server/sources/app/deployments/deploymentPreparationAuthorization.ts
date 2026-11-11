@@ -1,3 +1,7 @@
+import { z } from '@happier-dev/protocol/zodRuntimePolicy';
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
+import { DeploymentEnvironmentCreateInputV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentCreateV1';
+import { DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { deploymentPreparationOperationForActionV1, type ExternalActionExecutionAuthorizationBindingV1,
     type DeploymentPreparationAdmissionV1, type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
@@ -9,7 +13,7 @@ import { loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx, readCreat
     type DeploymentEnvironmentRow } from './deploymentEnvironmentService';
 import { admitDeploymentMachineInTx, type DeploymentAuthentication } from './deploymentAdmission';
 import { readPreviewCompanionMainInTx } from './previewEnvironmentRelation';
-import { DeploymentDomainAddAdmissionInputV1Schema, DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema, DeploymentEnvironmentUpdateInputV1Schema, DeploymentTargetLinkInputV1Schema,
+import { DeploymentDomainAddAdmissionInputV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema, DeploymentTargetLinkInputV1Schema,
     DeploymentDeployAdmissionInputV1Schema, DeploymentEnvironmentGetInputV1Schema, DeploymentEnvironmentListInputV1Schema, DeploymentReceiptGetInputV1Schema, DeploymentReceiptListInputV1Schema,
     DeploymentDomainGetInputV1Schema, DeploymentDomainListInputV1Schema,
     DeploymentTargetLinksListInputV1Schema,
@@ -54,6 +58,14 @@ import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/de
 type TemplateAdmission = Extract<DeploymentPreparationAdmissionV1, { operation: 'template' }>;
 type SetupDeployment = Extract<DeploymentPreparationAdmissionV1, { operation: 'setup' }>['deployments'][number];
 type CreateAdmission = Extract<DeploymentPreparationAdmissionV1, { operation: 'create' }>;
+
+// Template scope adds only pending captures to the existing public operand grammar.
+const templateCreateStorageInputSchema = lazyZodSchema(() => z.safeExtend(DeploymentEnvironmentCreateInputV1Schema, {
+    referencedSavedSecretRevisions: DeploymentEnvironmentCreateStorageInputV1Schema.shape.referencedSavedSecretRevisions,
+}));
+const templateUpdateStorageInputSchema = lazyZodSchema(() => z.safeExtend(DeploymentEnvironmentUpdateInputV1Schema, {
+    referencedSavedSecretRevisions: DeploymentEnvironmentUpdateStorageInputV1Schema.shape.referencedSavedSecretRevisions,
+}));
 
 /** Move spends its definition admission on the selected workspace, independently of runtime placement. */
 export function isDeploymentMoveToRepositoryHttpEffect(binding: ExternalActionExecutionAuthorizationBindingV1,
@@ -563,8 +575,9 @@ export async function readDeploymentEnvironmentContentPreparationHttpPurpose(tx:
         const environment = await readConfigurationDefaultsEnvironmentInTx(tx, binding);
         if (!environment) return false;
         const matches = (expected: unknown) => proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, expected);
-        if (effectActionId === 'deployments.environments.get') return proof.path
-            === `/v1/deployments/environments/${encodeURIComponent(environment.id)}?serverId=${encodeURIComponent(binding.serverIdentityId)}`
+        const environmentPath = `/v1/deployments/environments/${encodeURIComponent(environment.id)}?serverId=${encodeURIComponent(binding.serverIdentityId)}`;
+        if (effectActionId === 'deployments.environments.get'
+            || effectActionId === binding.actionId && proof.path === environmentPath) return proof.path === environmentPath
             && matches({ serverId: binding.serverIdentityId, environmentId: environment.id });
         if (effectActionId === PROJECT_SOURCE_READ_ACTION_ID_V1) return proof.path
             === `/v1/projects/sources/${encodeURIComponent(environment.projectSourceId)}?serverId=${encodeURIComponent(binding.serverIdentityId)}`
@@ -1376,7 +1389,7 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
                 && parsed.data.approvalSessionId === undefined && routeMatches(parsed.data);
         }
         if (effectActionId === 'deployments.environments.create') {
-            const parsed = DeploymentEnvironmentCreateInputV1Schema.safeParse(proof.body);
+            const parsed = templateCreateStorageInputSchema.safeParse(proof.body);
             const selected = admission.environment;
             return selected.kind === 'create' && admission.target.kind === 'new' && method === 'POST'
                 && proof.path === '/v1/deployments/environments' && parsed.success && parsed.data.serverId === binding.serverIdentityId
@@ -1393,7 +1406,7 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
         if (!environmentId) return false;
         const path = `/v1/deployments/environments/${encodeURIComponent(environmentId)}`;
         if (effectActionId === 'deployments.environments.update') {
-            const parsed = DeploymentEnvironmentUpdateInputV1Schema.safeParse(proof.body);
+            const parsed = templateUpdateStorageInputSchema.safeParse(proof.body);
             return admission.environment.kind === 'existing' && method === 'PATCH' && proof.path === path && parsed.success
                 && parsed.data.patch === undefined && parsed.data.environmentId === environmentId && parsed.data.serverId === binding.serverIdentityId
                 && parsed.data.expectedRevision === admission.environment.expectedRevision && routeMatches(parsed.data);

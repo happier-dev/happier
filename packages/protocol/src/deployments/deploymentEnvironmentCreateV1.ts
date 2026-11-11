@@ -2,6 +2,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
+import { DeploymentBindingSavedSecretRevisionsV1Schema } from './deploymentBindingPatchV1.js';
 import { DeploymentNewProjectV1Schema, hasOneDeploymentProjectV1, DeploymentTargetManagedRetentionV1Schema } from './storedAppInputV1.js';
 import { DeploymentEnvironmentDeployerPrincipalsV1Schema } from './deploymentEnvironmentDeployerV1.js';
 import { DeploymentPreviewReferenceV1Schema } from './deploymentPreviewReferenceV1.js';
@@ -47,6 +48,8 @@ function hasPreparedPreviewReference(input: Pick<z.infer<typeof DeploymentEnviro
 // A 32-byte commitment, never the selected private copy operands.
 const deploymentEnvironmentCopyIntentCommitmentV1Schema = lazyZodSchema(() => z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/)));
 export const DeploymentEnvironmentCreateStorageInputV1Schema = lazyZodSchema(() => z.extend(DeploymentEnvironmentCreateBaseInputV1Schema, {
+  // Pending template captures retain identities; the binding writer completes their routing.
+  referencedSavedSecretRevisions: z.optional(DeploymentBindingSavedSecretRevisionsV1Schema.check(z.minLength(1))),
   copyFrom: z.optional(DeploymentEnvironmentCopySourceV1Schema),
   copyIntentCommitment: z.optional(deploymentEnvironmentCopyIntentCommitmentV1Schema),
 }).check(

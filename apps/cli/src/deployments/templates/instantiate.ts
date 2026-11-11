@@ -1,3 +1,4 @@
+import { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import axios from '@/api/client/credentialAxios';
 import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 import { createHash } from 'node:crypto';
@@ -43,7 +44,7 @@ import type { CliAdmittedProjectRowsReader } from '@/session/actions/cliActionDe
 import { resolveAdmittedRepositoryWorkspace, validateAdmittedRepositoryWorkspace } from '@/workspaces/admittedRepositoryWorkspace';
 import { prepareRepositoryFilesPullRequest, openRepositoryFilesPullRequest, type RepositoryFilesPullRequestHost } from '@/scm/actions/repositoryFilesPullRequest';
 import { REPOSITORY_FILES_PULL_REQUEST_CHILDREN_V1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 const refuse = (failure: string | ActionExecuteFailure): never => {
@@ -228,7 +229,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 ...(sample.memory.reported ? { memoryBytes: sample.memory.totalBytes } : {}) } } : {}),
             ...(currentInput ? { current: { ...currentInput, ...(baseline ? { baseline } : {}) } } : {}),
             bindings: input.bindings, connectTo: input.connectTo, replace: input.replace, domainBindings: input.domainBindings,
-            volumeBindings: input.volumeBindings };
+            volumeBindings: input.volumeBindings, companions: input.companions };
         const prepared = prepareDeploymentTemplateInstantiationV1(prepareInput);
         const candidateDefinition = { kind: 'stored' as const,
             composeDigest: storedComposeDefinitionDigest(prepared),
@@ -360,6 +361,9 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             }
             const finalPrepared = prepareDeploymentTemplateInstantiationV1({ ...plan.prepareInput, bindings });
             const defaults = plan.defaults;
+            const storagePreparation = { creationDefaults: defaults, template: plan.review,
+                templateBindingCaptures: captureDeploymentBindingSavedSecretRevisionsV1(finalPrepared.bindings)
+                    .map(({ resourceId, revision }) => ({ resourceId, revision })) };
             const commitBindings = async (set: DeploymentEnvironmentDetailV1['content']['bindings']) => {
                 const applied = await reviewedChild.invoke({ action: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
                     role: deploymentTemplateBindingsChildRole, input: normalizeStrictJsonValue({ serverId: input.serverId,
@@ -370,8 +374,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 environmentId = parsed.environmentId; revision = parsed.revision;
             };
             const commit = async (actionId: 'deployments.environments.create' | 'deployments.environments.update', input: Parameters<Host['storage']>[1]) => {
-                const result = await host.storage(actionId, input, context, actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
-                    ? { creationDefaults: defaults, template: plan.review } : undefined);
+                const result = await host.storage(actionId, input, context, storagePreparation);
                 if ('errorCode' in result) return refuse(result);
                 const parsed = DeploymentEnvironmentCreateResultV1Schema.parse(result);
                 if (!parsed.ok) return refuse(parsed.error);

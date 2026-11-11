@@ -47,7 +47,7 @@ import {
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readHostAdmittedReviewedChildV1, readHostAdmittedReviewedParentV1, readHostAdmittedReviewedRootV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { admitForkPreviewDeploymentForHost, prepareForkPreviewCreateForHost } from './forkPreviewCreateForHost';
-import { readPreviewDomainForHost } from './previewDomainForHost';
+import { readPreviewDomainForHost, preparePreviewDomainFactForHost } from './previewDomainForHost';
 import { createDeploymentCandidatePublicationV1, createDeploymentDomainContentArtifactIdV1, createDeploymentEnvironmentContentArtifactIdV1,
     isDeploymentDomainNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import {
@@ -170,6 +170,12 @@ const refuse = (reason: string | ActionExecuteFailure): never => {
     const code = typeof reason === 'string' ? reason : reason.errorCode;
     throw Object.assign(new RpcError(code, code), { code, ...(typeof reason === 'string' ? {} : { cause: reason }) });
 };
+// Home owns completeness and grant coverage; native preparation only consumes that typed fact.
+function requireDeploymentSecretScope(environment: DeploymentEnvironmentDetailV1): void {
+    const scope = environment.secretScope;
+    if (!scope) refuse('secret_scope_requirements_unavailable');
+    if (scope.status !== 'ready') refuse(scope.reason);
+}
 const machineUnavailable = (details: z.infer<typeof ExternalActionInstalledMachineUnavailableSchema>): ActionExecuteFailure => ({
     ok: false, errorCode: 'machine_unavailable', details,
     error: `machine_unavailable (Machine ${details.machineId}: ${details.reason}, HTTP ${details.status})`,
@@ -756,7 +762,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     open: artifactId => open(artifactId, context),
                 }) : undefined;
             return prepareForkPreviewCreateForHost({ prepared, content, context, bindings: plan.explicitBindings,
-                ...(domain ? { domain } : {}) }, { storage,
+                ...(domain ? { domain: { ...domain, domainId: preview.domain!.domainId } } : {}) }, { storage,
                 readEnvironment: request => readDeploymentEnvironmentForHost(request, { readMetadata: readEnvironmentMetadata, open, assertCurrent }),
                 create: request => executePreviewTemplateCreationForHost({ ...request, plan }, { ...host, storage }),
             });
@@ -820,11 +826,15 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     hostReviewedChildren = await preparePreviewCreateContinuation(preview, input, content, context);
                 });
             if ('errorCode' in prepared) return prepared;
-            return { input: hostReviewedChildren?.input === undefined ? prepared
-                    : DeploymentEnvironmentCreateInputV1Schema.parse(hostReviewedChildren.input),
+            const selected = hostReviewedChildren?.input === undefined ? prepared
+                : DeploymentEnvironmentCreateInputV1Schema.parse(hostReviewedChildren.input);
+            const { controllerMachineId: _controller, buildMachineId: _build, ...otherDefaults } = defaults.values;
+            return { input: selected,
                 ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
                 preview: normalizeStrictJsonValue({ creationDefaults: {
-                values: defaults.values, sources: defaults.sources }, ...(defaults.reviewBasis ? { creationDefaultsBasis: defaults.reviewBasis } : {}),
+                values: { ...otherDefaults, controllerMachineId: selected.controllerMachineId,
+                    ...(selected.buildMachineId === undefined ? {} : { buildMachineId: selected.buildMachineId }) },
+                sources: defaults.sources }, ...(defaults.reviewBasis ? { creationDefaultsBasis: defaults.reviewBasis } : {}),
                 ...(copy.review ? { copy: copy.review } : {}) }) };
         } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
     }
@@ -1088,9 +1098,11 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             const sourceIntent = originalRequest.sourceIntent ? structuredClone(originalRequest.sourceIntent) : undefined;
             await assertCurrent(originalRequest.context);
             const environment = observedEnvironment ?? await targetHostReaders.readEnvironment(originalRequest);
-            // Other originating hosts cannot lend the controller's preview admission.
-            if (!hasControllerPreparationAdmission(originalRequest.context, environment))
+            // Other originating hosts cannot lend the controller's admission.
+            if (!hasControllerPreparationAdmission(originalRequest.context, environment)) {
+                requireDeploymentSecretScope(environment);
                 await admitPreview(environment, originalRequest.context, originalRequest.sha);
+            }
             const targetLinkId = originalRequest.targetLinkId ?? environment.environment.runtimeTargetLinkId;
             if (!targetLinkId) return failure('target_mismatch');
             const request = { ...originalRequest, targetLinkId };
@@ -1104,8 +1116,16 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             const link = environment.targetLinks.find(item => item.targetLink.id === request.targetLinkId)?.targetLink;
             if (!link) return failure('target_mismatch');
             const assertCandidateCurrent = () => assertCurrent(request.context);
+            const previewDomain = request.context.invocationServices?.deploymentPreviewDomain
+                ?? await preparePreviewDomainFactForHost({ serverId: host.serverId,
+                    provenance: environment.content.previewProvenance,
+                    sources: environment.content.bindings.map(binding => binding.source) }, {
+                    readTemplate: environmentId => targetHostReaders.readEnvironment({ environmentId, context: request.context }),
+                    readDomain: input => targetHost.readPreviewDomain!({ ...input, context: request.context }),
+                });
             if (builder !== host.machineId) {
                 const response = await sendChild(DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'prepare',
+                    ...(previewDomain ? { previewDomain } : {}),
                     actionId: 'deployments.deploy', input: { serverId: host.serverId, environmentId: request.environmentId,
                         targetLinkId: request.targetLinkId,
                         ...(sourceIntent ? { sourceIntent } : {}), ...(request.sha ? { sha: request.sha } : {}),
@@ -1122,6 +1142,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 if (candidate.input.serverId !== host.serverId || candidate.input.environmentId !== request.environmentId
                     || candidate.input.targetLinkId !== link.id || candidate.input.expectedRevision !== environment.environment.revision
                     || candidate.input.expectedTargetLinkRevision !== link.revision || candidate.content.buildMachineId !== builder
+                    || !isDeepStrictEqual(candidate.content.previewDomain, previewDomain)
                     || !isDeepStrictEqual(candidate.content.machines, link.machines)
                     || !isDeepStrictEqual(candidate.content.machineResults, machineResults)) return failure('target_mismatch');
                 if (sourceIntent && !isDeepStrictEqual(candidate.content.sourceIntent, sourceIntent)
@@ -1139,11 +1160,14 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 return candidate;
             }
             const staging: { artifact?: Awaited<ReturnType<typeof artifacts.create>> } = {};
-            const content = await prepareOwnServerDeploymentCandidate({ ...request, sourceIntent, environment, runtime: host.runtime,
+            const candidateContext = previewDomain ? { ...request.context, invocationServices: {
+                ...request.context.invocationServices, deploymentPreviewDomain: previewDomain } } : request.context;
+            const content = await prepareOwnServerDeploymentCandidate({ ...request, context: candidateContext, sourceIntent, environment, runtime: host.runtime,
                 machineId: host.machineId, machineResults, readReferenceEnvironment: targetHostReaders.readEnvironment,
                 readPreviewDomain: targetHost.readPreviewDomain,
                 async stageContent(sourceIntent) {
                     const initial = DeploymentContentV1Schema.parse({ sourceIntent, machines: link.machines,
+                        ...(previewDomain ? { previewDomain } : {}),
                         ...(request.services ? { services: request.services } : {}),
                         buildMachineId: builder, ...(environment.environment.ingress ? { ingress: environment.environment.ingress } : {}),
                         onFailure: request.onFailure ?? DEFAULT_OWN_SERVER_DEPLOYMENT_ON_FAILURE, images: [], machineResults, steps: [] });
@@ -2067,6 +2091,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const environment = preparationEnvironment ?? await targetHostReaders.readEnvironment({
                     environmentId: request.input.environmentId, context: request.context });
                 if (!authorsCandidate) {
+                    if (request.actionId === 'deployments.deploy') requireDeploymentSecretScope(environment);
                     await admitPreview(environment, request.context, candidate.content.sourceIntent?.kind === 'repository'
                         ? candidate.content.sourceIntent.sha : undefined);
                     const role = await definitionRole(request.context);
@@ -2118,6 +2143,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     const { ownServer: _review, ...unreviewed } = nativeCandidate;
                     content = createStoredPromotionReceiptContentForHost(promotion, nativeCandidate.onFailure);
                     if (nativeCandidate.ownServer) {
+                        if (nativeCandidate.previewDomain) content = { ...content, previewDomain: nativeCandidate.previewDomain };
                         if (!isDeepStrictEqual(unreviewed, content)) return failure('target_mismatch');
                         if (!isDeepStrictEqual(nativeCandidate.ownServer.imageArchives, sourceImageArchives)) return failure('target_mismatch');
                         const retained = readDeploymentEnvironmentArtifactV1(request.input.destinationContent,
@@ -2136,6 +2162,16 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     }
                     promotionReview = { artifact: 'image', previousDocument: destination.content.definition.document,
                         candidateDocument: candidateEnvironmentContent.definition.document };
+                }
+                if (!content.previewDomain && !nativeCandidate.ownServer) {
+                    const effectiveEnvironment = candidateEnvironmentContent ?? environment.content;
+                    const previewDomain = await preparePreviewDomainFactForHost({ serverId: host.serverId,
+                        provenance: effectiveEnvironment.previewProvenance,
+                        sources: effectiveEnvironment.bindings.map(binding => binding.source) }, {
+                        readTemplate: environmentId => targetHostReaders.readEnvironment({ environmentId, context: request.context }),
+                        readDomain: input => targetHost.readPreviewDomain!({ ...input, context: request.context }),
+                    });
+                    if (previewDomain) content = { ...content, previewDomain };
                 }
                 if (!isDeepStrictEqual(content, candidate.content)) {
                     const owner = await readContentOwner();

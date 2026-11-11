@@ -131,6 +131,26 @@ transaction. The private grant repository stores ciphertext only; unchanged
 subjects and ciphertext cause no grant write. Grant identity excludes the
 Environment revision and binding author.
 
+In 0.3 development, a template's initial Environment create or content update
+records actual post-generation Saved Secret identities without completed
+`requiredBindings` routing while the binding child remains pending. The existing
+capture format treats that missing routing as incomplete. Updates retain prior
+reference identities, including unplaced/shared uses, until the binding writer
+commits the complete next bindings and grants. Incoming identities use canonical
+Saved Secret reference admission; a caller cannot retain another person's
+unavailable resource. This uses the private storage projection, not the public
+Action input. Template authorization admits that field without unrelated copy,
+prepared-grant or authored-digest operands. The global Used-by census continues
+to see known identities rather than treating unrelated resources as unknown.
+The final template metadata write preserves the committed captures. Deploy and
+candidate preparation consume Home's typed `secretScope` result once at
+admission, before native acquisition; a missing result refuses with
+`secret_scope_requirements_unavailable`. They do not inspect private content or
+recompute grant coverage. A controller-admitted signed preparation child consumes
+that admission instead of checking readiness again on its builder. Ordinary
+binding-free creates retain complete empty captures. This does not retroactively identify incomplete older installs whose
+captures were already recorded as an empty list.
+
 New secret content contains only `{ kind: 'secret', value }` inside the existing
 authenticated subject envelope. That subject binds the Environment, Machine,
 installation and exact Saved Secret resource revision. A renamed binding can
@@ -556,6 +576,16 @@ covers an Action edit, a daemon reconnect and a promotion. V4 answers 409
 the held record.
 
 ## Managed-resource birth relationship (0.3 development)
+
+Managed guests retain their own Machine grants. Controller Use confers no guest
+listing, viewing or execution access. Controller Manage also grants Manage on
+its enrolled guests, including nested controllers; below Manage, the guest's
+own grants decide. The Machine access owner applies this same decision to
+managed-resource reads, ordinary Machine access, recipient key work and grant
+withdrawals. Inherited authority does not create encryption envelopes: E2EE
+guest contents remain unavailable until a current key holder publishes the
+recipient's actual guest envelope. Exact native control can use its signed
+managed-resource scope without granting ordinary controller access.
 
 Session creation can carry `managedCreation` with the Home, managed-resource and
 controller ids. The Session birth transaction validates the admitted, enrolled

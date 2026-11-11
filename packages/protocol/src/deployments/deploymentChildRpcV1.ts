@@ -10,10 +10,11 @@ import { DEFAULT_DEPLOYMENT_ON_FAILURE_V1, EnvironmentSecretBindingV1Schema } fr
 import { DeploymentBindingsSetInputV1Schema } from './deploymentBindingPatchV1.js';
 import { DeploymentDeployInputV1Schema, DeploymentDeployIntentInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentRollbackIntentInputV1Schema } from './deploymentDeployIntentV1.js';
 import { DeploymentEnvironmentCreateIntentInputV1Schema } from './deploymentTemplateInstantiationV1.js';
+import { DeploymentPreviewDomainFactV1Schema } from './deploymentPreviewTemplateV1.js';
 import { deploymentChildEffectActionIdForRootV1, isDeploymentDomainRemoveActionIdV1, isDeploymentDomainAddActionIdV1,
     isDeploymentMembershipActionIdV1,
     DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
-    DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 } from './deploymentActionIdsV1.js';
+    DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from './deploymentActionIdsV1.js';
 import { DeploymentDomainAddInputV1Schema, DeploymentDomainAddPreparedInputV1Schema, DeploymentDomainRemoveInputV1Schema, DeploymentDomainVerifyInputV1Schema,
     DeploymentDomainPlacementV1Schema, DeploymentDomainTopologyV1Schema } from './deploymentDomainV1.js';
 import type { DeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
@@ -101,7 +102,8 @@ export const DeploymentChildRpcV1Schema = lazyZodSchema(() => z.union([
         input: DeploymentTeardownInputV1Schema, deploymentId: id, actionOperationId: id,
         step: DeploymentTeardownStepV1Schema, mode: z.enum(['observe', 'execute']) }),
     z.strictObject({ ...placement, kind: z.literal('prepare'), actionId: z.literal('deployments.deploy'),
-        input: z.safeExtend(DeploymentDeployIntentInputV1Schema, { targetLinkId: id }), expectedRevision: revision, expectedTargetLinkRevision: revision }),
+        input: z.safeExtend(DeploymentDeployIntentInputV1Schema, { targetLinkId: id }), expectedRevision: revision, expectedTargetLinkRevision: revision,
+        previewDomain: z.optional(DeploymentPreviewDomainFactV1Schema) }),
     ...job._zod.def.options.map(shape => z.union(root._zod.def.options.map(action => z.strictObject({ ...shape.shape, ...action.shape })))),
 ]).check(z.refine(value => value.kind !== 'member' || value.phase !== 'cleanup' || value.selectedDeploymentId === value.deploymentId)));
 export type DeploymentChildRpcV1 = z.infer<typeof DeploymentChildRpcV1Schema>;
@@ -173,7 +175,7 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
         if (!original.success || 'detachKeepRunning' in original.data) return false;
         return original.data.serverId === child.input.serverId && original.data.environmentId === child.input.environmentId;
     }
-    if (input.rootActionId === 'deployments.environments.create'
+    if (input.rootActionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
         || input.rootActionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 && isDeploymentDomainAddActionIdV1(child.actionId)) {
         if (deploymentChildEffectActionIdForRootV1(input.rootActionId, input.rootPreparationAdmission, child.actionId) !== child.actionId) return false;
         if (child.actionId === 'deployments.deploy') {

@@ -6,6 +6,7 @@ import { DeploymentBindingsPreparedInputV1Schema, DeploymentEnvironmentUpdateInp
 import { DeploymentArtifactContentReferenceV1Schema } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from '@happier-dev/protocol/deployments/deploymentIdentifiersV1';
 import { MachineSecretGrantV1Schema } from '../secrets/machineSecretGrantV1.js';
+import { DeploymentBindingSavedSecretRevisionsV1Schema } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 
 /** Private prepared installation envelopes accompany the single public binding intent. */
 export const DeploymentBindingsSetStorageInputV1Schema = z.extend(DeploymentBindingsPreparedInputV1Schema, {
@@ -19,6 +20,7 @@ export type DeploymentBindingsSetStorageInputV1 = z.infer<typeof DeploymentBindi
 
 /** Update remains the sole placement front door; binding custody commits in that same CAS. */
 export const DeploymentEnvironmentUpdateStorageInputV1Schema = lazyZodSchema(() => z.safeExtend(DeploymentEnvironmentUpdateInputV1Schema, {
+    referencedSavedSecretRevisions: z.optional(DeploymentBindingSavedSecretRevisionsV1Schema.check(z.minLength(1))),
     patch: z.optional(z.omit(DeploymentEnvironmentUpdatePatchV1Schema, deploymentEnvironmentPrivateContentPatchFieldsV1)),
     authoredInputDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u))),
     preparedBindings: z.optional(z.strictObject({

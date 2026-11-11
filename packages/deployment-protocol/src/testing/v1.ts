@@ -110,6 +110,8 @@ export function createDeploymentEnvironmentDetailV1(overrides: Partial<Deploymen
     if (environment.content.t !== 'plain' || link.content.t !== 'plain') throw new Error('Expected opened fixture content');
     return DeploymentEnvironmentDetailV1Schema.parse({
         environment: createDeploymentEnvironmentHeaderV1(), content: environment.content.v,
+        // The default binding-free Environment has the ordinary Home read's complete secret scope.
+        secretScope: { status: 'ready', reason: 'secret_scope_current', requiredGrantCount: 0, missingGrantCount: 0 },
         targetLinks: [{ targetLink: createDeploymentTargetLinkHeaderV1(), content: link.content.v }], ...overrides,
     });
 }

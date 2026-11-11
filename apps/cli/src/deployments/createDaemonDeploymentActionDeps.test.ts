@@ -223,7 +223,7 @@ describe('installed deployment storage and target composition', () => {
             }
             return { status: 200, data: path.includes('/receipts/')
                 ? { ok: true, deployment: receipt.deployment, cancellable: false }
-                : { ok: true, environment: detail.environment, targetLinks: [link] } };
+                : { ok: true, environment: detail.environment, secretScope: detail.secretScope, targetLinks: [link] } };
         });
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(url).pathname;
@@ -281,7 +281,7 @@ describe('installed deployment storage and target composition', () => {
         vi.spyOn(axios, 'request').mockImplementation(async request => ({ status: 200,
             data: String(request.url).includes('/receipts/')
                 ? { ok: true, deployment: receipt.deployment, cancellable: false }
-                : { ok: true, environment: detail.environment, targetLinks: [link] } }));
+                : { ok: true, environment: detail.environment, secretScope: detail.secretScope, targetLinks: [link] } }));
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(url).pathname;
             transportPaths.push(`GET ${path}`);
@@ -369,7 +369,7 @@ describe('installed deployment storage and target composition', () => {
         const detail = createDeploymentEnvironmentDetailV1();
         const link = detail.targetLinks[0]!.targetLink;
         vi.spyOn(axios, 'request').mockResolvedValue({ status: 200,
-            data: { ok: true, environment: detail.environment, targetLinks: [link] } });
+            data: { ok: true, environment: detail.environment, secretScope: detail.secretScope, targetLinks: [link] } });
         const artifacts = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Runtime log recovery cannot acquire private content'));
         const deps = createDaemonDeploymentActionDeps({ credentials: { token: 'fixture', encryption: null },
             serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
@@ -398,7 +398,7 @@ describe('installed deployment storage and target composition', () => {
         vi.spyOn(axios, 'request').mockImplementation(async config => ({ status: 200,
             data: String(config.url).includes('/receipts/')
                 ? { ok: true, deployment: receipt.deployment, cancellable: false }
-                : { ok: true, environment: detail.environment, targetLinks: [link] } }));
+                : { ok: true, environment: detail.environment, secretScope: detail.secretScope, targetLinks: [link] } }));
         const artifacts = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Platform logs must not open own-server content'));
         const deps = createDaemonDeploymentActionDeps({ credentials: { token: 'fixture', encryption: null },
             serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
@@ -580,7 +580,7 @@ describe('installed deployment storage and target composition', () => {
             if (path.endsWith('/teardown')) return { status: 200, data: { ok: true,
                 environmentId: detail.environment.id, revision: detail.environment.revision + 1,
                 targetLinkId: link.id, targetLinkRevision: link.revision + 1, detached: true } };
-            return { status: 200, data: { ok: true, environment: detail.environment,
+            return { status: 200, data: { ok: true, environment: detail.environment, secretScope: detail.secretScope,
                 targetLinks: detail.targetLinks.map(row => row.targetLink) } };
         });
         const keys = tweetnacl.sign.keyPair();
@@ -661,8 +661,8 @@ describe('installed deployment storage and target composition', () => {
     it.each([
         ['off', 'compact', 'deployment_access_denied'],
         ['off', 'prepared', 'deployment_access_denied'],
-        ['approveEachCommit', 'compact', 'approvals_not_supported'],
-        ['approveEachCommit', 'prepared', 'approvals_not_supported'],
+        ['approveEachCommit', 'compact', 'present_user_required'],
+        ['approveEachCommit', 'prepared', 'present_user_required'],
     ] as const)('refuses %s fork preview %s deployment before candidate or credential acquisition', async (forkPreviews, entry, errorCode) => {
         const environment = createDeploymentEnvironmentDetailV1();
         const template = createDeploymentEnvironmentDetailV1();
@@ -714,7 +714,7 @@ describe('installed deployment storage and target composition', () => {
             if (path.endsWith(`/receipts/${receipt.deployment.id}`))
                 return { status: 200, data: { ok: true, deployment: receipt.deployment } };
             const detail = path.endsWith(`/${template.environment.id}`) ? template : environment;
-            return { status: 200, data: { ok: true, environment: detail.environment,
+            return { status: 200, data: { ok: true, environment: detail.environment, secretScope: detail.secretScope,
                 targetLinks: detail.targetLinks.map(row => row.targetLink) } };
         });
         const acquire = vi.fn(async () => { throw Object.assign(new Error('fork_acquisition_reached'), { code: 'fork_acquisition_reached' }); });
@@ -818,7 +818,7 @@ describe('installed deployment storage and target composition', () => {
         receipt.content.sourceIntent = environment.content.definition;
         receipt.content.machines = environment.targetLinks[0].targetLink.machines;
         receipt.content.buildMachineId = environment.environment.buildMachineId!;
-        vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { ok: true, environment: environment.environment,
+        vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { ok: true, environment: environment.environment, secretScope: environment.secretScope,
             targetLinks: environment.targetLinks.map(row => row.targetLink) } });
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
@@ -964,7 +964,7 @@ describe('installed deployment storage and target composition', () => {
             const path = new URL(request.url!).pathname;
             if (request.method === 'GET') {
                 reads.push(path);
-                return { status: 200, data: { ok: true, environment: environment.environment,
+                return { status: 200, data: { ok: true, environment: environment.environment, secretScope: environment.secretScope,
                     targetLinks: environment.targetLinks.map(row => row.targetLink) } };
             }
             if (path === '/v1/deployments/targets/list') {
@@ -1086,7 +1086,7 @@ describe('installed deployment storage and target composition', () => {
                 return { status: 200, data: result() };
             }
             return { status: 200, data: DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
-                environment: environment.environment, targetLinks: [link] }) };
+                environment: environment.environment, secretScope: environment.secretScope, targetLinks: [link] }) };
         });
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(url).pathname;
@@ -1435,7 +1435,7 @@ describe('installed deployment storage and target composition', () => {
                 }
                 if (settling) settlementReads.metadata++;
                 return { status: 200, data: DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
-                    environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink) }) };
+                    environment: environment.environment, secretScope: environment.secretScope, targetLinks: environment.targetLinks.map(item => item.targetLink) }) };
             });
             vi.spyOn(axios, 'get').mockImplementation(async url => {
                 if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
@@ -2386,7 +2386,7 @@ describe('installed deployment storage and target composition', () => {
             const path = new URL(String(request.url)).pathname;
             expect(request.method).toBe('GET');
             if (path === `/v1/deployments/environments/${detail.environment.id}`) return { status: 200,
-                data: { ok: true, environment: detail.environment, targetLinks: [] } };
+                data: { ok: true, environment: detail.environment, secretScope: detail.secretScope, targetLinks: [] } };
             if (path === `/v1/projects/sources/${detail.environment.projectSourceId}`) return { status: 200,
                 data: { ok: true, canManage: true, source: { id: detail.environment.projectSourceId, revision: 6,
                     name: 'App', owner: { kind: 'account', accountId: 'owner' }, audience: [], createdByAccountId: 'owner' } } };
@@ -2424,6 +2424,70 @@ describe('installed deployment storage and target composition', () => {
         } finally { try { await rm(root, { recursive: true, force: true }); } finally { await mounted.dispose(); } }
     });
 
+    it.each(['compact', 'prepared'] as const)('refuses unresolved template secret readiness before %s Deploy native effects', async entry => {
+        const environment = createDeploymentEnvironmentDetailV1();
+        environment.environment.buildMachineId = 'machine-a';
+        const receipt = createDeploymentReceiptDetailV1();
+        const documents = new Map<string, { kind: string; content: unknown }>();
+        documents.set(environment.environment.contentArtifactId, { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, content: environment.content });
+        for (const row of environment.targetLinks) documents.set(row.targetLink.contentArtifactId,
+            { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, content: row.content });
+        documents.set(receipt.deployment.contentArtifactId, { kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, content: receipt.content });
+        let scope = { status: 'unavailable', reason: 'secret_scope_requirements_unavailable', requiredGrantCount: 0, missingGrantCount: 0 };
+        let omitScope = true;
+        const writes: unknown[] = [];
+        // Home HTTP and native acquisition are genuine boundaries; admission and private Artifact decoding stay real.
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+            const id = decodeURIComponent(new URL(url).pathname.split('/').at(-1)!);
+            const document = documents.get(id);
+            if (!document) return { status: 404, data: {} };
+            return { status: 200, data: { id, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
+                encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                header: encodePlainArtifactStoredContent({ kind: document.kind, title: 'Template' }),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify(document.content) }),
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } };
+        });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+            writes.push({ url, body }); throw new Error('Unresolved bindings cannot write candidates');
+        });
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+            if (request.method !== 'GET') { writes.push(request); throw new Error('No native mutation'); }
+            const path = new URL(request.url!).pathname;
+            if (path.endsWith('/deployments')) return { status: 200, data: { ok: true, items: [], nextCursor: null } };
+            if (path.endsWith(`/receipts/${receipt.deployment.id}`)) return { status: 200, data: { ok: true, deployment: receipt.deployment } };
+            return { status: 200, data: { ok: true, environment: environment.environment,
+                targetLinks: environment.targetLinks.map(row => row.targetLink), ...(omitScope ? {} : { secretScope: scope }) } };
+        });
+        let acquisitions = 0;
+        const acquire = async (): Promise<never> => {
+            acquisitions++; throw Object.assign(new Error('native_acquisition_reached'), { code: 'native_acquisition_reached' });
+        };
+        const deps = createDaemonDeploymentActionDeps({ credentials: { token: 'fixture', encryption: null },
+            serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
+            resolveRequesterIdentity: resolveOwnerRequesterIdentity, runtime: { acquire, acquireCandidate: acquire } });
+        const execute = () => deps.prepareDeploymentAction({ actionId: 'deployments.deploy', context: ownerContext,
+            input: { serverId: 'home', environmentId: environment.environment.id,
+                ...(entry === 'prepared' ? { expectedRevision: environment.environment.revision,
+                    targetLinkId: environment.targetLinks[0]!.targetLink.id,
+                    expectedTargetLinkRevision: environment.targetLinks[0]!.targetLink.revision,
+                    contentArtifactId: receipt.deployment.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 } : {}),
+                requestKey: 'template-readiness' } });
+        expect(await execute()).toMatchObject({ ok: false, errorCode: 'secret_scope_requirements_unavailable' });
+        expect(acquisitions).toBe(0);
+        omitScope = false;
+        expect(await execute()).toMatchObject({ ok: false, errorCode: 'secret_scope_requirements_unavailable' });
+        expect(acquisitions).toBe(0);
+        expect(writes).toEqual([]);
+        scope = { ...scope, status: 'actionNeeded', reason: 'secret_scope_grants_required', requiredGrantCount: 1, missingGrantCount: 1 };
+        expect(await execute()).toMatchObject({ ok: false, errorCode: 'secret_scope_grants_required' });
+        expect(acquisitions).toBe(0);
+        scope = { ...scope, status: 'ready', reason: 'secret_scope_current', missingGrantCount: 0 };
+        expect(await execute()).toMatchObject({ ok: false, errorCode: 'native_acquisition_reached' });
+        expect(acquisitions).toBe(1);
+    });
+
     it('prepares first-configuration choices through the existing update Action without writing or opening Environment content', async () => {
         const serverHttpBaseUrl = 'https://first-configure.test';
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
@@ -2440,7 +2504,7 @@ describe('installed deployment storage and target composition', () => {
             const path = new URL(String(request.url)).pathname;
             expect(request.method).toBe('GET');
             if (path === `/v1/deployments/environments/${detail.environment.id}`) return { status: 200,
-                data: { ok: true, environment: detail.environment, targetLinks: [link] } };
+                data: { ok: true, environment: detail.environment, secretScope: detail.secretScope, targetLinks: [link] } };
             if (path === `/v1/projects/sources/${detail.environment.projectSourceId}`) return { status: 200,
                 data: { ok: true, canManage: true, source: { id: detail.environment.projectSourceId, revision: 6,
                     name: 'App', owner: { kind: 'account', accountId: 'owner' }, audience: [], createdByAccountId: 'owner' } } };
@@ -2648,7 +2712,7 @@ describe('installed deployment storage and target composition', () => {
             }
             if (path.endsWith('/deployments')) return { status: 200,
                 data: DeploymentReceiptListResultV1Schema.parse({ ok: true, items: [listed], nextCursor: null }) };
-            return { status: 200, data: { ok: true, environment: environment.environment,
+            return { status: 200, data: { ok: true, environment: environment.environment, secretScope: environment.secretScope,
                 targetLinks: environment.targetLinks.map(item => item.targetLink) } };
         });
         const deps = createDaemonDeploymentActionDeps({
@@ -2726,7 +2790,7 @@ describe('installed deployment storage and target composition', () => {
             }
             if (path.endsWith('/parent-release')) return { status: 200, data: { ok: true, deployment: admitted.deployment } };
             const environment = path.endsWith('/source') ? source : destination;
-            return { status: 200, data: { ok: true, environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink) } };
+            return { status: 200, data: { ok: true, environment: environment.environment, secretScope: environment.secretScope, targetLinks: environment.targetLinks.map(item => item.targetLink) } };
         });
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
@@ -2838,7 +2902,7 @@ describe('installed deployment storage and target composition', () => {
         });
         let allocated = false;
         vi.spyOn(axios, 'request').mockImplementation(async request => {
-            if (request.method === 'GET') return { status: 200, data: { ok: true, environment: environment.environment,
+            if (request.method === 'GET') return { status: 200, data: { ok: true, environment: environment.environment, secretScope: environment.secretScope,
                 targetLinks: environment.targetLinks.map(item => item.targetLink) } };
             allocated = true;
             return { status: 409, data: { ok: false, error: 'deployment_conflict' } };
@@ -2968,7 +3032,7 @@ describe('installed deployment storage and target composition', () => {
         });
         let receiptAllocations = 0;
         vi.spyOn(axios, 'request').mockImplementation(async request => {
-            if (request.method === 'GET') return { status: 200, data: { ok: true, environment: environment.environment,
+            if (request.method === 'GET') return { status: 200, data: { ok: true, environment: environment.environment, secretScope: environment.secretScope,
                 targetLinks: environment.targetLinks.map(item => item.targetLink) } };
             receiptAllocations++;
             return { status: 409, data: { ok: false, error: 'deployment_conflict' } };
@@ -3118,7 +3182,7 @@ describe('installed deployment storage and target composition', () => {
                 if (path.endsWith('/secret-launch-admission')) return { status: 200, data: { ok: true, grants: [] } };
                 const environment = path.endsWith(`/${source.environment.id}`) ? source : destination;
                 if (request.method === 'GET' && path.includes('/environments/')) return { status: 200,
-                    data: { ok: true, environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink) } };
+                    data: { ok: true, environment: environment.environment, secretScope: environment.secretScope, targetLinks: environment.targetLinks.map(item => item.targetLink) } };
                 if (request.method === 'GET' && path.endsWith('/receipts/source-receipt')) return { status: 200,
                     data: { ok: true, deployment: receipt.deployment } };
                 if (request.method === 'GET' && path.endsWith(`/receipts/${servingDestination.deployment.id}`)) return { status: 200,
@@ -3251,7 +3315,7 @@ describe('installed deployment storage and target composition', () => {
         const requests: string[] = [];
         vi.spyOn(axios, 'request').mockImplementation(async request => {
             requests.push(String(request.url));
-            return { status: 200, data: { ok: true, environment: detail.environment,
+            return { status: 200, data: { ok: true, environment: detail.environment, secretScope: detail.secretScope,
                 targetLinks: detail.targetLinks.map(item => item.targetLink) } };
         });
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
@@ -3293,7 +3357,7 @@ describe('installed deployment storage and target composition', () => {
         const http = vi.spyOn(axios, 'request').mockImplementation(async request => {
             expect(request.method).toBe('GET');
             requests.push(String(request.url));
-            return { status: 200, data: { ok: true, environment: detail.environment,
+            return { status: 200, data: { ok: true, environment: detail.environment, secretScope: detail.secretScope,
                 targetLinks: detail.targetLinks.map(item => item.targetLink) } };
         });
         const privateReads = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Prepare scope cannot open private content'));
@@ -3353,7 +3417,7 @@ describe('installed deployment storage and target composition', () => {
         const writes: string[] = [];
         vi.spyOn(axios, 'request').mockImplementation(async request => {
             if (request.method?.toUpperCase() === 'GET') return { status: 200, data: { ok: true,
-                environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink) } };
+                environment: environment.environment, secretScope: environment.secretScope, targetLinks: environment.targetLinks.map(item => item.targetLink) } };
             writes.push(request.method ?? '');
             return { status: 200, data: { ok: true, environmentId: environment.environment.id, revision: 1 } };
         });
@@ -3664,7 +3728,7 @@ describe('installed deployment storage and target composition', () => {
                 if (path.endsWith(`/environments/${environment.environment.id}`)) {
                     preparationReads.environments++;
                     return { status: 200,
-                    data: { ok: true, environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink),
+                    data: { ok: true, environment: environment.environment, secretScope: environment.secretScope, targetLinks: environment.targetLinks.map(item => item.targetLink),
                         ...(pendingEnvelope ? { pendingDeploy: pendingEnvelope } : {}),
                         ...(selection === 'machine Use pending stored definition' ? { pendingAdmission: {
                             requesterAccountId: 'owner', serverId: 'home', requestKey: 'use-pending',
