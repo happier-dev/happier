@@ -2540,10 +2540,10 @@ describe('current UI context Voice tool port', () => {
     });
 
     it('delegates a generic Voice Action through the canonical dispatcher with its exact origin and returns only its bounded settlement', async () => {
-        daemonReply.mockReset();
-        daemonReply.mockResolvedValue({
-            ok: true,
-            result: { ticketId: 'T-124' },
+        const execute = vi.fn(async (_input: unknown, _context: Readonly<{ invocation: ExternalActionRequesterInvocationV1 }>) => ({ ticketId: 'T-124' }));
+        await answerExternalActionAccountForHome(homes, actionHomeId, {
+            actionId: 'action.invoke', machineId: 'machine-actions', tokenEpoch: 0, requesterInvocation: 'required',
+            execute,
         });
         const projection = createDaemonActionProjection();
         const port = createCurrentUiContextVoiceToolPort({
@@ -2564,23 +2564,19 @@ describe('current UI context Voice tool port', () => {
 
         expect(outcome).toEqual({ ok: true, result: { ticketId: 'T-124' } });
         expect(JSON.stringify(outcome)).not.toContain('private ticket title');
-        expect(daemonReply).toHaveBeenCalledWith(expect.objectContaining({
-            machineId: 'machine-actions',
-            method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
-            payload: expect.objectContaining({
-                expectedContributorOccurrenceId: 'acme-triage-occurrence-27',
-                qualifiedActionId: 'acme.triage/file-ticket',
-                input: { title: 'private ticket title' },
-                executionSurface: 'voice',
-                sessionId: 'host-daemon-session',
-            }),
-        }));
+        expect(execute).toHaveBeenCalledOnce();
+        expect(execute.mock.calls[0]![0]).toMatchObject({ action: ACTION_ID,
+            expectedContributorOccurrenceId: 'acme-triage-occurrence-27',
+            input: { title: 'private ticket title' }, sessionId: 'host-daemon-session' });
+        expect(execute.mock.calls[0]![1].invocation).toMatchObject({ surface: 'voice', defaultSessionId: 'host-daemon-session' });
     });
 
     it('projects an issued daemon Action acknowledgement loss to the retained Voice outcome_unknown settlement', async () => {
-        daemonReply.mockReset();
-        daemonReply.mockImplementation(async () => {
-            throw new Error('active Action socket acknowledgement timed out after emission');
+        const execute = vi.fn(async () => {
+            throw new Error('active Action HTTP acknowledgement was lost after issuance');
+        });
+        await answerExternalActionAccountForHome(homes, actionHomeId, {
+            actionId: 'action.invoke', machineId: 'machine-actions', tokenEpoch: 0, requesterInvocation: 'required', execute,
         });
         const projection = createDaemonActionProjection();
         const port = createCurrentUiContextVoiceToolPort({
@@ -2597,16 +2593,14 @@ describe('current UI context Voice tool port', () => {
             action: ACTION_ID,
             input: { title: 'private ticket title' },
         })).resolves.toEqual({ ok: false, code: 'outcome_unknown' });
-        expect(daemonReply).toHaveBeenCalledWith(expect.objectContaining({
-            method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
-        }));
+        expect(execute).toHaveBeenCalledOnce();
     });
 
     it('retains a post-handler daemon retirement as outcome_unknown', async () => {
-        daemonReply.mockReset();
-        daemonReply.mockResolvedValue({
-            ok: false,
-            code: 'plugin_action_outcome_unknown',
+        const execute = vi.fn(async () => ({ code: 'plugin_action_outcome_unknown' }));
+        await answerExternalActionAccountForHome(homes, actionHomeId, {
+            actionId: 'action.invoke', machineId: 'machine-actions', tokenEpoch: 0, requesterInvocation: 'required', execute,
+            failure: () => ({ errorCode: 'plugin_action_outcome_unknown', error: 'plugin_action_outcome_unknown' }),
         });
         const projection = createDaemonActionProjection();
         const port = createCurrentUiContextVoiceToolPort({
@@ -2623,9 +2617,7 @@ describe('current UI context Voice tool port', () => {
             action: ACTION_ID,
             input: { title: 'private ticket title' },
         })).resolves.toEqual({ ok: false, code: 'outcome_unknown' });
-        expect(daemonReply).toHaveBeenCalledWith(expect.objectContaining({
-            method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
-        }));
+        expect(execute).toHaveBeenCalledOnce();
     });
 
     it('delegates an opaque execute-Action command through that same dispatcher and preserves a known success after its publication retires', async () => {
@@ -2638,10 +2630,12 @@ describe('current UI context Voice tool port', () => {
             },
             retirementSignal: new AbortController().signal,
         };
-        daemonReply.mockReset();
-        daemonReply.mockImplementation(async () => {
-            current = null;
-            return { ok: true, result: { ticketId: 'T-125' } };
+        await answerExternalActionAccountForHome(homes, actionHomeId, {
+            actionId: 'action.invoke', machineId: 'machine-actions', tokenEpoch: 0, requesterInvocation: 'required',
+            execute: async () => {
+                current = null;
+                return { ticketId: 'T-125' };
+            },
         });
         const projection = createDaemonActionProjection();
         const port = createCurrentUiContextVoiceToolPort({
@@ -2670,10 +2664,13 @@ describe('current UI context Voice tool port', () => {
             },
             retirementSignal: new AbortController().signal,
         };
-        daemonReply.mockReset();
-        daemonReply.mockImplementation(async () => {
+        const execute = vi.fn(async () => {
             current = null;
-            return { ok: false, code: 'plugin_action_unavailable' };
+            return { code: 'plugin_action_unavailable' };
+        });
+        await answerExternalActionAccountForHome(homes, actionHomeId, {
+            actionId: 'action.invoke', machineId: 'machine-actions', tokenEpoch: 0, requesterInvocation: 'required', execute,
+            failure: () => ({ errorCode: 'plugin_action_unavailable', error: 'plugin_action_unavailable' }),
         });
         const projection = createDaemonActionProjection();
         const port = createCurrentUiContextVoiceToolPort({
@@ -2692,9 +2689,7 @@ describe('current UI context Voice tool port', () => {
             errorCode: 'plugin_action_unavailable',
         });
         expect(current).toBeNull();
-        expect(daemonReply).toHaveBeenCalledWith(expect.objectContaining({
-            method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
-        }));
+        expect(execute).toHaveBeenCalledOnce();
     });
 
     it('forwards exact command retirement before a non-safe daemon Action dispatches', async () => {
