@@ -15,6 +15,7 @@ export const alertBrowserContextUnavailable: NonNullable<BrowserShellContextStat
     alertActionFailure({
         reason: message,
         code: reason.errorCode ?? null,
+        requestId: reason.requestId,
         context: {
             ...readSafeFailureDetails(reason.details),
             ...(cause ? {

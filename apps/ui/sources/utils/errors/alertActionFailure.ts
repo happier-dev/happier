@@ -37,6 +37,7 @@ export function showActionFailureDetails(failure: Readonly<{ code: string; conte
 export function alertActionFailure(failure: Readonly<{
     reason: string;
     code: string | null;
+    requestId?: string | null;
     context?: ActionFailureContext;
     recovery?: Readonly<{ label: string; onPress: () => void }>;
 }>): void {
@@ -51,7 +52,10 @@ export function alertActionFailure(failure: Readonly<{
         uncertain ? t('toolView.pending.unknownDescription') : failure.reason,
         [
             ...(failure.recovery ? [{ text: failure.recovery.label, onPress: failure.recovery.onPress }] : []),
-            { text: t('approvals.technicalDetails'), onPress: () => showActionFailureDetails({ code, context: failure.context }) },
+            { text: t('approvals.technicalDetails'), onPress: () => showActionFailureDetails({ code, context: {
+                ...failure.context,
+                ...(failure.requestId ? { requestId: failure.requestId } : {}),
+            } }) },
             { text: t('common.ok'), style: 'cancel' },
         ],
     );

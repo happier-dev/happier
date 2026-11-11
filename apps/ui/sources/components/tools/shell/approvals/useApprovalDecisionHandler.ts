@@ -120,7 +120,10 @@ export function alertApprovalFailure(error: unknown, fallbackMessage = t('approv
     const failureCause = typeof error === 'object' && error !== null && 'failureCause' in error && error.failureCause !== undefined
         ? readActionFailureCauseV1(error.failureCause) : undefined;
     const details = typeof error === 'object' && error !== null && 'details' in error ? error.details : undefined;
-    alertActionFailure({ reason, code, context: {
+    alertActionFailure({ reason, code,
+        requestId: typeof error === 'object' && error !== null && 'requestId' in error && typeof error.requestId === 'string'
+            ? error.requestId : undefined,
+        context: {
         ...readSafeFailureDetails(details),
         ...failureCause,
     } });

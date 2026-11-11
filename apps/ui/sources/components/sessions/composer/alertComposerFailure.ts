@@ -40,6 +40,7 @@ export function alertComposerActionResultFailure(result: unknown): void {
         reason,
         code,
         context: readSafeFailureDetails(record.details),
+        requestId: typeof record.requestId === 'string' ? record.requestId : undefined,
     });
 }
 
