@@ -1,4 +1,4 @@
-import type { ManagedMachineFailureDetailsV1, ManagedNativeFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { ManagedMachineFailureDetailsV1Schema, type ManagedMachineFailureDetailsV1, type ManagedNativeFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { MachineProvisionerNativeCauseV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { projectActionFailureCauseV1,
     type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -15,8 +15,9 @@ export class ManagedMachineControllerError extends Error {
     /** Child Actions return public failures, never raw exceptions or message text. */
     static fromActionFailure(failure: ActionExecuteFailure, phase: ActionId): ManagedMachineControllerError {
         const error = new ManagedMachineControllerError(failure.errorCode);
+        const details = ManagedMachineFailureDetailsV1Schema.safeParse(failure.details);
         return new ManagedMachineControllerError(failure.errorCode, undefined,
-            undefined, failure.failureCause ?? projectActionFailureCauseV1(error, phase));
+            details.success ? details.data : undefined, failure.failureCause ?? projectActionFailureCauseV1(error, phase));
     }
 }
 
