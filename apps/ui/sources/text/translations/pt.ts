@@ -20041,6 +20041,7 @@ settingsSession: {
         browseNoSearchResults: "Nenhuma sessão carregada corresponde ainda a esta pesquisa.",
     browseIndexing: "A indexar sessões externas…",
     browseIndexingProgress: ({ scanned, total }: { scanned: number; total: number }) => `${scanned} de ${total} sessões indexadas`,
+    browseIndexingScanned: ({ scanned }: { scanned: number }) => `Indexando sessões externas · ${scanned.toLocaleString()} até agora`,
     browseIndexingCancelled: "A indexação foi interrompida. Tente novamente quando quiser.",
     browseLoadMore: "Carregar mais sessões",
     browseFailedToLoad: "Falha ao carregar sessões externas.",

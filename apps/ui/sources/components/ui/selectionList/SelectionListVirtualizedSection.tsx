@@ -55,6 +55,8 @@ export type SelectionListVirtualizedSectionProps = Readonly<{
      * focused row nor scrolls.
      */
     focusedOptionId?: string | null;
+    /** The row the list keeps in view (`SelectionList` decides; never a pointer-focused row). */
+    scrollTargetOptionId?: string | null;
     /**
      * Canonical row-activation sinks, forwarded verbatim to `PlanOptionRow`.
      * The row itself owns activation (`activateSelectionListRow`), so these are
@@ -155,23 +157,24 @@ export function SelectionListVirtualizedSection(
         ? undefined
         : { rowIndex: props.headerRowIndex, columnCount: props.gridColumnCount ?? 1 };
 
-    // F4 — scroll-to-focused-row. Keyboard navigation updates
-    // `focusedOptionId` at the orchestrator; when the focused row belongs to
+    // F4 — scroll-to-row. `SelectionList` decides the row the list keeps in view
+    // (keyboard or programmatic focus, never the pointer); when it belongs to
     // THIS section, ask virtualized list to bring it into view centered
-    // (`viewPosition: 0.5`). When the focused option is null or lives in a
-    // different section, do nothing — the other section's virtualized host
-    // (if any) owns its own scroll behavior.
+    // (`viewPosition: 0.5`). When it is null or lives in a different section,
+    // do nothing — the other section's virtualized host (if any) owns its own
+    // scroll behavior.
     const virtualizedListRef = React.useRef<VirtualizedListRef | null>(null);
-    const focusedItemIndex = React.useMemo(
-        () => focusedOptionId === null
+    const revealOptionId = measureMode ? null : props.scrollTargetOptionId ?? null;
+    const revealItemIndex = React.useMemo(
+        () => revealOptionId === null
             ? -1
-            : props.section.options.findIndex((option) => option.id === focusedOptionId),
-        [focusedOptionId, props.section.options],
+            : props.section.options.findIndex((option) => option.id === revealOptionId),
+        [revealOptionId, props.section.options],
     );
     const { onViewportLayout } = useSelectionListVirtualizedFocusReveal({
         listRef: virtualizedListRef,
-        focusedItemIndex,
-        focusedKey: focusedOptionId,
+        focusedItemIndex: revealItemIndex,
+        focusedKey: revealOptionId,
         reducedMotion,
     });
 

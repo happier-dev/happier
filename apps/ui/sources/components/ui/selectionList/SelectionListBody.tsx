@@ -406,6 +406,7 @@ function SelectionListBodyPlannedContent(props: SelectionListBodyProps & Readonl
                 stepId={props.step.id}
                 selectedOptionIds={props.selectedOptionIds}
                 focusedOptionId={props.focusedOptionId}
+                scrollTargetOptionId={props.scrollTargetOptionId ?? null}
                 onSelect={props.onSelect}
                 onPushStep={props.onPushStep}
                 measureMode={isMeasure}
@@ -435,6 +436,7 @@ function SelectionListBodyPlannedContent(props: SelectionListBodyProps & Readonl
         stepId: props.step.id,
         selectedOptionIds: props.selectedOptionIds,
         focusedOptionId: props.focusedOptionId,
+        scrollTargetOptionId: props.scrollTargetOptionId ?? null,
         onSelect: props.onSelect,
         onPushStep: props.onPushStep,
         optionPositionById: optionPositions.byId,
@@ -573,6 +575,7 @@ function SelectionListBodyDirectVirtualizedSource(props: SelectionListBodyProps 
             selectedOptionIds={props.selectedOptionIds}
             focusedOptionId={props.focusedOptionId}
             focusedOptionIndex={props.focusedOptionIndex}
+            scrollTargetOptionId={props.scrollTargetOptionId ?? null}
             onSelect={props.onSelect}
             onPushStep={props.onPushStep}
             measureMode={isMeasure}

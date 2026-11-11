@@ -88,7 +88,7 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
-                focusedOptionId="opt-25"
+                focusedOptionId="opt-25" scrollTargetOptionId="opt-25"
                 onSelect={() => {}}
                 onPushStep={() => {}}
             />,
@@ -120,7 +120,7 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
-                focusedOptionId={null}
+                focusedOptionId={null} scrollTargetOptionId={null}
                 onSelect={() => {}}
                 onPushStep={() => {}}
             />,
@@ -136,7 +136,7 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
-                focusedOptionId="opt-30"
+                focusedOptionId="opt-30" scrollTargetOptionId="opt-30"
                 onSelect={() => {}}
                 onPushStep={() => {}}
             />,
@@ -158,7 +158,7 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
-                focusedOptionId="opt-30"
+                focusedOptionId="opt-30" scrollTargetOptionId="opt-30"
                 onSelect={() => {}}
                 onPushStep={() => {}}
             />
@@ -181,7 +181,7 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
-                focusedOptionId="opt-40"
+                focusedOptionId="opt-40" scrollTargetOptionId="opt-40"
                 onSelect={() => {}}
                 onPushStep={() => {}}
             />,
@@ -200,7 +200,7 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
-                focusedOptionId="opt-30"
+                focusedOptionId="opt-30" scrollTargetOptionId="opt-30"
                 onSelect={() => {}}
                 onPushStep={() => {}}
             />,
@@ -232,7 +232,7 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
-                focusedOptionId={null}
+                focusedOptionId={null} scrollTargetOptionId={null}
                 onSelect={() => {}}
                 onPushStep={() => {}}
             />,
@@ -244,7 +244,7 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
-                focusedOptionId="opt-30"
+                focusedOptionId="opt-30" scrollTargetOptionId="opt-30"
                 onSelect={() => {}}
                 onPushStep={() => {}}
             />,
@@ -265,7 +265,7 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 stepId="root"
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
-                focusedOptionId={null}
+                focusedOptionId={null} scrollTargetOptionId={null}
                 onSelect={() => {}}
                 onPushStep={() => {}}
             />,
@@ -278,7 +278,7 @@ describe('SelectionListVirtualizedSection focus parity (F4)', () => {
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
                 // Focus belongs to a different section's option id.
-                focusedOptionId="favorite:/Users/me/elsewhere"
+                focusedOptionId="favorite:/Users/me/elsewhere" scrollTargetOptionId="favorite:/Users/me/elsewhere"
                 onSelect={() => {}}
                 onPushStep={() => {}}
             />,

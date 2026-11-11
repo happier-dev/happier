@@ -39,7 +39,9 @@ const { module: capturedLegendList, state: legendListState } =
 
 // The factory runs while this file's static imports are still being evaluated (the virtualized list
 // backend imports Legend transitively), before `capturedLegendList` is initialized; read it at render.
-vi.mock('@legendapp/list/react-native', () => ({
+// Only the recycler is replaced: the section-list entry reached by the virtualized barrel imports other exports.
+vi.mock('@legendapp/list/react-native', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   LegendList: React.forwardRef<unknown, Record<string, unknown>>((props, ref) =>
     React.createElement(capturedLegendList.LegendList, { ...props, ref }),
   ),
@@ -1306,8 +1308,9 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
     const progress = screen.findByTestId('direct-session-candidates:indexing');
     expect(progress?.props.accessibilityRole).toBe('progressbar');
+    // A source that cannot count ahead still reports how far it got.
     expect(progress?.props.accessibilityLabel).toBe(
-      'externalSessions.browseIndexing',
+      'externalSessions.browseIndexingScanned',
     );
     expect(progress?.props.accessibilityValue).toBeUndefined();
     expect(progress?.props.accessibilityLiveRegion).toBeUndefined();

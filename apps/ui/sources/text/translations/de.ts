@@ -20036,6 +20036,7 @@ settingsSession: {
         browseNoSearchResults: 'Noch passt keine geladene Session zu dieser Suche.',
         browseIndexing: 'Externe Sessions werden indiziert…',
         browseIndexingProgress: ({ scanned, total }: { scanned: number; total: number }) => `${scanned} von ${total} Sessions indiziert`,
+        browseIndexingScanned: ({ scanned }: { scanned: number }) => `Externe Sessions werden indiziert · bisher ${scanned.toLocaleString()}`,
         browseIndexingCancelled: 'Die Indizierung wurde gestoppt. Versuch es erneut, wenn du so weit bist.',
         browseLoadMore: 'Mehr Sessions laden',
         browseFailedToLoad: 'Die externen Sessions ließen sich nicht laden.',

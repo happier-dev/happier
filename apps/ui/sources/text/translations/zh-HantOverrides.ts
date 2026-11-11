@@ -14809,6 +14809,7 @@ settingsSession: {
         browseNoSearchResults: "目前沒有已載入的工作階段符合此搜尋。",
         browseIndexing: "正在為外部工作階段建立索引…",
         browseIndexingProgress: ({ scanned, total }: { scanned: number; total: number }) => `已建立索引 ${scanned}/${total} 個工作階段`,
+        browseIndexingScanned: ({ scanned }: { scanned: number }) => `正在建立外部工作階段索引 · 已完成 ${scanned.toLocaleString()} 個`,
         browseIndexingCancelled: "索引已停止。準備好後可重試。",
         browseLoadMore: "載入更多工作階段",
         browseFailedToLoad: "載入外部工作階段失敗。",

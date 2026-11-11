@@ -19845,6 +19845,7 @@ settingsSession: {
         browseNoSearchResults: "この検索に一致する読み込み済みセッションはまだありません。",
     browseIndexing: "外部セッションをインデックスしています…",
     browseIndexingProgress: ({ scanned, total }: { scanned: number; total: number }) => `${total} 件中 ${scanned} 件をインデックス済み`,
+    browseIndexingScanned: ({ scanned }: { scanned: number }) => `外部セッションをインデックス中 · これまでに ${scanned.toLocaleString()} 件`,
     browseIndexingCancelled: "インデックス作成を停止しました。準備ができたら再試行してください。",
     browseLoadMore: "さらにセッションを読み込む",
     browseFailedToLoad: "外部セッションの読み込みに失敗しました。",

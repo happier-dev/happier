@@ -19884,6 +19884,7 @@ settingsSession: {
         browseNoSearchResults: "Ни одна загруженная сессия пока не соответствует этому поиску.",
     browseIndexing: "Индексирование внешних сессий…",
     browseIndexingProgress: ({ scanned, total }: { scanned: number; total: number }) => `Проиндексировано ${scanned} из ${total} сессий`,
+    browseIndexingScanned: ({ scanned }: { scanned: number }) => `Индексация внешних сессий · пока ${scanned.toLocaleString()}`,
     browseIndexingCancelled: "Индексирование остановлено. Повторите попытку, когда будете готовы.",
     browseLoadMore: "Загрузить ещё сессии",
     browseFailedToLoad: "Не удалось загрузить внешние сессии.",

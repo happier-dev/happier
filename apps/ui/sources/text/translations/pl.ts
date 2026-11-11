@@ -19760,6 +19760,7 @@ settingsSession: {
         browseNoSearchResults: "Żadna wczytana sesja nie pasuje jeszcze do tego wyszukiwania.",
     browseIndexing: "Indeksowanie sesji zewnętrznych…",
     browseIndexingProgress: ({ scanned, total }: { scanned: number; total: number }) => `Zindeksowano ${scanned} z ${total} sesji`,
+    browseIndexingScanned: ({ scanned }: { scanned: number }) => `Indeksowanie sesji zewnętrznych · dotąd ${scanned.toLocaleString()}`,
     browseIndexingCancelled: "Indeksowanie zatrzymano. Spróbuj ponownie, gdy zechcesz.",
     browseLoadMore: "Wczytaj więcej sesji",
     browseFailedToLoad: "Nie udało się wczytać sesji zewnętrznych.",

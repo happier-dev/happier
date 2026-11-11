@@ -645,12 +645,12 @@ function BrowseLoadingState(props: Readonly<{
     const isBanner = props.placement === 'banner';
     const preparation = props.preparation;
     const total = preparation?.total;
-    const progressLabel = total === undefined
-        ? t('externalSessions.browseIndexing')
-        : t('externalSessions.browseIndexingProgress', {
-            scanned: preparation!.scanned,
-            total,
-        });
+    // A source that cannot count ahead (Codex rollouts) still reports how many it has indexed.
+    const progressLabel = total !== undefined
+        ? t('externalSessions.browseIndexingProgress', { scanned: preparation!.scanned, total })
+        : preparation && preparation.scanned > 0
+            ? t('externalSessions.browseIndexingScanned', { scanned: preparation.scanned })
+            : t('externalSessions.browseIndexing');
     const skeleton = isBanner ? null : (
         <SkeletonRows rows={7} {...SELECTION_LIST_SKELETON_ROW_SHAPE} rowTestID={(index) => `direct-session-candidates:loading:row-${index}`} />
     );

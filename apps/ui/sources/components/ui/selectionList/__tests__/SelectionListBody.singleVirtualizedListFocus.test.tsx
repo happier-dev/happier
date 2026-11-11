@@ -134,7 +134,7 @@ describe('SelectionListBody flat virtualized-list focused-row scroll (RV-9)', ()
         const plan: ReadonlyArray<SectionRenderPlan> = [{ id: 'models', options: makeOptions(50, 'model'), virtualization: 'force' }];
         const props = { step: buildBodyStep(), rootTestID: 'sl', selectedOptionIds: new Set<string>(), plan,
             columnCount: 2, declaresColumns: true, listboxId: 'listbox', onSelect() {}, onPushStep() {} };
-        const screen = await renderScreen(<SelectionListBody {...props} focusedOptionId="model-48" />);
+        const screen = await renderScreen(<SelectionListBody {...props} focusedOptionId="model-48" scrollTargetOptionId="model-48" />);
         legendListState.props?.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 640, height: 400 } } });
         const last = screen.findByTestId('sl:root:option-wrapper:model-48')!;
         // The option is inside a cell frame stacked 1,440px down the first column.
@@ -148,24 +148,24 @@ describe('SelectionListBody flat virtualized-list focused-row scroll (RV-9)', ()
         });
         expect(scrollToIndex).toHaveBeenLastCalledWith({ index: 1, viewPosition: 0, viewOffset: -1440, animated: true });
         scrollToIndex.mockClear();
-        await screen.update(<SelectionListBody {...props} focusedOptionId="model-0" />);
+        await screen.update(<SelectionListBody {...props} focusedOptionId="model-0" scrollTargetOptionId="model-0" />);
         const first = screen.findByTestId('sl:root:option-wrapper:model-0')!;
         await act(async () => { first.props.onLayout?.({ nativeEvent: { layout: { y: 0, height: 60 } } }); });
         expect(scrollToIndex).toHaveBeenLastCalledWith({ index: 1, viewPosition: 0, viewOffset: 0, animated: true });
         // A label refresh does not cause native layout events for unchanged cell geometry.
         const refreshedPlan = [{ ...plan[0]!, options: plan[0]!.options.map(option => ({ ...option, label: `Updated ${option.label}` })) }];
         scrollToIndex.mockClear();
-        await screen.update(<SelectionListBody {...props} plan={refreshedPlan} focusedOptionId="model-0" />);
+        await screen.update(<SelectionListBody {...props} plan={refreshedPlan} focusedOptionId="model-0" scrollTargetOptionId="model-0" />);
         const refreshedFirst = screen.findByTestId('sl:root:option-wrapper:model-0')!;
         await act(async () => { refreshedFirst.props.onLayout?.({ nativeEvent: { layout: { y: 20, height: 60 } } }); });
         expect(scrollToIndex).not.toHaveBeenCalled();
         scrollToIndex.mockClear();
-        await screen.update(<SelectionListBody {...props} plan={refreshedPlan} focusedOptionId="model-48" />);
+        await screen.update(<SelectionListBody {...props} plan={refreshedPlan} focusedOptionId="model-48" scrollTargetOptionId="model-48" />);
         expect(scrollToIndex).toHaveBeenLastCalledWith({ index: 1, viewPosition: 0, viewOffset: -1440, animated: true });
-        await screen.update(<SelectionListBody {...props} plan={refreshedPlan} focusedOptionId="model-0" />);
+        await screen.update(<SelectionListBody {...props} plan={refreshedPlan} focusedOptionId="model-0" scrollTargetOptionId="model-0" />);
         scrollToIndex.mockClear();
         const reorderedPlan = [{ ...plan[0]!, options: [...plan[0]!.options].reverse() }];
-        await screen.update(<SelectionListBody {...props} plan={reorderedPlan} focusedOptionId="model-0" />);
+        await screen.update(<SelectionListBody {...props} plan={reorderedPlan} focusedOptionId="model-0" scrollTargetOptionId="model-0" />);
         const moved = screen.findByTestId('sl:root:option-wrapper:model-0')!;
         await act(async () => { moved.props.onLayout?.({ nativeEvent: { layout: { y: 1440, height: 60 } } }); });
         expect(scrollToIndex).not.toHaveBeenCalled();
@@ -190,10 +190,10 @@ describe('SelectionListBody flat virtualized-list focused-row scroll (RV-9)', ()
         };
         const props = { step: buildBodyStep(), rootTestID: 'sl', selectedOptionIds: new Set<string>(), plan: [],
             virtualizedOptionSource: source, listboxId: 'listbox', onSelect() {}, onPushStep() {} };
-        const screen = await renderScreen(<SelectionListBody {...props} focusedOptionIndex={0} focusedOptionId="indexed-0" />);
+        const screen = await renderScreen(<SelectionListBody {...props} focusedOptionIndex={0} focusedOptionId="indexed-0" scrollTargetOptionId="indexed-0" />);
         kindReads = 0;
         scrollToIndex.mockClear();
-        await screen.update(<SelectionListBody {...props} focusedOptionIndex={54_934} focusedOptionId="indexed-54934" />);
+        await screen.update(<SelectionListBody {...props} focusedOptionIndex={54_934} focusedOptionId="indexed-54934" scrollTargetOptionId="indexed-54934" />);
         expect(kindReads).toBeLessThanOrEqual(12); // Two native-boundary cells plus their semantic wrappers.
         expect(scrollToIndex).toHaveBeenCalledWith({ index: 54_934, viewPosition: 0.5, animated: true });
     });
@@ -212,7 +212,7 @@ describe('SelectionListBody flat virtualized-list focused-row scroll (RV-9)', ()
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
                 plan={buildMultiSectionPlan()}
-                focusedOptionId={null}
+                focusedOptionId={null} scrollTargetOptionId={null}
                 listboxId="listbox"
                 onSelect={() => {}}
                 onPushStep={() => {}}
@@ -225,7 +225,7 @@ describe('SelectionListBody flat virtualized-list focused-row scroll (RV-9)', ()
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
                 plan={buildMultiSectionPlan()}
-                focusedOptionId="second-4"
+                focusedOptionId="second-4" scrollTargetOptionId="second-4"
                 listboxId="listbox"
                 onSelect={() => {}}
                 onPushStep={() => {}}
@@ -248,7 +248,7 @@ describe('SelectionListBody flat virtualized-list focused-row scroll (RV-9)', ()
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
                 plan={buildMixedSectionPlan()}
-                focusedOptionId={null}
+                focusedOptionId={null} scrollTargetOptionId={null}
                 listboxId="listbox"
                 onSelect={() => {}}
                 onPushStep={() => {}}
@@ -260,7 +260,7 @@ describe('SelectionListBody flat virtualized-list focused-row scroll (RV-9)', ()
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
                 plan={buildMixedSectionPlan()}
-                focusedOptionId="provider-10"
+                focusedOptionId="provider-10" scrollTargetOptionId="provider-10"
                 listboxId="listbox"
                 onSelect={() => {}}
                 onPushStep={() => {}}
@@ -283,7 +283,7 @@ describe('SelectionListBody flat virtualized-list focused-row scroll (RV-9)', ()
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
                 plan={buildMultiSectionPlan()}
-                focusedOptionId="second-4"
+                focusedOptionId="second-4" scrollTargetOptionId="second-4"
                 listboxId="listbox"
                 onSelect={() => {}}
                 onPushStep={() => {}}
@@ -313,7 +313,7 @@ describe('SelectionListBody flat virtualized-list focused-row scroll (RV-9)', ()
                 selectedOptionIds={new Set<string>()}
                 plan={[]}
                 virtualizedOptionSource={source}
-                focusedOptionId="direct-5"
+                focusedOptionId="direct-5" scrollTargetOptionId="direct-5"
                 focusedOptionIndex={5}
                 listboxId="listbox"
                 onSelect={() => {}}
@@ -343,7 +343,7 @@ describe('SelectionListBody flat virtualized-list focused-row scroll (RV-9)', ()
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
                 plan={buildMultiSectionPlan()}
-                focusedOptionId={null}
+                focusedOptionId={null} scrollTargetOptionId={null}
                 listboxId="listbox"
                 onSelect={() => {}}
                 onPushStep={() => {}}
@@ -355,7 +355,7 @@ describe('SelectionListBody flat virtualized-list focused-row scroll (RV-9)', ()
                 rootTestID="sl"
                 selectedOptionIds={new Set<string>()}
                 plan={buildMultiSectionPlan()}
-                focusedOptionId="second-4"
+                focusedOptionId="second-4" scrollTargetOptionId="second-4"
                 listboxId="listbox"
                 onSelect={() => {}}
                 onPushStep={() => {}}

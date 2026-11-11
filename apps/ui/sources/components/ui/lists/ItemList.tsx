@@ -5,7 +5,7 @@ import { BASE_CONTENT_PADDING_BOTTOM } from '@/components/ui/lists/pageListBotto
 import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance/KeyboardAwareScrollView';
 import { ListPresentationProvider, type ListPresentation } from './listPresentation';
 import type { PageColumn } from '@/components/ui/layout/contentWidthMode';
-import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
+import { usePageContentBackgroundColor } from './usePageContentBackgroundColor';
 import { RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { HAPPIER_PAGE_METRICS, useContainingHappierMaterialRole, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { PageFrame } from '@/components/ui/layout/PageFrame';
@@ -39,9 +39,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
         ...(Platform.OS === 'web' ? { minHeight: 0 } : {}),
-    },
-    groupedBackground: {
-        backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.base, 'content', true),
     },
     contentContainer: {
         paddingBottom: Platform.select({ ios: 34, default: 16 }),
@@ -166,6 +163,7 @@ export const ItemListStatic = React.memo<ItemListStaticProps>((props) => {
     const { theme } = useUnistyles();
     const materialRole = useContainingHappierMaterialRole();
     const paintColor = useHappierMaterialColorResolver();
+    const pageBackground = usePageContentBackgroundColor(theme.colors.surface.base);
     const {
         children,
         style,
@@ -176,7 +174,7 @@ export const ItemListStatic = React.memo<ItemListStaticProps>((props) => {
 
     return (
         <ListPresentationProvider value={presentation}>
-            <View style={[materialRole === undefined ? stylesheet.groupedBackground : { backgroundColor: paintColor(theme.colors.surface.base, 'transparent') }, style, materialRole !== undefined && typeof authoredBackground === 'string' ? { backgroundColor: paintColor(authoredBackground, 'transparent') } : null]}>
+            <View style={[{ backgroundColor: pageBackground }, style, materialRole !== undefined && typeof authoredBackground === 'string' ? { backgroundColor: paintColor(authoredBackground, 'transparent') } : null]}>
                 <View style={containerStyle}>
                     {children}
                 </View>

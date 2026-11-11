@@ -708,6 +708,11 @@ type SelectionListBodyVirtualizedProps = Readonly<{
     selectedOptionIds: ReadonlySet<string>;
     focusedOptionId: string | null;
     focusedOptionIndex?: number;
+    /**
+     * The row the list keeps in view, decided once by `SelectionList` (keyboard, programmatic or
+     * selection; never a pointer-focused row, which would slide away and snap every wheel scroll back).
+     */
+    scrollTargetOptionId?: string | null;
     onSelect: (id: string, option: SelectionListOption) => void;
     onPushStep: (step: SelectionListStep) => void;
     showsVerticalScrollIndicator?: boolean;
@@ -798,34 +803,33 @@ function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualiz
         );
     }, [props.plan]);
 
-    // RV-9: scroll-to-focused-row across the flattened item list. Compute
-    // the flat-index of the focused option; ask virtualized list to bring it into
-    // view centered.
+    // RV-9: scroll-to-row across the flattened item list. Compute the flat-index of the row the list
+    // keeps in view (the scroll target, not a pointer-focused row); ask virtualized list to centre it.
     const virtualizedListRef = React.useRef<VirtualizedListRef | null>(null);
-    const focusedOptionId = props.focusedOptionId;
-    const focusedItemIndex = React.useMemo(
-        () => focusedOptionId === null ? -1 : flatItems.findIndex((row) => {
-            if (row.kind === 'option') return row.option.id === focusedOptionId;
-            // A focused cell brings its block into view; `revealFocusedCell` then narrows to the cell.
+    const revealOptionId = props.scrollTargetOptionId ?? null;
+    const revealItemIndex = React.useMemo(
+        () => revealOptionId === null ? -1 : flatItems.findIndex((row) => {
+            if (row.kind === 'option') return row.option.id === revealOptionId;
+            // A revealed cell brings its block into view; `revealFocusedCell` then narrows to the cell.
             if (row.kind === 'option-row') {
-                return row.options.some((cell) => cell.option.id === focusedOptionId);
+                return row.options.some((cell) => cell.option.id === revealOptionId);
             }
             return false;
         }),
-        [focusedOptionId, flatItems],
+        [revealOptionId, flatItems],
     );
-    const focusedCell = focusedOptionId === null ? undefined : (() => {
-        const row = flatItems[focusedItemIndex];
-        return row?.kind === 'option-row' ? row.options.find((cell) => cell.option.id === focusedOptionId) : undefined;
+    const revealCell = revealOptionId === null ? undefined : (() => {
+        const row = flatItems[revealItemIndex];
+        return row?.kind === 'option-row' ? row.options.find((cell) => cell.option.id === revealOptionId) : undefined;
     })();
     const { onViewportLayout, registerCellLayout } = useSelectionListVirtualizedFocusReveal({
         listRef: virtualizedListRef,
-        focusedItemIndex,
-        focusedKey: focusedOptionId,
+        focusedItemIndex: revealItemIndex,
+        focusedKey: revealOptionId,
         cellLayoutItems: flatItems,
         optionPositions: optionPositions.byId,
-        focusedCellDomId: focusedCell === undefined ? null : resolveSelectionListOptionDomId({
-            option: focusedCell.option,
+        focusedCellDomId: revealCell === undefined ? null : resolveSelectionListOptionDomId({
+            option: revealCell.option,
             rootTestID: props.rootTestID,
             stepId: props.stepId,
         }),
@@ -1019,16 +1023,18 @@ function SelectionListBodyDirectVirtualizedSource(props: SelectionListBodyVirtua
     const onPushStep = useEventCallback(props.onPushStep);
     const a11yPattern = React.useContext(SelectionListA11yPatternContext);
     const virtualizedListRef = React.useRef<VirtualizedListRef | null>(null);
-    const focusedOptionIndex = props.focusedOptionIndex ?? (
-        props.focusedOptionId === null
-            ? -1
-            : source.findOptionIndexById(props.focusedOptionId)
-    );
-    const focusedItemIndex = focusedOptionIndex < 0 ? -1 : source.findItemIndexByOptionIndex(focusedOptionIndex);
+    // The row the list keeps in view; the focused row's known index avoids a source lookup.
+    const revealOptionId = props.scrollTargetOptionId ?? null;
+    const revealOptionIndex = revealOptionId === null
+        ? -1
+        : revealOptionId === props.focusedOptionId && props.focusedOptionIndex !== undefined
+            ? props.focusedOptionIndex
+            : source.findOptionIndexById(revealOptionId);
+    const revealItemIndex = revealOptionIndex < 0 ? -1 : source.findItemIndexByOptionIndex(revealOptionIndex);
     const { onViewportLayout } = useSelectionListVirtualizedFocusReveal({
         listRef: virtualizedListRef,
-        focusedItemIndex,
-        focusedKey: props.focusedOptionId ?? (focusedOptionIndex < 0 ? null : `index:${focusedOptionIndex}`),
+        focusedItemIndex: revealItemIndex,
+        focusedKey: revealOptionId,
         reducedMotion,
     });
 

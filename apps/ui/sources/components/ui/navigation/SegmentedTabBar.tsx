@@ -239,11 +239,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         minWidth: 0,
     },
     tabCaption: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6, minWidth: 0, maxWidth: '100%' },
+    // No cross-axis self-alignment: in a control row it would pin the bar to the row's top instead of
+    // the row's own alignment (owner 11-11 #03). The track (`innerContent`) is what hugs its segments.
     containerContent: {
         width: 'auto',
         maxWidth: '100%',
         flexGrow: 0,
-        alignSelf: 'flex-start',
     },
     inner: {
         flexDirection: 'row',

@@ -1175,6 +1175,7 @@ const EXTERNAL_SESSION_FUNCTION_TRANSLATIONS: Readonly<Record<string, readonly u
     'externalSessions.browseSearchIncomplete': [{ count: 12 }],
     'externalSessions.browseSourceCodexConnectedServices': [{ service: 'SERVICE_MARKER' }],
     'externalSessions.browseIndexingProgress': [{ scanned: 12, total: 20 }],
+    'externalSessions.browseIndexingScanned': [{ scanned: 12 }],
 };
 
 const EXTERNAL_SESSION_NEIGHBORING_STRING_KEYS = [

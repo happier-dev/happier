@@ -23647,7 +23647,9 @@ const enExternalSessions = {
   }: {
     scanned: number;
     total: number;
-  }) => `${scanned} of ${total} sessions indexed`,
+  }) => `Indexing external sessions · ${scanned.toLocaleString()} of ${total.toLocaleString()}`,
+  browseIndexingScanned: ({ scanned }: { scanned: number }) =>
+    `Indexing external sessions · ${scanned.toLocaleString()} so far`,
   browseIndexingCancelled: 'Indexing stopped. Retry when you’re ready.',
   browseLoadMore: 'Load more sessions',
   browseFailedToLoad: 'Failed to load external sessions.',

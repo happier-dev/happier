@@ -19550,6 +19550,7 @@ settingsSession: {
         browseNoSearchResults: "当前没有已加载的会话匹配此搜索。",
     browseIndexing: "正在为外部会话建立索引…",
     browseIndexingProgress: ({ scanned, total }: { scanned: number; total: number }) => `已索引 ${scanned}/${total} 个会话`,
+    browseIndexingScanned: ({ scanned }: { scanned: number }) => `正在索引外部会话 · 已完成 ${scanned.toLocaleString()} 个`,
     browseIndexingCancelled: "索引已停止。准备好后可重试。",
     browseLoadMore: "加载更多会话",
     browseFailedToLoad: "加载外部会话失败。",

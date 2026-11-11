@@ -19809,6 +19809,7 @@ settingsSession: {
         browseNoSearchResults: "Aucune session chargée ne correspond à cette recherche pour l’instant.",
     browseIndexing: "Indexation des sessions externes…",
     browseIndexingProgress: ({ scanned, total }: { scanned: number; total: number }) => `${scanned} sur ${total} sessions indexées`,
+    browseIndexingScanned: ({ scanned }: { scanned: number }) => `Indexation des sessions externes · ${scanned.toLocaleString()} pour l’instant`,
     browseIndexingCancelled: "Indexation arrêtée. Relance quand tu veux.",
     browseLoadMore: "Charger plus de sessions",
     browseFailedToLoad: "Échec du chargement des sessions externes.",

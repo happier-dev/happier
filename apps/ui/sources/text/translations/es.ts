@@ -19935,6 +19935,7 @@ settingsSession: {
         browseNoSearchResults: "Ninguna sesión cargada coincide todavía con esta búsqueda.",
     browseIndexing: "Indexando sesiones externas…",
     browseIndexingProgress: ({ scanned, total }: { scanned: number; total: number }) => `${scanned} de ${total} sesiones indexadas`,
+    browseIndexingScanned: ({ scanned }: { scanned: number }) => `Indexando sesiones externas · ${scanned.toLocaleString()} hasta ahora`,
     browseIndexingCancelled: "Se detuvo la indexación. Inténtalo de nuevo cuando quieras.",
     browseLoadMore: "Cargar más sesiones",
     browseFailedToLoad: "No se pudieron cargar las sesiones externas.",

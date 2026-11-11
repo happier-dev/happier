@@ -19937,6 +19937,7 @@ settingsSession: {
         browseNoSearchResults: "Nessuna sessione caricata corrisponde ancora a questa ricerca.",
     browseIndexing: "Indicizzazione delle sessioni esterne…",
     browseIndexingProgress: ({ scanned, total }: { scanned: number; total: number }) => `${scanned} di ${total} sessioni indicizzate`,
+    browseIndexingScanned: ({ scanned }: { scanned: number }) => `Indicizzazione delle sessioni esterne · ${scanned.toLocaleString()} finora`,
     browseIndexingCancelled: "Indicizzazione interrotta. Riprova quando vuoi.",
     browseLoadMore: "Carica altre sessioni",
     browseFailedToLoad: "Impossibile caricare le sessioni esterne.",

@@ -7,7 +7,7 @@ import {
     type StyleProp,
     type ViewStyle,
 } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
 import { resolveItemGroupColumnCountForWidth } from '@/components/ui/lists/itemGroupColumnLayout';
@@ -62,6 +62,7 @@ import { useSelectionListStepStack } from './useSelectionListStepStack';
 import { useHardwareKeyboard } from './useHardwareKeyboard';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { HAPPIER_PAGE_METRICS, isHappierPageRowNarrow } from '@happier-dev/plugin-ui/presentation';
+import { usePageContentBackgroundColor } from '@/components/ui/lists/usePageContentBackgroundColor';
 import { SelectionListFilterChips } from './SelectionListFilterChips';
 import { SelectionListDetailPaneContext } from './SelectionListDetailPaneContext';
 import { renderSelectionListAccessory } from './renderSelectionListAccessory';
@@ -341,6 +342,10 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     }
     const containingSurface = useContainingGlassSurfaceGroup();
     const surface = props.surface ?? (containingSurface === 'floating' ? 'none' : 'base');
+    // A list on a page takes the page's material (glass when glass is on), from the same owner as `ItemList`.
+    const { theme } = useUnistyles();
+    const pageBackground = usePageContentBackgroundColor(theme.colors.surface.base);
+    const surfaceBackground = surface === 'none' ? null : { backgroundColor: pageBackground };
     const selectedOptionId = selection.kind === 'single' ? selection.selectedId : null;
     const multipleSelectedIds = selection.kind === 'multiple' ? selection.selectedIds : null;
     const selectedOptionIds = React.useMemo<ReadonlySet<string>>(
@@ -1238,7 +1243,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         : undefined;
     const containerStyle: StyleProp<ViewStyle> = [
         styles.container,
-        surface === 'none' ? styles.bareSurface : null,
+        surface === 'none' ? styles.bareSurface : surfaceBackground,
         props.fillAvailableSpace === true ? styles.containerFill : null,
         props.maxHeight !== undefined ? { maxHeight: props.maxHeight } : null,
         fixedHeight !== undefined ? { height: fixedHeight } : null,
@@ -1363,7 +1368,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         >
             <SelectionListSearchHeader
                 style={[
-                    surface === 'none' ? styles.bareSurface : null,
+                    surface === 'none' ? styles.bareSurface : surfaceBackground,
                     seatInputInBody ? styles.bodySearchField : styles.searchFieldWithoutDivider,
                 ]}
                 testID={selectionListTestId(resolvedTestId, 'header')}

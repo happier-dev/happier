@@ -223,6 +223,8 @@ export type SelectionListSectionRenderContext = Readonly<{
     stepId: string;
     selectedOptionIds: ReadonlySet<string>;
     focusedOptionId: string | null;
+    /** The row the list keeps in view (see `SelectionListBody`'s `scrollTargetOptionId`). */
+    scrollTargetOptionId: string | null;
     onSelect: (id: string, option: SelectionListOption) => void;
     onPushStep: (step: SelectionListStep) => void;
     optionPositionById: ReadonlyMap<string, number>;
@@ -499,6 +501,7 @@ function renderSelectionListSectionElement(
                 // AND so it can scroll the focused row into view
                 // (matching the plain mapped path's UX).
                 focusedOptionId={ctx.focusedOptionId}
+                scrollTargetOptionId={ctx.scrollTargetOptionId}
                 // The virtualized rows are `PlanOptionRow`s: they own
                 // activation themselves, so the raw sinks are forwarded
                 // (wrapping them in `activateSelectionListRow` here would
