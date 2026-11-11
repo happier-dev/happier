@@ -229,11 +229,14 @@ function useProjectsTreeItems(props: ProjectsTreeProps, onRevealIndex?: (index: 
                         position={positionOf(item.rows[0]!.key)} />
                     : <ProjectsTreeRowList rows={item.rows} activeKey={activeKey} {...rowListProps} />;
             case 'savedLabel':
-                return <CollectionListGroupLabel testID={`${testID}-saved`} title={t('projects.identity.savedNotOpen')} count={item.count} />;
+                // Drawn for the eye; each saved row says it is not open in its own name, so the tree owns only items.
+                return <View aria-hidden><CollectionListGroupLabel testID={`${testID}-saved`} title={t('projects.identity.savedNotOpen')} count={item.count} /></View>;
             case 'saved':
                 return (
                     <CollectionNavigationRow
                         testID={`${testID}-saved-${item.item.key}`}
+                        treeItem={SECTION_TREE_ITEM}
+                        accessibilityLabel={`${item.item.title}, ${t('projects.identity.notOpen')}`}
                         title={item.item.title}
                         subtitle={item.item.subtitle}
                         icon={<Icon name="folder" size={16} color={theme.colors.text.tertiary} />}
@@ -254,6 +257,7 @@ function useProjectsTreeItems(props: ProjectsTreeProps, onRevealIndex?: (index: 
                         <CollectionNavigationRow
                             rowRole="item"
                             testID={`${testID}-hidden`}
+                            treeItem={SECTION_TREE_ITEM}
                             title={t('projects.identity.hiddenTitle')}
                             titleQualifier={String(hidden.items.length)}
                             accessibilityLabel={t('projects.identity.hiddenCount', { count: hidden.items.length })}
@@ -269,6 +273,7 @@ function useProjectsTreeItems(props: ProjectsTreeProps, onRevealIndex?: (index: 
                 return (
                     <CollectionNavigationRow
                         testID={`${testID}-hidden-${item.item.key}`}
+                        treeItem={HIDDEN_PROJECT_TREE_ITEM}
                         href={item.item.refId ? props.hrefForRef?.(item.item.refId, item.item.workspaceAddress) ?? null : null}
                         title={item.item.title}
                         subtitle={item.item.subtitle}
@@ -292,6 +297,13 @@ function useProjectsTreeItems(props: ProjectsTreeProps, onRevealIndex?: (index: 
     }, [activeKey, hidden, live, openRef, positionOf, props.hrefForRef, rowListProps, saved, testID, theme]);
     return { testID, items, renderItem, activeKey, itemIndexByRowIndex };
 }
+
+/**
+ * The tree's section rows (saved sources, the Hidden disclosure and its Projects): treeitems of their own, each its
+ * own tab stop as before, so the tree owns only items; Hidden's Projects sit one level under its disclosure.
+ */
+const SECTION_TREE_ITEM = Object.freeze({ webRole: 'treeitem' as const, accessibilityLevel: 1 });
+const HIDDEN_PROJECT_TREE_ITEM = Object.freeze({ webRole: 'treeitem' as const, accessibilityLevel: 2 });
 
 /** The tree drawn whole: a short list (the Projects page's saved and hidden Projects). */
 export const ProjectsTree = React.memo(function ProjectsTree(props: ProjectsTreeProps) {

@@ -83,12 +83,12 @@ describe('ProjectsTree section render locality', () => {
         await screen.update(<Census expandedKeys={new Set(['project-0'])} />);
         expect([...renders]).toEqual([['project-0', 1]]);
         renders.clear();
-        const item = (key: string) => screen.findAll(node => node.props?.testID === `projects-tree-row-${key}`
+        const item = (key: string) => screen.findAll(node => node.props?.testID === `projects-tree-row-${key}:treeitem`
             && typeof node.props?.onKeyDown === 'function')[0]!;
         await act(async () => item('project-0').props.onKeyDown({ key: 'End', preventDefault() {} }));
         expect([...renders.keys()].sort()).toEqual(['project-0', 'project-149']);
-        expect(item('project-149').props.webTabIndex).toBe(0);
-        expect(item('project-0').props.webTabIndex).toBe(-1);
+        expect(item('project-149').props.tabIndex).toBe(0);
+        expect(item('project-0').props.tabIndex).toBe(-1);
     });
 
     it('updates only old/new selected Projects and dispatches the latest open handler without repainting sections', async () => {
@@ -181,20 +181,20 @@ describe('ProjectsTree (lab p-projects TREE/HIDDEN)', () => {
         const onToggle = vi.fn();
         const onOpenRef = vi.fn();
         const screen = await renderScreen(<ProjectsTree rows={rows} onToggle={onToggle} onOpenRef={onOpenRef} />);
-        const item = (key: string) => screen.findAll((node) => node.props?.testID === `projects-tree-row-${key}`
+        const item = (key: string) => screen.findAll((node) => node.props?.testID === `projects-tree-row-${key}:treeitem`
             && typeof node.props?.onKeyDown === 'function')[0]!;
         const press = async (key: string, keyboardKey: string) => {
             await act(async () => { item(key).props.onKeyDown({ key: keyboardKey, nativeEvent: { key: keyboardKey }, preventDefault: () => {} }); });
         };
         // One tab stop, on the first row; tree semantics carry level and expanded state.
-        expect(item('plugins').props.webTabIndex).toBe(0);
-        expect(item('plugins/p1').props.webTabIndex).toBe(-1);
-        expect(item('plugins').props.accessibilityLevel).toBe(1);
-        expect(item('plugins/p1').props.accessibilityLevel).toBe(2);
-        expect(item('plugins').props.accessibilityExpanded).toBe(true);
+        expect(item('plugins').props.tabIndex).toBe(0);
+        expect(item('plugins/p1').props.tabIndex).toBe(-1);
+        expect(item('plugins').props['aria-level']).toBe(1);
+        expect(item('plugins/p1').props['aria-level']).toBe(2);
+        expect(item('plugins').props['aria-expanded']).toBe(true);
 
         await press('plugins', 'ArrowDown');
-        expect(item('plugins/p1').props.webTabIndex).toBe(0);
+        expect(item('plugins/p1').props.tabIndex).toBe(0);
         await press('plugins/p1', 'Enter');
         expect(onOpenRef.mock.calls[0]?.[0]).toBe('p1');
 
@@ -207,22 +207,22 @@ describe('ProjectsTree (lab p-projects TREE/HIDDEN)', () => {
         expect(onToggle).toHaveBeenCalledTimes(1);
         await press('plugins/p2', 'End');
         await press('plugins/p2', 'Home');
-        expect(item('plugins').props.webTabIndex).toBe(0);
+        expect(item('plugins').props.tabIndex).toBe(0);
     });
 
     it('keeps focus in the tree when the focused checkout disappears (its Project closes or hides)', async () => {
         const screen = await renderScreen(<ProjectsTree rows={rows} onToggle={() => {}} onOpenRef={() => {}} />);
-        const item = (key: string) => screen.findAll((node) => node.props?.testID === `projects-tree-row-${key}`
+        const item = (key: string) => screen.findAll((node) => node.props?.testID === `projects-tree-row-${key}:treeitem`
             && typeof node.props?.onKeyDown === 'function')[0];
         await act(async () => { item('plugins/p2')!.props.onFocus(); });
-        expect(item('plugins/p2')!.props.webTabIndex).toBe(0);
+        expect(item('plugins/p2')!.props.tabIndex).toBe(0);
         const collapsed = buildProjectsTreeRows({ projects: [{ key: 'plugins', name: 'happier-plugins', checkouts: [
             { refId: 'p1', machineId: 'devbox', machineName: 'devbox', label: 'main', path: '~/src/plugins', attention: null },
             { refId: 'p2', machineId: 'devbox', machineName: 'devbox', label: 'pi-agent', path: '~/x', attention: null },
         ] }], openRefId: null, expandedKeys: new Set(), collapsedKeys: new Set(['plugins']) });
         await screen.update(<ProjectsTree rows={collapsed} onToggle={() => {}} onOpenRef={() => {}} />);
         // The roving stop repairs to the nearest visible ancestor, never off the tree.
-        expect(item('plugins')!.props.webTabIndex).toBe(0);
+        expect(item('plugins')!.props.tabIndex).toBe(0);
     });
 
     it('says once, on the row, that a Project arrived from a session (lab p-projects AUTO)', async () => {

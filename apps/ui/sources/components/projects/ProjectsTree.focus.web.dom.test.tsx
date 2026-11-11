@@ -21,7 +21,8 @@ it('does not reclaim focus from an editor when a previously focused Project row 
     const render = () => <><ProjectsTree rows={[...rows]} onToggle={() => {}} onOpenRef={() => {}} /><textarea aria-label="Editor" /></>;
     try {
         await act(async () => root.render(render()));
-        const row = container.querySelector<HTMLElement>('[data-testid="projects-tree-row-project"]')!;
+        // The treeitem holds the roving tab stop; the press target inside it is out of the tab order.
+        const row = container.querySelector<HTMLElement>('[data-testid="projects-tree-row-project:treeitem"]')!;
         const editor = container.querySelector('textarea')!;
         await act(async () => row.focus());
         await act(async () => editor.focus());
