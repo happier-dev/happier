@@ -174,8 +174,8 @@ export type ConnectedAccountDeviceBeginResult =
         status: 'awaitingDeviceAuthorization';
         verificationUri: string;
         verificationUriComplete?: string;
-        userCode: string;
-        expiresAtMs: number;
+        userCode?: string;
+        expiresAtMs?: number;
         pollIntervalMs: number;
     }>
     | Exclude<ConnectedAccountAuthCompletionResult, Readonly<{ status: 'connected' }>>;

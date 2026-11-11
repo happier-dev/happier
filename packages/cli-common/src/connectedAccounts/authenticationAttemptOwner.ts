@@ -14,7 +14,7 @@ import type {
     ConnectedAccountManualInput,
 } from './authenticationTypes.js';
 import { applyConnectedAccountConfigurationFields, type ConnectedAccountConfigurationOwner } from './configurationOwner.js';
-import type { ConnectedAccountAttemptTransactionRecord, PendingConnectedAccountAttemptTransaction } from './attemptTransactionApi.js';
+import { resolveConnectedAccountAttemptTransactionExpiry, type ConnectedAccountAttemptTransactionRecord, type PendingConnectedAccountAttemptTransaction } from './attemptTransactionApi.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, isConnectedAccountApiKeyModeV1, listConnectedAccountSecretCredentialKeysV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { QualifiedConnectedAccountIdSchema, sameQualifiedConnectedAccountRef,
     connectedAccountSourceCustodyV1Equal, type ConnectedAccountSourceCustodyV1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -24,7 +24,7 @@ import type { MachineTargetV1 } from '@happier-dev/protocol/machines/machineAcce
 import { areConnectedAccountManualFieldsValidV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 import { normalizeLegacyConnectedServiceUxDiagnosticCode } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
-import { ConnectedAccountRuntimeInvocationNotStartedError } from './runtimeInvocationError.js';
+import { ConnectedAccountAuthenticationModeUnavailableError, ConnectedAccountRuntimeInvocationNotStartedError } from './runtimeInvocationError.js';
 import type { SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { ConnectedAccountManualAttemptBasis } from './manualAttemptDraft.js';
 
@@ -158,7 +158,7 @@ export type ConnectedAccountDeviceTransactionSnapshot = Readonly<{
     nextPollAtMs: number;
     verificationUri: string;
     verificationUriComplete?: string;
-    userCode: string;
+    userCode?: string;
     stagedCredentials: Readonly<Record<string, string>>;
     stagedAccountConfigurationContent?: unknown;
     preparedSettlement?: Omit<ConnectedAccountAttemptSettlementRequest, 'completionObservation'>;
@@ -338,7 +338,7 @@ type ActiveStoredAttempt = {
         nextPollAtMs: number;
         verificationUri: string;
         verificationUriComplete?: string;
-        userCode: string;
+        userCode?: string;
     } | null;
     phase:
         | 'configurationRequired'
@@ -437,16 +437,21 @@ function snapshotSourceMatchesAdmission(
  * into `connected_account_runtime_unavailable` and hides that fact from the
  * connect surface. The typed error maps onto the same drift response this
  * owner already returns when the non-throwing currentness check reports the
- * admission is stale; every other rejection stays unavailable. Neither outcome
- * admits an attempt, so the reason becomes legible without loosening
+ * admission is stale. A missing mode retains its typed admission refusal so
+ * placement can delegate to a selected Machine. Other rejections stay unavailable.
+ * These outcomes admit no attempt, so the reason becomes legible without loosening
  * fail-closed admission.
  */
 function runtimeAdmissionFailure(error: unknown): Readonly<{
     status: 'conflict' | 'unavailable';
     code:
         | 'connected_account_runtime_generation_changed'
+        | 'connected_account_authentication_mode_unavailable'
         | 'connected_account_runtime_unavailable';
 }> {
+    if (error instanceof ConnectedAccountAuthenticationModeUnavailableError) {
+        return { status: 'unavailable', code: error.code };
+    }
     return error instanceof ConnectedAccountRuntimeInvocationNotStartedError
         ? { status: 'conflict', code: error.code }
         : { status: 'unavailable', code: 'connected_account_runtime_unavailable' };
@@ -1362,7 +1367,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             ...(device.verificationUriComplete === undefined
                 ? {}
                 : { verificationUriComplete: device.verificationUriComplete }),
-            userCode: device.userCode,
+            ...(device.userCode === undefined ? {} : { userCode: device.userCode }),
             expiresAtMs: device.expiresAtMs,
             pollIntervalMs: device.pollIntervalMs,
         };
@@ -1393,7 +1398,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             ...(attempt.device.verificationUriComplete === undefined
                 ? {}
                 : { verificationUriComplete: attempt.device.verificationUriComplete }),
-            userCode: attempt.device.userCode,
+            ...(attempt.device.userCode === undefined ? {} : { userCode: attempt.device.userCode }),
             stagedCredentials: attempt.credentials.snapshot(),
             ...(attempt.configuration.stagedAccountConfigurationContent === undefined
                 ? {}
@@ -2319,14 +2324,14 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             // state, but the actionable phase and response wait for the durable
             // acknowledgement and the currentness recheck.
             attempt.device = {
-                expiresAtMs: result.expiresAtMs,
+                expiresAtMs: result.expiresAtMs ?? resolveConnectedAccountAttemptTransactionExpiry({ now: params.now() }),
                 pollIntervalMs: result.pollIntervalMs,
                 nextPollAtMs: params.now() + result.pollIntervalMs,
                 verificationUri: result.verificationUri,
                 ...(result.verificationUriComplete === undefined
                     ? {}
                     : { verificationUriComplete: result.verificationUriComplete }),
-                userCode: result.userCode,
+                ...(result.userCode === undefined ? {} : { userCode: result.userCode }),
             };
             try {
                 await acknowledgeDeviceTransaction(attempt);
@@ -2446,7 +2451,6 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             attempt.lastResponse = response;
             return response;
         }
-        attempt.phase = 'rejected';
         const response: AttemptResponse = {
             status: result.status,
             attemptId: attempt.id,
@@ -2464,6 +2468,18 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 ? {}
                 : { retryNotBeforeMs: result.retryNotBeforeMs }),
         };
+        if (attempt.admission.descriptor.kind === 'manual') {
+            // A refused candidate leaves the existing form/address available
+            // for correction on every host. No credential has settled.
+            attempt.credentials.clear();
+            attempt.selectedSecrets = undefined;
+            const addressFailure = await acknowledgeAttemptAddress(attempt, 'awaitingManual');
+            if (addressFailure) return addressFailure;
+            attempt.phase = 'awaitingManual';
+            attempt.lastResponse = { status: 'awaitingManual', attemptId: attempt.id };
+            return response;
+        }
+        attempt.phase = 'rejected';
         attempt.lastResponse = response;
         await destroyAttempt(attempt, response);
         return response;
@@ -3585,7 +3601,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                         ...(snapshot.verificationUriComplete === undefined
                             ? {}
                             : { verificationUriComplete: snapshot.verificationUriComplete }),
-                        userCode: snapshot.userCode,
+                        ...(snapshot.userCode === undefined ? {} : { userCode: snapshot.userCode }),
                     },
                     phase: 'awaitingDeviceAuthorization',
                     lastResponse: null,

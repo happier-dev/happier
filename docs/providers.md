@@ -30,8 +30,18 @@ plugin publisher from those same declarations.
 
 ### Cursor and Copilot native account sources (0.3 development)
 
-The Cursor plugin owns its manual user/service key and declares native
-`CURSOR_API_KEY` delivery through the shared account launch owner. The GitHub
+The Cursor plugin owns user/service API keys, subscription browser sign-in and
+import of the selected Machine's Cursor Agent login. Browser sign-in uses Cursor's
+PKCE deep link and polling through the connected-account coordinator; it also
+runs in the Account authentication artifact without a daemon. Native import
+requires a connected Machine and reads the CLI's platform credential store.
+Subscription credentials refresh through staged account settlement. Native launch
+delivers API keys via `CURSOR_API_KEY`, or subscription access via
+`CURSOR_AUTH_TOKEN` with `AGENT_CLI_CREDENTIAL_STORE=memory` to preserve the
+Machine's original login. These subscription paths are development behavior;
+vendor acceptance and subscription entitlement still require live QA. Pi/OpenCode
+need a Cursor Connect adapter before they can use this source as a Provider.
+There is no Cursor CLIProxyAPI family. The GitHub
 plugin owns Copilot device/manual authentication and the existing GitHub token
 record; Copilot consumes that record through its native purpose and
 `COPILOT_GITHUB_TOKEN`. GitHub's public OAuth client comes from the existing
@@ -439,6 +449,15 @@ The normal flow is:
 5. Select one of the provider's models from the grouped model picker for a compatible Agent.
 
 Provider setup is intentionally separate from session launch. Once configured, users choose a model rather than repeatedly choosing or re-entering a provider.
+
+In 0.3 development, saving an API-key connection with a selected Machine runs
+the existing Provider probe once. The save remains committed when verification
+fails, and the Action returns the probe's typed refusal on the connection.
+A successful probe supplies the Machine's published health summary. Without a
+Machine, or when the network cannot verify the key, the connection remains
+Not verified. Enablement grants access to the configured source; it does not
+attest credential health. Contributed and custom connections share this Action
+dispatch; no additional credential validator or retry timer participates.
 
 In 0.3 development, Saved Secret readiness is decided by the materializer for
 the admitted Account snapshot. Connection descriptions, model picker projections,

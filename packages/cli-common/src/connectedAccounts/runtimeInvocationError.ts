@@ -1,3 +1,12 @@
+export class ConnectedAccountAuthenticationModeUnavailableError extends Error {
+    readonly code = 'connected_account_authentication_mode_unavailable';
+
+    constructor() {
+        super('The selected runtime does not implement this authentication mode');
+        this.name = 'ConnectedAccountAuthenticationModeUnavailableError';
+    }
+}
+
 export class ConnectedAccountRuntimeInvocationNotStartedError extends Error {
     readonly code = 'connected_account_runtime_generation_changed';
 

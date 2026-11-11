@@ -12,7 +12,7 @@ import { ConnectedServiceCredentialKindSchema } from '@happier-dev/protocol/conn
 import { ConnectedAccountAccessModeV1Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import {
-  CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS,
+  resolveConnectedAccountAttemptTransactionExpiry,
   ConnectedAccountAttemptTransactionApiError,
   type ConnectedAccountAttemptTransactionRecord,
   type ConnectedAccountAttemptTransactionScope,
@@ -105,7 +105,7 @@ const DeviceSnapshotSchema = z.strictObject({
   nextPollAtMs: SafeTimestampSchema,
   verificationUri: z.string().check(z.minLength(1)),
   verificationUriComplete: z.optional(z.string().check(z.minLength(1))),
-  userCode: z.string().check(z.minLength(1)),
+  userCode: z.optional(z.string().check(z.minLength(1))),
 });
 const OAuthPayloadSchema = z.strictObject({
   version: z.literal(2),
@@ -224,16 +224,6 @@ function assertDeviceSnapshotAdvance(
       'Connected-account device transaction acknowledgement is invalid',
     );
   }
-}
-
-function transactionExpiresAt(input: Readonly<{
-  now: number;
-  providerExpiresAtMs?: number;
-}>): number {
-  const hostExpiry = input.now + CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS;
-  return input.providerExpiresAtMs === undefined
-    ? hostExpiry
-    : Math.min(hostExpiry, input.providerExpiresAtMs);
 }
 
 type DurableOAuthTransaction = ConnectedAccountOAuthTransaction & Required<Pick<
@@ -427,7 +417,7 @@ export function createConnectedAccountAttemptTransactionAdapters(
         callbackUrl,
         consumed: false,
       });
-      const expiresAtMs = transactionExpiresAt({
+      const expiresAtMs = resolveConnectedAccountAttemptTransactionExpiry({
         now: now(),
         ...(input.snapshot.expiresAtMs === undefined
           ? {}
@@ -461,7 +451,8 @@ export function createConnectedAccountAttemptTransactionAdapters(
         throw new ConnectedAccountAttemptTransactionApiError('connected_account_attempt_transaction_conflict');
       }
       if (current && (current.kind !== snapshot.kind
-        || (current.scope.phase !== 'configurationRequired' && current.scope.phase !== 'awaitingManual'))) {
+        || (current.scope.phase !== 'configurationRequired' && current.scope.phase !== 'awaitingManual'
+          && !(current.kind === 'manual' && current.scope.phase === 'starting' && snapshot.phase === 'awaitingManual')))) {
         throw new ConnectedAccountAttemptTransactionApiError('connected_account_attempt_transaction_conflict');
       }
       if (current?.scope.phase === snapshot.phase) {
@@ -520,7 +511,7 @@ export function createConnectedAccountAttemptTransactionAdapters(
             attemptId: snapshot.attemptId,
             content: await seal(payload),
             scope: scopeFor(snapshot),
-            expiresAtMs: transactionExpiresAt({
+            expiresAtMs: resolveConnectedAccountAttemptTransactionExpiry({
               now: now(),
               providerExpiresAtMs: snapshot.expiresAtMs,
             }),

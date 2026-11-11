@@ -1,13 +1,15 @@
 import type { AgentConnectedAccountLaunchContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { CURSOR_API_KEY_ENV } from './auth/status.js';
+import { CURSOR_AUTH_TOKEN_ENV, CURSOR_CREDENTIAL_STORE_ENV } from '../connectedAccounts/subscription.js';
 import { resolveCursorResumeAction } from './resume/session.js';
 
 export const CURSOR_NATIVE_PURPOSE_ID = 'cursor-native';
 
 /** The host materializes the selected key once; both ACP opens retain that environment. */
 export const CURSOR_CONNECTED_ACCOUNT_LAUNCH = {
-  environmentUses: [{ purpose: CURSOR_NATIVE_PURPOSE_ID, environmentKey: CURSOR_API_KEY_ENV }],
+  environmentUses: [CURSOR_API_KEY_ENV, CURSOR_AUTH_TOKEN_ENV, CURSOR_CREDENTIAL_STORE_ENV].map(environmentKey => ({ purpose: CURSOR_NATIVE_PURPOSE_ID, environmentKey })),
+  environmentUnsetUses: [CURSOR_API_KEY_ENV, CURSOR_AUTH_TOKEN_ENV, CURSOR_CREDENTIAL_STORE_ENV].map(environmentKey => ({ purpose: CURSOR_NATIVE_PURPOSE_ID, environmentKey })),
   switchContinuity: {
     continuityMode: 'restart_same_home',
     supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected', 'same_connected_group'],

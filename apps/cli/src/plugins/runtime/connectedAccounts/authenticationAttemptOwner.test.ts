@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/protocol';
 
 import {
+    CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS,
     createConnectedAccountAuthenticationAttemptOwner,
     type ConnectedAccountAttemptConfigurationAdmission,
     type ConnectedAccountAttemptModeAdmission,
@@ -693,6 +694,46 @@ describe('addressed manual attempts', () => {
 });
 
 describe('generic prepared restoration', () => {
+    it('persists and resumes browser-poll authorization without a user code or provider deadline', async () => {
+        let now = 1_000;
+        const api = createConnectedAccountAttemptTransactionApiBoundary();
+        const transactions = createQualifiedConnectedAccountAttemptTransactionAdapters({
+            credentials: { token: 'account-token', encryption: null },
+            getAccountEncryptionMode: async () => 'plain', getMachineId: () => 'machine-1',
+            now: () => now, api,
+        });
+        const configuration = configured('configuration-1', {}, 'device');
+        const first = harness({ now: () => now, admittedMode: deviceMode(), configuration,
+            deviceTransactions: transactions.device, attemptAddresses: transactions.address,
+            invoke: async () => ({ status: 'awaitingDeviceAuthorization',
+                verificationUri: 'https://provider.example/browser', pollIntervalMs: 5_000 }),
+        });
+        let replacement: ReturnType<typeof harness> | undefined;
+        try {
+            await first.owner.beginConnect({ service, modeId: 'device' });
+            const response = await waitForAttemptStatus(first.owner, 'attempt-1', 'awaitingDeviceAuthorization');
+            const expiry = now + CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS;
+            expect(response).toEqual({ status: 'awaitingDeviceAuthorization', attemptId: 'attempt-1',
+                verificationUri: 'https://provider.example/browser', pollIntervalMs: 5_000, expiresAtMs: expiry });
+            expect(api.records.get('attempt-1')?.expiresAtMs).toBe(expiry);
+            first.owner.dispose();
+            replacement = harness({ now: () => now, admittedMode: deviceMode(), configuration,
+                deviceTransactions: transactions.device, attemptAddresses: transactions.address,
+                invoke: async () => ({ status: 'pending', retryAfterMs: 5_000 }),
+            });
+            await expect(replacement.owner.resumeDevice({ attemptId: 'attempt-1' })).resolves.toEqual(response);
+            now += 5_000;
+            await expect(replacement.owner.pollDevice({ attemptId: 'attempt-1' }))
+                .resolves.toMatchObject({ status: 'pending' });
+            expect(replacement.invoke).toHaveBeenCalledOnce();
+            now = expiry;
+            await expect(replacement.owner.pollDevice({ attemptId: 'attempt-1' }))
+                .resolves.toMatchObject({ status: 'unavailable', code: 'connected_account_device_authorization_expired' });
+            expect(api.records.has('attempt-1')).toBe(false);
+            expect(replacement.invoke).toHaveBeenCalledOnce();
+        } finally { first.owner.dispose(); replacement?.owner.dispose(); }
+    });
+
     it('restores device custody passively for read/cancel and resumes the prepared settlement once', async () => {
         let now = 1_000;
         const api = createConnectedAccountAttemptTransactionApiBoundary();
@@ -5071,7 +5112,7 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         }));
     });
 
-    it('destroys attempt-scoped configuration on cancel and provider rejection', async () => {
+    it('retains refused manual configuration until cancel and destroys cancelled configuration', async () => {
         const attemptTarget = Object.freeze({
             kind: 'attempt' as const,
             attemptId: 'attempt-1',
@@ -5116,6 +5157,10 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
             attemptId: 'attempt-1',
             fields: { token: 'denied' },
         })).resolves.toMatchObject({ status: 'rejected', code: 'provider_denied' });
+        expect(rejected.destroyAttemptConfiguration).not.toHaveBeenCalled();
+        await expect(rejected.owner.read({ attemptId: 'attempt-1' }))
+            .resolves.toMatchObject({ status: 'awaitingManual' });
+        await rejected.owner.cancel({ attemptId: 'attempt-1' });
         expect(rejected.destroyAttemptConfiguration).toHaveBeenCalledWith('attempt-1');
 
     });

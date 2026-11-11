@@ -25,7 +25,7 @@ describe('Cursor portable account', () => {
       expect(runtime).toBeDefined();
       if (!runtime) throw new Error('Cursor account runtime is not registered');
       const descriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.[0];
-      expect(descriptor?.authentication.modes.map(mode => mode.id)).toEqual(['api-key']);
+      expect(descriptor?.authentication.modes.map(mode => mode.id)).toEqual(['subscription', 'api-key', 'native-import']);
       const target = descriptor?.authentication.account;
       if (!target) throw new Error('Cursor Account artifact is missing');
       const scope = createPluginRegistrationScope({ pluginId: PLUGIN_MANIFEST.id, target: { realm: 'account', ...target },
@@ -35,7 +35,7 @@ describe('Cursor portable account', () => {
       if (portable?.family !== 'connectedAccountDescriptors') throw new Error('Cursor portable runtime is not registered');
       const mode = portable.value.authentication.modes['api-key'];
       if (mode?.kind !== 'manual') throw new Error('Cursor manual mode is not registered');
-      const modeDescriptor = descriptor?.authentication.modes[0];
+      const modeDescriptor = descriptor?.authentication.modes.find(mode => mode.id === 'api-key');
       if (!modeDescriptor) throw new Error('Cursor manual declaration is missing');
       const staged = credentialStore();
       const service = { pluginId: PLUGIN_MANIFEST.id, localId: 'cursor-account' };
@@ -57,6 +57,9 @@ describe('Cursor portable account', () => {
       expect(staged.values.size).toBe(0);
       const connected = await submit(' fake-cursor-key-B ');
       expect(connected).toMatchObject({ status: 'connected', credentialKind: 'token' });
+      if (connected.status !== 'connected') throw new Error('Cursor key was not connected');
+      const purpose = PLUGIN_MANIFEST.contributes.agents?.find(agent => agent.id === 'cursor')?.connectedAccounts?.[0];
+      expect(purpose?.credentialKinds).toContain(connected.credentialKind);
       expect(connected).not.toHaveProperty('providerIdentity');
       expect(JSON.stringify(connected)).not.toContain('fake-cursor-key-B');
       expect(staged.values).toEqual(new Map([['apiKey', 'fake-cursor-key-B']]));

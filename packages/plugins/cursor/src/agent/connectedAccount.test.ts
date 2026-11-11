@@ -8,7 +8,7 @@ describe('Cursor selected native account', () => {
     const kit = await createPluginTestkit({ manifest: CURSOR_PLUGIN.manifest, module: CURSOR_PLUGIN });
     try {
       const launch = kit.registration('agents', 'cursor')?.connectedAccountLaunch;
-      expect(launch?.environmentUses).toEqual([{ purpose: 'cursor-native', environmentKey: 'CURSOR_API_KEY' }]);
+      expect(launch?.environmentUses).toEqual(['CURSOR_API_KEY', 'CURSOR_AUTH_TOKEN', 'AGENT_CLI_CREDENTIAL_STORE'].map(environmentKey => ({ purpose: 'cursor-native', environmentKey })));
       expect(launch?.switchContinuity).toMatchObject({ continuityMode: 'restart_same_home', supportedTransitions: expect.arrayContaining(['connected_to_native', 'connected_to_connected']) });
       const verify = launch?.continuity?.verifyResumeReachable;
       if (!verify) throw new Error('Cursor native resume callback is not registered');

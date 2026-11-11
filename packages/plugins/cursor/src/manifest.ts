@@ -36,8 +36,12 @@ export const CURSOR_PLUGIN = definePlugin({
           { kind: 'systemTool', id: 'cursor-agent' },
           { kind: 'systemTool', id: 'cursor-agent-no-fallback' },
         ],
-        envKeys: ['CURSOR_API_KEY'],
+        envKeys: ['CURSOR_API_KEY', 'CURSOR_AUTH_TOKEN', 'AGENT_CLI_CREDENTIAL_STORE'],
       },
+    }, {
+      id: 'cursor-account-network', capability: 'network',
+      reason: 'Sign in to the selected Cursor subscription and refresh its credentials.',
+      scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api2.cursor.sh' }], methods: ['GET', 'POST'] },
     }],
     optional: [],
   },
@@ -48,9 +52,11 @@ export const CURSOR_PLUGIN = definePlugin({
         ui: { iconResourceId: 'agent-mark' },
         authentication: {
           account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
-          defaultModeId: 'api-key',
+          defaultModeId: 'subscription',
           modes: [{
-            id: 'api-key', kind: 'manual', apiKey: true, title: 'User or service API key',
+            id: 'subscription', kind: 'oauthDeviceCode', title: 'Sign in with Cursor', scopes: [], outcomeReconciliation: 'none',
+          }, {
+            id: 'api-key', kind: 'manual', apiKey: true, title: 'API key',
             setup: {
               url: 'https://cursor.com/dashboard',
               checklist: ['Create a user or service API key in Cursor Dashboard → API Keys. Admin keys are not supported.', 'Copy the key and paste it here.'],
@@ -60,6 +66,10 @@ export const CURSOR_PLUGIN = definePlugin({
             directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
             outcomeReconciliation: 'none',
             fields: [{ id: 'token', title: 'Cursor API key', schema: { type: 'string', minLength: 1 }, secret: true }],
+          }, {
+            id: 'native-import', kind: 'manual', title: 'Import Cursor login', credentialOrigin: 'native_import', outcomeReconciliation: 'none',
+            setup: { url: 'https://cursor.com/docs/cli', checklist: ['Requires a connected Machine. Run cursor-agent login on that Machine, then select it here to import the login.'], createKeyTitle: 'Cursor CLI sign-in instructions' },
+            fields: [{ id: 'source', title: 'Source', description: 'Requires the Machine where you signed in to Cursor Agent.', secret: false, default: 'native', schema: { type: 'string', enum: ['native'] } }],
           }],
         },
       },
@@ -114,7 +124,7 @@ export const CURSOR_PLUGIN = definePlugin({
         primary: 'sessions',
         connectedAccounts: [{
           purpose: CURSOR_NATIVE_PURPOSE_ID, service: 'cursor-account', required: false,
-          credentialKinds: ['token'], materializationKinds: ['environment'],
+          credentialKinds: ['token', 'oauth'], materializationKinds: ['environment'],
         }],
         catalog: {
           acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds],
@@ -147,6 +157,15 @@ export const CURSOR_PLUGIN = definePlugin({
               { kind: 'string', name: 'homeDir', min: 1, max: 10_000, nullish: true },
             ] },
             key: { segments: [{ kind: 'literal', value: 'cursorHome' }, { kind: 'field', field: 'homeDir' }] },
+            instances: [{ kind: 'default', constants: {} }],
+          }, {
+            // The Cursor app (editor) store: undocumented, version-sensitive, read-only.
+            sourceKind: 'cursorApp',
+            schema: { fields: [
+              { kind: 'literal', name: 'kind', value: 'cursorApp' },
+              { kind: 'string', name: 'dataDir', min: 1, max: 10_000, nullish: true },
+            ] },
+            key: { segments: [{ kind: 'literal', value: 'cursorApp' }, { kind: 'field', field: 'dataDir' }] },
             instances: [{ kind: 'default', constants: {} }],
           }],
         } },

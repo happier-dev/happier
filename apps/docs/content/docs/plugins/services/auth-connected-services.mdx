@@ -510,6 +510,14 @@ connectedAccountDescriptors: {
 },
 ```
 
+In the unreleased 0.3 API, `oauthDeviceCode` also supports browser sign-in
+protocols that return a URL and require polling without issuing a user code.
+Return `awaitingDeviceAuthorization` with the verification URL and poll interval;
+omit `userCode` and `expiresAtMs` when the provider supplies neither. The host
+uses its existing authentication-attempt lifetime when no provider deadline is
+available, including after recovery of the attempt. Keep polling inside the
+runtime's `poll` callback; the host owns scheduling and cancellation.
+
 The host rejects missing or extra runtime modes, kind mismatches, and
 reconciliation mismatches. `providerCheck` requires one safe `reconcile`
 implementation for the original transaction. `lateEvidence` and `none`

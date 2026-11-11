@@ -1,1 +1,1 @@
-export { activate } from './runtime.js';
+export { activate } from './portableRuntime.js';

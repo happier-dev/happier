@@ -6,6 +6,16 @@ import type { HttpService } from '../plugins/http/contracts.js';
 // Shared custody bound for staged credential material; after expiry, recover by starting a new attempt.
 export const CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS = 24 * 60 * 60_000;
 
+export function resolveConnectedAccountAttemptTransactionExpiry(input: Readonly<{
+  now: number;
+  providerExpiresAtMs?: number;
+}>): number {
+  const hostExpiry = input.now + CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS;
+  return input.providerExpiresAtMs === undefined
+    ? hostExpiry
+    : Math.min(hostExpiry, input.providerExpiresAtMs);
+}
+
 export type ConnectedAccountAttemptTransactionKind = 'manual' | 'oauth' | 'device';
 
 export type ConnectedAccountAttemptTransactionScope = Readonly<{
