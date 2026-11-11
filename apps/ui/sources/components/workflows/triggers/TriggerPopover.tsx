@@ -416,7 +416,11 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     );
     const unavailableWhen = when.kind === 'runLifecycle' ? undefined : props.unavailableKinds?.[when.kind];
     const refused = props.submitRefusal !== undefined || failure?.code === 'legacy_conversion_unsupported';
-    const complete = !refused && props.pushedPage === undefined && (props.manual || displayedTrigger !== null) && (!needsTarget || (target !== null && !promptDestination.deleted)) && unavailableWhen === undefined
+    // A saved observation has no execution fields. Until Edit event changes its When,
+    // Done only dismisses it; the private definition stays with its existing reader.
+    const unchangedObservation = observationOnly !== undefined && props.initial?.kind === 'observationOnly'
+        && when === props.initial.when;
+    const complete = !refused && props.pushedPage === undefined && (unchangedObservation || props.manual || displayedTrigger !== null) && (!needsTarget || (target !== null && !promptDestination.deleted)) && unavailableWhen === undefined
         && (observationOnly || props.hostComplete !== false) && (!needsTarget || then.kind !== 'runWorkflow'
             || (workflow.status === 'ready' && !inputFields.some((field) => field.blocking)))
         && (inlineDefinition === null || !inputFields.some((field) => field.blocking));
@@ -439,6 +443,10 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
 
     const submit = (context?: ActionExecutorContext) => {
         if (!complete) return;
+        if (unchangedObservation) {
+            props.onRequestClose();
+            return;
+        }
         // Confirmation freezes relative text into one instant. Save failures, retries and the
         // workflow's later Save retain this instant rather than starting the delay again.
         const submittedTrigger = props.manual || props.creatingSession ? null : buildTriggerDefinition({ when, enabled, sessionId: props.sessionId });
@@ -640,7 +648,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                     onSelect={(pullRequest) => setWhen({ kind: when.kind, pullRequest })}
                                 />
                             ) : null}
-                            {props.setRows ?? null}
+                            {observationOnly ? null : props.setRows ?? null}
                             {needsTarget ? (
                                 <>
                                     <FieldSelect

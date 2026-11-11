@@ -470,9 +470,18 @@ describe('Account Workflow Library and settings', () => {
         expect(editor.props.initial).toMatchObject({ kind: 'observationOnly', when: {
             kind: 'pluginEvent', observationOnly: { kind: 'observationOnly' }, eventRef: source.eventRef,
         } });
+        // An observation has a monitoring origin, but no execution placement.
+        // Reopening must allow Done without inventing an executable Runs on target.
+        expect(reopened.findAllByType(TriggerRunsOnRow)).toHaveLength(0);
+        expect(reopened.findByTestId('workflows-column-trigger-popover-submit')?.props.disabled).toBe(false);
+        const writesBeforeDone = writes().length;
+        await reopened.pressByTestIdAsync('workflows-column-trigger-popover-submit');
+        expect(reopened.findByTestId('workflows-column-trigger-popover-submit')).toBeNull();
+        expect(writes()).toHaveLength(writesBeforeDone);
+        await reopened.pressByTestIdAsync(`workflows-column:trigger:${id}`);
         let update!: Promise<void>;
         await act(async () => {
-            update = editor.props.onSubmit({ enabled: true, when: { kind: 'pluginEvent', value: source,
+            update = reopened.findByType(TriggerPopover).props.onSubmit({ enabled: true, when: { kind: 'pluginEvent', value: source,
                 observationOnly: { kind: 'observationOnly' } }, then: { kind: 'sendPrompt', prompt: '' } }, {
                 trigger: { ...source, displayLabel: 'Edited issues' }, target: null, inputs: {}, observationOnly: { kind: 'observationOnly' },
             });
@@ -815,6 +824,8 @@ describe('Account Workflow Library and settings', () => {
         await screen.pressByTestIdAsync('workflows-column:trigger:digest:t2');
         const runsOn = screen.findAllByType(TriggerRunsOnRow)[0];
         expect(runsOn).toBeDefined();
+        expect(runsOn?.props.target).toEqual(project);
+        expect(screen.findByTestId('workflows-column-trigger-popover-submit')?.props.disabled).toBe(false);
         await act(async () => runsOn?.props.onChange({ machineId: 'm2', directory: '/elsewhere' }));
         await act(async () => screen.changeTextByTestId('workflows-column-trigger-popover-prompt', 'Changed prompt'));
         await screen.pressByTestIdAsync('workflows-column-trigger-popover-submit');
