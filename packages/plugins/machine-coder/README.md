@@ -1,6 +1,8 @@
 # Coder Machines (development only, unreleased)
 
-This plugin creates Coder workspaces and enrolls them through Happier’s shared native Machine bootstrap. Lifecycle requests use the selected deployment’s REST API; private guest IO uses its managed `coder` executable. Install a Coder CLI compatible with your deployment on the Happier controller. The implementation is characterized against Coder v2.39.0.
+This plugin creates Coder workspaces and enrolls them through Happier’s shared native Machine bootstrap. Lifecycle requests use the selected deployment’s REST API; private guest IO uses the controller’s `coder` executable through Happier’s managed-dependency owner. The implementation is characterized against Coder v2.39.0.
+
+Install the Coder CLI matching your Coder deployment on the Happier controller and make `coder` available on its PATH. Follow the [official CLI installation instructions](https://coder.com/docs/install/cli); your deployment also provides its matching installer at `<deployment>/install.sh`. Happier checks the existing installation and reports an actionable refusal when it is missing. This version does not download or update the CLI automatically.
 
 Connect **Coder account** with your deployment’s root HTTP(S) URL and a per-user token. Changing the URL requires reconnecting. Authentication verifies the token against that deployment. Credentials remain in host-managed Account storage, request headers and private process environment; the plugin does not run `coder login` or place the token in arguments or launch parameters.
 

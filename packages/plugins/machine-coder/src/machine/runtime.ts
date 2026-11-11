@@ -1,4 +1,5 @@
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { CoderCliUnavailable } from './cliPrerequisite.js';
 import { prepareCoderConnection } from './connection.js';
 import { createCoderClient } from './nativeClient.js';
 import { createCoderTransport } from './transport.js';
@@ -10,11 +11,15 @@ export async function coderRuntime(context: PluginInvocationContext) {
     waitForObservation: () => context.services.machineProvisioners.waitForNativeObservation() });
   async function transport() {
     const status = await context.services.managedServices.dependencies.status(DEPENDENCY_ID, { signal: context.signal });
-    if ((status.state !== 'ready' && status.state !== 'updateAvailable') || !status.executable) throw new PluginError({ code: 'coder_cli_unavailable' });
+    if ((status.state !== 'ready' && status.state !== 'updateAvailable') || !status.executable) throw new CoderCliUnavailable(connection.endpoint);
     return createCoderTransport({ ...connection, exec: context.services.exec, executable: status.executable, signal: context.signal });
   }
   return { ...client,
-    async check() { await client.check(); await transport(); return { available: true }; },
+    async check() {
+      await client.check();
+      try { await transport(); return { available: true }; }
+      catch (error) { if (error instanceof CoderCliUnavailable) return error.checkResult; throw error; }
+    },
     async exec(value: ReturnType<typeof ROLE_SCHEMAS.execInput.parse>) {
       const resource = await client.guest(value.resource);
       return (await transport()).exec({ ...value, resource });

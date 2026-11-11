@@ -117,8 +117,12 @@ The Coder machine integration is under development for 0.3 and is not released.
 It runs Happier inside a selected workspace agent. Files, SCM and Agent execution
 therefore use that workspace's computer.
 
-Setup uses a reachable controller computer, the managed Coder executable, and a
+Setup uses a reachable controller Machine with the Coder CLI installed, and a
 Connected Account containing your deployment URL and personal Coder token.
+Install the CLI version that matches your deployment on the controller Machine
+before setup. See [Coder's CLI installation guide](https://coder.com/docs/install/cli)
+and your deployment's installation instructions at `<deployment>/install.sh`.
+Happier uses that system executable through its managed-dependency owner.
 The guest must provide the POSIX shell commands used by native installation.
 Choose a template or template version, an explicit agent name, and the template's
 parameter values. Template presets can supply values; required parameters still

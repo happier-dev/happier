@@ -1,4 +1,6 @@
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { CODER_CLI_INSTALL_ACTION } from './machine/cliPrerequisite.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema, MachineProvisionerPowerResultV1Schema,
@@ -29,7 +31,7 @@ export const MACHINE_PROVISIONER = {
 
 export const PLUGIN = definePlugin({
   id: CONTRIBUTION.pluginId, version: '0.0.0', displayName: 'Coder Machines', description: MACHINE_PROVISIONER.description,
-  entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [
     { id: networkAccess, capability: 'network', reason: 'Manage workspaces on the selected Coder deployment.',
       scope: { targets: [{ kind: 'connectedAccountOrigin', service: ACCOUNT_SERVICE.localId }], methods: ['GET', 'POST'] } },
@@ -59,6 +61,10 @@ export const PLUGIN = definePlugin({
   } },
   machineProvisioners: { [CONTRIBUTION.localId]: MACHINE_PROVISIONER },
   actions: {
+    [CODER_CLI_INSTALL_ACTION]: { title: 'Install Coder CLI', surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], dangerLevel: 'safe',
+      execution: { target: 'client', client: { artifactId: 'cli-install', exportName: 'activate' }, platforms: ['web', 'ios', 'android'] },
+      inputSchema: defineProtocolObject({}, { policy: 'closed' }),
+      resultSchema: defineProtocolUnion([defineProtocolLiteral(null), defineProtocolObject({ url: defineProtocolString() }, { policy: 'closed' })]) },
     check: { ...defaults, title: 'Check Coder access', dangerLevel: 'safe', inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) { try { return await (await runtime(context)).check(); }
         catch (error) { return failure(error, { available: false, code: 'provider_unavailable' }); } } },
