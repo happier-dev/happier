@@ -6,6 +6,7 @@ import { readRecord } from '../inputs/inputRecords.js';
 import { createProviderErrorV1, ProviderErrorV1Schema, providerErrorFromRpcFailure } from './errors.js';
 import { PROVIDER_ACTION_OUTPUT_SCHEMAS_V1, PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1, resolveProviderActionOwnerV1, type ProviderActionRequestV1 } from './providerActionsV1.js';
 import type { ProviderActionIdV1 } from './providerActionIdsV1.js';
+import type { ProviderConnectionId } from './ids.js';
 import type { ProviderDefaultModelSelectionMutationV1 } from './selection/v1.js';
 import type { AccountSettingsMutationResult } from '../account/settings/accountSettingMutationV1.js';
 import { DaemonProviderBindingStatusRequestV1Schema, DaemonProviderBindingStatusResponseV1Schema } from '../rpc/providers.js';
@@ -87,8 +88,8 @@ export function resolveProviderActionRpcRouteV1(actionId: ProviderActionIdV1): P
 
 /** Save verification consumes the existing probe once, for Actions and the SDK facade. */
 export async function verifySavedProviderConnectionV1(request: ProviderActionRequestV1, saved: unknown, host: Readonly<{
-  probe(input: Readonly<{ machineId: string; connectionId: string }>): Promise<unknown>;
-  describe(input: Readonly<{ machineId: string; connectionId: string }>): Promise<unknown>;
+  probe(input: Readonly<{ machineId: string; connectionId: ProviderConnectionId }>): Promise<unknown>;
+  describe(input: Readonly<{ machineId: string; connectionId: ProviderConnectionId }>): Promise<unknown>;
 }>): Promise<unknown> {
   // Account authoring remains usable without a Machine. Machine-private creation
   // already probes inside its authoring owner, so it must not be checked again.
