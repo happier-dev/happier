@@ -58,7 +58,7 @@ import {
   type ActionCliFixedServerTarget,
 } from './actionServerTarget';
 import {
-  isPrivateSecretCliWrite, needsSavedSecretsInputPreparation, prepareSavedSecretsCliInput, SavedSecretsInputFailure, SavedSecretsInputReadApproval,
+  secretCliArgumentError, needsSavedSecretsInputPreparation, prepareSavedSecretsCliInput, SavedSecretsInputFailure, SavedSecretsInputReadApproval,
 } from './adapters/savedSecretsInput';
 
 type Executor = Pick<
@@ -265,25 +265,20 @@ export async function runCompiledActionCliCommand(params: Readonly<{
     console.log(help);
     return;
   }
-  if (isPrivateSecretCliWrite(command.actionId) && hasFlagBeforeTerminator(
-    actionCliCommandInputArgv(command, params.argv), new Set([ACTION_CLI_WHOLE_INPUT_FLAG]),
-  )) {
-    await reportFailure({ json, kind, failure: { errorCode: 'invalid_arguments',
-      errorMessage: 'Secret values are read from stdin or a hidden prompt. --input-json is unavailable for this command.' },
+  const inputTokens = stripTransportTokens(command, actionCliCommandInputArgv(command, params.argv));
+  const secretError = secretCliArgumentError(command.spec, command, inputTokens);
+  if (secretError) {
+    await reportFailure({ json, kind, failure: { errorCode: 'invalid_arguments', errorMessage: secretError },
       extraFields: null, humanSuffix: null, unexpected: false, help: json ? null : help });
     return;
   }
 
-  const parsed = parseActionCliInput(
-    command,
-    stripTransportTokens(command, actionCliCommandInputArgv(command, params.argv)),
-  );
+  const parsed = parseActionCliInput(command, inputTokens);
   if (!parsed.ok) {
     await reportFailure({
       json,
       kind,
-      failure: { errorCode: parsed.code, errorMessage: isPrivateSecretCliWrite(command.actionId)
-        ? 'Invalid secret arguments. Values are read from stdin or a hidden prompt.' : parsed.message },
+      failure: { errorCode: parsed.code, errorMessage: parsed.message },
       extraFields: null,
       humanSuffix: null,
       unexpected: false,
@@ -296,7 +291,7 @@ export async function runCompiledActionCliCommand(params: Readonly<{
   const prepareSavedInput = needsSavedSecretsInputPreparation(command.actionId);
   const composed = composeActionCliInput({
     parsed,
-    canonicalSchema: prepareSavedInput ? command.callerSchema : command.spec.inputSchema,
+    canonicalSchema: prepareSavedInput && parsed.canonicalBase === null ? command.callerSchema : command.spec.inputSchema,
     wholeInputSchema: command.wholeInputSchema,
     callerSchema: command.callerSchema,
     bindInput: command.spec.cli?.bindInput,

@@ -26,7 +26,7 @@ import { createConnectedServiceCredentialApi } from '@/api/client/connectedServi
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { executeSessionMcpAction, hasSessionMcpContext } from './toolsSessionMcp';
 import {
-  isPrivateSecretCliWrite, needsSavedSecretsInputPreparation, prepareSavedSecretsCliInput,
+  secretCliArgumentError, needsSavedSecretsInputPreparation, prepareSavedSecretsCliInput,
   SavedSecretsInputFailure, SavedSecretsInputReadApproval,
 } from '@/cli/actions/adapters/savedSecretsInput';
 
@@ -141,17 +141,17 @@ type InvokeCompiledFields =
  * A discovered contributed definition supplies only canonical data fields: it
  * never receives a host-executable input binder.
  */
-function resolveInvokeActionInput(
+export function resolveInvokeActionInput(
   args: readonly string[],
   compiled: InvokeCompiledFields,
 ): unknown {
-  if (compiled.kind === 'local' && isPrivateSecretCliWrite(compiled.actionId)
-    && hasInvokeOption(args, ACTION_CLI_WHOLE_INPUT_FLAG)) {
-    invalidInvokeArguments('Secret values are read from stdin or a hidden prompt. --input-json is unavailable for this command.', args[1]);
-  }
   const target = { fields: compiled.fields, positionals: [] as const };
   const flags = describeActionCliCommandFlags(target);
   const finiteFlags = compiled.kind === 'local' && supportsFiniteActionOutcome(compiled.actionId) ? [INVOKE_WAIT_FLAG] : [];
+  const stripped = stripCliOwnedFlags(args.slice(1), { booleanFlags: [INVOKE_YES_FLAG, ...finiteFlags], valueFlags: [...INVOKE_TRANSPORT_VALUE_FLAGS] });
+  const tokens = stripped.slice(1);
+  const secretError = compiled.kind === 'local' ? secretCliArgumentError(compiled.spec, target, tokens) : null;
+  if (secretError) invalidInvokeArguments(secretError, args[1]);
   // Unknown flags, missing values and surplus positionals fail here, before any
   // credential read or executor construction.
   assertCommandArguments(args, {
@@ -162,17 +162,15 @@ function resolveInvokeActionInput(
     literalValueFlags: [ACTION_CLI_SOURCE_PATH_FLAG, ACTION_CLI_DESTINATION_PATH_FLAG],
     maxPositionals: 1,
   });
-  const stripped = stripCliOwnedFlags(args.slice(1), { booleanFlags: [INVOKE_YES_FLAG, ...finiteFlags], valueFlags: [...INVOKE_TRANSPORT_VALUE_FLAGS] });
   // The exact Action id is the first positional after `invoke`. Removing that
   // exact slot, rather than searching by value, preserves a field value that
   // happens to equal the Action id.
-  const tokens = stripped.slice(1);
   const parsed = parseActionCliInput(target, tokens);
   if (!parsed.ok) invalidInvokeArguments(parsed.message, args[1]);
   if (compiled.kind === 'local') {
     const composed = composeActionCliInput({
       parsed,
-      canonicalSchema: needsSavedSecretsInputPreparation(compiled.actionId) ? compiled.callerSchema : compiled.spec.inputSchema,
+      canonicalSchema: needsSavedSecretsInputPreparation(compiled.actionId) && parsed.canonicalBase === null ? compiled.callerSchema : compiled.spec.inputSchema,
       wholeInputSchema: compiled.wholeInputSchema,
       callerSchema: compiled.callerSchema,
       bindInput: compiled.bindInput,
@@ -381,14 +379,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
           );
           return null;
         }
-        let input: unknown;
-        try { input = resolveInvokeActionInput(args, invokeFields); }
-        catch (error) {
-          if (isPrivateSecretCliWrite(signedRootActionId.data)) {
-            invalidInvokeArguments('Invalid secret arguments. Values are read from stdin or a hidden prompt.', requested);
-          }
-          throw error;
-        }
+        const input = resolveInvokeActionInput(args, invokeFields);
         return {
           actionId: signedRootActionId.data,
           input: wait && signedRootActionId.data === 'action.operations.get'

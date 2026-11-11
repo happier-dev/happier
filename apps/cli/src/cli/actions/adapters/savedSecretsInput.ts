@@ -1,12 +1,16 @@
 import { Buffer } from 'node:buffer';
 import type { ActionExecuteResult, ActionId } from '@happier-dev/protocol';
 import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
+import { personalSavedSecretResourceMutationActionIdV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionIdsV1';
 import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { parseSavedSecretPasskeyImportV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
 import { readMissingActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import { readActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import { buildFlagIndex, type ActionCliParseTarget } from '../fieldFlags';
+import { ACTION_CLI_WHOLE_INPUT_FLAG } from '../flags';
 import { promptInput, isInteractiveTerminal } from '@/terminal/prompts/promptInput';
 import { normalizeActionExecuteResult, unwrapCliActionSuccessPayload } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { isApprovalRequestCreatedResult, type ApprovalRequestCreatedResult } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
@@ -38,8 +42,35 @@ export function needsSavedSecretsInputPreparation(actionId: string): boolean {
     || actionId === 'registries.sources.create' || actionId === 'registries.sources.token.set';
 }
 
-export function isPrivateSecretCliWrite(actionId: string): boolean {
-  return actionId === 'secrets.create' || actionId === 'secrets.update' || actionId === 'secrets.delete';
+/** Reject value-bearing argv before generic diagnostics can echo those bytes. */
+export function secretCliArgumentError(spec: SecretInputDeclaration & Readonly<{ id: string }>, target: ActionCliParseTarget, tokens: readonly string[]): string | null {
+  if (!personalSavedSecretResourceMutationActionIdV1(spec.id)) return null;
+  const paths = readActionSecretInputPaths(spec, {}, { includeInactive: true });
+  if (!paths.length) return null;
+  const flags = buildFlagIndex(target);
+  let positionals = 0;
+  let positionalOnly = false;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+    if (token === '--') { positionalOnly = true; continue; }
+    const name = token.split('=', 1)[0]!;
+    if (!positionalOnly && name === ACTION_CLI_WHOLE_INPUT_FLAG) {
+      return 'Secret values are read from stdin or a hidden prompt. --input-json is unavailable for this command.';
+    }
+    if (!positionalOnly && paths.some(path => name === `--${path}` || name === `--${path}-json`)) {
+      return 'Secret values are read from stdin or a hidden prompt.';
+    }
+    if (!positionalOnly && token.startsWith('-')) {
+      const match = flags.get(name);
+      if (match && (match.form === 'value' || match.form === 'json') && !token.includes('=')) index += 1;
+      continue;
+    }
+    positionals += 1;
+    if (!target.variadicPositional && positionals > target.positionals.length) {
+      return 'Secret values are read from stdin or a hidden prompt.';
+    }
+  }
+  return null;
 }
 
 async function readMetadata(execute: ReadAction, actionId: ActionId): Promise<unknown> {
@@ -149,7 +180,7 @@ export async function prepareSavedSecretsCliInput(params: Readonly<{
     const parsed = PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.list'].safeParse(await readMetadata(execute, 'secrets.list'));
     if (!parsed.success) invalid('Saved Secret metadata is unavailable.');
     const secret = selectUnique(matchPersonalSavedSecretMetadata(parsed.data.secrets, input.secretId), 'Saved Secret');
-    const resolved = { secretId: secret.secretId, expectedUpdatedAt: secret.updatedAt };
+    const resolved = { secretId: secret.secretId, expectedUpdatedAt: input.expectedUpdatedAt ?? secret.updatedAt };
     if (actionId === 'secrets.delete') return resolved;
     if (input.source !== undefined) return { ...resolved, source: input.source,
       ...(typeof input.rename === 'string' ? { name: input.rename } : {}) };

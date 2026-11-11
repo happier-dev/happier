@@ -125,10 +125,18 @@ describe('compiled secret input custody', () => {
   });
   it('resolves the secret and carries its current revision to deletion', async () => {
     const h = await harness();
-    expect(await h.run('delete', ['Acme'], '', true)).toMatchObject({ ok: true });
+    const result = await h.run('delete', ['Acme'], '', true);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
     expect(h.writes).toMatchObject([{ resourceId: 'resource-id', expectedRevision: 37 }]);
     expect(h.resources.has('resource-id')).toBe(false);
     expect(terminal.promptInput).not.toHaveBeenCalled();
+  });
+  it('preserves an explicit stale delete revision and refuses the mutation', async () => {
+    const h = await harness();
+    const result = await h.run('delete', ['--input-json', JSON.stringify({ secretId: 'resource-id', expectedUpdatedAt: 36 })], '', true);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, error: { code: 'revision_conflict' } });
+    expect(h.writes).toEqual([]);
+    expect(h.resources.has('resource-id')).toBe(true);
   });
   it.each([['Acme', '--value', 'argv-value'], ['Acme', 'argv-value'],
     ['--input-json', '{"name":"Acme","value":"argv-value"}'],

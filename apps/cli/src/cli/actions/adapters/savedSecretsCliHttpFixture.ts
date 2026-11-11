@@ -1,3 +1,5 @@
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { CONNECTED_PRESENTATION_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { createServer } from 'node:http';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { SharedSavedSecretCreateInputV1Schema, SharedSavedSecretUpdateInputV1Schema, SharedSavedSecretDeleteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
@@ -51,6 +53,8 @@ export async function createSavedSecretsCliHttpFixture(options: Readonly<{ loseC
     const send = (value: unknown) => response.end(JSON.stringify(value));
     try {
       if (request.method === 'HEAD' && url.pathname === '/') return response.end();
+      if (url.pathname === '/v1/account/profile') return send(AccountProfileSchema.parse({ id: 'account-cli-fixture', connectedAccountsV4: [] }));
+      if (url.pathname === CONNECTED_PRESENTATION_ROWS_ROUTE_V1) return send({ status: 'absent' });
       if (url.pathname === '/v1/account/encryption') return send({ mode: 'plain', updatedAt: 1 });
       if (url.pathname === '/v1/account/encryption/currentness') return send({ mode: 'plain', version: 1, settingsVersion: 7,
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
