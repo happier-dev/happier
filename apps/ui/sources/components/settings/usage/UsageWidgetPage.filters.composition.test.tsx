@@ -790,8 +790,13 @@ describe('mounted Usage page scope commands', () => {
         const scroll = { getInnerViewRef: () => content };
         const nodes = new Map<string, Readonly<{ measureInWindow: (done: MeasureDone) => void }>>();
         const shownAccounting: Array<number | null> = [];
+        let renderCount = 0;
         let observeContent: (() => void) | undefined;
-        const screen = await renderScreen(<React.Profiler id="usage-scroll" onRender={() => observeContent?.()}><InjectedAuthProvider credentials={credentials}>
+        const screen = await renderScreen(<React.Profiler id="usage-scroll" onRender={() => {
+            renderCount++;
+            if (renderCount > 200) throw new Error(`usage WidgetArea render guard exceeded: ${renderCount}`);
+            observeContent?.();
+        }}><InjectedAuthProvider credentials={credentials}>
             <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
                 <UsageWidgetPage initialFilters={{ layoutId: 'how-you-work', period: '7days', metric: 'tokens', costMode: 'auto', focus: null }} />
             </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
@@ -817,7 +822,20 @@ describe('mounted Usage page scope commands', () => {
         const ids = [...positions.keys()];
         await vi.waitFor(() => expect(bodies()).toEqual(ids.slice(0, 4).map(id => `${id}.body`)));
         const firstBody = screen.root.findAllByType(WidgetSurface)[0]!;
+        let presentationFlipCount = 0;
+        let lastPresented: boolean | undefined;
+        const presentedFirst = () => {
+            const owning = screen.root.findAllByType(PluginSurfaceFocusEligibilityProvider).filter(node => node.findAllByType(WidgetSurface).includes(firstBody));
+            return owning.at(-1)?.props.presentationActive as boolean | undefined;
+        };
+        const recordPresentation = () => {
+            const next = presentedFirst();
+            if (next === undefined) return;
+            if (lastPresented !== undefined && next !== lastPresented) presentationFlipCount++;
+            lastPresented = next;
+        };
         await flushHookEffects({ cycles: 20 });
+        recordPresentation();
         const batches = () => home!.httpRequests.filter(request => request.path === '/v2/usage/query-batch');
         expect(batches(), 'cold visible widgets and inventory share one mount batch').toHaveLength(1);
         const firstContent = () => screen.root.findAllByType(UsageRhythmWidget)[0]!;
@@ -838,14 +856,10 @@ describe('mounted Usage page scope commands', () => {
             scroller().props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: offset } } });
         });
         await vi.waitFor(() => expect(bodies()).toEqual(ids.map(id => `${id}.body`)));
+        recordPresentation();
         expect(screen.root.findAllByType(WidgetSurface)[0], 'scrolling away keeps the loaded body mounted').toBe(firstBody);
-        // Retained is not demand: a body scrolled out of the viewport withdraws presentation, so live demand
-        // (Machine summaries, Live watches) inside it releases while its content stays mounted.
-        const presentedFirst = () => {
-            const owning = screen.root.findAllByType(PluginSurfaceFocusEligibilityProvider).filter(node => node.findAllByType(WidgetSurface).includes(firstBody));
-            return owning.at(-1)?.props.presentationActive;
-        };
-        await vi.waitFor(() => expect(presentedFirst(), 'an offscreen retained body is not presented').toBe(false));
+        // Retained content remains presented after admission; proximity only controls the one-time body admit.
+        await vi.waitFor(() => expect(presentedFirst(), 'an offscreen retained body stays presented').toBe(true));
         await flushHookEffects({ cycles: 20 });
         expect(firstContent() === loadedContent, 'scrolling away preserves the loaded inner body').toBe(true);
         expect(firstContent().props.slice.accounting?.totals.tokens.total).toBe(15);
@@ -856,6 +870,7 @@ describe('mounted Usage page scope commands', () => {
             scroller().props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: offset } } });
         });
         await vi.waitFor(() => expect(bodies()).toEqual(ids.map(id => `${id}.body`)));
+        recordPresentation();
         expect(screen.root.findAllByType(WidgetSurface)[0], 'scrolling back retains the same body').toBe(firstBody);
         await vi.waitFor(() => expect(presentedFirst(), 'a returned body is presented again').toBe(true));
         await flushHookEffects({ cycles: 20 });
@@ -870,6 +885,7 @@ describe('mounted Usage page scope commands', () => {
                 scroller().props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: offset } } });
             });
             await flushHookEffects({ cycles: 20 });
+            recordPresentation();
             expect(bodies()).toEqual(ids.map(id => `${id}.body`));
             expect(firstContent() === loadedContent, 'warm scrolling preserves the inner body').toBe(true);
             expect(firstContent().props.slice.accounting?.totals.tokens.total).toBe(15);
@@ -878,6 +894,8 @@ describe('mounted Usage page scope commands', () => {
         expect(screen.findByType(WidgetAreaLayoutBar).props.readFailure,
             'scroll admission and return never retire the page view inventory').toBeUndefined();
         observeContent = undefined;
+        expect(renderCount, 'multi-widget proximity/presentation settles instead of oscillating').toBeLessThan(200);
+        expect(presentationFlipCount, 'one-time admission never feeds proximity back into presentation').toBe(0);
         expect(shownAccounting).toContain(15);
         expect(shownAccounting, 'every committed scroll frame retains the loaded facts').not.toContain(null);
     });
