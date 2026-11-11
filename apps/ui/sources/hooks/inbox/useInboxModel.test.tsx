@@ -175,6 +175,16 @@ function enableDiscussionReads() {
 }
 
 describe('useInboxModel work groups (ORC R-10)', () => {
+    it('serves the real Voice agent Inbox Action from the mounted canonical owner', async () => {
+        listRuns.mockResolvedValue(page([]));
+        await renderModel();
+        const { createVoiceToolHandlers } = await import('@/voice/tools/handlers');
+        const serverId = appliedSnapshot().serverId;
+        const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: serverId });
+        const result = JSON.parse(await handlers.inbox_get!({}, { serverId, turnOrigin: 'person' }));
+
+        expect(result).toMatchObject({ ok: true, status: 'ready' });
+    });
     it('keeps Home summary and open Inbox hook order and commit and read cost stable across unrelated Home updates', async () => {
         listRuns.mockResolvedValue(page([]));
         const serverId = appliedSnapshot().serverId;
