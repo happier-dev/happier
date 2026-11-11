@@ -872,6 +872,8 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     const materializedEnv = (result as { targetMaterializedEnv?: Record<string, string> }).targetMaterializedEnv;
     expect(result).toMatchObject({ credentialRevision });
     expect(materializedEnv).toEqual({
+      HAPPIER_CLAUDE_AUTO_CONTINUE_AT_USAGE_LIMIT: '0',
+      HAPPIER_CLAUDE_NATIVE_CONFIG_DIR: join(tmpdir(), '.claude'),
       CLAUDE_CONFIG_DIR: join(
         activeServerDir,
         'daemon',

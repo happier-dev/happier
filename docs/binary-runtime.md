@@ -531,9 +531,41 @@ What it guarantees:
 
 Limits, stated so they are not assumed away:
 
-- **There is no uninstall hook.** No desktop uninstall path exists in the Tauri/bootstrap shell,
-  and dragging the app to the Trash cannot run app code, so PATH cleanup happens only when the
-  user asks for it in machine settings.
+- **Desktop cleanup is implemented in development source, not yet released.** Machine settings ›
+  Terminal offers cleanup before app removal; success quits the app. The native owner excludes
+  running setup tasks and blocks new ones through shutdown. Windows NSIS/MSI removal invokes the
+  same `hsetup desktop uninstall` owner before deleting app files; updates preserve components.
+  Real Windows removal refuses a running Desktop app; quit normally and retry. Normal Quit waits
+  for active native setup or component removal, so it cannot abandon an in-flight helper.
+  Older NSIS installers can invoke a newer uninstaller in place during replacement without an
+  update flag. Those ambiguous in-place invocations preserve components; explicit in-place
+  administrative removal therefore needs the settings action or helper cleanup first.
+  Moving the macOS app to the Trash or deleting a Linux AppImage does not invoke Happier's
+  component cleanup in the current implementation: use the settings action first. macOS supports
+  bundle-contained helpers through `SMAppService`, but Happier currently uses external LaunchAgent
+  definitions and separately installed CLI files; app deletion does not run their cleanup owner.
+  Explicit `--uninstall-desktop-components` also requires quitting the app first.
+- `desktopInstallations.ts` records the native bundle identity and the actual state/install homes
+  in the app's platform data directory before acquisition, then records the selected CLI executor.
+  `desktopResourceOwnership.ts` records creation and participating Desktop consumers beside CLI
+  roots and service definitions. Attribution and `managedBy` alone never authorize deletion.
+  Existing unclaimed resources remain user/legacy controlled; a standalone install relinquishes
+  its Desktop claim, while owner-controlled updates preserve it. Service claims bind the exact
+  definition, so an unrecognized replacement fails cleanup visibly.
+- Cleanup first invokes the installed CLI's capability-advertised Desktop service selector for
+  every recorded data home, then refreshes surviving launchers before removing any shared CLI.
+  The app's existing installation record saves that successful service-cleanup result before
+  deleting executables, so a subsequent record-write failure can be retried without reacquisition.
+  Only after those CLI children exit does the shared component uninstaller release CLI claims
+  and remove the last consumer's files.
+  Surviving services protect their CLI dependency. Scoped PATH cleanup uses the existing exposure
+  owner and retains entries for surviving CLI installations. Failed targets stay retryable;
+  successful targets are removed from the app's installation record. Credentials, settings,
+  sessions and other user data remain intact.
+- Older Desktop versions do not register consumers. Their legacy resources are retained without
+  an ownership claim; arbitrary older portable apps cannot be inventoried reliably. Do not infer
+  their absence from the new consumer list. Windows enterprise removal as SYSTEM cannot clean
+  another user's resources; perform cleanup as that user before removing the app.
 - The installer's default POSIX `BIN_DIR` (`~/.local/bin`) differs from the Desktop-managed shim
   directory (`<happier home>/bin`). When a `happier` already resolves the desktop adds nothing
   (INV5). On macOS, where an app opened from the Dock gets launchd's PATH, that check also searches

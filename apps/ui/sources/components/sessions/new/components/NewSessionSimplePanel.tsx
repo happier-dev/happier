@@ -88,6 +88,8 @@ const SIMPLE_NEW_SESSION_DISMISS_SAFETY_MS = 1000;
 export type NewSessionSimplePanelProps = Readonly<{
     composerTopContent?: React.ReactNode;
     statusBadges?: React.ComponentProps<typeof AgentInput>['statusBadges'];
+    newSessionAfterSendMode?: React.ComponentProps<typeof AgentInput>['newSessionAfterSendMode'];
+    focusOnMount?: boolean;
     statusTrailingActions?: React.ReactNode;
     popoverBoundaryRef: React.RefObject<View | null>;
     headerHeight: number;
@@ -509,6 +511,8 @@ function NewSessionSimplePanelComposer({
                         value={sessionPrompt}
                         onChangeText={props.setSessionPrompt}
                         onSend={attachmentsController.handleSend}
+                        newSessionAfterSendMode={props.newSessionAfterSendMode}
+                        focusOnMount={props.focusOnMount}
                         isSendDisabled={!props.canCreate}
                         isSending={props.isCreating}
                         disabled={props.isCreating}

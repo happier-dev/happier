@@ -445,6 +445,7 @@ export const de: TranslationStructure = {
             composerFocus: 'Composer fokussieren',
             composerSendImmediate: 'Alternativ senden (Warteschlange / steuern)',
             composerSendInterrupt: 'Unterbrechen und senden',
+            composerSendAlternateAfterSend: "Senden und weitere starten / öffnen",
             composerSendPending: 'An die Warteschlange senden',
             commandPaletteOpen: 'Befehlspalette öffnen',
             modeCycle: 'Modus wechseln',
@@ -3337,6 +3338,7 @@ export const de: TranslationStructure = {
         trayStopAllConfirmBody: 'Agent-Sitzungen auf diesem Computer werden beendet, und Telefon und Browser erreichen ihn erst wieder, wenn du Happier öffnest.',
         trayStopConfirmAction: 'Stoppen',
         trayActionFailedTitle: 'Das hat nicht geklappt',
+        trayQuitWaitForSystemTasks: "Happier richtet noch Komponenten ein oder entfernt sie. Warte, bis der Vorgang abgeschlossen ist, und versuche dann erneut, die App zu beenden.",
         trayLoginItemFailed: 'Das Anmeldeobjekt von Happier konnte nicht aktualisiert werden',
         traySessions: ({ count }: { count: string }) => `Sitzungen: ${count}`,
         closeStopTitle: 'Es laufen noch Agenten-Sitzungen',
@@ -6201,7 +6203,7 @@ export const de: TranslationStructure = {
     },
 
     sessionDrafts: {
-        sectionTitle: 'Entwürfe', badge: 'Entwurf', untitled: 'Unbenannter Entwurf', continueEditing: 'Weiterbearbeiten', startAnother: 'Neuen Entwurf beginnen',
+        sectionTitle: 'Entwürfe', badge: 'Entwurf', untitled: 'Unbenannter Entwurf', continueEditing: 'Weiterbearbeiten', startAnother: 'Neuen Entwurf beginnen', startedOpen: "Sitzung gestartet · Öffnen",
         status: { offline: 'Nicht verbunden', syncing: 'Wird synchronisiert', conflict: 'Konflikt', machineUnavailable: 'Computer nicht verfügbar', attachmentNeedsAttention: 'Anhang prüfen', startInterrupted: 'Start unterbrochen' },
         new: { action: 'Neuer Entwurf' }, delete: { action: 'Entwurf löschen', confirmTitle: 'Entwurf löschen?', confirmDescription: 'Dieser Entwurf wird von deinen Geräten entfernt.' },
         conflict: { title: 'Entwurfskonflikt', description: 'Dieses Feld wurde auf einem anderen Gerät geändert.', mine: 'Auf diesem Gerät', synced: 'Synchronisiert', useSynced: 'Synchronisierte Version verwenden', keepDevice: 'Geräteversion behalten', copyMine: 'Meine Version kopieren', copied: 'Kopiert', copyFailed: 'Kopieren fehlgeschlagen', field: { text: 'Textinhalt', mentions: 'Erwähnungen', attachments: 'Anhänge', recipient: 'Empfänger', agentContinuation: 'Agentenfortsetzung', executionRunDelivery: 'Laufzustellung' } },
@@ -6585,8 +6587,12 @@ export const de: TranslationStructure = {
     },
 
     agentInput: {
+        keepKeyboard: { label: "Tastatur nach dem Senden geöffnet lassen" },
+        historyPosition: ({ index, total }: { index: number; total: number }) => `${index} von ${total}`,
         sendOptions: {
             title: "Sendeoptionen",
+            sendAndStartAnother: "Senden und weitere starten",
+            sendAndOpen: "Senden und Sitzung öffnen",
             queue: "Einreihen",
             hint: "Gedrückt halten, um die Sendeart zu wählen",
         },
@@ -7900,6 +7906,7 @@ export const de: TranslationStructure = {
 settingsSession: {
     terminalHostTitle: 'Terminal-Host für neue Sitzungen',
     terminalHostNone: 'Kein Terminal-Host',
+    newSessionAfterSend: { title: "Nach dem Senden", footer: "Lege fest, was beim Senden aus dem Editor für neue Sitzungen passiert. Halte Senden gedrückt, um für eine Nachricht die andere Option zu wählen.", openTitle: "Sitzung öffnen", openSubtitle: "Zur Sitzung wechseln, sobald sie startet.", startAnotherTitle: "Bleiben und weitere starten", startAnotherSubtitle: "Im Hintergrund weiter starten und einen neuen Entwurf öffnen." },
     newSessionDraftEntry: {
         title: 'Entwürfe für neue Sitzungen',
         footer: 'Wähle, ob „Neue Sitzung“ den Entwurf dieses Geräts fortsetzt oder einen neuen öffnet.',
@@ -8091,6 +8098,8 @@ settingsSession: {
               resetHiddenSubtitle: 'Die auf diesem Gerät ausgeblendeten Banner zurückholen.',
           },
           inputBehavior: {
+              keepFocusTitle: "Eingabefeld nach dem Senden fokussiert lassen",
+              keepFocusSubtitle: "Im Nachrichtenfeld bleiben, um gleich die nächste Nachricht zu schreiben.",
               title: 'Eingabeverhalten',
               footer: 'Enter-zum-Senden und das Verhalten des Nachrichtenverlaufs einstellen.',
               enterToSendEnabledNativeSubtitle: 'Enter zum Senden drücken',
@@ -10214,7 +10223,15 @@ settingsSession: {
         },
         cliPath: {
             title: 'Terminal',
-            footer: 'Happier Desktop fügt nur PATH-Einträge hinzu oder entfernt sie, die es selbst erstellt hat; Einträge des Shell-Installers bleiben unangetastet.',
+            footer: "Happier Desktop ändert nur selbst erstellte PATH-Einträge; Einträge des Shell-Installers bleiben erhalten.",
+            cleanupTitle: "Desktop-Komponenten entfernen",
+            cleanupSubtitle: "Desktop-eigene Kommandozeile und Hintergrunddienste entfernen und beenden.",
+            cleanupConfirmTitle: "Desktop-Komponenten entfernen und beenden?",
+            cleanupConfirmBody: "Dies entfernt Kommandozeilendateien, PATH-Einträge und Hintergrunddienste von Desktop, wenn keine andere Desktop-App sie benötigt. Gemeinsam genutzte und selbst installierte Komponenten bleiben erhalten, ebenso der Sitzungsverlauf und die Kontodaten. Die entfernten Dienste werden gestoppt, wodurch laufende Sitzungen und der Fernzugriff unterbrochen werden können.\n\nDesktop wird nach der Bereinigung beendet. Entferne danach die App über dein Betriebssystem; unter macOS oder portablem Linux entfernst du das App-Paket oder die Datei. Beim erneuten Öffnen kann Desktop seine Komponenten wieder einrichten.",
+            cleanupConfirmAction: "Komponenten entfernen und beenden",
+            cleanupBusy: "Desktop-Komponenten werden entfernt…",
+            cleanupFailed: "Die Bereinigung wurde nicht abgeschlossen. Versuche es erneut.",
+            cleanupQuitFailed: "Die Bereinigung ist abgeschlossen, aber Desktop konnte nicht beendet werden. Beende die App, bevor du sie entfernst.",
             addTitle: 'happier zum PATH hinzufügen',
             addSubtitle: 'Macht den Befehl happier in neuen Terminals verfügbar.',
             removeTitle: 'happier aus dem PATH entfernen',

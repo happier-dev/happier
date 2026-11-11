@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
 import { readInstalledDaemonServiceBundleId, readInstalledDaemonServiceManagedBy } from './discoverInstalledDaemonServiceEntries';
-import { previewDaemonServiceInstall } from './installer';
+import { installDaemonService, previewDaemonServiceInstall } from './installer';
 import { parseDaemonServiceBundleId, planDaemonServiceInstall } from './plan';
 
 /**
@@ -45,6 +45,32 @@ function writePlanFile(plan: ReturnType<typeof planDaemonServiceInstall>): strin
 }
 
 describe('daemon service management marker', () => {
+  it('records actual Desktop creation and shared consumers independently from attribution, then relinquishes on terminal install', async () => {
+    await withTempDir('happier-desktop-service-ownership-', async (homeDir) => {
+      const options = {
+        platform: 'linux' as const, mode: 'user' as const, uid: 501,
+        channel: 'stable' as const, targetMode: 'pinned' as const,
+        instanceId: 'company', activeServerId: 'company',
+        userHomeDir: homeDir, happierHomeDir: `${homeDir}/.happier`,
+        serverUrl: 'https://company.example.test', webappUrl: 'https://company.example.test',
+        publicServerUrl: 'https://company.example.test', nodePath: '/usr/local/bin/happier', entryPath: '',
+        runCommands: false,
+      };
+      const definitionPath = planPinned({ platform: 'linux', homeDir }).files[0]!.path;
+      const ownershipPath = `${definitionPath}.desktop-ownership.json`;
+      await installDaemonService({ ...options, desktopBundleId: 'dev.happier.desktop' });
+      expect(JSON.parse(readFileSync(ownershipPath, 'utf8'))).toMatchObject({
+        version: 1, createdByDesktop: true, consumers: ['dev.happier.desktop'],
+      });
+      await installDaemonService({ ...options, desktopBundleId: 'dev.happier.desktop.preview' });
+      expect(JSON.parse(readFileSync(ownershipPath, 'utf8')).consumers).toEqual([
+        'dev.happier.desktop', 'dev.happier.desktop.preview',
+      ]);
+      await installDaemonService(options);
+      expect(existsSync(ownershipPath)).toBe(false);
+      expect(existsSync(definitionPath)).toBe(true);
+    });
+  });
   for (const platform of platforms) {
     it(`persists the desktop marker in a ${platform} definition and reads it back; no marker reads as user-owned`, async () => {
       await withTempDir(`happier-managed-by-${platform}-`, async (homeDir) => {

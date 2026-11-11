@@ -92,6 +92,8 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
     //   and true cognates that are simply the same word (Actions, Options, Description, Sources).
     // A key here is a decision, not a gap; translating one of them would make the UI read worse.
     fr: new Set([
+        // "Session" is also the French noun for an agent session.
+        'message.provenanceSession',
         'machine.thisComputer.cliChannelStable',
         // "Machine" is the French word for a computer here, not an untranslated fallback.
         'updates.sections.machine',

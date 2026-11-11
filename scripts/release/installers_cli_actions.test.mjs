@@ -9,6 +9,16 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
+function managedCliFixture(body) {
+  return `#!/usr/bin/env bash
+if [[ "$*" == 'service uninstall --help --json' ]]; then
+  printf '%s\\n' '{"flags":["--install-root"]}'
+  exit 0
+fi
+${body}
+`;
+}
+
 test('install.sh --check is read-only and reports missing install', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-check-missing-'));
   const homeDir = join(root, 'home');
@@ -111,6 +121,7 @@ test('install.sh --uninstall removes installed binary and shim without network',
   const binDir = join(root, 'bin');
   const installDir = join(root, 'install');
   const outBinDir = join(root, 'out-bin');
+  const invocationLogPath = join(root, 'service-context.log');
 
   await mkdir(homeDir, { recursive: true });
   await mkdir(binDir, { recursive: true });
@@ -124,10 +135,14 @@ test('install.sh --uninstall removes installed binary and shim without network',
   await chmod(curlStubPath, 0o755);
 
   const happierPath = join(installDir, 'bin', 'happier');
-  await writeFile(happierPath, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
+  await writeFile(happierPath, managedCliFixture(`
+printf '%s\\n' "$*" "\${HAPPIER_HOME_DIR:-}" "\${HAPPIER_DAEMON_SERVICE_CHANNEL:-}" > "$HAPPIER_TEST_SERVICE_CONTEXT_LOG"
+`), 'utf8');
   await chmod(happierPath, 0o755);
   await writeFile(join(installDir, 'cli', 'current', 'marker.txt'), 'current', 'utf8');
   await writeFile(join(installDir, 'cli', 'versions', '1.0.0', 'marker.txt'), 'version', 'utf8');
+  const desktopOwnershipPath = join(installDir, 'cli.desktop-ownership.json');
+  await writeFile(desktopOwnershipPath, '{"version":1,"createdByDesktop":true,"consumers":["dev.happier.app"]}');
   const shimPath = join(outBinDir, 'happier');
   await symlink(happierPath, shimPath);
 
@@ -141,12 +156,18 @@ test('install.sh --uninstall removes installed binary and shim without network',
     HAPPIER_INSTALL_DIR: installDir,
     HAPPIER_BIN_DIR: outBinDir,
     HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_TEST_SERVICE_CONTEXT_LOG: invocationLogPath,
   };
+  delete env.HAPPIER_HOME_DIR;
+  delete env.HAPPIER_WITH_DAEMON;
 
   const res = spawnSync('bash', [installerPath, '--uninstall'], { env, encoding: 'utf8' });
   const stdout = String(res.stdout ?? '');
   const stderr = String(res.stderr ?? '');
   assert.equal(res.status, 0, `uninstall failed:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
+  assert.deepEqual((await readFile(invocationLogPath, 'utf8')).trimEnd().split('\n'), [
+    `service uninstall --all --install-root ${join(installDir, 'cli')} --yes`, installDir, 'stable',
+  ]);
 
   const checkBin = spawnSync('bash', ['-lc', `test ! -e "${happierPath.replaceAll('"', '\\"')}"`], { encoding: 'utf8' });
   assert.equal(checkBin.status, 0, 'expected binary to be removed');
@@ -154,8 +175,128 @@ test('install.sh --uninstall removes installed binary and shim without network',
   assert.equal(checkShim.status, 0, 'expected shim to be removed');
   const checkPayload = spawnSync('bash', ['-lc', `test ! -d "${join(installDir, 'cli').replaceAll('"', '\\"')}"`], { encoding: 'utf8' });
   assert.equal(checkPayload.status, 0, 'expected versioned payload install root to be removed');
+  await assert.rejects(readFile(desktopOwnershipPath, 'utf8'), { code: 'ENOENT' });
 
   await rm(root, { recursive: true, force: true });
+});
+
+test('install.sh --uninstall preserves the installation and reports failed service removal', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-uninstall-failure-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const installDir = join(root, 'install');
+  const stateHomeDir = join(root, 'state');
+  const outBinDir = join(root, 'out-bin');
+  await mkdir(join(installDir, 'bin'), { recursive: true });
+  await mkdir(join(installDir, 'cli', 'current'), { recursive: true });
+  await mkdir(stateHomeDir, { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+  const invocationLogPath = join(root, 'service-context.log');
+  const happierPath = join(installDir, 'bin', 'happier');
+  await writeFile(happierPath, managedCliFixture(`
+printf '%s\\n' "$*" "\${HAPPIER_HOME_DIR:-}" > "$HAPPIER_TEST_SERVICE_CONTEXT_LOG"
+echo 'Service unregister denied' >&2
+exit 23
+`), 'utf8');
+  await chmod(happierPath, 0o755);
+  const payloadPath = join(installDir, 'cli', 'current', 'marker');
+  await writeFile(payloadPath, 'installed');
+  const desktopOwnershipPath = join(installDir, 'cli.desktop-ownership.json');
+  const desktopOwnership = '{"version":1,"createdByDesktop":true,"consumers":["dev.happier.app"]}';
+  await writeFile(desktopOwnershipPath, desktopOwnership);
+  const shimPath = join(outBinDir, 'happier');
+  await symlink(happierPath, shimPath);
+  const env = {
+    ...process.env,
+    HOME: join(root, 'home'),
+    PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_HOME_DIR: stateHomeDir,
+    HAPPIER_BIN_DIR: outBinDir,
+    HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_TEST_SERVICE_CONTEXT_LOG: invocationLogPath,
+  };
+  delete env.HAPPIER_WITH_DAEMON;
+  const result = spawnSync('bash', [join(repoRoot, 'scripts/release/installers/install.sh'), '--uninstall', '--purge'], {
+    env, encoding: 'utf8',
+  });
+  assert.notEqual(result.status, 0, 'uninstall must fail when the service cannot be removed');
+  assert.match(result.stderr, /Service unregister denied/);
+  assert.equal(await readFile(payloadPath, 'utf8'), 'installed');
+  assert.equal(await readFile(desktopOwnershipPath, 'utf8'), desktopOwnership);
+  assert.equal(await readFile(shimPath, 'utf8'), await readFile(happierPath, 'utf8'));
+  assert.deepEqual((await readFile(invocationLogPath, 'utf8')).trimEnd().split('\n'), [
+    `service uninstall --all --install-root ${installDir} --yes`, stateHomeDir,
+  ]);
+});
+
+test('install.sh --uninstall keeps an older CLI when installation-scoped cleanup is unsupported', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-uninstall-legacy-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const installDir = join(root, 'install');
+  const cliPath = join(installDir, 'bin', 'happier');
+  const callsPath = join(root, 'calls');
+  await mkdir(dirname(cliPath), { recursive: true });
+  await mkdir(join(installDir, 'cli', 'current'), { recursive: true });
+  await writeFile(join(installDir, 'cli', 'current', 'marker'), 'installed');
+  // Older releases accept help but may ignore unknown selectors during execution.
+  await writeFile(cliPath, `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$HAPPIER_TEST_CLI_CALLS"
+if [[ "$*" == 'service uninstall --help --json' ]]; then
+  printf '%s\\n' '{"flags":["--all"]}'
+fi
+exit 0
+`);
+  await chmod(cliPath, 0o755);
+  const env = {
+    ...process.env,
+    HOME: join(root, 'home'),
+    PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_HOME_DIR: installDir,
+    HAPPIER_BIN_DIR: join(root, 'out-bin'),
+    HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_TEST_CLI_CALLS: callsPath,
+  };
+  delete env.HAPPIER_WITH_DAEMON;
+  const result = spawnSync('bash', [join(repoRoot, 'scripts/release/installers/install.sh'), '--uninstall'], {
+    env, encoding: 'utf8',
+  });
+  assert.notEqual(result.status, 0, 'unsupported cleanup must keep the installation');
+  assert.equal(await readFile(join(installDir, 'cli', 'current', 'marker'), 'utf8'), 'installed');
+  assert.deepEqual((await readFile(callsPath, 'utf8')).trim().split('\n'), ['service uninstall --help --json']);
+});
+
+test('install.sh --uninstall preserves a damaged installation instead of using another CLI from PATH', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-uninstall-missing-cli-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const installDir = join(root, 'install');
+  const payloadPath = join(installDir, 'cli', 'current', 'marker');
+  const otherCli = join(root, 'other-bin', 'happier');
+  const callsPath = join(root, 'calls');
+  await mkdir(dirname(payloadPath), { recursive: true });
+  await mkdir(dirname(otherCli), { recursive: true });
+  await writeFile(payloadPath, 'installed');
+  await writeFile(otherCli, managedCliFixture('echo invoked > "$HAPPIER_TEST_CLI_CALLS"'));
+  await chmod(otherCli, 0o755);
+  const env = {
+    ...process.env,
+    HOME: join(root, 'home'),
+    PATH: `${dirname(otherCli)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_BIN_DIR: join(root, 'out-bin'),
+    HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_TEST_CLI_CALLS: callsPath,
+  };
+  delete env.HAPPIER_WITH_DAEMON;
+  const result = spawnSync('bash', [join(repoRoot, 'scripts/release/installers/install.sh'), '--uninstall'], {
+    env, encoding: 'utf8',
+  });
+  assert.notEqual(result.status, 0, 'missing managed CLI must prevent payload removal');
+  assert.equal(await readFile(payloadPath, 'utf8'), 'installed');
+  assert.equal(await readFile(callsPath, 'utf8').catch(() => ''), '');
 });
 
 test('install.sh --uninstall skips service uninstall when daemon setup is explicitly disabled', async () => {
@@ -217,6 +358,43 @@ exit 0
   await rm(root, { recursive: true, force: true });
 });
 
+test('install.sh --uninstall reports a payload removal failure', {
+  skip: process.platform === 'win32' || process.getuid?.() === 0,
+}, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-uninstall-permissions-'));
+  const installDir = join(root, 'install');
+  const payloadDir = join(installDir, 'cli', 'current');
+  const outBinDir = join(root, 'out-bin');
+  await mkdir(join(installDir, 'bin'), { recursive: true });
+  await mkdir(payloadDir, { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+  const happierPath = join(installDir, 'bin', 'happier');
+  await writeFile(happierPath, managedCliFixture('exit 0'));
+  await chmod(happierPath, 0o755);
+  await writeFile(join(payloadDir, 'marker'), 'installed');
+  await chmod(payloadDir, 0o555);
+  t.after(async () => {
+    await chmod(payloadDir, 0o755);
+    await rm(root, { recursive: true, force: true });
+  });
+  const result = spawnSync('bash', [join(repoRoot, 'scripts/release/installers/install.sh'), '--uninstall'], {
+    env: {
+      ...process.env,
+      HOME: join(root, 'home'),
+      HAPPIER_PRODUCT: 'cli',
+      HAPPIER_INSTALL_DIR: installDir,
+      HAPPIER_HOME_DIR: installDir,
+      HAPPIER_BIN_DIR: outBinDir,
+      HAPPIER_WITH_DAEMON: '0',
+      HAPPIER_NONINTERACTIVE: '1',
+    },
+    encoding: 'utf8',
+  });
+  assert.notEqual(result.status, 0, 'a remaining payload must not be reported as uninstalled');
+  assert.doesNotMatch(result.stdout, /uninstalled\./);
+  assert.equal(await readFile(join(payloadDir, 'marker'), 'utf8'), 'installed');
+});
+
 test('install.sh --uninstall --preview restores default happier shim when it pointed at preview', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-uninstall-preview-default-shim-'));
   const homeDir = join(root, 'home');
@@ -237,19 +415,19 @@ test('install.sh --uninstall --preview restores default happier shim when it poi
 
   // Stable install present.
   const stableBinaryPath = join(installDir, 'cli', 'current', 'happier');
-  await writeFile(stableBinaryPath, '#!/usr/bin/env bash\necho stable\n', 'utf8');
+  await writeFile(stableBinaryPath, managedCliFixture('echo stable'), 'utf8');
   await chmod(stableBinaryPath, 0o755);
 
   // Preview install present and selected as default.
   const previewBinaryPath = join(installDir, 'cli-preview', 'current', 'happier');
-  await writeFile(previewBinaryPath, '#!/usr/bin/env bash\necho preview\n', 'utf8');
+  await writeFile(previewBinaryPath, managedCliFixture('echo preview'), 'utf8');
   await chmod(previewBinaryPath, 0o755);
   const defaultShimPath = join(installDir, 'bin', 'happier');
   await symlink('../cli-preview/current/happier', defaultShimPath);
 
   // Preview shim that should be removed by uninstall.
   const previewShimPath = join(installDir, 'bin', 'hprev');
-  await writeFile(previewShimPath, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
+  await writeFile(previewShimPath, managedCliFixture('exit 0'), 'utf8');
   await chmod(previewShimPath, 0o755);
   await symlink(previewShimPath, join(outBinDir, 'hprev'));
 
@@ -298,6 +476,32 @@ test('install.sh --uninstall --preview restores default happier shim when it poi
   await rm(root, { recursive: true, force: true });
 });
 
+test('install.sh --uninstall keeps the fallback executable when PATH uses the managed bin directory', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-shared-bin-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const installDir = join(root, 'install');
+  const binDir = join(installDir, 'bin');
+  await mkdir(binDir, { recursive: true });
+  for (const [channelRoot, version] of [['cli', 'stable'], ['cli-preview', 'preview']]) {
+    const payloadDir = join(installDir, channelRoot, 'current');
+    await mkdir(payloadDir, { recursive: true });
+    const binary = join(payloadDir, 'happier');
+    await writeFile(binary, managedCliFixture(`echo ${version}`));
+    await chmod(binary, 0o755);
+  }
+  await symlink('../cli-preview/current/happier', join(binDir, 'happier'));
+  await symlink('../cli-preview/current/happier', join(binDir, 'hprev'));
+  await writeFile(join(installDir, 'default-cli-release-channel.json'), JSON.stringify({ releaseChannel: 'preview' }));
+  const result = spawnSync('bash', [join(repoRoot, 'scripts/release/installers/install.sh'), '--uninstall'], {
+    env: { ...process.env, HAPPIER_INSTALL_DIR: installDir, HAPPIER_BIN_DIR: binDir, HAPPIER_CHANNEL: 'preview', HAPPIER_PRODUCT: 'cli', HAPPIER_NONINTERACTIVE: '1' },
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const fallback = spawnSync(join(binDir, 'happier'), ['--version'], { encoding: 'utf8' });
+  assert.equal(fallback.status, 0, fallback.error?.message || fallback.stderr);
+  assert.equal(fallback.stdout.trim(), 'stable');
+});
+
 test('install.sh --uninstall (stable) preserves default happier shim when it points at preview', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-uninstall-stable-preserve-default-shim-'));
   const homeDir = join(root, 'home');
@@ -317,11 +521,11 @@ test('install.sh --uninstall (stable) preserves default happier shim when it poi
   await chmod(curlStubPath, 0o755);
 
   const stableBinaryPath = join(installDir, 'cli', 'current', 'happier');
-  await writeFile(stableBinaryPath, '#!/usr/bin/env bash\necho stable\n', 'utf8');
+  await writeFile(stableBinaryPath, managedCliFixture('echo stable'), 'utf8');
   await chmod(stableBinaryPath, 0o755);
 
   const previewBinaryPath = join(installDir, 'cli-preview', 'current', 'happier');
-  await writeFile(previewBinaryPath, '#!/usr/bin/env bash\necho preview\n', 'utf8');
+  await writeFile(previewBinaryPath, managedCliFixture('echo preview'), 'utf8');
   await chmod(previewBinaryPath, 0o755);
 
   const defaultShimPath = join(installDir, 'bin', 'happier');
@@ -390,11 +594,11 @@ test('install.sh --uninstall (stable) switches default happier shim to preview w
   await chmod(curlStubPath, 0o755);
 
   const stableBinaryPath = join(installDir, 'cli', 'current', 'happier');
-  await writeFile(stableBinaryPath, '#!/usr/bin/env bash\necho stable\n', 'utf8');
+  await writeFile(stableBinaryPath, managedCliFixture('echo stable'), 'utf8');
   await chmod(stableBinaryPath, 0o755);
 
   const previewBinaryPath = join(installDir, 'cli-preview', 'current', 'happier');
-  await writeFile(previewBinaryPath, '#!/usr/bin/env bash\necho preview\n', 'utf8');
+  await writeFile(previewBinaryPath, managedCliFixture('echo preview'), 'utf8');
   await chmod(previewBinaryPath, 0o755);
 
   const defaultShimPath = join(installDir, 'bin', 'happier');
@@ -541,7 +745,7 @@ test('install.sh --reset purges the install directory', async () => {
   await chmod(curlStubPath, 0o755);
 
   const happierPath = join(installDir, 'bin', 'happier');
-  await writeFile(happierPath, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
+  await writeFile(happierPath, managedCliFixture('exit 0'), 'utf8');
   await chmod(happierPath, 0o755);
   const shimPath = join(outBinDir, 'happier');
   await symlink(happierPath, shimPath);

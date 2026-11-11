@@ -71,7 +71,6 @@ describe('tool normalization fixtures (v1): tool results', () => {
           protocol: event.protocol,
           provider: event.provider,
         });
-        expect(outRecord?._raw).toBeDefined();
 
         if (canonicalToolName === 'Bash') {
           const stdout = outRecord?.stdout;

@@ -832,6 +832,68 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(modalAlertSpy).toHaveBeenCalled();
   });
 
+  it('opens a fresh draft at Send and reports the started Session instead of navigating', async () => {
+    vi.useRealTimers();
+    const { useCreateNewSession, machineSpawnNewSessionSpy, storageState } = await setupHarness();
+    const { readNewSessionStartedNotice, resetNewSessionStartedNoticeForTests, subscribeNewSessionStartedNotice } = await import(
+      '@/components/sessions/new/modules/newSessionStartedNotice'
+    );
+    resetNewSessionStartedNoticeForTests();
+    const stopListening = subscribeNewSessionStartedNotice(() => {});
+    let resolveSpawn!: (value: Readonly<{ type: 'success'; sessionId: string }>) => void;
+    machineSpawnNewSessionSpy.mockImplementationOnce(() => new Promise((resolve) => { resolveSpawn = resolve; }));
+    storageState.sessions['session-created'] = { id: 'session-created' };
+    const router = { push: vi.fn(), replace: vi.fn() };
+    const onStartAnother = vi.fn();
+    const hook = await renderHook(() => useCreateNewSession({
+      draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
+      launchIntentSignature: 'direct-launch-intent',
+      router,
+      onStartAnother,
+      selectedMachineId: 'm1',
+      selectedPath: '/tmp',
+      selectedMachine: { id: 'm1', active: true, activeAt: Date.now(), metadata: { host: 'devbox', homeDir: '/Users/alice' } },
+      setIsCreating: vi.fn(),
+      setIsResumeSupportChecking: vi.fn(),
+      settings: { experiments: false, newSessionAfterSendV1: 'open' } as unknown as Settings,
+      useProfiles: false,
+      selectedProfileId: null,
+      profileMap: new Map(),
+      recentMachinePaths: [],
+      agentType: 'opencode' as any,
+      permissionMode: 'default' as PermissionMode,
+      modelMode: 'default' as ModelMode,
+      promptStore: createNewSessionPromptStore('First turn'),
+      resumeSessionId: '',
+      agentNewSessionOptions: null,
+      machineEnvPresence: { isPreviewEnvSupported: false, isLoading: false, meta: {}, refreshedAt: null, refresh: () => {} },
+      secrets: [],
+      secretBindingsByProfileId: {},
+      selectedSecretIdByProfileIdByEnvVarName: {},
+      sessionOnlySecretValueByProfileIdByEnvVarName: {},
+      selectedMachineCapabilities: {},
+      targetServerId: null,
+      allowedTargetServerIds: undefined,
+      draftScope: { serverId: 'server-a', accountId: 'account-a' },
+    }));
+
+    let createPromise: Promise<void> | void | null = null;
+    await act(async () => {
+      createPromise = hook.getCurrent().handleCreateSession({ afterSend: 'startAnother' });
+      await flushHookEffects({ cycles: 1, turns: 2 });
+    });
+    expect(onStartAnother).toHaveBeenCalledTimes(1);
+
+    await hook.unmount();
+    resolveSpawn({ type: 'success', sessionId: 'session-created' });
+    await createPromise;
+
+    expect(machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(readNewSessionStartedNotice()?.href).toContain('session-created');
+    stopListening();
+  });
+
   it('continues outer follow-up without navigating after direct spawn custody settles when the launcher unmounts', async () => {
     vi.useRealTimers();
     const {

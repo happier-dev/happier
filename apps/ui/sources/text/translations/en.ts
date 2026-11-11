@@ -443,6 +443,7 @@ export const en = {
             composerFocus: 'Focus composer',
             composerSendImmediate: 'Alternate send (queue / steer)',
             composerSendInterrupt: 'Interrupt and send',
+            composerSendAlternateAfterSend: "Send and start another / open",
             composerSendPending: 'Send to pending queue',
             commandPaletteOpen: 'Open command palette',
             modeCycle: 'Cycle mode',
@@ -3338,6 +3339,7 @@ export const en = {
         trayStopAllConfirmBody: 'Agent sessions running on this computer will end, and your phone and browser can’t reach it until you open Happier again.',
         trayStopConfirmAction: 'Stop',
         trayActionFailedTitle: 'That didn’t go through',
+        trayQuitWaitForSystemTasks: "Happier is still setting up or removing components. Wait for it to finish, then try quitting again.",
         trayLoginItemFailed: 'Couldn’t update Happier’s login item',
         traySessions: ({ count }: { count: string }) => `Sessions: ${count}`,
         closeStopTitle: 'Agent sessions are still running',
@@ -6222,7 +6224,7 @@ export const en = {
     },
 
     sessionDrafts: {
-        sectionTitle: 'Drafts', badge: 'Draft', untitled: 'Untitled draft', continueEditing: 'Continue editing', startAnother: 'Start another',
+        sectionTitle: 'Drafts', badge: 'Draft', untitled: 'Untitled draft', continueEditing: 'Continue editing', startAnother: 'Start another', startedOpen: "Session started · Open",
         status: { offline: 'Offline', syncing: 'Syncing', conflict: 'Conflict', machineUnavailable: 'Machine unavailable', attachmentNeedsAttention: 'Attachment needs attention', startInterrupted: 'Start interrupted' },
         new: { action: 'New draft' },
         delete: { action: 'Delete draft', confirmTitle: 'Delete draft?', confirmDescription: 'This draft will be removed from your devices.' },
@@ -6617,8 +6619,12 @@ export const en = {
     },
 
     agentInput: {
+        keepKeyboard: { label: "Keep keyboard open after sending" },
+        historyPosition: ({ index, total }: { index: number; total: number }) => `${index} of ${total}`,
         sendOptions: {
             title: "Send options",
+            sendAndStartAnother: "Send and start another",
+            sendAndOpen: "Send and open session",
             queue: "Queue",
             hint: "Hold to choose how to send",
         },
@@ -7932,6 +7938,7 @@ export const en = {
 settingsSession: {
     terminalHostTitle: 'Terminal host for new sessions',
     terminalHostNone: 'No terminal host',
+    newSessionAfterSend: { title: "After sending", footer: "Choose what happens when you send from the new session composer. Hold Send to choose the other way for one message.", openTitle: "Open the session", openSubtitle: "Go to the session as soon as it starts.", startAnotherTitle: "Stay and start another", startAnotherSubtitle: "Keep it starting in the background and open a fresh draft." },
     newSessionDraftEntry: {
         title: 'New session drafts',
         footer: 'Choose whether New session continues this device’s draft or opens a fresh one.',
@@ -8123,6 +8130,8 @@ settingsSession: {
               resetHiddenSubtitle: 'Clear the banners hidden on this device.',
           },
           inputBehavior: {
+              keepFocusTitle: "Keep composer focused after sending",
+              keepFocusSubtitle: "Stay in the message field so you can write the next message right away.",
               title: 'Input behavior',
               footer: 'Configure Enter-to-send and message history behavior.',
               enterToSendEnabledNativeSubtitle: 'Press Enter to send',
@@ -10246,7 +10255,15 @@ settingsSession: {
         },
         cliPath: {
             title: 'Terminal',
-            footer: 'Happier Desktop only adds or removes the PATH entries it created; entries written by the shell installer stay untouched.',
+            footer: "Happier Desktop only changes PATH entries it created; shell installer entries stay untouched.",
+            cleanupTitle: "Remove Desktop components",
+            cleanupSubtitle: "Clean up Desktop-owned command line and background services, then quit.",
+            cleanupConfirmTitle: "Remove Desktop components and quit?",
+            cleanupConfirmBody: "This removes command line files, PATH entries and background services owned by Desktop when no other Desktop app needs them. Shared and user-installed components are kept. Session history and account data are kept. Services being removed stop, which may interrupt running sessions and remote access.\n\nDesktop will quit after cleanup. Then remove the app using your operating system; on macOS or portable Linux, remove the app bundle or file. Opening Desktop again may set up its components again.",
+            cleanupConfirmAction: "Remove components and quit",
+            cleanupBusy: "Removing Desktop components…",
+            cleanupFailed: "Cleanup did not finish. Try again.",
+            cleanupQuitFailed: "Cleanup finished, but Desktop could not quit. Quit the app before removing it.",
             addTitle: 'Add happier to PATH',
             addSubtitle: 'Make the happier command available in new terminals.',
             removeTitle: 'Remove happier from PATH',

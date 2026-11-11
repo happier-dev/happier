@@ -12,6 +12,7 @@ import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSe
 import type {
     NewSessionWizardSectionPresentation,
     NewSessionWizardSelectionSectionId,
+    NewSessionAfterSendMode,
 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 
 export type NewSessionSimpleScreenProps = NewSessionSimplePanelProps & Readonly<{
@@ -19,7 +20,10 @@ export type NewSessionSimpleScreenProps = NewSessionSimplePanelProps & Readonly<
     setCheckoutCreationDraft: React.Dispatch<React.SetStateAction<NewSessionCheckoutCreationDraft | null>>;
 }>;
 
-export type NewSessionScreenModel =
+export type NewSessionScreenModel = Readonly<{
+    /** The configured "After sending" choice, or undefined where this draft has only one outcome. */
+    newSessionAfterSendMode?: NewSessionAfterSendMode;
+}> & (
     | Readonly<{
         variant: 'simple';
         popoverBoundaryRef: React.RefObject<View>;
@@ -37,4 +41,5 @@ export type NewSessionScreenModel =
             machine: NewSessionWizardMachineProps;
             footer: NewSessionWizardFooterProps;
         }>;
-    }>;
+    }>
+);

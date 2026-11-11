@@ -4,6 +4,8 @@ use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DesktopExitAction {
+    /// Hold the exit until native setup or component cleanup has finished.
+    WaitForSystemTasks,
     /// Hold the exit and let the webview decide what to do with the background services.
     HandOffToWebview,
     /// Quit now.
@@ -15,6 +17,8 @@ pub enum DesktopExitAction {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DesktopExitRequest {
+    /// Native setup and cleanup must finish before an ordinary exit can drop their owner.
+    pub system_tasks_busy: bool,
     /// Whether there is still a webview to ask.
     pub webview_present: bool,
     /// Whether this quit already handed off once.
@@ -29,11 +33,12 @@ pub struct DesktopExitRequest {
     pub explicit: bool,
 }
 
-/// One handoff, then the app always quits.
+/// One handoff, then the app quits once native setup and cleanup have finished.
 ///
 /// `handoff_used` is what keeps a quit from ever becoming unquittable: if the webview is wedged,
-/// gone, or simply slow, pressing Quit again exits. Nothing here waits on a timer. In menu-bar mode
-/// only an explicit Quit exits; with no web UI there is nobody to hand off to, so it exits at once
+/// gone, or simply slow, pressing Quit again exits when no native task is active. Nothing here
+/// waits on a timer. In menu-bar mode only an explicit Quit exits; with no web UI there is nobody
+/// to hand off to, so it exits once native work settles
 /// and leaves every service exactly as it was. The menu router resolves the tray-only login-start
 /// preference before requesting an exit, using the same Stop owner as explicit "stop and quit".
 pub fn resolve_desktop_exit_action(request: DesktopExitRequest) -> DesktopExitAction {
@@ -42,6 +47,9 @@ pub fn resolve_desktop_exit_action(request: DesktopExitRequest) -> DesktopExitAc
     }
     if request.menu_bar_mode && !request.explicit {
         return DesktopExitAction::StayInMenuBar;
+    }
+    if request.system_tasks_busy {
+        return DesktopExitAction::WaitForSystemTasks;
     }
     if request.handoff_used || !request.webview_present {
         return DesktopExitAction::Exit;
@@ -126,11 +134,29 @@ mod tests {
 
     fn request() -> DesktopExitRequest {
         DesktopExitRequest {
+            system_tasks_busy: false,
             webview_present: true,
             handoff_used: false,
             is_restart: false,
             menu_bar_mode: false,
             explicit: true,
+        }
+    }
+
+    #[test]
+    fn native_system_tasks_hold_normal_quit_even_after_a_previous_handoff() {
+        for handoff_used in [false, true] {
+            for webview_present in [false, true] {
+                assert_eq!(
+                    resolve_desktop_exit_action(DesktopExitRequest {
+                        system_tasks_busy: true,
+                        handoff_used,
+                        webview_present,
+                        ..request()
+                    }),
+                    DesktopExitAction::WaitForSystemTasks,
+                );
+            }
         }
     }
 
@@ -180,6 +206,7 @@ mod tests {
         assert_eq!(
             resolve_desktop_exit_action(DesktopExitRequest {
                 is_restart: true,
+                system_tasks_busy: true,
                 ..request()
             }),
             DesktopExitAction::Exit
@@ -202,6 +229,7 @@ mod tests {
                 webview_present: false,
                 menu_bar_mode: true,
                 explicit: false,
+                system_tasks_busy: true,
                 ..request()
             }),
             DesktopExitAction::StayInMenuBar

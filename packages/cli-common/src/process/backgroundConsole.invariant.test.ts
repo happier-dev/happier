@@ -16,6 +16,7 @@ const roots = [
   'apps/cli/src/daemon/service',
 ];
 const leaves = [
+  'apps/cli/src/integrations/tmux/TmuxUtilities.ts',
   'apps/cli/src/utils/spawnHappyCLI.ts',
   'apps/cli/src/daemon/doctor.ts',
   'apps/cli/src/daemon/runtime/spawnDetachedDaemonStartSync.ts',

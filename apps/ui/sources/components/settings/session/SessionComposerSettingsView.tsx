@@ -9,6 +9,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { t } from '@/text';
+import { useHasHardwareKeyboard } from '@/hooks/ui/useHasHardwareKeyboard';
 import { useLocalSettingMutable, useSettingMutable } from '@/sync/domains/state/storage';
 import { normalizeComposerBannerCollapseRecord } from '@/components/sessions/composerBanners/composerBannerCollapse';
 import type { BusySteerSendPolicy, MessageSendMode, NonSteerableSendPromptSetting } from '@/sync/domains/session/control/submitMode';
@@ -39,6 +40,10 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
     const [composerSurfaceStyle, setComposerSurfaceStyle] = useSettingMutable('composerSurfaceStyle');
     const [rememberBannerVisibility, setRememberBannerVisibility] = useSettingMutable('sessionComposerRememberBannerVisibility');
     const [newSessionDraftEntryMode, setNewSessionDraftEntryMode] = useSettingMutable('newSessionDraftEntryMode');
+    const [newSessionAfterSend, setNewSessionAfterSend] = useSettingMutable('newSessionAfterSendV1');
+    const [keepFocusAfterSendSetting, setKeepFocusAfterSend] = useLocalSettingMutable('composerKeepFocusAfterSend');
+    const hasHardwareKeyboard = useHasHardwareKeyboard();
+    const keepFocusAfterSend = keepFocusAfterSendSetting ?? hasHardwareKeyboard;
     const [collapsedBannerKinds, setCollapsedBannerKinds] = useLocalSettingMutable('sessionComposerCollapsedBannerKinds');
     const [openHistoryScopeMenu, setOpenHistoryScopeMenu] = React.useState(false);
     const [openInactiveResumePolicyMenu, setOpenInactiveResumePolicyMenu] = React.useState(false);
@@ -191,7 +196,44 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
                 />
             </ItemGroup>
 
+            <ItemGroup
+                title={t('settingsSession.newSessionAfterSend.title')}
+                footer={t('settingsSession.newSessionAfterSend.footer')}
+            >
+                <Item
+                    testID="settings-new-session-after-send-open"
+                    title={t('settingsSession.newSessionAfterSend.openTitle')}
+                    subtitle={t('settingsSession.newSessionAfterSend.openSubtitle')}
+                    icon={<Icon name="arrow-square-out" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={newSessionAfterSend === 'open'
+                        ? <Icon name="check" size={20} color={theme.colors.accent.blue} />
+                        : null}
+                    onPress={() => setNewSessionAfterSend('open')}
+                    showChevron={false}
+                />
+                <Item
+                    testID="settings-new-session-after-send-start-another"
+                    title={t('settingsSession.newSessionAfterSend.startAnotherTitle')}
+                    subtitle={t('settingsSession.newSessionAfterSend.startAnotherSubtitle')}
+                    icon={<Icon name="plus" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={newSessionAfterSend === 'startAnother'
+                        ? <Icon name="check" size={20} color={theme.colors.accent.blue} />
+                        : null}
+                    onPress={() => setNewSessionAfterSend('startAnother')}
+                    showChevron={false}
+                />
+            </ItemGroup>
+
             <ItemGroup title={t('settingsSession.inputBehavior.title')} footer={t('settingsSession.inputBehavior.footer')}>
+                <Item
+                    testID="settings-keep-composer-focus-after-send"
+                    title={t('settingsSession.inputBehavior.keepFocusTitle')}
+                    subtitle={t('settingsSession.inputBehavior.keepFocusSubtitle')}
+                    icon={<Icon name="push-pin" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={<Switch value={keepFocusAfterSend} onValueChange={setKeepFocusAfterSend} />}
+                    showChevron={false}
+                    onPress={() => setKeepFocusAfterSend(!keepFocusAfterSend)}
+                />
                 <Item
                     title={t('settingsFeatures.enterToSend')}
                     subtitle={enterToSendSubtitle}

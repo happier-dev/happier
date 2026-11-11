@@ -269,12 +269,9 @@ export async function startStackDevTargets(
           throw new Error(`[dev-targets] shared synchronization endpoints do not match ${target.name}; configure the sibling sync owner first`);
         }
       }
-      const borrowed = await siblingOwner.ensureProject({
+      await siblingOwner.ensureProject({
         stackBaseDir, sourceDir, targets: synchronizedTargets, ownerId: instanceId, borrowOnly: true, env,
       }, { runProcess });
-      if (borrowed.unhealthyTargets.size > 0) {
-        throw new Error(`[dev-targets] shared synchronization is unavailable: ${[...borrowed.unhealthyTargets].map(([name, state]) => `${name} (${state})`).join(', ')}`);
-      }
     } else {
       requireSuccessful(
         await runProcess({ label: 'mutagen', command: 'mutagen', args: ['version'], env: mutagenEnv }),
@@ -815,13 +812,7 @@ export async function startStackDevTargets(
           `[dev-targets] authoritative server target ${unavailableAuthoritativeServer.target.name} failed to become ready`,
         );
     }
-    if (
-      workersByTarget.size === 0
-      && targetFailuresByTarget.size > 0
-      && [...targetFailuresByTarget.values()].every(({ phase }) => phase === 'sync')
-    ) {
-      throw [...targetFailuresByTarget.values()].at(-1).error;
-    }
+    // Optional targets keep the existing lifecycle even when none starts immediately.
     for (const { target, index, initialWorker, initialTunnel } of syncFailedTargets) {
       const plan = plans.find((candidate) => candidate.target.name === target.name);
       startTargetLifecycle(plan, index, initialWorker, initialTunnel);

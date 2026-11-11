@@ -629,6 +629,7 @@ export const es: TranslationStructure = {
             composerFocus: 'Enfocar el compositor',
             composerSendImmediate: 'Envío alternativo (cola / dirigir)',
             composerSendInterrupt: 'Interrumpir y enviar',
+            composerSendAlternateAfterSend: "Enviar y empezar otra / abrir",
             composerSendPending: 'Enviar a la cola pendiente',
             commandPaletteOpen: 'Abrir paleta de comandos',
             modeCycle: 'Cambiar modo',
@@ -3612,6 +3613,7 @@ export const es: TranslationStructure = {
     trayStopAllConfirmBody: 'Las sesiones de agentes que se ejecutan en este ordenador terminarán, y tu teléfono y tu navegador no podrán alcanzarlo hasta que vuelvas a abrir Happier.',
     trayStopConfirmAction: 'Detener',
     trayActionFailedTitle: 'No se ha podido hacer',
+    trayQuitWaitForSystemTasks: "Happier sigue configurando o eliminando componentes. Espera a que termine y vuelve a intentar salir.",
     trayLoginItemFailed: 'No se pudo actualizar el elemento de inicio de Happier',
     traySessions: ({ count }: { count: string }) => `Sesiones: ${count}`,
     closeStopTitle: 'Todavía hay sesiones de agente en curso',
@@ -6563,7 +6565,7 @@ export const es: TranslationStructure = {
   },
 
   sessionDrafts: {
-    sectionTitle: 'Borradores', badge: 'Borrador', untitled: 'Borrador sin título', continueEditing: 'Continuar editando', startAnother: 'Empezar otro',
+    sectionTitle: 'Borradores', badge: 'Borrador', untitled: 'Borrador sin título', continueEditing: 'Continuar editando', startAnother: 'Empezar otro', startedOpen: "Sesión iniciada · Abrir",
     status: { offline: 'Sin conexión', syncing: 'Sincronizando', conflict: 'Conflicto', machineUnavailable: 'Máquina no disponible', attachmentNeedsAttention: 'El archivo adjunto requiere atención', startInterrupted: 'Inicio interrumpido' },
     new: { action: 'Nuevo borrador' }, delete: { action: 'Eliminar borrador', confirmTitle: '¿Eliminar borrador?', confirmDescription: 'Este borrador se eliminará de tus dispositivos.' },
     conflict: { title: 'Conflicto de borrador', description: 'Este campo cambió en otro dispositivo.', mine: 'En este dispositivo', synced: 'Sincronizado', useSynced: 'Usar sincronizado', keepDevice: 'Conservar dispositivo', copyMine: 'Copiar el mío', copied: 'Copiado', copyFailed: 'No se pudo copiar', field: { text: 'Texto', mentions: 'Menciones', attachments: 'Adjuntos', recipient: 'Destinatario', agentContinuation: 'Continuación del agente', executionRunDelivery: 'Entrega de ejecución' } },
@@ -6959,8 +6961,12 @@ export const es: TranslationStructure = {
   },
 
   agentInput: {
+      keepKeyboard: { label: "Mantener el teclado abierto al enviar" },
+      historyPosition: ({ index, total }: { index: number; total: number }) => `${index} de ${total}`,
       sendOptions: {
           title: "Opciones de envío",
+          sendAndStartAnother: "Enviar y empezar otra",
+          sendAndOpen: "Enviar y abrir sesión",
           queue: "Poner en cola",
           hint: "Mantén pulsado para elegir cómo enviar",
       },
@@ -8334,6 +8340,7 @@ export const es: TranslationStructure = {
 settingsSession: {
     terminalHostTitle: 'Terminal para nuevas sesiones',
     terminalHostNone: 'Sin terminal',
+    newSessionAfterSend: { title: "Después de enviar", footer: "Elige qué ocurre al enviar desde el editor de nueva sesión. Mantén pulsado Enviar para elegir la otra opción en un solo mensaje.", openTitle: "Abrir la sesión", openSubtitle: "Ir a la sesión en cuanto empiece.", startAnotherTitle: "Quedarse y empezar otra", startAnotherSubtitle: "Seguir iniciándola en segundo plano y abrir un borrador nuevo." },
     newSessionDraftEntry: {
         title: 'Borradores de sesión nueva',
         footer: 'Elige si Nueva sesión continúa el borrador de este dispositivo o abre uno nuevo.',
@@ -8525,6 +8532,8 @@ settingsSession: {
           resetHiddenSubtitle: 'Borra los avisos ocultos en este dispositivo.',
       },
       inputBehavior: {
+          keepFocusTitle: "Mantener el editor enfocado al enviar",
+          keepFocusSubtitle: "Permanece en el campo de mensaje para escribir el siguiente enseguida.",
           title: 'Comportamiento de la entrada',
           footer: 'Configura Enviar con Intro y el comportamiento del historial de mensajes.',
           enterToSendEnabledNativeSubtitle: 'Pulsa Intro para enviar',
@@ -10867,7 +10876,15 @@ settingsSession: {
     },
     cliPath: {
       title: "Terminal",
-      footer: "Happier Desktop solo añade o elimina las entradas del PATH que ha creado; las escritas por el instalador del shell no se tocan.",
+      footer: "Happier Desktop solo modifica las entradas PATH que creó; conserva las del instalador de shell.",
+      cleanupTitle: "Eliminar componentes de Desktop",
+      cleanupSubtitle: "Eliminar la línea de comandos y los servicios propios de Desktop y salir.",
+      cleanupConfirmTitle: "¿Eliminar los componentes de Desktop y salir?",
+      cleanupConfirmBody: "Esto elimina los archivos de línea de comandos, las entradas PATH y los servicios propios de Desktop cuando ninguna otra aplicación Desktop los necesita. Se conservan los componentes compartidos o instalados por ti, el historial de sesiones y los datos de la cuenta. Los servicios eliminados se detienen, lo que puede interrumpir las sesiones en curso y el acceso remoto.\n\nDesktop se cerrará tras la limpieza. Después elimina la aplicación con tu sistema operativo; en macOS o Linux portátil, elimina el paquete o archivo de la aplicación. Al abrir Desktop de nuevo, sus componentes pueden volver a instalarse.",
+      cleanupConfirmAction: "Eliminar componentes y salir",
+      cleanupBusy: "Eliminando componentes de Desktop…",
+      cleanupFailed: "La limpieza no terminó. Inténtalo de nuevo.",
+      cleanupQuitFailed: "La limpieza terminó, pero Desktop no pudo cerrarse. Cierra la aplicación antes de eliminarla.",
       addTitle: "Añadir happier al PATH",
       addSubtitle: "Haz que el comando happier esté disponible en los terminales nuevos.",
       removeTitle: "Quitar happier del PATH",

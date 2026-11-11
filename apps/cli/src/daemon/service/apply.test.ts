@@ -15,7 +15,7 @@ describe('runDaemonServiceCommands', () => {
   let commandsDir: string;
   beforeEach(async () => {
     commandsDir = await createTempDir('happier-service-commands-');
-    for (const command of ['systemctl', 'launchctl', 'sleep']) {
+    for (const command of ['systemctl', 'launchctl', 'sleep', 'powershell.exe', 'schtasks']) {
       const path = join(commandsDir, process.platform === 'win32' ? `${command}.exe` : command);
       writeFileSync(path, 'fixture');
       chmodSync(path, 0o755);
@@ -28,6 +28,95 @@ describe('runDaemonServiceCommands', () => {
     vi.unstubAllEnvs();
     delete process.env.HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS;
     await removeTempDir(commandsDir);
+  });
+
+  it.each(['linux', 'darwin', 'win32'] as const)('preserves the %s definition when unregister is denied', async (platform) => {
+    await withTempDir('happier-uninstall-denied-', async (dir) => {
+      const { planDaemonServiceUninstall } = await import('./plan');
+      const { applyDaemonServiceUninstallPlan } = await import('./apply');
+      const definition = join(dir, platform === 'darwin' ? 'daemon.plist' : platform === 'win32' ? 'daemon.ps1' : 'daemon.service');
+      writeFileSync(definition, 'installed definition');
+      spawnSyncMock.mockReturnValue({ status: 1, stdout: '', stderr: 'Access denied: Operation not permitted' });
+      const plan = planDaemonServiceUninstall({ platform, instanceId: 'default', userHomeDir: dir, happierHomeDir: dir, installedPath: definition, uid: 501 });
+
+      await expect(applyDaemonServiceUninstallPlan(plan)).rejects.toThrow(/denied|permitted/i);
+      expect(readFileSync(definition, 'utf8')).toBe('installed definition');
+    });
+  });
+
+  it('removes an already absent Linux service definition before reloading systemd', async () => {
+    await withTempDir('happier-uninstall-absent-', async (dir) => {
+      const { planDaemonServiceUninstall } = await import('./plan');
+      const { applyDaemonServiceUninstallPlan } = await import('./apply');
+      const definition = join(dir, 'happier-daemon.default.service');
+      writeFileSync(definition, 'stale definition');
+      let reloaded = false;
+      spawnSyncMock.mockImplementation((_cmd: string, args: readonly string[]) => {
+        if (args.includes('daemon-reload')) {
+          expect(existsSync(definition)).toBe(false);
+          reloaded = true;
+          return { status: 0, stdout: '', stderr: '' };
+        }
+        return { status: 1, stdout: '', stderr: 'Unit happier-daemon.default.service does not exist.' };
+      });
+
+      await applyDaemonServiceUninstallPlan(planDaemonServiceUninstall({ platform: 'linux', instanceId: 'default', userHomeDir: dir, installedPath: definition }));
+      expect(existsSync(definition)).toBe(false);
+      expect(reloaded).toBe(true);
+    });
+  });
+
+  it('preserves a legacy service definition when its unregister fails', async () => {
+    await withTempDir('happier-uninstall-legacy-', async (dir) => {
+      const { planDaemonServiceUninstall } = await import('./plan');
+      const { applyDaemonServiceUninstallPlan } = await import('./apply');
+      const plan = planDaemonServiceUninstall({ platform: 'linux', instanceId: 'default', userHomeDir: dir, targetMode: 'default-following' });
+      const legacy = plan.filesToRemove.find((path) => path.endsWith('/happier-daemon.service'))!;
+      const { mkdir } = await import('node:fs/promises');
+      await mkdir(join(dir, '.config/systemd/user'), { recursive: true });
+      writeFileSync(legacy, 'legacy definition');
+      spawnSyncMock.mockImplementation((_cmd: string, args: readonly string[]) => ({
+        status: args.includes('happier-daemon.service') ? 1 : 0,
+        stdout: '', stderr: 'Permission denied',
+      }));
+
+      await expect(applyDaemonServiceUninstallPlan(plan)).rejects.toThrow(/denied/i);
+      expect(readFileSync(legacy, 'utf8')).toBe('legacy definition');
+    });
+  });
+
+  it('continues an uninstall past a failing step the plan tolerates', async () => {
+    await withTempDir('happier-uninstall-tolerated-', async (dir) => {
+      const { applyDaemonServiceUninstallPlan } = await import('./apply');
+      const definition = join(dir, 'daemon.service');
+      writeFileSync(definition, 'installed definition');
+      spawnSyncMock.mockImplementation((cmd: string) => (cmd === 'schtasks'
+        ? { status: 1, stdout: '', stderr: 'ERROR: There is no running instance of the task.' }
+        : { status: 0, stdout: '', stderr: '' }));
+
+      await applyDaemonServiceUninstallPlan({
+        platform: 'linux',
+        filesToRemove: [definition],
+        commands: [
+          { cmd: 'schtasks', args: ['/End', '/TN', 'Happier\\legacy'], ignoreFailure: true },
+          { cmd: 'systemctl', args: ['--user', 'daemon-reload'] },
+        ],
+      });
+      expect(existsSync(definition)).toBe(false);
+    });
+  });
+
+  it('reports a failed definition removal', async () => {
+    const { applyDaemonServiceUninstallPlan } = await import('./apply');
+    await expect(applyDaemonServiceUninstallPlan({ platform: 'linux', filesToRemove: [commandsDir], commands: [] })).rejects.toThrow();
+  });
+
+  it('keeps the existing command timeout when uninstall uses the shared service owner', async () => {
+    const { applyDaemonServiceUninstallPlan } = await import('./apply');
+    vi.stubEnv('HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS', '42000');
+    spawnSyncMock.mockReturnValue({ status: 0, stdout: '', stderr: '' });
+    await applyDaemonServiceUninstallPlan({ platform: 'linux', filesToRemove: [], commands: [{ cmd: 'systemctl', args: ['--user', 'daemon-reload'] }] });
+    expect(spawnSyncMock.mock.calls.at(-1)?.[2]?.timeout).toBe(42000);
   });
 
   it('does not create or overwrite definitions when a strict install requires a missing manager', async () => {

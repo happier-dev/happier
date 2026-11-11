@@ -68,6 +68,9 @@ import {
 import { captureExceptionIfEnabled } from '@/utils/system/sentry';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
+import { resolveNewSessionAfterSend } from '@/components/sessions/new/modules/newSessionAfterSend';
+import { publishNewSessionStartedNotice } from '@/components/sessions/new/modules/newSessionStartedNotice';
+import type { NewSessionAfterSendMode } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import type { SessionMcpSelectionV1 } from '@happier-dev/protocol';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
@@ -134,6 +137,8 @@ export type CreatedSessionFollowUpContext = Readonly<{
 }>;
 
 export type HandleCreateSessionOptions = Readonly<{
+    /** What follows this Send, overriding the "After sending" setting. */
+    afterSend?: NewSessionAfterSendMode;
     initialMessage?: 'send' | 'skip';
     inputTextOverride?: string;
     /**
@@ -219,6 +224,8 @@ function readNewSessionConnectedServicesOption(
 
 export function useCreateNewSession(params: Readonly<{
     router: { push: (options: any) => void; replace: (path: any, options?: any) => void };
+    /** Opens a fresh draft in this surface; the launch already admitted keeps running. */
+    onStartAnother?: () => void;
 
     selectedMachineId: string | null;
     selectedPath: string;
@@ -378,6 +385,15 @@ export function useCreateNewSession(params: Readonly<{
         }
         createInFlightRef.current = true;
         current.setIsCreating(true);
+        // This launch owns everything it needs from here, so it outlives the screen. Only navigation
+        // below asks whether the screen is still there.
+        if (resolveNewSessionAfterSend({
+            configured: current.settings.newSessionAfterSendV1,
+            requested: opts?.afterSend,
+            automationEnabled: current.authoringDraft?.automation?.enabled === true,
+        }) === 'startAnother') {
+            current.onStartAnother?.();
+        }
 
         try {
             const targetServerId = typeof current.targetServerId === 'string' ? current.targetServerId.trim() : '';
@@ -1295,6 +1311,8 @@ export function useCreateNewSession(params: Readonly<{
                             return 'session';
                         },
                     });
+                } else if (isLaunchScopeStillActive()) {
+                    publishNewSessionStartedNotice({ href: postSpawnReplacementHref ?? sessionRoute });
                 }
 
                 if (!preserveLaunchAttemptForFirstTurnRetry) {

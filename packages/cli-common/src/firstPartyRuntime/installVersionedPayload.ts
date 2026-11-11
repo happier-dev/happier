@@ -17,6 +17,7 @@ import { joinPathForPathShape } from '../path/pathShape.js';
 import { resolveFirstPartyInstallLayout, resolveFirstPartyVersionInstallPath, type FirstPartyInstallLayout } from './installLayout.js';
 import { readInstalledVersionMarkers } from './versionMarkers.js';
 import { withFirstPartyActivationLock, withFirstPartyPayloadMutationLock } from './withFirstPartyPayloadMutationLock.js';
+import { withDesktopResourceOwnership } from './desktopResourceOwnership.js';
 
 function readErrorCode(error: unknown): string | null {
   if (typeof error !== 'object' || error === null || !('code' in error)) {
@@ -183,6 +184,8 @@ export async function installVersionedPayload(params: FirstPartyAcquisitionOptio
    * channel that is already installed — see `resolveDefaultReleaseChannelAfterInstall`.
    */
   selectAsDefaultReleaseChannel?: boolean;
+  /** Actual Desktop acquisition; omitted explicit installs relinquish Desktop removal authority. */
+  desktopBundleId?: string;
 }>): Promise<FirstPartyPayloadPromotionResult> {
   params.signal?.throwIfAborted();
   const layout = resolveFirstPartyInstallLayout({
@@ -201,24 +204,38 @@ export async function installVersionedPayload(params: FirstPartyAcquisitionOptio
   return await withFirstPartyPayloadMutationLock({
     layout,
     operation: async () => await withSharedActivationLock(async () => {
-      try {
-        return await installVersionedPayloadOnce(params);
-      } catch (error) {
-        if (!isRecoverableWindowsInstallRootError(error, layout)) {
-          throw error;
-        }
+      const install = async () => {
+        try {
+          return await installVersionedPayloadOnce(params);
+        } catch (error) {
+          if (!isRecoverableWindowsInstallRootError(error, layout)) {
+            throw error;
+          }
 
-        const quarantinedInstallRoot = await quarantineWindowsInstallRoot(layout);
-        const retryPayloadRoot = await resolveWindowsRetryPayloadRoot({
-          ...params,
-          layout,
-          quarantinedInstallRoot,
-        });
-        return await installVersionedPayloadOnce({
-          ...params,
-          payloadRoot: retryPayloadRoot,
-        });
-      }
+          const quarantinedInstallRoot = await quarantineWindowsInstallRoot(layout);
+          const retryPayloadRoot = await resolveWindowsRetryPayloadRoot({
+            ...params,
+            layout,
+            quarantinedInstallRoot,
+          });
+          return await installVersionedPayloadOnce({
+            ...params,
+            payloadRoot: retryPayloadRoot,
+          });
+        }
+      };
+      if (params.componentId !== 'happier-cli') return await install();
+      return await withDesktopResourceOwnership({
+        resourcePath: layout.installRoot,
+        bundleId: params.desktopBundleId,
+        operation: async () => {
+          const exists = await lstat(layout.installRoot).then(() => true).catch((error: unknown) => {
+            if (readErrorCode(error) === 'ENOENT') return false;
+            throw error;
+          });
+          return { value: await install(), created: !exists };
+        },
+      });
     }),
   });
 }

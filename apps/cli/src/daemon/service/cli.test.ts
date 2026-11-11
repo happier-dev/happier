@@ -16,7 +16,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { captureStderr, captureStdout, captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 import type { DaemonLocallyPersistedState } from '@/persistence';
-import { planDaemonServiceInstall, planDaemonServiceLifecycle } from './plan';
+import { planDaemonServiceInstall, planDaemonServiceLifecycle, resolveDaemonServiceSystemdUnitName } from './plan';
 const stopDaemonMock = vi.fn(async () => ({ status: 'stopped' as const, method: 'graceful' as const }));
 const restartDaemonAndWaitMock = vi.fn(async () => true);
 
@@ -118,13 +118,14 @@ function writeValidInstalledDaemonServiceFile(
     activeServerId?: string;
     releaseChannel?: 'stable' | 'preview' | 'dev';
     targetMode?: 'default-following' | 'pinned';
+    execStart?: string[];
   }> = {},
 ): void {
   writeFileSync(
     installedPath,
     renderSystemdServiceUnit({
       description: 'Happier Daemon',
-      execStart: ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
+      execStart: options.execStart ?? ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
       env: {
         HAPPIER_HOME_DIR: process.env.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR ?? process.env.HAPPIER_HOME_DIR ?? '',
         HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
@@ -3069,6 +3070,7 @@ describe('runDaemonServiceCliCommand', () => {
       expect(payload.commands).toContain('list');
       expect(payload.commands).toContain('install');
       expect(payload.flags).toContain('--json');
+      expect(payload.flags).toContain('--install-root');
     } finally {
       output.restore();
     }
@@ -4135,6 +4137,106 @@ describe('runDaemonServiceCliCommand', () => {
       } finally {
         output.restore();
       }
+    });
+  });
+
+  it('uninstalls only services using --install-root, including managed shims and pinned profiles', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-uninstall-installation-' }, async ({ homeDir }) => {
+      const happierHomeDir = join(homeDir, '.happier');
+      envScope.patch({ HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux', HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir, HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happierHomeDir });
+      doMockChildProcessSpawnSync(() => ({ status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') }));
+      const { runDaemonServiceCliCommand } = await loadCliModule();
+      const installRoot = join(happierHomeDir, 'cli');
+      const unitDir = join(homeDir, '.config/systemd/user');
+      mkdirSync(unitDir, { recursive: true });
+      const selected = [join(unitDir, 'happier-daemon.alpha.service'), join(unitDir, 'happier-daemon.beta.service')];
+      const kept = [join(unitDir, 'happier-daemon.gamma.service'), join(unitDir, 'happier-daemon.delta.service')];
+      for (const [index, executable] of [join(installRoot, 'current/happier'), join(happierHomeDir, 'bin/happier'), join(happierHomeDir, 'bin/hprev'), `${installRoot}2/current/happier`].entries()) {
+        const path = [...selected, ...kept][index]!;
+        writeValidInstalledDaemonServiceFile(path, { activeServerId: ['alpha', 'beta', 'gamma', 'delta'][index], targetMode: 'pinned', execStart: [executable, 'daemon', 'start-sync'] });
+      }
+      const output = captureStdoutJsonOutput<{ removed: number }>();
+      try {
+        await runDaemonServiceCliCommand({ argv: ['uninstall', '--all', '--install-root', installRoot, '--yes', '--json'] });
+        expect(output.json().removed).toBe(2);
+        expect(selected.map(existsSync)).toEqual([false, false]);
+        expect(kept.map(existsSync)).toEqual([true, true]);
+      } finally {
+        output.restore();
+      }
+    });
+  });
+
+  it('releases only the requested Desktop consumer across rings and reports surviving CLI dependencies', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-uninstall-desktop-' }, async ({ homeDir }) => {
+      const happierHomeDir = join(homeDir, '.happier');
+      const binDir = join(homeDir, 'bin');
+      mkdirSync(binDir);
+      writeFileSync(join(binDir, 'systemctl'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      envScope.patch({ HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux', HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir, HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happierHomeDir, PATH: `${binDir}:${process.env.PATH}` });
+      doMockChildProcessSpawnSync(() => ({ status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') }));
+      const { runDaemonServiceCliCommand, recordDesktopDaemonServiceUse } = await loadCliModule();
+      const { recordDesktopResourceUse } = await import('@happier-dev/cli-common/firstPartyRuntime');
+      const unitDir = join(homeDir, '.config/systemd/user');
+      mkdirSync(unitDir, { recursive: true });
+      const paths = ['alpha', 'beta', 'gamma'].map((id, index) => join(unitDir, resolveDaemonServiceSystemdUnitName(id, index === 1 ? 'preview' : 'stable', 'pinned')));
+      for (const [index, path] of paths.entries()) {
+        writeValidInstalledDaemonServiceFile(path, { activeServerId: ['alpha', 'beta', 'gamma'][index], targetMode: 'pinned', releaseChannel: index === 1 ? 'preview' : 'stable' });
+      }
+      const foreignPath = join(unitDir, resolveDaemonServiceSystemdUnitName('foreign', 'stable', 'pinned'));
+      writeFileSync(foreignPath, renderSystemdServiceUnit({
+        description: 'Happier Daemon', execStart: ['/foreign/cli/current/happier', 'daemon', 'start-sync'],
+        env: { HAPPIER_HOME_DIR: join(homeDir, '.other-happier'), HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service', HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned', HAPPIER_ACTIVE_SERVER_ID: 'foreign', HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable' },
+        wantedBy: 'default.target',
+      }));
+      await recordDesktopResourceUse({ resourcePath: foreignPath, bundleId: 'dev.happier.app', created: true });
+      await recordDesktopResourceUse({ resourcePath: paths[0]!, bundleId: 'dev.happier.app', created: true });
+      await recordDesktopResourceUse({ resourcePath: paths[1]!, bundleId: 'dev.happier.app', created: true });
+      envScope.patch({ HAPPIER_DAEMON_SERVICE_CHANNEL: 'preview', HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'beta', HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned' });
+      await recordDesktopDaemonServiceUse('dev.happier.preview');
+      const beforePreview = paths.map((path) => readFileSync(path, 'utf8'));
+      const previewOutput = captureStdoutJsonOutput<{ remainingServiceLaunchers: string[][] }>();
+      try {
+        await runDaemonServiceCliCommand({ argv: ['uninstall', '--all', '--desktop-bundle-id', 'dev.happier.app', '--dry-run', '--json'] });
+        expect(previewOutput.json().remainingServiceLaunchers).toHaveLength(4);
+        expect(paths.map((path) => readFileSync(path, 'utf8'))).toEqual(beforePreview);
+      } finally { previewOutput.restore(); }
+      const output = captureStdoutJsonOutput<{ removed: number; remainingServiceLaunchers: string[][] }>();
+      try {
+        await runDaemonServiceCliCommand({ argv: ['uninstall', '--all', '--desktop-bundle-id', 'dev.happier.app', '--yes', '--json'] });
+        expect(output.json().removed).toBe(1);
+        expect(existsSync(foreignPath)).toBe(true);
+        expect(paths.map(existsSync)).toEqual([false, true, true]);
+        expect(output.json().remainingServiceLaunchers.map((launcher) => JSON.stringify(launcher)).sort()).toEqual([
+          ['/Users/tester/.happier/cli/current/happier'], ['/foreign/cli/current/happier'], ['/Users/tester/.happier/cli/current/happier'],
+        ].map((launcher) => JSON.stringify(launcher)).sort());
+      } finally { output.restore(); }
+    });
+  });
+
+  it('includes matching system services in installation-scoped user-mode removal', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-uninstall-system-dependency-' }, async ({ homeDir }) => {
+      const happierHomeDir = join(homeDir, '.happier');
+      const installRoot = join(happierHomeDir, 'cli');
+      const systemDir = join(homeDir, 'system-units');
+      envScope.patch({ HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux', HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir, HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happierHomeDir });
+      mkdirSync(systemDir, { recursive: true });
+      writeValidInstalledDaemonServiceFile(join(systemDir, 'happier-daemon.company.service'), { activeServerId: 'company', targetMode: 'pinned', execStart: [join(installRoot, 'current/happier'), 'daemon', 'start-sync'] });
+      // Redirect only the OS system-unit filesystem boundary; discovery and identity logic stay real.
+      vi.doMock('node:fs', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('node:fs')>();
+        const redirect = (path: unknown) => typeof path === 'string' && path.startsWith('/etc/systemd/system') ? path.replace('/etc/systemd/system', systemDir) : path;
+        return { ...actual,
+          readdirSync: (...args: Parameters<typeof actual.readdirSync>) => Reflect.apply(actual.readdirSync, actual, [redirect(args[0]), ...args.slice(1)]),
+          readFileSync: (...args: Parameters<typeof actual.readFileSync>) => Reflect.apply(actual.readFileSync, actual, [redirect(args[0]), ...args.slice(1)]),
+        };
+      });
+      const { runDaemonServiceCliCommand } = await loadCliModule();
+      const output = captureStdoutJsonOutput<{ removed: number }>();
+      try {
+        await runDaemonServiceCliCommand({ argv: ['uninstall', '--all', '--install-root', installRoot, '--dry-run', '--json'] });
+        expect(output.json().removed).toBe(1);
+      } finally { output.restore(); vi.doUnmock('node:fs'); }
     });
   });
 

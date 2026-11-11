@@ -58,6 +58,8 @@ export type UserMessageHistoryNavigator = {
     warmup: () => void;
     isBrowsing: () => boolean;
     hasRetainedSession: () => boolean;
+    /** The recalled entry's place, counted from the newest (1), or null while on the draft. */
+    readPosition: () => Readonly<{ index: number; total: number }> | null;
 };
 
 export type UserMessageHistoryMoveState = Readonly<{
@@ -204,5 +206,10 @@ export function createUserMessageHistoryNavigator(
         session.activeBrowsing = false;
     }
 
-    return { moveUp, moveDown, pause, reset, warmup, isBrowsing, hasRetainedSession };
+    function readPosition() {
+        if (!session || session.currentSlot.kind === 'draft') return null;
+        return { index: session.currentSlot.index + 1, total: readHistoryEntries(entriesSource).length };
+    }
+
+    return { moveUp, moveDown, pause, reset, warmup, isBrowsing, hasRetainedSession, readPosition };
 }

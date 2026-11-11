@@ -619,6 +619,7 @@ export const ca: TranslationStructure = {
             composerFocus: 'Enfoca el compositor',
             composerSendImmediate: 'Enviament alternatiu (cua / orientar)',
             composerSendInterrupt: 'Interromp i envia',
+            composerSendAlternateAfterSend: "Envia i comença una altra / obre",
             composerSendPending: 'Envia a la cua pendent',
             commandPaletteOpen: 'Obre la paleta d’ordres',
             modeCycle: 'Canvia de mode',
@@ -3423,6 +3424,7 @@ export const ca: TranslationStructure = {
         trayStopAllConfirmBody: 'Les sessions d’agents que s’executen en aquest ordinador s’acabaran, i el telèfon i el navegador no hi podran arribar fins que tornis a obrir Happier.',
         trayStopConfirmAction: 'Atura',
         trayActionFailedTitle: 'No s’ha pogut fer',
+        trayQuitWaitForSystemTasks: "Happier encara està configurant o eliminant components. Espera que acabi i torna a provar de sortir.",
         trayLoginItemFailed: 'No s’ha pogut actualitzar l’element d’inici de Happier',
         traySessions: ({ count }: { count: string }) => `Sessions: ${count}`,
         closeStopTitle: 'Encara hi ha sessions d’agent en marxa',
@@ -6202,7 +6204,7 @@ deps: {
     },
 
     sessionDrafts: {
-        sectionTitle: 'Esborranys', badge: 'Esborrany', untitled: 'Esborrany sense títol', continueEditing: 'Continua editant', startAnother: 'Comença’n un altre',
+        sectionTitle: 'Esborranys', badge: 'Esborrany', untitled: 'Esborrany sense títol', continueEditing: 'Continua editant', startAnother: 'Comença’n un altre', startedOpen: "Sessió iniciada · Obre",
         status: { offline: 'Sense connexió', syncing: 'Sincronitzant', conflict: 'Conflicte', machineUnavailable: 'Màquina no disponible', attachmentNeedsAttention: 'Cal revisar l’adjunt', startInterrupted: 'Inici interromput' },
         new: { action: 'Esborrany nou' }, delete: { action: 'Suprimeix l’esborrany', confirmTitle: 'Vols suprimir l’esborrany?', confirmDescription: 'Aquest esborrany se suprimirà dels teus dispositius.' },
         conflict: { title: 'Conflicte d’esborrany', description: 'Aquest camp ha canviat en un altre dispositiu.', mine: 'En aquest dispositiu', synced: 'Sincronitzat', useSynced: 'Utilitza el sincronitzat', keepDevice: 'Conserva el del dispositiu', copyMine: 'Copia el meu', copied: 'Copiat', copyFailed: 'No s’ha pogut copiar', field: { text: 'Contingut de text', mentions: 'Mencions', attachments: 'Adjunts', recipient: 'Destinatari', agentContinuation: 'Continuació de l’agent', executionRunDelivery: 'Lliurament de l’execució' } },
@@ -6586,8 +6588,12 @@ deps: {
     },
 
     agentInput: {
+        keepKeyboard: { label: "Mantén el teclat obert després d’enviar" },
+        historyPosition: ({ index, total }: { index: number; total: number }) => `${index} de ${total}`,
         sendOptions: {
             title: "Opcions d’enviament",
+            sendAndStartAnother: "Envia i comença una altra",
+            sendAndOpen: "Envia i obre la sessió",
             queue: "Posa a la cua",
             hint: "Mantén premut per triar com enviar",
         },
@@ -7897,6 +7903,7 @@ deps: {
 settingsSession: {
     terminalHostTitle: 'Amfitrió de terminal per a sessions noves',
     terminalHostNone: 'Sense amfitrió de terminal',
+    newSessionAfterSend: { title: "Després d’enviar", footer: "Tria què passa quan envies des del redactor de sessió nova. Mantén premut Envia per triar l’altra opció per a un sol missatge.", openTitle: "Obre la sessió", openSubtitle: "Ves a la sessió tan bon punt comenci.", startAnotherTitle: "Queda’t i comença una altra", startAnotherSubtitle: "Continua iniciant-la en segon pla i obre un esborrany nou." },
     newSessionDraftEntry: {
         title: 'Esborranys de sessió nova',
         footer: 'Tria si Sessió nova continua l’esborrany d’aquest dispositiu o n’obre un de nou.',
@@ -8088,6 +8095,8 @@ settingsSession: {
                 resetHiddenSubtitle: 'Esborra els bàners amagats en aquest dispositiu.',
             },
             inputBehavior: {
+                keepFocusTitle: "Mantén el redactor enfocat després d’enviar",
+                keepFocusSubtitle: "Queda’t al camp del missatge per escriure el següent de seguida.",
                 title: 'Comportament de l’entrada',
                 footer: 'Configura Enviar amb Retorn i el comportament de l’historial de missatges.',
                 enterToSendEnabledNativeSubtitle: 'Prem Retorn per enviar',
@@ -10150,7 +10159,15 @@ settingsSession: {
         },
         cliPath: {
             title: 'Terminal',
-            footer: 'Happier Desktop només afegeix o elimina les entrades del PATH que ha creat; les escrites per l\'instal·lador del shell no es toquen.',
+            footer: "Happier Desktop només modifica les entrades PATH que ha creat; conserva les de l’instal·lador de l’intèrpret d’ordres.",
+            cleanupTitle: "Elimina els components de Desktop",
+            cleanupSubtitle: "Elimina la línia d’ordres i els serveis propis de Desktop i surt.",
+            cleanupConfirmTitle: "Vols eliminar els components de Desktop i sortir?",
+            cleanupConfirmBody: "Això elimina els fitxers de línia d’ordres, les entrades PATH i els serveis propis de Desktop quan cap altra aplicació Desktop els necessita. Es conserven els components compartits o instal·lats per tu, l’historial de sessions i les dades del compte. Els serveis que s’eliminen s’aturen, cosa que pot interrompre les sessions en curs i l’accés remot.\n\nDesktop es tancarà després de la neteja. Després elimina l’aplicació amb el sistema operatiu; a macOS o Linux portàtil, elimina el paquet o fitxer de l’aplicació. Si tornes a obrir Desktop, pot tornar a configurar els components.",
+            cleanupConfirmAction: "Elimina els components i surt",
+            cleanupBusy: "S’estan eliminant els components de Desktop…",
+            cleanupFailed: "La neteja no s’ha completat. Torna-ho a provar.",
+            cleanupQuitFailed: "La neteja s’ha completat, però Desktop no s’ha pogut tancar. Tanca l’aplicació abans d’eliminar-la.",
             addTitle: 'Afegeix happier al PATH',
             addSubtitle: 'Fes que l\'ordre happier estigui disponible als terminals nous.',
             removeTitle: 'Elimina happier del PATH',

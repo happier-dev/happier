@@ -649,6 +649,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           composerFocus: '聚焦輸入框',
           composerSendImmediate: '切換傳送方式（排隊 / 引導）',
             composerSendInterrupt: '中斷並傳送',
+            composerSendAlternateAfterSend: "傳送並開始另一個 / 開啟",
           composerSendPending: '傳送到待處理佇列',
           commandPaletteOpen: '開啟命令面板',
           modeCycle: '切換模式',
@@ -3324,6 +3325,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         trayStopAllConfirmBody: '這台電腦上執行的代理工作階段將結束，在你再次開啟 Happier 之前，你的手機和瀏覽器都無法連到它。',
         trayStopConfirmAction: '停止',
         trayActionFailedTitle: '沒有成功',
+        trayQuitWaitForSystemTasks: "Happier 仍在設定或移除元件。請等待完成後再嘗試結束。",
         trayLoginItemFailed: '無法更新 Happier 的登入項目',
         traySessions: ({ count }: { count: string }) => `工作階段：${count}`,
 		        closeStopTitle: '代理程式工作階段仍在執行',
@@ -5594,7 +5596,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     sessionDrafts: {
-        sectionTitle: '草稿', badge: '草稿', untitled: '未命名草稿', continueEditing: '繼續編輯', startAnother: '開始另一份',
+        sectionTitle: '草稿', badge: '草稿', untitled: '未命名草稿', continueEditing: '繼續編輯', startAnother: '開始另一份', startedOpen: "工作階段已啟動 · 開啟",
         status: { offline: '離線', syncing: '同步中', conflict: '衝突', machineUnavailable: '機器無法使用', attachmentNeedsAttention: '附件需要處理', startInterrupted: '啟動中斷' },
         new: { action: '新增草稿' }, delete: { action: '刪除草稿', confirmTitle: '刪除草稿？', confirmDescription: '此草稿將從你的裝置移除。' },
         conflict: { title: '草稿衝突', description: '此欄位已在其他裝置上變更。', mine: '此裝置', synced: '已同步', useSynced: '使用同步版本', keepDevice: '保留裝置版本', copyMine: '複製我的版本', copied: '已複製', copyFailed: '無法複製', field: { text: '文字', mentions: '提及', attachments: '附件', recipient: '收件者', agentContinuation: '代理延續', executionRunDelivery: '執行傳送' } },
@@ -5903,8 +5905,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     agentInput: {
+        keepKeyboard: { label: "傳送後保持鍵盤開啟" },
+        historyPosition: ({ index, total }: { index: number; total: number }) => `${index} / ${total}`,
         sendOptions: {
             title: "傳送選項",
+            sendAndStartAnother: "傳送並開始另一個",
+            sendAndOpen: "傳送並開啟工作階段",
             queue: "加入佇列",
             hint: "長按選擇傳送方式",
         },
@@ -7070,6 +7076,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 settingsSession: {
     terminalHostTitle: '新工作階段的終端機主機',
     terminalHostNone: '不使用終端機主機',
+    newSessionAfterSend: { title: "傳送後", footer: "選擇從新工作階段編輯器傳送時的行為。長按傳送可為單則訊息選擇另一種方式。", openTitle: "開啟工作階段", openSubtitle: "工作階段啟動後立即前往。", startAnotherTitle: "留下並開始另一個", startAnotherSubtitle: "在背景繼續啟動，並開啟新的草稿。" },
     newSessionDraftEntry: {
         title: '新工作階段草稿',
         footer: '選擇「新工作階段」要繼續此裝置上的草稿，還是開啟新草稿。',
@@ -7243,6 +7250,8 @@ settingsSession: {
             resetHiddenSubtitle: '清除本裝置上已隱藏的橫幅。',
         },
         inputBehavior: {
+            keepFocusTitle: "傳送後保持編輯器焦點",
+            keepFocusSubtitle: "留在訊息欄位，以便立即撰寫下一則訊息。",
             title: '輸入行為',
             footer: '設定按 Enter 傳送與訊息歷史行為。',
             enterToSendEnabledNativeSubtitle: '按 Enter 傳送',
@@ -8899,7 +8908,15 @@ settingsSession: {
         },
         cliPath: {
             title: '終端機',
-            footer: 'Happier Desktop 只會新增或移除它自己建立的 PATH 項目；由 shell 安裝程式寫入的項目保持不變。',
+            footer: "Happier Desktop 只修改它建立的 PATH 項目；Shell 安裝程式的項目會保留。",
+            cleanupTitle: "移除 Desktop 元件",
+            cleanupSubtitle: "清理 Desktop 擁有的命令列和背景服務，然後結束。",
+            cleanupConfirmTitle: "移除 Desktop 元件並結束？",
+            cleanupConfirmBody: "僅當沒有其他 Desktop 應用程式需要時，才會移除 Desktop 擁有的命令列檔案、PATH 項目和背景服務。共用元件、使用者自行安裝的元件、工作階段歷程和帳戶資料都會保留。被移除的服務會停止，可能中斷執行中的工作階段和遠端存取。\n\n清理完成後 Desktop 將結束。然後請透過作業系統移除應用程式；在 macOS 或可攜版 Linux 上，請刪除應用程式套件或檔案。再次開啟 Desktop 可能會重新設定這些元件。",
+            cleanupConfirmAction: "移除元件並結束",
+            cleanupBusy: "正在移除 Desktop 元件…",
+            cleanupFailed: "清理未完成，請重試。",
+            cleanupQuitFailed: "清理已完成，但 Desktop 無法結束。請先結束應用程式，再將其移除。",
             addTitle: '將 happier 加入 PATH',
             addSubtitle: '讓 happier 指令可在新的終端機中使用。',
             removeTitle: '從 PATH 移除 happier',

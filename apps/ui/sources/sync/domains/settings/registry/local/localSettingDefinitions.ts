@@ -183,6 +183,13 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Account receiving the legacy device theme library during migration',
         storageScope: 'local',
     },
+    composerKeepFocusAfterSend: {
+        // null follows the device: keep focus with a hardware keyboard, close the soft keyboard otherwise.
+        schema: z.boolean().nullable(),
+        default: null,
+        description: 'Whether the session composer stays focused after sending a message',
+        storageScope: 'local',
+    },
     uiBackdropBlurEnabled: {
         schema: z.boolean(),
         default: true,

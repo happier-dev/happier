@@ -1,9 +1,10 @@
-import { readClaudePeerMessage, type DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { resolveClaudeSessionMessageRole } from '@/api/session/messageRole';
 import { isClaudeInternalTranscriptMessage } from '@/backends/claude/utils/isClaudeInternalTranscriptMessage';
 import { normalizeClaudeToolUseNamesInRawJsonLines } from '@/backends/claude/utils/normalizeClaudeToolUseNames';
 import { parseRawJsonLinesObject } from '@/backends/claude/utils/parseRawJsonLines';
+import { readClaudeUserMessageText } from '@/backends/claude/utils/readClaudeUserMessageText';
 
 function extractEnvelopeTimestampMs(value: unknown): number {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return 0;
@@ -127,13 +128,8 @@ export function mapClaudeJsonlLineToDirectMessages(params: Readonly<{
   const normalizedForOutput = ensureClaudeOutputMessageRole(normalized);
   const messageRole = resolveClaudeSessionMessageRole(normalized);
 
-  if (
-    normalized.type === 'user' &&
-    !readClaudePeerMessage(normalized) &&
-    typeof (normalized as any).message?.content === 'string' &&
-    (normalized as any).isSidechain !== true &&
-    (normalized as any).isMeta !== true
-  ) {
+  const userText = readClaudeUserMessageText(normalized);
+  if (userText !== null) {
     return [
       {
         id: stableId,
@@ -142,7 +138,7 @@ export function mapClaudeJsonlLineToDirectMessages(params: Readonly<{
         messageRole,
         raw: {
           role: 'user',
-          content: { type: 'text', text: String((normalized as any).message.content) },
+          content: { type: 'text', text: userText },
         },
       },
     ];

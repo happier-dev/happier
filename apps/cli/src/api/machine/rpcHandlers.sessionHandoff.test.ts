@@ -361,8 +361,9 @@ function createLoopbackMachineTransferChannels() {
 
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-prepare-job-missing-'));
     try {
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'server_test',
           workspaceReplicationBlobPackTargetBytes: 1024 * 1024,
@@ -473,8 +474,9 @@ function createLoopbackMachineTransferChannels() {
 
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-prepare-job-pending-resultget-'));
     try {
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'server_test',
           workspaceReplicationBlobPackTargetBytes: 1024 * 1024,
@@ -560,8 +562,9 @@ function createLoopbackMachineTransferChannels() {
 
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-v2-status-recovery-'));
     try {
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_session_handoff_v2_status_recovery',
         },
@@ -635,8 +638,9 @@ function createLoopbackMachineTransferChannels() {
 
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-v2-final-polling-'));
     try {
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_session_handoff_v2_final_polling',
         },
@@ -701,8 +705,9 @@ function createLoopbackMachineTransferChannels() {
 
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-v1-prepare-v2-guard-'));
     try {
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_session_handoff_v1_prepare_v2_guard',
         },
@@ -767,8 +772,9 @@ function createLoopbackMachineTransferChannels() {
 
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-abort-wsrepl-'));
     try {
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'server_test',
         },
@@ -858,8 +864,9 @@ function createLoopbackMachineTransferChannels() {
 
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-abort-legacy-cleanup-'));
     try {
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_session_handoff_abort_legacy_cleanup',
         },
@@ -929,8 +936,9 @@ function createLoopbackMachineTransferChannels() {
 
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-abort-v2-not-attempted-'));
     try {
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_session_handoff_abort_v2_not_attempted',
         },
@@ -1124,8 +1132,9 @@ function createLoopbackMachineTransferChannels() {
     vi.resetModules();
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-commit-v2-retry-'));
     try {
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_session_handoff_commit_v2_retry',
         },
@@ -1236,8 +1245,9 @@ function createLoopbackMachineTransferChannels() {
 
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-terminal-source-export-only-'));
     try {
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'server_test',
         },
@@ -1376,8 +1386,9 @@ function createLoopbackMachineTransferChannels() {
       targetPath: '/repo',
     }));
 
-    vi.doMock('@/configuration', () => ({
+    vi.doMock('@/configuration', async () => ({
       configuration: {
+        ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
         activeServerDir: '/tmp/happier-active-server',
       },
     }));
@@ -1436,8 +1447,9 @@ function createLoopbackMachineTransferChannels() {
       await mkdir(join(workspaceRoot, 'files'), { recursive: true });
       await writeFile(join(workspaceRoot, 'files', 'a.txt'), 'hello\n', 'utf8');
 
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'server_test',
           workspaceReplicationBlobPackTargetBytes: 1024 * 1024,
@@ -1800,8 +1812,9 @@ function createLoopbackMachineTransferChannels() {
 	    vi.resetModules();
 
       const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-start-deferred-'));
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_session_handoff_start_deferred',
           filesTransferSessionTtlMs: 2_000,
@@ -2451,8 +2464,9 @@ function createLoopbackMachineTransferChannels() {
   it('durably preserves exact late source-start failure codes on both sides of the fast-path result shape', async () => {
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-late-start-failure-'));
     vi.resetModules();
-    vi.doMock('@/configuration', () => ({
+    vi.doMock('@/configuration', async () => ({
       configuration: {
+        ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
         activeServerDir,
         activeServerId: 'test_session_handoff_late_start_failure',
         filesTransferSessionTtlMs: 2_000,
@@ -2617,8 +2631,9 @@ function createLoopbackMachineTransferChannels() {
 
     try {
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_session_handoff_durable_status',
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
@@ -2742,8 +2757,9 @@ function createLoopbackMachineTransferChannels() {
       // Simulate a daemon restart: new handler registration should still be able to answer
       // status_get from the persisted job store (not from in-memory StoredHandoffState).
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_session_handoff_durable_status',
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
@@ -2777,8 +2793,9 @@ function createLoopbackMachineTransferChannels() {
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-start-v2-handoff-back-hint-'));
     const published = await createPublishedDirectPeerPayloadRouter();
     try {
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'server_test',
           workspaceReplicationBlobPackTargetBytes: 1024 * 1024,
@@ -2858,8 +2875,9 @@ function createLoopbackMachineTransferChannels() {
 
     try {
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_session_handoff_commit_not_ready',
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
@@ -2987,8 +3005,9 @@ function createLoopbackMachineTransferChannels() {
 
     try {
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_session_handoff_source_cleanup_reverse_baseline',
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
@@ -3096,8 +3115,9 @@ function createLoopbackMachineTransferChannels() {
 
     try {
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_session_handoff_source_cleanup_stop',
         },
@@ -3168,8 +3188,9 @@ function createLoopbackMachineTransferChannels() {
 
     try {
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_session_handoff_lease_release',
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
@@ -3308,8 +3329,9 @@ function createLoopbackMachineTransferChannels() {
 
     try {
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_status_progress',
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
@@ -3430,8 +3452,9 @@ function createLoopbackMachineTransferChannels() {
 
     try {
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_status_checkpoint_parity',
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
@@ -3550,8 +3573,9 @@ function createLoopbackMachineTransferChannels() {
 
     try {
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_status_live_lease',
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
@@ -3649,8 +3673,9 @@ function createLoopbackMachineTransferChannels() {
 
     try {
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir,
           activeServerId: 'test_status_recovery_race',
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
@@ -3923,8 +3948,9 @@ function createLoopbackMachineTransferChannels() {
     } as any;
 
     vi.resetModules();
-	    vi.doMock('@/configuration', () => ({
+	    vi.doMock('@/configuration', async () => ({
 	      configuration: {
+	        ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
 	        activeServerDir: '/tmp/happier-adapter-seam',
 	        activeServerId: 'test_adapter_seam',
         workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
@@ -5025,8 +5051,9 @@ function createLoopbackMachineTransferChannels() {
 	    try {
 	      const workspaceBlobPath = join(sourcePath, 'README.md');
 	      await writeFile(workspaceBlobPath, workspaceBlobPayload);
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir: sourceActiveServerDir,
           activeServerId: 'test_direct_peer_header_only',
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
@@ -5441,8 +5468,9 @@ function createLoopbackMachineTransferChannels() {
     try {
       const channels = createLoopbackMachineTransferChannels();
 
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir: sourceActiveServerDir,
           activeServerId: 'test_server_routed_restart_source',
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
@@ -5500,8 +5528,9 @@ function createLoopbackMachineTransferChannels() {
       // handlers against the same activeServerDir.
       const restartChannels = createLoopbackMachineTransferChannels();
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir: sourceActiveServerDir,
           activeServerId: 'test_server_routed_restart_source',
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
@@ -6432,10 +6461,12 @@ function createLoopbackMachineTransferChannels() {
       };
 
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir: sourceActiveServerDir,
           activeServerId: 'test_server_routed_unavailable_source',
+          filesTransferSessionTtlMs: 5,
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
           workspaceReplicationBlobPackMaxBlobs: 64,
           workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
@@ -6469,10 +6500,12 @@ function createLoopbackMachineTransferChannels() {
       });
 
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir: targetActiveServerDir,
           activeServerId: 'test_server_routed_unavailable_target',
+          filesTransferSessionTtlMs: 5,
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
           workspaceReplicationBlobPackMaxBlobs: 64,
           workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
@@ -6582,10 +6615,12 @@ function createLoopbackMachineTransferChannels() {
       };
 
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir: sourceActiveServerDir,
           activeServerId: 'test_provider_timeout_source',
+          filesTransferSessionTtlMs: 5,
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
           workspaceReplicationBlobPackMaxBlobs: 64,
           workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
@@ -6633,10 +6668,12 @@ function createLoopbackMachineTransferChannels() {
       });
 
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir: targetActiveServerDir,
           activeServerId: 'test_provider_timeout_target',
+          filesTransferSessionTtlMs: 5,
           workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
           workspaceReplicationBlobPackMaxBlobs: 64,
           workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
@@ -7810,8 +7847,9 @@ function createLoopbackMachineTransferChannels() {
 
 	    const channels = createLoopbackMachineTransferChannels();
 	    vi.resetModules();
-	    vi.doMock('@/configuration', () => ({
+	    vi.doMock('@/configuration', async () => ({
 	      configuration: {
+	        ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
 	        activeServerDir: sourceActiveServerDir,
 	        activeServerId: 'test_corrupt_source_export',
 	      },
@@ -7853,8 +7891,9 @@ function createLoopbackMachineTransferChannels() {
 
 	    const channels = createLoopbackMachineTransferChannels();
 	    vi.resetModules();
-	    vi.doMock('@/configuration', () => ({
+	    vi.doMock('@/configuration', async () => ({
 	      configuration: {
+	        ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
 	        activeServerDir: sourceActiveServerDir,
 	        activeServerId: 'test_terminal_source_export',
 	        filesTransferSessionTtlMs: 50,
@@ -7932,8 +7971,9 @@ function createLoopbackMachineTransferChannels() {
 
         const channels = createLoopbackMachineTransferChannels();
         vi.resetModules();
-        vi.doMock('@/configuration', () => ({
+        vi.doMock('@/configuration', async () => ({
           configuration: {
+            ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
             activeServerDir: sourceActiveServerDir,
             activeServerId: 'test_wsrepl_manifest_corrupt',
             filesTransferSessionTtlMs: 10 * 60_000,
@@ -8027,8 +8067,9 @@ function createLoopbackMachineTransferChannels() {
 
         const channels = createLoopbackMachineTransferChannels();
         vi.resetModules();
-        vi.doMock('@/configuration', () => ({
+        vi.doMock('@/configuration', async () => ({
           configuration: {
+            ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
             activeServerDir: sourceActiveServerDir,
             activeServerId: 'test_wsrepl_missing_blob',
             filesTransferSessionTtlMs: 10 * 60_000,
@@ -8120,8 +8161,9 @@ function createLoopbackMachineTransferChannels() {
 
       const channels = createLoopbackMachineTransferChannels();
       vi.resetModules();
-      vi.doMock('@/configuration', () => ({
+      vi.doMock('@/configuration', async () => ({
         configuration: {
+          ...(await vi.importActual<typeof import('@/configuration')>('@/configuration')).configuration,
           activeServerDir: sourceActiveServerDir,
           activeServerId: 'test_wait_source_export',
           // Intentionally small: the responder must not clamp its deferred source-export wait to

@@ -48,6 +48,16 @@
     "externalBin": [
       "binaries/hsetup"
     ],
+    "windows": {
+      "nsis": {
+        "template": "installer/windows/installer.nsi",
+        "installerHooks": "installer/windows/uninstall-hooks.nsh"
+      },
+      "wix": {
+        "fragmentPaths": ["installer/windows/desktop-uninstall.wxs"],
+        "componentGroupRefs": ["HappierDesktopCleanupIntegration"]
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

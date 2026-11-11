@@ -32,6 +32,13 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
         settingsTitleKey: 'settingsKeyboard.commands.composerSendInterrupt',
     },
     {
+        // New-session composer only: sends the other way round from the "After sending" setting. It
+        // shares its default key with composer.sendInterrupt, which only a Session composer handles.
+        id: 'composer.sendAlternateAfterSend',
+        defaultBinding: { binding: 'Mod+Shift+Enter', allowInEditable: true, conflictScope: 'newSessionComposer' },
+        settingsTitleKey: 'settingsKeyboard.commands.composerSendAlternateAfterSend',
+    },
+    {
         id: 'commandPalette.open',
         defaultBindings: [
             { binding: 'Alt+K', platforms: ['web'] },
@@ -57,11 +64,11 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
     {
         id: 'session.new',
         defaultBindings: [
-            { binding: 'Alt+N', platforms: ['web'] },
-            { binding: 'Mod+Shift+N', blockedSurfaces: ['web'] },
+            // Alt+letter types a character on many layouts, so only the Mod chord works while typing.
+            { binding: 'Alt+N', platforms: ['web'], allowInEditable: false },
+            { binding: 'Mod+Shift+N', blockedSurfaces: ['web'], allowInEditable: true },
         ],
         settingsTitleKey: 'settingsKeyboard.commands.sessionNew',
-        when: (context) => !context.isEditableTarget,
     },
     {
         id: 'session.mru.next',

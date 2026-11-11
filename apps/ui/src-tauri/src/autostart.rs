@@ -39,9 +39,33 @@ pub fn register(app: &mut App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Explicit removal also removes this app's own login item. It never changes another
+/// channel's registration, and failure keeps the uninstall operation retryable.
+#[cfg(desktop)]
+pub(crate) fn remove_for_uninstall(app: &AppHandle) -> Result<(), String> {
+    let autolaunch = app.autolaunch();
+    if autolaunch.is_enabled().map_err(|error| error.to_string())? {
+        autolaunch.disable().map_err(|error| error.to_string())?;
+    }
+    if let Some(state) = app.try_state::<AppAutostartState>() {
+        if let Ok(mut applied) = state.0.lock() {
+            *applied = Some(false);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(desktop)]
 pub fn follow_login_start_setting(app: &AppHandle, mode: Option<AutostartMode>) {
     let Some(start_at_login) = app_autostart_target(mode) else {
+        return;
+    };
+    // Use the same activity reservation as helper tasks: a late settings push must not
+    // recreate the login item during or after explicit component removal.
+    let Some(tasks) = app.try_state::<crate::system_tasks::SystemTasksState>() else {
+        return;
+    };
+    let Ok(_activity) = tasks.reserve_start() else {
         return;
     };
     // A development build must not register its own debug binary as a login item every time it

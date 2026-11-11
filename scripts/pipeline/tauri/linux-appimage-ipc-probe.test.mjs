@@ -55,6 +55,19 @@ test('the stand-in CLI answers startup status and service-list reads and records
   assert.equal(verdict.hsetupExe, process.execPath);
 }));
 
+test('the desktop status read that names its bundle id is the startup status read', linuxOnly, () => withScratch(async (root) => {
+  // localDaemonCli.ts sends --desktop-bundle-id with the Desktop status read; on a computer with
+  // no installed service the CLI records nothing (recordDesktopDaemonServiceUse).
+  const recordDir = join(root, 'records');
+  const cli = writeStubHappierCli({ dir: join(root, 'bin'), recordDir });
+  const argv = ['daemon', 'status', '--json', '--desktop-bundle-id', 'dev.happier.app.publicdev'];
+  const { appPid, outputs } = await runThroughAppTree(cli, [argv]);
+  assert.equal(outputs[0].status, 0);
+  assert.equal(JSON.parse(outputs[0].stdout).service.installed, false);
+  const verdict = evaluateAppIpcInvocations({ invocations: readStubInvocations(recordDir), appPid, isBundledHsetup: isNodeHsetup });
+  assert.deepEqual(verdict.statusRead.argv, argv);
+}));
+
 test('no status read at all fails the probe', linuxOnly, () => withScratch(async (root) => {
   const recordDir = join(root, 'records');
   const cli = writeStubHappierCli({ dir: join(root, 'bin'), recordDir });

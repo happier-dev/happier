@@ -15,7 +15,7 @@ function normalizeBasename(pathLike: string | null | undefined): string {
   return basename(String(pathLike ?? '').trim()).toLowerCase();
 }
 
-function isJavaScriptRuntimeExecutable(pathLike: string | null | undefined): boolean {
+export function isJavaScriptRuntimeExecutable(pathLike: string | null | undefined): boolean {
   return JAVA_SCRIPT_RUNTIME_BASENAMES.has(normalizeBasename(pathLike));
 }
 

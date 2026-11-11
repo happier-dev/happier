@@ -34,6 +34,34 @@ struct SystemTasksStateInner {
 struct TaskStore {
     tasks: HashMap<String, TaskRecord>,
     completed_task_ids: VecDeque<String>,
+    starting_tasks: usize,
+    component_removal: ComponentRemoval,
+}
+
+#[derive(Default, PartialEq, Eq)]
+enum ComponentRemoval {
+    #[default]
+    Idle,
+    Running,
+    Finished,
+}
+
+impl TaskStore {
+    fn is_busy(&self) -> bool {
+        self.component_removal == ComponentRemoval::Running
+            || self.starting_tasks > 0
+            || self.tasks.values().any(|task| task.child.is_some())
+    }
+}
+
+pub(crate) struct TaskStartReservation(SystemTasksState);
+
+impl Drop for TaskStartReservation {
+    fn drop(&mut self) {
+        if let Ok(mut store) = self.0.lock_tasks() {
+            store.starting_tasks -= 1;
+        }
+    }
 }
 
 struct TaskRecord {
@@ -44,6 +72,46 @@ struct TaskRecord {
 }
 
 impl SystemTasksState {
+    /// A result can arrive before the executor exits. Keep quit held until the real child
+    /// is released, including task starts and synchronous component cleanup.
+    pub(crate) fn is_busy(&self) -> Result<bool, String> {
+        Ok(self.lock_tasks()?.is_busy())
+    }
+
+    pub(crate) fn reserve_start(&self) -> Result<TaskStartReservation, String> {
+        let mut store = self.lock_tasks()?;
+        if store.component_removal != ComponentRemoval::Idle {
+            return Err("Desktop component cleanup is in progress or complete. Quit the app before starting more system tasks.".to_string());
+        }
+        store.starting_tasks += 1;
+        Ok(TaskStartReservation(self.clone()))
+    }
+
+    pub(crate) fn run_component_cleanup(
+        &self,
+        cleanup: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        {
+            let mut store = self.lock_tasks()?;
+            if store.component_removal != ComponentRemoval::Idle {
+                return Err(
+                    "Desktop component cleanup is already in progress or complete.".to_string(),
+                );
+            }
+            if store.is_busy() {
+                return Err("A system task is still running. Wait for it to finish, then retry desktop component cleanup.".to_string());
+            }
+            store.component_removal = ComponentRemoval::Running;
+        }
+        let result = cleanup();
+        self.lock_tasks()?.component_removal = if result.is_ok() {
+            ComponentRemoval::Finished
+        } else {
+            ComponentRemoval::Idle
+        };
+        result
+    }
+
     pub fn new(max_completed_tasks: usize) -> Self {
         Self {
             inner: Arc::new(SystemTasksStateInner {
@@ -114,7 +182,6 @@ impl SystemTasksState {
             return Ok(false);
         }
         record.snapshot.result = Some(result);
-        record.child = None;
         task_store.completed_task_ids.push_back(task_id.to_string());
         evict_completed_tasks(&mut task_store, self.inner.max_completed_tasks);
         Ok(true)
@@ -184,6 +251,7 @@ impl SystemTasksState {
         if let Some(record) = task_store.tasks.get_mut(task_id) {
             record.child = None;
         }
+        evict_completed_tasks(&mut task_store, self.inner.max_completed_tasks);
         Ok(())
     }
 
@@ -241,6 +309,11 @@ fn evict_completed_tasks(task_store: &mut TaskStore, max_completed_tasks: usize)
             .unwrap_or(false);
         if should_remove {
             task_store.tasks.remove(&task_id);
+        } else if task_store.tasks.contains_key(&task_id) {
+            // A result can precede process exit. Keep its retention entry until
+            // mark_finished releases the child, then retry the existing eviction.
+            task_store.completed_task_ids.push_front(task_id);
+            break;
         }
     }
 }
@@ -301,6 +374,65 @@ mod tests {
             message: Some(message.to_string()),
             data: None,
         }
+    }
+
+    #[test]
+    fn component_cleanup_excludes_task_starts_and_keeps_success_closed() {
+        let state = SystemTasksState::default();
+        assert!(!state.is_busy().unwrap());
+        state.run_component_cleanup(|| {
+            assert!(state.reserve_start().is_err(), "cleanup must exclude task starts");
+            assert!(state.is_busy().unwrap(), "quit must wait for component cleanup");
+            Ok(())
+        }).unwrap();
+        assert!(!state.is_busy().unwrap(), "completed cleanup must allow quit");
+        assert!(state.reserve_start().is_err(), "successful cleanup must block reacquisition until exit");
+    }
+
+    #[test]
+    fn component_cleanup_rejects_running_tasks_and_allows_retry_after_failure() {
+        let state = SystemTasksState::default();
+        let child = spawn_test_child();
+        state.insert_running_task("busy", child.clone()).unwrap();
+        let result = state.run_component_cleanup(|| panic!("busy cleanup must have no side effects"));
+        kill_test_child(child);
+        assert!(result.is_err());
+        state.mark_finished("busy").unwrap();
+        assert!(state.run_component_cleanup(|| Err("retry".to_string())).is_err());
+        assert!(!state.is_busy().unwrap(), "failed cleanup must allow quit after its executor returns");
+        assert!(state.reserve_start().is_ok(), "failed cleanup must permit recovery");
+    }
+
+    #[test]
+    fn component_cleanup_waits_for_spawn_reservations_and_real_process_exit() {
+        let state = SystemTasksState::default();
+        let reservation = state.reserve_start().unwrap();
+        assert!(state.is_busy().unwrap(), "quit must wait for task startup");
+        assert!(state.run_component_cleanup(|| panic!("spawn is in progress")).is_err());
+        drop(reservation);
+        assert!(!state.is_busy().unwrap());
+        let child = spawn_test_child();
+        state.insert_running_task("finishing", child.clone()).unwrap();
+        state.complete_task("finishing", build_failure_result("finishing", "failed", "done")).unwrap();
+        assert!(state.is_busy().unwrap(), "a result must not allow quit before process exit");
+        let result = state.run_component_cleanup(|| panic!("result precedes actual process exit"));
+        kill_test_child(child);
+        assert!(result.is_err());
+        state.mark_finished("finishing").unwrap();
+        assert!(!state.is_busy().unwrap(), "real process exit must permit quit");
+        state.run_component_cleanup(|| Ok(())).unwrap();
+    }
+
+    #[test]
+    fn completed_snapshot_retention_waits_for_real_process_exit() {
+        let state = SystemTasksState::new(0);
+        let child = spawn_test_child();
+        state.insert_running_task("finishing", child.clone()).unwrap();
+        state.complete_task("finishing", build_failure_result("finishing", "failed", "done")).unwrap();
+        assert!(state.snapshot("finishing").unwrap().result.is_some());
+        kill_test_child(child);
+        state.mark_finished("finishing").unwrap();
+        assert!(state.snapshot("finishing").unwrap().result.is_none());
     }
 
     #[test]

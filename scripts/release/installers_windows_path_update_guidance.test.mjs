@@ -18,7 +18,8 @@ test('install.ps1 refreshes the current session PATH and prints Windows PATH rel
   assert.match(guidanceMatch[0], /\$ShimName/);
   assert.match(raw, /\$machinePath\s*=\s*\[Environment\]::GetEnvironmentVariable\("Path",\s*\[EnvironmentVariableTarget\]::Machine\)/i);
   assert.match(raw, /\$processPathEntries\s*=\s*@\(\$updatedPathEntries\)\s*\+\s*@\(\$machinePathEntries\)/i);
-  assert.match(raw, /\$env:Path\s*=\s*\(\$processPathEntries -join ';'\)/i);
+  assert.match(raw, /\$updatedProcessPath\s*=\s*\(\$processPathEntries -join ';'\)/i);
+  assert.match(raw, /\$env:Path\s*=\s*\$updatedProcessPath/i);
   assert.doesNotMatch(
     raw,
     /\$env:Path\s*=\s*\(\$updatedPathEntries -join ';'\)/i,

@@ -33,10 +33,20 @@ function readProgramArguments(platform: DaemonServicePlatform, contents: string)
     return array ? [...array.matchAll(/<string>([\s\S]*?)<\/string>/gu)].map((match) => unescapeXml(String(match[1]))) : null;
   }
   const command = /^& (.*)$/mu.exec(contents)?.[1];
-  return command ? [...command.matchAll(/"((?:[^"`]|`.)*)"/gu)].flatMap((match) => {
+  if (!command) return null;
+  const args: string[] = [];
+  let consumed = 0;
+  for (const match of command.matchAll(/"((?:[^"`]|`.)*)"/gu)) {
+    // Only the fully quoted prefix emitted by our template can be preserved on repair.
+    // Skipping a custom bare token would silently install a different command.
+    if (command.slice(consumed, match.index).trim()) return null;
     const value = parsePowerShellQuotedString(match[0]);
-    return value === null ? [] : [value];
-  }) : null;
+    if (value === null) return null;
+    args.push(value);
+    consumed = match.index + match[0].length;
+    if (value === 'daemon') return args;
+  }
+  return null;
 }
 
 function unescapeSystemdQuoted(value: string): string {

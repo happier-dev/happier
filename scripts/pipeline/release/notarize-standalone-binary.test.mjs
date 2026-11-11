@@ -689,3 +689,120 @@ test('local payload repair signs every nested Mach-O while preserving executable
     rmSync(workDir, { recursive: true, force: true });
   }
 });
+
+function notarizeWithSubmit(t, submitBehavior) {
+  const workDir = mkdtempSync(path.join(os.tmpdir(), 'happier-darwin-payload-notary-wait-'));
+  t.after(() => rmSync(workDir, { recursive: true, force: true }));
+  const payloadDir = path.join(workDir, 'happier-v1.2.3-darwin-x64');
+  writeMachOFixture(path.join(payloadDir, 'happier'), 'root');
+  const notarytool = [];
+  const run = () => notarizeDarwinPayload({
+    payloadPath: payloadDir,
+    identity: 'Developer ID Application: Happier Dev (TEAMID)',
+    outPath: path.join(workDir, 'payload.notary.json'),
+    githubOutput: '',
+    environment: {
+      APPLE_API_KEY_ID: 'KEY',
+      APPLE_API_ISSUER_ID: 'ISSUER',
+      APPLE_API_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\ntest-only\n-----END PRIVATE KEY-----',
+    },
+    logger: { log: () => {}, warn: () => {} },
+    sleep: () => {},
+    runCommand: ([command, args], options = {}) => {
+      if (command === 'ditto') writeFileSync(args.at(-1), 'exact-submitted-archive', 'utf8');
+      if (command === 'spctl') {
+        const error = new Error('spctl could not assess a raw command-line tool');
+        error.stderr = `${args.at(-1)}: rejected (the code is valid but does not seem to be an app)\n`;
+        throw error;
+      }
+      if (command === 'xcrun' && (args[1] === 'submit' || args[1] === 'wait')) {
+        notarytool.push(args.slice(1, 3));
+        assert.equal(options.capture, true);
+        return submitBehavior(args);
+      }
+      return '';
+    },
+  });
+  return { run, notarytool };
+}
+
+function notaryPollingTimeout(submissionId) {
+  const error = new Error('Command failed: xcrun notarytool submit happier.zip --wait --timeout 15m --output-format json');
+  error.stderr = `Error: HTTPError(statusCode: nil, error: Error Domain=NSURLErrorDomain Code=-1001 "The request timed out." UserInfo={NSErrorFailingURLStringKey=https://appstoreconnect.apple.com/notary/v2/submissions/${submissionId}?})\n`;
+  return error;
+}
+
+test('a transient polling failure waits on the created submission instead of failing or resubmitting', (t) => {
+  const submissionId = '636eae8e-cb89-4ed3-ab4c-f827d4e671a3';
+  let waits = 0;
+  const { run, notarytool } = notarizeWithSubmit(t, (args) => {
+    if (args[1] === 'submit') throw notaryPollingTimeout(submissionId);
+    waits += 1;
+    if (waits === 1) throw notaryPollingTimeout(submissionId);
+    return JSON.stringify({ id: submissionId, status: 'Accepted' });
+  });
+
+  const evidence = run();
+
+  assert.equal(evidence.notarization.submissionId, submissionId);
+  assert.equal(evidence.notarization.status, 'Accepted');
+  assert.deepEqual(notarytool, [
+    ['submit', notarytool[0][1]],
+    ['wait', submissionId],
+    ['wait', submissionId],
+  ]);
+});
+
+test('a submit failure that names no submission is not retried', (t) => {
+  const { run, notarytool } = notarizeWithSubmit(t, () => {
+    const error = new Error('Command failed: xcrun notarytool submit happier.zip');
+    error.stderr = 'Error: HTTPError(statusCode: nil, error: Error Domain=NSURLErrorDomain Code=-1001 "The request timed out.")\n';
+    throw error;
+  });
+
+  assert.throws(run, /notarytool submit/u);
+  assert.equal(notarytool.length, 1);
+});
+
+test('codesign retries a signature whose timestamp Apple did not return', () => {
+  const command = ['codesign', ['--timestamp', '/tmp/difft']];
+  let attempts = 0;
+  const missingTimestamp = new Error('Command failed: codesign --force --sign IDENTITY --timestamp /tmp/difft');
+  missingTimestamp.stderr = '/tmp/difft: A timestamp was expected but was not found.\n';
+
+  assert.equal(
+    runCodesignWithRetry(command, {
+      attempts: 4,
+      retryDelayMs: 10,
+      runCommand: () => {
+        attempts += 1;
+        if (attempts === 1) throw missingTimestamp;
+        return 'signed';
+      },
+      sleep: () => {},
+      logger: { warn: () => {} },
+    }),
+    'signed',
+  );
+  assert.equal(attempts, 2);
+});
+
+test('codesign retry sees the timestamp failure codesign itself prints', (t) => {
+  // Real process boundary: a codesign stand-in that writes Apple's message to stderr and exits 1
+  // once, as the real tool does, then succeeds. The default runner must expose that output.
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'happier-codesign-retry-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const marker = path.join(dir, 'failed-once');
+  const fake = path.join(dir, 'codesign');
+  writeFileSync(fake, `#!/bin/sh\nif [ ! -e "${marker}" ]; then : > "${marker}"; echo "$2: The timestamp service is not available." >&2; exit 1; fi\necho "$2: replacing existing signature" >&2\n`);
+  chmodSync(fake, 0o755);
+  const warnings = [];
+
+  runCodesignWithRetry([fake, ['--timestamp', '/tmp/libonnxruntime.dylib']], {
+    attempts: 4,
+    retryDelayMs: 0,
+    logger: { warn: (message) => warnings.push(message) },
+  });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /retrying codesign \(2\/4\)/u);
+});

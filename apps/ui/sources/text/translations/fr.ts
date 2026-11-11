@@ -445,6 +445,7 @@ export const fr: TranslationStructure = {
             composerFocus: 'Placer le focus sur le composer',
             composerSendImmediate: 'Envoi alternatif (file / orienter)',
             composerSendInterrupt: 'Interrompre et envoyer',
+            composerSendAlternateAfterSend: "Envoyer et en démarrer une autre / ouvrir",
             composerSendPending: 'Envoyer dans la file d’attente',
             commandPaletteOpen: 'Ouvrir la palette de commandes',
             modeCycle: 'Changer de mode',
@@ -3337,6 +3338,7 @@ export const fr: TranslationStructure = {
         trayStopAllConfirmBody: 'Les sessions d’agent en cours sur cet ordinateur prendront fin, et ton téléphone et ton navigateur ne pourront plus l’atteindre tant que tu n’auras pas rouvert Happier.',
         trayStopConfirmAction: 'Arrêter',
         trayActionFailedTitle: 'Ça n’a pas marché',
+        trayQuitWaitForSystemTasks: "Happier est encore en train de configurer ou de supprimer des composants. Attendez la fin, puis réessayez de quitter.",
         trayLoginItemFailed: 'Impossible de mettre à jour l’élément de connexion de Happier',
         traySessions: ({ count }: { count: string }) => `Sessions : ${count}`,
         closeStopTitle: 'Des sessions d’agent tournent encore',
@@ -6188,7 +6190,7 @@ export const fr: TranslationStructure = {
     },
 
     sessionDrafts: {
-        sectionTitle: 'Brouillons', badge: 'Brouillon', untitled: 'Brouillon sans titre', continueEditing: 'Continuer la modification', startAnother: 'En commencer un autre',
+        sectionTitle: 'Brouillons', badge: 'Brouillon', untitled: 'Brouillon sans titre', continueEditing: 'Continuer la modification', startAnother: 'En commencer un autre', startedOpen: "Session démarrée · Ouvrir",
         status: { offline: 'Hors ligne', syncing: 'Synchronisation', conflict: 'Conflit', machineUnavailable: 'Machine indisponible', attachmentNeedsAttention: 'Pièce jointe à vérifier', startInterrupted: 'Démarrage interrompu' },
         new: { action: 'Nouveau brouillon' }, delete: { action: 'Supprimer le brouillon', confirmTitle: 'Supprimer le brouillon ?', confirmDescription: 'Ce brouillon sera supprimé de vos appareils.' },
         conflict: { title: 'Conflit de brouillon', description: 'Ce champ a changé sur un autre appareil.', mine: 'Sur cet appareil', synced: 'Synchronisé', useSynced: 'Utiliser la version synchronisée', keepDevice: 'Garder cette version', copyMine: 'Copier ma version', copied: 'Copié', copyFailed: 'Copie impossible', field: { text: 'Texte', mentions: 'Références', attachments: 'Pièces jointes', recipient: 'Destinataire', agentContinuation: 'Suite de l’agent', executionRunDelivery: 'Livraison de l’exécution' } },
@@ -6572,8 +6574,12 @@ export const fr: TranslationStructure = {
     },
 
     agentInput: {
+        keepKeyboard: { label: "Garder le clavier ouvert après l’envoi" },
+        historyPosition: ({ index, total }: { index: number; total: number }) => `${index} sur ${total}`,
         sendOptions: {
             title: "Options d’envoi",
+            sendAndStartAnother: "Envoyer et en démarrer une autre",
+            sendAndOpen: "Envoyer et ouvrir la session",
             queue: "Mettre en attente",
             hint: "Maintiens pour choisir comment envoyer",
         },
@@ -7887,6 +7893,7 @@ export const fr: TranslationStructure = {
 settingsSession: {
     terminalHostTitle: 'Hôte de terminal pour les nouvelles sessions',
     terminalHostNone: 'Aucun hôte de terminal',
+    newSessionAfterSend: { title: "Après l’envoi", footer: "Choisissez ce qui se passe quand vous envoyez depuis l’éditeur de nouvelle session. Maintenez Envoyer pour choisir l’autre option pour un seul message.", openTitle: "Ouvrir la session", openSubtitle: "Aller à la session dès qu’elle démarre.", startAnotherTitle: "Rester et en démarrer une autre", startAnotherSubtitle: "Continuer le démarrage en arrière-plan et ouvrir un nouveau brouillon." },
     newSessionDraftEntry: {
         title: 'Brouillons de nouvelle session',
         footer: 'Choisissez si Nouvelle session reprend le brouillon de cet appareil ou en ouvre un nouveau.',
@@ -8078,6 +8085,8 @@ settingsSession: {
               resetHiddenSubtitle: 'Efface les bannières masquées sur cet appareil.',
           },
           inputBehavior: {
+              keepFocusTitle: "Garder l’éditeur actif après l’envoi",
+              keepFocusSubtitle: "Rester dans le champ de message pour écrire le suivant tout de suite.",
               title: 'Comportement de la saisie',
               footer: 'Configure l’envoi avec Entrée et le comportement de l’historique des messages.',
               enterToSendEnabledNativeSubtitle: 'Appuie sur Entrée pour envoyer',
@@ -10201,7 +10210,15 @@ settingsSession: {
         },
         cliPath: {
             title: 'Terminal',
-            footer: 'Happier Desktop n\'ajoute ou ne retire que les entrées PATH qu\'il a créées ; celles écrites par l\'installateur shell restent intactes.',
+            footer: "Happier Desktop ne modifie que les entrées PATH qu’il a créées ; celles de l’installateur shell restent intactes.",
+            cleanupTitle: "Supprimer les composants Desktop",
+            cleanupSubtitle: "Supprimer la ligne de commande et les services appartenant à Desktop, puis quitter.",
+            cleanupConfirmTitle: "Supprimer les composants Desktop et quitter ?",
+            cleanupConfirmBody: "Cette action supprime les fichiers de ligne de commande, les entrées PATH et les services appartenant à Desktop si aucune autre application Desktop n’en a besoin. Les composants partagés ou installés par vous sont conservés, ainsi que l’historique des sessions et les données du compte. Les services supprimés sont arrêtés, ce qui peut interrompre les sessions en cours et l’accès à distance.\n\nDesktop quittera après le nettoyage. Supprimez ensuite l’application avec votre système d’exploitation ; sur macOS ou Linux portable, supprimez le paquet ou le fichier de l’application. Rouvrir Desktop peut réinstaller ses composants.",
+            cleanupConfirmAction: "Supprimer les composants et quitter",
+            cleanupBusy: "Suppression des composants Desktop…",
+            cleanupFailed: "Le nettoyage n’a pas abouti. Réessayez.",
+            cleanupQuitFailed: "Le nettoyage est terminé, mais Desktop n’a pas pu quitter. Quittez l’application avant de la supprimer.",
             addTitle: 'Ajouter happier au PATH',
             addSubtitle: 'Rends la commande happier disponible dans les nouveaux terminaux.',
             removeTitle: 'Retirer happier du PATH',

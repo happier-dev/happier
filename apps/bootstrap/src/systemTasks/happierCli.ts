@@ -137,7 +137,7 @@ export async function runLocalHappierJsonCommand(params: LocalHappierJsonCommand
   // minute can kill a valid Windows ownership wait (120s plus grace), or interrupt recovery.
   const serviceArgs = params.args[0] === 'daemon' ? params.args.slice(1) : params.args;
   const serviceMutation = serviceArgs[0] === 'service'
-    && ['install', 'start', 'stop', 'restart'].includes(serviceArgs[1] ?? '')
+    && ['install', 'uninstall', 'start', 'stop', 'restart'].includes(serviceArgs[1] ?? '')
     && !params.args.includes('--dry-run');
 
   const result = await runCommandCapture({
@@ -301,8 +301,7 @@ export async function resolveVersionedLocalHappierCli(
   const processEnv = params.processEnv ?? process.env;
   const cliParams = resolveHappierCliParams({ ...params, processEnv });
   const readVersion = overrides.readVersion ?? readLocalHappierCliVersion;
-  const resolved = resolveExplicitOrInstalledLocalFirstPartyCommand(cliParams)
-    ?? await acquireManagedLocalFirstPartyComponentCommand({ ...cliParams, assertAcceptableVersion: params.assertAcceptableVersion }, overrides);
+  const resolved = await ensureLocalFirstPartyComponentCommand({ ...cliParams, assertAcceptableVersion: params.assertAcceptableVersion }, overrides);
   params.signal?.throwIfAborted();
   params.onProgress?.({ phase: 'checkingCli' });
   return { ...resolved, version: await readVersion({ command: resolved.command, processEnv }) };

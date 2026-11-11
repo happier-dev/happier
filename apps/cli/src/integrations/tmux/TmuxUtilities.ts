@@ -279,6 +279,7 @@ export class TmuxUtilities {
         stdio: stdin !== undefined ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
         shell: false,
         ...spawnOptions,
+        windowsHide: true,
         env: mergedEnv,
       });
 

@@ -2,7 +2,7 @@ import * as React from 'react';
 import {
     createBottomTabNavigator,
 } from '@react-navigation/bottom-tabs';
-import { NavigationContainer, NavigationIndependentTree, useIsFocused, type TabNavigationState } from '@react-navigation/native';
+import { NavigationContainer, NavigationIndependentTree, useIsFocused, useTheme, type TabNavigationState } from '@react-navigation/native';
 import { Platform, StyleSheet, View, type ViewProps } from 'react-native';
 
 import { usePersistSessionLastMobileSurface } from '@/sync/domains/state/storage';
@@ -61,6 +61,7 @@ function resolveInitialSurface(
 }
 
 export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNavigatorProps) => {
+    const navigationTheme = useTheme();
     const terminalTabAvailable = props.terminalTabAvailable !== false;
     const initialSurface = resolveInitialSurface(props.initialSurface, terminalTabAvailable);
     const surfaces = resolveAvailableSurfaces(terminalTabAvailable);
@@ -78,7 +79,7 @@ export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNa
     // mounts, instead of every surface session A had lazily mounted re-rendering with B's props.
     return (
         <NavigationIndependentTree key={props.sessionId}>
-            <NavigationContainer linking={DISABLED_NAVIGATION_LINKING}>
+            <NavigationContainer theme={navigationTheme} linking={DISABLED_NAVIGATION_LINKING}>
                 <Tab.Navigator
                     backBehavior="history"
                     initialRouteName={initialSurface}

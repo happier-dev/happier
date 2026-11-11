@@ -167,6 +167,49 @@ vi.mock('./snapshotSync', async (importOriginal) => {
 });
 
 describe('ApiSessionClient message commit queue', () => {
+  it('commits SDK text-block prompts as user messages', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true,
+      emitWithAckResult: { ok: true, id: 'prompt-row', seq: 1, localId: 'claude-jsonl:main:user:prompt', didWrite: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    try {
+      await client.sendClaudeSessionMessageCommittedExact({ type: 'user', uuid: 'prompt',
+        message: { content: [{ type: 'text', text: 'Keep this prompt visible' }] } });
+      const payload = sessionSocketStub.emitWithAck.mock.calls.find(([event]) => event === 'message')?.[1];
+      expect(payload).toMatchObject({
+        localId: 'claude-jsonl:main:user:prompt',
+        messageRole: 'user',
+        message: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Keep this prompt visible' } } },
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('publishes a Claude command body once through the persisted message transport', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true,
+      emitWithAckResult: { ok: true, id: 'command-row', seq: 1, localId: 'claude-jsonl:main:user:command', didWrite: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    const text = 'Full command report\n'.repeat(100);
+    const native = { stdout: text, backgroundTaskId: 'task-1', exit_code: 0 };
+    try {
+      await client.sendClaudeSessionMessageCommittedExact({ type: 'user', uuid: 'command', toolUseResult: native,
+        message: { content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: text }] } });
+      const payload = sessionSocketStub.emitWithAck.mock.calls.find(([event]) => event === 'message')?.[1];
+      expect(payload).toMatchObject({ message: { t: 'plain', v: { content: { type: 'output', data: {
+        message: { content: [{ content: native }] },
+      } } } } });
+      expect(JSON.stringify(payload).split(JSON.stringify(text).slice(1, -1))).toHaveLength(2);
+    } finally {
+      await client.close();
+    }
+  });
+
   it('persists turn_failed as failed session turn runtime state', async () => {
     vi.resetModules();
     const runtimeStateUpdates: unknown[] = [];

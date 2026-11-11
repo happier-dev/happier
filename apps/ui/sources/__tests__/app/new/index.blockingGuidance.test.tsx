@@ -440,6 +440,7 @@ describe('/new (blocking guidance)', () => {
         expect(mockState.routerReplace).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                focusComposer: '1',
                 draftId: '85ffed43-744d-4bad-86ac-f2882dcaa6f8',
                 draftOrigin: 'ordinary',
             },
@@ -478,6 +479,7 @@ describe('/new (blocking guidance)', () => {
         expect(mockState.routerReplace).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
+                focusComposer: '1',
                 draftId: '85ffed43-744d-4bad-86ac-f2882dcaa6f8',
                 draftOrigin: 'ordinary',
             },

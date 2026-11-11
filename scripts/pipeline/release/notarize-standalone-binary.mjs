@@ -3,7 +3,7 @@
 // @ts-check
 
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -343,11 +343,34 @@ export function resolveAdHocDarwinPayloadSigningCommands(machOCode) {
 }
 
 function run([command, args], options = {}) {
+  if (!options.capture) return runEchoingOutput([command, args], options);
   return execFileSync(command, args, {
     encoding: 'utf8',
-    stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    stdio: ['ignore', 'pipe', 'pipe'],
     timeout: options.timeoutMs ?? 10 * 60_000,
   });
+}
+
+// codesign and notarytool report Apple service failures only on stderr. Keep that output in the
+// job log and on the thrown error, where the retry classifiers read it (an inherited stderr
+// leaves only "Command failed").
+function runEchoingOutput([command, args], options = {}) {
+  const result = spawnSync(command, args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: options.timeoutMs ?? 10 * 60_000,
+  });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const error = new Error(`Command failed: ${[command, ...args].join(' ')}`);
+    error.status = result.status;
+    error.stdout = result.stdout;
+    error.stderr = result.stderr;
+    throw error;
+  }
+  return result.stdout;
 }
 
 function commandFailureOutput(error) {
@@ -375,7 +398,8 @@ export function runCodesignWithRetry(
     try {
       return runCommand(command);
     } catch (error) {
-      const timestampServiceUnavailable = /timestamp service is not available/iu.test(
+      // Both mean Apple's timestamp service did not answer this signing request.
+      const timestampServiceUnavailable = /timestamp service is not available|timestamp was expected but was not found/iu.test(
         commandFailureOutput(error),
       );
       if (!timestampServiceUnavailable || attempt >= attempts) {
@@ -390,6 +414,43 @@ export function runCodesignWithRetry(
     }
   }
   throw new Error('[release] codesign retry loop exhausted unexpectedly');
+}
+
+const TRANSIENT_NOTARY_REQUEST_PATTERN = /NSURLErrorDomain\s+Code=-1001|HTTPError\(statusCode:\s*nil|request timed out|network connection was lost/iu;
+const NOTARY_SUBMISSION_URL_PATTERN = /\/notary\/v2\/submissions\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/iu;
+
+// `submit --wait` fails when one status poll times out, although Apple already holds the
+// submission (its id is in the failing URL). Resubmitting would notarize the archive twice, so
+// keep waiting on that submission, with the same transient-service budget as codesign.
+export function submitDarwinPayloadForNotarization(
+  submitCommand,
+  {
+    authArgs,
+    attempts = DEFAULT_CODESIGN_ATTEMPTS,
+    retryDelayMs = DEFAULT_CODESIGN_RETRY_DELAY_MS,
+    runCommand = run,
+    sleep = sleepSync,
+    logger = console,
+  },
+) {
+  const options = { capture: true, timeoutMs: 30 * 60_000 };
+  let command = submitCommand;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return runCommand(command, options);
+    } catch (error) {
+      const output = commandFailureOutput(error);
+      const submissionId = NOTARY_SUBMISSION_URL_PATTERN.exec(output)?.[1];
+      if (!submissionId || !TRANSIENT_NOTARY_REQUEST_PATTERN.test(output) || attempt >= attempts) {
+        throw error;
+      }
+      logger.warn?.(
+        `[release] Apple notary status request failed transiently; waiting on submission ${submissionId} (${attempt + 1}/${attempts})`,
+      );
+      sleep(retryDelayMs * (2 ** (attempt - 1)));
+      command = ['xcrun', ['notarytool', 'wait', submissionId, ...authArgs, '--timeout', '15m', '--output-format', 'json']];
+    }
+  }
 }
 
 export function runGatekeeperAssessment(
@@ -755,6 +816,7 @@ export function notarizeDarwinPayload({
   runCommand = run,
   logger = console,
   finalizePayloadBeforeSnapshot = () => {},
+  sleep = sleepSync,
 }) {
   if (!fs.statSync(payloadPath, { throwIfNoEntry: false })?.isDirectory()) {
     throw new Error(`[release] Darwin payload does not exist: ${payloadPath}`);
@@ -793,7 +855,12 @@ export function notarizeDarwinPayload({
     const signedSnapshot = snapshotDarwinPayload(payloadPath);
     runCommand(provisional.archive);
     const archiveSha256 = fileSha256(zipPath);
-    const submitOutput = runCommand(provisional.submit, { capture: true, timeoutMs: 30 * 60_000 });
+    const submitOutput = submitDarwinPayloadForNotarization(provisional.submit, {
+      authArgs: ['--key', keyPath, '--key-id', keyId, '--issuer', issuerId],
+      runCommand,
+      sleep,
+      logger,
+    });
     const submission = JSON.parse(submitOutput);
     const submissionId = requireValue(submission.id, 'notarytool submission id');
     const status = requireValue(submission.status, 'notarytool submission status');

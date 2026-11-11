@@ -593,7 +593,8 @@ test('source daemon lifecycle commands run after the CLI publication lock is rel
         HAPPIER_STACK_REPO_DIR: repoDir,
         HAPPIER_STACK_TUI: '0',
         HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS: '1',
-        HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '20',
+        // Profile reconciliation runs a real CLI subprocess within the startup budget.
+        HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '2000',
         HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '1',
         HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
         EVENTS_PATH: eventsPath,

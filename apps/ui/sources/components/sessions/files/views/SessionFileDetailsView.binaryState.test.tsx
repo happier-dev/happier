@@ -1,7 +1,8 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createSessionFixture, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { createMachineFixture, createRootLayoutFeaturesResponse, createSessionFixture, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { Session, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { Project } from '@/sync/runtime/orchestration/projectManager';
 import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
@@ -26,7 +27,9 @@ installSessionFilesViewCommonModuleMocks({
     },
     storage: async (importOriginal) => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const { storage } = await importOriginal<typeof import('@/sync/domains/state/storage')>();
         return createStorageModuleStub({
+            storage,
             useSession: () => binarySession,
             useProjectForSession: () => binaryProject,
             useSessionWorkspacePath: () => '/workspace',
@@ -41,6 +44,38 @@ installSessionFilesViewCommonModuleMocks({
         });
     },
 });
+
+// File metadata is now verified through the real RPC routing path before showing a binary preview.
+vi.mock('@/sync/http/client', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/http/client')>()),
+    serverFetch: async (path: string) => {
+        if (path !== '/v1/features') throw new Error(`Unexpected request: ${path}`);
+        return Response.json(createRootLayoutFeaturesResponse({
+            features: {
+                machines: {
+                    enabled: true,
+                    transfer: {
+                        enabled: true,
+                        directPeer: { enabled: true },
+                        serverRouted: { enabled: true },
+                    },
+                },
+            },
+        }));
+    },
+}));
+
+vi.mock('@/sync/api/session/apiSocket', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/api/session/apiSocket')>()),
+    apiSocket: {
+        machineRPC: async (machineId: string, method: string, payload: unknown) => {
+            expect(machineId).toBe('m1');
+            expect(method).toBe(RPC_METHODS.STAT_FILE);
+            expect(payload).toEqual({ path: '/workspace/bin.zip' });
+            return { success: true, exists: true, kind: 'file', sizeBytes: 1, modifiedMs: 1 };
+        },
+    },
+}));
 
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
@@ -244,7 +279,9 @@ vi.mock('@/components/sessions/files/useSessionFileDownloadAvailability', () => 
   useSessionFileDownloadAvailability: () => downloadAvailabilityState.value,
 }));
 
-beforeEach(() => {
+beforeEach(async () => {
+  const { storage } = await import('@/sync/domains/state/storage');
+  storage.setState({ sessions: { s1: binarySession }, machines: { m1: createMachineFixture({ id: 'm1' }) } });
   downloadAvailabilityState.value = true;
   binarySnapshot = { ...binarySnapshot, fetchedAt: 1, entries: [binaryEntry] };
 

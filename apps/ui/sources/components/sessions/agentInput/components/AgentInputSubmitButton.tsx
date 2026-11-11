@@ -14,8 +14,7 @@ import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { DeferredAnchoredTooltip } from '@/components/ui/overlays/DeferredAnchoredTooltip';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import type { MessageSendMode } from '@/sync/domains/session/control/submitMode';
-import type { AgentInputSendIntentOptions } from '../agentInputSendOptions';
+import type { AgentInputSendIntentOptions, AgentInputSendMenuItem } from '../agentInputSendOptions';
 
 import {
     resolveAgentContinuationSubmitPresentation,
@@ -129,8 +128,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
      */
     armedContinuationTarget?: Readonly<{ agentId: string; label: string }> | null;
     onSend: (options?: AgentInputSendIntentOptions) => void;
-    sendMenuModes?: readonly MessageSendMode[];
-    sendMenuShortcuts?: Partial<Record<MessageSendMode, string>>;
+    sendMenuItems?: readonly AgentInputSendMenuItem[];
     onStop?: () => void;
 }>) {
     const { theme } = useUnistyles();
@@ -139,10 +137,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
     const [sendTooltipOpen, setSendTooltipOpen] = React.useState(false);
     const hasSendIntent = props.hasSendableContent || props.armedContinuationTarget != null;
     const sendMenuEnabled = props.hasSendableContent && !props.disabled && !props.isSending
-        && !props.armedContinuationTarget && Boolean(props.sendMenuModes?.length);
-    const getSendModeTitle = (mode: MessageSendMode) => mode === 'agent_queue'
-        ? t('session.pendingMessages.actions.steerNow')
-        : mode === 'interrupt' ? t('session.pendingMessages.actions.sendNowInterrupt') : t('agentInput.sendOptions.queue');
+        && !props.armedContinuationTarget && Boolean(props.sendMenuItems?.length);
     const openSendMenu = () => {
         if (!sendMenuEnabled) return;
         hapticsLight();
@@ -310,10 +305,9 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
           </AgentInputSubmitShape>
           {Platform.OS === 'web' && sendMenuEnabled && sendTooltipOpen && !sendMenuOpen ? (
             <DeferredAnchoredTooltip activationKey="send" anchorRef={sendMenuAnchorRef} placement="top"
-                label={(props.sendMenuModes ?? []).map((mode) => {
-                    const title = getSendModeTitle(mode);
-                    return props.sendMenuShortcuts?.[mode] ? `${title} (${props.sendMenuShortcuts[mode]})` : title;
-                }).join('\n')} />
+                label={(props.sendMenuItems ?? []).map((item) => (
+                    item.shortcut ? `${item.title} (${item.shortcut})` : item.title
+                )).join('\n')} />
           ) : null}
           {sendMenuOpen && sendMenuEnabled ? (
             <DropdownMenu
@@ -324,17 +318,17 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                 popoverAnchorAlign="end"
                 matchTriggerWidth={false}
                 closeOnSelect={false}
-                items={(props.sendMenuModes ?? []).map((mode) => ({
-                    id: mode,
-                    shortcut: props.sendMenuShortcuts?.[mode],
-                    testID: `agent-input-send-option-${mode}`,
-                    title: getSendModeTitle(mode),
+                items={(props.sendMenuItems ?? []).map((item) => ({
+                    id: item.id,
+                    shortcut: item.shortcut,
+                    testID: `agent-input-send-option-${item.id}`,
+                    title: item.title,
                 }))}
                 onSelect={(id) => {
-                    const mode = props.sendMenuModes?.find((mode) => mode === id);
-                    if (!mode) return;
+                    const item = props.sendMenuItems?.find((candidate) => candidate.id === id);
+                    if (!item) return;
                     setSendMenuOpen(false);
-                    props.onSend({ deliveryIntent: mode });
+                    props.onSend(item.options);
                 }}
             />
           ) : null}

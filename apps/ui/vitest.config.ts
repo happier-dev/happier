@@ -131,7 +131,8 @@ export default defineConfig({
         server: {
             deps: {
                 // Keep the real voice SDK in the test graph so tests can replace its LiveKit transport boundary.
-                inline: [/react-native-reanimated/, /react-native-keyboard-controller/, /@elevenlabs\/client/],
+                // Keep navigation inside Vite so its React Native imports use the platform stub.
+                inline: [/react-native-reanimated/, /react-native-keyboard-controller/, /@elevenlabs\/client/, /@react-navigation\/native/],
             },
         },
         setupFiles: [resolve('./sources/dev/vitestSetup.ts')],

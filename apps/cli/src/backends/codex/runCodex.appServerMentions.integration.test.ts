@@ -320,26 +320,26 @@ describe('runCodex app-server composer reference resolution', () => {
           mode: {
             permissionMode: 'default',
             permissionModeUpdatedAt: 1,
-            promptMetadata: {
-              happierStructuredInputV1: {
-                v: 1,
-                mentions: [
-                  {
-                    kind: MENTION_KIND_V1.skill,
-                    ref: buildMentionRefForKindV1(MENTION_KIND_V1.skill, 'vendor:codex:review'),
-                    token: '$review',
-                    start: 4,
-                    end: 11,
-                  },
-                  {
-                    kind: MENTION_KIND_V1.vendorPlugin,
-                    ref: buildMentionRefForKindV1(MENTION_KIND_V1.vendorPlugin, 'plugin://linear@happier'),
-                    token: '@linear',
-                    start: 17,
-                    end: 24,
-                  },
-                ],
-              },
+          },
+          providerPromptMeta: {
+            happierStructuredInputV1: {
+              v: 1,
+              mentions: [
+                {
+                  kind: MENTION_KIND_V1.skill,
+                  ref: buildMentionRefForKindV1(MENTION_KIND_V1.skill, 'vendor:codex:review'),
+                  token: '$review',
+                  start: 4,
+                  end: 11,
+                },
+                {
+                  kind: MENTION_KIND_V1.vendorPlugin,
+                  ref: buildMentionRefForKindV1(MENTION_KIND_V1.vendorPlugin, 'plugin://linear@happier'),
+                  token: '@linear',
+                  start: 17,
+                  end: 24,
+                },
+              ],
             },
           },
           isolate: false,

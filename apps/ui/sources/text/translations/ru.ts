@@ -644,6 +644,7 @@ export const ru: TranslationStructure = {
             composerFocus: 'Перейти к вводу',
             composerSendImmediate: 'Альтернативная отправка (очередь / направление)',
             composerSendInterrupt: 'Прервать и отправить',
+            composerSendAlternateAfterSend: "Отправить и начать ещё одну / открыть",
             composerSendPending: 'Отправить в очередь ожидания',
             commandPaletteOpen: 'Открыть палитру команд',
             modeCycle: 'Переключить режим',
@@ -3565,6 +3566,7 @@ export const ru: TranslationStructure = {
     trayStopAllConfirmBody: 'Сеансы агентов на этом компьютере завершатся, и телефон и браузер не смогут связаться с ним, пока вы снова не откроете Happier.',
     trayStopConfirmAction: 'Остановить',
     trayActionFailedTitle: 'Не получилось',
+    trayQuitWaitForSystemTasks: "Happier ещё настраивает или удаляет компоненты. Дождитесь завершения и попробуйте выйти снова.",
     trayLoginItemFailed: 'Не удалось обновить элемент входа Happier',
     traySessions: ({ count }: { count: string }) => `Сеансы: ${count}`,
     closeStopTitle: 'Сессии агента ещё выполняются',
@@ -5505,7 +5507,7 @@ export const ru: TranslationStructure = {
   },
 
   sessionDrafts: {
-    sectionTitle: 'Черновики', badge: 'Черновик', untitled: 'Черновик без названия', continueEditing: 'Продолжить редактирование', startAnother: 'Начать другой',
+    sectionTitle: 'Черновики', badge: 'Черновик', untitled: 'Черновик без названия', continueEditing: 'Продолжить редактирование', startAnother: 'Начать другой', startedOpen: "Сессия запущена · Открыть",
     status: { offline: 'Не в сети', syncing: 'Синхронизация', conflict: 'Конфликт', machineUnavailable: 'Компьютер недоступен', attachmentNeedsAttention: 'Вложение требует внимания', startInterrupted: 'Запуск прерван' },
     new: { action: 'Новый черновик' }, delete: { action: 'Удалить черновик', confirmTitle: 'Удалить черновик?', confirmDescription: 'Этот черновик будет удалён с ваших устройств.' },
     conflict: { title: 'Конфликт черновика', description: 'Это поле изменено на другом устройстве.', mine: 'На этом устройстве', synced: 'Синхронизировано', useSynced: 'Использовать синхронизированное', keepDevice: 'Оставить с устройства', copyMine: 'Скопировать моё', copied: 'Скопировано', copyFailed: 'Не удалось скопировать', field: { text: 'Текст', mentions: 'Упоминания', attachments: 'Вложения', recipient: 'Получатель', agentContinuation: 'Продолжение агента', executionRunDelivery: 'Доставка запуска' } },
@@ -6960,8 +6962,12 @@ export const ru: TranslationStructure = {
       },
 
     agentInput: {
+        keepKeyboard: { label: "Не закрывать клавиатуру после отправки" },
+        historyPosition: ({ index, total }: { index: number; total: number }) => `${index} из ${total}`,
         sendOptions: {
             title: "Варианты отправки",
+            sendAndStartAnother: "Отправить и начать ещё одну",
+            sendAndOpen: "Отправить и открыть сессию",
             queue: "В очередь",
             hint: "Удерживайте, чтобы выбрать способ отправки",
         },
@@ -8330,6 +8336,7 @@ export const ru: TranslationStructure = {
 settingsSession: {
     terminalHostTitle: 'Терминальный хост для новых сеансов',
     terminalHostNone: 'Без терминального хоста',
+    newSessionAfterSend: { title: "После отправки", footer: "Выберите, что происходит при отправке из редактора новой сессии. Удерживайте «Отправить», чтобы выбрать другой вариант для одного сообщения.", openTitle: "Открыть сессию", openSubtitle: "Перейти к сессии сразу после запуска.", startAnotherTitle: "Остаться и начать ещё одну", startAnotherSubtitle: "Продолжить запуск в фоне и открыть новый черновик." },
     newSessionDraftEntry: {
         title: 'Черновики новой сессии',
         footer: 'Выберите, продолжать ли черновик на этом устройстве или открывать новый при выборе «Новая сессия».',
@@ -8503,6 +8510,8 @@ settingsSession: {
         resetHiddenSubtitle: 'Очистить список баннеров, скрытых на этом устройстве.',
     },
     inputBehavior: {
+        keepFocusTitle: "Сохранять фокус в редакторе после отправки",
+        keepFocusSubtitle: "Оставаться в поле сообщения, чтобы сразу написать следующее.",
         title: 'Поведение ввода',
         footer: 'Настройте отправку по Enter и поведение истории сообщений.',
         enterToSendEnabledNativeSubtitle: 'Нажмите Enter, чтобы отправить',
@@ -10754,7 +10763,15 @@ settingsSession: {
     },
     cliPath: {
       title: "Терминал",
-      footer: "Happier Desktop добавляет и удаляет только те записи PATH, которые создал сам; записи установщика оболочки остаются нетронутыми.",
+      footer: "Happier Desktop изменяет только созданные им записи PATH; записи установщика оболочки остаются без изменений.",
+      cleanupTitle: "Удалить компоненты Desktop",
+      cleanupSubtitle: "Удалить командную строку и фоновые службы Desktop, затем выйти.",
+      cleanupConfirmTitle: "Удалить компоненты Desktop и выйти?",
+      cleanupConfirmBody: "Будут удалены файлы командной строки, записи PATH и службы, принадлежащие Desktop, если они не нужны другому приложению Desktop. Общие и установленные вами компоненты, история сеансов и данные учётной записи сохранятся. Удаляемые службы останавливаются, что может прервать текущие сеансы и удалённый доступ.\n\nПосле очистки Desktop закроется. Затем удалите приложение средствами операционной системы; в macOS или портативном Linux удалите пакет или файл приложения. При повторном открытии Desktop компоненты могут быть настроены заново.",
+      cleanupConfirmAction: "Удалить компоненты и выйти",
+      cleanupBusy: "Удаление компонентов Desktop…",
+      cleanupFailed: "Очистка не завершена. Повторите попытку.",
+      cleanupQuitFailed: "Очистка завершена, но Desktop не удалось закрыться. Закройте приложение перед удалением.",
       addTitle: "Добавить happier в PATH",
       addSubtitle: "Сделать команду happier доступной в новых терминалах.",
       removeTitle: "Удалить happier из PATH",

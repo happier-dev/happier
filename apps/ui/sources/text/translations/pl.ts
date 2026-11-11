@@ -640,6 +640,7 @@ export const pl: TranslationStructure = {
             composerFocus: 'Ustaw fokus na edytorze',
             composerSendImmediate: 'Alternatywne wysyłanie (kolejka / sterowanie)',
             composerSendInterrupt: 'Przerwij i wyślij',
+            composerSendAlternateAfterSend: "Wyślij i rozpocznij kolejną / otwórz",
             composerSendPending: 'Wyślij do kolejki oczekujących',
             commandPaletteOpen: 'Otwórz paletę poleceń',
             modeCycle: 'Przełącz tryb',
@@ -3643,6 +3644,7 @@ export const pl: TranslationStructure = {
     trayStopAllConfirmBody: 'Sesje agentów działające na tym komputerze zostaną zakończone, a telefon i przeglądarka nie dosięgną go, dopóki nie otworzysz Happier ponownie.',
     trayStopConfirmAction: 'Zatrzymaj',
     trayActionFailedTitle: 'Nie udało się',
+    trayQuitWaitForSystemTasks: "Happier nadal konfiguruje lub usuwa komponenty. Poczekaj na zakończenie, a następnie spróbuj ponownie zamknąć aplikację.",
     trayLoginItemFailed: 'Nie udało się zaktualizować elementu logowania Happier',
     traySessions: ({ count }: { count: string }) => `Sesje: ${count}`,
     closeStopTitle: 'Sesje agenta wciąż działają',
@@ -6581,7 +6583,7 @@ export const pl: TranslationStructure = {
   },
 
   sessionDrafts: {
-    sectionTitle: 'Wersje robocze', badge: 'Wersja robocza', untitled: 'Wersja bez tytułu', continueEditing: 'Kontynuuj edycję', startAnother: 'Rozpocznij nową',
+    sectionTitle: 'Wersje robocze', badge: 'Wersja robocza', untitled: 'Wersja bez tytułu', continueEditing: 'Kontynuuj edycję', startAnother: 'Rozpocznij nową', startedOpen: "Sesja rozpoczęta · Otwórz",
     status: { offline: 'Poza siecią', syncing: 'Synchronizowanie', conflict: 'Konflikt', machineUnavailable: 'Maszyna niedostępna', attachmentNeedsAttention: 'Załącznik wymaga uwagi', startInterrupted: 'Uruchamianie przerwane' },
     new: { action: 'Nowa wersja robocza' }, delete: { action: 'Usuń wersję roboczą', confirmTitle: 'Usunąć wersję roboczą?', confirmDescription: 'Ta wersja robocza zostanie usunięta z Twoich urządzeń.' },
     conflict: { title: 'Konflikt wersji roboczej', description: 'To pole zmieniono na innym urządzeniu.', mine: 'Na tym urządzeniu', synced: 'Zsynchronizowane', useSynced: 'Użyj zsynchronizowanej', keepDevice: 'Zachowaj z urządzenia', copyMine: 'Kopiuj moją', copied: 'Skopiowano', copyFailed: 'Nie udało się skopiować', field: { text: 'Tekst', mentions: 'Wzmianki', attachments: 'Załączniki', recipient: 'Odbiorca', agentContinuation: 'Kontynuacja agenta', executionRunDelivery: 'Dostarczenie wykonania' } },
@@ -6977,8 +6979,12 @@ export const pl: TranslationStructure = {
   },
 
   agentInput: {
+      keepKeyboard: { label: "Nie zamykaj klawiatury po wysłaniu" },
+      historyPosition: ({ index, total }: { index: number; total: number }) => `${index} z ${total}`,
       sendOptions: {
           title: "Opcje wysyłania",
+          sendAndStartAnother: "Wyślij i rozpocznij kolejną",
+          sendAndOpen: "Wyślij i otwórz sesję",
           queue: "Dodaj do kolejki",
           hint: "Przytrzymaj, aby wybrać sposób wysłania",
       },
@@ -8346,6 +8352,7 @@ export const pl: TranslationStructure = {
 settingsSession: {
     terminalHostTitle: 'Host terminala dla nowych sesji',
     terminalHostNone: 'Bez hosta terminala',
+    newSessionAfterSend: { title: "Po wysłaniu", footer: "Wybierz, co ma się dziać po wysłaniu z edytora nowej sesji. Przytrzymaj Wyślij, aby dla jednej wiadomości wybrać drugą opcję.", openTitle: "Otwórz sesję", openSubtitle: "Przejdź do sesji, gdy tylko się rozpocznie.", startAnotherTitle: "Zostań i rozpocznij kolejną", startAnotherSubtitle: "Kontynuuj uruchamianie w tle i otwórz nowy szkic." },
     newSessionDraftEntry: {
         title: 'Wersje robocze nowej sesji',
         footer: 'Wybierz, czy Nowa sesja ma kontynuować wersję roboczą z tego urządzenia, czy otworzyć nową.',
@@ -8519,6 +8526,8 @@ settingsSession: {
           resetHiddenSubtitle: 'Wyczyść banery ukryte na tym urządzeniu.',
       },
       inputBehavior: {
+          keepFocusTitle: "Zachowaj fokus w edytorze po wysłaniu",
+          keepFocusSubtitle: "Pozostań w polu wiadomości, aby od razu pisać następną.",
           title: 'Zachowanie wprowadzania',
           footer: 'Skonfiguruj wysyłanie klawiszem Enter i zachowanie historii wiadomości.',
           enterToSendEnabledNativeSubtitle: 'Naciśnij Enter, aby wysłać',
@@ -10860,7 +10869,15 @@ settingsSession: {
     },
     cliPath: {
       title: "Terminal",
-      footer: "Happier Desktop dodaje lub usuwa tylko te wpisy PATH, które sam utworzył; wpisy zapisane przez instalator powłoki pozostają nietknięte.",
+      footer: "Happier Desktop zmienia tylko utworzone przez siebie wpisy PATH; wpisy instalatora powłoki pozostają bez zmian.",
+      cleanupTitle: "Usuń składniki Desktop",
+      cleanupSubtitle: "Usuń wiersz poleceń i usługi należące do Desktop, a potem zakończ aplikację.",
+      cleanupConfirmTitle: "Usunąć składniki Desktop i zakończyć?",
+      cleanupConfirmBody: "Ta operacja usuwa pliki wiersza poleceń, wpisy PATH i usługi należące do Desktop, jeśli nie potrzebuje ich inna aplikacja Desktop. Składniki współdzielone lub zainstalowane przez Ciebie, historia sesji i dane konta zostaną zachowane. Usuwane usługi zostaną zatrzymane, co może przerwać trwające sesje i dostęp zdalny.\n\nPo zakończeniu czyszczenia Desktop zostanie zamknięty. Następnie usuń aplikację przy użyciu systemu operacyjnego; w macOS lub przenośnym Linuksie usuń pakiet lub plik aplikacji. Ponowne otwarcie Desktop może ponownie skonfigurować składniki.",
+      cleanupConfirmAction: "Usuń składniki i zakończ",
+      cleanupBusy: "Usuwanie składników Desktop…",
+      cleanupFailed: "Czyszczenie nie zostało ukończone. Spróbuj ponownie.",
+      cleanupQuitFailed: "Czyszczenie zakończone, ale Desktop nie mógł się zamknąć. Zamknij aplikację przed jej usunięciem.",
       addTitle: "Dodaj happier do PATH",
       addSubtitle: "Udostępnij polecenie happier w nowych terminalach.",
       removeTitle: "Usuń happier z PATH",

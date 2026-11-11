@@ -28,9 +28,12 @@ export function resolveClaudeNativeQuestionWithAnswerState(
   state?: ClaudeNativeQuestionAnswerState,
 ): ReturnType<typeof resolveClaudeNativeQuestionScreen> {
   const draft = state?.drafts.get(state.questionIndex);
-  const index = draft !== undefined && presentation.freeformIndex !== null
-    && doesClaudeOwnedTextMatchCapture(draft, presentation.options[presentation.freeformIndex]!.label)
-    ? state?.questionIndex : undefined;
+  // The hook identifies this occurrence. Its sole question has one page even
+  // when the viewport hides the heading; options and drafts still need to match.
+  const index = questions.length === 1 ? 0
+    : draft !== undefined && presentation.freeformIndex !== null
+      && doesClaudeOwnedTextMatchCapture(draft, presentation.options[presentation.freeformIndex]!.label)
+      ? state?.questionIndex : undefined;
   return resolveClaudeNativeQuestionScreen(presentation, questions, index);
 }
 

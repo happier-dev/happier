@@ -3,6 +3,45 @@ import { describe, expect, it } from 'vitest';
 import { mapClaudeJsonlLineToDirectMessages } from './mapClaudeJsonlLineToDirectMessages';
 
 describe('mapClaudeJsonlLineToDirectMessages', () => {
+  it.each([
+    ['cli', 'Keep this prompt visible'],
+    ['sdk-ts', [{ type: 'text', text: 'Keep this prompt visible' }]],
+  ])('projects a human prompt from %s as a user row', (entrypoint, content) => {
+    const [item] = mapClaudeJsonlLineToDirectMessages({
+      fileRelPath: 'project/session.jsonl',
+      lineStartOffsetBytes: 10,
+      lineValue: { type: 'user', uuid: 'human-prompt', entrypoint, message: { role: 'user', content } },
+    });
+
+    expect(item).toMatchObject({
+      messageRole: 'user',
+      raw: { role: 'user', content: { type: 'text', text: 'Keep this prompt visible' } },
+    });
+  });
+
+  it('preserves every text block in one human prompt', () => {
+    const [item] = mapClaudeJsonlLineToDirectMessages({
+      fileRelPath: 'project/session.jsonl', lineStartOffsetBytes: 10,
+      lineValue: { type: 'user', uuid: 'multi-block', message: { content: [
+        { type: 'text', text: 'First paragraph' }, { type: 'text', text: 'Second paragraph' },
+      ] } },
+    });
+    expect(item?.raw).toEqual({ role: 'user', content: { type: 'text', text: 'First paragraph\nSecond paragraph' } });
+  });
+
+  it.each([
+    { isMeta: true, message: { content: [{ type: 'text', text: 'Internal prompt' }] } },
+    { isSidechain: true, message: { content: [{ type: 'text', text: 'Subagent prompt' }] } },
+    { message: { content: [{ type: 'tool_result', tool_use_id: 'tool', content: 'Result' }, { type: 'text', text: 'Context' }] } },
+    { message: { content: [{ type: 'image', source: { type: 'base64', data: 'image' } }, { type: 'text', text: 'Caption' }] } },
+  ])('retains structured output for non-human or non-text-only records: %j', (record) => {
+    const [item] = mapClaudeJsonlLineToDirectMessages({
+      fileRelPath: 'project/session.jsonl', lineStartOffsetBytes: 10,
+      lineValue: { type: 'user', uuid: 'structured-user', ...record },
+    });
+    expect(item?.raw).toMatchObject({ role: 'agent', content: { type: 'output', data: record } });
+  });
+
   it('projects native queued task completion through the same parser as synced history', () => {
     const [item] = mapClaudeJsonlLineToDirectMessages({ fileRelPath: 'project/session.jsonl', lineStartOffsetBytes: 10,
       lineValue: { type: 'attachment', uuid: 'direct-task', attachment: { type: 'queued_command', commandMode: 'task-notification',

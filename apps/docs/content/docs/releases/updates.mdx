@@ -139,6 +139,11 @@ previous version does not come back, that it failed). `--to` takes an exact publ
 Windows, `self update` stops the background service and ends running sessions before it switches
 versions, as the installer does.
 
+In current development source (not yet released), Windows self-update also repairs a legacy
+PowerShell task action before restarting its service, using the native hidden launcher. It keeps
+the service's existing startup preference and Desktop ownership. Custom command prefixes that
+cannot be preserved are kept with a repair warning.
+
 Rerunning the installer is also a valid update path:
 
 ```bash

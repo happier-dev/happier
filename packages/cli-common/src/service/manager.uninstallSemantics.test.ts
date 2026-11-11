@@ -12,6 +12,14 @@ import {
 } from './manager';
 
 describe('service uninstall semantics', () => {
+  it('unregisters an explicit systemd timer before deleting its definition and reloading', () => {
+    const definitionPath = '/tmp/dev.happier.stack.exp.timer';
+    const plan = planServiceAction({ backend: 'systemd-user', action: 'uninstall', label: 'dev.happier.stack.exp', definitionPath });
+    expect(plan.commands[0]).toMatchObject({ cmd: 'systemctl', args: ['--user', 'disable', '--now', 'dev.happier.stack.exp.timer'], expectedFailure: 'service-absent' });
+    expect(plan.removals).toEqual([{ path: definitionPath, beforeCommandIndex: 1 }]);
+    expect(plan.commands[1]).toMatchObject({ cmd: 'systemctl', args: ['--user', 'daemon-reload'] });
+  });
+
   it.each([
     ['systemd-user', 'systemctl', ['--user', 'disable', '--now', 'dev.happier.stack.exp.service']],
     ['launchd-user', 'launchctl', ['bootout', 'gui/501/dev.happier.stack.exp']],
@@ -32,10 +40,7 @@ describe('service uninstall semantics', () => {
       expectedFailure: 'service-absent',
     }));
     expect(plan.commands.find((item) => item.cmd === command && item.args.join(' ') === args.join(' '))?.allowFail).not.toBe(true);
-    if (backend === 'systemd-user') {
-      expect(plan.commands.find((item) => item.cmd === command && item.args.join(' ') === args.join(' '))?.completePlanOnExpectedFailure)
-        .toBe(true);
-    }
+    expect(plan.removals).toContainEqual({ path: definitionPath, beforeCommandIndex: backend === 'systemd-user' ? 1 : 2 });
   });
 
   it('plans Windows teardown through typed scheduler commands before definition removal', () => {
@@ -52,6 +57,11 @@ describe('service uninstall semantics', () => {
     expect(plan.commands[0]?.args.at(-1)).toContain('Stop-ScheduledTask');
     expect(plan.commands[1]?.args.at(-1)).toContain('Unregister-ScheduledTask');
     expect(plan.commands.every((command) => command.allowFail !== true)).toBe(true);
+    expect(plan.removals).toContainEqual({
+      path: 'C:\\Users\\test\\.happier\\services\\dev.happier.stack.exp',
+      recursive: true,
+      beforeCommandIndex: 2,
+    });
   });
 
   it.each([

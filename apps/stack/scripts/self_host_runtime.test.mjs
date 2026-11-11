@@ -22,6 +22,7 @@ import {
   renderUpdaterSystemdUnit,
   renderUpdaterSystemdTimerUnit,
   buildUpdaterScheduledTaskCreateArgs,
+  planUpdaterScheduledTaskCreate,
   renderServerEnvFile,
   renderServerServiceUnit,
   renderSelfHostStatusText,
@@ -39,7 +40,8 @@ import { buildStackHarnessEnv, writeFakeBin } from './testkit/core/fake_bin_harn
 import { runNodeCaptureSync } from './testkit/core/run_node_capture.mjs';
 import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 
-test('self-host uninstall preserves payload and retained data when service teardown fails', async (t) => {
+for (const failureTarget of ['service', 'updater']) {
+test(`self-host uninstall preserves payload and retained data when ${failureTarget} teardown fails`, async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'happier-self-host-uninstall-refusal-' });
   const installRoot = fixture.path('install');
   const configDir = fixture.path('config');
@@ -60,6 +62,7 @@ test('self-host uninstall preserves payload and retained data when service teard
   const command = process.platform === 'win32' ? 'powershell.exe' : process.platform === 'darwin' ? 'launchctl' : 'systemctl';
   const { binDir } = writeFakeBin({ root: fixture.path('commands'), name: command, content: '' });
   const serviceName = 'happier-self-host-uninstall-refusal';
+  const refusedLabel = failureTarget === 'updater' ? `${serviceName}-updater` : serviceName;
   const moduleUrl = new URL('./self_host_runtime.mjs', import.meta.url).href;
   const result = runNodeCaptureSync(['--input-type=module', '--eval', [
     'import childProcess from "node:child_process";',
@@ -73,7 +76,7 @@ test('self-host uninstall preserves payload and retained data when service teard
     '  if (command === "sh" && args[0] === "-lc" && args[1]?.startsWith("command -v ")) return spawnSync(command, args, options);',
     `  if (command !== ${JSON.stringify(command)} && command !== "schtasks") throw new Error("Unexpected OS command: " + command);`,
     '  const raw = args.join(" ");',
-    `  const serverTarget = args.includes(${JSON.stringify(`${serviceName}.service`)}) || raw.includes(${JSON.stringify(`/${serviceName}`)}) || raw.includes(${JSON.stringify(`$taskName = "${serviceName}"`)});`,
+    `  const serverTarget = args.includes(${JSON.stringify(`${refusedLabel}.service`)}) || args.includes(${JSON.stringify(`${refusedLabel}.timer`)}) || raw.includes(${JSON.stringify(`/${refusedLabel}`)}) || raw.includes(${JSON.stringify(`$taskName = "${refusedLabel}"`)});`,
     '  const inspecting = args.includes("show") || args[0] === "print" || (raw.includes("Get-ScheduledTaskInfo") && !raw.includes("Stop-ScheduledTask"));',
     '  if (serverTarget && !inspecting) return { status: 1, stdout: "", stderr: "self-host teardown denied sentinel" };',
     '  return { status: 0, stdout: command === "powershell.exe" ? JSON.stringify({ exists: true }) : "loaded", stderr: "" };',
@@ -103,6 +106,24 @@ test('self-host uninstall preserves payload and retained data when service teard
   for (const file of retainedFiles) {
     assert.equal(await readFile(file, 'utf8'), 'retained\n');
   }
+});
+}
+
+test('self-host forwarding hides both the capability probe and forwarded child windows', async () => {
+  const moduleUrl = new URL('./self_host_runtime.mjs', import.meta.url).href;
+  const result = runNodeCaptureSync(['--input-type=module', '--eval', [
+    'import childProcess from "node:child_process";',
+    'import { syncBuiltinESMExports } from "node:module";',
+    'const observed = [];',
+    'childProcess.spawnSync = (command, args, options) => { observed.push({ command, args, windowsHide: options.windowsHide }); return { status: 0 }; };',
+    'syncBuiltinESMExports();',
+    `const { runSelfHostCli } = await import(${JSON.stringify(moduleUrl)});`,
+    'await runSelfHostCli(["status"]);',
+    'console.log(JSON.stringify(observed));',
+  ].join('\n')], { env: buildStackHarnessEnv({ extraEnv: { HAPPIER_STACK_SELF_HOST_FORWARD: '1' } }) });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const commands = JSON.parse(result.stdout.trim());
+  assert.deepEqual(commands.map(({ windowsHide }) => windowsHide), [true, true]);
 });
 
 function b64(buf) {
@@ -2014,19 +2035,28 @@ test('buildUpdaterScheduledTaskCreateArgs uses DAILY schedule when at is provide
     taskName: 'Happier\\\\happier-server-updater',
     definitionPath: 'C:\\\\Users\\\\me\\\\.happier\\\\self-host\\\\services\\\\happier-server-updater.ps1',
     at: '03:15',
+    windowsLauncher: { sourcePath: 'C:\\package\\happier-service-launcher.exe', version: 'test' },
   });
   assert.ok(args.includes('DAILY'));
   assert.ok(args.includes('03:15'));
   assert.equal(args.includes('MINUTE'), false);
 });
 
-test('buildUpdaterScheduledTaskCreateArgs uses hidden non-interactive PowerShell on Windows', () => {
-  const args = buildUpdaterScheduledTaskCreateArgs({
+test('buildUpdaterScheduledTaskCreateArgs uses the native windowless launcher for user tasks', () => {
+  const plan = planUpdaterScheduledTaskCreate({
     backend: 'schtasks-user',
     taskName: 'Happier\\\\happier-server-updater',
     definitionPath: 'C:\\\\Users\\\\me\\\\.happier\\\\self-host\\\\services\\\\happier-server-updater.ps1',
+    windowsLauncher: { sourcePath: 'C:\\package\\happier-service-launcher.exe', version: 'test' },
   });
-  assert.equal(args[args.indexOf('/TR') + 1], 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\\\\Users\\\\me\\\\.happier\\\\self-host\\\\services\\\\happier-server-updater.ps1"');
+  const args = plan.args;
+  const action = args[args.indexOf('/TR') + 1];
+  assert.equal(plan.copies.length, 1);
+  assert.equal(plan.copies[0].validation, 'windows-service-launcher-x64-v1');
+  assert.ok(action.includes(plan.copies[0].destinationPath));
+  assert.match(action, /^".*happier-service-launcher\.exe" --wrapper /);
+  assert.match(action, /--diagnostic-log /);
+  assert.doesNotMatch(action, /powershell\.exe/);
 });
 
 test('mergeEnvTextWithDefaults preserves overrides while backfilling new default keys', () => {

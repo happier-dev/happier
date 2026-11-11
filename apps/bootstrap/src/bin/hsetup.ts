@@ -1,6 +1,7 @@
 import { systemTasks } from '@happier-dev/cli-common';
 import type { InteractiveSystemTaskEventInput, InteractiveSystemTaskKind, InteractiveSystemTaskKindMap } from '@happier-dev/cli-common/systemTasks';
 import { createInterface } from 'node:readline';
+import { readDesktopInstallationContext } from '@happier-dev/cli-common/firstPartyRuntime';
 import { pathToFileURL } from 'node:url';
 import {
   SystemTaskEventSchema,
@@ -13,6 +14,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { ensureSetupCapableLocalHappierCli } from '../systemTasks/happierCli.js';
+import { uninstallDesktopComponents } from '../systemTasks/desktopUninstall.js';
 import {
   configureRelay,
   installService,
@@ -59,6 +61,23 @@ type SignalProcessLike = Readonly<{
 }>;
 
 export async function runHsetupCli(argv: readonly string[], io: HsetupIo = createDefaultIo()): Promise<number> {
+  if (argv[0] === 'desktop' && argv[1] === 'uninstall') {
+    try {
+      if (argv.length !== 6 || argv[2] !== '--bundle-id' || argv[4] !== '--state-dir') {
+        throw new Error('usage: hsetup desktop uninstall --bundle-id <id> --state-dir <absolute-path>');
+      }
+      const context = readDesktopInstallationContext({ HAPPIER_DESKTOP_BUNDLE_ID: argv[3], HAPPIER_DESKTOP_STATE_DIR: argv[5] });
+      if (!context) throw new Error('Desktop uninstall requires a bundle identity and state directory.');
+      await uninstallDesktopComponents(context);
+      io.stdout.write(`${JSON.stringify({ ok: true })}\n`);
+      return 0;
+    } catch (error) {
+      io.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      return 1;
+    } finally {
+      io.stdin.close?.();
+    }
+  }
   const parsed = parseHsetupArgs(argv);
   if (!parsed.ok) {
     io.stderr.write(`${parsed.message}\n`);

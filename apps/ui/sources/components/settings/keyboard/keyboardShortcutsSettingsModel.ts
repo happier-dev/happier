@@ -158,9 +158,10 @@ function buildDuplicateBindingConflicts(params: Readonly<{
             singleKeyShortcutsEnabled: params.singleKeyShortcutsEnabled,
         })) {
             const label = formatKeybindingLabel(parseKeybindingRule(binding), params.platform);
-            const current = commandIdsByLabel.get(label) ?? [];
+            const key = `${binding.conflictScope ?? ''}:${label}`;
+            const current = commandIdsByLabel.get(key) ?? [];
             current.push(command.id);
-            commandIdsByLabel.set(label, current);
+            commandIdsByLabel.set(key, current);
         }
     }
 

@@ -6,7 +6,9 @@ import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { isSystemTaskBridgeUnavailableError, readSystemTaskStartErrorMessage } from '@/components/systemTasks/systemTaskStartError';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Modal } from '@/modal';
 import { t } from '@/text';
+import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
 
 import { buildLocalDaemonServiceSystemTaskSpec } from './buildLocalDaemonServiceSystemTaskSpec';
 
@@ -47,12 +49,15 @@ export const LocalCliPathExposureSection = React.memo(function LocalCliPathExpos
     const runner = props.runner ?? getDefaultSystemTaskRunner();
     const [activeTask, setActiveTask] = React.useState<Readonly<{ kind: CliPathExposureTaskKind; taskId: string }> | null>(null);
     const [startErrorMessage, setStartErrorMessage] = React.useState<string | null>(null);
+    const [cleanupBusy, setCleanupBusy] = React.useState(false);
+    const [cleanupError, setCleanupError] = React.useState<string | null>(null);
+    const cleanupPendingRef = React.useRef(false);
     const snapshot = useSystemTaskSnapshot(runner, activeTask?.taskId ?? null);
     const isUnavailable = runner.mode === 'unavailable';
     const isBusy = activeTask != null && snapshot?.result == null;
 
     const startTask = React.useCallback(async (kind: CliPathExposureTaskKind) => {
-        if (isUnavailable) {
+        if (isUnavailable || isBusy || cleanupPendingRef.current) {
             return;
         }
         try {
@@ -65,40 +70,99 @@ export const LocalCliPathExposureSection = React.memo(function LocalCliPathExpos
                 ? t('settings.systemTaskBridgeUnavailable')
                 : (readSystemTaskStartErrorMessage(error) ?? t('settings.systemTaskStartFailed')));
         }
-    }, [isUnavailable, runner]);
+    }, [isUnavailable, isBusy, runner]);
+
+    const removeDesktopComponents = React.useCallback(async () => {
+        if (!isTauriDesktop() || isBusy || cleanupPendingRef.current) return;
+        // Admit once before the asynchronous confirmation, including repeated keyboard activation.
+        cleanupPendingRef.current = true;
+        let cleaned = false;
+        try {
+            const confirmed = await Modal.confirm(
+                t('machine.cliPath.cleanupConfirmTitle'),
+                t('machine.cliPath.cleanupConfirmBody'),
+                {
+                    cancelText: t('common.cancel'),
+                    confirmText: t('machine.cliPath.cleanupConfirmAction'),
+                    destructive: true,
+                },
+            );
+            if (!confirmed) return;
+            setCleanupError(null);
+            setCleanupBusy(true);
+            await invokeTauri<void>('desktop_uninstall_components');
+            cleaned = true;
+            // Successful native cleanup prepares the existing shutdown owner to exit directly.
+            await invokeTauri<void>('desktop_finish_shutdown');
+        } catch (error) {
+            const message = t(cleaned ? 'machine.cliPath.cleanupQuitFailed' : 'machine.cliPath.cleanupFailed');
+            const reason = readSystemTaskStartErrorMessage(error);
+            setCleanupError(reason ? `${message}\n\n${reason}` : message);
+        } finally {
+            cleanupPendingRef.current = false;
+            setCleanupBusy(false);
+        }
+    }, [isBusy]);
 
     const statusSubtitle = startErrorMessage
         ?? (activeTask ? readTaskOutcome(activeTask.kind, snapshot?.result ?? null) : null);
 
     return (
-        <ItemGroup title={t('machine.cliPath.title')} footer={t('machine.cliPath.footer')}>
-            {statusSubtitle ? (
+        <>
+            <ItemGroup title={t('machine.cliPath.title')} footer={t('machine.cliPath.footer')}>
+                {statusSubtitle ? (
+                    <Item
+                        testID="settings.localCliPath.status"
+                        title={t('machine.status')}
+                        subtitle={statusSubtitle}
+                        showChevron={false}
+                        mode="info"
+                    />
+                ) : null}
                 <Item
-                    testID="settings.localCliPath.status"
-                    title={t('machine.status')}
-                    subtitle={statusSubtitle}
-                    showChevron={false}
-                    mode="info"
+                    testID="settings.localCliPath.add"
+                    title={t('machine.cliPath.addTitle')}
+                    subtitle={t('machine.cliPath.addSubtitle')}
+                    onPress={() => {
+                        void startTask('cli.pathExposure.ensure.v1');
+                    }}
+                    disabled={isUnavailable || isBusy || cleanupBusy}
                 />
+                <Item
+                    testID="settings.localCliPath.remove"
+                    title={t('machine.cliPath.removeTitle')}
+                    subtitle={t('machine.cliPath.removeSubtitle')}
+                    onPress={() => {
+                        void startTask('cli.pathExposure.remove.v1');
+                    }}
+                    disabled={isUnavailable || isBusy || cleanupBusy}
+                />
+            </ItemGroup>
+            {isTauriDesktop() ? (
+                <ItemGroup title={t('settingsDesktop.title')}>
+                    {cleanupError ? (
+                        <Item
+                            testID="settings.localDesktop.cleanupStatus"
+                            title={t('common.error')}
+                            subtitle={cleanupError}
+                            subtitleLines={0}
+                            showChevron={false}
+                            mode="info"
+                        />
+                    ) : null}
+                    <Item
+                        testID="settings.localDesktop.cleanup"
+                        title={t('machine.cliPath.cleanupTitle')}
+                        subtitle={t(cleanupBusy ? 'machine.cliPath.cleanupBusy' : 'machine.cliPath.cleanupSubtitle')}
+                        subtitleLines={0}
+                        showChevron={false}
+                        destructive
+                        loading={cleanupBusy}
+                        disabled={isBusy || cleanupBusy}
+                        onPress={removeDesktopComponents}
+                    />
+                </ItemGroup>
             ) : null}
-            <Item
-                testID="settings.localCliPath.add"
-                title={t('machine.cliPath.addTitle')}
-                subtitle={t('machine.cliPath.addSubtitle')}
-                onPress={() => {
-                    void startTask('cli.pathExposure.ensure.v1');
-                }}
-                disabled={isUnavailable || isBusy}
-            />
-            <Item
-                testID="settings.localCliPath.remove"
-                title={t('machine.cliPath.removeTitle')}
-                subtitle={t('machine.cliPath.removeSubtitle')}
-                onPress={() => {
-                    void startTask('cli.pathExposure.remove.v1');
-                }}
-                disabled={isUnavailable || isBusy}
-            />
-        </ItemGroup>
+        </>
     );
 });

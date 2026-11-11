@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import {
+  planWindowsServiceLauncher,
   resolveInstalledWindowsServiceLauncherPaths,
   resolvePackagedWindowsServiceLauncherInstallSpec,
   resolveWindowsServiceLauncherInstallSpec,
@@ -30,6 +31,20 @@ function createPeFixture(overrides: Readonly<{
 }
 
 describe('Windows service launcher asset', () => {
+  it('plans the staged launcher and the quoted task action together', () => {
+    const plan = planWindowsServiceLauncher({
+      definitionPath: 'C:\\Users\\QA User\\services\\updater.ps1', label: 'updater',
+      windowsLauncher: { sourcePath: 'C:\\package\\happier-service-launcher.exe', version: 'test' },
+    });
+    expect(plan.copy).toEqual({
+      sourcePath: 'C:\\package\\happier-service-launcher.exe', destinationPath: plan.action.executable,
+      validation: 'windows-service-launcher-x64-v1',
+    });
+    expect(plan.commandLine).toBe(`"${plan.action.executable}" ${plan.action.arguments}`);
+    expect(plan.action.arguments).toContain('--wrapper "C:\\Users\\QA User\\services\\updater.ps1"');
+    expect(plan.action.arguments).toContain(`--diagnostic-log "${plan.diagnosticLogPath}"`);
+  });
+
   it('uses a versioned task-owned path and a sibling diagnostic log', () => {
     expect(resolveInstalledWindowsServiceLauncherPaths({
       definitionPath: 'C:\\Users\\Zoë & QA\\.happier\\services\\happier-daemon.default.ps1',

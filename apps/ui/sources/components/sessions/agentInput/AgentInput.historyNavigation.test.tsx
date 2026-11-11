@@ -130,6 +130,7 @@ vi.mock('@/hooks/session/useUserMessageHistory', () => ({
     warmup: (...args: any[]) => mocks.historyWarmup(...args),
     isBrowsing: (...args: any[]) => mocks.historyIsBrowsing(...args),
     hasRetainedSession: (...args: any[]) => mocks.historyHasRetainedSession(...args),
+    readPosition: () => null,
     pause: (...args: any[]) => mocks.historyPause(...args),
     };
   },
@@ -330,6 +331,46 @@ describe('AgentInput (history navigation)', () => {
       scope: 'global',
       sessionId: 's1',
     });
+  });
+
+  it('recalls prompts across Sessions in a new-session composer, which has no Session of its own', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(
+      React.createElement(AgentInput, {
+        value: '',
+        placeholder: 'p',
+        onChangeText: mocks.onChangeText,
+        onSend: mocks.onSend,
+        autocompleteKinds: [],
+        autocompleteSuggestions: async () => [],
+      }),
+    );
+
+    expect(mocks.historyHookArgs.at(-1)).toEqual({ scope: 'global', sessionId: null });
+    await screen.unmount();
+  });
+
+  it('sends the other way round on the new-session send key', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(
+      React.createElement(AgentInput, {
+        value: 'first prompt',
+        placeholder: 'p',
+        onChangeText: mocks.onChangeText,
+        onSend: mocks.onSend,
+        newSessionAfterSendMode: 'open',
+        autocompleteKinds: [],
+        autocompleteSuggestions: async () => [],
+      }),
+    );
+    const input = screen.root.findByProps({ testID: 'new-session-composer-input' });
+
+    await act(async () => {
+      expect(input.props.onKeyPress({ key: 'Enter', metaKey: true, shiftKey: true, platformOS: 'web', webPlatform: 'MacIntel' })).toBe(true);
+    });
+
+    expect(mocks.onSend).toHaveBeenCalledWith(expect.objectContaining({ afterSend: 'startAnother' }));
+    await screen.unmount();
   });
 
   it('sends on Enter when there are sendable attachments (web enter-to-send)', async () => {

@@ -107,21 +107,30 @@ describe('DropdownMenu', () => {
         vi.unstubAllGlobals();
     });
 
-    it('lets uncapped menus use the window while retaining explicit caller limits', async () => {
+    it('draws a shortcut hint only where a hardware keyboard can press it', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
-        for (const cap of [undefined, 240]) {
-            const screen = await renderScreen(React.createElement(DropdownMenu, {
-                open: true,
-                onOpenChange: () => {},
-                items: [{ id: 'a', title: 'A' }],
-                onSelect: () => {},
-                trigger: React.createElement('View'),
-                maxHeightCap: cap,
-            }));
-            const popover = screen.findByType('Popover');
-            expect(popover.props.maxHeightCap).toBe(cap ?? 600);
-            expect(popover.props.placementMinSpace).toBe(cap ?? 320);
-        }
+        const { KeyHint } = await import('@/components/ui/keyboard/KeyHint');
+        const readHintRow = () => useSelectableMenuSpy.mock.lastCall?.[0].items[0].right;
+        const render = () => renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: () => {},
+            items: [{ id: 'queue', title: 'Queue', shortcut: 'Cmd+Enter' }],
+            onSelect: () => {},
+            trigger: () => null,
+        }));
+
+        const listeners = { addEventListener: () => {}, removeEventListener: () => {} };
+        vi.stubGlobal('window', { ...listeners, matchMedia: () => ({ matches: false }) });
+        const touch = await render();
+        expect(readHintRow()).toBeNull();
+        await touch.unmount();
+
+        vi.stubGlobal('window', { ...listeners, matchMedia: () => ({ matches: true }) });
+        vi.stubGlobal('navigator', { maxTouchPoints: 0 });
+        const desktop = await render();
+        expect(readHintRow()?.type).toBe(KeyHint);
+        await desktop.unmount();
+        vi.unstubAllGlobals();
     });
 
     it('provides a toggle handler to the trigger and uses it to open/close', async () => {

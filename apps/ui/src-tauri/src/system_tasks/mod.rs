@@ -1,3 +1,4 @@
+mod hsetup_command;
 mod hsetup_path;
 mod json_lines;
 mod protocol;
@@ -18,19 +19,49 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::thread;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 const MAX_STDOUT_LINE_BYTES: usize = 16 * 1024;
 
 /// R16 — tells hsetup which desktop app launched it (the bundle identifier), so the services it
 /// installs for that app name it and macOS Login Items attributes them to Happier.
-const DESKTOP_BUNDLE_ID_ENV: &str = "HAPPIER_DESKTOP_BUNDLE_ID";
-static DESKTOP_BUNDLE_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+static DESKTOP_CONTEXT: std::sync::OnceLock<(String, PathBuf)> = std::sync::OnceLock::new();
 
 /// Called once at app start with the app's identifier (`tauri.conf.json` `identifier`, which is
 /// the macOS bundle identifier).
-pub fn set_desktop_bundle_id(identifier: &str) {
-    let _ = DESKTOP_BUNDLE_ID.set(identifier.to_string());
+pub fn set_desktop_context(app: &AppHandle) -> Result<(), String> {
+    let state_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| error.to_string())?;
+    let _ = DESKTOP_CONTEXT.set((app.config().identifier.clone(), state_dir));
+    Ok(())
+}
+
+/// Cleanup is a separate, explicit operation: it never participates in startup acquisition.
+pub(crate) fn uninstall_desktop_components(app: &AppHandle) -> Result<(), String> {
+    let hsetup_path = hsetup_path::resolve_hsetup_path(app)?;
+    let state_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| error.to_string())?;
+    hsetup_command::run_uninstall(&hsetup_path, &app.config().identifier, &state_dir)?;
+    crate::autostart::remove_for_uninstall(app)
+        .map_err(|error| format!("Unable to remove the desktop login item: {error}"))
+}
+
+#[tauri::command]
+pub async fn desktop_uninstall_components(app: AppHandle) -> Result<(), String> {
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        handle
+            .state::<SystemTasksState>()
+            .run_component_cleanup(|| uninstall_desktop_components(&handle))
+    })
+    .await
+    .map_err(|error| format!("Desktop component cleanup did not finish: {error}"))??;
+    crate::shutdown::prepare_after_component_removal(&app);
+    Ok(())
 }
 
 #[derive(Clone, Serialize)]
@@ -46,6 +77,8 @@ pub async fn start_system_task(
     spec_json: String,
 ) -> Result<StartSystemTaskResponse, String> {
     parse_system_task_spec_json(&spec_json)?;
+
+    let _starting = state.reserve_start()?;
 
     let task_id = state.allocate_task_id();
     let hsetup_path = hsetup_path::resolve_hsetup_path(&app)?;
@@ -86,6 +119,11 @@ pub(crate) fn run_system_task_for_native(app: &AppHandle, spec_json: &str) -> Na
     if let Err(message) = parse_system_task_spec_json(spec_json) {
         return failed("invalid_spec", message);
     }
+    let state = app.state::<SystemTasksState>();
+    let _running = match state.reserve_start() {
+        Ok(reservation) => reservation,
+        Err(message) => return failed("desktop_cleanup_in_progress", message),
+    };
     let hsetup_path = match hsetup_path::resolve_hsetup_path(app) {
         Ok(path) => path,
         Err(message) => return failed("executor_unavailable", message),
@@ -556,10 +594,12 @@ fn spawn_hsetup_child(hsetup_path: &Path, spec_json: &str) -> Result<Child, Stri
 }
 
 fn create_hsetup_run_command(hsetup_path: &Path) -> Command {
-    let mut command = background_command(hsetup_path);
-    if let Some(bundle_id) = DESKTOP_BUNDLE_ID.get() {
-        command.env(DESKTOP_BUNDLE_ID_ENV, bundle_id);
-    }
+    let mut command = hsetup_command::hsetup_command(
+        hsetup_path,
+        DESKTOP_CONTEXT
+            .get()
+            .map(|(bundle_id, state_dir)| (bundle_id.as_str(), state_dir.as_path())),
+    );
     command
         .arg("system-tasks")
         .arg("run")
