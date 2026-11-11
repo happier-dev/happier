@@ -7,6 +7,7 @@ import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace
 import { readProjectRouteStringParam } from '@/components/projects/detail/projectRouteState';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useAccountSettingsScope } from '@/sync/store/hooks';
+import { retainIfEqual } from '@/sync/domains/state/structuralSharing';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useDeploymentAccountDefaults } from '@/components/projects/deployments/useDeploymentAccountDefaults';
@@ -34,30 +35,42 @@ export function DeploymentsSettingsView() {
     const defaults = useDeploymentAccountDefaults(binding ?? null);
     const execution = useMountedActionExecution(binding?.scope);
     const router = useRouter();
-    const [saving, setSaving] = React.useState(false);
-    const save = async (preferences: DeploymentCreationDefaultsV1) => {
-        if (saving) return;
-        setSaving(true);
+    const [draft, setDraft] = React.useState<DeploymentCreationDefaultsV1 | null>(null);
+    const saving = React.useRef<{ preferences: DeploymentCreationDefaultsV1 } | null>(null);
+    const save = async (edit: React.SetStateAction<DeploymentCreationDefaultsV1>) => {
+        const previous = saving.current?.preferences ?? defaults.preferences;
+        if (!previous) return;
+        const preferences = typeof edit === 'function' ? edit(previous) : edit;
+        if (retainIfEqual(previous, preferences) === previous) return;
+        setDraft(preferences);
+        if (saving.current) { saving.current.preferences = preferences; return; }
+        const pending = { preferences };
+        saving.current = pending;
         try {
-            const result = await execution.execute('settings.set', { anchor: DEPLOYMENTS_SETTINGS.settings.creationDefaults.anchor, value: preferences });
-            if (result.ok) defaults.accept(preferences);
-            else presentSettingWriteFailure(result);
+            while (true) {
+                const sent = pending.preferences;
+                const result = await execution.execute('settings.set', { anchor: DEPLOYMENTS_SETTINGS.settings.creationDefaults.anchor, value: sent });
+                if (!result.ok) { presentSettingWriteFailure(result); break; }
+                defaults.accept(sent);
+                if (!execution.isCurrent() || retainIfEqual(sent, pending.preferences) === sent) break;
+            }
         } catch (error) { presentSettingWriteFailure(error); }
-        finally { setSaving(false); }
+        finally { saving.current = null; setDraft(null); }
     };
-    const resolved = binding && defaults.preferences ? resolveDeploymentCreationDefaultsV1({
+    const preferences = draft ?? defaults.preferences;
+    const resolved = binding && preferences ? resolveDeploymentCreationDefaultsV1({
         projectOwner: { kind: 'account', accountId: binding.scope.accountId },
-        account: { accountId: binding.scope.accountId, defaults: defaults.preferences }, target: { kind: 'ownServer', machines: [] },
+        account: { accountId: binding.scope.accountId, defaults: preferences }, target: { kind: 'ownServer', machines: [] },
     }) : null;
     return <ItemList testID="settings-deployments" style={{ paddingTop: 0 }}>
         <SettingsPageHeader title={t('projects.deployments.title')} description={t('projects.deployments.defaultsEditor.accountDescription')}
             meta={serverId ? [{ key: 'home', text: homeLabel }] : []} />
         {execution.approval.approvalPending ? <ActionApprovalPendingNotice message={t('approvals.waitingForYou')}
             summary={execution.approval.approvalSummary} onOpenApproval={execution.approval.openApproval} /> : null}
-        {resolved && defaults.preferences && serverId ? <SettingAnchor setting={DEPLOYMENTS_SETTINGS.settings.creationDefaults}>
+        {resolved && preferences && serverId ? <SettingAnchor setting={DEPLOYMENTS_SETTINGS.settings.creationDefaults}>
             <ItemGroup title={t('projects.deployments.creationDefaults')}>
-                {renderDeploymentDefaultsEditorRows({ serverId, preferences: defaults.preferences, resolved,
-                    inheritLabel: t('projects.deployments.defaultsEditor.useBuiltin'), disabled: saving || !execution.ready,
+                {renderDeploymentDefaultsEditorRows({ serverId, preferences, resolved,
+                    inheritLabel: t('projects.deployments.defaultsEditor.useBuiltin'), disabled: !execution.ready,
                     onChange: next => { void save(next); } })}
             </ItemGroup>
         </SettingAnchor> : <SurfaceStateCard kind={defaults.error ? 'error' : 'loading'} title={t('projects.deployments.creationDefaults')}

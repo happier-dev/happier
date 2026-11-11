@@ -6,6 +6,7 @@ import type { DeploymentCreationDefaultsV1 } from '@happier-dev/protocol/project
 import { isAccountCurrentnessEntityIdV1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { retainIfEqual } from '@/sync/domains/state/structuralSharing';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { readProjectDeploymentDefaults, writeProjectDeploymentDefaults, type ProjectDeploymentDefaultsRead } from '@/sync/api/projects/projectDeploymentDefaults';
@@ -38,7 +39,8 @@ export function ProjectDeploymentDefaultsSettings(props: Readonly<{ lifetime: Se
     const [value, setValue] = React.useState<ProjectDeploymentDefaultsRead | null>(null);
     const [error, setError] = React.useState<unknown>(null);
     const [retry, setRetry] = React.useState(0);
-    const [saving, setSaving] = React.useState(false);
+    const [draft, setDraft] = React.useState<DeploymentCreationDefaultsV1 | null>(null);
+    const saving = React.useRef<{ preferences: DeploymentCreationDefaultsV1 } | null>(null);
     React.useEffect(() => {
         if (!lifetime || !presented) return;
         setValue(null);
@@ -63,21 +65,34 @@ export function ProjectDeploymentDefaultsSettings(props: Readonly<{ lifetime: Se
     }, [lifetime, presented, sourceId, retry]);
     const ownAccount = value?.owner.kind === 'account' && value.owner.accountId === lifetime?.scope.accountId;
     const account = useDeploymentAccountDefaults(ownAccount && presented ? lifetime : null);
-    const resolved = value ? resolveDeploymentCreationDefaultsV1({
+    const preferences = draft ?? value?.preferences;
+    const resolved = value && preferences ? resolveDeploymentCreationDefaultsV1({
         projectSourceId: sourceId, projectOwner: value.owner,
-        projectDefaults: { projectSourceId: sourceId, deploymentDefaults: value.preferences },
+        projectDefaults: { projectSourceId: sourceId, deploymentDefaults: preferences },
         ...(ownAccount && account.preferences && lifetime ? { account: { accountId: lifetime.scope.accountId, defaults: account.preferences } } : {}),
         target: { kind: 'ownServer', machines: [] },
     }) : null;
-    const save = async (preferences: DeploymentCreationDefaultsV1) => {
-        if (!lifetime || !value?.canManage || saving || error) return;
-        setSaving(true);
+    const save = async (edit: React.SetStateAction<DeploymentCreationDefaultsV1>) => {
+        if (!lifetime || !value?.canManage || error) return;
+        const previous = saving.current?.preferences ?? value.preferences;
+        const preferences = typeof edit === 'function' ? edit(previous) : edit;
+        if (retainIfEqual(previous, preferences) === previous) return;
+        setDraft(preferences);
+        if (saving.current) { saving.current.preferences = preferences; return; }
+        const pending = { preferences };
+        saving.current = pending;
+        let confirmed = value;
         try {
-            const next = await writeProjectDeploymentDefaults({ serverId: lifetime.scope.serverId,
-                accountId: lifetime.scope.accountId, current: value, preferences, execute: execution.executeValue });
-            if (lifetime.isCurrent()) setValue(next);
+            while (true) {
+                const sent = pending.preferences;
+                confirmed = await writeProjectDeploymentDefaults({ serverId: lifetime.scope.serverId,
+                    accountId: lifetime.scope.accountId, current: confirmed, preferences: sent, execute: execution.executeValue });
+                if (!lifetime.isCurrent()) break;
+                setValue(confirmed);
+                if (retainIfEqual(sent, pending.preferences) === sent) break;
+            }
         } catch (failure) { Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(failure, t('common.unavailable'))); }
-        finally { setSaving(false); }
+        finally { saving.current = null; setDraft(null); }
     };
     return <ItemList testID="project-deployment-defaults" style={{ paddingTop: 0 }}>
         <PageHeader title={t('projects.deployments.defaultsEditor.projectTitle')}
@@ -86,10 +101,10 @@ export function ProjectDeploymentDefaultsSettings(props: Readonly<{ lifetime: Se
             summary={execution.approval.approvalSummary} onOpenApproval={execution.approval.openApproval} /> : null}
         {error ? <SurfaceStateCard kind="error" title={t('projects.deployments.loadErrorTitle')}
             action={{ label: t('common.retry'), onPress: () => setRetry(value => value + 1) }} /> : null}
-        {value && resolved && lifetime && (!ownAccount || account.preferences) ? <ItemGroup title={t('projects.deployments.creationDefaults')}>
-            {renderDeploymentDefaultsEditorRows({ serverId: lifetime.scope.serverId, preferences: value.preferences, resolved,
+        {value && preferences && resolved && lifetime && (!ownAccount || account.preferences) ? <ItemGroup title={t('projects.deployments.creationDefaults')}>
+            {renderDeploymentDefaultsEditorRows({ serverId: lifetime.scope.serverId, preferences, resolved,
                 inheritLabel: t(ownAccount ? 'projects.deployments.defaultsEditor.useAccount' : 'projects.deployments.defaultsEditor.useBuiltin'),
-                disabled: !value.canManage || saving || !execution.ready || Boolean(error), onChange: next => { void save(next); } })}
+                disabled: !value.canManage || !execution.ready || Boolean(error), onChange: next => { void save(next); } })}
         </ItemGroup> : !error ? <SurfaceStateCard kind={account.error ? 'error' : 'loading'} title={t('projects.deployments.creationDefaults')}
             {...(account.error ? { action: { label: t('common.retry'), onPress: account.retry } } : {})} /> : null}
         {ownAccount && lifetime ? <ItemGroup><Item testID="project-deployment-defaults.account" title={t('projects.deployments.defaultsEditor.accountLink')}

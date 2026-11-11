@@ -30,7 +30,7 @@ export function DeploymentExtraDefaultsRows(props: Readonly<{
   resolved: ResolvedDeploymentCreationDefaultsV1;
   inheritLabel: string;
   disabled: boolean;
-  onChange: (next: Preferences) => void;
+  onChange: React.Dispatch<React.SetStateAction<Preferences>>;
   sourceLabel: (source: DeploymentCreationDefaultSourceV1 | undefined) => string | undefined;
 }>) {
   const [destinationOpen, setDestinationOpen] = React.useState(false);
@@ -45,10 +45,12 @@ export function DeploymentExtraDefaultsRows(props: Readonly<{
   const { preferences, resolved } = props;
   const change = <K extends keyof Preferences>(key: K, value: Preferences[K]) => {
     if (props.disabled) return;
-    const next = { ...preferences };
-    if (value === undefined) delete next[key];
-    else next[key] = value;
-    props.onChange(next);
+    props.onChange(current => {
+      const next = { ...current };
+      if (value === undefined) delete next[key];
+      else next[key] = value;
+      return next;
+    });
   };
   const selectAlert = async (index?: number) => {
     if (props.disabled || selectingAlert) return;

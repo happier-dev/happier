@@ -21,13 +21,15 @@ export function renderDeploymentDefaultsEditorRows(props: Readonly<{
   resolved: CreationDefaults;
   inheritLabel: string;
   disabled: boolean;
-  onChange: (next: DeploymentCreationDefaultsV1) => void;
+  onChange: React.Dispatch<React.SetStateAction<DeploymentCreationDefaultsV1>>;
 }>) {
   function change<K extends keyof DeploymentCreationDefaultsV1>(key: K, value: DeploymentCreationDefaultsV1[K]) {
-    const next = { ...props.preferences };
-    if (value === undefined) delete next[key];
-    else next[key] = value;
-    props.onChange(next);
+    props.onChange(current => {
+      const next = { ...current };
+      if (value === undefined) delete next[key];
+      else next[key] = value;
+      return next;
+    });
   }
   return <>
     <EnvironmentMachineChoice testID="deployment-defaults.builder" serverId={props.serverId} icon={null}
@@ -56,8 +58,7 @@ export function renderDeploymentDefaultsEditorRows(props: Readonly<{
         const parsed = DeploymentCreationDefaultsV1Schema.safeParse({ ...props.preferences, retainPreviousDeployments: value });
         if (!parsed.success) return props.preferences.retainPreviousDeployments?.toString() ?? '';
         change('retainPreviousDeployments', value);
-        // The acknowledged preference replaces this value when the Action settles.
-        return props.preferences.retainPreviousDeployments?.toString() ?? '';
+        return value?.toString() ?? '';
       }} />
     <DeploymentExtraDefaultsRows {...props} sourceLabel={sourceWord} />
   </>;
