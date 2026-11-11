@@ -1,16 +1,13 @@
 import Fastify from 'fastify';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { auth } from '@/app/auth/auth';
+import { db } from '@/storage/db';
+import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 
-const logSpy = vi.fn();
+const logSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('@/utils/logging/log', () => ({
     log: logSpy,
-}));
-
-vi.mock('@/app/auth/auth', () => ({
-    auth: {
-        verifyToken: vi.fn(async () => ({ userId: 'user_123' })),
-    },
 }));
 
 function stringifyForSearch(value: unknown): string {
@@ -37,6 +34,17 @@ async function withApp(run: (app: ReturnType<typeof Fastify>) => Promise<void>) 
 }
 
 describe('log redaction', () => {
+    let harness: LightSqliteHarness;
+    let token: string;
+
+    beforeAll(async () => {
+        harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-log-redaction-', initAuth: true });
+    }, 120_000);
+
+    afterAll(async () => {
+        await harness?.close();
+    });
+
     beforeEach(() => {
         logSpy.mockClear();
     });
@@ -48,7 +56,8 @@ describe('log redaction', () => {
         await withApp(async (app) => {
             enableAuthentication(app as any);
 
-            const apiToken = `hap_v1_550e8400-e29b-41d4-a716-446655440000_${"A".repeat(43)}`;
+            const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+            token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
 
             const reply = {
                 code: vi.fn(() => reply),
@@ -56,16 +65,34 @@ describe('log redaction', () => {
             };
 
             await (app as any).authenticate(
-                { headers: { authorization: `Bearer ${apiToken}` }, url: '/v1/account/profile' },
+                { headers: { authorization: `Bearer ${token}` }, url: '/v1/account/profile', routeOptions: { config: {} } },
                 reply
             );
 
-            expectNoSecretLeak(apiToken);
-            expectNoSecretLeak(`Bearer ${apiToken}`);
+            expectNoSecretLeak(token);
+            expectNoSecretLeak(`Bearer ${token}`);
         });
         },
         20_000,
     );
+
+    it('refuses an invalid bearer credential while keeping it out of logs', async () => {
+        const { enableAuthentication } = await import('./enableAuthentication');
+        await withApp(async (app) => {
+            enableAuthentication(app as any);
+            const invalidToken = 'invalid-log-redaction-token';
+            const reply = { code: vi.fn(() => reply), send: vi.fn(() => reply) };
+
+            await (app as any).authenticate(
+                { headers: { authorization: `Bearer ${invalidToken}` }, url: '/v1/account/profile', routeOptions: { config: {} } },
+                reply,
+            );
+
+            expect(reply.code).toHaveBeenCalledWith(401);
+            expectNoSecretLeak(invalidToken);
+            expectNoSecretLeak(`Bearer ${invalidToken}`);
+        });
+    });
 
     it('enableErrorHandlers never logs Authorization/Cookie header values in 404 handler', async () => {
         const { enableErrorHandlers } = await import('./enableErrorHandlers');

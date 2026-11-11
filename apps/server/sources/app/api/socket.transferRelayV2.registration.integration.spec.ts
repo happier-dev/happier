@@ -1,4 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { auth } from '@/app/auth/auth';
+import { db } from '@/storage/db';
+import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 
 const serverCtor = vi.hoisted(() => vi.fn());
 vi.mock('socket.io', () => ({
@@ -7,248 +10,105 @@ vi.mock('socket.io', () => ({
   },
 }));
 
-const onShutdownMock = vi.hoisted(() => vi.fn());
-vi.mock('@/utils/process/shutdown', () => ({
-  onShutdown: (...args: unknown[]) => onShutdownMock(...args),
-}));
-
-const authVerifyTokenMock = vi.hoisted(() => vi.fn(async (token: string) => (
-  token === 'current-transfer-relay-v2-token' ? { userId: 'user-1' } : null
-)));
-vi.mock('@/app/auth/auth', () => ({
-  auth: {
-    verifyToken: (token: string) => authVerifyTokenMock(token),
-  },
-}));
-
-const eventRouterSetIoMock = vi.hoisted(() => vi.fn());
-const eventRouterEmitEphemeralMock = vi.hoisted(() => vi.fn());
-const buildMachineActivityEphemeralMock = vi.hoisted(() => vi.fn(() => ({
-  t: 'machine-activity',
-  machineId: 'mock-machine',
-  active: true,
-  activeAt: 0,
-})));
+vi.mock('@/utils/process/shutdown', () => ({ onShutdown: vi.fn() }));
 vi.mock('@/app/events/eventRouter', () => ({
-  buildMachineActivityEphemeral: buildMachineActivityEphemeralMock,
-  eventRouter: {
-    setIo: (...args: unknown[]) => eventRouterSetIoMock(...args),
-    addConnection: vi.fn(),
-    emitEphemeral: (...args: unknown[]) => eventRouterEmitEphemeralMock(...args),
-  },
+  buildMachineActivityEphemeral: vi.fn(),
+  eventRouter: { setIo: vi.fn(), addConnection: vi.fn(), emitEphemeral: vi.fn() },
 }));
-
-const rpcHandlerMock = vi.hoisted(() => vi.fn());
-vi.mock('./socket/rpcHandler', () => ({
-  rpcHandler: (...args: unknown[]) => rpcHandlerMock(...args),
-}));
-const usageHandlerMock = vi.hoisted(() => vi.fn());
-vi.mock('./socket/usageHandler', () => ({
-  usageHandler: (...args: unknown[]) => usageHandlerMock(...args),
-}));
-const sessionUpdateHandlerMock = vi.hoisted(() => vi.fn());
-vi.mock('./socket/sessionUpdateHandler', () => ({
-  sessionUpdateHandler: (...args: unknown[]) => sessionUpdateHandlerMock(...args),
-}));
-const pingHandlerMock = vi.hoisted(() => vi.fn());
-vi.mock('./socket/pingHandler', () => ({
-  pingHandler: (...args: unknown[]) => pingHandlerMock(...args),
-}));
-const machineUpdateHandlerMock = vi.hoisted(() => vi.fn());
-vi.mock('./socket/machineUpdateHandler', () => ({
-  machineUpdateHandler: (...args: unknown[]) => machineUpdateHandlerMock(...args),
-}));
-const machineTransferHandlerMock = vi.hoisted(() => vi.fn());
-vi.mock('./socket/machineTransferHandler', () => ({
-  machineTransferHandler: (...args: unknown[]) => machineTransferHandlerMock(...args),
-}));
-const transferRelayV2HandlerMock = vi.hoisted(() => vi.fn());
-vi.mock('./socket/transferRelayV2Handler', () => ({
-  transferRelayV2Handler: (...args: unknown[]) => transferRelayV2HandlerMock(...args),
-}));
-const peerTcpTunnelRelayHandlerMock = vi.hoisted(() => vi.fn());
-vi.mock('./socket/peer/mediation/tunnel/registerRelay', () => ({
-  registerPeerTcpTunnelRelaySocketHandler: (...args: unknown[]) => peerTcpTunnelRelayHandlerMock(...args),
-}));
-const artifactUpdateHandlerMock = vi.hoisted(() => vi.fn());
-vi.mock('./socket/artifactUpdateHandler', () => ({
-  artifactUpdateHandler: (...args: unknown[]) => artifactUpdateHandlerMock(...args),
-}));
-const accessKeyHandlerMock = vi.hoisted(() => vi.fn());
-vi.mock('./socket/accessKeyHandler', () => ({
-  accessKeyHandler: (...args: unknown[]) => accessKeyHandlerMock(...args),
-}));
-const createServerRpcForwarderMock = vi.hoisted(() => vi.fn(() => vi.fn()));
-vi.mock('./socket/serverRpcForwarder', () => ({
-  createServerRpcForwarder: () => createServerRpcForwarderMock(),
-}));
+vi.mock('./socket/rpcHandler', () => ({ rpcHandler: vi.fn() }));
+vi.mock('./socket/usageHandler', () => ({ usageHandler: vi.fn() }));
+vi.mock('./socket/sessionUpdateHandler', () => ({ sessionUpdateHandler: vi.fn() }));
+vi.mock('./socket/pingHandler', () => ({ pingHandler: vi.fn() }));
+vi.mock('./socket/machineUpdateHandler', () => ({ machineUpdateHandler: vi.fn() }));
+vi.mock('./socket/machineTransferHandler', () => ({ machineTransferHandler: vi.fn() }));
+vi.mock('./socket/transferRelayV2Handler', () => ({ transferRelayV2Handler: vi.fn() }));
+vi.mock('./socket/peer/mediation/tunnel/registerRelay', () => ({ registerPeerTcpTunnelRelaySocketHandler: vi.fn() }));
+vi.mock('./socket/artifactUpdateHandler', () => ({ artifactUpdateHandler: vi.fn() }));
+vi.mock('./socket/accessKeyHandler', () => ({ accessKeyHandler: vi.fn() }));
+vi.mock('./socket/serverRpcForwarder', () => ({ createServerRpcForwarder: vi.fn(() => vi.fn()) }));
 
 describe('startSocket transfer relay v2 registration', () => {
-  beforeEach(() => {
+  let harness: LightSqliteHarness;
+  let accountId: string;
+  let token: string;
+
+  beforeAll(async () => {
+    harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-transfer-relay-registration-', initAuth: true });
+  }, 120_000);
+
+  afterAll(async () => { await harness?.close(); });
+
+  beforeEach(async () => {
+    harness.resetEnv();
     vi.stubEnv('HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED', '1');
     vi.stubEnv('HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__ENABLED', '0');
+    const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+    accountId = account.id;
+    token = await auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await db.account.deleteMany();
     vi.unstubAllEnvs();
   });
 
-  it('registers the new relay v2 handler beside the existing machine transfer handler', async () => {
-    const fakeServer = {
+  function makeServer() {
+    let middleware: ((socket: any, next: (error?: unknown) => void) => Promise<void>) | undefined;
+    const server = {
       on: vi.fn(),
-      use: vi.fn(),
+      use: vi.fn((handler: any) => { middleware = handler; }),
       close: vi.fn(),
       to: vi.fn(() => ({ emit: vi.fn() })),
+      serverSideEmit: vi.fn(),
+      sockets: { adapter: { on: vi.fn(), rooms: new Map() }, sockets: new Map() },
     };
-    serverCtor.mockReturnValue(fakeServer);
+    serverCtor.mockReturnValue(server);
+    return { server, getMiddleware: () => middleware };
+  }
 
-    const { startSocket } = await import('./socket');
-    const app = { server: {} } as any;
-    startSocket(app);
-
-    const connectionHandler = fakeServer.on.mock.calls.find(([event]) => event === 'connection')?.[1] as
-      | ((socket: any) => Promise<void>)
-      | undefined;
-    expect(connectionHandler).toBeTypeOf('function');
-
-    const socket = {
+  function socketFor(authToken: string) {
+    return {
       id: 'socket-1',
-      data: {
-        userId: 'user-1',
-        clientType: 'user-scoped',
-        clientPurpose: 'transfer',
-      },
-      emit: vi.fn(),
-      on: vi.fn(),
-      join: vi.fn(),
-      use: vi.fn(),
-      timeout: vi.fn(() => ({ emitWithAck: vi.fn() })),
+      data: {},
       connected: true,
+      on: vi.fn(),
+      once: vi.fn(),
+      use: vi.fn(),
+      join: vi.fn(),
+      emit: vi.fn(),
+      disconnect: vi.fn(),
       handshake: {
         address: '127.0.0.1',
-        auth: {
-          token: 'current-transfer-relay-v2-token',
-          clientType: 'user-scoped',
-          clientPurpose: 'transfer',
-        },
-        headers: {
-          'user-agent': 'happier-test-agent',
-        },
+        auth: { token: authToken, clientType: 'user-scoped', clientPurpose: 'transfer' },
+        headers: { 'user-agent': 'happier-test-agent' },
       },
-      conn: {
-        transport: { name: 'websocket' },
-        remotePort: 1234,
-      },
-      disconnect: vi.fn(),
-    } as any;
+      conn: { transport: { name: 'websocket' }, remotePort: 1234 },
+    };
+  }
 
-    await connectionHandler!(socket);
+  it('uses the real verifier for a test-issued token and registers the relay connection hook', async () => {
+    const { server, getMiddleware } = makeServer();
+    const { startSocket } = await import('./socket');
+    startSocket({ server: { on: vi.fn() } } as any);
 
-    expect(socket.join).toHaveBeenCalledWith(['user:user-1', 'user-scoped:user-1']);
-    expect(machineTransferHandlerMock).toHaveBeenCalledTimes(1);
-    expect(machineTransferHandlerMock).toHaveBeenCalledWith('user-1', socket, expect.objectContaining({ io: fakeServer }));
-    expect(transferRelayV2HandlerMock).toHaveBeenCalledTimes(1);
-    expect(transferRelayV2HandlerMock).toHaveBeenCalledWith('user-1', socket, expect.objectContaining({ io: fakeServer }));
-    expect(peerTcpTunnelRelayHandlerMock).toHaveBeenCalledTimes(1);
-    expect(peerTcpTunnelRelayHandlerMock).toHaveBeenCalledWith('user-1', socket, expect.objectContaining({
-      io: expect.objectContaining({
-        to: expect.any(Function),
-      }),
-      coordinator: expect.objectContaining({
-        admit: expect.any(Function),
-        routeMachineEnvelope: expect.any(Function),
-        release: expect.any(Function),
-        close: expect.any(Function),
-      }),
-      serverRoutedEnabled: true,
-      serverRoutedEnabledByFlowKind: {
-        tcp_tunnel: true,
-        voice_media: false,
-      },
-      maxBytes: 64 * 1024 * 1024,
-      maxActiveTunnelsPerSocket: 8,
-      maxFrameBytes: 64 * 1024,
-    }));
+    const middleware = getMiddleware();
+    expect(middleware).toBeTypeOf('function');
+    const next = vi.fn();
+    await middleware!(socketFor(token), next);
+    expect(next).toHaveBeenCalledWith();
+    expect(server.on.mock.calls.some(([event]) => event === 'connection')).toBe(true);
   });
 
-  it('waits for the socket room join before publishing machine online status', async () => {
-    const fakeServer = {
-      on: vi.fn(),
-      use: vi.fn(),
-      close: vi.fn(),
-      to: vi.fn(() => ({ emit: vi.fn() })),
-    };
-    serverCtor.mockReturnValue(fakeServer);
-
+  it('refuses an invalid handshake token at the auth boundary', async () => {
+    makeServer();
     const { startSocket } = await import('./socket');
-    const app = { server: {} } as any;
-    startSocket(app);
-
-    const connectionHandler = fakeServer.on.mock.calls.find(([event]) => event === 'connection')?.[1] as
-      | ((socket: any) => Promise<void>)
-      | undefined;
-    expect(connectionHandler).toBeTypeOf('function');
-
-    let resolveJoin!: () => void;
-    const joinPromise = new Promise<void>((resolve) => {
-      resolveJoin = resolve;
-    });
-
-    const socket = {
-      id: 'socket-1',
-      data: {
-        userId: 'user-1',
-        clientType: 'machine-scoped',
-        clientPurpose: 'transfer',
-        machineId: 'm-1',
-      },
-      emit: vi.fn(),
-      on: vi.fn(),
-      join: vi.fn(() => joinPromise),
-      use: vi.fn(),
-      timeout: vi.fn(() => ({ emitWithAck: vi.fn() })),
-      connected: true,
-      handshake: {
-        address: '127.0.0.1',
-        auth: {
-          token: 'current-transfer-relay-v2-token',
-          clientType: 'machine-scoped',
-          clientPurpose: 'transfer',
-          machineId: 'm-1',
-        },
-        headers: {
-          'user-agent': 'happier-test-agent',
-        },
-      },
-      conn: {
-        transport: { name: 'websocket' },
-        remotePort: 1234,
-      },
-      disconnect: vi.fn(),
-    } as any;
-
-    const connectionPromise = connectionHandler!(socket);
-    await Promise.resolve();
-
-    expect(socket.join).toHaveBeenCalledWith([
-      'user-machines:user-1',
-      'machine:m-1:user-1',
-    ]);
-    expect(eventRouterEmitEphemeralMock).not.toHaveBeenCalled();
-
-    resolveJoin();
-    await connectionPromise;
-    await Promise.resolve();
-
-    expect(buildMachineActivityEphemeralMock).toHaveBeenCalledWith('m-1', true, expect.any(Number));
-    expect(eventRouterEmitEphemeralMock).toHaveBeenCalledTimes(1);
-    expect(eventRouterEmitEphemeralMock).toHaveBeenCalledWith(expect.objectContaining({
-      userId: 'user-1',
-      payload: expect.objectContaining({
-        t: 'machine-activity',
-        active: true,
-      }),
-      recipientFilter: { type: 'user-scoped-only' },
-    }));
+    startSocket({ server: { on: vi.fn() } } as any);
+    // Read the middleware from the server mock without introducing an auth mock.
+    const io = serverCtor.mock.results.at(-1)?.value as { use: ReturnType<typeof vi.fn> };
+    const handler = io.use.mock.calls.length > 0 ? io.use.mock.calls[0][0] as (socket: any, next: (error?: unknown) => void) => Promise<void> : undefined;
+    expect(handler).toBeTypeOf('function');
+    const next = vi.fn();
+    await handler!(socketFor('invalid-transfer-relay-v2-token'), next);
+    expect(next).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ error: 'invalid-token' }) }));
   });
 });

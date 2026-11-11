@@ -1,139 +1,108 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import type { Socket } from 'socket.io';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { decodeBase64 } from 'privacy-kit';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, SessionPendingEnqueueByMachineRequestV1Schema, SessionPendingEnqueueByMachineResponseV1Schema, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 
-import { createFakeSocket, getSocketHandler } from '../testkit/socketHarness';
-
-vi.mock("@/app/api/socket/socketCredentialCurrentness", async () => (
-    await import("../testkit/socketHarness")
-).createCurrentSocketCredentialModuleMock());
-
-const enqueuePendingMessageByAuthenticatedMachine = vi.fn();
-const readMachineAvailabilityState = vi.fn(async () => 'available');
-
-vi.mock('@/app/events/eventRouter', () => ({
-  eventRouter: { emitEphemeral: vi.fn(), emitUpdate: vi.fn() },
-  buildMachineActivityEphemeral: vi.fn(),
-  buildUpdateMachineUpdate: vi.fn(),
-}));
-vi.mock('@/app/monitoring/metrics/index', () => ({
-  machineAliveEventsCounter: { inc: vi.fn() },
-  websocketEventsCounter: { inc: vi.fn() },
-}));
-vi.mock('@/app/presence/sessionCache', () => ({
-  activityCache: { invalidateMachine: vi.fn(), isMachineValid: vi.fn() },
-}));
-vi.mock('@/app/presence/presenceRecorder', () => ({ recordMachineAlive: vi.fn() }));
-vi.mock('@/app/presence/publishSessionPublisherClose', () => ({
-  publishSessionPublisherClose: vi.fn(),
-}));
-vi.mock('@/app/machines/machineStateGuards', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/app/machines/machineStateGuards')>()),
-  readMachineAvailabilityState,
-}));
-vi.mock('@/app/session/pending/pendingMessageService', () => ({
-  enqueuePendingMessageByAuthenticatedMachine,
-}));
-vi.mock('@/storage/db', () => ({ db: {} }));
-vi.mock('@/storage/inTx', () => ({ afterTx: vi.fn(), inTx: vi.fn() }));
-vi.mock('@/app/changes/markAccountChanged', () => ({ markAccountChanged: vi.fn() }));
-vi.mock('@/utils/keys/randomKeyNaked', () => ({ randomKeyNaked: vi.fn(() => 'change') }));
-vi.mock('@/utils/logging/log', () => ({ log: vi.fn() }));
-vi.mock('@/app/session/externalSessionHistoricalImportCommand', () => ({
-  executeExternalSessionHistoricalImportCommand: vi.fn(),
-}));
+import { db } from '@/storage/db';
+import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
+import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { createFakeSocket, createSocketRoomDiscoveryHarness, getSocketHandler } from '../testkit/socketHarness';
+import { machineUpdateHandler } from './machineUpdateHandler';
+import { VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY } from './machineSocketInstallationProof';
 
 const options = {
-  operationSocketBatchLimits: {
-    ok: true as const,
-    limits: { maxItems: 200, maxSerializedBytes: 524_288 },
-  },
+    operationSocketBatchLimits: {
+        ok: true as const,
+        limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+    },
 };
 
-const request = {
-  v: 1 as const,
-  sessionId: 'session-1',
-  targetMachineId: 'machine-target',
-  localId: 'plugin-input-v1:abc',
-  content: {
-    t: 'plain' as const,
-    v: { role: 'user', content: { type: 'text', text: 'hello' } },
-  },
-  requestedAction: { v: 1 as const, kind: 'enqueue' as const },
-};
+describe('machine Session Pending enqueue through real admission owners', () => {
+    let harness: LightSqliteHarness;
 
-// Collect the handler before a test's lifetime so slow source transformation
-// cannot resume an expired test inside its neighbor's boundary mocks.
-await import('./machineUpdateHandler');
+    beforeAll(async () => {
+        harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-machine-pending-handler-', initAuth: true });
+    }, 120_000);
 
-describe('machine Session Pending enqueue', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    readMachineAvailabilityState.mockResolvedValue('available');
-    enqueuePendingMessageByAuthenticatedMachine.mockResolvedValue({
-      status: 'accepted',
-      localId: request.localId,
+    afterAll(async () => {
+        await harness?.close();
     });
-  });
 
-  it('stamps the authenticated source Machine and preserves only the exact target routing fact', async () => {
-    const { machineUpdateHandler } = await import('./machineUpdateHandler');
-    const socket = createFakeSocket({
-      data: { clientType: 'machine-scoped', machineId: 'machine-source' },
+    async function fixture() {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await db.machine.create({ data: {
+            id: randomUUID(), accountId: account.id, installationId: randomUUID(),
+            metadata: encodePlainMachineStoredContent({ host: 'source' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
+        const target = await db.machine.create({ data: {
+            id: randomUUID(), accountId: account.id, installationId: randomUUID(),
+            metadata: encodePlainMachineStoredContent({ host: 'target' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+        } });
+        const session = await db.session.create({ data: {
+            accountId: account.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain',
+            active: true, lastActiveAt: new Date(1), publisherGeneration: 1n,
+        } });
+        await db.accessKey.create({ data: {
+            accountId: account.id, machineId: source.id, sessionId: session.id, data: 'opaque',
+        } });
+        await db.session.update({ where: { id: session.id }, data: {
+            runtimeMachineTarget: {
+                homeId: await getOrCreateServerIdentityId(), accountId: account.id, sessionId: session.id,
+                machineId: source.id, installationId: source.installationId!,
+            },
+        } });
+        return { account, source, target, session };
+    }
+
+    function request(sessionId: string, targetMachineId: string, localId = `plugin-input-v1:${randomUUID()}`) {
+        return SessionPendingEnqueueByMachineRequestV1Schema.parse({
+            v: 1, sessionId, targetMachineId, localId,
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } },
+            requestedAction: { v: 1, kind: 'enqueue' },
+        });
+    }
+
+    async function invoke(f: Awaited<ReturnType<typeof fixture>>, payload = request(f.session.id, f.source.id)) {
+        const socket = createFakeSocket({
+            nsp: { server: createSocketRoomDiscoveryHarness(async () => []) },
+            data: {
+                clientType: 'machine-scoped', machineId: f.source.id,
+                authAuthority: 'present_user',
+                [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: f.source.installationId,
+            },
+        });
+        machineUpdateHandler(f.account.id, socket as unknown as Socket, options);
+        let response: unknown;
+        await getSocketHandler(socket, SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1)(payload, (value: unknown) => {
+            response = value;
+        });
+        return SessionPendingEnqueueByMachineResponseV1Schema.parse(response).result;
+    }
+
+    it('admits the real source Machine and persists the pending message', async () => {
+        const f = await fixture();
+        const localId = `accepted-${randomUUID()}`;
+        await expect(invoke(f, request(f.session.id, f.source.id, localId))).resolves.toEqual({ status: 'accepted', localId });
+        await expect(db.sessionPendingMessage.findUnique({ where: { sessionId_localId: { sessionId: f.session.id, localId } } }))
+            .resolves.toMatchObject({ sessionId: f.session.id, localId, content: { t: 'plain' } });
     });
-    machineUpdateHandler('account-1', socket as never, options);
-    const callback = vi.fn();
 
-    await getSocketHandler(socket, 'session-pending-enqueue-by-machine-v1')(request, callback);
-
-    expect(enqueuePendingMessageByAuthenticatedMachine).toHaveBeenCalledWith({
-      accountId: 'account-1',
-      sourceMachineId: 'machine-source',
-      targetMachineId: 'machine-target',
-      sessionId: 'session-1',
-      localId: 'plugin-input-v1:abc',
-      content: request.content,
-      requestedAction: request.requestedAction,
+    it('rejects a revoked source Machine before enqueue admission', async () => {
+        const f = await fixture();
+        await db.machine.update({ where: { id: f.source.id }, data: { revokedAt: new Date() } });
+        await expect(invoke(f)).resolves.toEqual({ status: 'rejected', code: 'session_input_unauthorized' });
+        await expect(db.sessionPendingMessage.count({ where: { sessionId: f.session.id } })).resolves.toBe(0);
     });
-    expect(callback).toHaveBeenCalledWith({
-      v: 1,
-      result: { status: 'accepted', localId: request.localId },
+
+    it('rejects an unavailable source Machine before enqueue admission', async () => {
+        const f = await fixture();
+        await db.machine.update({ where: { id: f.source.id }, data: { replacedByMachineId: f.target.id } });
+        await expect(invoke(f)).resolves.toEqual({ status: 'rejected', code: 'session_input_unauthorized' });
+        await expect(db.sessionPendingMessage.count({ where: { sessionId: f.session.id } })).resolves.toBe(0);
     });
-  });
-
-  it('rejects an unavailable authenticated source before exposing target state', async () => {
-    readMachineAvailabilityState.mockResolvedValueOnce('revoked');
-    const { machineUpdateHandler } = await import('./machineUpdateHandler');
-    const socket = createFakeSocket({
-      data: { clientType: 'machine-scoped', machineId: 'machine-source' },
-    });
-    machineUpdateHandler('account-1', socket as never, options);
-    const callback = vi.fn();
-
-    await getSocketHandler(socket, 'session-pending-enqueue-by-machine-v1')(request, callback);
-
-    expect(enqueuePendingMessageByAuthenticatedMachine).not.toHaveBeenCalled();
-    expect(callback).toHaveBeenCalledWith({
-      v: 1,
-      result: { status: 'rejected', code: 'session_input_unauthorized' },
-    });
-  });
-
-  it('rejects malformed input without calling the admission owner', async () => {
-    const { machineUpdateHandler } = await import('./machineUpdateHandler');
-    const socket = createFakeSocket({
-      data: { clientType: 'machine-scoped', machineId: 'machine-source' },
-    });
-    machineUpdateHandler('account-1', socket as never, options);
-    const callback = vi.fn();
-
-    await getSocketHandler(socket, 'session-pending-enqueue-by-machine-v1')({
-      ...request,
-      machineId: 'forged-machine',
-    }, callback);
-
-    expect(enqueuePendingMessageByAuthenticatedMachine).not.toHaveBeenCalled();
-    expect(callback).toHaveBeenCalledWith({
-      v: 1,
-      result: { status: 'rejected', code: 'session_input_invalid' },
-    });
-  });
 });
