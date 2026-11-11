@@ -100,4 +100,31 @@ test('touched typecheck keeps baseline comparison on the controller', async t =>
 test('worker compiler transport preserves location-report mode', () => {
   const payload = renderNativeCommandPolicy().split('\n').find(line => line.startsWith('command_payload_environment_names='));
   assert.ok(payload.includes('HAPPIER_TYPECHECK_LOCATIONS_ONLY'));
+  assert.ok(payload.includes('HAPPIER_TYPECHECK_SELECTION'));
+});
+
+test('touched dispatch identity distinguishes file selection and baseline', () => {
+  const first = touched.buildTypecheckDispatchIdentity({
+    packagePath: 'apps/ui',
+    paths: ['apps/ui/sources/b.ts', 'apps/ui/sources/a.ts'],
+    baselinePath: '.project/tmp/systemic-orch/ui.locs',
+  });
+  const reordered = touched.buildTypecheckDispatchIdentity({
+    packagePath: 'apps/ui',
+    paths: ['apps/ui/sources/a.ts', 'apps/ui/sources/b.ts'],
+    baselinePath: '.project/tmp/systemic-orch/ui.locs',
+  });
+  const differentSelection = touched.buildTypecheckDispatchIdentity({
+    packagePath: 'apps/ui',
+    paths: ['apps/ui/sources/a.ts'],
+    baselinePath: '.project/tmp/systemic-orch/ui.locs',
+  });
+  const differentBasis = touched.buildTypecheckDispatchIdentity({
+    packagePath: 'apps/ui',
+    paths: ['apps/ui/sources/a.ts', 'apps/ui/sources/b.ts'],
+    baselinePath: '.project/tmp/systemic-orch/other.locs',
+  });
+  assert.equal(first, reordered, 'path ordering does not change identical work');
+  assert.notEqual(first, differentSelection, 'a touched subset is distinct work');
+  assert.notEqual(first, differentBasis, 'a different source baseline is distinct work');
 });

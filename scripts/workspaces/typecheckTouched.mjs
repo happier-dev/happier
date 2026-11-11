@@ -1,4 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createInterface } from 'node:readline';
@@ -14,6 +15,14 @@ const marker = '[typecheck-locations] ';
 // Compiler prose can quote source fixtures. Retain only executor, package-manager
 // and runner reason lines, using the process owner's redaction and tail budget.
 const executorReason = /^(?:\[typecheck-(?:failure|delta)\]|\[typecheck-inputs\] unavailable:|(?:ERR_PNPM_[A-Z_]+|\[?ELIFECYCLE\]?)(?:[:\s]|$)|\[(?:preferred-execution|execution-host)\]|HSTACK_[A-Z_]+(?:[:\s]|$)|(?:ssh(?:_[a-z_]+)?|client_loop|kex_exchange_identification|packet_write_wait|mux_client_[a-z_]+|hstack-dev-target-control):|(?:Shared connection|Connection) to |Connection (?:reset |closed )|Read from remote host |Received disconnect from |Disconnected from |Timeout, server )/u;
+
+export function buildTypecheckDispatchIdentity({ packagePath, paths, baselinePath }) {
+  return createHash('sha256').update(JSON.stringify({
+    packagePath,
+    paths: [...paths].sort(),
+    baselinePath,
+  })).digest('hex');
+}
 
 export async function readSharedTypecheckBaseline(repoRoot, packagePath, baselinePath) {
   if (!baselinePath) throw new Error('an explicit --baseline path is required');
@@ -63,6 +72,8 @@ export async function runTouchedTypecheck({ repoRoot, packagePath, paths, baseli
   const manifest = JSON.parse(await readFile(resolve(repoRoot, normalizedPackage, 'package.json'), 'utf8'));
   if (!manifest.scripts?.typecheck || !selected.length) throw new Error('a package typecheck and explicit touched paths are required');
   const baseline = await readSharedTypecheckBaseline(repoRoot, normalizedPackage, baselinePath);
+  const dispatchIdentity = buildTypecheckDispatchIdentity({ packagePath: normalizedPackage, paths: selected,
+    baselinePath: portable(relative(repoRoot, baseline.path)) });
   process.stdout.write(`baseline: ${portable(relative(repoRoot, baseline.path))}\n`);
   const started = performance.now();
   // Resolve the prepared host tool, never a controller's absolute npm_execpath.
@@ -71,7 +82,8 @@ export async function runTouchedTypecheck({ repoRoot, packagePath, paths, baseli
   const command = routed ? resolve(repoRoot, 'apps/stack/bin/hstack-exec') : pnpm.command;
   const args = routed ? ['--', 'env', 'HAPPIER_TYPECHECK_LOCATIONS_ONLY=1', pnpm.command, ...pnpm.args] : pnpm.args;
   const child = spawnForegroundCommand(command, args, { cwd: repoRoot, ownedProcessGroup: true,
-    stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HAPPIER_TYPECHECK_LOCATIONS_ONLY: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HAPPIER_TYPECHECK_LOCATIONS_ONLY: '1',
+      ...(routed ? { HAPPIER_TYPECHECK_SELECTION: dispatchIdentity } : {}) },
     ...(pnpm.windowsVerbatimArguments && !routed ? { windowsVerbatimArguments: pnpm.windowsVerbatimArguments } : {}) });
   const reports = [];
   let malformed = false;
