@@ -135,13 +135,13 @@ run_remote_ssh_probe() {
 }
 
 score_load_sample() {
-  # AUTO reuses admission's achievable capacity: non-admitted memory cannot
-  # be recovered by draining its queue. Explicit pins keep their queue choice.
-  printf '%s\n' "$1" | awk -v heavy="${2-0}" -v minimum_capacity="${3-0}" -v pinned="${explicit_target_number:-0}" '
+  # Remote placement reuses admission's achievable capacity: non-admitted
+  # memory cannot be recovered by draining its queue, including for pins.
+  printf '%s\n' "$1" | awk -v heavy="${2-0}" -v minimum_capacity="${3-0}" '
     {
       if ($1 <= 0 || $2 < 0) exit
       if (minimum_capacity > 0 && $8 < minimum_capacity) exit
-      if (pinned == 0 && minimum_capacity > 0 && $19 ~ /^[0-9]+$/ && $19 < minimum_capacity) exit
+      if (minimum_capacity > 0 && $19 ~ /^[0-9]+$/ && $19 < minimum_capacity) exit
       ratio = $3
       if ($8 > 0) ratio = $7 / $8
       # Linux admission already accounts for services and unused live-owner

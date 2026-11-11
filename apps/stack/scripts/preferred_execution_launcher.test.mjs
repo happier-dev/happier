@@ -1994,6 +1994,60 @@ test('AUTO emits one typed exclusion per dropped candidate for fresh and retaine
   });
 });
 
+
+for (const dispatcher of ['native', 'javascript']) {
+  test(`AUTO ${dispatcher} places the reported saturated fleet by admission headroom`, async t => {
+    const fixture = await memoryRoutingFixture(t);
+    // Hold the external clock within one cache lifetime even on a busy host.
+    await executable(join(fixture.binDir, 'date'), '#!/bin/sh\ncase "$*" in +%s) printf "1700000000\\n" ;; *) exec /bin/date "$@" ;; esac\n');
+    fixture.config.targets[0].name = 'windows2-linux';
+    fixture.config.targets[1].name = 'nl1';
+    fixture.config.targets.push({ ...fixture.config.targets[0], name: 'linux1', ssh: 'linux1-host' });
+    fixture.config.commandExecution.targets = ['windows2-linux', 'nl1', 'linux1'];
+    await writeFile(fixture.configPath, JSON.stringify(fixture.config));
+    await writeNativeProjectionFixture(join(fixture.stackDir, 'dev-target-exec-v1.sh'),
+      renderNativeExecutionProjection(fixture.config, { repoRoot }));
+    // OS/SSH boundary: reported 12/8/48 cores, 20/24/125 GiB total,
+    // 1.3/1/13 GiB available, and 297/91/448 GiB queued. Achievable
+    // capacity credits admitted residents; it cannot reclaim unrelated jobs.
+    const sample = (cores, load, total, available, achievable, queued) => {
+      const kib = gib => Math.round(gib * 1024 * 1024);
+      return `${cores} ${load} ${available / total} 22000000 20 0 ${kib(available)} ${kib(total)} 0 0 0 0 0 0 0 linux ${kib(available)} 0 ${kib(achievable)} ${kib(queued)}`;
+    };
+    await executable(join(fixture.binDir, 'ssh'), `#!/bin/sh
+printf 'ssh:%s\\n' "$*" >> "$FIXTURE_TRACE"
+case "$*" in
+  *getconf*) case "$*" in
+    *starved-host*) printf '%s\\n' '${sample(12, 2.38, 20, 1.3, 16.9, 297)}' ;;
+    *linux1-host*) printf '%s\\n' '${sample(8, 8, 24, 1, 16, 91)}' ;;
+    *) printf '%s\\n' '${sample(48, 80, 125, 13, 40, 448)}' ;; esac ;;
+  *"&& command -v "*|*-O\\ check*|*-MNf*) exit 0 ;;
+  *) case "$*" in *starved-host*) name=windows2-linux ;; *linux1-host*) name=linux1 ;; *) name=nl1 ;; esac
+     printf '%s\\n' "$name" >> "$DISPATCHES"
+     printf 'remote:%s\\n' "$name" ;;
+esac
+`);
+    const invoke = args => dispatcher === 'native'
+      ? spawnSync('/bin/sh', [launcher, '--', ...args], fixture.invocation)
+      : spawnSync(process.execPath, [join(import.meta.dirname, 'dev_targets.mjs'), 'exec', 'auto', '--', ...args], fixture.invocation);
+    for (const args of [
+      ['node', '--test', 'focused.test.mjs'],
+      ['node', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=/request.json'],
+    ]) {
+      const before = (await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8').catch(() => '')).split('\n').filter(l => l.includes('getconf')).length;
+      for (const cached of [false, true]) {
+        const result = invoke(args);
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stdout, 'remote:nl1\n', `cached=${cached}: nl1 has headroom despite higher CPU load and more queued bytes`);
+      }
+      const after = (await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8')).split('\n').filter(l => l.includes('getconf')).length;
+      assert.equal(after - before, 3, 'one fresh probe per candidate; warm selection adds no observation');
+    }
+    assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'),
+      ['nl1', 'nl1', 'nl1', 'nl1'], 'saturated or unachievable workers receive zero preparation/payload dispatches');
+  });
+}
+
 test('AUTO sends small suites to a free peer when the broker head reserves the other host', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await memoryRoutingFixture(t, { availableKiB: 11600000, roomyLoad: 80 });
   // Unix socket paths must stay short even under a remote custody TMPDIR.
@@ -2818,8 +2872,13 @@ for (const dispatcher of ['native', 'javascript']) {
     assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['roomy', 'roomy']);
 
     const pinned = invoke('starved');
-    assert.equal(pinned.status, 0, pinned.stderr);
-    assert.equal(pinned.stdout, 'remote:starved\n', 'an explicit pin retains the broker queue instead of an AUTO capacity exclusion');
+    // PLACEMENT-HEADROOM-1111 also refuses an unachievable explicit pin:
+    // the request cannot fit even after this broker's admitted work drains.
+    assert.equal(pinned.status, 75, pinned.stderr);
+    assert.equal(pinned.stdout, '');
+    assert.match(pinned.stderr, /HSTACK_ADMISSION_CAPACITY:placement/);
+    assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'),
+      ['roomy', 'roomy'], 'an unachievable pin receives zero preparation or payload dispatches');
 
     // Admitted resident pages count toward achievable memory. A capable busy
     // worker remains eligible even when its current spare memory is too small.
@@ -2836,7 +2895,10 @@ for (const dispatcher of ['native', 'javascript']) {
       assert.equal(result.status, 0, result.stderr);
       assert.equal(result.stdout, 'remote:starved\n', result.stderr);
     }
-    assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved', 'starved']);
+    const capablePin = invoke('starved');
+    assert.equal(capablePin.status, 0, capablePin.stderr);
+    assert.equal(capablePin.stdout, 'remote:starved\n', 'a pin with achievable capacity remains eligible under admitted pressure');
+    assert.deepEqual((await readFile(fixture.invocation.env.DISPATCHES, 'utf8')).trim().split('\n'), ['starved', 'starved', 'starved']);
 
     // A physically impossible floor, unlike temporary pressure, must cause
     // zero preparation/payload dispatches to that worker.

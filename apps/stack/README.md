@@ -206,6 +206,10 @@ serialize choosing a worker with publishing its existing active dispatch record,
 then release that decision lock before synchronization or worker admission.
 Zero memory headroom stays behind positive headroom within the same placement
 priority without a large numeric penalty hiding recent dispatches.
+Linux remote placement (AUTO and explicit target pins) rejects a request above
+the broker's observed achievable memory before preparation. Retry a refused
+pin after memory recovers or choose another worker. Admitted residents count
+toward achievable memory, so ordinary reservation pressure can still queue.
 
 In current 0.3 development, Linux tool concurrency hints share cores among
 native admitted jobs; queued requests do not consume that share. Authenticated
