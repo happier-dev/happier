@@ -8,7 +8,6 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { ManagedControlAdmissionInputV1Schema, ManagedListInputV1Schema,
     managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { Tx } from '@/storage/inTx';
-import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, resolveProjectSourceAccessInTx, canManageProjectSourceOwnerInTx } from '@/app/projects/sources/projectSourceService';
 import { loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx, readCreatedDeploymentEnvironmentIdInTx,
     type DeploymentEnvironmentRow } from './deploymentEnvironmentService';
@@ -60,38 +59,116 @@ type TemplateAdmission = Extract<DeploymentPreparationAdmissionV1, { operation: 
 type SetupDeployment = Extract<DeploymentPreparationAdmissionV1, { operation: 'setup' }>['deployments'][number];
 type CreateAdmission = Extract<DeploymentPreparationAdmissionV1, { operation: 'create' }>;
 
-/** One projection of the signed preparation operands used by declared read transports. */
-export async function readAdmittedDeploymentPreparationScopeInTx(tx: Tx,
-    binding: Pick<ExternalActionExecutionAuthorizationBindingV1, 'deploymentPreparationAdmission'>): Promise<Readonly<{
-        environmentIds: readonly string[]; sourceIds: readonly string[]; artifactIds: readonly string[];
-    }> | null> {
-    const admission = binding.deploymentPreparationAdmission;
-    if (!admission) return null;
-    const environmentIds = new Set<string>();
-    const sourceIds = new Set<string>();
-    const artifactIds = new Set<string>();
-    const visit = (value: unknown, key = ''): void => {
-        if (typeof value === 'string') {
-            if (key.endsWith('environmentId') || key === 'environment') environmentIds.add(value);
-            else if (key.endsWith('sourceId') || key === 'source') sourceIds.add(value);
-            else if (key.endsWith('artifactId') || key.includes('contentArtifactId')) artifactIds.add(value);
-            return;
-        }
-        if (Array.isArray(value)) { for (const item of value) visit(item, key); return; }
-        if (value && typeof value === 'object') {
-            for (const [childKey, child] of Object.entries(value)) visit(child, childKey);
-        }
-    };
-    visit(admission);
-    for (const ids of portableQueryChunks({ values: [...environmentIds], bindingsPerValue: 1 })) {
-        const environments = await tx.deploymentEnvironment.findMany({ where: { id: { in: [...ids] } },
-            select: { id: true, projectSourceId: true, contentArtifactId: true } });
-        for (const environment of environments) {
-            sourceIds.add(environment.projectSourceId);
-            artifactIds.add(environment.contentArtifactId);
+type AdmittedDeploymentOperandKind = 'environment' | 'source' | 'artifact' | 'deployment' | 'targetLink' | 'domain' | 'machine';
+
+const DEPLOYMENT_TRANSPORT_OPERAND_KEYS = new Set(['serverId', 'requestId', 'requestKey', 'cursor', 'revision', 'expectedRevision',
+    'contentHeaderVersion', 'contentBodyVersion', 'actionId', 'installationId']);
+const DEPLOYMENT_OPERAND_NAMES: readonly (readonly [AdmittedDeploymentOperandKind, readonly string[]])[] = [
+    ['environment', ['environment']], ['source', ['source', 'projectSource', 'project']], ['artifact', ['artifact', 'contentArtifact']],
+    ['deployment', ['deployment', 'receipt']], ['targetLink', ['targetLink']], ['domain', ['domain']], ['machine', ['machine', 'machineTargets']],
+];
+
+/** Names a signed operand by its key, or by its parent object for a nested `{ id }`. */
+function classifyDeploymentOperand(key: string, parent: string): AdmittedDeploymentOperandKind | 'transport' | 'unknown' {
+    if (DEPLOYMENT_TRANSPORT_OPERAND_KEYS.has(key)) return 'transport';
+    const name = key === 'id' ? parent : key;
+    for (const [kind, bases] of DEPLOYMENT_OPERAND_NAMES) {
+        for (const base of bases) {
+            const capitalized = `${base[0]!.toUpperCase()}${base.slice(1)}`;
+            if (name === base || name === `${base}Id` || name === `${base}Ids` || name.endsWith(`${capitalized}Id`)
+                || name.endsWith(`${capitalized}Ids`)) return kind;
         }
     }
-    return { environmentIds: [...environmentIds], sourceIds: [...sourceIds], artifactIds: [...artifactIds] };
+    return key === 'id' || key.endsWith('Id') || key.endsWith('Ids') ? 'unknown' : 'transport';
+}
+
+function collectDeploymentOperands(value: unknown, visit: (kind: ReturnType<typeof classifyDeploymentOperand>, id: string) => void,
+    key = '', parent = ''): void {
+    if (typeof value === 'string') { visit(classifyDeploymentOperand(key, parent), value); return; }
+    if (Array.isArray(value)) { for (const item of value) collectDeploymentOperands(item, visit, key, parent); return; }
+    if (value && typeof value === 'object') {
+        for (const [childKey, child] of Object.entries(value)) collectDeploymentOperands(child, visit, childKey, key);
+    }
+}
+
+/**
+ * The one admitted deployment scope: every Environment, Source, Artifact and
+ * Machine operand the signed root (or its accepted receipt) names, expanded only
+ * through rows those Environments own. Declared read transports consume it.
+ */
+export async function readAdmittedDeploymentScopeInTx(tx: Tx,
+    binding: Pick<ExternalActionExecutionAuthorizationBindingV1, 'deploymentPreparationAdmission' | 'deploymentNativeAdmission'
+        | 'deploymentReadAdmission' | 'deploymentLinkAdmission' | 'environmentId'>,
+    acceptedEnvironmentId?: string,
+): Promise<Readonly<{ environmentIds: ReadonlySet<string>; sourceIds: ReadonlySet<string>;
+    artifactIds: ReadonlySet<string>; machineIds: ReadonlySet<string> }> | null> {
+    const seeds = { environment: new Set<string>(), source: new Set<string>(), artifact: new Set<string>(),
+        deployment: new Set<string>(), targetLink: new Set<string>(), domain: new Set<string>(), machine: new Set<string>() };
+    const admissions = [binding.deploymentPreparationAdmission, binding.deploymentNativeAdmission,
+        binding.deploymentReadAdmission, binding.deploymentLinkAdmission].filter(admission => admission !== undefined);
+    if (admissions.length === 0 && binding.environmentId === undefined && acceptedEnvironmentId === undefined) return null;
+    for (const admission of admissions) collectDeploymentOperands(admission, (kind, id) => {
+        if (kind !== 'transport' && kind !== 'unknown') seeds[kind].add(id);
+    });
+    if (binding.environmentId !== undefined) seeds.environment.add(binding.environmentId);
+    if (acceptedEnvironmentId !== undefined) seeds.environment.add(acceptedEnvironmentId);
+    const environments = await tx.deploymentEnvironment.findMany({ where: { id: { in: [...seeds.environment] } },
+        select: { id: true, projectSourceId: true, contentArtifactId: true, controllerMachineId: true, buildMachineId: true,
+            previewTemplateEnvironmentId: true,
+            targetLinks: { select: { id: true, contentArtifactId: true, machineId: true, machines: { select: { machineId: true } } } },
+            domains: { select: { id: true, contentArtifactId: true } } } });
+    const environmentIds = new Set(environments.map(environment => environment.id));
+    const sourceIds = new Set(seeds.source);
+    const artifactIds = new Set(seeds.artifact);
+    const machineIds = new Set(seeds.machine);
+    for (const environment of environments) {
+        // A preview reads the template Environment it was derived from.
+        if (environment.previewTemplateEnvironmentId) environmentIds.add(environment.previewTemplateEnvironmentId);
+        sourceIds.add(environment.projectSourceId);
+        artifactIds.add(environment.contentArtifactId);
+        machineIds.add(environment.controllerMachineId);
+        if (environment.buildMachineId) machineIds.add(environment.buildMachineId);
+        for (const link of environment.targetLinks) {
+            artifactIds.add(link.contentArtifactId);
+            if (link.machineId) machineIds.add(link.machineId);
+            for (const member of link.machines) machineIds.add(member.machineId);
+        }
+        for (const domain of environment.domains) artifactIds.add(domain.contentArtifactId);
+    }
+    return { environmentIds, sourceIds, artifactIds, machineIds };
+}
+
+/**
+ * Each declared read operand must name a row inside the admitted scope; a read
+ * naming none is refused. `null` means the root carries no deployment scope.
+ */
+export async function isDeploymentReadOperandInAdmittedScopeInTx(tx: Tx,
+    binding: Parameters<typeof readAdmittedDeploymentScopeInTx>[1], operands: unknown, acceptedEnvironmentId?: string,
+    operandKind?: AdmittedDeploymentOperandKind,
+): Promise<boolean | null> {
+    const scope = await readAdmittedDeploymentScopeInTx(tx, binding, acceptedEnvironmentId);
+    if (!scope) return null;
+    const owned = { deployment: [] as string[], targetLink: [] as string[], domain: [] as string[] };
+    let constrained = false;
+    let inScope = true;
+    collectDeploymentOperands(operands, (classified, id) => {
+        const kind = classified === 'unknown' && operandKind ? operandKind : classified;
+        if (kind === 'transport') return;
+        constrained = true;
+        if (kind === 'unknown') inScope = false;
+        else if (kind === 'deployment' || kind === 'targetLink' || kind === 'domain') owned[kind].push(id);
+        else if (!({ environment: scope.environmentIds, source: scope.sourceIds, artifact: scope.artifactIds,
+            machine: scope.machineIds })[kind].has(id)) inScope = false;
+    });
+    if (!constrained || !inScope) return false;
+    const environmentIds = [...scope.environmentIds];
+    const [deployments, targetLinks, domains] = await Promise.all([
+        owned.deployment.length === 0 ? 0 : tx.deployment.count({ where: { id: { in: owned.deployment }, environmentId: { in: environmentIds } } }),
+        owned.targetLink.length === 0 ? 0 : tx.deploymentTargetLink.count({ where: { id: { in: owned.targetLink }, environmentId: { in: environmentIds } } }),
+        owned.domain.length === 0 ? 0 : tx.deploymentDomain.count({ where: { id: { in: owned.domain }, environmentId: { in: environmentIds } } }),
+    ]);
+    return deployments === new Set(owned.deployment).size && targetLinks === new Set(owned.targetLink).size
+        && domains === new Set(owned.domain).size;
 }
 
 // Template scope adds only pending captures to the existing public operand grammar.

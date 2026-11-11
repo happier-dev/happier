@@ -21,8 +21,8 @@ import { readDeploymentReadAuthorizationInTx, readAdmittedRegistryAppUpdateScope
 import { loadDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
 import { readDeploymentLinkReviewedSetupHttpPurpose } from '@/app/deployments/deploymentLinkReviewedChildAuthorization';
 import { admitDeploymentMachineInTx, canDeployDeploymentEnvironment } from '@/app/deployments/deploymentAdmission';
-import { readDeploymentAcceptedExecution, hasAcceptedDeploymentReceiptInTx, deploymentInProgressStates, type DeploymentReceiptContinuation } from '@/app/deployments/deploymentAcceptedExecution';
-import { isDeploymentPreparationHttpPurposeInTx, readDeploymentPreparationSourceHttpPurposeInTx, readAdmittedDeploymentPreparationScopeInTx, type DeploymentPreparationSourceRead,
+import { readDeploymentAcceptedExecution, readAcceptedDeploymentReceiptInTx, deploymentInProgressStates, type DeploymentReceiptContinuation } from '@/app/deployments/deploymentAcceptedExecution';
+import { isDeploymentPreparationHttpPurposeInTx, readDeploymentPreparationSourceHttpPurposeInTx, isDeploymentReadOperandInAdmittedScopeInTx, type DeploymentPreparationSourceRead,
     readDeploymentCreateHttpPurposeInTx, isDeploymentCreateHttpEffect, isDeploymentPreviewPreparationReadEffect, type DeploymentCreateHttpPurpose,
     readDeploymentTargetRetentionHttpPurpose, type DeploymentTargetRetentionHttpPurpose,
     readDeploymentLinkPreparationHttpPurpose,
@@ -915,6 +915,8 @@ export type VerifiedExternalActionExecutionRequest = Readonly<{
     deploymentChildAdmission?: DeploymentChildAdmission;
     /** The receipt owner accepted this exact root and installed controller. */
     acceptedDeploymentReceipt?: Readonly<{ platformMaterial?: NonNullable<ReturnType<typeof readDeploymentPlatformMaterialHttpPurpose>>;
+        /** The accepted receipt's Environment, which joins the admitted deployment scope. */
+        environmentId?: string;
         read?: Readonly<{ environmentId?: string; deploymentId?: string;
         /** Exact finite native read, including its captured content custody. */
         contentCustody?: true }> }>;
@@ -1552,9 +1554,11 @@ async function verifyCommon(
     const acceptedDeployment = (deploymentContinuation
         || deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== undefined)
         && verifySignature(machine.installationPublicKey)
-        && await hasAcceptedDeploymentReceiptInTx(db, binding, deploymentContinuation, {
+        && await readAcceptedDeploymentReceiptInTx(db, binding, deploymentContinuation, {
+            // A declared read spends the job principal only while its job runs.
             ...(platformMaterial ? { cancelRequestedAt: null, state: { in: deploymentInProgressStates() } }
-                : acceptedPreparationRead ? { state: { in: deploymentInProgressStates() } } : {}),
+                : acceptedPreparationRead || !deploymentContinuation && isDeclaredReadActionId(effectActionId.data)
+                    ? { state: { in: deploymentInProgressStates() } } : {}),
             ...(acceptedPreparationRead?.environmentId ? { environmentId: acceptedPreparationRead.environmentId }
                 : acceptedPreparationRead?.deploymentId ? { environment: { deployments: { some: {
                     id: acceptedPreparationRead.deploymentId,
@@ -1612,7 +1616,8 @@ async function verifyCommon(
         const principal = projectAcceptedDeploymentPrincipal(binding);
         return principal ? { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal,
             effectiveAuthority: principal.authority,
-            acceptedDeploymentReceipt: { ...(acceptedPreparationRead ? { read: acceptedPreparationRead } : {}),
+            acceptedDeploymentReceipt: { environmentId: acceptedDeployment.environmentId,
+                ...(acceptedPreparationRead ? { read: acceptedPreparationRead } : {}),
                 ...(platformMaterial ? { platformMaterial } : {}) },
             ...(domainPurpose ? { deploymentDomainPurpose: domainPurpose } : {}),
             ...(targetRetentionPurpose ? { deploymentTargetRetentionAdmission: targetRetentionPurpose } : {}),
@@ -2235,37 +2240,51 @@ function isAccountActionHttpOperation(actionId: string,
     return expected.path === proof.path && sameManagedInput(expected.body, proof.body);
 }
 
-/** Declared read transports consume only the operands admitted with the root. */
+function isDeclaredReadActionId(actionId: string): boolean {
+    const parsed = ActionIdSchema.safeParse(actionId);
+    return parsed.success && getActionSpec(parsed.data).sideEffectClass === 'read';
+}
+
+/** The Project Source read transport, which the generic Account operation binder does not declare. */
+function readDeploymentSourceReadOperands(serverIdentityId: string,
+    proof: ExternalActionExecutionRequestProof): Readonly<{ serverId: string; sourceId: string }> | null {
+    const url = new URL(proof.path, 'http://home.invalid');
+    const match = /^\/v1\/projects\/sources\/([^/?#]+)$/u.exec(url.pathname);
+    if (!match || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined || url.hash !== ''
+        || url.searchParams.size !== 1 || url.searchParams.get('serverId') !== serverIdentityId) return null;
+    try {
+        const source = ProjectSourcesReadInputV1Schema.safeParse({ serverId: url.searchParams.get('serverId'), sourceId: decodeURIComponent(match[1]) });
+        return source.success && match[1] === encodeURIComponent(source.data.sourceId)
+            && (proof.routeInput === undefined || sameManagedInput(proof.routeInput,
+                { serverId: source.data.serverId, id: source.data.sourceId })) ? source.data : null;
+    } catch { return null; }
+}
+
+/**
+ * Declared read transports consume only the operands admitted with the root.
+ * `null` means the root carries no deployment scope to decide with.
+ */
+async function readAdmittedDeclaredDeploymentReadScope(
+    binding: ExternalActionExecutionAuthorizationBindingV1,
+    effectActionId: string,
+    proof: ExternalActionExecutionRequestProof,
+    acceptedEnvironmentId?: string,
+): Promise<boolean | null> {
+    if (effectActionId === 'projects.sources.read') {
+        const source = readDeploymentSourceReadOperands(binding.serverIdentityId, proof);
+        return source ? isDeploymentReadOperandInAdmittedScopeInTx(db, binding, source, acceptedEnvironmentId) : false;
+    }
+    if (!isDeclaredReadActionId(effectActionId) || !isAccountActionHttpOperation(effectActionId, proof)) return false;
+    return isDeploymentReadOperandInAdmittedScopeInTx(db, binding, proof.routeInput ?? proof.body, acceptedEnvironmentId);
+}
+
 async function isAdmittedDeclaredDeploymentReadInScope(
     binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string,
     proof: ExternalActionExecutionRequestProof,
+    acceptedEnvironmentId?: string,
 ): Promise<boolean> {
-    if (!isDeploymentPreparationActionIdV1(binding.actionId)
-        && binding.deploymentPreparationAdmission?.operation === undefined) return false;
-    const parsed = ActionIdSchema.safeParse(effectActionId);
-    if (!parsed.success || getActionSpec(parsed.data).sideEffectClass !== 'read'
-        || !isAccountActionHttpOperation(effectActionId, proof)) return false;
-    const scope = await readAdmittedDeploymentPreparationScopeInTx(db, binding);
-    if (!scope) return false;
-    const allowed = new Set([...scope.environmentIds, ...scope.sourceIds, ...scope.artifactIds]);
-    let constrained = false;
-    let valid = true;
-    const visit = (value: unknown, key = ''): void => {
-        if (typeof value === 'string') {
-            if (key === 'serverId' || key === 'requestId' || key === 'cursor' || key === 'revision'
-                || key === 'expectedRevision' || key === 'contentHeaderVersion' || key === 'contentBodyVersion') return;
-            if (key === 'id' || key.endsWith('Id') || key.includes('artifactId') || key.includes('environment') || key.includes('source')) {
-                constrained = true;
-                if (!allowed.has(value)) valid = false;
-            }
-            return;
-        }
-        if (Array.isArray(value)) { for (const item of value) visit(item, key); return; }
-        if (value && typeof value === 'object') for (const [childKey, child] of Object.entries(value)) visit(child, childKey);
-    };
-    visit(proof.routeInput ?? proof.body);
-    return valid && constrained;
+    return await readAdmittedDeclaredDeploymentReadScope(binding, effectActionId, proof, acceptedEnvironmentId) === true;
 }
 
 /** A Discussion operation admits only its resource-codec preparation phases. */
@@ -2766,17 +2785,17 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
             && read.data.environmentId === verified.binding.environmentId;
     }
     if (verified.signedChildPurpose.sibling.deploymentRead) {
-        if (verified.effectActionId !== 'projects.sources.read') return isAccountActionHttpOperation(verified.effectActionId, proof);
-        const url = new URL(proof.path, 'http://home.invalid');
-        const match = /^\/v1\/projects\/sources\/([^/?#]+)$/u.exec(url.pathname);
-        if (!match || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined || url.hash !== ''
-            || url.searchParams.size !== 1 || url.searchParams.get('serverId') !== verified.binding.serverIdentityId) return false;
-        try {
-            const source = ProjectSourcesReadInputV1Schema.safeParse({ serverId: url.searchParams.get('serverId'), sourceId: decodeURIComponent(match[1]) });
-            return source.success && match[1] === encodeURIComponent(source.data.sourceId)
-                && (proof.routeInput === undefined || sameManagedInput(proof.routeInput,
-                    { serverId: source.data.serverId, id: source.data.sourceId }));
-        } catch { return false; }
+        // Sibling reads consume only operands inside the root's admitted deployment scope.
+        // A root whose binding carries no Environment (its input names it) keeps the
+        // declared transport; the resource route owns that Account's access.
+        if (!isDeclaredReadActionId(verified.effectActionId) && verified.effectActionId !== 'projects.sources.read') {
+            return isAccountActionHttpOperation(verified.effectActionId, proof);
+        }
+        const scoped = await readAdmittedDeclaredDeploymentReadScope(verified.binding, verified.effectActionId, proof,
+            verified.acceptedDeploymentReceipt?.environmentId);
+        return scoped ?? (verified.effectActionId === 'projects.sources.read'
+            ? readDeploymentSourceReadOperands(verified.binding.serverIdentityId, proof) !== null
+            : isAccountActionHttpOperation(verified.effectActionId, proof));
     }
     if (deploymentNativeAdmissionInputSchema(root) || isDeploymentDomainChildActionIdV1(root) || root === 'deployments.receipts.observe') {
         return isDeploymentNativeHttpPurpose(verified, proof)
@@ -3428,10 +3447,9 @@ export async function verifyExternalActionDomainExecutionRequest(
         // through the native HTTP purpose owner without admitting preparation again.
         const nativeEffect = verified.effectActionId === verified.binding.actionId ? 'deployments.deploy' : verified.effectActionId;
         if (!isAdmittedRootRelay && !readsExecutionMachine
-            && !await isAdmittedDeclaredDeploymentReadInScope(verified.binding, nativeEffect, proof)
-            && !isDeploymentNativeHttpPurpose({ binding: verified.binding, effectActionId: nativeEffect }, proof)
-            && !(verified.signedChildPurpose.sibling.deploymentRead
-                && isAccountActionHttpOperation(verified.effectActionId, proof))) return refuseExternalActionExecutionRequest('deployment_preparation', proof);
+            && !await isAdmittedDeclaredDeploymentReadInScope(verified.binding, verified.effectActionId, proof,
+                verified.acceptedDeploymentReceipt.environmentId)
+            && !isDeploymentNativeHttpPurpose({ binding: verified.binding, effectActionId: nativeEffect }, proof)) return refuseExternalActionExecutionRequest('deployment_preparation', proof);
     } else if (isDeploymentPreparationActionIdV1(verified.binding.actionId)
         || verified.binding.deploymentPreparationAdmission?.operation === 'create') {
         const authentication = { authenticationAuthority: verified.effectiveAuthority,
