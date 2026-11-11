@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { SvgXml } from 'react-native-svg';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createValidPluginBrandPngFixture, renderScreen } from '@/dev/testkit';
@@ -56,6 +57,17 @@ describe('ConnectedServiceMark', () => {
       />,
     );
     expect(screen.tree.findAllByType(HappierBrandMark)).toHaveLength(1);
+    expect(screen.tree.findAllByType(Icon)).toHaveLength(0);
+  });
+
+  it('draws the qualified service mark when no legacy alias is supplied', async () => {
+    bundledBrands.splice(0, bundledBrands.length);
+    const screen = await renderScreen(<ConnectedServiceMark
+      legacyServiceId={null}
+      service={{ pluginId: 'happier.agent.codex', localId: 'openai-codex' }}
+      size="row"
+    />);
+    expect(screen.tree.findAllByType(SvgXml)).toHaveLength(1);
     expect(screen.tree.findAllByType(Icon)).toHaveLength(0);
   });
 

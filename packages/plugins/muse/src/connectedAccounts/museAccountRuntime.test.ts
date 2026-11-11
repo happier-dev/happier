@@ -1,3 +1,5 @@
+import { resolveConnectedAccountAuthenticationModeMachineRequirement } from '@happier-dev/protocol/connect/pluginConnectedAccountAuthenticationV2';
+import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConnectedAccountCompletionObservation, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createConnectedAccountAuthenticationAttemptOwner, createConnectedAccountConfigurationOwner, createConnectedAccountCredentialSettlement, invokeConnectedAccountAuthenticationRuntime } from '@happier-dev/cli-common/connectedAccounts';
@@ -34,6 +36,21 @@ function deviceMode() {
 }
 
 describe('Muse account runtime', () => {
+  it('routes Muse Meta device grant through Machine only in browsers', () => {
+    const descriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.find(entry => entry.id === 'muse-account');
+    if (!descriptor) throw new Error('Account descriptor missing');
+    const projection = projectConnectedAccountDescriptorV1({
+      descriptor, serviceId: descriptor.id, pluginId: PLUGIN_MANIFEST.id,
+      provenance: 'first_party', sourceKind: 'builtin',
+      availability: { state: 'available', reason: 'resolved' }, diagnostics: [],
+    });
+    const mode = projection.authentication.modes.find(entry => entry.id === 'device');
+    expect(resolveConnectedAccountAuthenticationModeMachineRequirement(mode, true)).toBe('browser_unreachable');
+    expect(resolveConnectedAccountAuthenticationModeMachineRequirement(mode, false)).toBeNull();
+    const apiKey = projection.authentication.modes.find(entry => entry.id === 'api-key');
+    expect(resolveConnectedAccountAuthenticationModeMachineRequirement(apiKey, true)).toBeNull();
+  });
+
   it('declares an Account-side authentication artifact for app-runnable modes', () => {
     expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.find(entry => entry.id === MUSE_ACCOUNT_SERVICE.localId)?.authentication)
       .toMatchObject({ account: { artifactId: 'connected-account-authentication', exportName: 'activate' } });

@@ -1,5 +1,6 @@
 import { presentConnectedServiceQuotaFreshness } from '@/sync/domains/connectedServices/presentConnectedServiceQuotaFreshness';
 import * as React from 'react';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readBuiltInLegacyConnectedServiceIdForQualifiedService } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { useSetting } from '@/sync/domains/state/storage';
 import { connectedServiceProfileKey, resolveQualifiedConnectedAccountProfilePreference } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
@@ -84,6 +85,7 @@ export type ConnectedAccountIndexEntry = Readonly<{
     signedOut: Readonly<{ reason: string; onSignInAgain: ((anchor?: PopoverAnchor) => void) | null }> | null;
     /** While a set-up panel is open elsewhere on the page, a row's fix steps down to secondary. */
     fixProminence?: 'primary' | 'secondary';
+    service?: PluginContributionIdentityV1;
     legacyServiceId: ConnectedServiceId | null;
     /** The service's owning plugin: its packaged brand is the row's mark when no built-in mark exists (as in the rail). */
     pluginId?: string | null;
@@ -336,7 +338,7 @@ export const ConnectedAccountIndexRowView = React.memo(function ConnectedAccount
             testID={props.testID}
             title={props.title}
             subtitle={fact || undefined}
-            icon={<ConnectedServiceMark legacyServiceId={props.legacyServiceId} pluginId={props.pluginId} size="inline" />}
+            icon={<ConnectedServiceMark service={props.service} legacyServiceId={props.legacyServiceId} pluginId={props.pluginId} size="inline" />}
             rightElement={trailing}
             rightElementOutsidePressable={Boolean(props.signedOut) || facts.usage.kind === 'error'}
             keepChevronWithRightElement={!props.signedOut}

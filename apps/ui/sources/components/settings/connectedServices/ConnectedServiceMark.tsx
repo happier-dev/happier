@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { SvgXml } from 'react-native-svg';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -29,15 +30,15 @@ const MARK_SIZES = {
  */
 export const ConnectedServiceMark = React.memo(function ConnectedServiceMark(props: Readonly<{
     legacyServiceId: string | null | undefined;
+    /** Exact service identity selects its descriptor-owned mark without a legacy alias. */
+    service?: PluginContributionIdentityV1 | null;
     /** The service's owning plugin: its packaged brand is the mark when no built-in mark exists. */
     pluginId?: string | null;
     size?: keyof typeof MARK_SIZES;
 }>) {
     const { theme } = useUnistyles();
-    // Brand aliases are a visual affordance only; only a generated legacy adapter can opt a qualified
-    // owner into a built-in mark.
-    const brandXml = resolveConnectedServiceBrandIconXml(props.legacyServiceId ?? undefined, theme);
-    const pluginBrand = useBundledPluginBrandPresentation(brandXml ? null : props.pluginId);
+    const brandXml = resolveConnectedServiceBrandIconXml(props.service ?? props.legacyServiceId, theme);
+    const pluginBrand = useBundledPluginBrandPresentation(brandXml ? null : props.service?.pluginId ?? props.pluginId);
     const size = MARK_SIZES[props.size ?? 'row'];
     const glyph = brandXml
         ? <SvgXml xml={brandXml} width={size.logo} height={size.logo} />

@@ -43,6 +43,12 @@ describe('resolveConnectedServiceBrandIconXml', () => {
         expect(resolveConnectedServiceBrandIconXml('Claude-Subscription', theme)).not.toBeNull();
     });
 
+    it('resolves qualified service marks without requiring a legacy alias', () => {
+        expect(resolveConnectedServiceBrandIconXml({ pluginId: 'happier.agent.codex', localId: 'openai-codex' }, theme))
+            .toBe(resolveConnectedServiceBrandIconXml('openai-codex', theme));
+        expect(resolveConnectedServiceBrandIconXml({ pluginId: 'happier.example.unknown', localId: 'openai-codex' }, theme)).toBeNull();
+    });
+
     it('returns null for unknown or empty service ids', () => {
         expect(resolveConnectedServiceBrandIconXml('not-a-service', theme)).toBeNull();
         expect(resolveConnectedServiceBrandIconXml('', theme)).toBeNull();

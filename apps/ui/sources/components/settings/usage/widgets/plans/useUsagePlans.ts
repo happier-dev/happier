@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { UsageWidgetBodyModel } from '../../useUsageWidgetResource';
 import { useShallow } from 'zustand/react/shallow';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
@@ -37,6 +38,7 @@ export type UsagePlanAccountName = Readonly<{
   /** The plan and account identity, quiet beside the title. */
   qualifier: string;
   serviceLabel: string;
+  service?: PluginContributionIdentityV1;
   legacyServiceId: ConnectedServiceId | null;
 }>;
 
@@ -139,6 +141,7 @@ export function useUsagePlans(slice: UsageQueryResultSlice, refresh: UsageWidget
           .filter(Boolean)
           .join(' · '),
         serviceLabel,
+        service: account.service,
         legacyServiceId: summary?.legacyServiceId ?? serviceEntryOf(account)?.legacyServiceId ?? null,
       };
     },

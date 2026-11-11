@@ -74,7 +74,13 @@ export const cursorSubscriptionMode = {
       const state = object(JSON.parse(await context.attemptCredentials.get(POLL_KEY, { signal }) ?? 'null'));
       const url = new URL(`${ORIGIN}/auth/poll`);
       url.search = new URLSearchParams({ uuid: required(state.uuid), verifier: required(state.verifier) }).toString();
-      const response = await context.services.http.request({ url: url.href, method: 'GET', redirect: 'error' }, { signal });
+      let response;
+      try {
+        response = await context.services.http.request({ url: url.href, method: 'GET', redirect: 'error' }, { signal });
+      } catch (error) {
+        if (signal.aborted) throw error;
+        return { status: 'unavailable', diagnostic: cursorDiagnostic('cursor_poll_transport_unavailable') };
+      }
       if (response.status === 404) return { status: 'pending', retryAfterMs: POLL_INTERVAL_MS };
       if ([401, 403, 410].includes(response.status)) return { status: 'rejected', diagnostic: cursorDiagnostic(`cursor_poll_${response.status}`) };
       if (response.status !== 200) return { status: 'unavailable', diagnostic: cursorDiagnostic(`cursor_poll_http_${response.status}`) };

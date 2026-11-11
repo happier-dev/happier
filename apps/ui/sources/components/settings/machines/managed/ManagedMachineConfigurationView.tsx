@@ -1092,7 +1092,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 subtitle={purposeAccountTitle(purpose.purpose)}
                 // It opens the Connect sheet: the service's own mark, or Connect's plug while the service is not named.
                 icon={purposeService(purpose.purpose) ? <ConnectedServiceMark legacyServiceId={null}
-                    pluginId={purposeService(purpose.purpose)!.pluginId} size="card" /> : <Icon name="plug" />}
+                    service={purposeService(purpose.purpose)!} size="card" /> : <Icon name="plug" />}
                 disabled={!catalogPlacementAvailable || !catalogProvisioner || busy || !!preset && !props.presetOnly}
                 onPress={event => { void openAccountSetup(purpose.purpose, resolvePressTriggerAnchor(event)); }} />)}
         </ItemGroup> : null}

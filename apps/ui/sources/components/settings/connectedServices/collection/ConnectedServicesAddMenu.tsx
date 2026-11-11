@@ -201,7 +201,7 @@ export const ConnectedServicesAddMenu = React.memo(
             ) : (
               <ConnectedServiceMark
                 legacyServiceId={entry?.legacyServiceId ?? null}
-                pluginId={choice.kind === 'account' ? choice.service.pluginId : null}
+                service={choice.kind === 'account' ? choice.service : null}
                 size="inline"
               />
             );

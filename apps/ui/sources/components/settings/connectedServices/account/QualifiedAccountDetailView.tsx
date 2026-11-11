@@ -314,7 +314,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                 title={presentation.primaryLabel}
                 alwaysShowTitle
                 compactPresentation="centered"
-                leading={<ConnectedServiceMark legacyServiceId={props.legacyServiceId ?? null} size="page" />}
+                leading={<ConnectedServiceMark service={props.account.service} legacyServiceId={props.legacyServiceId ?? null} size="page" />}
                 titleAccessory={rename ? (
                     <View ref={renameAnchorRef} collapsable={false}>
                         {/* Renaming is rare: the pencil beside the name, on a phone too, never the bar's primary. */}

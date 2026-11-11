@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { presentConnectedAccountSignedOut } from '@/components/settings/connectedServices/account/connectedAccountCredentialStatusLabel';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -106,7 +107,7 @@ const HubUsageCard = React.memo(function HubUsageCard(props: Readonly<{
     return (
         <SurfaceCard testID={`hub-usage.${entry.key}`} padding="sm" fill>
             <View style={stylesheet.identity}>
-                <ConnectedServiceMark legacyServiceId={entry.legacyServiceId ?? null} size="card" />
+                <ConnectedServiceMark service={parseQualifiedPluginContributionKey(entry.serviceGroupKey)} legacyServiceId={entry.legacyServiceId ?? null} size="card" />
                 <View style={stylesheet.identityText}>
                     <ConnectedAccountIdentityText value={identity.title} style={stylesheet.service} numberOfLines={1} />
                     {identity.qualifier ? <ConnectedAccountIdentityText value={identity.qualifier} style={stylesheet.qualifier} numberOfLines={1} /> : null}
@@ -161,7 +162,7 @@ const HubSignedOutCard = React.memo(function HubSignedOutCard(props: Readonly<{
     return (
         <SurfaceCard testID={`hub-usage.${account.key}:signed-out`} padding="sm" fill>
             <View style={stylesheet.identity}>
-                <ConnectedServiceMark legacyServiceId={account.legacyServiceId ?? null} size="card" />
+                <ConnectedServiceMark service={account.ref.service} legacyServiceId={account.legacyServiceId ?? null} size="card" />
                 <View style={stylesheet.identityText}>
                     <ConnectedAccountIdentityText value={identity.title} style={stylesheet.service} numberOfLines={1} />
                     {identity.qualifier ? <ConnectedAccountIdentityText value={identity.qualifier} style={stylesheet.qualifier} numberOfLines={1} /> : null}

@@ -219,7 +219,7 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
                 testID={`connected-services-rail:service:${draftOnlyService.serviceKey}`}
                 surface="page"
                 title={draftOnlyService.label}
-                icon={<ConnectedServiceMark legacyServiceId={draftOnlyService.entry?.legacyServiceId ?? null} pluginId={draftOnlyService.service.pluginId} size="column" />}
+                icon={<ConnectedServiceMark legacyServiceId={draftOnlyService.entry?.legacyServiceId ?? null} service={draftOnlyService.service} size="column" />}
                 disclosure={{ expanded: true }}
                 count={null}
                 selected={false}
@@ -291,7 +291,7 @@ export const ConnectedServicesRailView = React.memo(function ConnectedServicesRa
                 testID={`connected-services-rail:service:${sheet.serviceKey}`}
                 surface="page"
                 title={sheet.label}
-                icon={<ConnectedServiceMark legacyServiceId={sheet.legacyServiceId} pluginId={sheet.service.pluginId} size="column" />}
+                icon={<ConnectedServiceMark legacyServiceId={sheet.legacyServiceId} service={sheet.service} size="column" />}
                 disclosure={expandable || drafting ? { expanded: open } : null}
                 status={rollup}
                 count={sheet.accounts.length > 0 ? sheet.accounts.length : null}
@@ -669,7 +669,7 @@ function RailAccountRowView(props: Readonly<{
             child
             title={props.title}
             subtitle={subtitle || undefined}
-            icon={<ConnectedServiceMark legacyServiceId={props.sheet.legacyServiceId} pluginId={props.sheet.service.pluginId} size="column" />}
+            icon={<ConnectedServiceMark legacyServiceId={props.sheet.legacyServiceId} service={props.sheet.service} size="column" />}
             accessibilityLabel={props.accessibilityLabel}
             status={props.status}
             selected={props.selected}

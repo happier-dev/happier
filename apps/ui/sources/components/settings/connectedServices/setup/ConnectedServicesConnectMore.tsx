@@ -172,7 +172,7 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
                 <SetupBlockTile
                     testID={`connected-services-connect-more:${entry.serviceKey}`}
                     layout={phone ? 'row' : 'wide'}
-                    glyph={<ConnectedServiceMark legacyServiceId={entry.legacyServiceId} pluginId={entry.service.pluginId} size="inline" />}
+                    glyph={<ConnectedServiceMark legacyServiceId={entry.legacyServiceId} service={entry.service} size="inline" />}
                     title={entry.label}
                     subtitle={connected
                         ? [agents, t('connectedServicesSettings.setupConnectedCount', { count: entry.connectedCount })].filter(Boolean).join(' · ')
@@ -219,7 +219,7 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
                             <Text style={styles.moreTitle}>{t('connectedServicesSetup.firstRunMore')}</Text>
                             <View style={styles.marks}>
                                 {marked.map((entry) => (
-                                    <ConnectedServiceMark key={entry.serviceKey} legacyServiceId={entry.legacyServiceId} pluginId={entry.service.pluginId} size="inline" />
+                                    <ConnectedServiceMark key={entry.serviceKey} legacyServiceId={entry.legacyServiceId} service={entry.service} size="inline" />
                                 ))}
                             </View>
                             <View style={styles.grow} />
@@ -240,7 +240,7 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
                     glyph={(
                         <View style={styles.marks}>
                             {marked.map((entry) => (
-                                <ConnectedServiceMark key={entry.serviceKey} legacyServiceId={entry.legacyServiceId} pluginId={entry.service.pluginId} size="inline" />
+                                <ConnectedServiceMark key={entry.serviceKey} legacyServiceId={entry.legacyServiceId} service={entry.service} size="inline" />
                             ))}
                         </View>
                     )}
@@ -283,7 +283,7 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
                     icon={(
                         <View style={styles.firstRunMarks}>
                             {catalog.filter(entry => getConnectedServiceSetupPresentation(entry.service, entry.entry)?.firstRun === true).slice(0, 3).map((entry) => (
-                                <ConnectedServiceMark key={entry.serviceKey} legacyServiceId={entry.legacyServiceId} pluginId={entry.service.pluginId} size="page" />
+                                <ConnectedServiceMark key={entry.serviceKey} legacyServiceId={entry.legacyServiceId} service={entry.service} size="page" />
                             ))}
                         </View>
                     )}

@@ -352,7 +352,7 @@ const ConnectedServicesSettingsBody = React.memo(function ConnectedServicesSetti
           description={t('connectedServicesCollection.sharedWithYouDescription')}
           surface="none"
           renderMark={(resource) => resource.sourcePresentation?.kind === 'connected_service' ? (
-            <ConnectedServiceMark legacyServiceId={readBuiltInLegacyConnectedServiceIdForQualifiedService(resource.sourcePresentation.service)} size="inline" />
+            <ConnectedServiceMark service={resource.sourcePresentation.service} legacyServiceId={readBuiltInLegacyConnectedServiceIdForQualifiedService(resource.sourcePresentation.service)} size="inline" />
           ) : null}
           sourceKind="connected_service"
           catalog={teamCredentialCatalog}

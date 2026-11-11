@@ -60,6 +60,16 @@ describe('Cursor subscription authentication', () => {
     expect(await f.mode.poll(f.context)).toMatchObject({ status: 'rejected' });
     expect(f.values.has('accessToken')).toBe(false);
   });
+  it('reports transport failure as unavailable and retains the attempt for recovery', async () => {
+    const f = fixture();
+    await f.mode.begin(f.context);
+    const context = { ...f.context, services: { http: createPluginHttpFixture({
+      async request() { throw new TypeError('Failed to fetch'); },
+    }) } };
+    expect(await f.mode.poll(context)).toMatchObject({ status: 'unavailable', diagnostic: { code: 'cursor_poll_transport_unavailable' } });
+    expect(f.values.has('accessToken')).toBe(false);
+    expect(await f.mode.poll(f.context)).toMatchObject({ status: 'pending' });
+  });
   it('rejects malformed successful responses', async () => {
     const f = fixture(200, { accessToken: token });
     await f.mode.begin(f.context);

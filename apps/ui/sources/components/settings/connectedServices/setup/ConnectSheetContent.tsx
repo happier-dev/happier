@@ -269,7 +269,7 @@ function ConnectAccountSheetLeaf(
     leading: selectedEntry ? (
       <ConnectedServiceMark
         legacyServiceId={selectedEntry.legacyServiceId}
-        pluginId={selectedEntry.service.pluginId}
+        service={selectedEntry.service}
         size="title"
       />
     ) : (
@@ -371,7 +371,7 @@ function ConnectAccountSheetLeaf(
                   left={
                     <ConnectedServiceMark
                       legacyServiceId={selectedEntry?.legacyServiceId ?? null}
-                      pluginId={selectedEntry?.service.pluginId ?? null}
+                      service={selectedEntry?.service}
                       size="row"
                     />
                   }

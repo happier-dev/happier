@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -286,6 +287,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
         <UsageAccountGroup
             key={entry.account.key}
             serviceLabel={entry.provider.serviceLabel}
+            service={parseQualifiedPluginContributionKey(entry.provider.key)}
             legacyServiceId={entry.provider.legacyServiceId}
             account={entry.account}
             facts={facts.accounts?.[entry.account.key] ?? null}
@@ -438,6 +440,7 @@ function accountHeaderLine(serviceLabel: string, name: ConnectedAccountNamePrese
 
 /** An account's head: the bare service mark, "Service · Name", the plan, and the email on the right. */
 function AccountHeader(props: Readonly<{
+    service?: PluginContributionIdentityV1 | null;
     legacyServiceId: string | null;
     title: string;
     planLabel: string | null;
@@ -445,7 +448,7 @@ function AccountHeader(props: Readonly<{
 }>) {
     return (
         <View style={styles.accountHeader}>
-            <ConnectedServiceMark legacyServiceId={props.legacyServiceId as ConnectedServiceId | null} size="inline" />
+            <ConnectedServiceMark service={props.service} legacyServiceId={props.legacyServiceId as ConnectedServiceId | null} size="inline" />
             <ConnectedAccountIdentityText value={props.title} style={styles.accountLabel} numberOfLines={1} />
             {props.planLabel ? <Text style={styles.plan} numberOfLines={1}>{props.planLabel}</Text> : null}
             {props.email ? <ConnectedAccountIdentityText value={props.email} style={styles.email} numberOfLines={1} /> : null}
@@ -457,6 +460,7 @@ const noop = () => {};
 
 const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<{
     serviceLabel: string;
+    service?: PluginContributionIdentityV1 | null;
     legacyServiceId: string | null;
     account: UsageAccountRow;
     facts: UsagePopoverAccountFacts | null;
@@ -473,6 +477,7 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
     return (
         <View testID={`sidebar-usage-account-${account.key}`} style={styles.group}>
             <AccountHeader
+                service={props.service}
                 legacyServiceId={props.legacyServiceId}
                 title={identity.title}
                 planLabel={account.planLabel}
@@ -557,6 +562,7 @@ const SignedOutAccount = React.memo(function SignedOutAccount(props: Readonly<{
     return (
         <View testID={`sidebar-usage-signed-out-${account.key}`} style={styles.group}>
             <AccountHeader
+                service={account.ref.service}
                 legacyServiceId={account.legacyServiceId}
                 title={identity.title}
                 planLabel={null}

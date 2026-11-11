@@ -26,7 +26,7 @@ export const NewPoolMenu = React.memo(function NewPoolMenu(props: Readonly<{
         id: services[index]!.serviceKey,
         title: t('connectedServicesCollection.newPoolDraft', { service: choice.title }),
         subtitle: choice.purpose ?? undefined,
-        icon: <ConnectedServiceMark legacyServiceId={services[index]!.legacyServiceId} pluginId={services[index]!.service.pluginId} size="inline" />,
+        icon: <ConnectedServiceMark legacyServiceId={services[index]!.legacyServiceId} service={services[index]!.service} size="inline" />,
         rightElement: choice.addedCount ? <AddChoiceCount count={choice.addedCount} /> : undefined,
     })), [services]);
     if (services.length === 0) return null;

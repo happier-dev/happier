@@ -21,7 +21,8 @@ export const museAccountDescriptor = {
     account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
     defaultModeId: 'device',
     modes: [
-      { id: 'device', kind: 'oauthDeviceCode', title: 'Sign in with Meta', scopes: [], outcomeReconciliation: 'none' },
+      // Meta's device endpoint rejects the browser preflight; native apps keep Account execution.
+      { id: 'device', kind: 'oauthDeviceCode', title: 'Sign in with Meta', scopes: [], outcomeReconciliation: 'none', browserReachability: 'unreachable' },
       { id: 'api-key', kind: 'manual', apiKey: true, title: 'API key', outcomeReconciliation: 'none',
         credentialFieldKeys: { apiKey: 'inferenceKey' },
         fields: [{ id: 'apiKey', title: 'Meta API key', schema: { type: 'string', minLength: 1 }, secret: true }] },

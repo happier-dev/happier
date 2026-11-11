@@ -57,7 +57,10 @@ import { t, tLoose } from '@/text';
 import type { AgentUiPoolSetting } from '@/agents/registry/registryUiBehavior';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { formatResetAtTime } from '@/utils/time/formatResetAtTime';
-import { resolveConnectedServiceQuotaMeterLimitIdentity } from '@happier-dev/protocol/connect/connectedServiceQuotaLimitSelection';
+import {
+    isConnectedServiceQuotaCreditMeter,
+    resolveConnectedServiceQuotaMeterLimitIdentity,
+} from '@happier-dev/protocol/connect/connectedServiceQuotaLimitSelection';
 import type { ConnectedServiceAuthGroupPolicyV2, ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { QualifiedConnectedAccountQuotaSnapshotV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -208,6 +211,8 @@ export function buildPoolQuotaLimitCandidates(input: Readonly<{
     }>();
     for (const [snapshotIndex, snapshot] of input.snapshots.entries()) {
         for (const meter of snapshot.meters) {
+            // Credits are account-wide spend that every selection keeps, not a selectable allowance.
+            if (isConnectedServiceQuotaCreditMeter(meter)) continue;
             const id = resolveConnectedServiceQuotaMeterLimitIdentity(meter);
             const evidence = evidenceById.get(id) ?? {
                 labels: new Set<string>(),
@@ -659,7 +664,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                 // the header's action. Only a pool that needs you speaks with its own card below.
                 description={memberCount > 0 && !waiting ? nowDetail : t('connectedServicesPool.fallbackDescription')}
                 details={<View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 }}>
-                    <ConnectedServiceMark legacyServiceId={props.legacyServiceId} size="inline" />
+                    <ConnectedServiceMark service={props.group.ref.service} legacyServiceId={props.legacyServiceId} size="inline" />
                     <Text style={styles.headerMeta}>{[
                         compact || memberCount === 0
                             ? props.serviceLabel

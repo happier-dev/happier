@@ -176,6 +176,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
             } : null,
             fixProminence: props.settled ? 'secondary' : props.fixProminence,
             legacyServiceId: sheet.legacyServiceId,
+            service: sheet.service,
             pluginId: sheet.service.pluginId,
             accountId: account.accountId,
             // The default menu lives on cards and on the account; a list row keeps one trailing thing (R138).
@@ -270,7 +271,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
                 testID={`connected-services-index:${sheet.serviceKey}:${sheet.supportDetails ? 'support-details' : 'state'}`}
                 title={sheet.label}
                 subtitle={presentSheetStateLine(sheet) ?? t('settingsPlugins.diagnosticsTitle')}
-                icon={<ConnectedServiceMark legacyServiceId={sheet.legacyServiceId} pluginId={sheet.service.pluginId} size="inline" />}
+                icon={<ConnectedServiceMark legacyServiceId={sheet.legacyServiceId} service={sheet.service} size="inline" />}
                 mode={sheet.supportDetails ? undefined : 'info'}
                 onPress={sheet.supportDetails ? () => openDiagnostics(sheet) : undefined}
             />
@@ -313,7 +314,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
                 <ItemGroup
                     title={sheet.label}
                     description={summary}
-                    titleLeading={<ConnectedServiceMark legacyServiceId={sheet.legacyServiceId} pluginId={sheet.service.pluginId} size="inline" />}
+                    titleLeading={<ConnectedServiceMark legacyServiceId={sheet.legacyServiceId} service={sheet.service} size="inline" />}
                     titleAccessory={<Text style={styles.gridLabelCount}>{String(sheet.accounts.length)}</Text>}
                     action={addAccountAction(sheet)}
                     surface="none"

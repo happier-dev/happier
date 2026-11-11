@@ -601,7 +601,7 @@ const GatewayFamilyMark = React.memo(function GatewayFamilyMark(props: Readonly<
   return (
     <ConnectedServiceMark
       legacyServiceId={getQualifiedConnectedServiceRegistryEntry(props.service)?.legacyServiceId ?? null}
-      pluginId={props.service.pluginId}
+      service={props.service}
       size="inline"
     />
   );

@@ -200,7 +200,7 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                 testID="team-credential-header"
                 alwaysShowTitle
                 title={named?.displayName ?? t('teams.credentials.title')}
-                leading={named ? <ConnectedServiceMark legacyServiceId={resourceConnectedServiceMarkId(named, registry)} size="page" /> : undefined}
+                leading={named ? <ConnectedServiceMark service={named.sourcePresentation?.kind === 'connected_service' ? named.sourcePresentation.service : null} legacyServiceId={resourceConnectedServiceMarkId(named, registry)} size="page" /> : undefined}
                 description={named ? (sharedBy ?? t('teams.pages.credentialDetail')) : t('teams.pages.credentialDetail')}
             />
             {props.conditionBanners}

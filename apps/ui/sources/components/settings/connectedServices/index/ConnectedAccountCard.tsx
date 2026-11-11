@@ -46,7 +46,7 @@ export const ConnectedAccountCardView = React.memo(function ConnectedAccountCard
             // An account card is as tall as its content: it reserves no Home widget rows (owner 11-01).
             rows={0}
             // The bare mark, so its ink stands on the card's content edge with the body and the foot beneath it.
-            mark={<ConnectedServiceMark legacyServiceId={props.legacyServiceMarkId} pluginId={props.pluginId} size="column" />}
+            mark={<ConnectedServiceMark service={props.service} legacyServiceId={props.legacyServiceMarkId} pluginId={props.pluginId} size="column" />}
             title={<ConnectedAccountIdentityText value={props.title} style={styles.title} numberOfLines={1} />}
             source={identity ? <ConnectedAccountIdentityText value={identity} style={styles.subtitle} numberOfLines={1} /> : undefined}
             sourcePlacement="below"

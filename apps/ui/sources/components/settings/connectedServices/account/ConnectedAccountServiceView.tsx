@@ -1440,7 +1440,7 @@ const ConnectedAccountServiceController = React.memo(
             testID="connected-account-service-header"
             title={headerTitle}
             alwaysShowTitle
-            leading={<ConnectedServiceMark legacyServiceId={legacyServiceId} pluginId={service.pluginId} size="page" />}
+            leading={<ConnectedServiceMark legacyServiceId={legacyServiceId} service={service} size="page" />}
             description={t('connectedServicesSettings.servicePurpose', { service: headerTitle })}
             actions={machineChip ? (
                 <MachineAdministrationTargetSelector

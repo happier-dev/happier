@@ -172,7 +172,7 @@ function ConnectedServiceSetupGroup(props: Readonly<{
                     style={({ pressed }) => [styles.tools, pressed ? styles.toolsPressed : null]}
                 >
                     <Text style={styles.toolsTitle}>{props.title}</Text>
-                    <View style={styles.toolMarks}>{props.entries.slice(0, 3).map((entry) => <ConnectedServiceMark key={entry.serviceKey} legacyServiceId={entry.legacyServiceId} pluginId={entry.service.pluginId} size="inline" />)}</View>
+                    <View style={styles.toolMarks}>{props.entries.slice(0, 3).map((entry) => <ConnectedServiceMark key={entry.serviceKey} legacyServiceId={entry.legacyServiceId} service={entry.service} size="inline" />)}</View>
                     <Text style={styles.toolsNames} numberOfLines={1}>
                         {formatAgentNames(props.entries.map((entry) => entry.label))}
                     </Text>
@@ -358,7 +358,7 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
             ) : null}
             <View style={styles.lead}>
                 {selected
-                    ? <ConnectedServiceMark legacyServiceId={selected.legacyServiceId} pluginId={selected.service.pluginId} size="row" />
+                    ? <ConnectedServiceMark legacyServiceId={selected.legacyServiceId} service={selected.service} size="row" />
                     : <Icon name="plug" size={18} color={theme.colors.text.secondary} />}
             </View>
             <View style={styles.headText}>
@@ -429,7 +429,7 @@ export const ConnectedServiceSetupPanel = React.memo(function ConnectedServiceSe
         // The machine the sign-in runs on is context, not a quiet action: phones keep the chip on the page.
         <PageHeader title={title} description={purpose} alwaysShowTitle actionsPlacement="page"
             cancelAction={props.targetLocked ? { title: t('common.cancel'), onPress: onClose, testID: 'connected-service-setup:close' } : undefined}
-            leading={selected ? <ConnectedServiceMark legacyServiceId={selected.legacyServiceId} pluginId={selected.service.pluginId} size="page" /> : <Icon name="plug" size={24} />}
+            leading={selected ? <ConnectedServiceMark legacyServiceId={selected.legacyServiceId} service={selected.service} size="page" /> : <Icon name="plug" size={24} />}
             // An Account-saved key needs no machine, so only a machine-scoped method names one.
             actions={showTargetSelector ? <MachineAdministrationTargetSelector selection={targetSelection} resolveCandidateAvailability={machineAvailability} disabled={props.targetLocked} presentation="chip" testIDPrefix="connected-service-setup-target" /> : undefined} />
     );

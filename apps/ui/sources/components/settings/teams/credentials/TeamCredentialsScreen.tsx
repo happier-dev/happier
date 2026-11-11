@@ -54,7 +54,7 @@ const CredentialRow = React.memo(function CredentialRow(props: Readonly<{
         <Item
             testID={`team-credentials-row:${resource.id}`}
             title={resource.displayName}
-            icon={<ConnectedServiceMark legacyServiceId={resourceConnectedServiceMarkId(resource, registry)} size="row" />}
+            icon={<ConnectedServiceMark service={resource.sourcePresentation?.kind === 'connected_service' ? resource.sourcePresentation.service : null} legacyServiceId={resourceConnectedServiceMarkId(resource, registry)} size="row" />}
             subtitle={summaryLines.join('\n')}
             subtitleLines={0}
             accessibilityLabel={resourceAccessibilityLabel(resource)}

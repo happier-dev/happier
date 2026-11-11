@@ -54,7 +54,8 @@ export const CURSOR_PLUGIN = definePlugin({
           account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
           defaultModeId: 'subscription',
           modes: [{
-            id: 'subscription', kind: 'oauthDeviceCode', title: 'Sign in with Cursor', scopes: [], outcomeReconciliation: 'none',
+            // api2.cursor.sh/auth/poll omits browser CORS permission; native apps keep Account execution.
+            id: 'subscription', kind: 'oauthDeviceCode', title: 'Sign in with Cursor', scopes: [], outcomeReconciliation: 'none', browserReachability: 'unreachable',
           }, {
             id: 'api-key', kind: 'manual', apiKey: true, title: 'API key',
             setup: {

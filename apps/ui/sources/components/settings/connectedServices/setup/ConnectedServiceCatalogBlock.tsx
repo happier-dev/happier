@@ -87,7 +87,7 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
                     highlighted={entry.canAdd && (pressed || hovered === true)}
                 >
                     <View style={styles.top}>
-                        <ConnectedServiceMark legacyServiceId={entry.legacyServiceId} pluginId={entry.service.pluginId} size="card" />
+                        <ConnectedServiceMark legacyServiceId={entry.legacyServiceId} service={entry.service} size="card" />
                         {count ? <Text style={styles.count}>{count}</Text> : null}
                     </View>
                     <View>
@@ -118,7 +118,7 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
                     highlighted={entry.canAdd && (pressed || hovered === true)}
                 >
                     <View style={styles.rowIdentity}>
-                        <ConnectedServiceMark legacyServiceId={entry.legacyServiceId} pluginId={entry.service.pluginId} size="card" />
+                        <ConnectedServiceMark legacyServiceId={entry.legacyServiceId} service={entry.service} size="card" />
                         {count ? <Text style={styles.count}>{count}</Text> : null}
                     </View>
                     <View style={styles.rowText}>

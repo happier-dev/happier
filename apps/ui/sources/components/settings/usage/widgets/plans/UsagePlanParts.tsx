@@ -293,6 +293,7 @@ export function UsagePlanIdentity(
     <View testID={props.testID} style={styles.identity}>
       <View style={styles.identityMark}>
         <ConnectedServiceMark
+          service={props.name.service}
           legacyServiceId={props.name.legacyServiceId}
           size="inline"
         />
