@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { useWorkspaceFileOpener, type WorkspaceFileOpenOptions } from '@/components/workspaces/files/useWorkspaceFileOpener';
+import { useOpenResource } from '@/utils/url/openResource';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { readPressFocusReturnTarget } from '@/keyboard/focusReturn';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -26,6 +27,7 @@ export function useTranscriptFileLinks(params: Readonly<{
     const { open, canOpen } = useWorkspaceFileOpener();
     const enabled = params.canOpenFiles && source?.navigate != null && canOpen;
     const serverId = params.serverId ?? source?.serverId;
+    const { openResourceUrl } = useOpenResource({ sessionId: params.sessionId, serverId: serverId ?? undefined, chatLink: true });
     const sessionAddress = React.useMemo(() => normalizeSessionAddress(serverId, params.sessionId), [serverId, params.sessionId]);
     const openPath = React.useCallback((path: string, options?: WorkspaceFileOpenOptions & Readonly<{ event?: unknown }>): boolean => {
         if (!enabled) return false;
@@ -73,8 +75,10 @@ export function useTranscriptFileLinks(params: Readonly<{
     }, [enabled, open, params.routeMessageId, params.seq, serverId, params.sessionId, params.workspacePath, sessionAddress]);
     const onMarkdownLinkPress = React.useCallback((url: string) => {
         const resolved = resolveWorkspaceFileReference({ url, workspacePath: params.workspacePath, allowOutsideWorkspace: true });
-        return resolved ? openPath(resolved.filePath, resolved.anchor ? { anchor: resolved.anchor, anchorSource: 'file' } : undefined) : false;
-    }, [openPath, params.workspacePath]);
+        if (resolved) return openPath(resolved.filePath, resolved.anchor ? { anchor: resolved.anchor, anchorSource: 'file' } : undefined);
+        fireAndForget(openResourceUrl(url), { tag: 'useTranscriptFileLinks.openResourceUrl' });
+        return true;
+    }, [openPath, openResourceUrl, params.workspacePath]);
     const jumpToAnchor = React.useCallback<NonNullable<StructuredMessageRendererParams['onJumpToAnchor']>>((target) => {
         openPath(target.filePath, { anchor: target.anchor, anchorSource: target.source, view: target.source === 'diff' ? 'changes' : 'view' });
     }, [openPath]);

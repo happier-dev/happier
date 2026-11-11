@@ -8,6 +8,11 @@ import { createTestSessionTranscriptSource, wrapWithSessionTranscriptSource } fr
 import { createSessionFilesViewFixture, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from '../files/views/sessionFilesViewTestkit';
 import type { WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 
+const openResourceUrl = vi.hoisted(() => vi.fn(async (_url: string) => true));
+vi.mock('@/utils/url/openResource', () => ({
+    useOpenResource: () => ({ openResourceUrl }),
+}));
+
 installSessionFilesViewBoundaries({ platformOS: 'web' });
 await prepareSessionFilesViewTestkit();
 const { WorkspaceProvider } = await import('@/components/appShell/workspace/WorkspaceProvider');
@@ -51,6 +56,15 @@ async function mountLinks(workspacePath = '/work/repo', canOpenFiles = true, mac
 }
 
 describe('transcript file links through workspace navigation', () => {
+    it('routes external transcript links through the canonical chat-link opener', async () => {
+        const mounted = await mountLinks();
+        openResourceUrl.mockClear();
+        await act(async () => {
+            expect(mounted.links.onMarkdownLinkPress('https://example.net/')).toBe(true);
+        });
+        expect(openResourceUrl).toHaveBeenCalledWith('https://example.net/');
+    });
+
     it.each([
         { link: '/work/repo-task/.scratch/report.md#L5-L8', root: '/work/repo-task/.scratch', path: 'report.md', workspace: '/work/repo' },
         { link: '../artifacts/report.md', root: '/work/artifacts', path: 'report.md', workspace: '/work/repo' },
