@@ -25,6 +25,31 @@ describe('Pi Agent runtime', () => {
     vi.useRealTimers();
   });
 
+  it('preserves a native configuration refusal through Session opening', async () => {
+    const boundary = hostBoundaries();
+    const write = boundary.write.getMockImplementation()!;
+    boundary.write.mockImplementation(async record => {
+      if (record && typeof record === 'object' && !Array.isArray(record)
+        && record.type === 'set_model' && typeof record.id === 'string') {
+        await boundary.emit({ type: 'response', id: record.id, command: 'set_model', success: false,
+          error: 'Model not found: github-copilot/fixture-model; Authorization: Bearer private-fixture-token' });
+      } else await write(record);
+    });
+    const failure: unknown = await createPiAgentRuntime().sessions.open({
+      kind: 'create', sessionId: 'pi-config-refusal', cwd: '/workspace',
+      configuration: {
+        mode: { value: null, updatedAtMs: 0 },
+        model: { value: 'github-copilot/fixture-model', updatedAtMs: 0 },
+        permissionIntent: { value: null, updatedAtMs: 0 }, options: {},
+      },
+    }, boundary.context).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'agent_startup_failed', retryable: false,
+      details: { failureCause: { code: 'agent_startup_failed', phase: 'client_start',
+        providerErrorMessage: expect.stringContaining('Model not found: github-copilot/fixture-model') } } });
+    expect(JSON.stringify(failure)).not.toContain('private-fixture-token');
+    expect(boundary.disposeProcess).toHaveBeenCalled();
+  });
+
   it.each([undefined, null, 'default'])('refuses an unqualified ChatGPT default before native startup (%s)', async (model) => {
     const boundary = hostBoundaries();
     boundary.getBinding.mockImplementation(async (purpose) => purpose === PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID ? {

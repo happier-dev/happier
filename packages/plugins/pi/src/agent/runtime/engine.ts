@@ -8,7 +8,7 @@ import {
   type AgentSessionRuntimeContext,
   createExecutionRunHostBackendFromConversationRuntime,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError, redactBugReportSensitiveText, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import { SESSION_CAPABILITY_NOTICE_SIDECAR_KEY } from '@happier-dev/plugin-sdk/sessions';
 
 import {
@@ -54,6 +54,22 @@ function resolvePiResumeSessionSelector(request: AgentSessionOpenRequest): strin
     return descriptor.sessionFile;
   }
   return request.providerSessionId;
+}
+
+function initialConfigurationFailure(result: Readonly<{
+  status: string;
+  diagnostic?: Pick<PluginDiagnosticData, 'code' | 'message'>;
+}>): PluginError {
+  const code = result.diagnostic?.code ?? result.status;
+  const detail = result.diagnostic?.message;
+  const message = redactBugReportSensitiveText(
+    `Pi rejected its initial configuration (${code})${detail ? `: ${detail}` : ''}`,
+  );
+  return new PluginError({
+    code: 'agent_startup_failed', retryable: false, message,
+    details: { failureCause: { code: 'agent_startup_failed', phase: 'client_start',
+      failureReason: 'unclassified_provider_error', retryable: false, providerErrorMessage: message } },
+  });
 }
 
 async function openPiSession(
@@ -190,12 +206,7 @@ async function openPiSession(
       lifecycle.remainingMs('session open completion');
       return runtime;
     }
-    const failureCode = 'diagnostic' in result
-      ? result.diagnostic.code
-      : result.status;
-    const failure = new Error(
-      `Pi rejected its initial session configuration (${failureCode})`,
-    );
+    const failure = initialConfigurationFailure(result);
     try {
       await runtime.dispose();
     } catch (disposeError) {
@@ -283,9 +294,7 @@ async function openPiExecutionRun(
             'initial execution-run configuration',
           );
           if (result.status !== 'applied') {
-            await conversation.dispose();
-            const failureCode = 'diagnostic' in result ? result.diagnostic.code : result.status;
-            throw new Error(`Pi rejected its initial execution-run configuration (${failureCode})`);
+            throw initialConfigurationFailure(result);
           }
         }
         return conversation;
