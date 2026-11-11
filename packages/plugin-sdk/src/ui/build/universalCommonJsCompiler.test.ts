@@ -494,6 +494,58 @@ describe('compileUniversalPluginUiCommonJs', () => {
         expect(new TextDecoder().decode(result.bytes)).not.toContain('sourceMappingURL');
     });
 
+    it('evaluates one host runtime for four distinct view artifacts without bundling its implementation', async () => {
+        const { root, entry } = await fixture([
+            "import { runtime } from 'react';",
+            "import { runtime as ui } from '@happier-dev/plugin-ui';",
+            'export const renderSurface = () => [runtime, ui];',
+        ].join('\n'));
+        // The installed framework package is the external module-loader boundary.
+        // Real CommonJS caching models the host realm, not an artifact-local cache.
+        const counter = `happier-runtime-${root}`;
+        for (const name of ['react', '@happier-dev/plugin-ui']) {
+            const packageRoot = join(root, 'node_modules', name);
+            await mkdir(packageRoot, { recursive: true });
+            await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name, main: 'index.cjs' }));
+            await writeFile(join(packageRoot, 'index.cjs'),
+                `const key = Symbol.for(${JSON.stringify(counter + name)}); globalThis[key] = (globalThis[key] || 0) + 1; exports.runtime = {};`);
+        }
+        const requireHost = createRequire(entry);
+        try {
+            const views = [];
+            for (let index = 0; index < 4; index += 1) {
+                await writeFile(entry, [
+                    "import { runtime } from 'react';",
+                    "import { runtime as ui } from '@happier-dev/plugin-ui';",
+                    `export const renderSurface = () => [runtime, ui, ${index}];`,
+                ].join('\n'));
+                const compiled = await compileFixture(root, entry, `view-${index}`);
+                const bundled = Object.values(compiled.metafile.outputs).flatMap(output =>
+                    Object.entries(output.inputs).filter(([, input]) => input.bytesInOutput > 0).map(([path]) => path));
+                expect(bundled).toHaveLength(1);
+                expect(compiled.externalSpecifiers).toEqual(['@happier-dev/plugin-ui', 'react']);
+                const module = { exports: {} as Record<string, unknown> };
+                evaluatePortableCommonJs(new TextDecoder().decode(compiled.bytes), module, requireHost);
+                const render = module.exports.renderSurface;
+                expect(typeof render).toBe('function');
+                const view = (render as () => unknown[])();
+                expect(view[2]).toBe(index);
+                views.push(view);
+            }
+            for (const view of views) {
+                expect(view[0]).toBe(views[0]![0]);
+                expect(view[1]).toBe(views[0]![1]);
+            }
+            for (const name of ['react', '@happier-dev/plugin-ui']) {
+                expect(Reflect.get(globalThis, Symbol.for(counter + name))).toBe(1);
+            }
+        } finally {
+            for (const name of ['react', '@happier-dev/plugin-ui']) {
+                Reflect.deleteProperty(globalThis, Symbol.for(counter + name));
+            }
+        }
+    });
+
     it('shares public schema owners while bundling other dependency families', async () => {
         const { root, entry } = await fixture([
             "import { marker as zodMarker } from 'zod';",
@@ -519,10 +571,10 @@ describe('compileUniversalPluginUiCommonJs', () => {
             requestedExports: ['renderSurface'],
         });
 
-        expect(result.externalSpecifiers).toEqual(['@happier-dev/plugin-sdk', 'zod']);
+        expect(result.externalSpecifiers).toEqual(['@happier-dev/plugin-sdk', '@happier-dev/protocol', 'zod']);
         const output = new TextDecoder().decode(result.bytes);
         for (const [packageName, marker] of markers) {
-            if (packageName === 'zod' || packageName === '@happier-dev/plugin-sdk') expect(output).not.toContain(marker);
+            if (result.externalSpecifiers.includes(packageName)) expect(output).not.toContain(marker);
             else expect(output).toContain(marker);
         }
     });
