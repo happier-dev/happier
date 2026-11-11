@@ -225,7 +225,7 @@ export function WidgetSetupStep(props: Readonly<{
                 if (value === undefined) return false;
                 change(path, { kind: 'pin', value });
             } },
-            { key: `clear:${path}`, title: `${t('common.clear')}: ${title}`, invoke: () => change(path, { kind: 'clear' }) },
+            { key: `clear:${path}`, title: `${t('selectionList.clearInput')}: ${title}`, invoke: () => change(path, { kind: 'clear' }) },
             ...(entry.follow ? [{ key: `follow:${path}`, title: `${entry.follow.label}: ${title}`,
                 invoke: () => change(path, { kind: 'follow', slot: entry.follow!.slot }) }] : []),
         ];
