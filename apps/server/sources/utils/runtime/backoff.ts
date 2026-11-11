@@ -33,6 +33,7 @@ export function createBackoff(
                 }
                 warn(e);
                 let waitForRequest = exponentialRandomizedBackoffDelay(currentFailureCount, minDelay, maxDelay, factor);
+                currentFailureCount += 1;
                 await delay(waitForRequest, signal);
             }
         }
