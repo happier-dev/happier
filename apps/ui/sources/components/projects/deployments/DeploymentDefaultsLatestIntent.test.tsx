@@ -93,3 +93,44 @@ it.each(['account', 'project'] as const)('retains rapid %s defaults edits and ne
         expect(writes).toBe(3);
     } finally { first.resolve(); failure.resolve(); standardCleanup(); context.dispose(); await account.dispose(); }
 });
+
+it('keeps a replacement Account binding independent of its predecessor’s held write', async () => {
+    const first = createDeferred<void>();
+    const writes: string[] = [];
+    const settings = settingsParse({ actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } } });
+    const accountA = await createSecretSettingsTestHarness({ settings, handleRequest: async (path, init) => {
+        if (path === '/v2/account/settings' && init?.method === 'POST') { writes.push('account-a'); await first.promise; }
+        return null;
+    } });
+    let accountB: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;
+    const { DeploymentsSettingsView } = await import('@/components/settings/deployments/DeploymentsSettingsView');
+    let selectAccount = (_credentials: typeof accountA.credentials) => {};
+    function Page() {
+        const [credentials, setCredentials] = React.useState(accountA.credentials);
+        selectAccount = setCredentials;
+        return <InjectedAuthProvider credentials={credentials}><DeploymentsSettingsView /></InjectedAuthProvider>;
+    }
+    try {
+        const screen = await renderScreen(<Page />);
+        const database = () => screen.findAllByType(SegmentedChoiceItem).find(item => item.props.testIDPrefix === 'deployment-defaults.previewDatabase')!;
+        await vi.waitFor(() => expect(database()?.props.disabled).toBe(false));
+        await act(async () => database().props.onChange('none'));
+        await vi.waitFor(() => expect(writes).toEqual(['account-a']));
+        await act(async () => {
+            accountB = await createSecretSettingsTestHarness({ accountId: 'account-b', settings, handleRequest: async (path, init) => {
+                if (path === '/v2/account/settings' && init?.method === 'POST') writes.push('account-b');
+                return null;
+            } });
+            selectAccount(accountB.credentials);
+        });
+        await vi.waitFor(() => expect(database()?.props.disabled).toBe(false));
+        expect(database().props.value).toBe('inherit');
+        await act(async () => database().props.onChange('branch'));
+        await vi.waitFor(() => expect(accountB?.persistedSettings.deploymentDefaultsV1.previewDatabase).toBe('branch'));
+        await act(async () => first.resolve());
+        await vi.waitFor(() => expect(accountA.persistedSettings.deploymentDefaultsV1.previewDatabase).toBe('none'));
+        expect(accountB.persistedSettings.deploymentDefaultsV1.previewDatabase).toBe('branch');
+        expect(database().props.value).toBe('branch');
+        expect(writes).toEqual(['account-a', 'account-b']);
+    } finally { first.resolve(); standardCleanup(); await accountB?.dispose(); await accountA.dispose(); }
+});

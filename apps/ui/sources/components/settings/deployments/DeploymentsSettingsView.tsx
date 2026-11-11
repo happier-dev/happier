@@ -26,12 +26,21 @@ import { t } from '@/text';
 import { DEPLOYMENTS_SETTINGS } from './deploymentsSettings';
 
 export function DeploymentsSettingsView() {
-    const { theme } = useUnistyles();
     const params = useLocalSearchParams<{ serverId?: string | string[] }>();
     const activeScope = useAccountSettingsScope();
     const serverId = readProjectRouteStringParam(params.serverId) ?? activeScope?.serverId ?? null;
     const homeLabel = useHomeDisplayLabel(serverId ? getServerProfileById(serverId) : null);
     const { binding } = useServerCredentialAccountScopeBinding(serverId);
+    return <DeploymentDefaultsEditor key={binding ? `${binding.scope.serverId}:${binding.scope.accountId}` : 'unbound'}
+        binding={binding} serverId={serverId} homeLabel={homeLabel} />;
+}
+
+function DeploymentDefaultsEditor({ binding, serverId, homeLabel }: Readonly<{
+    binding: ReturnType<typeof useServerCredentialAccountScopeBinding>['binding'];
+    serverId: string | null;
+    homeLabel: string;
+}>) {
+    const { theme } = useUnistyles();
     const defaults = useDeploymentAccountDefaults(binding ?? null);
     const execution = useMountedActionExecution(binding?.scope);
     const router = useRouter();
