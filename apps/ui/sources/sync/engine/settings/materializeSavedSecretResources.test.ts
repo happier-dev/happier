@@ -182,6 +182,12 @@ describe('materializeSavedSecretResources', () => {
         });
 
         expect(result.materializedSecrets.map((secret) => secret.id)).toEqual([plain.entry.ref]);
+        expect(result.materialErrors?.[entry.ref]?.code).toBe('credential_unavailable');
+        const { applySavedSecretCatalogPage, resolveSavedSecretReference, resetSavedSecretCatalogSnapshotsForTests } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
+        const scope = { serverId: 'material-error-home', accountId: 'material-error-account' };
+        applySavedSecretCatalogPage({ scope, ...result, observedAt: 1 });
+        expect(resolveSavedSecretReference(scope, [], entry.ref).errorCause?.code).toBe('credential_unavailable');
+        resetSavedSecretCatalogSnapshotsForTests();
         expect(result.entries.find((candidate) => candidate.ref === entry.ref)?.materialStatus)
             .toBe('temporarily_unavailable');
     });

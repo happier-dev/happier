@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { useUnistyles } from 'react-native-unistyles';
 import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
@@ -23,6 +24,7 @@ import { presentCredentialsSecretsState, type CredentialsSecretsState } from './
 export function useCredentialsSecrets(): Readonly<{
   entries: readonly SavedSecretCatalogEntryV1[];
   state: CredentialsSecretsState;
+  errorCause: import('@/sync/domains/scope/scopedSnapshotFacts').ScopedSnapshotError | null;
   retry: () => void;
 }> {
   const catalog = useSavedSecretCatalog({ includeMaterial: false });
@@ -30,7 +32,7 @@ export function useCredentialsSecrets(): Readonly<{
   const state = presentCredentialsSecretsState({ status: catalog.status, stale: catalog.stale, entryCount: entries.length });
   const reload = catalog.reload;
   const retry = React.useCallback(() => { void reload().catch(() => undefined); }, [reload]);
-  return { entries, state, retry };
+  return { entries, state, retry, errorCause: catalog.errorCause };
 }
 
 /**
@@ -42,7 +44,7 @@ export const CredentialsSecretsGroup = React.memo(function CredentialsSecretsGro
   onOpen: (href: string) => void;
 }>) {
   const { theme } = useUnistyles();
-  const { entries, state, retry } = useCredentialsSecrets();
+  const { entries, state, retry, errorCause } = useCredentialsSecrets();
   return (
     <ItemGroup
       testID="credentials-secrets"
@@ -64,7 +66,7 @@ export const CredentialsSecretsGroup = React.memo(function CredentialsSecretsGro
             testID="credentials-secrets:pending"
             kind={state === 'failed' ? 'warning' : 'loading'}
             size="line"
-            title={state === 'failed' ? t('secretsSettings.staleTitle') : t('common.loading')}
+            title={state === 'failed' ? resolveActionExecutionErrorMessage(errorCause, t('secretsSettings.staleTitle'), { safeToRetry: true }) : t('common.loading')}
             action={state === 'failed' ? { label: t('common.retry'), onPress: retry } : undefined}
           />
         </SectionContentRow>

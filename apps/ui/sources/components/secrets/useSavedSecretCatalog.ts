@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { getDemoSavedSecretMetadata } from '@/demoMode/runtime/demoSettingsReadProjection';
 import { useShallow } from 'zustand/react/shallow';
 import {
@@ -112,6 +113,7 @@ export type SavedSecretCatalogProjection = Readonly<{
   status: 'loading' | 'refreshing' | 'ready' | 'error';
   stale: boolean;
   error: boolean;
+  errorCause: ScopedSnapshotError | null;
   reload: () => Promise<void>;
 }>;
 
@@ -216,7 +218,7 @@ function sameReferenceResolution(
   right: SavedSecretReferenceResolution,
 ): boolean {
   return left.status === right.status && left.displayStatus === right.displayStatus && left.resolving === right.resolving
-    && left.kind === right.kind && left.entry === right.entry && left.secret === right.secret
+    && left.errorCause === right.errorCause && left.kind === right.kind && left.entry === right.entry && left.secret === right.secret
     && left.revision === right.revision && left.fingerprint === right.fingerprint;
 }
 
@@ -318,6 +320,27 @@ export function useSavedSecretCatalogPersonalSecrets(
     read,
     read,
   );
+}
+
+/** Select only the failure fact needed by a mounted reader; never load material for an error notice. */
+export function useSavedSecretCatalogError(
+  options?: Readonly<{ scope?: AccountSettingsScope | null }>,
+): ScopedSnapshotError | null;
+export function useSavedSecretCatalogError<T>(
+  options: Readonly<{ scope?: AccountSettingsScope | null }> | undefined,
+  select: (error: ScopedSnapshotError | null) => T,
+): T;
+export function useSavedSecretCatalogError<T>(
+  options?: Readonly<{ scope?: AccountSettingsScope | null }>,
+  select?: (error: ScopedSnapshotError | null) => T,
+): T | ScopedSnapshotError | null {
+  const { scope, catalogEnabled } = useSavedSecretCatalogSource({ ...options, includeMaterial: false });
+  const readSelected = useShallow(React.useCallback(() => {
+    const error = catalogEnabled ? getSavedSecretCatalogSnapshot(scope)?.error ?? null : null;
+    return select ? select(error) : error;
+  }, [scope?.serverId, scope?.accountId, catalogEnabled, select]));
+  const read = React.useCallback(() => readSelected(undefined), [readSelected]);
+  return React.useSyncExternalStore(catalogEnabled ? subscribeSavedSecretCatalogSnapshots : subscribeNoop, read, read);
 }
 
 export function useSavedSecretCatalog(
@@ -719,6 +742,7 @@ export function useSavedSecretCatalog(
       catalogEnabled &&
       snapshot?.error !== null &&
       snapshot?.error !== undefined,
+    errorCause: catalogEnabled ? snapshot?.error ?? null : null,
     reload,
   });
 }

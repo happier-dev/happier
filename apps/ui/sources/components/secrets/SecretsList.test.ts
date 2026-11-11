@@ -107,6 +107,8 @@ async function renderSecretsList(params?: {
     includeNoneRow?: boolean;
     defaultId?: string | null;
     sharedEntries?: readonly SavedSecretCatalogEntryV1[];
+    sharedCatalogError?: import('@/sync/domains/scope/scopedSnapshotFacts').ScopedSnapshotError | null;
+    resolveSharedReference?: import('./SecretsList').SecretsListProps['resolveSharedReference'];
     sharedCatalogStale?: boolean;
     onRetrySharedCatalog?: () => void;
     onCreatePersonal?: () => Promise<string | null>;
@@ -131,7 +133,9 @@ async function renderSecretsList(params?: {
             includeNoneRow: params?.includeNoneRow,
             allowAdd: params?.allowAdd,
             sharedEntries: params?.sharedEntries,
+            resolveSharedReference: params?.resolveSharedReference,
             sharedCatalogStale: params?.sharedCatalogStale,
+            sharedCatalogError: params?.sharedCatalogError,
             onRetrySharedCatalog: params?.onRetrySharedCatalog,
         }),
     );
@@ -208,6 +212,32 @@ describe('SecretsList', () => {
 
         expect(screen.getTextContent().split('secrets.catalog.status.temporarily_unavailable')).toHaveLength(2);
         expect(screen.findHostByTestId('saved-secret-catalog-unreachable')).not.toBeNull();
+    });
+
+    it('presents the typed credential cause and retry step', async () => {
+        const { screen } = await renderSecretsList({ sharedCatalogStale: true,
+            sharedCatalogError: { kind: 'unknown', code: 'credential_unavailable', retryable: true },
+            onRetrySharedCatalog: vi.fn() });
+        expect(screen.getTextContent()).toContain('session.startFailure.cause.credential_unavailable');
+        expect(screen.getTextContent()).toContain('common.retry');
+        expect(screen.getTextContent()).not.toContain('secrets.catalog.operationFailed');
+    });
+
+    it('presents a row material cause retained by the snapshot resolver', async () => {
+        const { applySavedSecretCatalogPage, resolveSavedSecretReference, resetSavedSecretCatalogSnapshotsForTests } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
+        const entry = SavedSecretCatalogEntryV1Schema.parse({
+            ref: 'happier:shared-secret:v1:row-cause', source: 'shared_resource', relationship: 'owner',
+            name: 'Row cause', kind: 'apiKey', revision: 1, materialStatus: 'temporarily_unavailable',
+            capabilities: { use: false, rename: true, rotate: true, manageAccess: true, delete: true },
+        });
+        const scope = { serverId: 'row-cause-home', accountId: 'row-cause-account' };
+        applySavedSecretCatalogPage({ scope, entries: [entry], observedAt: 1,
+            materialErrors: { [entry.ref]: { kind: 'invalid', retryable: false, code: 'credential_unavailable' } } });
+        const { screen } = await renderSecretsList({ sharedEntries: [entry],
+            resolveSharedReference: ref => resolveSavedSecretReference(scope, [], ref) });
+        expect(screen.getTextContent()).toContain('session.startFailure.cause.credential_unavailable');
+        expect(screen.findHostByTestId('saved-secret-catalog-unreachable')).toBeNull();
+        resetSavedSecretCatalogSnapshotsForTests();
     });
 
     it('offers a working refresh action when the shared catalog is stale', async () => {

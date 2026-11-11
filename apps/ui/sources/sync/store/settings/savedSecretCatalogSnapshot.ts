@@ -23,6 +23,7 @@ export type SavedSecretCatalogSnapshot = Readonly<{
     data: readonly SavedSecretCatalogEntryV1[] | null;
     corruptEntries: readonly SavedSecretCatalogCorruptEntryV1[];
     materializedSecrets: readonly SavedSecret[];
+    materialErrors?: Readonly<Record<string, ScopedSnapshotError>>;
     /** Metadata-only reads cannot establish material readiness, including for an empty catalog. */
     includesMaterial?: boolean;
     legacyImport: SavedSecretLegacyImportResult | null;
@@ -117,7 +118,7 @@ export function beginSavedSecretCatalogLoad(scope: ServerAccountScope): void {
     });
 }
 
-export function applySavedSecretCatalogPage(params: Readonly<{ scope: ServerAccountScope; entries: readonly SavedSecretCatalogEntryV1[]; corruptEntries?: readonly SavedSecretCatalogCorruptEntryV1[]; materializedSecrets?: readonly SavedSecret[]; includesMaterial?: boolean; legacyImport?: SavedSecretLegacyImportResult; observedAt: number; current?: boolean }>): void {
+export function applySavedSecretCatalogPage(params: Readonly<{ scope: ServerAccountScope; entries: readonly SavedSecretCatalogEntryV1[]; materialErrors?: Readonly<Record<string, ScopedSnapshotError>>; corruptEntries?: readonly SavedSecretCatalogCorruptEntryV1[]; materializedSecrets?: readonly SavedSecret[]; includesMaterial?: boolean; legacyImport?: SavedSecretLegacyImportResult; observedAt: number; current?: boolean }>): void {
     const previous = getSavedSecretCatalogSnapshot(params.scope);
     for (const entry of params.entries) receiptOrdering.retain(params.scope, entry.ref, entry.revision);
     for (const entry of params.corruptEntries ?? []) {
@@ -132,6 +133,7 @@ export function applySavedSecretCatalogPage(params: Readonly<{ scope: ServerAcco
     publish({
         scope: params.scope,
         status: 'ready',
+        materialErrors: retainDeep(previous?.materialErrors, params.materialErrors ?? {}),
         data: preserveRows(previous?.data ?? null, params.entries),
         corruptEntries: previous && areSnapshotProjectionsEquivalent(previous.corruptEntries, params.corruptEntries ?? [])
             ? previous.corruptEntries : Object.freeze([...(params.corruptEntries ?? [])]),
@@ -230,6 +232,7 @@ export type SavedSecretReferenceResolution = Readonly<{
     ref: string;
     kind: 'personal' | 'shared_resource';
     status: SavedSecretCatalogMaterialStatusV1;
+    errorCause?: ScopedSnapshotError | null;
     /** Last-known metadata for display only; `status` and `secret` still govern material use. */
     displayStatus?: SavedSecretCatalogMaterialStatusV1;
     /** The catalog owner is actively acquiring this reference's material. */
@@ -307,6 +310,7 @@ export function resolveSavedSecretReference(
                 ? entry.materialStatus
                 : 'temporarily_unavailable',
             ...(entry && snapshot?.status !== 'error' ? { displayStatus: entry.materialStatus } : {}),
+            errorCause: snapshot?.error ?? snapshot?.materialErrors?.[ref] ?? null,
             resolving: Boolean(scope) && (snapshot === null || snapshot.status === 'loading' || snapshot.status === 'refreshing'),
             entry,
             secret: null,
@@ -337,6 +341,7 @@ export function resolveSavedSecretReference(
             ? 'temporarily_unavailable'
             : entry.materialStatus,
         entry,
+        errorCause: snapshot?.materialErrors?.[ref] ?? null,
         secret: currentMaterial,
         revision,
         fingerprint,

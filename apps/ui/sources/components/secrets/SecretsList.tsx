@@ -17,6 +17,8 @@ import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { COLLECTION_LIST_SEARCH_THRESHOLD } from '@/components/ui/lists/collection/CollectionList';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
 import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { sharedSecretProvenanceSegments, sharedSecretStatusLabel } from './savedSecretRowCopy';
 
@@ -48,6 +50,7 @@ export interface SecretsListProps {
     sharedEntries?: readonly SavedSecretCatalogEntryV1[];
     resolveSharedReference?: (ref: string) => SavedSecretReferenceResolution;
     sharedCatalogStale?: boolean;
+    sharedCatalogError?: ScopedSnapshotError | null;
     onRetrySharedCatalog?: () => void;
 
     wrapInItemList?: boolean;
@@ -152,9 +155,12 @@ export function SecretsList(props: SecretsListProps) {
 
     const resolveStatus = (entry: SavedSecretCatalogEntryV1) => props.resolveSharedReference?.(entry.ref).status ?? entry.materialStatus;
     // A Home out of reach is one cause for every shared row: it is said once above the rows, not on each.
-    const homeUnreachable = (props.sharedEntries ?? []).some((entry) => resolveStatus(entry) === 'temporarily_unavailable');
+    const homeUnreachable = !props.sharedCatalogError && (props.sharedEntries ?? []).some((entry) => resolveStatus(entry) === 'temporarily_unavailable' && !props.resolveSharedReference?.(entry.ref).errorCause);
     const renderSharedEntry = (entry: SavedSecretCatalogEntryV1, idx: number, total: number) => {
-        const resolvedStatus = resolveStatus(entry);
+        const resolution = props.resolveSharedReference?.(entry.ref);
+        const resolvedStatus = resolution?.status ?? entry.materialStatus;
+        const failureMessage = resolution?.errorCause
+            ? resolveActionExecutionErrorMessage(resolution.errorCause, sharedSecretStatusLabel(resolvedStatus), { safeToRetry: true }) : null;
         // A passkey is a key for a browser profile, not a value a field can use: listed, not choosable.
         const passkey = entry.storage?.kind === 'passkey';
         const provenance = [...(passkey ? [t('secretsSettings.kindPasskey')] : []), ...sharedSecretProvenanceSegments(entry)];
@@ -167,14 +173,14 @@ export function SecretsList(props: SecretsListProps) {
                 title={entry.name ?? t('secrets.catalog.unavailableName')}
                 // A pick list names each secret in full; similar names differ only at the end.
                 titleLines={0}
-                subtitle={[...provenance, ...(resolvedStatus === 'temporarily_unavailable' ? [] : [sharedSecretStatusLabel(resolvedStatus)])].join(' · ') || undefined}
+                subtitle={[...provenance, ...(failureMessage ? [failureMessage] : resolvedStatus === 'temporarily_unavailable' ? [] : [sharedSecretStatusLabel(resolvedStatus)])].join(' · ') || undefined}
                 accessibilityLabel={[
                     entry.name ?? t('secrets.catalog.unavailableName'),
                     entry.relationship === 'owner'
                         ? t('secrets.catalog.relationship.owner')
                         : t('secrets.catalog.relationship.recipient'),
                     ...provenance,
-                    sharedSecretStatusLabel(resolvedStatus),
+                    failureMessage ?? sharedSecretStatusLabel(resolvedStatus),
                 ].join(', ')}
                 icon={<Icon name="key" size={29} color={theme.colors.button.secondary.tint} />}
                 onPress={props.onSelectId && ready ? () => props.onSelectId?.(entry.ref) : undefined}
@@ -202,7 +208,7 @@ export function SecretsList(props: SecretsListProps) {
                     <Item
                         testID="saved-secret-catalog-retry"
                         title={t('common.retry')}
-                        subtitle={t('secrets.catalog.operationFailed')}
+                        subtitle={resolveActionExecutionErrorMessage(props.sharedCatalogError, t('secrets.catalog.operationFailed'), { safeToRetry: true })}
                         onPress={props.onRetrySharedCatalog}
                         showChevron={false}
                     />
@@ -233,7 +239,7 @@ export function SecretsList(props: SecretsListProps) {
                     <Item
                         testID={`saved-secret:${unavailableSelection.ref}`}
                         title={unavailableSelection.entry?.name ?? t('secrets.catalog.unavailableName')}
-                        subtitle={sharedSecretStatusLabel(unavailableSelection.status)}
+                        subtitle={resolveActionExecutionErrorMessage(unavailableSelection.errorCause, sharedSecretStatusLabel(unavailableSelection.status), { safeToRetry: true })}
                         accessibilityLabel={[
                             unavailableSelection.entry?.name ?? t('secrets.catalog.unavailableName'),
                             sharedSecretStatusLabel(unavailableSelection.status),

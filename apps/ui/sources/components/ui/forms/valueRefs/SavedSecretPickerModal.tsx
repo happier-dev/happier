@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -35,7 +36,7 @@ export function SavedSecretPickerModal(props: SavedSecretPickerModalProps) {
         if (entry.name === null || resolution.kind !== 'shared_resource') return [];
         const status = resolution.status;
         const ready = status === 'ready' && !stale;
-        return [{ entry, disabled: !ready, note: status === 'ready' ? null : sharedSecretStatusLabel(status) }];
+        return [{ entry, disabled: !ready, note: status === 'ready' ? null : resolveActionExecutionErrorMessage(resolution.errorCause, sharedSecretStatusLabel(status), { safeToRetry: true }) }];
     }), [catalog.entries, catalog.resolveReference, stale]);
     const retry = React.useCallback(() => {
         void catalog.reload().catch(() => {});
@@ -69,7 +70,7 @@ export function SavedSecretPickerModal(props: SavedSecretPickerModalProps) {
                         testID="saved-secret-picker:stale"
                         size="line"
                         kind="unavailable"
-                        title={t('secrets.catalog.operationFailed')}
+                        title={resolveActionExecutionErrorMessage(catalog.errorCause, t('secrets.catalog.operationFailed'), { safeToRetry: true })}
                         action={{ label: t('common.retry'), onPress: retry, testID: 'saved-secret-picker:retry' }}
                     />
                 ) : null}

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { SavedSecretCatalogCorruptEntryV1, SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
@@ -64,6 +65,7 @@ export type SecretsSettingsPageProps = Readonly<{
     resolveSharedReference: (ref: string) => SavedSecretReferenceResolution;
     /** The shared catalog is showing last-known rows because a refresh failed. */
     sharedCatalogStale: boolean;
+    sharedCatalogError?: import('@/sync/domains/scope/scopedSnapshotFacts').ScopedSnapshotError | null;
     sharedCatalogStatus: ScopedSnapshotStatus;
     onRetrySharedCatalog?: () => void;
 
@@ -227,6 +229,7 @@ export const SecretsSettingsPage = React.memo(function SecretsSettingsPage(props
         ? t('secretsSettings.storageE2eeDescription') : t('secretsSettings.storagePlainDescription')}`;
     // One page for every shared secret, yours or shared with you: its capabilities decide what it offers.
     const openEntry = selectedRef ? props.sharedEntries.find((entry) => entry.ref === selectedRef) ?? null : null;
+    const visibleError = props.sharedCatalogError ?? (openEntry ? props.resolveSharedReference(openEntry.ref).errorCause : null);
     const pageNotices = (
         <>
             {props.approvalId && props.onOpenApproval ? (
@@ -242,11 +245,11 @@ export const SecretsSettingsPage = React.memo(function SecretsSettingsPage(props
                     />
                 </ItemGroup>
             ) : null}
-            {props.sharedCatalogStale && props.onRetrySharedCatalog ? (
+            {(props.sharedCatalogStale || visibleError) && props.onRetrySharedCatalog ? (
                 // Last-known rows stay at full strength; one quiet line says they are stale, with Retry.
                 <SurfaceFreshnessLine
                     testID="saved-secret-catalog-retry"
-                    reason={t('secretsSettings.staleTitle')}
+                    reason={resolveActionExecutionErrorMessage(visibleError, t('secretsSettings.staleTitle'), { safeToRetry: true })}
                     action={{ label: t('common.retry'), testID: 'saved-secret-catalog-retry-button', onPress: props.onRetrySharedCatalog }}
                 />
             ) : null}

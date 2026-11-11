@@ -430,7 +430,8 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
             corruptEntries={catalog.corruptEntries}
             resolveSharedReference={catalog.resolveReference}
             sharedCatalogStatus={catalog.status}
-            sharedCatalogStale={catalog.status === 'error' || (catalog.status === 'ready' && catalog.stale)}
+            sharedCatalogError={catalog.errorCause}
+                sharedCatalogStale={catalog.status === 'error' || (catalog.status === 'ready' && catalog.stale)}
             onRetrySharedCatalog={catalog.sharedEnabled || catalog.collisionMigrationStatus === 'failed'
                 ? () => { void catalog.reload().catch(() => {}); }
                 : undefined}

@@ -87,6 +87,7 @@ const loader = createScopedSnapshotLoader<Target>({
                                 entries: outcome.resources.filter(row => row.materialStatus !== 'resource_corrupt'),
                                 corruptEntries: outcome.resources.filter(row => row.materialStatus === 'resource_corrupt'),
                                 materializedSecrets: [],
+                                materialErrors: {},
                                 contents: new Map(),
                             }, observedAt: Date.now() };
                         }

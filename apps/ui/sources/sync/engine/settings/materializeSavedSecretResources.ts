@@ -2,6 +2,7 @@ import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/ac
 import type { SavedSecretResourceContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import type { SavedSecretCatalogCorruptEntryV1, SavedSecretCatalogEntryV1, SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
+import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 
 type HealthySavedSecretResourceMaterialV1 = Extract<
@@ -24,12 +25,14 @@ export async function materializeSavedSecretResources(params: Readonly<{
     entries: readonly SavedSecretCatalogEntryV1[];
     corruptEntries: readonly SavedSecretCatalogCorruptEntryV1[];
     materializedSecrets: readonly SavedSecret[];
+    materialErrors: Readonly<Record<string, ScopedSnapshotError>>;
     /** Operation-local opened content; never persisted in catalog display state. */
     contents: ReadonlyMap<string, SavedSecretResourceContentV1>;
 }>> {
     const entries: SavedSecretCatalogEntryV1[] = [];
     const corruptEntries: SavedSecretCatalogCorruptEntryV1[] = [];
     const materialized: SavedSecret[] = [];
+    const materialErrors: Record<string, ScopedSnapshotError> = {};
     const contents = new Map<string, SavedSecretResourceContentV1>();
     for (const resource of params.resources) {
         // Corrupt rows expose only row-local repair metadata and deliberately
@@ -46,7 +49,7 @@ export async function materializeSavedSecretResources(params: Readonly<{
 
         try {
             if (params.isCurrent?.() === false) throw new Error('Saved Secret material read retired');
-            if (!resource.storedContent) throw new Error('Ready Saved Secret resource omitted content');
+            if (!resource.storedContent) throw Object.assign(new Error('Ready Saved Secret resource omitted content'), { code: 'saved_secret_material_content_missing' });
             const content = resource.encryptionMode === 'plain'
                 ? openSavedSecretResourceStoredContentV1({
                     resourceId: resource.resourceId,
@@ -54,9 +57,9 @@ export async function materializeSavedSecretResources(params: Readonly<{
                     storedContent: resource.storedContent,
                 })
                 : await (async () => {
-                    if (!resource.recipientEnvelope) return null;
+                    if (!resource.recipientEnvelope) throw Object.assign(new Error('Missing recipient key'), { code: 'credential_unavailable' });
                     const dataKey = await params.decryptDataKeyEnvelope(resource.recipientEnvelope.encryptedDataKey);
-                    if (!dataKey) return null;
+                    if (!dataKey) throw Object.assign(new Error('Recipient key unavailable'), { code: 'credential_unavailable' });
                     try {
                         if (params.isCurrent?.() === false) return null;
                         return openSavedSecretResourceStoredContentV1({
@@ -69,7 +72,7 @@ export async function materializeSavedSecretResources(params: Readonly<{
                         dataKey.fill(0);
                     }
                 })();
-            if (!content) throw new Error('Saved Secret resource material authentication failed');
+            if (!content) throw Object.assign(new Error('Saved Secret resource material authentication failed'), { code: 'saved_secret_material_authentication_failed' });
             // The catalog row and the opened material must describe the same
             // secret. They are read as two snapshots, so a stale pair would
             // otherwise hand a picker a row labelled as one secret carrying the
@@ -77,7 +80,7 @@ export async function materializeSavedSecretResources(params: Readonly<{
             // catalog publishes them, and only a published contradiction fails.
             if ((resource.entry.name !== null && resource.entry.name !== content.name)
                 || (resource.entry.kind !== null && resource.entry.kind !== content.kind)) {
-                throw new Error('Saved Secret catalog entry contradicts its opened material');
+                throw Object.assign(new Error('Saved Secret catalog entry contradicts its opened material'), { code: 'saved_secret_material_identity_mismatch' });
             }
 
             entries.push(resource.entry);
@@ -91,7 +94,10 @@ export async function materializeSavedSecretResources(params: Readonly<{
                 createdAt: 0,
                 updatedAt: resource.entry.revision ?? 0,
             }) satisfies SavedSecret);
-        } catch {
+        } catch (error) {
+            materialErrors[resource.entry.ref] = Object.freeze({ kind: 'invalid', retryable: false,
+                code: error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+                    ? error.code : 'saved_secret_material_invalid' });
             entries.push(Object.freeze({
                 ...resource.entry,
                 materialStatus: 'temporarily_unavailable',
@@ -104,5 +110,6 @@ export async function materializeSavedSecretResources(params: Readonly<{
         corruptEntries: Object.freeze(corruptEntries),
         materializedSecrets: Object.freeze(materialized),
         contents,
+        materialErrors: Object.freeze(materialErrors),
     });
 }

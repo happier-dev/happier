@@ -30,7 +30,8 @@ function SavedCatalogRows(props: Readonly<{ account: Account; personal: readonly
     selected: SavedChoice | null; disabled: boolean; onSelect: SelectSaved }>) {
     const catalog = useSavedSecretCatalog({ scope: props.account.accountLifetime.scope, personalSecrets: props.personal });
     return <SecretsList secrets={catalog.personalSecrets} sharedEntries={catalog.sharedEntries}
-        resolveSharedReference={catalog.resolveReference} sharedCatalogStale={catalog.stale}
+        resolveSharedReference={catalog.resolveReference} sharedCatalogError={catalog.errorCause}
+                sharedCatalogStale={catalog.stale}
         onRetrySharedCatalog={() => { void catalog.reload().catch(() => undefined); }}
         selectedId={props.selected?.ref} allowAdd={false} allowEdit={false} wrapInItemList={false} footer={null}
         onSelectId={props.disabled ? undefined : ref => {

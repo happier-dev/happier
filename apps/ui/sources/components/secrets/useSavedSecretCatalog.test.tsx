@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { SavedSecretResourceMaterialV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
@@ -36,6 +37,41 @@ afterEach(async () => {
 });
 
 describe('useSavedSecretCatalog resource authority', () => {
+    it('preserves typed causes without rerendering boolean-only readers', async () => {
+        home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }) });
+        const { useSavedSecretCatalog, useSavedSecretCatalogError } = await import('./useSavedSecretCatalog');
+        const { applySavedSecretCatalogFailure, applySavedSecretCatalogPage } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
+        const scope = home.scope;
+        const { entry } = await home.addOwnerResource();
+        const catalog = await renderHook(() => useSavedSecretCatalog({ scope }));
+        await act(async () => catalog.getCurrent().reload());
+        await vi.waitFor(() => expect(getSavedSecretCatalogSnapshot(scope)?.legacyImport).not.toBeNull());
+        const { renderScreen } = await import('@/dev/testkit');
+        const { SecretsList } = await import('./SecretsList');
+        const { resolveActionExecutionErrorMessage } = await import('@/sync/ops/actions/resolveActionExecutionFailureMessage');
+        function Consumer() {
+            const current = useSavedSecretCatalog({ scope });
+            return React.createElement(SecretsList, { secrets: [], sharedCatalogError: current.errorCause,
+                sharedCatalogStale: current.error, onRetrySharedCatalog: current.reload });
+        }
+        const screen = await renderScreen(React.createElement(Consumer));
+        let renders = 0;
+        const selectUnavailable = (error: unknown) => Boolean(error);
+        const unavailable = await renderHook(() => { renders++; return useSavedSecretCatalogError({ scope }, selectUnavailable); });
+        await act(async () => { applySavedSecretCatalogFailure({ scope, error: { kind: 'unknown', code: 'credential_unavailable', retryable: true } }); });
+        expect(catalog.getCurrent().errorCause?.code).toBe('credential_unavailable');
+        expect(unavailable.getCurrent()).toBe(true);
+        expect(screen.getTextContent()).toContain(resolveActionExecutionErrorMessage(catalog.getCurrent().errorCause, 'missing cause'));
+        const baseline = renders;
+        await act(async () => { applySavedSecretCatalogFailure({ scope, error: { kind: 'forbidden', code: 'permission_denied', retryable: false } }); });
+        expect(renders).toBe(baseline);
+        await act(async () => { applySavedSecretCatalogPage({ scope, entries: [], observedAt: 123 }); });
+        expect(unavailable.getCurrent()).toBe(false);
+        const settled = renders;
+        await act(async () => { applySavedSecretCatalogPage({ scope, entries: [entry], observedAt: 124 }); });
+        expect(renders).toBe(settled);
+    });
+
     it('lists recipient grants in Credentials without fetching secret material and follows withdrawal', async () => {
         home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }) });
         await home.addOwnerResource();
@@ -371,7 +407,7 @@ describe('useSavedSecretCatalog resource authority', () => {
         const listed=await executor.execute('secrets.list',{}, {surface:'ui',authority:'present_user',serverId:home.scope.serverId,expectedAccountId:home.scope.accountId});
         if(!listed.ok)throw new Error(listed.error);
         const metadata=PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.list'].parse(listed.result);
-        expect(metadata.secrets).toContainEqual({secretId:resource.resourceId,name:'Registry private',kind:'apiKey',updatedAt:1});
+        expect(metadata.secrets).toContainEqual({secretId:resource.resourceId,secretRef:resource.entry.ref,name:'Registry private',kind:'apiKey',updatedAt:1});
         expect(JSON.stringify(listed)).not.toContain('private-producer-value');
         const update=await executor.execute('secrets.update',{secretId:resource.resourceId,name:'Renamed private',expectedUpdatedAt:1},
             {surface:'ui',authority:'present_user',serverId:home.scope.serverId,expectedAccountId:home.scope.accountId});

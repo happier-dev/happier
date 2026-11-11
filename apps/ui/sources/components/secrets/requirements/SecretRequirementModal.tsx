@@ -627,6 +627,9 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                             secrets={savedSecretCatalog.personalSecrets}
                             sharedEntries={savedSecretCatalog.sharedEntries}
                             resolveSharedReference={savedSecretCatalog.resolveReference}
+                            sharedCatalogError={savedSecretCatalog.errorCause}
+                            sharedCatalogStale={savedSecretCatalog.status === 'error' || (savedSecretCatalog.status === 'ready' && savedSecretCatalog.stale)}
+                            onRetrySharedCatalog={() => { void savedSecretCatalog.reload().catch(() => undefined); }}
                             onCreatePersonal={canManage ? savedSecretCatalog.personalMutations.create : undefined}
                             allowAdd={canManage}
                             allowEdit={false}
