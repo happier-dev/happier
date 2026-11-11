@@ -81,7 +81,7 @@ describe('whole external Action encryption', () => {
     const { browserSessionId: _session, ...missingProjection } = request;
     expect(open(missingProjection)).toBeNull();
   });
-  it.each(['deployments.bindings.set', 'deployments.environments.controller.set', 'deployments.cancel', 'deployments.restart'] as const)(
+  it.each(['deployments.bindings.set', 'deployments.environments.controller.set', 'deployments.cancel', 'deployments.restart', 'deployments.environments.delete', 'deployments.targets.unlink'] as const)(
     'binds the selected %s Environment while keeping authored values encrypted', actionId => {
     const bindingRequest = { ...binding, actionId };
     const input = actionId === 'deployments.environments.controller.set'
@@ -93,6 +93,11 @@ describe('whole external Action encryption', () => {
         machineId: 'machine-1', installationId: 'installation', expectedGeneration: 'generation',
         service: { kind: 'deployment', machineId: 'machine-1', environmentId: 'environment',
           environmentInstanceId: 'private-value', composeService: 'web', serviceId: 'private-value/web' } }
+      : actionId === 'deployments.environments.delete'
+      ? { serverId: 'home', environmentId: 'environment', expectedRevision: 2, requestKey: 'private-value' }
+      : actionId === 'deployments.targets.unlink'
+      ? { serverId: 'home', environmentId: 'environment', expectedRevision: 2, requestKey: 'private-value',
+        targetLinkId: 'link', expectedTargetLinkRevision: 2 }
       : { serverId: 'home', environmentId: 'environment', expectedRevision: 2,
         set: [{ purpose: 'variable', name: 'PUBLIC_LABEL', phase: 'runtime', source: { kind: 'value', value: 'private-value' } }], remove: [] };
     const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,

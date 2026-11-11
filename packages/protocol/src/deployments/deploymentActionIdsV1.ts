@@ -69,11 +69,14 @@ export function isDeploymentApprovalMetadataPreparationActionIdV1(value: string)
     || value === DEPLOYMENT_CANCEL_ACTION_ID_V1;
 }
 
+export const DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1 = 'deployments.environments.delete';
+export const DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1 = 'deployments.targets.unlink';
+
 export const DEPLOYMENT_ACTION_IDS_V1 = [
   DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, 'deployments.domains.remove', 'deployments.domains.verify', 'deployments.domains.get', 'deployments.domains.list',
   DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, 'deployments.targets.link', DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1,
   'deployments.environments.controller.set',
-  'deployments.targets.unlink', 'deployments.environments.delete',
+  DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1,
   'deployments.promote',
   'deployments.restart', DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
   DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,

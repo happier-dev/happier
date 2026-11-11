@@ -2244,31 +2244,19 @@ function isDeclaredReadActionId(actionId: string): boolean {
     return parsed.success && getActionSpec(parsed.data).sideEffectClass === 'read';
 }
 
-/**
- * Declared read transports consume only the operands admitted with the root.
- * `null` means the root carries no deployment scope to decide with.
- */
-async function readAdmittedDeclaredDeploymentReadScope(
-    binding: ExternalActionExecutionAuthorizationBindingV1,
-    effectActionId: string,
-    proof: ExternalActionExecutionRequestProof,
-    acceptedEnvironmentId?: string,
-): Promise<boolean | null> {
-    if (effectActionId === 'projects.sources.read') {
-        const source = readDeploymentSourceReadOperands(binding.serverIdentityId, proof);
-        return source ? isDeploymentReadOperandInAdmittedScopeInTx(db, binding, source, acceptedEnvironmentId, undefined, effectActionId) : false;
-    }
-    if (!isDeclaredReadActionId(effectActionId) || !isAccountActionHttpOperation(effectActionId, proof)) return false;
-    return isDeploymentReadOperandInAdmittedScopeInTx(db, binding, proof.routeInput ?? proof.body, acceptedEnvironmentId, undefined, effectActionId);
-}
-
+/** Declared read transports consume only the operands admitted with the root. */
 async function isAdmittedDeclaredDeploymentReadInScope(
     binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string,
     proof: ExternalActionExecutionRequestProof,
     acceptedEnvironmentId?: string,
 ): Promise<boolean> {
-    return await readAdmittedDeclaredDeploymentReadScope(binding, effectActionId, proof, acceptedEnvironmentId) === true;
+    if (effectActionId === 'projects.sources.read') {
+        const source = readDeploymentSourceReadOperands(binding.serverIdentityId, proof);
+        return source ? await isDeploymentReadOperandInAdmittedScopeInTx(db, binding, source, acceptedEnvironmentId, undefined, effectActionId) === true : false;
+    }
+    if (!isDeclaredReadActionId(effectActionId) || !isAccountActionHttpOperation(effectActionId, proof)) return false;
+    return await isDeploymentReadOperandInAdmittedScopeInTx(db, binding, proof.routeInput ?? proof.body, acceptedEnvironmentId, undefined, effectActionId) === true;
 }
 
 /** A Discussion operation admits only its resource-codec preparation phases. */
@@ -2716,16 +2704,11 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     }
     if (verified.signedChildPurpose.sibling.deploymentRead) {
         // Sibling reads consume only operands inside the root's admitted deployment scope.
-        // A root whose binding carries no Environment (its input names it) keeps the
-        // declared transport; the resource route owns that Account's access.
         if (!isDeclaredReadActionId(verified.effectActionId) && verified.effectActionId !== 'projects.sources.read') {
             return isAccountActionHttpOperation(verified.effectActionId, proof);
         }
-        const scoped = await readAdmittedDeclaredDeploymentReadScope(verified.binding, verified.effectActionId, proof,
+        return isAdmittedDeclaredDeploymentReadInScope(verified.binding, verified.effectActionId, proof,
             verified.acceptedDeploymentReceipt?.environmentId);
-        return scoped ?? (verified.effectActionId === 'projects.sources.read'
-            ? readDeploymentSourceReadOperands(verified.binding.serverIdentityId, proof) !== null
-            : isAccountActionHttpOperation(verified.effectActionId, proof));
     }
     if (deploymentNativeAdmissionInputSchema(root) || isDeploymentDomainChildActionIdV1(root) || root === 'deployments.receipts.observe') {
         return isDeploymentNativeHttpPurpose(verified, proof)

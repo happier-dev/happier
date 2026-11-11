@@ -3223,8 +3223,13 @@ describe('deployment children retain their controller Action authority', () => {
             accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
             actionId: rootActionId, machineId: f.controller.id, target, requestId: envelope.requestId,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+        // A cleanup root reads only its own Environment, even one its Account can read.
+        const sibling = cleanup ? await db.deploymentEnvironment.create({ data: { projectSourceId: f.environment.projectSourceId,
+            createdByAccountId: f.account.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: f.controller.id, ...await f.content('deployment-environment.v1') } }) : null;
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
-            for (const [environmentId, statusCode] of [[f.environment.id, 200], [foreign.environment.id, 404]] as const) {
+            for (const [environmentId, statusCode] of [[f.environment.id, 200], ...(sibling ? [[sibling.id, 401] as const] : []),
+                [foreign.environment.id, cleanup ? 401 : 404]] as const) {
                 const path = `/v1/deployments/environments/${environmentId}?serverId=${serverId}`;
                 const effectActionId = 'deployments.environments.get';
                 const response = await app.inject({ method: 'GET', url: path, headers: {

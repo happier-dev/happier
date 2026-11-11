@@ -228,7 +228,7 @@ describe('Home-signed Environment metadata reads', () => {
                     expect(ordinary.statusCode, ordinary.body).toBe(200);
                     const replay = await app.inject({ method: 'GET', url: transport.path, headers: headers(transport.path, effect) });
                     expect.soft(replay.statusCode, `${effect}: ${replay.body}`).toBe(401);
-                    expect.soft(replay.json()).toMatchObject({ authorizationRefusal: 'deployment_metadata_environment' });
+                    expect.soft(replay.json()).toMatchObject({ authorizationRefusal: 'verification_purpose' });
                 }
                 const foreignPreparation = environmentRead(foreign.environment.id);
                 const denied = await app.inject({ method: 'GET', url: foreignPreparation.path,
@@ -242,6 +242,49 @@ describe('Home-signed Environment metadata reads', () => {
                     headers: headers(preparation.path, 'artifact.get') });
                 expect(wrongEffect.statusCode).toBe(401);
                 expect(wrongEffect.json()).toMatchObject({ authorizationRefusal: 'effect_family' });
+            }, { authentication: 'real' });
+        });
+    it.each((['deployments.environments.delete', 'deployments.targets.unlink'] as const)
+        .flatMap(actionId => ([1, 2] as const).map(version => ({ actionId, version }))))(
+        'confines $actionId V$version approval preparation to its admitted Environment', async ({ actionId, version }) => {
+            const own = await fixture(), sibling = await fixture(own.account.id);
+            const input = getActionSpec(actionId).inputSchema.parse({ serverId, environmentId: own.environment.id,
+                expectedRevision: 1, requestKey: crypto.randomUUID(), ...(actionId === 'deployments.targets.unlink' ? { targetLinkId: own.link.id, expectedTargetLinkRevision: 1 } : {}) });
+            const { target, envelope, authorization } = await admittedRead(own, actionId, input, version);
+            const headers = (path: string) => ({
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'deployments.environments.get',
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: 'deployments.environments.get', target, installationId: own.machine.installationId!,
+                    requestId: envelope.requestId, method: 'GET', path, privateKey: own.keys.secretKey }),
+            });
+            await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+                const environmentSpec = getActionSpec('deployments.environments.get');
+                if (!environmentSpec.serverTransport) throw new Error('Expected canonical Environment transport');
+                const read = (environmentId: string) => bindHomeDomainHttpRequestV1({ transport: environmentSpec.serverTransport!,
+                    inputSchema: environmentSpec.inputSchema, input: { serverId, environmentId } });
+                const ownRead = read(own.environment.id);
+                const admitted = await app.inject({ method: 'GET', url: ownRead.path, headers: headers(ownRead.path) });
+                expect(admitted.statusCode, admitted.body).toBe(200);
+                const resolver = createDeploymentApprovalScopeResolverV1(async (readActionId, readInput) => {
+                    const spec = getActionSpec(readActionId);
+                    if (!spec.serverTransport) throw new Error('Expected canonical approval read transport');
+                    const request = bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema, input: readInput });
+                    const response = await app.inject({ method: 'GET', url: request.path, headers: headers(request.path) });
+                    expect(response.statusCode, response.body).toBe(200);
+                    return DeploymentActionOutputSchemasV1[readActionId].parse(response.json());
+                });
+                expect(await resolver({ actionId, input, context: {}, phase: 'prepare' })).toEqual({ scope: {
+                    kind: 'environment', environmentId: own.environment.id,
+                } });
+                const siblingRead = read(sibling.environment.id);
+                const bearer = await auth.createToken(own.account.id, undefined, { kind: 'account', authority: 'present_user' });
+                const ordinary = await app.inject({ method: 'GET', url: siblingRead.path, headers: { authorization: `Bearer ${bearer}` } });
+                expect(ordinary.statusCode, ordinary.body).toBe(200);
+                const refused = await app.inject({ method: 'GET', url: siblingRead.path, headers: headers(siblingRead.path) });
+                expect(refused.statusCode, refused.body).toBe(401);
+                expect(authorization.binding.environmentId).toBe(own.environment.id);
             }, { authentication: 'real' });
         });
 });
