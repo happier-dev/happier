@@ -181,7 +181,16 @@ The first-party `happier.deployment.templates` Plugin declares the packaged
 `data-services` source. Its `postgresql` item supplies a PostgreSQL 17 service,
 an internal endpoint, declared username/database/password inputs, a logical-dump
 backup descriptor and direct `DATABASE_URL`/`DIRECT_URL` exports. The password is
-a secret input, not a catalog default. This is development-source catalog data;
+a secret input, not a catalog default. Its optional `pgbouncer` companion is off
+unless the review selects it (`companions` on `deployments.templates.instantiate`).
+Selected, it adds a pinned `edoburu/pgbouncer` service in transaction mode with
+SCRAM and `max_prepared_statements=200`; the image writes its own auth file at
+start from the same `DB_USER`/`DB_PASSWORD` bindings passed as ordinary env, so
+there is no Happier-written credential file. `DATABASE_URL` then points at the
+pooler and `DIRECT_URL` stays on PostgreSQL for migrations and session features
+(SET, LISTEN, advisory locks, WITH HOLD cursors, SQL PREPARE). Query, backup and
+restore always use PostgreSQL. Unselected, the companion's service leaves the
+document. This is development-source catalog data;
 availability still requires the supplying Plugin occurrence and the deployment
 journey below.
 

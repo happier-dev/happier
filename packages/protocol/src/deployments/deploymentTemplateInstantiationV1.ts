@@ -72,6 +72,8 @@ export const DeploymentTemplateInstantiateInputV1Schema = lazyZodSchema(() => z.
   connectTo: z.optional(z.strictObject({ service: id })), replace: z.optional(z.array(id)),
   domainBindings: z.optional(z.array(z.strictObject({ templateDomainId: id, hostname: id }))),
   volumeBindings: z.optional(z.array(z.strictObject({ templateVolumeId: id, source: id }))),
+  /** Reviewed optional template companions (for example PostgreSQL's PgBouncer); omission selects none. */
+  companions: z.optional(z.array(id)),
   deploy: z.optional(deploy),
 }).check(z.superRefine((input, context) => {
   if (!hasOneDeploymentProjectV1(input.projectSourceId, input.newProject) || input.newProject && input.environment.kind !== 'create') {

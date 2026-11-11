@@ -13,7 +13,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { t } from '@/text';
 
 type Input = DeploymentTemplateInstantiateInputV1;
-export type DeploymentTemplateChoicesValue = Partial<Pick<Input, 'bindings' | 'volumeBindings' | 'domainBindings' | 'connectTo' | 'replace'>>;
+export type DeploymentTemplateChoicesValue = Partial<Pick<Input, 'bindings' | 'volumeBindings' | 'domainBindings' | 'connectTo' | 'replace' | 'companions'>>;
 const text = (value: DeploymentTemplateV1['title']) => typeof value === 'string' ? value : value.fallback;
 
 /** Ephemeral reviewed template inputs. The template planner owns validation and conflict decisions. */
@@ -70,6 +70,13 @@ export function DeploymentTemplateChoices(props: Readonly<{
                             onChangeText={value => setBinding({ purpose: 'variable', name: variable.key, phase: 'runtime', source: { kind: 'value', value } })}
                             autoCapitalize="none" />} />;
             })}
+        </ItemGroup> : null}
+        {template.companions?.length ? <ItemGroup header="none">
+            {template.companions.map(companion => <Item key={companion.id} title={text(companion.title)}
+                subtitle={companion.description ? text(companion.description) : undefined} showChevron={false}
+                rightElement={<Switch testID={`${testID}.companion.${companion.id}`} value={value.companions?.includes(companion.id) ?? false}
+                    onValueChange={selected => onChange({ ...value, companions: selected ? [...(value.companions ?? []), companion.id]
+                        : (value.companions ?? []).filter(entry => entry !== companion.id) })} />} />)}
         </ItemGroup> : null}
         {template.volumes.length ? <ItemGroup title={t('capabilities.store.appPage.choices.volumes')}>
             {template.volumes.map(volume => <Item key={`${volume.service}:${volume.id}`} title={volume.target}

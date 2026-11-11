@@ -14,6 +14,8 @@ export type DeploymentTemplateInstantiationPreparationInputV1 = Readonly<{
     reservedVariableNames?: readonly string[];
     replace?: readonly string[]; domainBindings?: Readonly<NonNullable<DeploymentTemplateInstantiateInputV1['domainBindings']>>;
     volumeBindings?: Readonly<NonNullable<DeploymentTemplateInstantiateInputV1['volumeBindings']>>;
+    /** Selected optional companions; every other declared companion leaves the source. */
+    companions?: Readonly<NonNullable<DeploymentTemplateInstantiateInputV1['companions']>>;
     /** One finite receiver sampler snapshot; absent facts remain unknown. */
     targetResources?: Readonly<{ sampledAt: number; memoryBytes?: number }>;
 }>;
@@ -102,6 +104,32 @@ function prepareVolumeBindings(input: DeploymentTemplateInstantiationPreparation
         volumes: input.template.volumes.map(volume => ({ ...volume, id: rename(volume.id) })) } };
 }
 
+/** Applies the reviewed companion choice once, before naming or merging: an unselected companion's services
+ * leave the source, a selected one joins the service selection and its exports replace the same-named ones. */
+function prepareCompanions(input: DeploymentTemplateInstantiationPreparationInputV1): DeploymentTemplateInstantiationPreparationInputV1 {
+    const declared = input.template.companions ?? [];
+    const selected = new Set(input.companions ?? []);
+    const unknown = [...selected].find(id => !declared.some(companion => companion.id === id));
+    if (unknown !== undefined) return refuse('template_companion_unknown', { key: unknown });
+    if (!declared.length) return input;
+    const services = { ...record(input.source.services) };
+    let exports = input.template.exports;
+    const chosenServices: string[] = [];
+    for (const companion of declared) {
+        if (!selected.has(companion.id)) {
+            for (const service of companion.services) delete services[service];
+            continue;
+        }
+        chosenServices.push(...companion.services);
+        if (companion.exports) exports = { ...exports, ...companion.exports };
+    }
+    const { companions: _declared, ...template } = input.template;
+    return { ...input, source: { ...input.source, services }, template: { ...template,
+        compose: { ...template.compose, services: template.compose.services.length
+            ? [...template.compose.services, ...chosenServices] : template.compose.services },
+        ...(exports ? { exports } : {}) } };
+}
+
 /** Add-only/metadata composition needs no historical source; replacing an existing service does. */
 export function resolveDeploymentTemplateInstantiationBaselineRefV1(
     input: Pick<DeploymentTemplateInstantiationPreparationInputV1, 'templateRef' | 'source' | 'current' | 'intent'>,
@@ -116,7 +144,7 @@ export function resolveDeploymentTemplateInstantiationBaselineRefV1(
 
 /** One inert plan for preview/apply. P41 admits the output; Actions alone create refs and write content. */
 export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTemplateInstantiationPreparationInputV1): PreparedDeploymentTemplateInstantiationV1 {
-    input = prepareDeploymentTemplateAdditionV1(prepareVolumeBindings(input));
+    input = prepareDeploymentTemplateAdditionV1(prepareVolumeBindings(prepareCompanions(input)));
     const { template } = input;
     const source = structuredClone(input.source);
     const declaredServices = record(source.services);

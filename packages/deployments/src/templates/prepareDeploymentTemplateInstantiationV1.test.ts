@@ -116,7 +116,9 @@ describe('stored template preparation', () => {
         expect(app.variables.find(variable => variable.key === 'DB_PASSWORD')).toMatchObject({ secret: true });
         expect(app.variables.find(variable => variable.key === 'DB_PASSWORD')?.default).toBeUndefined();
         expect(app.generatedSecrets).toMatchObject([{ key: 'DB_PASSWORD', profile: { kind: 'base64url-32-bytes' } }]);
-        expect(app.compose.document).not.toMatch(/\bports:/u);
+        // Nothing publishes beyond the Machine's loopback; apps reach it over the Compose network or private exports.
+        const services: Record<string, { ports?: { host_ip?: string }[] }> = JSON.parse(app.compose.document).services;
+        expect(Object.values(services).flatMap(service => service.ports ?? []).every(port => port.host_ip === '127.0.0.1')).toBe(true);
     });
 
     it('offers PostgreSQL, MySQL, MariaDB, MongoDB and Redis as valid data templates, each on its own service', async () => {
@@ -460,9 +462,10 @@ async function packagedPostgres() {
     if (!selected || typeof selected !== 'object' || !('app' in selected)) throw new Error('Expected PostgreSQL catalog item');
     return DeploymentTemplateV1Schema.parse(selected.app);
 }
-function preparePostgres(app: DeploymentTemplateV1, options: Readonly<{ companions?: string[]; existing?: ReturnType<typeof current> }> = {}) {
+function preparePostgres(app: DeploymentTemplateV1, options: Readonly<{ companions?: string[]; existing?: ReturnType<typeof current>; connect?: false }> = {}) {
     return prepareDeploymentTemplateInstantiationV1({ template: app, templateRef: { ...templateRef, itemId: 'postgresql' },
-        source: JSON.parse(app.compose.document), current: options.existing ?? current(), intent: 'add', connectTo: { service: 'app' },
+        source: JSON.parse(app.compose.document), current: options.existing ?? current(), intent: 'add',
+        ...(options.connect === false ? {} : { connectTo: { service: 'app' } }),
         ...(options.companions ? { companions: options.companions } : {}),
         bindings: app.generatedSecrets.map(secret => ({ purpose: 'variable', name: secret.key, phase: 'runtime',
             source: { kind: 'generated', key: secret.key } })) });
@@ -509,7 +512,7 @@ describe('PostgreSQL PgBouncer companion (P45-R37)', () => {
         const existing = current();
         const occupied = { content: { ...existing.content, definition: { ...existing.content.definition, document: first.document,
             services: first.services } }, source: JSON.parse(first.document) };
-        const second = JSON.parse(preparePostgres(app, { companions: ['pgbouncer'], existing: occupied as ReturnType<typeof current> }).document);
+        const second = JSON.parse(preparePostgres(app, { companions: ['pgbouncer'], existing: occupied as ReturnType<typeof current>, connect: false }).document);
         expect(second.services['pgbouncer-2'].environment.DATABASE_URL).toBe('postgres://${DB_USER_2}:${DB_PASSWORD_2}@database-2:5432/${DB_NAME_2}');
         expect(second.services['pgbouncer-2'].depends_on).toEqual({ 'database-2': { condition: 'service_healthy' } });
     });
