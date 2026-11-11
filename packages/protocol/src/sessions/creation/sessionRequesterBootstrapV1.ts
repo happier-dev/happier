@@ -195,7 +195,7 @@ export function projectExternalActionRequesterInvocationV1(args: Readonly<{
 /** An Account's private host invocation can retain its own cause, never name another person. */
 export function admitExternalActionRequesterInvocationAttributionV1(
   invocation: ExternalActionRequesterInvocationV1 | undefined,
-  principal: Readonly<{ accountId: string; serverIdentityId: string; authentication?: Readonly<{ kind: string }>;
+  principal: Readonly<{ accountId: string; serverIdentityId: string; authentication?: Readonly<{ kind: 'account' | 'terminal' }>;
     sessionActionOrigin?: unknown; workflowActionOrigin?: unknown }> | undefined,
   caller: Readonly<{ kind: string }> | undefined = invocation?.caller,
 ): Readonly<{ ok: true; actionRequestAttributionV1?: ActionRequestAttributionV1 }> | Readonly<{ ok: false }> {
