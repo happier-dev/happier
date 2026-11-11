@@ -1,4 +1,4 @@
-import type { SupportedLanguage } from '../_types';
+import type { SupportedLanguage } from '../_all';
 
 type ChatLinksCopy = Readonly<{ title: string; description: string; browser: string; embedded: string; managed: string }>;
 

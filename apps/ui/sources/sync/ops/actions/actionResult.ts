@@ -1,6 +1,6 @@
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SESSION_COMPACT_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
-import type { SessionCompactResultV1 } from '@happier-dev/protocol/sessions/control';
+import type { SessionCompactResultV1 } from '@happier-dev/protocol/sessions/control/index';
 import { HappyError } from '@/utils/errors/errors';
 
 /** Retain typed refusal and pending custody instead of exposing either as a completed effect. */

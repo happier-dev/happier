@@ -13,9 +13,9 @@ import {
 
 const PREFIX = 'session-drafts-repository-v1:';
 
-type RecordsUpdate = (current: ReadonlyMap<string, string | undefined>) => {
+type RecordsUpdate<T> = (current: ReadonlyMap<string, string | undefined>) => {
     values: ReadonlyMap<string, string | undefined>;
-    result: void;
+    result: T;
 };
 type Dependencies = {
     legacy: { getAllKeys(): string[]; getString(key: string): string | undefined; delete(key: string): void };
@@ -23,7 +23,7 @@ type Dependencies = {
         list(): Promise<Map<string, string>>;
         read(key: string): Promise<string | undefined>;
         /** One transaction over `keys`: every returned change commits, or none does. */
-        updateMany(keys: readonly string[], update: RecordsUpdate): Promise<void>;
+        updateMany<T>(keys: readonly string[], update: RecordsUpdate<T>): Promise<T>;
     };
 };
 
@@ -71,19 +71,16 @@ export function createSessionDraftPersistenceStorage({ legacy, records }: Depend
      * retained custody. Returns whether the source is now held in IndexedDB.
      */
     async function migrateScopeRecord(key: string, listedRaw: string, source: 'records' | 'legacy'): Promise<boolean> {
-        let outcome: 'migrated' | 'retained' | 'refused' = 'migrated';
-        await records.updateMany([key, ...legacySessionDraftRowKeys(key, listedRaw)], (current) => {
+        const outcome = await records.updateMany<'migrated' | 'retained' | 'refused'>([key, ...legacySessionDraftRowKeys(key, listedRaw)], (current) => {
             const legacyRaw = source === 'records' ? current.get(key) : listedRaw;
-            if (!isLegacySessionDraftScopeRecord(legacyRaw)) return { values: new Map(), result: undefined };
+            if (!isLegacySessionDraftScopeRecord(legacyRaw)) return { values: new Map(), result: 'migrated' };
             const changes = migrateLegacySessionDraftScope(key, legacyRaw,
                 (rowKey) => current.has(rowKey) ? current.get(rowKey) : SESSION_DRAFT_RECORD_UNREAD);
-            if (changes) return { values: changes, result: undefined };
+            if (changes) return { values: changes, result: 'migrated' };
             if (source === 'legacy' && current.get(key) === undefined) {
-                outcome = 'retained';
-                return { values: new Map([[key, legacyRaw]]), result: undefined };
+                return { values: new Map([[key, legacyRaw]]), result: 'retained' };
             }
-            outcome = 'refused';
-            return { values: new Map(), result: undefined };
+            return { values: new Map(), result: 'refused' };
         });
         if (outcome !== 'migrated') {
             console.warn('Session draft migration refused for one Account: a stored draft differs from the whole-scope copy; both were kept.');

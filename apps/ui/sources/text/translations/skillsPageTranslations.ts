@@ -465,6 +465,7 @@ const es: SkillsPageTranslation = {
 };
 
 const ca: SkillsPageTranslation = {
+  ...es,
   pane: { thisBot: "Creades per aquest Bot", yours: "Teves", registries: "Dels teus registres", other: "Altres habilitats", allSkills: "Totes les teves habilitats" },
   saved: {
     saved: "Desat als teus skills",
@@ -494,7 +495,6 @@ const ca: SkillsPageTranslation = {
     openSession: "Obre la sessió",
     createdHere: "Creat a Happier",
   },
-  ...es,
   title: 'Habilitats',
   pageDescription:
     'Instruccions que els teus agents fan servir quan una tasca les necessita. Afegeix una habilitat un cop i arriba a totes les màquines.',
@@ -655,6 +655,7 @@ const it: SkillsPageTranslation = {
 };
 
 const pt: SkillsPageTranslation = {
+  ...es,
   pane: { thisBot: "Criadas por este Bot", yours: "Suas", registries: "Dos seus registros", other: "Outras habilidades", allSkills: "Todas as suas habilidades" },
   saved: {
     saved: "Salvo nos seus skills",
@@ -684,7 +685,6 @@ const pt: SkillsPageTranslation = {
     openSession: "Abrir sessão",
     createdHere: "Criado no Happier",
   },
-  ...es,
   pageDescription:
     'Instruções que os seus agentes usam quando uma tarefa precisa delas. Adicione uma habilidade uma vez e ela chega a todas as máquinas.',
   searchPlaceholder: 'Pesquisar habilidades',

@@ -306,7 +306,7 @@ const fileContentSearchTranslations = { "ca": {
         regex: "Expressió regular",
         findMode: "Cerca a",
         findFiles: "Fitxers",
-        findText: "Text",
+        findText: "Text del fitxer",
     } };
 
 return { fileContentSearchTranslations };

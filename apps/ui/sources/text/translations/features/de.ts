@@ -300,7 +300,7 @@ const fileContentSearchTranslations = { "de": {
         regex: "Regulärer Ausdruck",
         findMode: "Suchen in",
         findFiles: "Dateien",
-        findText: "Text",
+        findText: "Textsuche",
     } };
 
 return { fileContentSearchTranslations };

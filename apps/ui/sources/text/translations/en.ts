@@ -24416,6 +24416,7 @@ type DeepTranslationShape<T> = T extends (...args: infer Args) => infer Return
 type TranslationOverlay<Base, Overlay> = Omit<Base, keyof Overlay> & Overlay;
 
 type EnglishNamespaces0 = {
+  readonly llmTaskRunner: typeof llmTaskRunnerTranslations.en;
   readonly transcriptPassage: Readonly<{ quote: string; annotate: string; noteTitle: string; note: string; notePlaceholder: string; saveError: string; quoteError: string }>;
   readonly resourceProposal: typeof resourceProposalTranslations.en;
   readonly actionPresentation: typeof actionPresentationTranslations.en;
