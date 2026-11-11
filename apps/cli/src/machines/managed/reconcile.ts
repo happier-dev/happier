@@ -525,11 +525,11 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
             enroll: enrollment => runManagedEnrollment(params, enrollment, native),
             complete: async row => {
                 // Only creation or the first enrollment initializes administrator
-                // policy. Recovery of an enrolled guest preserves deliberate edits.
+                // and isolation policies. Enrolled guest recovery preserves stored policy.
                 if (params.action === 'machines.managed.acquire' || !params.machine.enrolledMachineId) {
                     await recordEnrollmentAdministratorAccess(params.input, row, params.options);
+                    await initializeManagedMachineEnrollmentIsolation(row, params.input, params.options);
                 }
-                await initializeManagedMachineEnrollmentIsolation(row, params.input, params.options);
             },
         },
         waitForObservation: createManagedNativeObservationWait(params.options.signal),
