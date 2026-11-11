@@ -111,7 +111,8 @@ vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
     AttachmentFilePicker: () => null,
 }));
 
-vi.mock('@/components/ui/popover', () => ({
+vi.mock('@/components/ui/popover', async () => ({
+    ...(await import('@/components/ui/popover/modalAwareFloatingPopoverPortalOptions')),
     PopoverBoundaryProvider: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement(React.Fragment, null, props.children),
     PopoverScrollSourceProvider: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -167,6 +168,10 @@ vi.mock('expo-linear-gradient', () => ({
         React.createElement('LinearGradient', props, props.children),
 }));
 
+// The platform SDK reads mockEnv dynamically; prepare the real graph before timed keyboard interactions.
+const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+const { NewSessionWizard } = await import('./NewSessionWizard');
+
 afterEach(() => {
     standardCleanup();
     mockEnv.keyboardListeners.clear();
@@ -178,7 +183,7 @@ afterEach(() => {
 });
 
 function buildSimplePanel() {
-    return import('./NewSessionSimplePanel').then(({ NewSessionSimplePanel }) => (
+    return (
         <NewSessionSimplePanel
             popoverBoundaryRef={{ current: null } as any}
             headerHeight={44}
@@ -213,11 +218,11 @@ function buildSimplePanel() {
             useProfiles={false}
             selectedProfileId={null}
         />
-    ));
+    );
 }
 
 function buildWizard() {
-    return import('./NewSessionWizard').then(({ NewSessionWizard }) => (
+    return (
         <NewSessionWizard
             popoverBoundaryRef={{ current: null } as any}
             layout={{
@@ -295,7 +300,7 @@ function buildWizard() {
                 inputMaxHeight: 200,
             }}
         />
-    ));
+    );
 }
 
 describe('new-session native keyboard avoiding', () => {
@@ -335,6 +340,8 @@ describe('new-session native keyboard avoiding', () => {
         keyboardAnimationState.progress.value = 0;
         const screen = await renderScreen(await buildSimplePanel());
         const composerKeyboardStyle = resolveComposerKeyboardStyleFactory(screen);
+        // The floating native card rests above the safe-area indicator and its gap.
+        const restingTranslateY = composerKeyboardStyle()?.transform?.[0]?.translateY;
 
         act(() => {
             mockEnv.keyboardListeners.get('keyboardDidShow')?.({
@@ -348,7 +355,7 @@ describe('new-session native keyboard avoiding', () => {
             mockEnv.keyboardListeners.get('keyboardDidHide')?.();
         });
 
-        expect(composerKeyboardStyle()?.transform?.[0]?.translateY).toBe(-8);
+        expect(composerKeyboardStyle()?.transform?.[0]?.translateY).toBe(restingTranslateY);
     });
 
     it('uses the scaffold keyboard host for the wizard on iOS', async () => {

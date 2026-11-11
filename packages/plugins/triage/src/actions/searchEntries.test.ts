@@ -112,6 +112,10 @@ function createContext(snapshots: readonly SearchEntryFixture[], remoteQueries?:
                 }),
             },
             actions: {
+                execute: async (action: string) => {
+                    if (action !== 'tasks.internal.list') throw new Error(`Unexpected Action: ${action}`);
+                    return internal.read();
+                },
                 // The source honours the page limit it is asked for, the way a
                 // real one must: a page larger than requested breaks the scan
                 // contract and the lane is refused, not silently truncated.

@@ -8,11 +8,14 @@ import { installNewSessionComponentsCommonModuleMocks } from './newSessionCompon
 import type { AppTextProps, AppTextInputProps } from '@/components/ui/text/Text';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 import { installSessionOpsNetworkBoundary, type SessionOpsRpcRequest } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { activateStorageAccountScope } from '@/dev/testkit/runtime/storageRuntime';
 import { DaemonFilesystemListDirectoryRequestSchema, DaemonFilesystemListDirectoryResponseSchema,
     type DaemonFilesystemListDirectoryResponse } from '@happier-dev/protocol/machines/fileBrowser';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionIdsV1';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { t } from '@/text';
 
@@ -24,7 +27,7 @@ installNewSessionComponentsCommonModuleMocks({
     }),
 });
 
-// The daemon filesystem reply is the network boundary; sorting, caching,
+// The Account Action HTTP reply is the network boundary; sorting, caching,
 // Home/Account admission and the picker lifecycle remain real.
 const openMachinePathBrowserModalMock = vi.hoisted(() => vi.fn());
 type DirectoryReply = Pick<Extract<DaemonFilesystemListDirectoryResponse, { ok: true }>, 'ok' | 'entries'>
@@ -46,23 +49,44 @@ beforeEach(async () => {
     openMachinePathBrowserModalMock.mockReset();
     listMachineFileBrowserDirectoryEntriesMock.mockReset().mockResolvedValue({ ok: true, entries: [] });
     network.resetRequests();
-    const home = await network.addHome('https://srv-a', 'account-a');
-    await network.addHome('https://srv-b', 'account-b');
-    await network.addHome('https://srv-1', 'account-c');
+    const home = await network.addHome('https://srv-a', 'account-a', { serverIdentityId: 'srv_a' });
+    await network.addHome('https://srv-b', 'account-b', { serverIdentityId: 'srv_b' });
+    await network.addHome('https://srv-1', 'account-c', { serverIdentityId: 'srv_1' });
+    const boundaries = await Promise.all([
+        { serverUrl: 'https://srv-a', serverIdentityId: 'srv_a', accountId: 'account-a' },
+        { serverUrl: 'https://srv-b', serverIdentityId: 'srv_b', accountId: 'account-b' },
+        { serverUrl: 'https://srv-1', serverIdentityId: 'srv_1', accountId: 'account-c' },
+    ].map(params => createExternalActionAccountHttpBoundary({
+        ...params, machineId: 'm-1', actionId: FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory, tokenEpoch: 0,
+        execute: async (input, context) => {
+            const payload = DaemonFilesystemListDirectoryRequestSchema.parse(input);
+            const reply = await listMachineFileBrowserDirectoryEntriesMock({
+                serverUrl: params.serverUrl, targetId: context.target.machineId,
+                method: RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY, payload,
+            });
+            return DaemonFilesystemListDirectoryResponseSchema.parse(reply.ok
+                ? { path: payload.path, truncated: false, ...reply } : reply);
+        },
+    })));
+    network.setHttpResponder(async (input, init) => {
+        const url = new URL(String(input));
+        if (url.origin === 'https://srv-1' && url.pathname === '/v1/machines/read-batch') {
+            return createMachineReadBatchResponseFixture(init?.body, id => id === 'member-machine'
+                ? createPlainMachineRowFixture({ id, accountId: 'account-c' })
+                : boundaries[2]!.machine.id === id ? boundaries[2]!.machine : null);
+        }
+        for (const boundary of boundaries) {
+            const response = await boundary.handle(url, init);
+            if (response) return response;
+        }
+        return null;
+    });
     const { setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
     await setActiveServerId(home.id);
     accountScope = await activateStorageAccountScope({ serverId: home.id, accountId: home.accountId });
-    network.setRpcAckResponder(async request => {
-        if (request.method !== RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) {
-            return { ok: false, error: 'Unsupported fixture RPC', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
-        }
-        const payload = DaemonFilesystemListDirectoryRequestSchema.parse(request.payload);
-        const reply = await listMachineFileBrowserDirectoryEntriesMock({
-            serverUrl: request.serverUrl, targetId: request.targetId, method: request.method, payload,
-        });
-        return { ok: true, result: DaemonFilesystemListDirectoryResponseSchema.parse(reply.ok
-            ? { path: payload.path, truncated: false, ...reply } : reply) };
-    });
+    network.setRpcAckResponder(async () => ({
+        ok: false, error: 'Unsupported fixture RPC', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
+    }));
 });
 
 // The canonical `@/components/ui/text/Text` primitive depends on
@@ -167,7 +191,7 @@ describe('PathSelectionList', () => {
         const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
         const { resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
         const { Text } = await import('@/components/ui/text/Text');
-        const home = await network.addHome('https://srv-1', 'account-c');
+        const home = await network.addHome('https://srv-1', 'account-c', { serverIdentityId: 'srv_1' });
         const serverId = resolveServerProfileScopeId(home);
         network.setRpcAckResponder(async request => {
             if (request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
@@ -529,7 +553,7 @@ describe('PathSelectionList', () => {
                 recents={[]}
                 machineHomeDir="/Users/leeroy"
                 machineId="m-1"
-                serverId="srv-1"
+                serverId="srv_1"
                 machinePlatform="unix"
                 onCommit={() => {}}
                 onRequestClose={() => {}}
@@ -570,7 +594,7 @@ describe('PathSelectionList', () => {
                 recents={[]}
                 machineHomeDir="/Users/leeroy"
                 machineId="m-1"
-                serverId="srv-1"
+                serverId="srv_1"
                 machinePlatform="unix"
                 onCommit={() => {}}
                 onRequestClose={() => {}}
@@ -600,7 +624,7 @@ describe('PathSelectionList', () => {
                 recents={[]}
                 machineHomeDir="/Users/leeroy"
                 machineId="m-1"
-                serverId="srv-1"
+                serverId="srv_1"
                 machinePlatform="unix"
                 onCommit={onCommit}
                 onRequestClose={() => {}}
@@ -612,7 +636,7 @@ describe('PathSelectionList', () => {
         expect(openMachinePathBrowserModalMock).toHaveBeenCalledTimes(1);
         expect(openMachinePathBrowserModalMock.mock.calls[0]![0]).toEqual(expect.objectContaining({
             machineId: 'm-1',
-            serverId: 'srv-1',
+            serverId: 'srv_1',
             initialPath: '~/sub',
         }));
         // resolved → onCommit called with the modal-returned absolute path
@@ -633,7 +657,7 @@ describe('PathSelectionList', () => {
                     recents={[]}
                     machineHomeDir="/Users/leeroy"
                     machineId="m-1"
-                    serverId="srv-1"
+                    serverId="srv_1"
                     machinePlatform="unix"
                     onCommit={() => {}}
                     onRequestClose={() => {}}
@@ -1582,12 +1606,12 @@ describe('PathSelectionList', () => {
                 />
             );
 
-            const screen = await renderScreen(renderHarness('srv-a'));
+            const screen = await renderScreen(renderHarness('srv_a'));
             await flushDynamicSection();
             const initialCount = listMachineFileBrowserDirectoryEntriesMock.mock.calls.length;
             expect(initialCount).toBeGreaterThanOrEqual(1);
 
-            await screen.update(renderHarness('srv-b'));
+            await screen.update(renderHarness('srv_b'));
             await flushDynamicSection();
 
             expect(listMachineFileBrowserDirectoryEntriesMock.mock.calls.length)

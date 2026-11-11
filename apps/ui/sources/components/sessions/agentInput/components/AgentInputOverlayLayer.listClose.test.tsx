@@ -39,7 +39,8 @@ installAgentInputCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/ui/popover', () => ({
+vi.mock('@/components/ui/popover', async () => ({
+    ...await import('@/components/ui/popover/modalAwareFloatingPopoverPortalOptions'),
     Popover: (props: Record<string, unknown> & { open?: boolean; children?: React.ReactNode | ((args: { maxHeight: number }) => React.ReactNode) }) => {
         const child = typeof props.children === 'function'
             ? props.children({ maxHeight: 312 })
@@ -151,12 +152,14 @@ function buildChipWithListPresentation(rootStep: SelectionListStep): AgentInputE
  * branch must NOT separately call `deferAgentInputPopoverClose(...)` — doing
  * so schedules a duplicate close.
  */
+// Load the real subject after boundary installation, before behavior-test timing begins.
+const { AgentInputOverlayLayer } = await import('./AgentInputOverlayLayer');
+
 describe("AgentInputOverlayLayer presentation:'list' sole-close-ownership (FR4-W1-CHIP)", () => {
     it("wrapper-level onSelect does NOT call any close path (the wrapper owns close via onRequestClose)", async () => {
         resetCapture();
         vi.useFakeTimers();
         try {
-            const { AgentInputOverlayLayer } = await import('./AgentInputOverlayLayer');
             const chip = buildChipWithListPresentation(baseRootStep);
             await renderScreen(
                 <AgentInputOverlayLayer
@@ -201,7 +204,6 @@ describe("AgentInputOverlayLayer presentation:'list' close routing (R16c Major 7
         // wrapper defers `onRequestClose` on web, the mocked wrapper here
         // exposes both callbacks directly for verification.
         resetCapture();
-        const { AgentInputOverlayLayer } = await import('./AgentInputOverlayLayer');
         const chip = buildChipWithListPresentation(baseRootStep);
         await renderScreen(
             <AgentInputOverlayLayer
@@ -228,7 +230,6 @@ describe("AgentInputOverlayLayer presentation:'list' close routing (R16c Major 7
 
     it("does not desync after rapid repeated wrapper-onSelect invocations (no extra close paths schedule)", async () => {
         resetCapture();
-        const { AgentInputOverlayLayer } = await import('./AgentInputOverlayLayer');
         const chip = buildChipWithListPresentation(baseRootStep);
         await renderScreen(
             <AgentInputOverlayLayer
@@ -265,7 +266,6 @@ describe("AgentInputOverlayLayer presentation:'list' close routing (R16c Major 7
      */
     it('per-option SelectionListOption.onSelect carries the action; wrapper-onSelect is a no-op', async () => {
         resetCapture();
-        const { AgentInputOverlayLayer } = await import('./AgentInputOverlayLayer');
 
         const rootStepWithRowCallbacks: SelectionListStep = {
             id: 'root',

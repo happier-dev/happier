@@ -1,13 +1,15 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
-import { VoiceCaptureBusyError } from '@/voice/runtime/input/VoiceCaptureAdmissionController';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { collectUnexpectedRawTextNodes, createRootLayoutFeaturesResponse, renderScreen } from '@/dev/testkit';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompleteTypes';
 import type { AgentInputAttachmentsRowItem } from './agentInputContracts';
-import type { VoiceDictationFailure } from '@/voice/dictation/VoiceDictationController';
 import { flattenTestStyle } from '@/dev/testkit/harness/popoverHarness';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { activateStorageAccountScope } from '@/dev/testkit/runtime/storageRuntime';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
 
 // Exercise the installed color codec used by the real composer surface.
 vi.unmock('color');
@@ -16,18 +18,18 @@ type MultiTextInputSelection = { start: number; end: number };
 // Cold imports belong to fixture setup, not the timeout of the first selected interaction test.
 beforeAll(async () => { await import('./AgentInput'); }, 600_000);
 type MultiTextInputState = { text: string; selection: MultiTextInputSelection };
-const localSettingOverrides = vi.hoisted(() => ({} as Record<string, unknown>));
 const multiTextInputHandleMocks = vi.hoisted(() => ({
     blur: vi.fn(),
     focus: vi.fn(),
     setTextAndSelection: vi.fn(),
 }));
 const multiTextInputRenderCount = vi.hoisted(() => ({ value: 0 }));
-const dictationState = vi.hoisted(() => ({
-    status: 'idle' as 'idle' | 'starting' | 'listening' | 'transcribing',
-    failure: null as VoiceDictationFailure | null,
-    toggle: vi.fn(),
-    dismissFailure: vi.fn(),
+const recognition = vi.hoisted(() => ({
+    listeners: new Map<string, (event: unknown) => void>(),
+    text: 'dictated',
+    permission: 'granted' as 'granted' | 'denied',
+    start: vi.fn(),
+    stop: vi.fn(),
 }));
 const modalAlertMock = vi.hoisted(() => vi.fn());
 /**
@@ -47,17 +49,6 @@ const translateOverride = vi.hoisted(() => ({
 vi.mock('@/agents/registry/AgentIcon', () => ({
     AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
 }));
-
-// The person's keep-keyboard choice is a local setting; the rest of the store stays real.
-vi.mock('@/sync/store/hooks', async (importOriginal) => {
-    const original = await importOriginal() as Record<string, unknown> & { useLocalSetting: (key: string, selector?: (value: unknown) => unknown) => unknown };
-    return {
-        ...original,
-        useLocalSetting: (key: string, selector?: (value: unknown) => unknown) => (
-            key in localSettingOverrides ? localSettingOverrides[key] : original.useLocalSetting(key, selector as never)
-        ),
-    };
-});
 
 installAgentInputCommonModuleMocks({
     reactNative: async () => {
@@ -103,33 +94,6 @@ installAgentInputCommonModuleMocks({
             },
         }).module;
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useSetting: (key: string) => {
-                if (key === 'profiles') return [];
-                if (key === 'agentInputEnterToSend') return true;
-                if (key === 'agentInputActionBarLayout') return 'wrap';
-                if (key === 'agentInputChipDensity') return 'labels';
-                if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-                return null;
-            },
-            useSessionMessages: () => ({ messages: [], isLoaded: true }),
-            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionMessagesById: () => ({}),
-            useSessionMessagesVersion: () => 0,
-            useSessionMessagesReducerState: () => null,
-        });
-    },
-    storageStore: async () => {
-        const { createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
-        const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
-        const store = createStorageStoreMock({
-            sessionMessages: {},
-            localSettings: { ...localSettingsDefaults, uiFontScale: 1 },
-        });
-        return { getStorage: () => store };
-    },
 });
 
 vi.mock('expo-image', () => ({
@@ -147,14 +111,25 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
-vi.mock('@/voice/dictation/useVoiceDictation', () => ({
-    useVoiceDictation: () => ({
-        status: dictationState.status,
-        failure: dictationState.failure,
-        toggle: dictationState.toggle,
-        dismissFailure: dictationState.dismissFailure,
-    }),
-}));
+// Expo's recognizer is the speech SDK boundary. Capture admission, Dictation,
+// mounted field Actions and selection insertion remain real.
+vi.mock('expo-speech-recognition', () => ({ ExpoSpeechRecognitionModule: {
+    isRecognitionAvailable: () => true,
+    requestPermissionsAsync: async () => ({ granted: recognition.permission === 'granted' }),
+    addListener: (name: string, listener: (event: unknown) => void) => {
+        recognition.listeners.set(name, listener);
+        return { remove: () => recognition.listeners.delete(name) };
+    },
+    start: () => {
+        recognition.start();
+        recognition.listeners.get('audiostart')?.({});
+    },
+    stop: () => {
+        recognition.stop();
+        recognition.listeners.get('result')?.({ isFinal: true, results: [{ transcript: recognition.text }] });
+        recognition.listeners.get('end')?.({});
+    },
+} }));
 
 const featureEnabledState: Record<string, boolean> = { voice: true };
 
@@ -178,6 +153,7 @@ vi.mock('@/components/ui/forms/MultiTextInput', () => ({
             },
             focus: multiTextInputHandleMocks.focus,
             blur: multiTextInputHandleMocks.blur,
+            setDropCaret: () => {},
         }));
         return React.createElement('MultiTextInput', props, null);
     }),
@@ -257,6 +233,60 @@ vi.mock('@/sync/domains/sessionControl/configOptionsControl', () => ({
 /** Stands in for a host that owns the field's top-right corner (§2.3). */
 function HostFieldAccessory() {
     return React.createElement('View', { testID: 'host-field-accessory' });
+}
+
+const network = await installSessionOpsNetworkBoundary();
+await loadSyncSingletonForTests();
+const deviceModule = await loadVitestModuleForNodeRequire(
+    new URL('../../../voice/input/DeviceSttController.ts', import.meta.url),
+    () => import('@/voice/input/DeviceSttController'),
+);
+let accountScope: Awaited<ReturnType<typeof activateStorageAccountScope>> | undefined;
+afterAll(async () => { deviceModule.dispose(); await network.dispose(); });
+
+async function renderDictationComposer(element: React.ReactElement) {
+    network.resetRequests();
+    const home = await network.addHome('https://composer-dictation.test', 'composer-account', {
+        serverIdentityId: 'composer-dictation-home',
+    });
+    const { setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+    await setActiveServerId(home.id);
+    accountScope = await activateStorageAccountScope({ serverId: home.id, accountId: home.accountId });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { voiceSettingsParse } = await import('@/sync/domains/settings/voiceSettings');
+    storage.setState({ settingsScope: { serverId: home.id, accountId: home.accountId }, settings: {
+        ...storage.getState().settings,
+        experiments: true,
+        featureToggles: { ...storage.getState().settings.featureToggles, voice: true },
+        voice: voiceSettingsParse({ dictation: { sttBinding: 'explicit', stt: { provider: 'device' } } }),
+    } });
+    const features = createRootLayoutFeaturesResponse({
+        capabilities: { serverIdentity: { serverIdentityId: 'composer-dictation-home' } },
+        features: { voice: { enabled: true } },
+    });
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    primeServerFeaturesSnapshot({ serverId: home.id, snapshot: { status: 'ready', features } });
+    network.setHttpResponder(async input => {
+        const path = new URL(String(input)).pathname;
+        if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
+        if (path === '/v2/account/settings') return Response.json({
+            content: { t: 'plain', v: storage.getState().settings }, version: 1,
+        });
+        return null;
+    });
+    vi.stubGlobal('navigator', {
+        permissions: { query: async () => ({ state: recognition.permission }) },
+        mediaDevices: { getUserMedia: async () => {
+            if (recognition.permission === 'denied') throw Object.assign(new Error('Permission denied'), { name: 'NotAllowedError' });
+            return { getTracks: () => [{ stop() {} }] };
+        } },
+    });
+    const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+    const screen = await renderMountedCurrentUiContext(element);
+    // Focus publishes the field's real commands before the subsequent press,
+    // as the browser does before clicking its Dictation control.
+    await act(async () => { screen.root.findByType('MultiTextInput' as never).props.onFocus?.(); });
+    return screen;
 }
 
 describe('AgentInput (send button accessibility)', () => {
@@ -349,12 +379,17 @@ describe('AgentInput (send button accessibility)', () => {
     );
 
 
-    afterEach(() => {
-        delete localSettingOverrides.composerKeepFocusAfterSend;
+    afterEach(async () => {
+        const { voiceDictationController } = await import('@/voice/dictation/voiceDictationRuntime');
+        await voiceDictationController.cancel();
+        accountScope?.dispose(); accountScope = undefined;
+        vi.unstubAllGlobals();
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.setState({ localSettings: { ...storage.getState().localSettings, composerKeepFocusAfterSend: false } });
         translateOverride.fn = null;
         featureEnabledState.voice = true;
-        dictationState.status = 'idle';
-        dictationState.failure = null;
+        recognition.text = 'dictated';
+        recognition.permission = 'granted';
         vi.clearAllMocks();
     });
 
@@ -1444,9 +1479,8 @@ describe('AgentInput (send button accessibility)', () => {
 
     it('shows a stop control while mic is enabled and active (no text)', async () => {
         const { AgentInput } = await import('./AgentInput');
-        dictationState.status = 'listening';
 
-        const screen = await renderScreen(<AgentInput
+        const screen = await renderDictationComposer(<AgentInput
                     sessionId="session-1"
                     value=""
                     placeholder="Type"
@@ -1460,6 +1494,8 @@ describe('AgentInput (send button accessibility)', () => {
                     autocompleteSuggestions={async () => []}
                 />);
 
+        await screen.pressByTestIdAsync('session-composer-send');
+        await vi.waitFor(() => expect(recognition.start).toHaveBeenCalledOnce());
         const send = screen.findByTestId('session-composer-send');
         expect(send).toBeTruthy();
         if (!send) throw new Error('session-composer-send not found');
@@ -1479,11 +1515,8 @@ describe('AgentInput (send button accessibility)', () => {
         const { AgentInput } = await import('./AgentInput');
         const onChangeText = vi.fn();
         const onSend = vi.fn();
-        dictationState.toggle
-            .mockResolvedValueOnce({ kind: 'started' })
-            .mockResolvedValueOnce({ kind: 'completed', text: 'dictated' });
 
-        const screen = await renderScreen(<AgentInput
+        const screen = await renderDictationComposer(<AgentInput
             sessionId="session-1"
             voiceAffordance="dictation"
             value=""
@@ -1498,7 +1531,7 @@ describe('AgentInput (send button accessibility)', () => {
         expect(screen.root.findAll((node) => node.type === voiceMountType)).toHaveLength(0);
         expect(screen.findByTestId('agent-input-dictation')).not.toBeNull();
         await screen.pressByTestIdAsync('agent-input-dictation');
-        dictationState.status = 'listening';
+        await vi.waitFor(() => expect(recognition.start).toHaveBeenCalledOnce());
         await screen.update(<AgentInput
             sessionId="session-1"
             voiceAffordance="dictation"
@@ -1519,7 +1552,7 @@ describe('AgentInput (send button accessibility)', () => {
         });
         await screen.pressByTestIdAsync('agent-input-dictation');
 
-        expect(dictationState.toggle).toHaveBeenCalledTimes(2);
+        expect(recognition.stop).toHaveBeenCalledOnce();
         expect(multiTextInputHandleMocks.setTextAndSelection).toHaveBeenLastCalledWith(
             'before dictated after',
             { start: 15, end: 15 },
@@ -1533,10 +1566,9 @@ describe('AgentInput (send button accessibility)', () => {
 
     it('reports a completed Dictation attempt when no speech was detected', async () => {
         const { AgentInput } = await import('./AgentInput');
-        dictationState.status = 'listening';
-        dictationState.toggle.mockResolvedValueOnce({ kind: 'completed', text: null });
+        recognition.text = '';
 
-        const screen = await renderScreen(<AgentInput
+        const screen = await renderDictationComposer(<AgentInput
             sessionId="session-1"
             value="existing"
             placeholder="Type"
@@ -1546,8 +1578,12 @@ describe('AgentInput (send button accessibility)', () => {
             autocompleteSuggestions={async () => []}
         />);
         await screen.pressByTestIdAsync('agent-input-dictation');
+        await vi.waitFor(() => expect(recognition.start).toHaveBeenCalledOnce());
+        await screen.pressByTestIdAsync('agent-input-dictation');
 
-        expect(modalAlertMock).toHaveBeenCalledWith('voiceAssistant.dictationNoSpeech');
+        expect(screen.getTextContent()).toContain('voiceAssistant.dictationNoSpeech');
+        expect(screen.findByTestId('agent-input-dictation-recovery')).not.toBeNull();
+        expect(modalAlertMock).not.toHaveBeenCalled();
         expect(multiTextInputHandleMocks.setTextAndSelection).not.toHaveBeenCalled();
 
         await screen.unmount();
@@ -1555,9 +1591,9 @@ describe('AgentInput (send button accessibility)', () => {
 
     it('does not stack a generic Dictation alert over the microphone permission prompt', async () => {
         const { AgentInput } = await import('./AgentInput');
-        dictationState.toggle.mockRejectedValueOnce(new Error('mic_permission_denied'));
+        recognition.permission = 'denied';
 
-        const screen = await renderScreen(<AgentInput
+        const screen = await renderDictationComposer(<AgentInput
             sessionId="session-1"
             value=""
             placeholder="Type"
@@ -1568,6 +1604,7 @@ describe('AgentInput (send button accessibility)', () => {
         />);
         await screen.pressByTestIdAsync('agent-input-dictation');
 
+        expect(recognition.start).not.toHaveBeenCalled();
         expect(modalAlertMock).not.toHaveBeenCalled();
 
         await screen.unmount();
@@ -1575,11 +1612,31 @@ describe('AgentInput (send button accessibility)', () => {
 
     it('explains that conversational Voice must end before Dictation can start', async () => {
         const { AgentInput } = await import('./AgentInput');
-        dictationState.toggle.mockRejectedValueOnce(
-            new VoiceCaptureBusyError('conversation'),
-        );
+        const { voiceCaptureAdmissionController } = await import('@/voice/runtime/input/VoiceCaptureAdmissionController');
+        const conversation = voiceCaptureAdmissionController.acquire('conversation');
+        if (conversation.status !== 'acquired') throw new Error('Expected the conversation to acquire its microphone');
 
-        const screen = await renderScreen(<AgentInput
+        const screen = await renderDictationComposer(<AgentInput
+            sessionId="session-1"
+            value=""
+            placeholder="Type"
+            onChangeText={() => {}}
+            onSend={() => {}}
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+        try {
+            await screen.pressByTestIdAsync('agent-input-dictation');
+            expect(screen.getTextContent()).toContain('voiceAssistant.dictationErrors.microphoneOwnedByVoice');
+            expect(recognition.start).not.toHaveBeenCalled();
+            expect(modalAlertMock).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); conversation.lease.release(); }
+    });
+
+    it('presents and consumes an asynchronous Dictation capture failure', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderDictationComposer(<AgentInput
             sessionId="session-1"
             value=""
             placeholder="Type"
@@ -1589,39 +1646,15 @@ describe('AgentInput (send button accessibility)', () => {
             autocompleteSuggestions={async () => []}
         />);
         await screen.pressByTestIdAsync('agent-input-dictation');
-
-        expect(modalAlertMock).toHaveBeenCalledWith(
-            'common.error',
-            'voiceAssistant.dictationErrors.microphoneOwnedByVoice',
-        );
-
-        await screen.unmount();
-    });
-
-    it('presents and consumes an asynchronous Dictation capture failure', async () => {
-        const { AgentInput } = await import('./AgentInput');
-        dictationState.failure = {
-            id: 7,
-            sessionId: 'session-1',
-            kind: 'provider_error',
-            reason: 'capture_failed',
-        };
-
-        const screen = await renderScreen(<AgentInput
-            sessionId="session-1"
-            value=""
-            placeholder="Type"
-            onChangeText={() => {}}
-            onSend={() => {}}
-            autocompleteKinds={[]}
-            autocompleteSuggestions={async () => []}
-        />);
-
-        expect(modalAlertMock).toHaveBeenCalledWith(
-            'common.error',
-            'voiceAssistant.dictationErrors.captureFailed',
-        );
-        expect(dictationState.dismissFailure).toHaveBeenCalledWith(7);
+        await vi.waitFor(() => expect(recognition.start).toHaveBeenCalledOnce());
+        await act(async () => { recognition.listeners.get('error')?.({ error: 'audio-capture' }); });
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('voiceAssistant.dictationErrors.captureFailed'));
+        const { voiceDictationController } = await import('@/voice/dictation/voiceDictationRuntime');
+        expect(voiceDictationController.getSnapshot().failure).toBeUndefined();
+        expect(modalAlertMock).not.toHaveBeenCalled();
+        expect(multiTextInputHandleMocks.setTextAndSelection).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('agent-input-dictation-recovery-close');
+        expect(screen.findByTestId('agent-input-dictation-recovery')).toBeNull();
 
         await screen.unmount();
     });
@@ -1715,7 +1748,8 @@ describe('AgentInput (send button accessibility)', () => {
     });
 
     it('keeps the session composer focused after sending when the person asked for that', async () => {
-        localSettingOverrides.composerKeepFocusAfterSend = true;
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.setState({ localSettings: { ...storage.getState().localSettings, composerKeepFocusAfterSend: true } });
         const { AgentInput } = await import('./AgentInput');
 
         const screen = await renderScreen(<AgentInput

@@ -5,6 +5,7 @@ import { ACTION_IDS } from '@happier-dev/protocol/actions/actionIds';
 import { t } from '@/text';
 import { getTranslationValue } from '@/text/i18n';
 import { SUPPORTED_LANGUAGE_CODES } from '@/text/_all';
+import { preloadLocaleBundle } from '@/text/localeBundlesSync';
 
 import {
     SESSION_ACTION_ARCHIVE_ID,
@@ -60,8 +61,9 @@ describe('session action presentation', () => {
             .toMatchObject({ checked: false, subtitle: t('bots.menu.toolsOffHere') });
     });
 
-    it('resolves tool visibility action labels without replacing the transcript group label in any locale', () => {
+    it('resolves tool visibility action labels without replacing the transcript group label in any locale', async () => {
         for (const language of SUPPORTED_LANGUAGE_CODES) {
+            await preloadLocaleBundle(language);
             expect(typeof getTranslationValue('session.toolCalls', language)).toBe('string');
             for (const actionId of [SESSION_ACTION_TOOL_CALLS_TOGGLE_ID, SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID]) {
                 const metadata = getSessionActionMetadata(actionId);

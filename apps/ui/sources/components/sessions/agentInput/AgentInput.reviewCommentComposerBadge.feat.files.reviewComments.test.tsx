@@ -2,19 +2,10 @@ import React from 'react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen as renderPanelScreen } from '@/dev/testkit';
-import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
-
-function flattenStyle(style: unknown): Record<string, unknown> {
-    if (!style) return {};
-    if (Array.isArray(style)) {
-        return style.reduce<Record<string, unknown>>((result, entry) => ({ ...result, ...flattenStyle(entry) }), {});
-    }
-    return typeof style === 'object' ? style as Record<string, unknown> : {};
-}
 
 const modalAlertSpy = vi.fn();
 const modalShowSpy = vi.fn((_config: unknown) => 'review-comments-modal');
@@ -44,6 +35,8 @@ vi.mock('expo-image', () => ({
     Image: (props: Record<string, unknown>) => React.createElement('Image', props),
 }));
 vi.mock('expo-linear-gradient', () => ({ LinearGradient: 'LinearGradient' }));
+// Install configurable SDK boundaries before the runtime harness loads the composer graph.
+const { installSessionPaneRuntimeTestHarness } = await import('@/components/sessions/panes/sessionPaneRuntimeTestHarness');
 const runtime = installSessionPaneRuntimeTestHarness();
 const { storage } = await import('@/sync/domains/state/storageStore');
 beforeEach(() => {
@@ -235,14 +228,14 @@ describe('AgentInput review comment composer badge', () => {
         );
 
         const touchFloor = HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE;
-        const { layoutHitArea } = await import('@/dev/testkit/harness/hitFrameReach');
+        const { layoutHitArea, readHitArea } = await import('@/dev/testkit/harness/hitFrameReach');
         const removeButton = screen.findByTestId('agent-input-review-comments-attachment-badge-remove');
-        expect(removeButton?.props.accessibilityRole).toBe('button');
+        expect(screen.findHostByTestId('agent-input-review-comments-attachment-badge-remove')?.props.role).toBe('button');
         expect(removeButton?.props.accessibilityLabel).toBe('files.reviewComments.detachOrDiscardTitle');
         expect(removeButton?.props.hitSlop).toBeUndefined();
         // The badge's remove control keeps its drawn square and reaches the pointer floor by hit area.
-        const drawn = flattenStyle(removeButton?.props.style);
-        const area = await layoutHitArea(() => screen.findByTestId('agent-input-review-comments-attachment-badge-remove'), { width: Number(drawn.width ?? drawn.minWidth), height: Number(drawn.height ?? drawn.minHeight) });
+        const drawn = readHitArea(removeButton!).drawn;
+        const area = await layoutHitArea(() => screen.findByTestId('agent-input-review-comments-attachment-badge-remove'), drawn);
         expect(Math.min(area.width, area.height)).toBeGreaterThanOrEqual(touchFloor);
 
         await screen.pressByTestIdAsync('agent-input-review-comments-attachment-badge-remove');

@@ -12,7 +12,6 @@ import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { readUsageWidgetPageContext, readUsageWidgetPageScope } from '@/components/settings/usage/usageWidgetPageContext';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { storage } from '@/sync/domains/state/storageStore';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import type { WidgetAreaPort } from './useWidgetAreaLayout';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -74,6 +73,7 @@ const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mo
 const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 const { t } = await import('@/text');
+const { ModalProvider } = await import('@/modal/ModalProvider');
 function setActionPolicy(policy: ReturnType<typeof normalizeActionsSettingsV1>) {
     actionPolicy = policy;
     storage.setState({ settingsScope: { serverId: runtime.serverId, accountId: 'account-a' },
@@ -594,7 +594,8 @@ it.each([500, 503, 'AbortError', 'invalidRecord', 'batch503', 'batch403'] as con
         // Selection changes document identity. Only a refresh of the SAME view may retain its cards.
         await vi.waitFor(() => expect(current.layout.state).toMatchObject({ status: 'unavailable',
             reasonCode: status === 'AbortError' ? 'cancelled' : status === 'invalidRecord' ? 'invalid_widget_area_record'
-                : status === 'batch503' || status === 'batch403' ? 'artifact_content_unavailable' : 'widget_area_unavailable' }));
+                : status === 503 || status === 'batch503' ? 'database_transaction_timeout'
+                    : status === 'batch403' ? 'artifact_content_unavailable' : 'widget_area_unavailable' }));
         expect(screen.findAllHostsByTestId('core.area.readFailed')).toHaveLength(0);
         expect(screen.findByTestId('core.area.unavailable')).not.toBeNull();
         expect(screen.findByTestId('core.area.widget.costs-body.body')).toBeNull();
@@ -681,7 +682,7 @@ it('renews named layouts after same-Account activation without a Profile scope c
     } finally { await hook.unmount(); publishAppliedActiveServerSnapshot(snapshot); }
 });
 
-it('keeps an untouched Usage widget unchanged while its configured UI edit awaits canonical approval', async () => {
+it('keeps an untouched Usage widget unchanged while its configured UI edit awaits native confirmation', async () => {
     setActionPolicy(normalizeActionsSettingsV1({ v: 1,
         actions: { 'widgets.item.rename': { approvalRequiredSurfaces: ['ui'] } },
     }));
@@ -690,44 +691,51 @@ it('keeps an untouched Usage widget unchanged while its configured UI edit await
             v: 1 as const, id: 'displayed', definition: { kind: 'builtin' as const, id: 'project_about' }, bindings: {},
         } }] },
     ] };
-    const hook = await renderHook(() => useCorePageWidgetAreaBinding(input));
+    let binding!: ReturnType<typeof useCorePageWidgetAreaBinding>;
+    function Page() { binding = useCorePageWidgetAreaBinding(input); return null; }
+    const screen = await renderScreen(<ModalProvider><Page /></ModalProvider>);
     try {
-        const surface = hook.getCurrent().surface!;
-        const result = await hook.getCurrent().port!.execute({ actionId: 'widgets.item.rename', instanceId: 'displayed', displayName: 'Personal' });
-        expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+        const surface = binding.surface!;
+        let pending!: ReturnType<NonNullable<typeof binding.port>['execute']>;
+        await act(async () => { pending = binding.port!.execute({ actionId: 'widgets.item.rename', instanceId: 'displayed', displayName: 'Personal' }); });
+        await vi.waitFor(() => expect(screen.findByTestId('web-modal-cancel')).not.toBeNull());
         expect(artifacts.readPlainBody(buildWidgetSurfaceArtifactIdV1(surface))).toBeNull();
-        const approval = artifacts.list().find(row => row.id !== buildWidgetSurfaceArtifactIdV1(surface));
-        expect(approval).toBeDefined();
-        expect(JSON.parse(artifacts.readPlainBody(approval!.id)!)).toMatchObject({ actionId: 'widgets.item.rename',
-            actionArgs: { ref: { surface, instanceId: 'displayed' }, displayName: 'Personal' },
-            executionOriginV1: { authority: 'present_user' } });
-    } finally { await hook.unmount(); }
+        expect(artifacts.list()).toEqual([]);
+        await screen.pressByTestIdAsync('web-modal-cancel');
+        await expect(pending).resolves.toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+        expect(artifacts.readPlainBody(buildWidgetSurfaceArtifactIdV1(surface))).toBeNull();
+    } finally { await screen.unmount(); }
 });
 
-it('reports a pending new Usage view without treating its approval as an applied layout', async () => {
+it('keeps a new Usage view unapplied while native confirmation is open', async () => {
     setActionPolicy(normalizeActionsSettingsV1({ v: 1,
         actions: { 'widgets.area.layout.create': { approvalRequiredSurfaces: ['ui'] } },
     }));
     const input = { serverId: runtime.serverId, pageId: 'usage', area: 'main', context: {}, presets: [
         { id: 'overview', name: 'Overview', items: [] },
     ] };
-    const hook = await renderHook(() => {
+    let current!: { binding: ReturnType<typeof useCorePageWidgetAreaBinding>; layouts: ReturnType<typeof useWidgetAreaLayouts> };
+    function Page() {
         const binding = useCorePageWidgetAreaBinding(input);
-        return { binding, layouts: useWidgetAreaLayouts({ surface: binding.surface, execute: binding.executeLayoutAction }) };
-    });
+        current = { binding, layouts: useWidgetAreaLayouts({ surface: binding.surface, execute: binding.executeLayoutAction }) };
+        return null;
+    }
+    const screen = await renderScreen(<ModalProvider><Page /></ModalProvider>);
     try {
-        await vi.waitFor(() => expect(hook.getCurrent().layouts.state.status).toBe('ready'));
-        let created!: ReturnType<ReturnType<typeof hook.getCurrent>['layouts']['create']>;
-        await act(async () => { created = hook.getCurrent().layouts.create('Personal', hook.getCurrent().binding.surface!); });
-        await vi.waitFor(() => expect(hook.getCurrent().layouts.approvalId).toBeTypeOf('string'));
-        expect(hook.getCurrent().layouts.state.dashboards.map(row => row.name)).toEqual(['Overview']);
-        expect(readPresentationNotice()).toMatchObject({ severity: 'info', message: 'widgetAdd.areaApprovalPending' });
-        expect(await decideApprovalAsInbox(runtime.serverId, hook.getCurrent().layouts.approvalId!, 'reject')).toMatchObject({ ok: true });
-        await expect(created).resolves.toMatchObject({ ok: false, errorCode: 'approval_rejected' });
-    } finally { await hook.unmount(); }
+        await vi.waitFor(() => expect(current.layouts.state.status).toBe('ready'));
+        let created!: ReturnType<typeof current.layouts.create>;
+        await act(async () => { created = current.layouts.create('Personal', current.binding.surface!); });
+        await vi.waitFor(() => expect(screen.findByTestId('web-modal-cancel')).not.toBeNull());
+        expect(current.layouts.state.dashboards.map(row => row.name)).toEqual(['Overview']);
+        expect(current.layouts.approvalId).toBeNull();
+        expect(artifacts.list()).toEqual([]);
+        await screen.pressByTestIdAsync('web-modal-cancel');
+        await expect(created).resolves.toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+        expect(current.layouts.state.dashboards.map(row => row.name)).toEqual(['Overview']);
+    } finally { await screen.unmount(); }
 });
 
-it('keeps an edited preset and offers no Undo while Reset is awaiting approval', async () => {
+it('keeps an edited preset and offers no Undo while Reset awaits native confirmation', async () => {
     const input = { serverId: runtime.serverId, pageId: 'usage', area: 'main', context: {}, presets: [
         { id: 'overview', name: 'Overview', items: [{ kind: 'widget' as const, instance: {
             v: 1 as const, id: 'displayed', definition: { kind: 'builtin' as const, id: 'project_about' }, bindings: {},
@@ -739,7 +747,7 @@ it('keeps an edited preset and offers no Undo while Reset is awaiting approval',
         return binding.surface ? <WidgetAreaPresetLine preset={{ id: 'overview', name: 'Overview', isEdited: true, changes: [] }}
             surface={binding.surface} presetActions={binding} testID="pending.preset" /> : null;
     }
-    const screen = await renderScreen(<Composition />);
+    const screen = await renderScreen(<ModalProvider><Composition /></ModalProvider>);
     try {
         const port = binding!.port!;
         await act(async () => { expect(await port.execute({ actionId: 'widgets.item.rename', instanceId: 'displayed', displayName: 'Personal' })).toMatchObject({ ok: true }); });
@@ -749,41 +757,49 @@ it('keeps an edited preset and offers no Undo while Reset is awaiting approval',
             actions: { 'widgets.area.layout.reset': { approvalRequiredSurfaces: ['ui'] } },
         }));
         await screen.pressByTestIdAsync('pending.preset.reset');
-        await vi.waitFor(() => expect(readPresentationNotice()).toMatchObject({ severity: 'info', message: 'widgetAdd.areaApprovalPending' }));
+        await vi.waitFor(() => expect(screen.findByTestId('web-modal-cancel')).not.toBeNull());
         expect(readPresentationNotice()?.undo).toBeUndefined();
         expect(artifacts.readPlainBody(artifactId)).toBe(before);
-        expect(JSON.parse(artifacts.readPlainBody(artifacts.list().find(row => row.id !== artifactId)!.id)!))
-            .toMatchObject({ actionId: 'widgets.area.layout.reset' });
+        expect(artifacts.list().map(row => row.id)).toEqual([artifactId]);
+        await screen.pressByTestIdAsync('web-modal-cancel');
+        expect(artifacts.readPlainBody(artifactId)).toBe(before);
+        expect(readPresentationNotice()?.undo).toBeUndefined();
     } finally { await screen.unmount(); }
 });
 
-it('retains the selected user view while Delete awaits approval', async () => {
+it('retains the selected user view while Delete awaits native confirmation', async () => {
     const input = { serverId: runtime.serverId, pageId: 'usage', area: 'main', context: {}, presets: [
         { id: 'overview', name: 'Overview', items: [] },
     ] };
-    const hook = await renderHook(() => {
+    let current!: { binding: ReturnType<typeof useCorePageWidgetAreaBinding>; layouts: ReturnType<typeof useWidgetAreaLayouts> };
+    function Page() {
         const binding = useCorePageWidgetAreaBinding(input);
-        return { binding, layouts: useWidgetAreaLayouts({ surface: binding.surface, execute: binding.executeLayoutAction }) };
-    });
+        current = { binding, layouts: useWidgetAreaLayouts({ surface: binding.surface, execute: binding.executeLayoutAction }) };
+        return null;
+    }
+    const screen = await renderScreen(<ModalProvider><Page /></ModalProvider>);
     try {
-        await act(async () => { expect(await hook.getCurrent().binding.createLayout('personal', 'Personal')).toMatchObject({ ok: true }); });
-        await act(async () => { await hook.getCurrent().layouts.reload(); });
-        await vi.waitFor(() => expect(hook.getCurrent().layouts.state.dashboards.some(row => row.name === 'Personal')).toBe(true));
-        const personal = hook.getCurrent().layouts.state.dashboards.find(row => row.name === 'Personal')!;
+        await act(async () => { expect(await current.binding.createLayout('personal', 'Personal')).toMatchObject({ ok: true }); });
+        await act(async () => { await current.layouts.reload(); });
+        await vi.waitFor(() => expect(current.layouts.state.dashboards.some(row => row.name === 'Personal')).toBe(true));
+        const personal = current.layouts.state.dashboards.find(row => row.name === 'Personal')!;
         const before = artifacts.readPlainBody(personal.artifactId);
-        await act(async () => { expect(await hook.getCurrent().binding.selectLayout('personal')).toMatchObject({ ok: true }); });
+        await act(async () => { expect(await current.binding.selectLayout('personal')).toMatchObject({ ok: true }); });
         setActionPolicy(normalizeActionsSettingsV1({ v: 1,
             actions: { 'widgets.area.layout.delete': { approvalRequiredSurfaces: ['ui'] } },
         }));
-        let removed!: ReturnType<ReturnType<typeof hook.getCurrent>['layouts']['remove']>;
-        await act(async () => { removed = hook.getCurrent().layouts.remove(personal); });
-        await vi.waitFor(() => expect(hook.getCurrent().layouts.approvalId).toBeTypeOf('string'));
-        expect(hook.getCurrent().binding.surface).toMatchObject({ owner: { layoutId: 'personal' } });
+        let removed!: ReturnType<typeof current.layouts.remove>;
+        await act(async () => { removed = current.layouts.remove(personal); });
+        await vi.waitFor(() => expect(screen.findByTestId('web-modal-cancel')).not.toBeNull());
+        expect(current.binding.surface).toMatchObject({ owner: { layoutId: 'personal' } });
         expect(artifacts.readPlainBody(personal.artifactId)).toBe(before);
-        expect(readPresentationNotice()).toMatchObject({ severity: 'info', message: 'widgetAdd.areaApprovalPending' });
-        expect(await decideApprovalAsInbox(runtime.serverId, hook.getCurrent().layouts.approvalId!, 'reject')).toMatchObject({ ok: true });
-        await expect(removed).resolves.toMatchObject({ ok: false, errorCode: 'approval_rejected' });
-    } finally { await hook.unmount(); }
+        expect(current.layouts.approvalId).toBeNull();
+        expect(artifacts.list().map(row => row.id)).toEqual([personal.artifactId]);
+        await screen.pressByTestIdAsync('web-modal-cancel');
+        await expect(removed).resolves.toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+        expect(current.binding.surface).toMatchObject({ owner: { layoutId: 'personal' } });
+        expect(artifacts.readPlainBody(personal.artifactId)).toBe(before);
+    } finally { await screen.unmount(); }
 });
 
 it('reads the route-selected preset on the first admitted surface without first reading Overview', async () => {

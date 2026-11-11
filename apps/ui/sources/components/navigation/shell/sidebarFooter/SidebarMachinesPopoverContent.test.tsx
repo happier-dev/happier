@@ -13,6 +13,9 @@ import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+
 installDisconnectedServerSocketBoundary();
 const { machineResourceStore } = await import('@/sync/domains/machines/resources/machineResourceStore');
 const { storage } = await import('@/sync/domains/state/storageStore');

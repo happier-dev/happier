@@ -54,7 +54,8 @@ installAgentInputCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/ui/popover', () => ({
+vi.mock('@/components/ui/popover', async () => ({
+    ...await import('@/components/ui/popover/modalAwareFloatingPopoverPortalOptions'),
     Popover: (props: Record<string, unknown> & { open?: boolean; children?: React.ReactNode | ((args: { maxHeight: number }) => React.ReactNode) }) => {
         const child = typeof props.children === 'function'
             ? props.children({ maxHeight: 312 })
@@ -149,11 +150,13 @@ const baseRootStep: SelectionListStep = {
 
 const baseOverlayProps = buildOverlayLayerFixture();
 
+// Load the real subject after boundary installation, before behavior-test timing begins.
+const { AgentInputOverlayLayer } = await import('./AgentInputOverlayLayer');
+
 describe('AgentInputOverlayLayer presentation routing', () => {
     it('does not route autocomplete suggestions through the overlay layer', async () => {
         resetCaptures();
 
-        const { AgentInputOverlayLayer } = await import('./AgentInputOverlayLayer');
         const overlayAnchorRef = { current: null } as React.RefObject<View | null>;
 
         await renderScreen(
@@ -172,7 +175,6 @@ describe('AgentInputOverlayLayer presentation routing', () => {
     it('forwards machine content-popover scroll ownership props to the shared content popover', async () => {
         resetCaptures();
 
-        const { AgentInputOverlayLayer } = await import('./AgentInputOverlayLayer');
         const renderContent = () => null;
 
         await renderScreen(
@@ -207,7 +209,6 @@ describe('AgentInputOverlayLayer presentation routing', () => {
     it('preserves an explicit content-popover boundary override', async () => {
         resetCaptures();
 
-        const { AgentInputOverlayLayer } = await import('./AgentInputOverlayLayer');
         const explicitBoundaryRef = React.createRef<View>();
 
         await renderScreen(
@@ -228,7 +229,6 @@ describe('AgentInputOverlayLayer presentation routing', () => {
     it("routes presentation: 'list' through AgentInputSelectionListPopover and forwards the rootStep + selectedOptionId + anchor", async () => {
         resetCaptures();
 
-        const { AgentInputOverlayLayer } = await import('./AgentInputOverlayLayer');
 
         const chip = buildChipWithListPresentation(baseRootStep);
 
@@ -251,7 +251,6 @@ describe('AgentInputOverlayLayer presentation routing', () => {
     it("routes presentation: 'picker' (default) through AgentInputChipPickerPopover", async () => {
         resetCaptures();
 
-        const { AgentInputOverlayLayer } = await import('./AgentInputOverlayLayer');
 
         const chip = buildChipWithPickerPresentation();
 
@@ -271,7 +270,6 @@ describe('AgentInputOverlayLayer presentation routing', () => {
     it('mounts a dynamic collapsed popover through the incumbent active-chip anchor and close owner', async () => {
         resetCaptures();
 
-        const { AgentInputOverlayLayer } = await import('./AgentInputOverlayLayer');
         const onRequestClose = vi.fn();
         const renderContextCapture = {
             current: null as AgentInputExtraActionChipCollapsedPopoverRenderContext | null,
@@ -312,7 +310,6 @@ describe('AgentInputOverlayLayer presentation routing', () => {
         const prevDev = (globalThis as any).__DEV__;
         (globalThis as any).__DEV__ = true;
         try {
-            const { AgentInputOverlayLayer } = await import('./AgentInputOverlayLayer');
             // Force-cast a structurally invalid descriptor through `any` to
             // bypass R5's compile-time discriminated union (simulating dynamic
             // plugin / settings construction via type erasure).
@@ -353,7 +350,6 @@ describe('AgentInputOverlayLayer presentation routing', () => {
         const prevDev = (globalThis as any).__DEV__;
         (globalThis as any).__DEV__ = true;
         try {
-            const { AgentInputOverlayLayer } = await import('./AgentInputOverlayLayer');
             const invalidChip = {
                 key: 'invalid-picker',
                 controlId: 'recipient',

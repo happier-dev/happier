@@ -122,6 +122,14 @@ export async function createReactNativeNativeRuntime(
         ),
     };
 
+    // The host has no native sheet. Model the SDK's settled result: iOS can
+    // dismiss, while Android reports sharedAction when its chooser returns.
+    const baseShare = {
+        sharedAction: 'sharedAction',
+        dismissedAction: 'dismissedAction',
+        share: async () => ({ action: platformOS === 'ios' ? 'dismissedAction' as const : 'sharedAction' as const }),
+    } satisfies typeof import('react-native')['Share'];
+
     return {
         ...mergedModule,
         ...windowDimensionsAuthority(stub, mergedModule, restOverrides),
@@ -133,6 +141,7 @@ export async function createReactNativeNativeRuntime(
             baseAnimated as PlainObject,
             animatedOverrides as PlainObject | undefined,
         ),
+        Share: mergeObjectsPreservingDescriptors(baseShare, restOverrides.Share as PlainObject | undefined),
         I18nManager: { ...stub.I18nManager, ...(restOverrides.I18nManager as PlainObject | undefined) },
         Platform: mergeObjectsPreservingDescriptors(
             basePlatform as PlainObject,

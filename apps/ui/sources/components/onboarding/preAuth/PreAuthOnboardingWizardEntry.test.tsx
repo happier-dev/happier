@@ -224,6 +224,7 @@ vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
 
 vi.mock('@/utils/system/runtimeFetch', () => ({
     runtimeFetch: (...args: unknown[]) => runtimeFetchMock(...args),
+    get runtimeFetchManualResponse() { return this.runtimeFetch; },
 }));
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
@@ -737,7 +738,8 @@ describe('PreAuthOnboardingWizardEntry', () => {
         await act(async () => { await login; });
 
         expect(fetchMock).not.toHaveBeenCalled();
-        expect(runtimeFetchMock).toHaveBeenCalledWith('https://api.example.test/v1/auth/mtls', expect.objectContaining({
+        const mtlsRequest = runtimeFetchMock.mock.calls.find(([url]) => url === 'https://api.example.test/v1/auth/mtls');
+        expect(mtlsRequest?.[1]).toEqual(expect.objectContaining({
             method: 'POST',
             signal: expect.any(AbortSignal),
         }));

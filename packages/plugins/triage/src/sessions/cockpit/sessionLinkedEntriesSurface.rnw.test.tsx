@@ -279,6 +279,7 @@ async function mountCockpit(
     machinePending = false,
     observeResource = false,
     surface = renderSessionLinkedEntriesSurface,
+    executeUnlink?: (input: unknown) => Promise<unknown>,
 ): Promise<PluginUiTestkit> {
     let fixture!: PluginUiTestkit;
     let resourceReady: ((digest: string) => void) | undefined;
@@ -367,6 +368,7 @@ async function mountCockpit(
                 ...(observeResource ? { watchResource: async () => ({ digest: await firstResource }) } : {}),
                 executeAction: async ({ action, input }) => {
                     actionCalls.push({ action: String(action), input });
+                    if (String(action) === 'sessions/unlink-entry-v1' && executeUnlink !== undefined) return await executeUnlink(input) as never;
                     if (String(action) === 'sessions/read-source-links-v1') {
                         return await (sourceLinks ?? harness.readRelations)() as never;
                     }
@@ -407,7 +409,7 @@ async function openRow(fixture: PluginUiTestkit, name: string): Promise<void> {
 
 describe('expanded PR status from the exact linked source observation', () => {
     describe('createdHere PR linking', () => {
-        function createdPullRequestFixture(options: Readonly<{ failFirst?: boolean; project?: boolean; initialRead?: Promise<void> }> = {}) {
+        function createdPullRequestFixture(options: Readonly<{ failFirst?: boolean; project?: boolean; initialRead?: Promise<void>; initialAttach?: Promise<void> }> = {}) {
             const url = 'https://github.com/acme/widgets/pull/42';
             const calls: unknown[] = [];
             let linked = false;
@@ -441,7 +443,7 @@ describe('expanded PR status from the exact linked source observation', () => {
                                     }] : [],
                                 })) };
                         },
-                        executeAction: ({ action, input }) => {
+                        executeAction: async ({ action, input }) => {
                             if (action === 'plugins.settings.list') return getActionSpec(action).outputSchema.parse({
                                 ok: true, kind: action, data: {
                                     scope: { kind: 'account' }, target: { kind: 'account' }, revision: 'settings-1',
@@ -454,6 +456,7 @@ describe('expanded PR status from the exact linked source observation', () => {
                             });
                             calls.push({ action, input });
                             if (options.failFirst && calls.length === 1) throw new Error('Attach unavailable');
+                            await options.initialAttach;
                             linked = true;
                             return { kind: 'attached', bindingId: 'binding-42' };
                         },
@@ -468,7 +471,11 @@ describe('expanded PR status from the exact linked source observation', () => {
 
         it('attaches the exact Session and URL once per createdHere mount before reads settle and retains the link after remount', async () => {
             let settleRead!: () => void;
-            const scenario = createdPullRequestFixture({ initialRead: new Promise<void>(resolve => { settleRead = resolve; }) });
+            let settleAttach!: () => void;
+            const scenario = createdPullRequestFixture({
+                initialRead: new Promise<void>(resolve => { settleRead = resolve; }),
+                initialAttach: new Promise<void>(resolve => { settleAttach = resolve; }),
+            });
             const first = await scenario.mount();
             // A createdHere intent goes straight to Channels; PR reads do not admit attachment.
             expect(scenario.calls).toEqual([{ action: { pluginId: 'happier.channels', localId: 'session-pull-request-binding-v1' },
@@ -476,7 +483,7 @@ describe('expanded PR status from the exact linked source observation', () => {
             // A PR created here is an intent to link, never presented as an unwatched branch hint.
             await expect(first.getByText('Created from this session. Linking it here…')).resolves.toBeDefined();
             await expect(first.queryByText('Branch hint')).resolves.toBeUndefined();
-            await act(async () => { settleRead(); });
+            await act(async () => { settleRead(); settleAttach(); });
             expect(scenario.calls).toHaveLength(1);
             await expect(first.queryByRole('button', { name: 'Link this PR' })).resolves.toBeUndefined();
             await act(async () => { await first.dispose(); });
@@ -1371,6 +1378,25 @@ describe('the mounted Session cockpit', () => {
 });
 
 describe('undoing a link from the mounted cockpit', () => {
+    it('removes a source-qualified PR through the mounted row without choosing another source', async () => {
+        const relation = { entryRef: linkRow().entryRef, sessionId: SESSION_ID,
+            sourceInstanceId: '11111111-1111-4111-8111-111111111111', linkedAtMs: 1_000, displayPath: 'Source-owned PR' };
+        let linked = true;
+        const harness = createDataHarness({ snapshot: { rows: [], hasMore: false, status: 'ready' } });
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID }, null, true, null,
+            undefined, true, undefined, async () => ({ kind: 'complete', links: linked ? [relation] : [] }),
+            undefined, false, false, renderSessionLinkedEntriesSurface, async input => {
+                // The host Action boundary requires the exact source-qualified published address.
+                const value = input as { sourceInstanceId?: string };
+                if (value.sourceInstanceId !== relation.sourceInstanceId) throw new PluginError({ code: 'sessionLinksSourceInstanceRequired', message: 'A source is required.', retryable: false });
+                linked = false;
+                return { v: 1, status: 'unlinked' };
+            });
+        await unlinkThroughSharedPolicy(fixture, relation.displayPath);
+        expect(linked).toBe(false);
+        await expect(fixture.findByText('Link the PRs and issues at hand')).resolves.toBeDefined();
+        expect(harness.deletes).toHaveLength(0);
+    });
     /**
      * The reader who started a Session from the wrong entry had no way back: a
      * link is durable Account state, the cockpit was read-only, and nothing

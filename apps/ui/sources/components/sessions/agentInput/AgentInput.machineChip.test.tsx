@@ -6,7 +6,6 @@ vi.mock('socket.io-client', async (importOriginal) =>
 import type { ReactTestRendererJSON } from 'react-test-renderer';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
-import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 const mockEnv = vi.hoisted(() => ({
@@ -33,6 +32,8 @@ installAgentInputCommonModuleMocks({
         });
     },
 });
+// Install configurable SDK boundaries before the runtime harness loads the composer graph.
+const { installSessionPaneRuntimeTestHarness } = await import('@/components/sessions/panes/sessionPaneRuntimeTestHarness');
 const runtime = installSessionPaneRuntimeTestHarness();
 const { storage } = await import('@/sync/domains/state/storageStore');
 let AgentInput: typeof import('./AgentInput')['AgentInput'];

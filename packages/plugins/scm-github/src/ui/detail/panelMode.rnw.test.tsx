@@ -123,6 +123,14 @@ function failingChecksAnswer(): JsonValue {
   } as JsonValue;
 }
 
+/** Keep unrelated capability failures out of an Overview refusal case. */
+function readableCapabilitiesAnswer(): JsonValue {
+  return { kind: 'capabilities', ...projectGithubRepositoryCapabilities({
+    kind: 'readable', repositoryId: '1296269', repositoryKey: 'octo-org/example-app',
+    mergeSettings: { merge: true, squash: false, rebase: null }, archived: false, hasIssues: true,
+  }) };
+}
+
 /** GitHub's own pull request, as the exact overview read states it. */
 function overviewAnswer(): JsonValue {
   return {
@@ -328,7 +336,7 @@ describe('the GitHub detail as Triage panels', () => {
   it('publishes direct page Items, honors saved strip order and selects the real Files body from the phone host', async () => {
     const navigation: Array<PluginUiPageNavigationV1 | null> = [];
     const reads: string[] = [];
-    const fixture = await mountPanel('overview', { direct: true, navigation, reads });
+    const fixture = await mountPanel('overview', { direct: true, navigation, reads, changedFilesReview: true });
     const pageKind = { pluginId: GITHUB_PLUGIN_ID, localId: 'github-detail/pull-request' };
     expect(navigation.at(-1)).toMatchObject({ pageKind, value: 'overview' });
     expect(reads).not.toContain(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles);
@@ -357,7 +365,7 @@ describe('the GitHub detail as Triage panels', () => {
 
   it('leaves the outer page descriptor with Triage when rendering its source panel', async () => {
     const navigation: Array<PluginUiPageNavigationV1 | null> = [];
-    const fixture = await mountPanel('files', { navigation });
+    const fixture = await mountPanel('files', { navigation, changedFilesReview: true });
     expect(navigation).toEqual([]);
     expect(await fixture.queryAllByRole('tab')).toHaveLength(0);
     expect((await fixture.queryAllByRole('button')).filter(button => button.name?.includes('src/cart/totals.ts'))).not.toHaveLength(0);
@@ -521,7 +529,7 @@ describe('the GitHub detail as Triage panels', () => {
   });
 
   it.each([true, false])('reports an empty description only after a successful exact read (success=%s)', async (success) => {
-    const detail = await mountPanel('overview', { overview: success
+    const detail = await mountPanel('overview', { readCapabilities: async () => readableCapabilitiesAnswer(), overview: success
       ? { ...(overviewAnswer() as Record<string, JsonValue>), body: '' }
       : { kind: 'unavailable', failure: { class: 'transient', code: 'overview-read-refused' } },
     });
@@ -545,7 +553,7 @@ describe('the GitHub detail as Triage panels', () => {
   });
 
   it.each(['unavailable', 'timeout'])('keeps Overview Action refusal %s and its Request ID behind the shared details disclosure', async (code) => {
-    const detail = await mountPanel('overview', { rejectRead: localId =>
+    const detail = await mountPanel('overview', { readCapabilities: async () => readableCapabilitiesAnswer(), rejectRead: localId =>
       localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview ? new PluginError({
         code, retryable: false, details: { requestId: 'overview-request-54' },
         diagnostics: [{ code: 'plugin_surface_action_projection_unavailable', severity: 'error' }],
@@ -571,7 +579,8 @@ describe('the GitHub detail as Triage panels', () => {
     const result = await readGithubOverview({ v: 1, instance: launch.instance,
       localRef: { kindId, collisionScope, entryId }, routingToken: launch.observation.locator.routingToken }, transport.context);
     if (result.kind !== 'unavailable') throw new Error('Expected a native GitHub refusal');
-    const detail = await mountPanel('overview', { overview: projectNativeJsonValueForTransport(result) });
+    const detail = await mountPanel('overview', { overview: projectNativeJsonValueForTransport(result),
+      readCapabilities: async () => readableCapabilitiesAnswer() });
     expect(document.body.textContent).not.toContain('GH:OVERVIEW:54');
     await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Details' })); });
     expect(document.body.textContent).toContain(result.failure.code);

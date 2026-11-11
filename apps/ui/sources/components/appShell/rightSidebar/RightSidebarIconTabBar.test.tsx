@@ -74,7 +74,7 @@ describe('RightSidebarIconTabBar', () => {
         const onSelectTab = vi.fn();
         // Browser is a mobile-only sidebar tab after D1; this test exercises the bar's a11y
         // rendering for the Browser/Services tabs, so resolve the mobile tab set that includes both.
-        const tabs = resolveRightSidebarTabs({ scope: 'session', terminalTabAvailable: true, presentation: 'mobile' });
+        const tabs = resolveRightSidebarTabs({ scope: 'session', terminalTabAvailable: true, browserFeatureEnabled: true, presentation: 'mobile' });
 
         const screen = await renderScreen(
             <RightSidebarIconTabBar

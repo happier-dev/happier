@@ -1,22 +1,16 @@
 // @vitest-environment jsdom
-import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
+import { layoutHitArea, readHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 // The static storage graph reaches the Socket.IO transport; register its external boundary before any import.
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 import { renderScreen as renderPanelScreen } from '@/dev/testkit';
-import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { projectAgentInputAttachmentRowItems, type AgentInputAttachment } from './agentInputContracts';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 
-function flattenStyle(style: unknown): Record<string, unknown> {
-    if (!style) return {};
-    if (Array.isArray(style)) return style.reduce<Record<string, unknown>>((result, entry) => ({ ...result, ...flattenStyle(entry) }), {});
-    return typeof style === 'object' ? style as Record<string, unknown> : {};
-}
 type ModalShowConfig = Parameters<typeof import('@/modal')['Modal']['show']>[0];
 const modalShowSpy = vi.fn((_config: ModalShowConfig) => 'modal-1');
 installAgentInputCommonModuleMocks({
@@ -29,6 +23,8 @@ vi.mock('expo-image', () => ({
     Image: (props: Record<string, unknown>) => React.createElement('Image', props),
 }));
 vi.mock('expo-linear-gradient', () => ({ LinearGradient: 'LinearGradient' }));
+// Install configurable SDK boundaries before the runtime harness loads the composer graph.
+const { installSessionPaneRuntimeTestHarness } = await import('@/components/sessions/panes/sessionPaneRuntimeTestHarness');
 const runtime = installSessionPaneRuntimeTestHarness();
 const { storage } = await import('@/sync/domains/state/storageStore');
 beforeEach(() => {
@@ -159,7 +155,7 @@ describe('AgentInput (image attachment thumbnails)', () => {
 
         const screen = await renderAgentInput(attachments);
 
-        expect(screen.findByTestId('agent-input-attachment-image:a1')?.props.accessibilityRole).toBe('button');
+        expect(screen.findHostByTestId('agent-input-attachment-image:a1')?.props.role).toBe('button');
     });
 
     it('keeps image removal available while uploading', async () => {
@@ -203,11 +199,10 @@ describe('AgentInput (image attachment thumbnails)', () => {
         const touchFloor = HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE;
         for (const key of ['image', 'file']) {
             const remove = screen.findByTestId(`agent-input-attachment-remove:${key}`);
-            expect(remove?.props.accessibilityRole).toBe('button');
+            expect(screen.findHostByTestId(`agent-input-attachment-remove:${key}`)?.props.role).toBe('button');
             expect(remove?.props.accessibilityLabel).toBe('common.remove');
             // The corner control keeps its compact drawn square; the WCAG pointer floor is its hit area.
-            const frame = flattenStyle(remove?.props.style);
-            const drawn = { width: Number(frame?.width ?? frame?.minWidth), height: Number(frame?.height ?? frame?.minHeight) };
+            const drawn = readHitArea(remove!).drawn;
             const area = await layoutHitArea(() => screen.findByTestId(`agent-input-attachment-remove:${key}`), drawn);
             expect(Math.min(area.width, area.height)).toBeGreaterThanOrEqual(touchFloor);
         }

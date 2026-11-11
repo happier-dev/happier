@@ -272,6 +272,7 @@ describe('cockpit tab bars', () => {
     });
 
     it('uses the shared Session projection for native top mode with one bottom More', async () => {
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
         const { SystemMobileBottomChrome } = await import('../SystemMobileBottomChrome');
         const { SystemTabBar } = await import('../SystemTabBar');
         const onSurfacePress = vi.fn();
@@ -285,7 +286,9 @@ describe('cockpit tab bars', () => {
             // Open files kept on the bar is a page, so Top draws a strip (Chat alone keeps its bottom slot).
             navigationSurfacePlacementsV1: { pageTabs: { session: 'top' }, sessionTabBar: { orderedIds: [], placements: { tabs: 'pinned' } } },
         } }));
-        const screen = await renderRealScreen(<SystemMobileBottomChrome model={{ kind: 'sessionCockpit', props }} hidden={false} />);
+        const screen = await renderRealScreen(<InjectedAuthProvider credentials={null}>
+            <SystemMobileBottomChrome model={{ kind: 'sessionCockpit', props }} hidden={false} />
+        </InjectedAuthProvider>);
         const native = screen.findByType(SystemTabBar);
         expect(native.props.items.map((item: { id: string }) => item.id)).toEqual(['browse', 'git', 'companion', 'terminal', 'more']);
         await act(async () => native.props.onPress('more'));
@@ -390,9 +393,13 @@ describe('cockpit tab bars', () => {
     it('puts the Project pages on the bar in order, the rest behind More with their selected state (D44)', async () => {
         const { ProjectCockpitTabBar } = await import('./ProjectCockpitTabBar');
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const { resolveDetailNavigationItems } = await import('@/components/appShell/rightSidebar/detailNavigationItems');
+        const catalogPages = await projectPages();
+        const items = resolveDetailNavigationItems({ scope: 'project', presentation: 'mobile',
+            projectPages: catalogPages, terminalTabAvailable: true, browserFeatureEnabled: true });
         const navigate = vi.fn();
         const screen = await renderScreen(<ProjectCockpitTabBar
-            pages={await projectPages()}
+            pages={catalogPages} items={items}
             workspaceRefId="workspace-a" activeSurface="context" terminalTabAvailable={true} onSurfacePress={navigate}
         />);
         const tablists = screen.findAll((node) => typeof node.type === 'string' && node.props.accessibilityRole === 'tablist');

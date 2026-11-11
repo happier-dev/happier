@@ -8,14 +8,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { installPopoverCommonModuleMocks } from '@/components/ui/popover/popoverTestHelpers';
 
-import { createSessionListViewFilterDefaults } from './sessionListViewFilters';
-
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 installPopoverCommonModuleMocks({
     reactNative: async () => await import('react-native-web'),
 });
 
+// The filters reach Platform through Home profiles; select the DOM adapter before loading that graph.
+const { createSessionListViewFilterDefaults } = await import('./sessionListViewFilters');
 // Resolve the real web graph before the timed DOM/portal interaction begins.
 const { PopoverScope } = await import('@/components/ui/popover');
 const { SessionListFilterEditorControl } = await import('./SessionListFilterEditorControl');

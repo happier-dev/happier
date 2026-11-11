@@ -32,7 +32,6 @@ import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch'
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { createPlainSessionCurrentProjectionRecordFixture, createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainSessionByIdResponseFixture, createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -753,18 +752,25 @@ describe('/session/[id]/info', () => {
         // callback where a fixture exception looks like a network outage.
         sessionByIdForHttp = sessionRecordForHttp?.encryptionMode === 'plain'
             ? createPlainSessionByIdResponseFixture(sessionRecordForHttp) : null;
-        const machineInventory: Record<string, ReturnType<typeof createMachineFixture>[]> = { [serverId]: [plainMachine], ...Object.fromEntries(
+        // Unknown presence means the Account cannot see this Machine. Socket
+        // withdrawal retains an admitted online row rather than making it unknown.
+        const machineInventory: Record<string, ReturnType<typeof createMachineFixture>[]> = { [serverId]: machinePresenceObserved ? [plainMachine] : [], ...Object.fromEntries(
                 Object.entries(machineListByServerIdState.current).map(([homeId, machines]) => [homeId, machines.map(candidate => ({
                     ...plainMachine, ...candidate, metadata: { ...plainMachine.metadata, ...candidate.metadata },
                 }))]),
             ) };
+        const originMachineId = session?.metadata?.machineId;
+        if (machineTargetFixture && originMachineId && originMachineId !== plainMachine.id) {
+            // Stale explicit identity follows the replacement producer's forward
+            // pointer; matching host/home strings do not establish identity.
+            machineInventory[serverId] = [createMachineFixture({ ...plainMachine,
+                id: originMachineId, active: false, replacedByMachineId: plainMachine.id,
+            }), ...machineInventory[serverId]];
+        }
         machineCensusByServerId = Object.fromEntries(Object.entries(machineInventory).map(([homeId, rows]) => [homeId, rows.map(machine => ({
-            ...createPlainMachineRowFixture({ id: machine.id, accountId: 'viewer-account' }),
-            seq: machine.seq, createdAt: machine.createdAt, updatedAt: machine.updatedAt,
-            active: machine.active, activeAt: machine.activeAt,
-            metadata: encodePlainMachineStoredContent(machine.metadata), metadataVersion: machine.metadataVersion,
-            daemonState: machine.daemonState ? encodePlainMachineStoredContent(machine.daemonState) : null,
-            daemonStateVersion: machine.daemonStateVersion,
+            ...createPlainMachineRowFixture({ id: machine.id, accountId: 'viewer-account', machine }),
+            revokedAt: machine.revokedAt ?? null,
+            replacedByMachineId: machine.replacedByMachineId ?? null,
         }))]));
         const store = getStorage();
         store.setState({
@@ -773,7 +779,7 @@ describe('/session/[id]/info', () => {
             sessionListIndexByServerId: {},
             concurrentSessionListCacheByServerId: {},
             sessionLocalStateScope: { serverId, accountId: 'viewer-account' },
-            machines: { [plainMachine.id]: plainMachine },
+            machines: Object.fromEntries(machineInventory[serverId].map(machine => [machine.id, machine])),
             machineListByServerId: machineInventory,
             machineListStatusByServerId: Object.fromEntries([serverId, ...Object.keys(machineListByServerIdState.current)]
                 .map(homeId => [homeId, 'idle'])),
@@ -826,17 +832,6 @@ describe('/session/[id]/info', () => {
             ? <React.Profiler id="session-info" onRender={options.onRender}><SessionInfoScreen /></React.Profiler>
             : <SessionInfoScreen />;
         const screen = await renderScreen(content, { wrapper: SessionInfoTestProviders, createNodeMock: browserHostNode });
-        if (!machinePresenceObserved) {
-            const serverId = mockSession?.serverId ?? mockServerId ?? resolvedServerId;
-            // Settle the active Home's HTTP ingress before withdrawing it; a fresh
-            // census is a legitimate new presence observation after withdrawal.
-            await sync.refreshMachines();
-            const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
-            const { withdrawMachinePresenceForScope } = await import('@/sync/domains/machines/reachability/machineReachability');
-            await act(async () => withdrawMachinePresenceForScope({
-                serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'viewer-account',
-            }));
-        }
         if (routeHydrationState.kind === 'missing' || (!mockSession && routeHydrationState.kind === 'available')) {
             await vi.waitFor(() => expect(screen.getTextContent()).toContain('errors.sessionDeleted'));
         }
@@ -2143,7 +2138,6 @@ describe('/session/[id]/info', () => {
 
     it('reacts when machine-rpc direct-peer viability becomes available for the reachable machine target after metadata goes stale', async () => {
         sessionHandoffFeatureEnabled = true;
-        machinePresenceObserved = false;
         resolvedServerId = 'server_reactive_info';
         machineTargetFixture = {
             machineId: 'machine_rebound',
@@ -2190,6 +2184,12 @@ describe('/session/[id]/info', () => {
         };
 
         const screen = await renderInfoScreen();
+        const { recordMachineRequestFailed } = await import('@/sync/domains/machines/reachability/machineReachability');
+        // A failed relay request hides Handoff until the direct route supplies
+        // independent proof; a known online Machine cannot have unknown presence.
+        await act(async () => recordMachineRequestFailed({
+            serverId: 'server_reactive_info', accountId: 'viewer-account', machineId: 'machine_rebound',
+        }));
         let handoffItems = screen.findAllByType(Item).filter((node) => node.props.testID === 'session-info-hand-off');
         expect(handoffItems).toHaveLength(0);
 

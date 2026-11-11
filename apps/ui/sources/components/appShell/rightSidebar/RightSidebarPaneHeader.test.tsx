@@ -28,8 +28,9 @@ vi.mock('@/text', async () => {
   return createTextModuleMock({ translate: (key) => `en:${key}` });
 });
 
-function textOf(node: { children: unknown[] } | null): string {
-  if (!node) return '';
+function textOf(node: { children: unknown[]; props?: Record<string, unknown> } | null): string {
+  // Header facts include a hidden line-height probe; it is not published content.
+  if (!node || node.props?.['aria-hidden'] === true || node.props?.accessibilityElementsHidden === true) return '';
   return node.children
     .map((child) =>
       typeof child === 'string'

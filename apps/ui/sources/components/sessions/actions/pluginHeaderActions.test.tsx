@@ -217,6 +217,7 @@ describe('pluginHeaderActions — contribution-reference resolution', () => {
         expect(result).toEqual({ ok: true, result: { completed: true } });
         expect(execute).toHaveBeenCalledWith('machine-1', {
             serverId: 'server-a',
+            requestId: expect.any(String),
             expectedContributorOccurrenceId: HEADER_OCCURRENCE_ID,
             qualifiedActionId: 'acme.plugin/roundtrip',
             sessionId: 'sess-1',
@@ -520,6 +521,7 @@ describe('pluginHeaderActions — scoped projection authority', () => {
 
         expect(execute).toHaveBeenCalledWith('machine-projection', {
             serverId: 'server-projection',
+            requestId: expect.any(String),
             expectedContributorOccurrenceId: HEADER_OCCURRENCE_ID,
             qualifiedActionId: 'acme.plugin/roundtrip',
             sessionId: 'sess-1',

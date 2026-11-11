@@ -1,5 +1,5 @@
 import { SessionCurrentProjectionRecordV1Schema, type SessionCurrentProjectionRecordV1 } from '@happier-dev/protocol/sessions/listing/response';
-import { SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema, SessionOwnerMetadataEnvelopeV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema, SessionOwnerMetadataEnvelopeV1Schema, SessionMetadataVersionConflictV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionDisplayProjectionV1Schema } from '@happier-dev/protocol/sessions';
 import { z } from 'zod/mini';
 import { UsageSessionTimingV1Schema } from '@happier-dev/protocol/usage/usageTimingV1';
@@ -123,7 +123,14 @@ export function createSessionMetadataHttpBoundary(readSessions: () => Readonly<R
             if (patch.mode === 'owner_migration') {
                 if (current.metadataLayoutVersion !== 0 || patch.source.metadata.version !== current.metadataVersion
                     || patch.source.metadata.ciphertext !== current.metadata || patch.source.agentState.version !== current.agentStateVersion
-                    || patch.source.agentState.ciphertext !== current.agentState) throw new Error('Metadata migration fixture CAS mismatch');
+                    || patch.source.agentState.ciphertext !== current.agentState) {
+                    // The real PATCH route reports a stale source through HTTP;
+                    // let the real metadata owner classify that response.
+                    return Response.json(current.metadataLayoutVersion === 1
+                        ? SessionMetadataVersionConflictV1Schema.parse({ code: 'session_metadata_version_conflict', metadataLayoutVersion: 1,
+                            sharedMetadata: { version: current.metadataVersion }, agentState: { version: current.agentStateVersion } })
+                        : { error: 'Session metadata privacy upgrade required', code: 'metadata_privacy_upgrade_required' }, { status: 409 });
+                }
             } else if (current.metadataLayoutVersion !== 1 || patch.sharedMetadata.expectedVersion !== current.metadataVersion
                 || patch.agentState.expectedVersion !== current.agentStateVersion
                 || JSON.stringify(patch.expectedOwnerMetadata) !== JSON.stringify(current.ownerMetadata)) {

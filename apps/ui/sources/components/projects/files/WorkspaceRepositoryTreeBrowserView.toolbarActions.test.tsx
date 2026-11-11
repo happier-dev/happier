@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createCapturingLegendListMock, createModalModuleMock, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createLegendListModuleMock, createModalModuleMock, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { StorageState } from '@/sync/store/types';
 import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import { getCachedWorkspaceRepositoryDirectoryEntries, setCachedWorkspaceRepositoryDirectoryEntries } from '@/sync/domains/workspaces/files/workspaceRepositoryDirectory';
@@ -187,7 +187,7 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 }));
 
 // Virtualization is a third-party boundary; keep the result rows and query owner real.
-vi.mock('@legendapp/list/react-native', () => createCapturingLegendListMock({ renderItems: true }).module);
+vi.mock('@legendapp/list/react-native', () => createLegendListModuleMock({ renderItems: true }));
 
 describe('WorkspaceRepositoryTreeBrowserView (toolbar actions)', () => {
     beforeEach(async () => {

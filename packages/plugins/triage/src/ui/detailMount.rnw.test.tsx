@@ -1357,16 +1357,16 @@ it('re-enters the same settled entry through the real shell without another Over
     await openTheRow(shell);
     await vi.waitFor(async () => { expect(await shell.getByText('Settled source body')).toBeDefined(); });
     expect(overviewReads).toBe(1);
-    await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Back' })); });
+    await act(async () => { await shell.press(await shell.getByRole('button', { name: 'PRs & Issues' })); });
     expect(await shell.queryByText('Settled source body')).toBeUndefined();
     await openTheRow(shell);
     await vi.waitFor(async () => { expect(await shell.getByText('Settled source body')).toBeDefined(); });
     expect(overviewReads).toBe(1);
-    await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Back' })); });
+    await act(async () => { await shell.press(await shell.getByRole('button', { name: 'PRs & Issues' })); });
     currentHarness!.publishNewerObservation();
     await openTheRow(shell);
     await vi.waitFor(() => { expect(overviewReads).toBe(2); });
-    await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Back' })); });
+    await act(async () => { await shell.press(await shell.getByRole('button', { name: 'PRs & Issues' })); });
     await openTheRow(shell);
     await vi.waitFor(async () => { expect(await shell.getByText('Settled source body')).toBeDefined(); });
     expect(overviewReads).toBe(2);
@@ -2307,8 +2307,8 @@ describe('opening a row into the source detail', () => {
     it('says each connection’s own health on its Manage sources row, with its fix at the row’s end', async () => {
         // UI4 D16: a failing connection must not look healthy beside a detached failure line, and no bare Details
         // control leads the panel; the healthy connection stays quiet.
-        const shell = await mountShell({ secondInstance: true, secondInstanceFails: true, accountData: true });
-        await vi.waitFor(() => expect(document.body.textContent).toContain('could not be read'));
+        const shell = await mountShell({ secondInstance: true, secondInstanceFails: true, accountData: true, activeSurface: true });
+        await vi.waitFor(() => expect(document.body.textContent).toContain('could not be reached'));
         await pressToolbarMenuItem(shell, 'More', 'menuitem', 'Manage sources');
         await vi.waitFor(async () => expect(await shell.getByRole('button', { name: 'Retry Second account' })).toBeDefined());
         await expect(shell.queryByRole('button', { name: 'Retry Example account' })).resolves.toBeUndefined();
@@ -2508,7 +2508,7 @@ describe('opening a row into the source detail', () => {
             value: 'overview', items: expect.arrayContaining([{ value: 'overview', title: 'Overview', kind: 'page', glyph: 'info', phonePlacement: 'bar' }]) });
         await act(async () => { await shell.press(await shell.getByRole('tab', { name: 'Files' })); });
         expect(descriptors.at(-1)).toMatchObject({ value: 'files' });
-        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Back' })); });
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'PRs & Issues' })); });
         await vi.waitFor(() => expect(descriptors.at(-1)).toBeNull());
     });
 
@@ -3209,7 +3209,7 @@ describe('opening a row into the source detail', () => {
             onPageLocationRequest: location => { requestedLocations.push(location); },
             exactReadFailure: { class: 'unknown', code, detail } });
         await expect(shell.getByText('This entry could not be read from the source.')).resolves.toBeDefined();
-        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Back' })); });
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'PRs & Issues' })); });
         await act(async () => { await shell.updatePageLocation(''); });
         requestedLocations.length = 0;
         await act(async () => { await shell.updatePageLocation(subPath); });
@@ -3228,7 +3228,7 @@ describe('opening a row into the source detail', () => {
         const shell = await mountShell({ subPath: alertPath('4'), securityAlert: true, activeSurface: true,
             partialScan: true, publishCurrentUiContext: context => { published = context; },
             onPageLocationRequest: location => { requestedLocations.push(location); } });
-        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Back' })); });
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'PRs & Issues' })); });
         await act(async () => { await shell.updatePageLocation(''); });
         requestedLocations.length = 0;
         const release = currentHarness!.blockNextReobservation('1');
@@ -3300,7 +3300,7 @@ describe('opening a row into the source detail', () => {
         expect(currentHarness?.exactReads).toHaveLength(1);
         expect(currentHarness?.readDetailInstanceIds).toEqual([INSTANCE]);
         await act(async () => {
-            await shell.press(await shell.getByRole('button', { name: 'Back' }));
+            await shell.press(await shell.getByRole('button', { name: 'PRs & Issues' }));
         });
         await act(async () => {
             await shell.press(await shell.getByRole('button', { name: 'Load more' }));
@@ -3531,9 +3531,9 @@ describe('opening a row into the source detail', () => {
 
         await openTheRow(shell);
         // Pushed (no pane beside the page): the platform's Back is the detail's one way back.
-        await act(async () => { focusButton('Back'); });
+        await act(async () => { focusButton('PRs & Issues'); });
         await act(async () => {
-            await shell.press(await shell.getByRole('button', { name: 'Back' }));
+            await shell.press(await shell.getByRole('button', { name: 'PRs & Issues' }));
         });
         await act(async () => { await Promise.resolve(); });
 
@@ -3565,7 +3565,7 @@ describe('opening a row into the source detail', () => {
         // render after every press.
         await act(async () => { await shell.updatePageLocation(declared.subPath); });
         await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
-        await act(async () => { focusButton('Back'); });
+        await act(async () => { focusButton('PRs & Issues'); });
 
         // Now the host walks the declared step. The location names no entry.
         await act(async () => { await shell.updatePageLocation(backLocation as string); });
@@ -3579,8 +3579,10 @@ describe('opening a row into the source detail', () => {
     });
 
     it.each([false, true])('re-observes a selected entry excluded by a partial window before deciding absence (absent: %s)', async (absent) => {
+        let published: PluginUiContextEnrichmentV1 | null = null;
         const absentEntryIds: string[] = [];
-        const shell = await mountShell({ absentEntryIds });
+        const shell = await mountShell({ absentEntryIds, activeSurface: true,
+            publishCurrentUiContext: context => { published = context; } });
         await openTheRow(shell);
         await act(async () => { await shell.updatePageLocation(lastPageLocation!.subPath); });
         const harness = currentHarness;
@@ -3591,12 +3593,15 @@ describe('opening a row into the source detail', () => {
         harness.deferLinkedEntry.current = true;
         try {
             await act(async () => {
-                await refreshTriageListWindow('manual', shell.context.hostApi, harness.ephemeralSharedScope);
+                // The page's Refresh owns both list demand and the selected entry's fresh exact read.
+                await refreshMountedShell(shell, published);
             });
-            const snapshot = readTriageListWindowSnapshot(shell.context.hostApi, harness.ephemeralSharedScope);
-            expect(snapshot.window?.rows.some(row => row.entryRef.entryId === '17')).toBe(false);
-            expect(snapshot.window?.lanes.find(lane => lane.sourceInstanceId === INSTANCE)?.health)
-                .toEqual({ kind: 'partial', reason: 'more-pages' });
+            await vi.waitFor(() => {
+                const snapshot = readTriageListWindowSnapshot(shell.context.hostApi, harness.ephemeralSharedScope);
+                expect(snapshot.window?.rows.some(row => row.entryRef.entryId === '17')).toBe(false);
+                expect(snapshot.window?.lanes.find(lane => lane.sourceInstanceId === INSTANCE)?.health)
+                    .toEqual({ kind: 'partial', reason: 'more-pages' });
+            });
             await vi.waitFor(() => { expect(harness.exactReads).toHaveLength(2); });
             // An incomplete list cannot settle the exact entry's existence.
             await expect(shell.queryByText('This entry is no longer in the list')).resolves.toBeUndefined();
@@ -3796,7 +3801,8 @@ describe('opening a row into the source detail', () => {
         await expect(shell.getByText(`example/repository #17 · ${openedFixtureEntry()} · via ${secondLabel}`))
             .resolves.toBeDefined();
         await expect(shell.getByText('No connection to open this through')).resolves.toBeDefined();
-        expect(harness.readDetailInstanceIds).toEqual([]);
+        // Exact-only opens may prepare the launched connection, but never the window's tie-break connection.
+        expect(harness.readDetailInstanceIds).toEqual([SECOND_INSTANCE]);
         // The header and refusal both stay on the launched connection; neither
         // silently falls through to the window's qualified account.
         await expect(shell.queryByText(`example/repository #17 · ${openedFixtureEntry()} · via ${firstLabel}`))

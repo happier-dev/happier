@@ -117,7 +117,7 @@ describe('VoiceGlance delegated-work row', () => {
 
     const row = screen.findByTestId('voice-glance-handoff');
     expect(row?.props.disabled).toBeFalsy();
-    expect(row?.props.accessibilityRole).toBe('link');
+    expect(row?.props.accessibilityRole).toBe('button');
 
     await act(async () => {
       row?.props.onPress?.();

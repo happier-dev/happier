@@ -428,6 +428,21 @@ describe('buildActivityOverviewFromSource', () => {
         expect(overview.candidates[0]?.context?.contextLine).not.toContain(rawHost);
     });
     it.each([
+        { name: 'Studio', expected: 'Studio' },
+        { name: 'peer.example.test', expected: 'https://peer.example.test' },
+    ])('keeps a non-active Home distinct from the source Home ($name)', ({ name, expected }) => {
+        const source = createSource({ sessions: [createSessionFixture({ id: 'peer-permission', serverId: 'server-b',
+            agentState: pendingAgentState('permission') })] });
+        const profile = source.serverProfilesById!['server-a']!;
+        const overview = buildActivityOverviewFromSource({ source: { ...source,
+            serverProfilesById: { ...source.serverProfilesById,
+                'server-b': { ...profile, id: 'server-b', name, serverUrl: 'https://peer.example.test' } },
+        }, nowMs: 1_000 });
+        const candidate = overview.candidates[0];
+        expect(candidate?.serverName).toBe(expected);
+        expect(candidate?.context?.segments.find(segment => segment.kind === 'home')?.label).toBe(expected);
+    });
+    it.each([
         { privacyMode: 'status_only', candidatePrivacyMode: undefined, showsWorkspace: false },
         { privacyMode: 'title_only', candidatePrivacyMode: undefined, showsWorkspace: false },
         { privacyMode: 'include_preview', candidatePrivacyMode: undefined, showsWorkspace: true },
@@ -1172,7 +1187,7 @@ describe('buildActivityOverviewFromSource', () => {
             sessionId: 'permission',
             serverId: 'server-b',
             serverUrl: null,
-            serverName: 'This Home',
+            serverName: 'Home',
             route: '/session/permission?serverId=server-b',
             target: 'open-session:permission?serverId=server-b',
             activityName: 'HappierFocusLiveActivity',
@@ -1268,7 +1283,7 @@ describe('buildActivityOverviewFromSource', () => {
         expect(overview.candidates[0]).toMatchObject({
             sessionId: 'concurrent-unread',
             serverId: 'server-b',
-            serverName: 'This Home',
+            serverName: 'Home',
             route: '/session/concurrent-unread?serverId=server-b',
             target: 'open-session:concurrent-unread?serverId=server-b',
         });

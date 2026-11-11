@@ -59,7 +59,8 @@ vi.mock('@/components/sessions/agentInput/components/AgentInputSelectionListPopo
     },
 }));
 
-vi.mock('@/components/ui/popover', () => ({
+vi.mock('@/components/ui/popover', async () => ({
+    ...await import('@/components/ui/popover/modalAwareFloatingPopoverPortalOptions'),
     Popover: (props: any) => React.createElement('Popover', props, props.children),
     PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
@@ -68,6 +69,9 @@ vi.mock('@/components/sessions/agentInput/components/AgentInputPopoverSurface', 
     AgentInputPopoverSurface: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('AgentInputPopoverSurface', props, props.children),
 }));
+
+// Load the real graph after boundary mocks, before timed recipient interactions.
+await import('./RecipientChip');
 
 describe('RecipientChip', () => {
     it('does not render when there are no non-lead targets', async () => {

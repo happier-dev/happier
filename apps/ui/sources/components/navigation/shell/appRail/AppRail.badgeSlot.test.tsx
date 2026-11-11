@@ -7,6 +7,7 @@ import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
 import { resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import type { PluginPage } from '@/components/plugins/pages/pluginPages';
 import { getStorage } from '@/sync/domains/state/storage';
+import { deleteServerFeaturesSnapshot, primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 
 import { AppRailSurface } from './AppRail';
 import { buildAppRailEntries } from './appRailModel';
@@ -25,6 +26,7 @@ vi.mock('@/components/ui/popover', async (importOriginal) => {
 const initialStorageState = getStorage().getState();
 afterEach(() => {
     standardCleanup();
+    deleteServerFeaturesSnapshot();
     getStorage().setState(initialStorageState, true);
 });
 
@@ -35,8 +37,12 @@ function flatten(style: unknown): Record<string, unknown> {
 
 describe('AppRail badge placement', () => {
     it('draws every rail badge inside the rail slot its glyph stands in, so one offset reads the same everywhere', async () => {
+        // This fixture uses the released legacy Account transport, explicitly negotiated by its Home.
+        primeServerFeaturesSnapshot({ snapshot: { status: 'unsupported', reason: 'endpoint_missing' } });
         getStorage().setState(state => ({
-            profile: { ...state.profile, connectedAccountsV4: [{ status: 'needs_reauth' }, { status: 'needs_reauth' }] },
+            profile: { ...state.profile, connectedServicesV2: [{ serviceId: 'openai-codex', profiles: [
+                { profileId: 'work', status: 'needs_reauth' },
+            ] }] },
         }) as never);
         const pages: PluginPage[] = [{
             target: { kind: 'app' },

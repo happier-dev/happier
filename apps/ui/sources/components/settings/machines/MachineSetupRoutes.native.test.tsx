@@ -10,8 +10,8 @@ const nativeSsh = vi.hoisted(() => ({ available: true }));
 
 vi.mock('expo-router', () => expoRouterMock.module);
 vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({ Platform: { OS: 'ios' } });
+    const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeNativeMock({ platformOS: 'ios' });
 });
 // Whether this build links the native SSH transport is a native-module boundary.
 vi.mock('@happier-dev/ssh-native', async (importOriginal) => ({
@@ -21,16 +21,19 @@ vi.mock('@happier-dev/ssh-native', async (importOriginal) => ({
         : { available: false, reason: 'native-module-missing' }),
 }));
 
+const [{ default: AddMachineRoute }, { InjectedAuthProvider }, { discardMachineAdd }] = await Promise.all([
+    import('@/app/(app)/settings/machines/add'),
+    import('@/auth/context/AuthContext'),
+    import('@/components/machines/add/useMachineAddFlow'),
+]);
+
 async function renderAddMachine() {
-    const AddMachineRoute = (await import('@/app/(app)/settings/machines/add')).default;
-    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
     return renderScreen(<InjectedAuthProvider credentials={null}><AddMachineRoute /></InjectedAuthProvider>);
 }
 
 afterEach(standardCleanup);
 
 beforeEach(async () => {
-    const { discardMachineAdd } = await import('@/components/machines/add/useMachineAddFlow');
     await act(async () => discardMachineAdd());
 });
 

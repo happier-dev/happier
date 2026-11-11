@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { BaseNavigationContainer, createNavigatorFactory, StackRouter, useNavigationBuilder } from '@react-navigation/core';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import type { Href } from 'expo-router';
 import { resolveHref } from 'expo-router/build/link/href';
 
@@ -9,6 +9,8 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { resetSessionListPaneRetentionForTests, retainSessionListPaneState } from '@/components/sessions/shell/sessionListPaneRetention';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createSessionRouteHomesFixture, installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 installSessionRouteCommonModuleMocks({
@@ -32,6 +34,9 @@ installSessionRouteCommonModuleMocks({
         };
     },
 });
+const network = await installSessionOpsNetworkBoundary();
+await loadSyncSingletonForTests();
+afterAll(() => network.dispose());
 const { storage } = await import('@/sync/domains/state/storage');
 const { SessionInvalidLinkFallback } = await import('@/components/sessions/shell/SessionInvalidLinkFallback');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');

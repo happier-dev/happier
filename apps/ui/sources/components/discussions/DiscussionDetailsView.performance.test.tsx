@@ -13,6 +13,8 @@ import { ArtifactReadBatchHttpInputV1Schema } from '@happier-dev/protocol/artifa
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { createRenderCommitCounter } from '@/dev/testkit/performance/counts';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { answerDiscussionThreadForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -108,11 +110,17 @@ afterEach(async () => {
     vi.useRealTimers();
 });
 
-async function prepareLongDiscussion(configureSocket?: (socket: Socket) => void, options?: Readonly<{ losePost?: boolean }>) {
+async function prepareLongDiscussion(configureSocket?: (socket: Socket) => void, options?: Readonly<{
+    losePost?: boolean;
+    projectRows?: Parameters<typeof createPlainProjectAccountRowListFixture>[0];
+}>) {
     const serverUrl = 'https://discussion-cost.test';
     const serverIdentityId = 'srv_discussion_cost';
     const localServerId = await homes.addHome({ name: 'Discussion costs', serverUrl, serverIdentityId, accountId: 'alice', currentAccount: true });
     const serverId = resolveServerProfileScopeIdForIdentifier(localServerId);
+    if (options?.projectRows) homes.answer(serverId, 'POST /v1/account/project-rows/list', {
+        body: createPlainProjectAccountRowListFixture(options.projectRows),
+    });
     const features = createRootLayoutFeaturesResponse({ features: { sessions: { enabled: true, conversations: { enabled: true } } } });
     homes.answer(serverId, '/v1/features', { body: features });
     homes.answer(serverId, '/v1/features/authenticated', { body: features });
@@ -804,12 +812,13 @@ it('catches up replies when a retained Discussion is reopened without a reload',
 });
 
 it('keeps the workspace census demanded by real Workflow editors', async () => {
-    const { accountLifetime } = await prepareLongDiscussion();
-    const start = homes.requests.length;
+    const workspace = { id: 'editor-checkout', serverId: 'workspace-home', machineId: 'editor-machine',
+        rootPath: '/projects/editor', label: 'Editor checkout', createdAtMs: 1 } satisfies WorkspaceRefV1;
+    const { accountLifetime } = await prepareLongDiscussion(undefined, { projectRows: { workspaceRefs: [workspace] } });
     const memory = await renderHook(() => useWorkflowEditorAccountMemory(accountLifetime));
-    await vi.waitFor(() => expect(homes.requests.slice(start).filter(request => request.path === '/v1/account/project-rows/list')).toHaveLength(1));
-    await flushHookEffects();
-    expect(memory.getCurrent().workspaceRefs).toEqual([]);
+    // The Account row owner may already hold the bootstrap census. The editor must
+    // consume its real rows whether this mount needs HTTP or reuses that owner.
+    await vi.waitFor(() => expect(memory.getCurrent().workspaceRefs).toEqual([workspace]));
 });
 
 it('shares the mounted roster across queries, refreshes one invalidation, and still denies Send at the server', async () => {

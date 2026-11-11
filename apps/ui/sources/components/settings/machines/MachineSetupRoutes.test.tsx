@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { act, renderScreen } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
 const expoRouterMock = createExpoRouterMock({
@@ -26,28 +26,32 @@ vi.mock('@/utils/platform/desktopHost', async (importOriginal) => ({
     isDesktopHost: () => isDesktopHostMock(),
 }));
 
+// Prepare both real route modules after platform/navigation boundaries are installed.
+const AddMachineRoute = (await import('@/app/(app)/settings/machines/add')).default;
+const ThisComputerSetupRoute = (await import('@/app/(app)/settings/machines/this-computer')).default;
+
 describe('Machines settings routes', () => {
     beforeEach(() => {
         viewport.width = 800;
         viewport.height = 600;
+        expoRouterMock.resetParams();
+        expoRouterMock.spies.push.mockClear();
     });
 
-    it('keeps every connection path usable on a phone and opens the chosen SSH form', async () => {
+    it('keeps every connection path usable on a phone and pushes the chosen SSH form', async () => {
         viewport.width = 390;
         viewport.height = 844;
         isDesktopHostMock.mockReturnValue(false);
-        const AddMachineRoute = (await import('@/app/(app)/settings/machines/add')).default;
         const screen = await renderScreen(React.createElement(AddMachineRoute));
-        // Create-capable phone pages put the connection paths under Connect; otherwise they
-        // remain the radio choices above the form. Both preserve every connection action.
-        const choiceTestId = (id: string) => screen.findByTestId(`settings.machines.draft.form.connectPath.${id}`)
-            ? `settings.machines.draft.form.connectPath.${id}` : `settings.machines.draft.form.path:${id}`;
         for (const id of ['thisComputer', 'ssh', 'anotherComputer']) {
-            const choice = screen.findByTestId(choiceTestId(id));
+            const choice = screen.findByTestId(`settings.machines.draft.form.way.${id}`);
             expect(choice).not.toBeNull();
             expect(choice?.props.disabled).not.toBe(true);
         }
-        await screen.pressByTestIdAsync(choiceTestId('ssh'));
+        await screen.pressByTestIdAsync('settings.machines.draft.form.way.ssh');
+        expect(expoRouterMock.spies.push.mock.lastCall?.[0]).toBe('/settings/machines/add?path=ssh');
+        // The navigator opens the pushed route with its selected way in the URL.
+        await act(async () => { expoRouterMock.module.router.setParams({ path: 'ssh' }); });
         const { readMachineAddFlowDraft } = await import('@/components/machines/add/machineAddFlowStore');
         expect(readMachineAddFlowDraft().path).toBe('ssh');
         expect(screen.findByTestId('settings.machines.draft.form.pane.ssh-sshHostInput')).not.toBeNull();
@@ -55,7 +59,6 @@ describe('Machines settings routes', () => {
 
     it('offers this computer and SSH in the add-machine draft on desktop', async () => {
         isDesktopHostMock.mockReturnValue(true);
-        const AddMachineRoute = (await import('@/app/(app)/settings/machines/add')).default;
         const screen = await renderScreen(React.createElement(AddMachineRoute));
 
         expect(screen.findByTestId('settings.machines.draft.form.path:ssh')).toBeTruthy();
@@ -64,7 +67,6 @@ describe('Machines settings routes', () => {
 
     it('renders a setup wizard launcher for this-computer route on desktop', async () => {
         isDesktopHostMock.mockReturnValue(true);
-        const ThisComputerSetupRoute = (await import('@/app/(app)/settings/machines/this-computer')).default;
         const screen = await renderScreen(React.createElement(ThisComputerSetupRoute));
 
         expect(screen.tree.findByProps({ testID: 'settings.machineSetup.openSetupWizard' })).toBeTruthy();
@@ -72,7 +74,6 @@ describe('Machines settings routes', () => {
 
     it('offers this computer and the SSH setup wizard on the add-machine route on web', async () => {
         isDesktopHostMock.mockReturnValue(false);
-        const AddMachineRoute = (await import('@/app/(app)/settings/machines/add')).default;
         const screen = await renderScreen(React.createElement(AddMachineRoute));
 
         expect(screen.findByTestId('settings.machines.draft.form.path:thisComputer')).toBeTruthy();
@@ -81,7 +82,6 @@ describe('Machines settings routes', () => {
 
     it('renders a setup wizard launcher for this-computer route on web', async () => {
         isDesktopHostMock.mockReturnValue(false);
-        const ThisComputerSetupRoute = (await import('@/app/(app)/settings/machines/this-computer')).default;
         const screen = await renderScreen(React.createElement(ThisComputerSetupRoute));
 
         expect(screen.tree.findByProps({ testID: 'settings.machineSetup.openSetupWizard' })).toBeTruthy();

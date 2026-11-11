@@ -62,12 +62,13 @@ import {
 import { mutateTriageAction, TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1, TRIAGE_DEFAULT_ACTIONS_V1 } from '../settings/actions.js';
 import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-support.js';
 import type { TriageSessionActionInvokerV1 } from '../sessions/entrySessionOpen.js';
+import type { TriageProjectCandidateV1 } from '../sessions/launchPlacement.js';
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import { readTriageListWindowSnapshot, subscribeToTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 import { createTriageMountedUiActionHandler } from '../actions/mountedUi.js';
-import { TriageMountedUiInputV1Schema, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../actions/mountedUiProtocol.js';
+import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../actions/mountedUiProtocol.js';
 
 /**
  * Keyed MULTI-selection on the PRs & Issues list, driven through the real
@@ -191,13 +192,14 @@ function createHarness(options: Readonly<{
     actions?: JsonValue;
     /** Launch Profile rows returned to the action-reference owner. */
     profiles?: JsonValue;
+    projects?: readonly TriageProjectCandidateV1[];
     /** Host settlement returned for a New Session seed request. */
     newSessionSeedResult?: unknown;
     /** One-based spawn invocation whose transport answer is lost once. */
     failSpawnAttempt?: number;
     /** Optional exact repository identity projected by each observation. */
     repositories?: Readonly<Record<string, TriageEntryRepositoryRefV1>>;
-    /** Holds the project registry at its boundary until the mounted request is cancelled. */
+    /** Holds the finite project read until the test releases its boundary. */
     deferProjectsRead?: boolean;
     sessionStates?: Record<string, SessionStateV1 | null>;
     /** An Account relation Action transport outage after an earlier successful read. */
@@ -223,6 +225,7 @@ function createHarness(options: Readonly<{
     let spawnAttempt = 0;
     let retired = false;
     let projectsSignal: AbortSignal | undefined;
+    let releaseProjectsRead: (() => void) | undefined;
     let retireMounted: (() => Promise<void>) | null = null;
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
     const sessionLinksReader = {
@@ -411,6 +414,9 @@ function createHarness(options: Readonly<{
                 executeGet: async () => ({
                     kind: 'present',
                     localRef: { kindId, collisionScope: input.entryRef.collisionScope, entryId: input.entryRef.entryId },
+                    ...(options.repositories?.[input.entryRef.entryId] === undefined
+                        ? {}
+                        : { repository: options.repositories[input.entryRef.entryId] }),
                     locator: testkitLocator(),
                     snapshot: { ...testkitSnapshot(), reviewRevision: {
                         baseSha: 'base', headSha: `head-${input.entryRef.entryId}`, nativeRevision: `rev-${input.entryRef.entryId}`,
@@ -479,13 +485,13 @@ function createHarness(options: Readonly<{
         if (action === 'projects.list') {
             projectsSignal = request.signal;
             if (options.deferProjectsRead === true) {
-                await new Promise<never>((_resolve, reject) => request.signal?.addEventListener(
-                    'abort',
-                    () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
-                    { once: true },
-                ));
+                await new Promise<void>((resolve, reject) => {
+                    releaseProjectsRead = resolve;
+                    request.signal?.addEventListener('abort',
+                        () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+                });
             }
-            return { items: [], truncated: false };
+            return { items: options.projects ?? [], truncated: false };
         }
         if (action === 'sessions.spawn.profiles.list') {
             referenceReads.push('sessions.spawn.profiles.list');
@@ -535,6 +541,7 @@ function createHarness(options: Readonly<{
         get projectsSignal() {
             return projectsSignal;
         },
+        releaseProjectsRead: () => { releaseProjectsRead?.(); },
         setMountRetirement: (retire: () => Promise<void>) => {
             retireMounted = retire;
         },
@@ -570,6 +577,14 @@ async function mountShell(
         return options.onRender === undefined ? surface : createElement(Profiler, { id: 'triage-list', onRender: options.onRender }, surface);
     };
     let fixture!: PluginUiTestkit;
+    const executeMounted = async (input: unknown, invocationSurface: 'ui' | 'agent', signal = new AbortController().signal) => (
+        await createTriageMountedUiActionHandler()(TriageMountedUiInputV1Schema.parse(input), {
+            plugin: { id: 'happier.triage', version: '0.0.0' },
+            contribution: { id: 'ui/mounted-v1', qualifiedId: 'happier.triage/actions/ui/mounted-v1' },
+            invocationSurface, signal,
+            ui: fixture.context.hostApi, ephemeralSharedScope,
+        })
+    );
     await act(async () => {
         fixture = await createPluginUiTestkit({
             identity: { instanceId: 'fixture-instance-187', mountNonce: 'fixture-mount-187' },
@@ -586,7 +601,11 @@ async function mountShell(
                 publishCurrentUiContext: ({ enrichment }) => { published = enrichment; },
                 readSession: ({ sessionId }) => harness.sessionStates[sessionId] ?? null,
                 watchSession: () => undefined,
-                executeAction: async ({ action, input, signal }) => await harness.executeAction({ action, input, signal }),
+                executeAction: async ({ action, input, signal }) => (
+                    testkitTriageActionId(action) === TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1
+                        ? await executeMounted(input, 'ui', signal)
+                        : await harness.executeAction({ action, input, signal })
+                ),
                 openNewSession: async ({ request, preparedReviewWorkspace }) => {
                     harness.newSessionSeeds.push(request);
                     if (preparedReviewWorkspace !== undefined) {
@@ -698,12 +717,7 @@ async function mountShell(
         const command = published?.commands?.find((entry) => entry.command.kind === 'executeAction');
         if (command?.command.kind !== 'executeAction') throw new Error('Expected mounted action address');
         const address = TriageMountedUiInputV1Schema.parse(command.command.input);
-        return await createTriageMountedUiActionHandler()({ mountId: address.mountId, operation }, {
-            plugin: { id: 'happier.triage', version: '0.0.0' },
-            contribution: { id: 'ui/mounted-v1', qualifiedId: 'happier.triage/actions/ui/mounted-v1' },
-            invocationSurface: 'agent', signal: new AbortController().signal,
-            ui: fixture.context.hostApi, ephemeralSharedScope,
-        });
+        return await executeMounted({ mountId: address.mountId, operation }, 'agent');
     } };
 }
 
@@ -1227,7 +1241,7 @@ describe('selecting several PRs & Issues rows', () => {
         expect(document.body.textContent).toContain('None of your configured actions');
     });
 
-    it.each(['ui', 'agent'])('shows one truthful Stop control and shares cancellation with the %s caller', async (caller) => {
+    it.each(['ui', 'agent'])('shows one truthful Stop control and stops later bulk work for the %s caller', async (caller) => {
         const harness = createHarness({ deferProjectsRead: true });
         const { shell, invokeMounted } = await mountShell(harness, { overlays: true });
         await chooseRow('Replace the duplicated normalizer');
@@ -1249,7 +1263,13 @@ describe('selecting several PRs & Issues rows', () => {
         });
         await settle();
 
-        expect(harness.projectsSignal?.aborted).toBe(true);
+        // Stop withdraws the bulk run; the finite reference read can finish
+        // without admitting any later Session or Composer work (5ddd64b500).
+        await act(async () => { harness.releaseProjectsRead(); });
+        await settle();
+        expect(harness.lifecycle).toEqual([]);
+        expect(harness.newSessionSeeds).toEqual([]);
+        expect(await shell.queryByRole('button', { name: 'Stop' })).toBeUndefined();
         expect(selectedLabels()).toHaveLength(1);
         expect(document.querySelector('[data-testid="triage-bulk-action-bar"]')).not.toBeNull();
     });
@@ -1390,8 +1410,15 @@ describe('selecting several PRs & Issues rows', () => {
     });
 
     it('carries one bulk-selected PR through the exact prepared-workspace operation', async () => {
+        const repository = { kind: 'github', deployment: 'https://example.test', repository: 'example/repository' } as const;
         const harness = createHarness({
             omitScanReviewRevision: true,
+            repositories: { '17': repository },
+            projects: [{
+                projectKey: { id: 'prepared-review-project' },
+                serverId: 'server-a', machineId: 'machine-a', rootPath: '/workspaces/example',
+                forge: repository, reachable: true, worktrees: [],
+            }],
             actions: {
                 v: 1,
                 actions: [{

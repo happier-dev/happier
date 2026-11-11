@@ -13,7 +13,8 @@ test('tauri desktop-sidebar-chrome QA exposes a deterministic capture plan', asy
 
     const { stdout } = await execFileAsync(process.execPath, [scriptPath, '--json'], {
         cwd: dirname(dirname(scriptsDir)),
-        env: { ...process.env },
+        // This capture-plan fixture must not inherit the running Stack's driver port.
+        env: { ...process.env, HAPPIER_TAURI_MCP_APP_IDENTIFIER: undefined, HAPPIER_TAURI_MCP_PORT: '9225' },
         encoding: 'utf8',
     });
 

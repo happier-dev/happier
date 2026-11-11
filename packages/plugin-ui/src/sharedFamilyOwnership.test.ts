@@ -91,6 +91,7 @@ const APPROVED_CATALOG_VOCABULARY = [
   'TaskStatusGlyph', 'ProgressRing', 'CheckStatusGlyph', 'AnsiText',
   'HappierPublicProfile', 'HappierPublicProfileWidget', 'HappierPublicProfileDataProvider',
   'UsageDailyChart', 'UsageRhythmChart', 'UsagePeriodSummaryBody', 'UsageFootprintBody', 'UsageSourceCoverageBody',
+  'UsageMeterRow', 'OfferedChoices', 'OfferedChoiceFeedbackInput',
   'UsageBreakdownsBody', 'UsageOutcomesBody', 'UsageRecapBody',
   'UsageNinetyPlanets', 'UsageStreakThread', 'UsageWeeksSkyline', 'UsageAroundThePeriod', 'UsageDaysOnSurface', 'UsageRingedByStreaks',
   'UsageAgentMoons', 'UsageMachines', 'UsageProjects', 'UsageAtmosphere',
@@ -2211,6 +2212,31 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     devMountSymbols: [],
     declarative: { kind: 'not-applicable', reason: 'The provider shares one admitted profile projection among mounted page/widget children; it has no declarative node or maintained exact public author consumer yet.' },
   },
+  ...[
+    { name: 'UsageMeterRow', module: 'data/UsageMeterRow.tsx', consumer: 'components/settings/connectedServices/usage/UsageMeterRow.tsx',
+      publicConsumer: 'usageMeterSurface.tsx' },
+    { name: 'OfferedChoices', module: 'interaction/OfferedChoices.tsx', consumer: 'components/tools/shell/permissions/PermissionFooterOfferedChoices.tsx',
+      publicConsumer: 'offeredChoicesSurface.tsx' },
+    { name: 'OfferedChoiceFeedbackInput', module: 'interaction/OfferedChoices.tsx', consumer: 'components/tools/shell/permissions/PermissionFeedbackInput.tsx' },
+  ].map((entry): GraduatedFamily => ({
+    publicName: entry.name,
+    propTypeName: `${entry.name}Props`,
+    family: entry.name,
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: `presentation/${entry.module}`,
+    sharedSymbol: entry.name,
+    pluginOwner: { module: `components/${entry.name === 'UsageMeterRow' ? 'UsageMeterRow' : 'OfferedChoices'}.tsx`, symbol: entry.name },
+    coreConsumers: [entry.consumer],
+    ...('publicConsumer' in entry ? { positiveConsumer: {
+      kind: 'external-author-reference' as const,
+      pathFromRepoRoot: `packages/plugin-ui/fixtures/external-authoring/src/${entry.publicConsumer}`,
+    } } : {}),
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'Callers supply admitted usage or permission-decision facts; these live controls are not declarative document nodes.' },
+  })),
   // Theme adapters over the chart owners already consumed by core Usage. No
   // maintained plugin renders these exact public adapters yet, so they do not graduate.
   ...[
@@ -4032,6 +4058,7 @@ describe('graduated shared presentation families (§8.2)', () => {
       'CheckStatusGlyph',
       'AnsiText',
       'HappierPublicProfile', 'HappierPublicProfileWidget', 'HappierPublicProfileDataProvider',
+      'UsageMeterRow', 'OfferedChoices', 'OfferedChoiceFeedbackInput',
       'UsageDailyChart', 'UsageRhythmChart', 'UsagePeriodSummaryBody', 'UsageFootprintBody', 'UsageSourceCoverageBody',
       'UsageBreakdownsBody', 'UsageOutcomesBody', 'UsageRecapBody',
       'UsageNinetyPlanets', 'UsageStreakThread', 'UsageWeeksSkyline', 'UsageAroundThePeriod', 'UsageDaysOnSurface', 'UsageRingedByStreaks',
