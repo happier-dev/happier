@@ -629,6 +629,7 @@ export const SessionStatusActionResultV1Schema = lazyZodSchema(() => z.union([
   z.looseObject({ ...SessionStatusResultSchema.shape, ok: z.optional(z.literal(true)) }),
   z.strictObject({ ok: z.literal(false), code: z.string(), candidates: z.optional(z.array(z.string())) }),
 ]));
+export type SessionStatusActionResultV1 = z.infer<typeof SessionStatusActionResultV1Schema>;
 export const SessionStatusActionResultV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(SessionStatusActionResultV1Schema));
 
 export const SessionCreateResultSchema = lazyZodSchema(() => z.looseObject({
