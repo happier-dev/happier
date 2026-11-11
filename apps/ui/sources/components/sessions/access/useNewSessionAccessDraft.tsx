@@ -1,13 +1,10 @@
 import * as React from 'react';
-import { View } from 'react-native';
 import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 
 import type { createSessionAccessActionChip } from '@/components/sessions/agentInput/definitions/createSessionAccessActionChip';
 import { useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { reconcileSessionAccessDraftForHome } from '@/sync/domains/session/access/sessionAccessDraftReconciliation';
-import { SelectionListBackChip } from '@/components/ui/selectionList/SelectionListBackChip';
-import { t } from '@/text';
 
 import { SessionAccessEditor } from './SessionAccessEditor';
 import { useNewSessionAccessDraftController } from './useNewSessionAccessDraftController';
@@ -20,13 +17,12 @@ export type NewSessionAccessDraftState = Readonly<{
     applyTeamCredentialPolicy: (teamId: string, requireVisibility: boolean) => void;
     /** Whether an existing Teams/people owner currently has someone to share with. */
     hasShareCandidates: boolean;
-    /** Chip parameters for the New Session composer, or `null` when unavailable. */
+    /**
+     * Chip parameters for the New Session composer, or `null` when unavailable. On every layout the editor opens in
+     * the composer's own popover: the chip's popover, or a push inside the "+" menu (native QA: a phone overlay boxed
+     * into the docked composer left the editor ~40 pt).
+     */
     chip: Parameters<typeof createSessionAccessActionChip>[0] | null;
-    screen: Readonly<{
-        content: React.ReactElement;
-        onRequestClose: () => void;
-        focusReturnRef: React.RefObject<View | null>;
-    }> | null;
 }>;
 
 type DemandedSessionAccessEditorProps = React.ComponentProps<typeof SessionAccessEditor>
@@ -81,8 +77,6 @@ export function useNewSessionAccessDraft(input: Readonly<{
      */
     sourceAccessConflict?: boolean | null;
     sourcePrimaryTeamConflict?: boolean | null;
-    /** Compact/mobile reuses the New Session screen's retained full-surface host. */
-    useScreenHost?: boolean;
 }>): NewSessionAccessDraftState {
     const serverId = input.targetServerId ?? null;
     const [access, setAccess] = React.useState<SessionInitialAccessDraftV1 | null>(input.initialAccess ?? null);
@@ -211,11 +205,10 @@ export function useNewSessionAccessDraft(input: Readonly<{
         serverId,
         enabled: scope !== null && availability === 'available',
     });
-    const [screenOpen, setScreenOpen] = React.useState(false);
     // The composer's collapsed chip needs only the authored-grant summary, so
-    // candidate discovery stays with the presentation that is actually open.
-    // Both hosts report through the one signal; the directory keeps its already
-    // acquired pages while undemanded, so reopening does not refetch.
+    // candidate discovery stays with the presentation that is actually open. The
+    // mounted editor reports through this one signal; the directory keeps its
+    // already acquired pages while undemanded, so reopening does not refetch.
     const [popoverDemand, setPopoverDemand] = React.useState(0);
     const demandEditor = React.useCallback((demanded: boolean) => {
         setPopoverDemand((current) => Math.max(0, current + (demanded ? 1 : -1)));
@@ -226,40 +219,10 @@ export function useNewSessionAccessDraft(input: Readonly<{
         primaryTeamId,
         availability,
         homeReconciled,
-        demanded: screenOpen || popoverDemand > 0,
+        demanded: popoverDemand > 0,
         onChange: updateAccess,
         onPrimaryTeamIdChange: updatePrimaryTeamId,
     });
-    const screenFocusReturnRef = React.useRef<View | null>(null);
-    const closeScreen = React.useCallback(() => setScreenOpen(false), []);
-
-    const screen = React.useMemo<NewSessionAccessDraftState['screen']>(() => {
-        if (!screenOpen || !input.useScreenHost) return null;
-        return {
-            onRequestClose: closeScreen,
-            focusReturnRef: screenFocusReturnRef,
-            content: (
-                <View testID="new-session-access-screen" style={{ flex: 1, minHeight: 0 }}>
-                    <View style={{ paddingHorizontal: 12, paddingVertical: 8 }}>
-                        <SelectionListBackChip
-                            testID="new-session-access-screen-back"
-                            label={t('newSession.title')}
-                            onPress={closeScreen}
-                        />
-                    </View>
-                    <SessionAccessEditor
-                        model={controller.model}
-                        actions={controller.actions}
-                        query={controller.query}
-                        presentation="full"
-                        onRequestClose={closeScreen}
-                        testID="session-access-editor:new-session-screen"
-                    />
-                </View>
-            ),
-        };
-    }, [closeScreen, controller.actions, controller.model, controller.query, input.useScreenHost, screenOpen]);
-
     const chip = React.useMemo<NewSessionAccessDraftState['chip']>(() => {
         // A restored shared draft must remain reachable even if this Home can no
         // longer create shared Sessions. The read-only editor provides the explicit
@@ -270,12 +233,6 @@ export function useNewSessionAccessDraft(input: Readonly<{
             label: controller.model.summary.label,
             accessibilityLabel: controller.model.summary.accessibilityLabel,
             pending: controller.placementPending,
-            ...(input.useScreenHost ? {
-                onOpen: (focusReturnRef?: React.RefObject<View | null>) => {
-                    screenFocusReturnRef.current = focusReturnRef?.current ?? null;
-                    setScreenOpen(true);
-                },
-            } : {}),
             // The host's render form, so Escape drains an access sub-step first,
             // then closes this popover and returns focus to the real chip trigger.
             popoverContent: ({ requestClose }) => (
@@ -290,12 +247,12 @@ export function useNewSessionAccessDraft(input: Readonly<{
                 />
             ),
         };
-    }, [access?.grants.length, availability, controller.actions, controller.model, controller.placementPending, controller.query, demandEditor, hasShareCandidates, homeReconciled, input.useScreenHost, primaryTeamId, scope]);
+    }, [access?.grants.length, availability, controller.actions, controller.model, controller.placementPending, controller.query, demandEditor, hasShareCandidates, homeReconciled, primaryTeamId, scope]);
 
     // An unresolved scope hides the control; it never discards an authored
     // draft, which is authority-bearing creation input.
     return React.useMemo(
-        () => ({ access, primaryTeamId, chip, screen, applyTeamCredentialPolicy, hasShareCandidates }),
-        [access, applyTeamCredentialPolicy, chip, hasShareCandidates, primaryTeamId, screen],
+        () => ({ access, primaryTeamId, chip, applyTeamCredentialPolicy, hasShareCandidates }),
+        [access, applyTeamCredentialPolicy, chip, hasShareCandidates, primaryTeamId],
     );
 }

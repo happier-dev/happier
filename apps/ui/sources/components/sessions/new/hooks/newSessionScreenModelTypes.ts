@@ -83,30 +83,20 @@ export type NewSessionScreenModel =
         variant: 'simple';
         requesterIsolation?: ReturnType<typeof import('@/hooks/machine/useMachineOwnIsolationStatus').useMachineOwnIsolationStatus>;
         popoverBoundaryRef: React.RefObject<View>;
-        launchOverlay: React.ReactNode | null;
         temporaryComputerLaunch?: NewSessionTemporaryComputerLaunch;
         managedMachineDraft?: NewSessionManagedMachineDraftModel;
         botCreation?: NewSessionBotCreationModel;
         instructionsCreation?: NewSessionInstructionsCreationModel;
-        launchOnRequestClose: () => void;
-        overlayPresentation?: 'card' | 'screen';
-        overlayFocusReturnRef?: React.RefObject<View | null>;
-        overlayAccessibilityLabel?: string;
         simpleProps: NewSessionSimpleScreenProps;
     }>
     | Readonly<{
         variant: 'wizard';
         requesterIsolation?: ReturnType<typeof import('@/hooks/machine/useMachineOwnIsolationStatus').useMachineOwnIsolationStatus>;
         popoverBoundaryRef: React.RefObject<View>;
-        launchOverlay: React.ReactNode | null;
         temporaryComputerLaunch?: NewSessionTemporaryComputerLaunch;
         managedMachineDraft?: NewSessionManagedMachineDraftModel;
         botCreation?: NewSessionBotCreationModel;
         instructionsCreation?: NewSessionInstructionsCreationModel;
-        launchOnRequestClose: () => void;
-        overlayPresentation?: 'card' | 'screen';
-        overlayFocusReturnRef?: React.RefObject<View | null>;
-        overlayAccessibilityLabel?: string;
         wizardProps: Readonly<{
             layout: NewSessionWizardLayoutProps;
             sectionPresentation?: NewSessionWizardProps['sectionPresentation'];

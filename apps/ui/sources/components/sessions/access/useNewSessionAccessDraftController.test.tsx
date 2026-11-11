@@ -473,7 +473,6 @@ function AccessDraftProbe(props: Readonly<{
     sourcePrimaryTeamId: string | null;
     sourceAccessConflict?: boolean;
     sourcePrimaryTeamConflict?: boolean;
-    useScreenHost?: boolean;
     /** Mounts the composer popover exactly as the chip host does when it opens. */
     popoverOpen?: boolean;
     onReady: (state: NewSessionAccessDraftState) => void;
@@ -485,7 +484,6 @@ function AccessDraftProbe(props: Readonly<{
         sourceRevision: props.sourceRevision,
         sourceAccessConflict: props.sourceAccessConflict ?? false,
         sourcePrimaryTeamConflict: props.sourcePrimaryTeamConflict ?? false,
-        useScreenHost: props.useScreenHost ?? false,
     });
     props.onReady(state);
     const popoverContent = props.popoverOpen ? state.chip?.popoverContent : null;
@@ -733,32 +731,22 @@ describe('useNewSessionAccessDraft repository currentness', () => {
         expect(requestClose).toHaveBeenCalledTimes(1);
     });
 
-    it('opens the same draft-backed editor in the compact screen host and preserves edits across close/reopen', async () => {
+    it('keeps edits made in the composer popover editor across close and reopen', async () => {
         let latest: NewSessionAccessDraftState | null = null;
-        await renderScreen(<AccessDraftProbe serverId="home-one" sourceRevision={1}
-            sourceAccess={alice} sourcePrimaryTeamId={null} useScreenHost
-            onReady={(state) => { latest = state; }} />);
-
-        const chip = latest!.chip!;
-        expect(chip.onOpen).toBeTypeOf('function');
-        await act(async () => { chip.onOpen?.(React.createRef()); });
-        expect(latest!.screen?.content).toBeTruthy();
-
-        const screenContent = latest!.screen!.content as React.ReactElement<{ children: React.ReactNode }>;
-        const editor = React.Children.toArray(screenContent.props.children)[1] as React.ReactElement<{
-            actions: ReturnType<typeof useNewSessionAccessDraftController>['actions'];
-            presentation: string;
-        }>;
-        expect(editor.props.presentation).toBe('full');
+        const probe = (popoverOpen: boolean) => (
+            <AccessDraftProbe serverId="home-one" sourceRevision={1} sourceAccess={alice} sourcePrimaryTeamId={null}
+                popoverOpen={popoverOpen} onReady={(state) => { latest = state; }} />
+        );
+        const screen = await renderScreen(probe(true));
+        // One presentation on every layout: the chip opens nothing else.
+        expect(latest!.chip!.onOpen).toBeUndefined();
         await act(async () => {
-            editor.props.actions.addPrincipal({ kind: 'account', accountId: 'compact-added' });
+            accessDraftActions(latest!).addPrincipal({ kind: 'account', accountId: 'popover-added' });
         });
-
-        await act(async () => { latest!.screen!.onRequestClose(); });
-        expect(latest!.screen).toBeNull();
-        await act(async () => { latest!.chip!.onOpen?.(React.createRef()); });
+        await screen.update(probe(false));
+        await screen.update(probe(true));
         expect(latest!.access?.grants.map((grant) => grant.subject)).toContainEqual({
-            kind: 'account', accountId: 'compact-added',
+            kind: 'account', accountId: 'popover-added',
         });
     });
 

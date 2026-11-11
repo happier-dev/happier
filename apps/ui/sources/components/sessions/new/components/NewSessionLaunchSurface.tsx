@@ -135,17 +135,12 @@ const OVERLAY_MAX_CONTENT_WIDTH = 520;
  */
 export function NewSessionLaunchSurface(props: Readonly<{
     children: React.ReactNode;
-    overlay: React.ReactNode | null;
-    onRequestClose: () => void;
-    overlayPresentation?: 'card' | 'screen';
     /** Embedded cards replace the short composer footprint instead of overlaying it. */
     presentation?: 'screen' | 'embedded';
-    focusReturnRef?: React.RefObject<FocusReturnTarget>;
-    overlayAccessibilityLabel?: string;
     temporaryComputerLaunch?: NewSessionTemporaryComputerLaunch;
 }>): React.ReactElement {
     const temporaryLaunch = useTemporaryComputerLaunchSurface(props.temporaryComputerLaunch);
-    const overlay = props.overlay ?? temporaryLaunch.overlay;
+    const overlay = temporaryLaunch.overlay;
     const { theme } = useUnistyles();
     const insets = useChromeSafeAreaInsets();
     // Reduce Transparency means the retained composer must not show through the
@@ -153,13 +148,12 @@ export function NewSessionLaunchSurface(props: Readonly<{
     // surface rather than a veil over live-looking controls that no longer work.
     const reduceTransparency = useReduceTransparency();
     const frozen = overlay !== null;
-    const embeddedCard = props.presentation === 'embedded' && props.overlayPresentation !== 'screen';
-    const internalFocusReturnRef = React.useRef<FocusReturnTarget>(null);
-    const focusReturnRef = props.focusReturnRef ?? internalFocusReturnRef;
+    const embeddedCard = props.presentation === 'embedded';
+    const focusReturnRef = React.useRef<FocusReturnTarget>(null);
     const boundary = useModalPaneBoundary({
         active: frozen,
-        label: props.overlayAccessibilityLabel ?? t('newSession.temporaryComputer.title'),
-        onRequestClose: props.overlay != null ? props.onRequestClose : temporaryLaunch.dismiss,
+        label: t('newSession.temporaryComputer.title'),
+        onRequestClose: temporaryLaunch.dismiss,
         focusReturnRef,
         escapeEnabled: true,
         allowEditableEscape: true,
@@ -192,7 +186,7 @@ export function NewSessionLaunchSurface(props: Readonly<{
                         // Programmatic dialog focus is an entry anchor, not a control. Actual
                         // actions keep their canonical keyboard focus indicators.
                         ...(Platform.OS === 'web' ? { outlineWidth: 0 } : {}),
-                        backgroundColor: embeddedCard || props.overlayPresentation === 'screen' || reduceTransparency
+                        backgroundColor: embeddedCard || reduceTransparency
                             ? theme.colors.surface.base
                             : theme.colors.surface.pressedOverlay,
                     }}
@@ -203,21 +197,7 @@ export function NewSessionLaunchSurface(props: Readonly<{
                       * centered fixed box would push Cancel and the package
                       * export off screen with no way to reach them.
                       */}
-                    {embeddedCard ? overlay : props.overlayPresentation === 'screen' ? (
-                        <View
-                            testID="new-session-full-screen-overlay"
-                            style={{
-                                flex: 1,
-                                minHeight: 0,
-                                paddingTop: insets.top,
-                                paddingBottom: insets.bottom,
-                                paddingLeft: insets.left,
-                                paddingRight: insets.right,
-                            }}
-                        >
-                            {overlay}
-                        </View>
-                    ) : <ScrollView
+                    {embeddedCard ? overlay : <ScrollView
                         testID="new-session-launch-overlay-scroll"
                         style={{ flex: 1 }}
                         contentContainerStyle={{

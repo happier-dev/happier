@@ -98,13 +98,8 @@ function NewSessionScreenInner(props: Readonly<{
     if (model.variant === 'simple') {
         return (
             <NewSessionLaunchSurface
-                overlay={model.launchOverlay}
                 temporaryComputerLaunch={model.temporaryComputerLaunch}
-                onRequestClose={model.launchOnRequestClose}
-                overlayPresentation={model.overlayPresentation}
                 presentation={props.presentation}
-                focusReturnRef={model.overlayFocusReturnRef}
-                overlayAccessibilityLabel={model.overlayAccessibilityLabel}
             >
                 {props.presentation === 'embedded'
                     ? <NewSessionEmbeddedComposerCard
@@ -127,13 +122,8 @@ function NewSessionScreenInner(props: Readonly<{
 
     return (
         <NewSessionLaunchSurface
-            overlay={model.launchOverlay}
             temporaryComputerLaunch={model.temporaryComputerLaunch}
-            onRequestClose={model.launchOnRequestClose}
-            overlayPresentation={model.overlayPresentation}
             presentation={props.presentation}
-            focusReturnRef={model.overlayFocusReturnRef}
-            overlayAccessibilityLabel={model.overlayAccessibilityLabel}
         >
             {wizardWithDismissal(
                 <NewSessionWizard

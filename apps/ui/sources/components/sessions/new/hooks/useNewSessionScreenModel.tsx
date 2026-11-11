@@ -1170,7 +1170,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
         sourceRevision: scopedPersistedDraftRevision,
         sourceAccessConflict: scopedPersistedDraftAccessConflict,
         sourcePrimaryTeamConflict: scopedPersistedDraftPrimaryTeamConflict,
-        useScreenHost: isNewSessionMobileLayoutWidth,
     });
     // Placement needs the same pushed Team context before the machine-dependent
     // Agent catalog resolves. Each field owner resolves its final Agent below.
@@ -4638,7 +4637,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
             : undefined,
         useEnhancedSessionWizard,
         popoverBoundaryRef,
-        launchOverlay: accessDraftState.screen?.content ?? null,
         temporaryComputerLaunch,
         managedMachineDraft: { selection: managedMachineSelection, acquisition: managedMachineAcquisition,
             onAcquisitionChange: onManagedMachineAcquisitionChange,
@@ -4650,10 +4648,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
             deleteMachine: deleteManagedMachineAfterFailedSetup,
             cancel: cancelManagedMachineCreation, updateArchiveEffect: updateManagedMachineArchiveEffect,
             archiveChoiceAvailability: managedMachineArchiveChoiceAvailability },
-        launchOnRequestClose: accessDraftState.screen?.onRequestClose,
-        overlayPresentation: accessDraftState.screen ? 'screen' : 'card',
-        overlayFocusReturnRef: accessDraftState.screen?.focusReturnRef,
-        overlayAccessibilityLabel: accessDraftState.screen ? t('session.access.title') : undefined,
         simplePanelProps,
         checkoutCreationDraft,
         setCheckoutCreationDraft,

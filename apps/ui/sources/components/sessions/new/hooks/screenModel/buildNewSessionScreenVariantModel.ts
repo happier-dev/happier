@@ -36,15 +36,10 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
         teamCredentialPresentation?: ActionExecutorContext['teamCredentialPresentation'];
     }>;
     popoverBoundaryRef: React.RefObject<View>;
-    launchOverlay: React.ReactNode | null;
     temporaryComputerLaunch?: NewSessionTemporaryComputerLaunch;
     managedMachineDraft?: NewSessionManagedMachineDraftModel;
     botCreation?: NewSessionBotCreationModel;
     instructionsCreation?: NewSessionInstructionsCreationModel;
-    launchOnRequestClose?: () => void;
-    overlayPresentation?: 'card' | 'screen';
-    overlayFocusReturnRef?: React.RefObject<View | null>;
-    overlayAccessibilityLabel?: string;
     simplePanelProps: NewSessionSimplePanelProps;
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
     setCheckoutCreationDraft: React.Dispatch<React.SetStateAction<NewSessionCheckoutCreationDraft | null>>;
@@ -84,15 +79,10 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
             setSpaceMembership: params.setSpaceMembership,
             requesterIsolation: params.requesterIsolation,
             popoverBoundaryRef: params.popoverBoundaryRef,
-            launchOverlay: params.launchOverlay,
             temporaryComputerLaunch: params.temporaryComputerLaunch,
             managedMachineDraft: params.managedMachineDraft,
             botCreation: params.botCreation,
             instructionsCreation: params.instructionsCreation,
-            launchOnRequestClose: params.launchOnRequestClose ?? (() => undefined),
-            overlayPresentation: params.overlayPresentation,
-            overlayFocusReturnRef: params.overlayFocusReturnRef,
-            overlayAccessibilityLabel: params.overlayAccessibilityLabel,
             simpleProps,
         };
     }
@@ -103,15 +93,10 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
         setSpaceMembership: params.setSpaceMembership,
         requesterIsolation: params.requesterIsolation,
         popoverBoundaryRef: params.popoverBoundaryRef,
-        launchOverlay: params.launchOverlay,
         temporaryComputerLaunch: params.temporaryComputerLaunch,
         managedMachineDraft: params.managedMachineDraft,
         botCreation: params.botCreation,
         instructionsCreation: params.instructionsCreation,
-        launchOnRequestClose: params.launchOnRequestClose ?? (() => undefined),
-        overlayPresentation: params.overlayPresentation,
-        overlayFocusReturnRef: params.overlayFocusReturnRef,
-        overlayAccessibilityLabel: params.overlayAccessibilityLabel,
         wizardProps: {
             layout: params.wizardLayoutProps,
             sectionPresentation: params.wizardSectionPresentation,

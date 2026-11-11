@@ -97,9 +97,7 @@ function CopyControls(props: CopyProps & Readonly<{ draftId: string; setup: Reac
     const readiness = getBotTemplateSetupReadiness(props.preview.release.content.needs, setup);
     // A Bot draft is the ordinary simple composer, including when the Account prefers the wizard.
     if (model.variant !== 'simple' || !model.botCreation || !serverId) return null;
-    return <NewSessionLaunchSurface overlay={model.launchOverlay} temporaryComputerLaunch={model.temporaryComputerLaunch}
-        onRequestClose={model.launchOnRequestClose} overlayPresentation={model.overlayPresentation} presentation="embedded"
-        focusReturnRef={model.overlayFocusReturnRef} overlayAccessibilityLabel={model.overlayAccessibilityLabel}>
+    return <NewSessionLaunchSurface temporaryComputerLaunch={model.temporaryComputerLaunch} presentation="embedded">
         <BotTemplatePageLayout testID="bot-template-copy" content={props.preview.release.content}
             header={<BotTemplateHeader identity={props.preview.release.content.identity} version={props.preview.release.version}
                 presentation={props.preview.presentation} descriptionPlacement="body" />} notice={props.notice}

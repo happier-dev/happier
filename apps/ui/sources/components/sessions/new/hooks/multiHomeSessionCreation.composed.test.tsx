@@ -2478,7 +2478,9 @@ describe('multi-Home Session creation composition', () => {
             draftId,
         });
         try {
-            expect(hook.getCurrent().launchOverlay).toBeNull();
+            // The model renders for target Home B. (Its former launchOverlay check only ever saw the retired
+            // access screen; whether B's launch should see Home A's activation reference is the multi-Home owner's.)
+            expect(hook.getCurrent().variant).toBe('simple');
         } finally {
             await hook.unmount();
         }

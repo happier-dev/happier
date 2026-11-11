@@ -44,7 +44,7 @@ function buildVariant(useEnhancedSessionWizard: boolean, managedMachineDraft: Ne
     const ordinaryBadge = { key: 'ordinary', label: 'Ordinary status' };
     // Only the projection boundary is under test; unrelated form props are never rendered.
     const params = {
-        useEnhancedSessionWizard, popoverBoundaryRef: React.createRef(), launchOverlay: null,
+        useEnhancedSessionWizard, popoverBoundaryRef: React.createRef(),
         simplePanelProps: { statusBadges: [ordinaryBadge] }, checkoutCreationDraft: null,
         setCheckoutCreationDraft: () => {}, wizardLayoutProps: {}, wizardProfilesProps: {},
         wizardAgentProps: {}, wizardMachineProps: {}, wizardFooterProps: { statusBadges: [ordinaryBadge] },
@@ -229,7 +229,6 @@ describe('buildNewSessionScreenVariantModel', () => {
         const model = buildNewSessionScreenVariantModel({
             useEnhancedSessionWizard: true,
             popoverBoundaryRef: { current: null },
-            launchOverlay: null,
             simplePanelProps: {},
             checkoutCreationDraft: null,
             setCheckoutCreationDraft: () => {},
@@ -252,7 +251,6 @@ describe('buildNewSessionScreenVariantModel', () => {
         const model = buildNewSessionScreenVariantModel({
             useEnhancedSessionWizard: true,
             popoverBoundaryRef: { current: null },
-            launchOverlay: null,
             simplePanelProps: {},
             checkoutCreationDraft: null,
             setCheckoutCreationDraft: () => {},
