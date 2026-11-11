@@ -1445,8 +1445,8 @@ async function executeClientContributedAction(
         if (!exactId) throw new PluginError({ code: 'session_target_unavailable' });
         const account = await captureLazyActionAccountContext(accountLifetime.scope.serverId, input.signal);
         try {
-            const result = await createUiSessionStatusGet(account)({ sessionId: exactId,
-                serverId: accountLifetime.scope.serverId, ...(input.signal ? { signal: input.signal } : {}) });
+            const result = SessionStatusActionResultV1Schema.parse(await createUiSessionStatusGet(account)({ sessionId: exactId,
+                serverId: accountLifetime.scope.serverId, ...(input.signal ? { signal: input.signal } : {}) }));
             if (!result.ok) throw new PluginError({ code: result.code });
             const contributedAction = result.session.machineId ? {
                 machineId: result.session.machineId, serverId: accountLifetime.scope.serverId,
@@ -1649,7 +1649,7 @@ async function executeClientContributedAction(
                                 const sessionTarget = selectedAction.sessionTarget;
                                 const sessionId = sessionTarget?.cardinality === 'one' && isPluginActionInputRecord(value)
                                     ? readActionSessionTargetField(value, sessionTarget.field) : undefined;
-                                if (!explicitMachine && sessionId !== undefined && sessionId !== accountSessionId && input.hostAction) {
+                                if (!explicitMachine && typeof sessionId === 'string' && sessionId !== accountSessionId && input.hostAction) {
                                     const status = await dispatchPluginSurfaceAction({ ...nestedInput,
                                         action: 'session.status.get', input: { sessionId }, expectedContributorOccurrenceId: undefined,
                                     });
@@ -1893,6 +1893,7 @@ async function executeClientContributedAction(
             };
             const reference = current.binding.messageActionReference;
             if (!reference) return invokeHandler();
+            const accountOrigin = readPluginUiAccountExecutableOrigin(current.action);
             const messageInvocation = input.invocation?.kind === 'hostPresentedMessage' ? input.invocation
                 : invocationSurface === 'cli' || invocationSurface === 'agent' || invocationSurface === 'mcp'
                     ? clientActionInvocation(current) : null;
