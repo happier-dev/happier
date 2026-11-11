@@ -1,7 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createSecureTempDirectorySync, writeSecureTempTextFileSync } from '@happier-dev/plugin-sdk/fs';
 import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionOpenRequest, AgentSessionConnectedAccountSelection } from '@happier-dev/plugin-sdk/agents/runtime';
 import { OPENAI_CONNECTED_ACCOUNT_SERVICE, OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
 import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_SELECTED_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
 import { GROK_CONNECTED_ACCOUNT_SERVICE, XAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-grok/connected-account-service';
@@ -24,8 +24,8 @@ function modelSelectionRequired(): never {
       phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
 }
 
-function buildCodeBuddyNativeConfiguration(input: Readonly<{
-  modelId: string; api: string; url: string; apiKey: string; customHeaders: string; supportsReasoning?: true;
+export function buildCodeBuddyNativeConfiguration(input: Readonly<{
+  modelId: string; api: string; url: string; apiKey?: string; customHeaders: string; supportsReasoning?: true;
 }>) {
   const { modelId, customHeaders } = input;
   // CodeBuddy 2.181.0 EnvProductProvider accepts this per-process overlay. The
@@ -33,7 +33,7 @@ function buildCodeBuddyNativeConfiguration(input: Readonly<{
   // maxOutputTokens makes configureModelConfig delete maxTokens before the
   // Responses serializer. No native home or credential file is replaced.
   const native = { productFeatures: { ResponsesStore: false }, models: [{ id: modelId, name: modelId, tags: ['custom'],
-    api: input.api, url: input.url, apiKey: input.apiKey, supportsToolCall: true,
+    api: input.api, url: input.url, ...(input.apiKey ? { apiKey: input.apiKey } : {}), supportsToolCall: true,
     ...(input.supportsReasoning ? { supportsReasoning: true } : {}) }] };
   // Explicit settings override saved settings.env. Native logs the settings
   // object, so only noncredential headers go here. Native model.apiKey applies
@@ -72,15 +72,21 @@ export function createCodeBuddySubscriptionLaunch(configuration: ReturnType<type
 }
 
 export async function prepareCodeBuddyConnectedAccount(
-  request: Readonly<{ modelId?: string | null; providerBinding?: AgentSessionOpenRequest['providerBinding'] }>,
+  request: Readonly<{ modelId?: string | null; providerBinding?: AgentSessionOpenRequest['providerBinding']; connectedAccounts?: readonly AgentSessionConnectedAccountSelection[] }>,
   context: Readonly<{ services: { connectedAccounts: Pick<ConnectedAccountsService, 'getBinding' | 'materialize'> }; signal?: AbortSignal }>,
 ): Promise<ReturnType<typeof createCodeBuddySubscriptionLaunch> | null> {
   const accounts = context.services.connectedAccounts;
-  const binding = await accounts.getBinding(CODEBUDDY_CODEX_PURPOSE, { signal: context.signal });
+  const admittedBinding = (purpose: string) => {
+    const admitted = request.connectedAccounts?.find(selection => selection.purpose === purpose);
+    return admitted ? { purpose: admitted.purpose, service: admitted.account.service, account: admitted.account } : undefined;
+  };
+  const binding = admittedBinding(CODEBUDDY_CODEX_PURPOSE)
+    ?? await accounts.getBinding(CODEBUDDY_CODEX_PURPOSE, { signal: context.signal });
   if (binding) refuse('codebuddy_chatgpt_account_unsupported', 'CodeBuddy requires a CodeBuddy login or provider API key; a ChatGPT account is not supported.');
   const selectedKeys = [];
   for (const row of CODEBUDDY_KEY_ACCOUNTS) {
-    const selected = await accounts.getBinding(row.purpose, { signal: context.signal });
+    const selected = admittedBinding(row.purpose)
+      ?? await accounts.getBinding(row.purpose, { signal: context.signal });
     if (selected) selectedKeys.push({ row, binding: selected });
   }
   if (!binding && selectedKeys.length === 0) return null;

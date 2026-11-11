@@ -39,6 +39,16 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
           kind: 'custom',
           permissionModeMapping: QWEN_ACP_RUNTIME_DEFINITION.permissionModeMapping,
         },
+        providerRequirements: {
+          acceptsProtocols: ['openai-chat', 'openai-responses'],
+          required: { streaming: true, toolRoundTrips: true },
+          credentialSupport: { supportsNoAuth: false, apiKeyTransports: [
+            { protocol: 'openai-chat', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } },
+            { protocol: 'openai-responses', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } },
+          ] },
+          authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: [...QWEN_PROVIDER_OWNED_ENV_KEYS] },
+          materialization: 'configFile', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
+        },
         cli: {
           displayName: 'Qwen CLI',
           executable: {

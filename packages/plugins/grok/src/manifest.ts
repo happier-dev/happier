@@ -9,6 +9,7 @@ import { GROK_CONNECTED_ACCOUNT_LAUNCH } from './agent/connectedAccount.js';
 import { GROK_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/models.js';
 import { createGrokAgentRuntime } from './agent/runtime/factory.js';
 import { grokExternalSessionsContribution } from './agent/externalSessions/contribution.js';
+import { GROK_PROVIDER_BINDING_ADAPTER_V1, GROK_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding.js';
 
 
 const installScript = 'curl -fsSL https://x.ai/cli/install.sh | bash';
@@ -81,6 +82,13 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
         connectedAccounts: [{ purpose: 'primary', service: GROK_CONNECTED_ACCOUNT_SERVICE.localId, required: false,
           materializationKinds: ['files', 'environment'], credentialKinds: ['oauth', 'token'] }],
         runtime: { kind: 'custom' },
+        providerRequirements: {
+          acceptsProtocols: ['openai-chat'],
+          required: { streaming: true, toolRoundTrips: true },
+          credentialSupport: { supportsNoAuth: false, apiKeyTransports: [{ protocol: 'openai-chat', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } }] },
+          authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: [...GROK_PROVIDER_OWNED_ENV_KEYS] },
+          materialization: 'spawnEnv', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
+        },
         sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
         catalog: {
@@ -161,6 +169,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
         },
       },
       factory: createGrokAgentRuntime,
+      providerBinding: GROK_PROVIDER_BINDING_ADAPTER_V1,
       connectedAccountLaunch: GROK_CONNECTED_ACCOUNT_LAUNCH,
       externalSessions: grokExternalSessionsContribution,
       preflightSessionControls: GROK_PREFLIGHT_SESSION_CONTROLS,

@@ -7,6 +7,7 @@ import { createCodeBuddyAgentRuntime } from './agent/runtime/factory.js';
 import { CODEBUDDY_KEY_ACCOUNTS, prepareCodeBuddyConnectedAccount } from './agent/runtime/connectedAccounts.js';
 import { CODEBUDDY_CONNECTED_ACCOUNT_LAUNCH } from './agent/runtime/continuity.js';
 import { CODEBUDDY_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
+import { CODEBUDDY_PROVIDER_BINDING_ADAPTER_V1, CODEBUDDY_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding/adapter.js';
 
 import { codeBuddyExternalSessionsContribution } from './agent/externalSessions/contribution.js';
 
@@ -28,6 +29,20 @@ export const CODEBUDDY_PLUGIN = definePlugin({
       runtime: { kind: 'custom', permissionModeMapping: CODEBUDDY_ACP_RUNTIME_DECLARATION.definition.permissionModeMapping },
       connectedAccounts: CODEBUDDY_KEY_ACCOUNTS.map(({ purpose, service }) => ({ purpose, service,
           materializationKinds: ['environment'] as ['environment'], credentialKinds: ['token'] as ['token'] })),
+      providerRequirements: {
+        acceptsProtocols: ['openai-chat', 'openai-responses'],
+        required: { streaming: true, toolRoundTrips: true },
+        credentialSupport: {
+          supportsNoAuth: true,
+          noAuthProtocols: ['openai-chat'],
+          apiKeyTransports: [
+            { protocol: 'openai-chat', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } },
+            { protocol: 'openai-responses', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } },
+          ],
+        },
+        authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: [...CODEBUDDY_PROVIDER_OWNED_ENV_KEYS] },
+        materialization: 'spawnEnv', applyPolicy: 'restart_session', supportsFreeformModelIds: true, supportsReasoningEffort: true,
+      },
       cli: {
         displayName: 'CodeBuddy Code CLI',
         executable: { binaryName: 'codebuddy', sourcePreference: 'system-first', systemCommandResolutionStrategy: 'path-first' },
@@ -70,6 +85,7 @@ export const CODEBUDDY_PLUGIN = definePlugin({
       } },
     } satisfies PluginCustomAgentDeclaration,
     factory: createCodeBuddyAgentRuntime,
+    providerBinding: CODEBUDDY_PROVIDER_BINDING_ADAPTER_V1,
     sessionRunnerFactory: { module: './agent/runtime/factory', export: 'createCodeBuddyAgentRuntime', runtimeApiVersion: 1, externalSessionsExport: 'codeBuddyExternalSessionsContribution' },
     preflightSessionControls: {
       async prepareLaunchEnvironment({ environment, connectedAccounts, signal, modelId }) {

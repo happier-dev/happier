@@ -1,6 +1,7 @@
 import { createKimiAgentRuntime } from './agent/runtime/factory.js';
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { KIMI_ACP_COMMAND, KIMI_PREFLIGHT_SESSION_CONTROLS } from './agent/acp/preflight.js';
@@ -9,6 +10,9 @@ import { kimiExternalSessionsContribution } from './agent/externalSessions/contr
 import { KIMI_CONNECTED_ACCOUNT_LAUNCH } from './agent/connectedAccount.js';
 import { createKimiNativeConnectedAccountRuntime } from './connectedAccounts/nativeRuntime.js';
 import { kimiPortableAccountRuntime } from './connectedAccounts/runtime.js';
+import { KIMI_PROVIDER_BINDING_ADAPTER_V1, KIMI_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding.js';
+
+const KIMI_CODE_CONNECTED_SERVICE_ID = buildQualifiedPluginContributionKey({ pluginId: 'happier.agent.kimi', localId: 'kimi-code' });
 
 const regionConfiguration = {
   scope: 'account', changeBehavior: 'reconnect', fields: [{
@@ -34,7 +38,7 @@ export const KIMI_PLUGIN = definePlugin({
       reason: 'Run the declared Kimi CLI executable.',
       scope: {
         executables: [{ kind: 'systemTool', id: KIMI_ACP_COMMAND.toolId }],
-        envKeys: ['KIMI_CODE_HOME', 'HAPPIER_KIMI_ACCESS_TOKEN', ...KIMI_CONNECTED_ACCOUNT_LAUNCH.environmentUnsetUses.map(use => use.environmentKey)],
+        envKeys: [...new Set(['KIMI_CODE_HOME', ...KIMI_PROVIDER_OWNED_ENV_KEYS, ...KIMI_CONNECTED_ACCOUNT_LAUNCH.environmentUnsetUses.map(use => use.environmentKey)])],
       },
     }, {
       id: 'kimi-account-network', capability: 'network',
@@ -53,7 +57,6 @@ export const KIMI_PLUGIN = definePlugin({
     'kimi-code': {
       declaration: {
         title: 'Kimi Code',
-        ui: { iconResourceId: 'agent-mark' },
         authentication: {
           account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
           native: { systemTool: KIMI_ACP_COMMAND.toolId },
@@ -87,6 +90,17 @@ export const KIMI_PLUGIN = definePlugin({
         title: { key: 'agentInput.agent.kimi', fallback: 'Kimi' },
         description: { key: 'profiles.aiBackend.kimiSubtitleExperimental', fallback: 'Kimi coding agent (experimental)' },
         runtime: { kind: 'custom' },
+        providerRequirements: {
+          acceptsProtocols: ['openai-chat', 'openai-responses', 'anthropic'],
+          required: { streaming: true, toolRoundTrips: true },
+          credentialSupport: { supportsNoAuth: false, apiKeyTransports: [
+            { protocol: 'openai-chat', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } },
+            { protocol: 'openai-responses', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } },
+            { protocol: 'anthropic', destination: { kind: 'httpHeader', names: ['x-api-key'], formats: ['raw'] } },
+          ] },
+          authIsolation: { suppressConnectedServiceIds: [KIMI_CODE_CONNECTED_SERVICE_ID], ownedEnvKeys: [...KIMI_PROVIDER_OWNED_ENV_KEYS] },
+          materialization: 'configFile', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
+        },
         cli: {
           displayName: 'Kimi Code CLI',
           executable: {
@@ -160,6 +174,7 @@ export const KIMI_PLUGIN = definePlugin({
         }),
       },
       factory: createKimiAgentRuntime,
+      providerBinding: KIMI_PROVIDER_BINDING_ADAPTER_V1,
       connectedAccountLaunch: KIMI_CONNECTED_ACCOUNT_LAUNCH,
       preflightSessionControls: KIMI_PREFLIGHT_SESSION_CONTROLS,
       externalSessions: kimiExternalSessionsContribution,
@@ -207,7 +222,6 @@ export const KIMI_PLUGIN = definePlugin({
     { locale: "ja", resourceId: "i18n-ja" },
   ] },
   resources: {
-    'agent-mark': { kind: 'asset', path: 'assets/agent-mark.svg', contentType: 'image/svg+xml' },
     "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
     "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
     "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },

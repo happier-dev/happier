@@ -1,7 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createSecureTempDirectorySync, writeSecureTempTextFileSync } from '@happier-dev/plugin-sdk/fs';
 import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { AgentAcpModelControls, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentAcpModelControls, AgentSessionOpenRequest, AgentSessionConnectedAccountSelection } from '@happier-dev/plugin-sdk/agents/runtime';
 import { ANTHROPIC_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_API_KEY_ENV } from '@happier-dev/plugins-claude/connected-account-service';
 import { OPENAI_CONNECTED_ACCOUNT_SERVICE, OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
 import { GEMINI_CONNECTED_ACCOUNT_SERVICE, GEMINI_API_KEY_ENV } from '@happier-dev/plugins-gemini/connected-account-service';
@@ -17,19 +17,22 @@ export const QWEN_ACCOUNT_ENV_KEYS = ['QWEN_CODE_SYSTEM_SETTINGS_PATH', ANTHROPI
   'GOOGLE_GENAI_USE_VERTEXAI', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION', 'GOOGLE_APPLICATION_CREDENTIALS'] as const;
 
 export async function prepareQwenConnectedAccount(
-  request: Pick<AgentSessionOpenRequest, 'configuration' | 'providerBinding'>,
+  request: Readonly<{ modelId?: string | null; providerBinding?: AgentSessionOpenRequest['providerBinding']; connectedAccounts?: readonly AgentSessionConnectedAccountSelection[] }>,
   context: Readonly<{ services: { connectedAccounts: Pick<ConnectedAccountsService, 'getBinding' | 'materialize'> }; signal?: AbortSignal }>,
 ) {
   const accounts = context.services.connectedAccounts;
   const selections = [];
   for (const source of QWEN_ACCOUNT_SOURCES) {
-    const binding = await accounts.getBinding(source.purpose, { signal: context.signal });
+    const admitted = request.connectedAccounts?.find(selection => selection.purpose === source.purpose);
+    const binding = admitted
+      ? { purpose: admitted.purpose, service: admitted.account.service, account: admitted.account }
+      : await accounts.getBinding(source.purpose, { signal: context.signal });
     if (binding) selections.push({ source, binding });
   }
   if (selections.length === 0) return null;
   if (selections.length > 1 || request.providerBinding) throw new PluginError({ code: 'qwen_connected_account_conflict',
     message: 'Select one connected model account or Provider for Qwen Code.' });
-  const modelId = request.configuration?.model.value?.trim();
+  const modelId = request.modelId?.trim();
   if (!modelId || modelId === 'default') throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
     message: 'Select an explicit model before starting Qwen Code with a connected account.',
     details: { failureCause: { code: 'agent_startup_model_reconciliation_failed', phase: 'client_start',
