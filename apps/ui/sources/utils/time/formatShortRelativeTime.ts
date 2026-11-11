@@ -1,5 +1,19 @@
 import { t } from '@/text';
 
+/** Locale-aware relative label with an absolute-date fallback for Hermes builds without RelativeTimeFormat. */
+export function formatRelativeTimeOrAbsolute(
+    atMs: number,
+    value: number,
+    unit: Intl.RelativeTimeFormatUnit,
+    locales?: Intl.LocalesArgument,
+): string {
+    try {
+        return new Intl.RelativeTimeFormat(locales, { numeric: value === 1 || value === -1 ? 'auto' : 'always' }).format(value, unit);
+    } catch {
+        return new Intl.DateTimeFormat(locales, { dateStyle: 'medium' }).format(new Date(atMs));
+    }
+}
+
 function relativeTimeUnits(timestamp: number, nowMs: number) {
     const deltaMs = nowMs - timestamp;
     return {

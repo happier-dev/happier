@@ -12,6 +12,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { getPreferredLanguage, t } from '@/text';
+import { formatRelativeTimeOrAbsolute } from '@/utils/time/formatShortRelativeTime';
 
 import type { HomeComposerSuggestion, HomeComposerSuggestionSince } from './homeComposerSuggestions';
 import { useHomeComposerSuggestions } from './useHomeComposerSuggestions';
@@ -33,11 +34,7 @@ export type HomeComposerSuggestionFill = Readonly<{
 function formatSinceDay(since: HomeComposerSuggestionSince): string {
     const locale = getPreferredLanguage();
     if (since.kind === 'yesterday') {
-        try {
-            return new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(-1, 'day');
-        } catch {
-            return new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(new Date(since.atMs));
-        }
+        return formatRelativeTimeOrAbsolute(since.atMs, -1, 'day', locale);
     }
     return new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(new Date(since.atMs));
 }

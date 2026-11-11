@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { formatRelativeTimeShort, formatShortRelativeTime, formatShortRelativeTimeAt, readRelativeTimeShortRefreshAtMs, readShortRelativeTimeRefreshAtMs } from './formatShortRelativeTime';
+import { formatRelativeTimeOrAbsolute, formatRelativeTimeShort, formatShortRelativeTime, formatShortRelativeTimeAt, readRelativeTimeShortRefreshAtMs, readShortRelativeTimeRefreshAtMs } from './formatShortRelativeTime';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -24,6 +24,15 @@ describe('compact localized age display boundaries', () => {
 });
 
 describe('formatShortRelativeTime', () => {
+    it('falls back to a date when RelativeTimeFormat is unavailable', () => {
+        const original = Intl.RelativeTimeFormat;
+        Object.defineProperty(Intl, 'RelativeTimeFormat', { configurable: true, value: undefined });
+        try {
+            expect(formatRelativeTimeOrAbsolute(NOW - DAY, -1, 'day', 'en-US')).toContain('Jun');
+        } finally {
+            Object.defineProperty(Intl, 'RelativeTimeFormat', { configurable: true, value: original });
+        }
+    });
     it.each([-SECOND, 30 * SECOND, 59 * MINUTE, 23 * HOUR, 6 * DAY, 34 * DAY,
         59 * DAY, 359 * DAY, 364 * DAY, 729 * DAY])('reports the exact next display change for age %s', age => {
         const at = NOW - age;

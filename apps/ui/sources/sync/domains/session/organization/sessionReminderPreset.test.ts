@@ -59,6 +59,17 @@ describe('sessionReminderPreset', () => {
             .toBe('Sunday in 2 weeks · 9:00 AM');
     });
 
+    it('falls back to an absolute date when Hermes omits RelativeTimeFormat', () => {
+        const original = Intl.RelativeTimeFormat;
+        Object.defineProperty(Intl, 'RelativeTimeFormat', { configurable: true, value: undefined });
+        try {
+            expect(formatSessionReminderPresetRuleLabel({ kind: 'relative_day', daysAhead: 2, minuteOfDay: 960 }, now.getTime(), 'en-US'))
+                .toContain('Sep');
+        } finally {
+            Object.defineProperty(Intl, 'RelativeTimeFormat', { configurable: true, value: original });
+        }
+    });
+
     it('refuses a stale replacement instead of overwriting concurrent preset edits', () => {
         const opened = { label: 'Morning', rule: { kind: 'relative_day', daysAhead: 1, minuteOfDay: 540 } } as const;
         const edited = { ...opened, label: 'Focus' };

@@ -1,4 +1,5 @@
 import type { SessionReminderPresetRule } from '@happier-dev/protocol/account/settings/sessionReminderPresetsV1';
+import { formatRelativeTimeOrAbsolute } from '@/utils/time/formatShortRelativeTime';
 export { SessionReminderPresetsV1Schema } from '@happier-dev/protocol/account/settings/sessionReminderPresetsV1';
 export type { SessionReminderPresetRule, SessionReminderPresetV1 } from '@happier-dev/protocol/account/settings/sessionReminderPresetsV1';
 export {
@@ -10,14 +11,6 @@ export {
 } from '@happier-dev/protocol/account/settings/sessionReminderPresetsV1';
 
 const MILLIS_PER_DAY = 24 * 60 * 60 * 1_000;
-
-function formatRelativeOrAbsolute(locales: Intl.LocalesArgument | undefined, value: number, unit: Intl.RelativeTimeFormatUnit, date: Date): string {
-    try {
-        return new Intl.RelativeTimeFormat(locales, { numeric: value === 1 ? 'auto' : 'always' }).format(value, unit);
-    } catch {
-        return new Intl.DateTimeFormat(locales, { dateStyle: 'medium' }).format(date);
-    }
-}
 
 function localDayOrdinal(date: Date): number {
     return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / MILLIS_PER_DAY);
@@ -80,11 +73,11 @@ export function formatSessionReminderPresetRuleLabel(
     const resolved = new Date(resolveSessionReminderPresetRule(rule, nowMs));
     const time = new Intl.DateTimeFormat(locales, { hour: 'numeric', minute: '2-digit' }).format(resolved);
     if (rule.kind === 'relative_day' && rule.daysAhead === 1) {
-        const relative = formatRelativeOrAbsolute(locales, 1, 'day', resolved);
+        const relative = formatRelativeTimeOrAbsolute(resolved.getTime(), 1, 'day', locales);
         return `${relative.charAt(0).toLocaleUpperCase() + relative.slice(1)} · ${time}`;
     }
     if (rule.kind === 'relative_day') {
-        const relative = formatRelativeOrAbsolute(locales, rule.daysAhead, 'day', resolved);
+        const relative = formatRelativeTimeOrAbsolute(resolved.getTime(), rule.daysAhead, 'day', locales);
         return `${relative.charAt(0).toLocaleUpperCase() + relative.slice(1)} · ${time}`;
     }
     const weekday = new Intl.DateTimeFormat(locales, { weekday: 'long' }).format(resolved);
@@ -94,8 +87,8 @@ export function formatSessionReminderPresetRuleLabel(
     if (locale.toLowerCase().startsWith('en')) {
         return weeksAhead === 1
             ? `Next ${weekday} · ${time}`
-            : `${weekday} ${formatRelativeOrAbsolute(locales, weeksAhead, 'week', resolved)} · ${time}`;
+            : `${weekday} ${formatRelativeTimeOrAbsolute(resolved.getTime(), weeksAhead, 'week', locales)} · ${time}`;
     }
-    const nextWeek = formatRelativeOrAbsolute(locales, weeksAhead, 'week', resolved);
+    const nextWeek = formatRelativeTimeOrAbsolute(resolved.getTime(), weeksAhead, 'week', locales);
     return `${nextWeek.charAt(0).toLocaleUpperCase() + nextWeek.slice(1)} · ${weekday} · ${time}`;
 }
