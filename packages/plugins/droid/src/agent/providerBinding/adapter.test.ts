@@ -37,7 +37,7 @@ describe('registered Droid Provider binding', () => {
         expect(JSON.parse(result.files[0]!.utf8)).toEqual({ customModels: [{ model: 'vendor/model', displayName: 'Happier provider: vendor/model',
           baseUrl: 'https://provider.example/v1', provider, apiKey: '${HAPPIER_DROID_PROVIDER_API_KEY}', extraHeaders: { 'X-Project': 'Happier' } }] });
         const env = Object.fromEntries(result.env.map(row => [row.name, row.value]));
-        expect(env).toEqual({ HAPPIER_DROID_PROVIDER_API_KEY: 'fixture-selected-secret', FACTORY_API_KEY: null });
+        expect(env).toEqual({ HAPPIER_DROID_PROVIDER_API_KEY: 'fixture-selected-secret' });
         expect(result.env.map(row => row.name).sort()).toEqual([...DROID_PLUGIN.manifest.contributes.agents[0]!.providerRequirements!.authIsolation.ownedEnvKeys].sort());
       } finally { await activation.dispose(); }
     });

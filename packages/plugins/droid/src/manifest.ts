@@ -5,6 +5,7 @@ import { AGENT_DEFINITION } from './agent/definition.js';
 import { DROID_ACP_COMMAND } from './agent/preflight.js';
 import { droidExternalSessionsContribution } from './agent/externalSessions/contribution.js';
 import { DROID_PROVIDER_BINDING_ADAPTER, DROID_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding/adapter.js';
+import { DROID_NATIVE_AUTH_ENV_KEY } from './agent/providerBinding/settings.js';
 import { createDroidAgentRuntime } from './agent/runtime/factory.js';
 import { DROID_CONNECTED_ACCOUNT_PURPOSES, DROID_CONNECTED_ACCOUNT_LAUNCH, prepareDroidConnectedAccount } from './agent/runtime/connectedAccount.js';
 
@@ -14,7 +15,7 @@ export const DROID_PLUGIN = definePlugin({
   entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [{
     id: 'droid-process', capability: 'process', reason: 'Run the declared Factory Droid CLI executable.',
-    scope: { envKeys: [...DROID_PROVIDER_OWNED_ENV_KEYS, DROID_CONNECTED_ACCOUNT_LAUNCH.stateSharingDescriptor.nativeHome.environmentKey], executables: [{ kind: 'systemTool', id: DROID_ACP_COMMAND.toolId }] },
+    scope: { envKeys: [...DROID_PROVIDER_OWNED_ENV_KEYS, DROID_NATIVE_AUTH_ENV_KEY, DROID_CONNECTED_ACCOUNT_LAUNCH.stateSharingDescriptor.nativeHome.environmentKey], executables: [{ kind: 'systemTool', id: DROID_ACP_COMMAND.toolId }] },
   }], optional: [] },
   agents: { droid: {
     declaration: {
@@ -60,7 +61,7 @@ export const DROID_PLUGIN = definePlugin({
           guideUrl: 'https://docs.factory.ai/droid-cli/overview',
           docsUrl: 'https://docs.factory.ai/droid-cli/cli-reference',
         },
-        auth: { support: 'login_terminal', environmentVariables: ['FACTORY_API_KEY'], missingCredentialState: 'unknown', loginLaunches: [{ kind: 'primary', args: [], initialInput: '/login' }] },
+        auth: { support: 'login_terminal', environmentVariables: [DROID_NATIVE_AUTH_ENV_KEY], missingCredentialState: 'unknown', loginLaunches: [{ kind: 'primary', args: [], initialInput: '/login' }] },
       },
       sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
       primary: 'sessions',

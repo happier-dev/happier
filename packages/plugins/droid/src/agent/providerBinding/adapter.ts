@@ -1,5 +1,5 @@
 import type { AgentProviderBindingAdapter, AgentProviderBindingMaterializeInput } from '@happier-dev/plugin-sdk/agents/runtime';
-import { buildDroidModelSettings, DROID_PROVIDER_OWNED_ENV_KEYS, DROID_PROVIDER_SECRET_ENV, DROID_PROVIDER_SETTINGS_PATH } from './settings.js';
+import { buildDroidModelSettings, DROID_PROVIDER_OWNED_ENV_KEYS, DROID_PROVIDER_SETTINGS_PATH } from './settings.js';
 export { DROID_PROVIDER_OWNED_ENV_KEYS, DROID_PROVIDER_SECRET_ENV, DROID_PROVIDER_SETTINGS_PATH, droidProviderModelDisplayName } from './settings.js';
 
 const NATIVE_PROVIDER_BY_PROTOCOL = {
@@ -46,7 +46,7 @@ export const DROID_PROVIDER_BINDING_ADAPTER = Object.freeze({
       ...(authMode ? { authMode } : {}),
     });
     return { v: 1, kind: 'configFile',
-      env: DROID_PROVIDER_OWNED_ENV_KEYS.map(name => ({ name, value: name === DROID_PROVIDER_SECRET_ENV ? secret : null, source: 'provider' })),
+      env: DROID_PROVIDER_OWNED_ENV_KEYS.map(name => ({ name, value: secret, source: 'provider' })),
       files: [{ relativePath: DROID_PROVIDER_SETTINGS_PATH, utf8: settings }],
     };
   },

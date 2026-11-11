@@ -9,7 +9,7 @@ import { GROK_CONNECTED_ACCOUNT_SERVICE, XAI_SELECTED_API_KEY_ENV } from '@happi
 import { ANTHROPIC_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_API_KEY_ENV } from '@happier-dev/plugins-claude/connected-account-service';
 import { OPENAI_CONNECTED_ACCOUNT_SERVICE, OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
 
-import { buildDroidModelSettings, droidSettingsCommandArgs, DROID_PROVIDER_SECRET_ENV } from '../providerBinding/settings.js';
+import { buildDroidModelSettings, droidSettingsCommandArgs, DROID_NATIVE_AUTH_ENV_KEY, DROID_PROVIDER_SECRET_ENV } from '../providerBinding/settings.js';
 
 export const DROID_CHATGPT_PURPOSE = 'openai-codex';
 
@@ -76,10 +76,8 @@ export async function prepareDroidConnectedAccount<Request extends LaunchRequest
     const settingsPath = join(directory.path, 'settings.json');
     await writeAtomicTextFile({ path: settingsPath, contents: settings, mode: 0o600 });
     const values: Record<string, string> = { ...request.launchEnvironment?.values, [DROID_PROVIDER_SECRET_ENV]: secret };
-    delete values.FACTORY_API_KEY;
     const unset = new Set(request.launchEnvironment?.unset ?? []);
     unset.delete(DROID_PROVIDER_SECRET_ENV);
-    unset.add('FACTORY_API_KEY');
     return { request: { ...request, launchEnvironment: { values, unset: [...unset] } },
       customModel: { model: { id: modelId, name: modelId },
         commandArgsSuffix: droidSettingsCommandArgs(settingsPath), catalogConfidence: 'account_unverified' }, dispose: directory.cleanup };
@@ -96,7 +94,7 @@ const droidStateSharingDescriptor = {
   providerSupportStatus: 'supported',
   config: { supported: false, modes: ['isolated'], entries: [], unavailableReason: 'not_implemented' },
   state: { supported: true, modes: ['isolated', 'shared'], entries: [{ path: '.factory/sessions', mode: 'linked', createIfMissing: 'directory', requiresRealDirectory: true }], sharedStatePrivacyRiskAcknowledgementRequired: true, symlinkUnavailableDegradePolicy: 'block_continuity' },
-  authIsolation: { mode: 'process_env', secretEntries: ['FACTORY_API_KEY'] },
+  authIsolation: { mode: 'process_env', secretEntries: [DROID_NATIVE_AUTH_ENV_KEY] },
 } as const;
 
 export const DROID_CONNECTED_ACCOUNT_LAUNCH = {

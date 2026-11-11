@@ -28,7 +28,7 @@ const rows = [
 ];
 
 describe('Droid selected native key launch', () => {
-  it('delivers the selected Kimi key and model through the public composer to a real child', async () => {
+  it('preserves Factory authentication while delivering the selected Kimi key and model through the public composer to a real child', async () => {
     const row = rows[0]!;
     const account = { service: row.service, accountId: 'selected' };
     const materializationContext = { account, signal: new AbortController().signal, invokedAtMs: 0, services: {},
@@ -72,7 +72,7 @@ describe('Droid selected native key launch', () => {
         connectedAccounts: [{ purpose: row.purpose, account }], configuration });
       const launch = fixture.observeLaunch();
       expect(launch.env.HAPPIER_DROID_PROVIDER_API_KEY).toBe(row.key);
-      expect(launch.env.FACTORY_API_KEY).toBeUndefined();
+      expect(launch.env.FACTORY_API_KEY).toBe('ambient');
       const settingsIndex = launch.argv.indexOf('--settings');
       expect(settingsIndex).toBeGreaterThanOrEqual(0);
       const settings = await readFile(launch.argv[settingsIndex + 1]!, 'utf8');
@@ -106,7 +106,7 @@ describe('Droid selected native key launch', () => {
     expect(new TextDecoder().decode(result.stdout)).toBe('selected');
   });
 
-  it.each(rows)('uses $purpose instead of ambient auth for a Session', async row => {
+  it.each(rows)('uses $purpose for inference while retaining Factory authentication for a Session', async row => {
     const signal = new AbortController().signal;
     const account = { service: row.service, accountId: 'selected' };
     // Credential persistence and the host service are the boundary; producer decoding remains real.
@@ -126,7 +126,7 @@ describe('Droid selected native key launch', () => {
       expect(materialize).toHaveBeenCalledTimes(1);
       const [request, options] = open.mock.calls[0]!;
       expect(request.launchEnvironment?.values.HAPPIER_DROID_PROVIDER_API_KEY).toBe(row.key);
-      expect(request.launchEnvironment?.values.FACTORY_API_KEY).toBeUndefined();
+      expect(request.launchEnvironment?.values.FACTORY_API_KEY).toBe('ambient');
       if (options.transport.kind !== 'stdio') throw new Error('Expected stdio');
       expect(options.definition?.models?.catalogConfidence).toBe('account_unverified');
       const settings = await readFile(options.transport.args!.at(-1)!, 'utf8');
