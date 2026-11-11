@@ -16806,6 +16806,7 @@ settingsSession: {
             // usage-board:plans
             capacityCaption: "全プラン・最長の期間",
             capacityTightestUnit: ({ name }: { name: string | number }) => `${name} の残り（最も少ない）`,
+            limitsCaption: "次のセッション",
             limitsNextUnit: ({ name }: { name: string | number }) => `${name} の残り`,
             limitsOthers: ({ count, usedUp }: { count: string | number; usedUp: string | number }) => `${count} 件ほか` + (Number(usedUp) > 0 ? ` · ${usedUp} 使い切り` : ''),
             capacityResets: ({ time }: { time: string | number }) => `${time}にリセット`,

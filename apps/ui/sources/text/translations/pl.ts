@@ -16807,6 +16807,7 @@ settingsSession: {
       billingUnavailable: 'Rozliczenia wymagają maszyny online i adresu podanego przez dostawcę.',
       capacityCaption: "każdy plan · najdłuższe okno",
       capacityTightestUnit: ({ name }: { name: string | number }) => `pozostało dla ${name} · najbardziej ograniczający limit`,
+      limitsCaption: "następna sesja",
       limitsNextUnit: ({ name }: { name: string | number }) => `pozostało dla ${name}`,
       limitsOthers: ({ count, usedUp }: { count: string | number; usedUp: string | number }) => `${count} więcej` + (Number(usedUp) > 0 ? ` · ${usedUp} wyczerpane` : ''),
       capacityResets: ({ time }: { time: string | number }) => `odnowienie ${time}`,

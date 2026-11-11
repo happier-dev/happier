@@ -20018,6 +20018,7 @@ const enUsage = {
       // usage-board:plans
       capacityCaption: "every plan · longest window",
       capacityTightestUnit: ({ name }: { name: string | number }) => `left on ${name}, the tightest`,
+      limitsCaption: "next session",
       limitsNextUnit: ({ name }: { name: string | number }) => `left on ${name}`,
       limitsOthers: ({ count, usedUp }: { count: string | number; usedUp: string | number }) => `${count} more` + (Number(usedUp) > 0 ? ` · ${usedUp} used up` : ''),
       capacityResets: ({ time }: { time: string | number }) => `resets ${time}`,

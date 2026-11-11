@@ -16899,6 +16899,7 @@ settingsSession: {
             // usage-board:plans
             capacityCaption: "ogni piano · finestra più lunga",
             capacityTightestUnit: ({ name }: { name: string | number }) => `rimasto su ${name}, il più stretto`,
+            limitsCaption: "prossima sessione",
             limitsNextUnit: ({ name }: { name: string | number }) => `rimasto su ${name}`,
             limitsOthers: ({ count, usedUp }: { count: string | number; usedUp: string | number }) => `${count} in più` + (Number(usedUp) > 0 ? ` · ${usedUp} esauriti` : ''),
             capacityResets: ({ time }: { time: string | number }) => `si azzera ${time}`,

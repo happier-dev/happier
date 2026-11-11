@@ -226,9 +226,9 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   const selections = useUsagePoolSelections(props.slice);
   const router = useRouter();
   const pooled = POOLED_SIZES.has(presentation?.size ?? '');
-  // Beside other widgets Limits answers one question (the account the next session uses); only the full view
-  // compares every plan's longest window, and only it says so in the frame's caption.
-  useWidgetFrameBodyCaption(pooled ? null : t('usage.board.plans.capacityCaption'));
+  // Beside other widgets Limits answers one question, the account the next session uses, and its caption says so;
+  // the full view compares every plan's longest window.
+  useWidgetFrameBodyCaption(t(pooled ? 'usage.board.plans.limitsCaption' : 'usage.board.plans.capacityCaption'));
   // Beside other widgets the next move is Plans: the full view is one press from the figure (lab d2views-OV).
   const openPlans = useUsageOpenView('plans');
   const plansLink = React.useMemo(() => pooled && !tile
@@ -314,7 +314,8 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
     );
   }
   const heroUnit = !tightestName ? ''
-    : next !== null && !lone ? t('usage.board.plans.limitsNextUnit', { name: tightestName.title })
+    // The headline names the next account even when it is the only one: beside other widgets no cell repeats it.
+    : next !== null ? t('usage.board.plans.limitsNextUnit', { name: tightestName.title })
     : lone ? t('usage.board.plans.capacityLoneUnit')
     : t('usage.board.plans.capacityTightestUnit', { name: tightestName.title });
   // Equal cells while they fit; a narrow frame (a phone) wraps them two-up rather than shrinking them.

@@ -16694,6 +16694,7 @@ settingsSession: {
             // usage-board:plans
             capacityCaption: "jeder Tarif · längstes Fenster",
             capacityTightestUnit: ({ name }: { name: string | number }) => `übrig bei ${name}, dem knappsten`,
+            limitsCaption: "nächste Sitzung",
             limitsNextUnit: ({ name }: { name: string | number }) => `übrig bei ${name}`,
             limitsOthers: ({ count, usedUp }: { count: string | number; usedUp: string | number }) => `${count} weitere` + (Number(usedUp) > 0 ? ` · ${usedUp} aufgebraucht` : ''),
             capacityResets: ({ time }: { time: string | number }) => `wird ${time} zurückgesetzt`,

@@ -16402,6 +16402,7 @@ settingsSession: {
             // usage-board:plans
             capacityCaption: "chaque forfait · fenêtre la plus longue",
             capacityTightestUnit: ({ name }: { name: string | number }) => `restant sur ${name}, le plus serré`,
+            limitsCaption: "prochaine session",
             limitsNextUnit: ({ name }: { name: string | number }) => `restant sur ${name}`,
             limitsOthers: ({ count, usedUp }: { count: string | number; usedUp: string | number }) => `${count} de plus` + (Number(usedUp) > 0 ? ` · ${usedUp} épuisés` : ''),
             capacityResets: ({ time }: { time: string | number }) => `réinitialisé ${time}`,

@@ -712,3 +712,30 @@ it('says Limits beside other widgets as the account the next session uses: its f
   expect(screen.findHostByTestId('capacity.cell.spare')).toBeNull();
   expect(text).not.toContain(', the tightest');
 });
+
+it('names the only account in the Limits headline beside other widgets, where no cell names it (owner 11-11)', async () => {
+  const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
+  const query = normalizeUsageQuery({});
+  const now = Date.now();
+  const recordKey = { providerId: 'anthropic', accountSubjectId: 'solo', subjectKind: 'account', quotaScope: 'account' } as const;
+  const read = ConnectedServiceQuotaGetResultV1Schema.parse({
+    source: { ref: { service, accountId: 'solo' }, bindingKind: 'account' },
+    current: { v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+      providerId: 'anthropic', accountSubject: { kind: 'providerSubject', id: 'solo' },
+      observedAtMs: now, fetchedAtMs: now, staleAfterMs: 600_000,
+      source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', planLabel: null,
+      meters: [{ meterId: 'weekly', label: 'Weekly', usedPct: 30, utilizationPct: 30, used: null, limit: null,
+        unit: 'count', status: 'ok', resetsAt: now + 86_400_000, windowDurationMs: 7 * 86_400_000 }] },
+    pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
+  });
+  const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: [read] } }).results[0]!;
+  const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
+  const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+    <WidgetPresentationProvider value={{ size: 'medium', footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' },
+      geometry: { width: 520, height: 232 } }}>
+      <UsageCapacityWidget id="usage_capacity" slice={slice} query={query} serverId="home" testID="capacity" model={{ refresh: async () => {} }} />
+    </WidgetPresentationProvider>
+  </InjectedAuthProvider>);
+  expect(screen.getTextContent()).toMatch(/70%\s*left on \S/);
+  expect(screen.findHostByTestId('capacity.cell.solo')).toBeNull();
+});

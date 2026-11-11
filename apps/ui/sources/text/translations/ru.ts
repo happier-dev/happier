@@ -16473,6 +16473,7 @@ settingsSession: {
             // usage-board:plans
             capacityCaption: "каждый тариф · самое длинное окно",
             capacityTightestUnit: ({ name }: { name: string | number }) => `осталось у ${name}, самого загруженного`,
+            limitsCaption: "следующая сессия",
             limitsNextUnit: ({ name }: { name: string | number }) => `осталось у ${name}`,
             limitsOthers: ({ count, usedUp }: { count: string | number; usedUp: string | number }) => `${count} ещё` + (Number(usedUp) > 0 ? ` · ${usedUp} исчерпаны` : ''),
             capacityResets: ({ time }: { time: string | number }) => `сброс ${time}`,

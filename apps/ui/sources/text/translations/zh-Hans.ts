@@ -16170,6 +16170,7 @@ settingsSession: {
             // usage-board:plans
             capacityCaption: "每个套餐 · 最长周期",
             capacityTightestUnit: ({ name }: { name: string | number }) => `${name} 剩余，最紧张`,
+            limitsCaption: "下一个会话",
             limitsNextUnit: ({ name }: { name: string | number }) => `${name} 剩余`,
             limitsOthers: ({ count, usedUp }: { count: string | number; usedUp: string | number }) => `${count} 个其他账户` + (Number(usedUp) > 0 ? ` · ${usedUp} 已用完` : ''),
             capacityResets: ({ time }: { time: string | number }) => `${time} 重置`,

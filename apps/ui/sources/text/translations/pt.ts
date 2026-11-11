@@ -16636,6 +16636,7 @@ settingsSession: {
             // usage-board:plans
             capacityCaption: "cada plano · janela mais longa",
             capacityTightestUnit: ({ name }: { name: string | number }) => `restante em ${name}, o mais apertado`,
+            limitsCaption: "próxima sessão",
             limitsNextUnit: ({ name }: { name: string | number }) => `restante em ${name}`,
             limitsOthers: ({ count, usedUp }: { count: string | number; usedUp: string | number }) => `${count} mais` + (Number(usedUp) > 0 ? ` · ${usedUp} esgotadas` : ''),
             capacityResets: ({ time }: { time: string | number }) => `renova ${time}`,
