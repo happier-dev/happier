@@ -997,7 +997,6 @@ const artifactsBrowserTranslations = { de: {
             collapse: ({ name }) => `${name} einklappen`,
             columnName: 'Name',
             columnEdited: 'Bearbeitet',
-            emptyInvite: 'Noch keine Ordner. Gruppiere, was zusammengehört; nur du siehst deine Ablage.',
             unavailable: 'Die Ordner konnten von diesem Home nicht geladen werden. Alles wird ohne sie aufgelistet.',
             saveFailed: 'Diese Änderung wurde nicht gespeichert. Versuche es erneut.',
             refusedCycle: 'Ein Ordner kann nicht in sich selbst verschoben werden',
@@ -2055,6 +2054,7 @@ const de: ConnectedServicesCollectionCopy = {
     agentSignInTitle: 'Wie sich Agents anmelden',
     subscriptionTitle: 'Abo',
     subscriptionNone: 'Kein Abo',
+    subscriptionActive: 'Aktiv',
     subscriptionRenewsIn: ({ days }) => days === 0 ? 'Verlängert sich heute' : days === 1 ? 'Verlängert sich morgen' : `Verlängert sich in ${days} Tagen`,
     subscriptionEndsIn: ({ days }) => days === 0 ? 'Keine Verlängerung · endet heute' : `Keine Verlängerung · endet in ${days} Tagen`,
     subscriptionPeriodEndsIn: ({ days }) => days === 0 ? 'Zeitraum endet heute' : `Zeitraum endet in ${days} Tagen`,
@@ -3052,6 +3052,8 @@ const externalSessionOperationTranslations = { de: {
     browseAgentTimedOut: 'Der gewählte Agent auf diesem Rechner hat nicht rechtzeitig geantwortet. Er ist vielleicht ausgelastet oder indiziert noch, versuch es also noch einmal.',
     browseAgentFailed: 'Happier konnte die Sitzungen des gewählten Agents nicht lesen. Versuch es erneut; prüf bei weiteren Fehlern die Agent- und Daemon-Protokolle auf diesem Rechner.',
     browseAgentFailedNoRetry: 'Happier konnte die Sitzungsdaten dieser Quelle nicht lesen. Prüf die Agent- und Daemon-Protokolle auf diesem Rechner vor einer erneuten Suche.',
+    browseAgentFormatUnsupported: ({ agent }: { agent: string }) => `Diese Happier-Version kann das Sitzungsformat von ${agent} auf diesem Gerät nicht lesen. Aktualisiere Happier, um diese Sitzungen zu durchsuchen und zu öffnen.`,
+    browseThisAgent: 'diesem Agent',
     browseSourceInvalid: 'Diese Verlaufsquelle konnte nicht gelesen werden. Prüf das gewählte Konto und das Agent-Verzeichnis auf diesem Rechner und wähle die Quelle erneut.',
     operationTitleMaterialize: 'Nach Happier importieren',
     operationTitleTakeoverLinked: 'Übernehmen und verknüpft fortsetzen',
@@ -3558,6 +3560,8 @@ const fileViewerTranslations = { de: {
         audioCantPlayTitle: "Dieses Audio kann hier nicht abgespielt werden",
         mediaCantPlayBody: "Dieses Gerät unterstützt die Kodierung nicht. Lade die Datei herunter oder öffne sie in deiner Standard-App.",
         openInDefaultApp: "In Standard-App öffnen",
+        openInNewTab: "In neuem Tab öffnen",
+        openInNewTabBlocked: "Dein Browser hat den neuen Tab blockiert. Erlaube Pop-ups für Happier und versuche es erneut.",
         play: "Abspielen",
         pause: "Pausieren",
         playbackPosition: "Wiedergabeposition",
@@ -3575,6 +3579,7 @@ const fileViewerTranslations = { de: {
     kind: {
         code: "Textdatei",
         markdown: "Markdown",
+        html: "HTML-Seite",
         image: "Bild",
         svg: "SVG-Bild",
         pdf: "PDF-Dokument",
@@ -12317,6 +12322,10 @@ const de: typeof en = {
     unreadableTitle: ({ home }: { home: string }) => `Die Rechner auf ${home} konnten nicht gelesen werden`,
     indexViewTitle: 'Ansicht „Alle Rechner“',
     indexViewDescription: 'Zeigt „Alle Rechner“ als Liste oder mit einer Karte pro Rechner. Wird auf diesem Gerät gespeichert.',
+    emptyTitle: 'Noch keine Rechner',
+    connectFirst: 'Verbinde zuerst einen Rechner',
+    thisComputerNotWorking: 'Der Hintergrunddienst funktioniert nicht',
+    thisComputerNotConnected: 'Noch nicht verbunden',
 };
 
 const settingsMachinesTranslations = { de };

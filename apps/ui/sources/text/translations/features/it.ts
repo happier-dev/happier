@@ -1003,7 +1003,6 @@ const artifactsBrowserTranslations = { it: {
             collapse: ({ name }) => `Comprimi ${name}`,
             columnName: 'Nome',
             columnEdited: 'Modificato',
-            emptyInvite: 'Ancora nessuna cartella. Raggruppa ciò che va insieme; solo tu vedi come archivi.',
             unavailable: 'Impossibile caricare le cartelle da questo Home. Tutto è elencato senza di esse.',
             saveFailed: 'La modifica non è stata salvata. Riprova.',
             refusedCycle: 'Una cartella non può essere spostata dentro se stessa',
@@ -2061,6 +2060,7 @@ const it: ConnectedServicesCollectionCopy = {
     agentSignInTitle: 'Come accedono gli agenti',
     subscriptionTitle: 'Abbonamento',
     subscriptionNone: 'Nessun abbonamento',
+    subscriptionActive: 'Attivo',
     subscriptionRenewsIn: ({ days }) => days === 0 ? 'Si rinnova oggi' : days === 1 ? 'Si rinnova domani' : `Si rinnova tra ${days} giorni`,
     subscriptionEndsIn: ({ days }) => days === 0 ? 'Non si rinnova · termina oggi' : `Non si rinnova · termina tra ${days} giorni`,
     subscriptionPeriodEndsIn: ({ days }) => days === 0 ? 'Il periodo termina oggi' : `Il periodo termina tra ${days} giorni`,
@@ -3060,6 +3060,8 @@ const externalSessionOperationTranslations = { it: {
     browseAgentTimedOut: 'L’Agent selezionato su questa macchina non ha risposto in tempo. Potrebbe essere occupato o ancora in indicizzazione, quindi riprova.',
     browseAgentFailed: 'Happier non ha potuto leggere le sessioni dell’Agent selezionato. Riprova; se il problema persiste, consulta i log dell’Agent e del daemon su quella macchina.',
     browseAgentFailedNoRetry: 'Happier non ha potuto leggere i dati di questa fonte. Consulta i log dell’Agent e del daemon su quella macchina prima di cercare ancora.',
+    browseAgentFormatUnsupported: ({ agent }: { agent: string }) => `Questa versione di Happier non può leggere il formato delle sessioni di ${agent} su questa macchina. Aggiorna Happier per sfogliare e aprire queste sessioni.`,
+    browseThisAgent: 'questo Agent',
     browseSourceInvalid: 'Non è stato possibile leggere questa fonte della cronologia. Verifica l’account selezionato e la directory dell’Agent sulla macchina, poi seleziona di nuovo la fonte.',
     operationTitleMaterialize: 'Importa in Happier',
     operationTitleTakeoverLinked: 'Assumi il controllo e continua collegata',
@@ -3566,6 +3568,8 @@ const fileViewerTranslations = { it: {
         audioCantPlayTitle: "Questo audio non può essere riprodotto qui",
         mediaCantPlayBody: "Questo dispositivo non supporta la sua codifica. Scaricalo o aprilo nell'app predefinita.",
         openInDefaultApp: "Apri nell'app predefinita",
+        openInNewTab: "Apri in una nuova scheda",
+        openInNewTabBlocked: "Il browser ha bloccato la nuova scheda. Consenti i pop-up per Happier e riprova.",
         play: "Riproduci",
         pause: "Pausa",
         playbackPosition: "Posizione di riproduzione",
@@ -3583,6 +3587,7 @@ const fileViewerTranslations = { it: {
     kind: {
         code: "File di testo",
         markdown: "Markdown",
+        html: "Pagina HTML",
         image: "Immagine",
         svg: "Immagine SVG",
         pdf: "Documento PDF",
@@ -12331,6 +12336,10 @@ const it: typeof en = {
     unreadableTitle: ({ home }: { home: string }) => `Impossibile leggere le macchine di ${home}`,
     indexViewTitle: 'Vista Tutte le macchine',
     indexViewDescription: 'Mostra Tutte le macchine come elenco o con una scheda per macchina. Salvato su questo dispositivo.',
+    emptyTitle: 'Ancora nessuna macchina',
+    connectFirst: 'Collega prima una macchina',
+    thisComputerNotWorking: 'Il servizio in background non funziona',
+    thisComputerNotConnected: 'Non ancora collegata',
 };
 
 const settingsMachinesTranslations = { it };

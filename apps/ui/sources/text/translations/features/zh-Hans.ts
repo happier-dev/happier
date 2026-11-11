@@ -1003,7 +1003,6 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
             collapse: ({ name }) => `折叠 ${name}`,
             columnName: '名称',
             columnEdited: '编辑时间',
-            emptyInvite: '还没有文件夹。把相关内容归到一起；只有你能看到自己的归档方式。',
             unavailable: '无法从此 Home 加载文件夹。所有内容均不按文件夹列出。',
             saveFailed: '更改未保存。请重试。',
             refusedCycle: '文件夹不能移动到自身内',
@@ -2056,6 +2055,7 @@ const zhHans: ConnectedServicesCollectionCopy = {
     agentSignInTitle: '代理如何登录',
     subscriptionTitle: '订阅',
     subscriptionNone: '没有订阅',
+    subscriptionActive: '有效',
     subscriptionRenewsIn: ({ days }) => days === 0 ? '今天续订' : `${days} 天后续订`,
     subscriptionEndsIn: ({ days }) => days === 0 ? '不再续订 · 今天结束' : `不再续订 · ${days} 天后结束`,
     subscriptionPeriodEndsIn: ({ days }) => days === 0 ? '本期今天结束' : `本期 ${days} 天后结束`,
@@ -3053,6 +3053,8 @@ const externalSessionOperationTranslations = { zhHans: {
     browseAgentTimedOut: '此机器上所选的 Agent 未及时响应。它可能正忙或仍在建立索引，请重试。',
     browseAgentFailed: 'Happier 无法读取所选 Agent 的会话。请重试；如果仍然失败，请检查该机器上的 Agent 和 daemon 日志。',
     browseAgentFailedNoRetry: 'Happier 无法读取此来源的会话数据。再次搜索前，请检查该机器上的 Agent 和 daemon 日志。',
+    browseAgentFormatUnsupported: ({ agent }: { agent: string }) => `此版本的 Happier 无法读取此机器上 ${agent} 的会话格式。请更新 Happier 以浏览和打开这些会话。`,
+    browseThisAgent: '此 Agent',
     browseSourceInvalid: '无法读取此历史来源。请检查此机器上的所选账户和 Agent 主目录，然后重新选择来源。',
     operationTitleMaterialize: '导入 Happier',
     operationTitleTakeoverLinked: '接管并保持关联',
@@ -3559,6 +3561,8 @@ const fileViewerTranslations = { 'zh-Hans': {
         audioCantPlayTitle: "无法在此播放该音频",
         mediaCantPlayBody: "此设备不支持其编码。请下载，或在默认应用中打开。",
         openInDefaultApp: "在默认应用中打开",
+        openInNewTab: "在新标签页中打开",
+        openInNewTabBlocked: "浏览器阻止了新标签页。请允许 Happier 弹出窗口后重试。",
         play: "播放",
         pause: "暂停",
         playbackPosition: "播放位置",
@@ -3576,6 +3580,7 @@ const fileViewerTranslations = { 'zh-Hans': {
     kind: {
         code: "文本文件",
         markdown: "Markdown",
+        html: "HTML 页面",
         image: "图片",
         svg: "SVG 图片",
         pdf: "PDF 文档",
@@ -12310,6 +12315,10 @@ const zhHans: typeof en = {
     unreadableTitle: ({ home }: { home: string }) => `无法读取 ${home} 上的机器`,
     indexViewTitle: '所有机器视图',
     indexViewDescription: '以列表或每台机器一张卡片的形式显示所有机器。保存在此设备上。',
+    emptyTitle: '还没有机器',
+    connectFirst: '请先连接一台机器',
+    thisComputerNotWorking: '后台服务无法运行',
+    thisComputerNotConnected: '尚未连接',
 };
 
 const settingsMachinesTranslations = { zhHans };

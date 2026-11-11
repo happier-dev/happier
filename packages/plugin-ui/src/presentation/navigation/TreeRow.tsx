@@ -5,6 +5,7 @@ import type { HappierUiTheme } from '../../environment/types.js';
 import { useOptionalHappierUiPalette, useOptionalHappierUiTypography } from '../../environment/context.js';
 import { HappierDisclosureChevron } from '../collection/DisclosureChevron.js';
 import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT } from '../collection/CollectionList.js';
+import { HAPPIER_COLLECTION_ROW_METRICS } from '../collection/CollectionRowContent.js';
 import { resolveHappierTextStepStyle } from '../layout/pageText.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { HappierPressable } from '../interaction/Pressable.js';
@@ -26,9 +27,10 @@ import type { HappierTreeNode } from './treeInteraction.js';
  * column beside its names.
  */
 export const HAPPIER_TREE_ROW_METRICS = Object.freeze({
-  minHeightPx: Object.freeze({ precise: 28, touch: 36 }),
+  /** A touch tree row is a single-line list row: the phone list's one pitch, shared with Session rows. */
+  minHeightPx: Object.freeze({ precise: 28, touch: HAPPIER_COLLECTION_ROW_METRICS.height.touchCompact }),
   /** A tree drawn as a table (Code folder pages): each row carries a column, so it takes a list row's rhythm. */
-  tableMinHeightPx: Object.freeze({ precise: 36, touch: 52 }),
+  tableMinHeightPx: Object.freeze({ precise: 36, touch: HAPPIER_COLLECTION_ROW_METRICS.height.touchCompact }),
   basePaddingPx: 10,
   indentStepPx: 14,
   maxIndentDepth: 6,
@@ -165,6 +167,11 @@ export type HappierTreeRowProps = Readonly<{
   /** The roving tab stop of the tree. */
   tabStop: boolean;
   presentation?: 'tree' | 'table';
+  /**
+   * Whether a leaf keeps the disclosure column as space. A tree with no branch to disclose passes `false`, so its
+   * rows start with their marks on the content edge, as a list's do. Default `true`: names align under branches.
+   */
+  disclosureColumn?: boolean;
   touch?: boolean;
   /** Phone-narrow: the finger's row height and the reading type step, so a phone tree is not a squeezed sidebar. */
   compact?: boolean;
@@ -338,7 +345,7 @@ export function HappierTreeRow(props: HappierTreeRowProps) {
           : null;
         const glyphs = (
           <>
-            <HappierTreeDisclosure
+            {props.disclosureColumn === false && !branch ? null : <HappierTreeDisclosure
               kind={node.kind}
               expanded={node.expanded}
               color={theme.colors.mutedText}
@@ -354,7 +361,7 @@ export function HappierTreeRow(props: HappierTreeRowProps) {
                 right: HAPPIER_TREE_ROW_METRICS.glyphGapPx / 2,
               }}
               testID={props.disclosure?.testID}
-            />
+            />}
             {props.selection ?? null}
             {props.mark ? (
               <View aria-hidden style={{ alignItems: 'center', justifyContent: 'center' }}>

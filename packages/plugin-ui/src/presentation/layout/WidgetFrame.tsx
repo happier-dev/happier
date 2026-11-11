@@ -548,9 +548,11 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
               paddingLeft: inset,
               paddingRight: plain ? 0 : inset,
               paddingTop: plain ? plainStackedPadding : row ? HAPPIER_WIDGET_FRAME_METRICS.rowInsetYPx : inset,
-              // A card's facts line keeps its own gap above it; the card's inset closes the card below.
+              // A card's facts line keeps its own gap above it; the card's inset closes the card below. Under a
+              // preview band the title block and its foot are one identity: the header's own small gap parts them.
               paddingBottom: plain ? plainStackedPadding
-                : !isEmptySlot(props.facts) && isEmptySlot(props.children) ? HAPPIER_WIDGET_FRAME_METRICS.cardFactsGapPx
+                : !isEmptySlot(props.facts) && isEmptySlot(props.children)
+                  ? (previewItem ? HAPPIER_WIDGET_FRAME_METRICS.headerGapPx : HAPPIER_WIDGET_FRAME_METRICS.cardFactsGapPx)
                 : row ? HAPPIER_WIDGET_FRAME_METRICS.rowInsetYPx : inset,
             }}
           >

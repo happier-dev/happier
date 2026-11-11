@@ -11,7 +11,8 @@ import { useHappierUiAccessibility } from '../environment/context.js';
 import { useHappierNativeMinimumInteractiveTargetSize } from '../environment/interactiveTarget.js';
 import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
-import { HappierTreeRow } from '../presentation/navigation/TreeRow.js';
+import { HAPPIER_COLLECTION_LIST_METRICS } from '../presentation/collection/CollectionList.js';
+import { HAPPIER_TREE_ROW_METRICS, HappierTreeRow, resolveHappierTreeRowIndentPx } from '../presentation/navigation/TreeRow.js';
 import {
   useHappierTreeInteraction,
   type HappierTreeNode,
@@ -66,6 +67,9 @@ export type TreeProps = Readonly<{
  * End move focus, Right expands or enters a child, Left collapses or returns to the parent, Enter activates.
  * Disclosure and activation stay separate intents, so opening a branch never opens an item.
  */
+/** The shared tree row's own outset from its column (its hover chip's inset), already part of where a row starts. */
+const TREE_ROW_MARGIN_PX = HAPPIER_COLLECTION_LIST_METRICS.rowInset - HAPPIER_TREE_ROW_METRICS.basePaddingPx;
+
 export function Tree(props: TreeProps): ReactElement {
   const theme = usePluginTheme();
   const { reducedMotion } = useHappierUiAccessibility();
@@ -94,6 +98,8 @@ export function Tree(props: TreeProps): ReactElement {
   const pageChrome = useHappierPageChromeInternal();
   const [width, setWidth] = useState<number | null>(null);
   const compact = width === null ? pageChrome?.showsTitle === true : width < HAPPIER_PAGE_METRICS.rowStackBelowWidthPx;
+  // Only a tree with something to disclose keeps the disclosure column: a flat one is a list, its marks on the edge.
+  const disclosureColumn = props.items.some((item) => item.kind === 'branch');
   return (
     <View
       onLayout={(event) => {
@@ -119,6 +125,10 @@ export function Tree(props: TreeProps): ReactElement {
             selected={props.selectedKey === item.key}
             tabStop={interaction.activeKey === item.key}
             presentation={props.presentation}
+            disclosureColumn={disclosureColumn}
+            // A table tree stands on a page's sheet: its rows start where the page's rows do (their marks on one edge).
+            {...(props.presentation === 'table' ? { style: { paddingLeft: resolveHappierTreeRowIndentPx(item.depth, {
+              basePaddingPx: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx - TREE_ROW_MARGIN_PX }) } } : {})}
             touch={touch}
             compact={compact}
             theme={theme}

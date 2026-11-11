@@ -56,7 +56,10 @@ export function readCollectionLineHeight(role: HappierTypeRole, theme: Theme, ty
 const CARD = Object.freeze({
   /** The identity mark's box, independent of the spacing rhythm. */
   markSize: 32,
-  /** The preview band's height: about seven preview lines, enough to recognise the item at a glance. */
+  /**
+   * The preview band's height on a card of the default width: about seven preview lines, enough to recognise the
+   * item at a glance. A narrower card (two across a phone) keeps the same proportion, so it shows a short preview.
+   */
   previewHeight: 128,
   // Compact tracks still leave room for the mark, a readable title and the card insets.
   boardColumnMinWidth: 160,
@@ -543,7 +546,9 @@ type GridGeometry = Readonly<{
 }>;
 
 /** Which of a card's optional slots this grid keeps: those at least one of its cards fills (every card keeps them). */
-type GridSlots = Readonly<{ description: boolean; facts: boolean; body: boolean; headerRight: boolean; preview: boolean }>;
+type GridSlots = Readonly<{ description: boolean; facts: boolean; body: boolean; headerRight: boolean; preview: boolean;
+  /** A preview card's `where` line under its title: kept only when a card says where it came from. */
+  place: boolean }>;
 
 function present(value: ReactNode): boolean {
   return value !== null && value !== undefined && value !== false;
@@ -564,6 +569,7 @@ function useGridSlots<Item>(model: HappierCollectionModel<Item>, anatomy: Collec
         body: anatomy.card?.body !== undefined,
         headerRight: anatomy.card?.headerRight !== undefined || anatomy.reason !== undefined || anatomy.action !== undefined,
         preview: anatomy.preview !== undefined,
+        place: anatomy.where !== undefined || anatomy.byline !== undefined,
       };
     }
     return readGridSlots(items, anatomy);
@@ -575,12 +581,14 @@ function readGridSlots<Item>(items: readonly Item[], anatomy: CollectionAnatomy<
   let description = anatomy.card?.description !== undefined;
   let facts = false;
   let headerRight = false;
+  let place = false;
   for (const item of items) {
+    if (!place && (present(anatomy.where?.(item)) || present(anatomy.byline?.(item)))) place = true;
     if (!description && hasDescription(anatomy.description?.(item))) description = true;
     if (!facts && (present(anatomy.card?.facts?.(item)) || present(anatomy.where?.(item)) || present(anatomy.byline?.(item)) || present(anatomy.age?.(item)) || present(anatomy.agent?.(item)) || present(anatomy.signal?.(item)))) facts = true;
     if (!headerRight && (present(anatomy.card?.headerRight?.(item)) || present(anatomy.reason?.(item)) || present(anatomy.action?.(item)))) headerRight = true;
   }
-  return { description, facts, headerRight, body: anatomy.card?.body !== undefined, preview: anatomy.preview !== undefined };
+  return { description, facts, headerRight, body: anatomy.card?.body !== undefined, preview: anatomy.preview !== undefined, place };
 }
 
 /**
@@ -595,7 +603,8 @@ function useGridGeometryResolver(width: number | null, minCardWidth: number, con
   return useCallback((slots: GridSlots): GridGeometry => {
     const inner = Math.max(0, (width ?? 0) - 2 * GUTTER);
     const { columns, cardWidth } = resolveHappierCollectionGridGeometry({ width: inner, minCardWidth: minCardWidth * textScale, gap: CARD_GAP });
-    const previewHeight = slots.preview ? CARD.previewHeight : 0;
+    const previewHeight = slots.preview
+      ? Math.min(CARD.previewHeight, Math.round(cardWidth * CARD.previewHeight / (CARD.gridMinCardWidth * textScale))) : 0;
     // The arithmetic of what the one frame draws (WidgetFrame card): its border, insets, identity row and gaps.
     const F = HAPPIER_WIDGET_FRAME_METRICS;
     if (!slots.description && !slots.facts && !slots.body && !slots.headerRight && previewHeight === 0) {
@@ -604,9 +613,9 @@ function useGridGeometryResolver(width: number | null, minCardWidth: number, con
         previewHeight };
     }
     if (previewHeight > 0) {
-      // The band, the title beside the mark over one reserved `where` line, then the foot: no identity row.
-      const cardHeight = CARD.rowLayerEdge + 2 + previewHeight + card.padding + text.title + F.previewPlaceGapPx + text.meta
-        + (slots.facts ? F.cardFactsGapPx + text.meta + card.padding : card.padding);
+      // The band, the title beside the mark over its `where` line (reserved while any card has one), then the foot.
+      const cardHeight = CARD.rowLayerEdge + 2 + previewHeight + card.padding + text.title + (slots.place ? F.previewPlaceGapPx + text.meta : 0)
+        + (slots.facts ? F.headerGapPx + text.meta + card.padding : card.padding);
       return { compact: false, columns, cardWidth, cardHeight, previewHeight, fitContent: columns === 1 };
     }
     const content = contentHeightAtNormalText === null ? 0 : Math.ceil(contentHeightAtNormalText * textScale);
@@ -728,7 +737,7 @@ function GridCardView<Item>(props: Readonly<{
             height: geometry.previewHeight,
             borderTopLeftRadius: RADIUS - 2,
             borderTopRightRadius: RADIUS - 2,
-            backgroundColor: palette.inset ?? palette.fieldBackground,
+            // On the card's own material (lab A1): a second fill made the foot under it read as a slab.
             borderBottomColor: palette.rowDivider,
           }]}
           {...(testID === undefined ? {} : { testID: `${testID}:preview` })}
@@ -787,7 +796,8 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
   }), [anatomy, rowColumns, model.sections]);
   const rowGeometries = useMemo(() => gridRows.map((rows) => rows.map((row) => {
     const slots = readGridSlots(row, anatomy);
-    return slots.description === gridSlots.description && slots.facts === gridSlots.facts && slots.headerRight === gridSlots.headerRight ? geometry : resolvePageableGeometry(slots);
+    return slots.description === gridSlots.description && slots.facts === gridSlots.facts && slots.headerRight === gridSlots.headerRight
+      && slots.place === gridSlots.place ? geometry : resolvePageableGeometry(slots);
   })), [anatomy, geometry, gridRows, gridSlots, resolvePageableGeometry]);
   const keyOf = model.keyOf;
   const gridRowKeys = useMemo(() => gridRows.flatMap((rows) => rows.map((row) => row.map(keyOf))), [gridRows, keyOf]);

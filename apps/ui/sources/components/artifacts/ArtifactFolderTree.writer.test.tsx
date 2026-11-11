@@ -8,7 +8,7 @@ import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactSt
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { resetPromptLibraryCatalogSnapshotsForTests } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
 import { resetPromptLibraryCatalogEngineForTests, refreshPromptLibraryCatalog, invalidatePromptLibraryCatalogProjection } from '@/sync/engine/settings/promptLibraryCatalogEngine';
-import { ArtifactFolderTree } from './ArtifactFolderTree';
+import { ArtifactFolderTree, useArtifactFolderCommands, type ArtifactFolderTreeHandle } from './ArtifactFolderTree';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { ArtifactsBrowser } from './ArtifactsBrowserScreen';
@@ -44,6 +44,15 @@ vi.mock('@/utils/web/reactDomCjs', () => {
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: Record<string, unknown>) => React.createElement('DropdownMenu', props),
 }));
+
+/** The page's one New folder control (the browser toolbar draws it): the tree itself carries no invite. */
+function FolderCreateControl(props: Readonly<{ tree: React.RefObject<ArtifactFolderTreeHandle | null> }>) {
+    const commands = useArtifactFolderCommands();
+    return <ReactNativeButton testID="folders:create" disabled={!commands.canWrite} onPress={() => props.tree.current?.createFolder(null)} />;
+}
+function ReactNativeButton(props: Readonly<{ testID: string; disabled: boolean; onPress: () => void }>) {
+    return React.createElement('Pressable', { ...props, accessibilityRole: 'button' });
+}
 
 let fixture: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>> | undefined;
 let webLocks: WebLockManagerMockHandle | undefined;
@@ -84,14 +93,17 @@ async function setup(kind: 'all' | 'prompt', initial: readonly { id: string; nam
     } });
     if (askFirst) await fixture.hydrateAccountSettings();
     const testID = browser ? 'artifacts:folders' : 'folders';
+    const treeRef = React.createRef<ArtifactFolderTreeHandle>();
     const screen = await renderScreen(<ModalProvider>{browser ? <AppPaneProvider><ArtifactsBrowser artifacts={[{
         id: 'document', title: 'Notes', isDecrypted: true, header: { title: 'Notes' }, headerVersion: 1,
         bodyVersion: 1, seq: 1, body: 'Notes', createdAt: 1, updatedAt: 1, access: 'owner', storageMode: 'plain',
     }]} loaded loadFailed={false} onRetry={() => {}} usage={null} /></AppPaneProvider>
-        : <CoreCollectionScope><ArtifactFolderTree testID={testID} accessibilityLabel="Folders"
+        : <CoreCollectionScope><FolderCreateControl tree={treeRef} /><ArtifactFolderTree ref={treeRef} testID={testID} accessibilityLabel="Folders"
             filter={{ query: '', kind, sort: 'title_asc' }} onOpenArtifact={() => {}} /></CoreCollectionScope>}</ModalProvider>);
     if (browser) await screen.pressByTestIdAsync('artifacts:view:folders');
-    if (!holdFirstRead) await vi.waitFor(() => expect(screen.findByTestId(initial.length ? `${testID}:row:folder:${initial[0]!.id}` : `${testID}:invite:new`)).toBeTruthy());
+    const createControl = browser ? 'artifacts:folders:new' : 'folders:create';
+    if (!holdFirstRead) await vi.waitFor(() => expect(initial.length ? screen.findByTestId(`${testID}:row:folder:${initial[0]!.id}`)
+        : screen.findAll(node => node.props.testID === createControl && node.props.disabled === false).length).toBeTruthy());
     const read = () => {
         const record = boundary.read('folders');
         if (record.key !== 'folders') throw new Error('Wrong record');
@@ -144,7 +156,7 @@ it('Retry requests fresh folder authority instead of only joining the read alrea
 
 it('uses current catalog authority and settles its durable receipt before a held refresh', async () => {
     const state = await setup('all');
-    await state.screen.pressByTestIdAsync('folders:invite:new');
+    await state.screen.pressByTestIdAsync('folders:create');
     await state.changeName('Receipt folder');
     const release = state.holdCatalogReads();
     try {
@@ -180,7 +192,7 @@ it('removes an empty folder directly through its safe Action', async () => {
 
 it.each(['all', 'prompt'] as const)('inserts New folder into the shared tree (%s)', async kind => {
     const state = await setup(kind);
-    await state.screen.pressByTestIdAsync('folders:invite:new');
+    await state.screen.pressByTestIdAsync('folders:create');
     expect(state.screen.findByTestId('folders:edit:modal')).toBeNull();
     expect(state.screen.findByTestId('folders:edit:name')).toBeTruthy();
     const tree = state.screen.findByTestId('folders:sheet')!;
@@ -192,7 +204,7 @@ it.each(['all', 'prompt'] as const)('inserts New folder into the shared tree (%s
 
 it('keeps a draft while stale and refuses submission until the canonical refresh completes', async () => {
     const state = await setup('all');
-    await state.screen.pressByTestIdAsync('folders:invite:new');
+    await state.screen.pressByTestIdAsync('folders:create');
     await state.changeName('Reviewed after refresh');
     const { storage } = await import('@/sync/domains/state/storage');
     const scope = storage.getState().settingsScope!;
@@ -215,7 +227,7 @@ it('keeps a draft while stale and refuses submission until the canonical refresh
 
 it('keeps the create draft visibly pending on its durable approval without claiming a folder exists', async () => {
     const state = await setup('all', [], false, true);
-    await state.screen.pressByTestIdAsync('folders:invite:new');
+    await state.screen.pressByTestIdAsync('folders:create');
     await state.changeName('Approval folder');
     await state.screen.pressByTestIdAsync('folders:edit:save');
     await vi.waitFor(() => expect(state.screen.findByTestId('folders:edit:approval')).toBeTruthy());
@@ -234,7 +246,7 @@ it('keeps the create draft visibly pending on its durable approval without claim
 describe.each(['all', 'prompt'] as const)('shared folder inline writes (%s)', kind => {
     it('renames a just-settled create without reloading the tree', async () => {
         const state = await setup(kind);
-        await state.screen.pressByTestIdAsync('folders:invite:new');
+        await state.screen.pressByTestIdAsync('folders:create');
         await state.changeName('r2-folder-created');
         await state.screen.pressByTestIdAsync('folders:edit:save');
         await vi.waitFor(() => expect(state.screen.findByTestId('folders:edit:name')).toBeNull());
@@ -272,7 +284,7 @@ describe.each(['all', 'prompt'] as const)('shared folder inline writes (%s)', ki
 
     it('creates only on Save, normalizes names, and reuses an existing folder', async () => {
         const { screen, read, boundary, changeName, select } = await setup(kind);
-        await screen.pressByTestIdAsync('folders:invite:new');
+        await screen.pressByTestIdAsync('folders:create');
         expect(screen.findByTestId('folders:edit:name')).toBeTruthy();
         await changeName('  Release   notes  ');
         expect(read().folders).toEqual([]);
@@ -335,7 +347,7 @@ describe.each(['all', 'prompt'] as const)('shared folder inline writes (%s)', ki
     it.each(['conflict', 'failed'] as const)('keeps the create draft and typed refusal after %s, then saves on retry', async outcome => {
         const state = await setup(kind);
         state.setOutcome(outcome);
-        await state.screen.pressByTestIdAsync('folders:invite:new');
+        await state.screen.pressByTestIdAsync('folders:create');
         await state.changeName('  Keep   my draft  ');
         await state.screen.pressByTestIdAsync('folders:edit:save');
         await vi.waitFor(() => expect(state.screen.findByTestId('folders:edit:refused')).toBeTruthy());
@@ -376,6 +388,14 @@ describe.each(['all', 'prompt'] as const)('shared folder inline writes (%s)', ki
         await state.select('rename', 'replacement');
         expect(state.screen.findByTestId('folders:edit:name')!.props.value).toBe('Replacement');
     });
+});
+
+it('lists unfiled entries flat under the page\'s one New folder, with no invite beneath them, while there are no folders (owner 11-11 Artifacts 02)', async () => {
+    const state = await setup('all', [], true);
+    expect(state.screen.findByTestId('artifacts:folders:row:artifact:document')).toBeTruthy();
+    expect(state.screen.findAll(node => node.props.testID === 'artifacts:folders:new' && node.props.disabled === false).length).toBeGreaterThan(0);
+    expect(state.screen.findByTestId('artifacts:folders:invite')).toBeNull();
+    expect(state.screen.getTextContent()).not.toContain('artifacts.browser.folders.emptyInvite');
 });
 
 it('starts the same inline editor from the Artifacts browser toolbar', async () => {

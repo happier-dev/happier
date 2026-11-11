@@ -63,7 +63,6 @@ export type ArtifactsBrowserTranslations = Readonly<{
         collapse: (params: Readonly<{ name: string }>) => string;
         columnName: string;
         columnEdited: string;
-        emptyInvite: string;
         unavailable: string;
         saveFailed: string;
         refusedCycle: string;
@@ -266,7 +265,6 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             collapse: ({ name }) => `Collapse ${name}`,
             columnName: 'Name',
             columnEdited: 'Edited',
-            emptyInvite: 'No folders yet. Group what belongs together; only you see how you file things.',
             unavailable: 'Folders couldn’t be loaded from this Home. Everything is listed without them.',
             saveFailed: 'That change didn’t save. Try again.',
             refusedCycle: 'A folder can’t move into itself',

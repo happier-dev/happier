@@ -1003,7 +1003,6 @@ const artifactsBrowserTranslations = { ru: {
             collapse: ({ name }) => `Свернуть ${name}`,
             columnName: 'Название',
             columnEdited: 'Изменено',
-            emptyInvite: 'Папок пока нет. Сгруппируйте то, что связано; раскладку видите только вы.',
             unavailable: 'Не удалось загрузить папки с этого Home. Всё показано без них.',
             saveFailed: 'Изменение не сохранено. Попробуйте ещё раз.',
             refusedCycle: 'Папку нельзя переместить в саму себя',
@@ -2083,6 +2082,7 @@ const ru: ConnectedServicesCollectionCopy = {
     agentSignInTitle: 'Как входят агенты',
     subscriptionTitle: 'Подписка',
     subscriptionNone: 'Нет подписки',
+    subscriptionActive: 'Активна',
     subscriptionRenewsIn: ({ days }) => days === 0 ? 'Продлится сегодня' : `Продлится через ${days} дн.`,
     subscriptionEndsIn: ({ days }) => days === 0 ? 'Без продления · закончится сегодня' : `Без продления · закончится через ${days} дн.`,
     subscriptionPeriodEndsIn: ({ days }) => days === 0 ? 'Период закончится сегодня' : `Период закончится через ${days} дн.`,
@@ -3080,6 +3080,8 @@ const externalSessionOperationTranslations = { ru: {
     browseAgentTimedOut: 'Выбранный Agent на этой машине не ответил вовремя. Возможно, он занят или ещё индексирует, поэтому повторите попытку.',
     browseAgentFailed: 'Happier не смог прочитать сессии выбранного Agent. Повторите попытку; если ошибка сохраняется, проверьте журналы Agent и daemon на этой машине.',
     browseAgentFailedNoRetry: 'Happier не смог прочитать данные этого источника. Перед новым поиском проверьте журналы Agent и daemon на этой машине.',
+    browseAgentFormatUnsupported: ({ agent }: { agent: string }) => `Эта версия Happier не может прочитать формат сессий ${agent} на этой машине. Обновите Happier, чтобы просматривать и открывать эти сессии.`,
+    browseThisAgent: 'этого Agent',
     browseSourceInvalid: 'Не удалось прочитать этот источник истории. Проверьте выбранный аккаунт и каталог Agent на этой машине, затем выберите источник снова.',
     operationTitleMaterialize: 'Импортировать в Happier',
     operationTitleTakeoverLinked: 'Перехватить управление и сохранить связь',
@@ -3586,6 +3588,8 @@ const fileViewerTranslations = { ru: {
         audioCantPlayTitle: "Это аудио нельзя воспроизвести здесь",
         mediaCantPlayBody: "Устройство не поддерживает эту кодировку. Скачайте файл или откройте его в приложении по умолчанию.",
         openInDefaultApp: "Открыть в приложении по умолчанию",
+        openInNewTab: "Открыть в новой вкладке",
+        openInNewTabBlocked: "Браузер заблокировал новую вкладку. Разрешите всплывающие окна для Happier и повторите попытку.",
         play: "Воспроизвести",
         pause: "Пауза",
         playbackPosition: "Позиция воспроизведения",
@@ -3603,6 +3607,7 @@ const fileViewerTranslations = { ru: {
     kind: {
         code: "Текстовый файл",
         markdown: "Markdown",
+        html: "HTML-страница",
         image: "Изображение",
         svg: "Изображение SVG",
         pdf: "Документ PDF",
@@ -12362,6 +12367,10 @@ const ru: typeof en = {
     unreadableTitle: ({ home }: { home: string }) => `Не удалось прочитать машины в ${home}`,
     indexViewTitle: 'Вид «Все машины»',
     indexViewDescription: 'Показывает «Все машины» списком или карточкой для каждой машины. Сохраняется на этом устройстве.',
+    emptyTitle: 'Машин пока нет',
+    connectFirst: 'Сначала подключите машину',
+    thisComputerNotWorking: 'Фоновая служба не работает',
+    thisComputerNotConnected: 'Ещё не подключена',
 };
 
 const settingsMachinesTranslations = { ru };

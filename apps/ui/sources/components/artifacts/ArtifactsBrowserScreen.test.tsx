@@ -641,6 +641,36 @@ describe('Artifacts browser recovery', () => {
             .toEqual(['open', 'share', 'history', 'delete']);
     });
 
+    it('says what each phone row is on its second line: kind, then where it came from (owner 11-11 Artifacts 01)', async () => {
+        const viewport = { width: 390, height: 844, scale: 1, fontScale: 1 };
+        vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue(viewport);
+        vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue(viewport);
+        const screen = await renderRows([artifactFixture('own'), artifactFixture('received', { access: 'view' })]);
+        const textOf = (node: ReactTestInstance | string): string => typeof node === 'string' ? node
+            : node.children.map(child => textOf(child as ReactTestInstance | string)).join('');
+        const rowText = (id: string) => {
+            const facts = screen.findAll(node => node.props.testID === `artifacts:row:${id}:facts` && typeof node.type === 'string');
+            return facts.length > 0 ? textOf(facts[0]!) : '';
+        };
+        // The viewer's own document: its kind alone, no invented source.
+        expect(rowText('own')).toBe('artifacts.browser.kindOne.document');
+        // A received one: its kind, then who shared it, on the same quiet line.
+        expect(rowText('received')).toContain('artifacts.browser.kindOne.document');
+        expect(rowText('received')).toContain('artifacts.browser.provenance.sharedWithYou');
+    });
+
+    it('opens on the list where a phone is too narrow for two cards, and on cards where they fit side by side', async () => {
+        for (const [width, presentation] of [[390, 'list'], [1200, 'grid']] as const) {
+            const viewport = { width, height: 844, scale: 1, fontScale: 1 };
+            vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue(viewport);
+            vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue(viewport);
+            const screen = await renderRows([artifactFixture('document')]);
+            expect(screen.findAll(node => node.props.testIDPrefix === 'artifacts:view')[0]?.props.activeTabId).toBe(presentation);
+            await screen.unmount();
+            vi.restoreAllMocks();
+        }
+    });
+
     it('keeps phone search behind its magnifier, the choices and the count while omitting the redundant introduction', async () => {
         const viewport = { width: 390, height: 844, scale: 1, fontScale: 1 };
         vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue(viewport);

@@ -17,12 +17,10 @@ import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { Icon } from '@/components/ui/icons/Icon';
-import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { CollectionCreateButton, CollectionSearchToggle } from '@/components/ui/lists/collection/CollectionList';
 import { CollectionTitleButton } from '@/components/ui/lists/collection/CollectionTitleButton';
-import { usePublishPageCreateAction, type PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
+import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
+import { MainScreenHeader, type MainScreenSearch } from '@/components/navigation/shell/MainScreenHeader';
 import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
 import { PhonePageBackLine, usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
@@ -33,6 +31,7 @@ import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { useArtifacts, useArtifactsLoaded, useLocalSettingMutable } from '@/sync/domains/state/storage';
@@ -68,8 +67,13 @@ import { ArtifactView } from './ArtifactView';
 import { useArtifactOperations } from './useArtifactOperations';
 
 const SORTS: readonly ArtifactBrowserSort[] = ['updated_desc', 'created_desc', 'title_asc'];
-/** The narrowest card that still shows a readable preview; one column on a 390 pt phone. */
+/** The narrowest card that still shows a readable preview beside another on a tablet or desktop. */
 const CARD_MIN_WIDTH_PX = 260;
+/**
+ * A phone's cards, when chosen, stand two across (a short preview each): the narrowest card the shared grid draws
+ * that still holds the mark, a readable title and its insets (the Collection's compact card track).
+ */
+const PHONE_CARD_MIN_WIDTH_PX = 160;
 const LIST_MIN_WIDTH_PX = 320;
 /** Below this the page is too narrow to keep the grid beside an open artifact. */
 const PAGE_MIN_WIDTH_PX = 560;
@@ -134,16 +138,11 @@ export function ArtifactsBrowser(props: Readonly<{
     const phoneBack = usePhoneDestinationBack('artifacts:back');
     const { artifacts, loaded, loadFailed, usage } = props;
     const [query, setQuery] = React.useState('');
-    // A main screen's search waits behind its magnifier; a query keeps it open, closing it clears the query.
-    const [searchOpened, setSearchOpened] = React.useState(false);
-    const searchOpen = searchOpened || query.length > 0;
-    const toggleSearch = React.useCallback(() => {
-        if (searchOpen) { setQuery(''); setSearchOpened(false); } else setSearchOpened(true);
-    }, [searchOpen]);
     const [kind, setKind] = React.useState<ArtifactBrowserKind | 'all'>('all');
     const [sort, setSort] = React.useState<ArtifactBrowserSort>('updated_desc');
     const [view, setView] = useLocalSettingMutable('artifactsBrowserViewV1');
-    // A phone lists by default (one card per screen hides the collection); wider screens show cards.
+    // A phone lists by default (dense, scannable); cards lead only where two fit side by side (tablet, desktop).
+    // The person's own choice, once made, is kept.
     const presentation: BrowserPresentation = view?.presentation ?? (deviceType === 'phone' ? 'list' : 'grid');
     const setPresentation = React.useCallback((next: BrowserPresentation) => setView({ presentation: next }), [setView]);
     const filter = React.useMemo(() => ({ query, kind, sort }), [query, kind, sort]);
@@ -181,11 +180,16 @@ export function ArtifactsBrowser(props: Readonly<{
     const collectionPresentation = presentation === 'grid' ? 'grid' : phoneLayout ? 'list' : 'table';
     const anatomy = useBrowserAnatomy(presentation === 'grid' ? 'grid' : 'list');
     const newDocument = React.useCallback(() => router.push('/artifacts/new' as never), [router]);
-    // The title row's "+" and, on a phone, the bar's "+" beside the tabs run the same action.
+    // The title row's "+" and, on a phone, the bar's "+" beside the tabs run the same action (the main-screen head).
     const create = React.useMemo<PageCreateAction>(() => ({
         label: t('artifacts.browser.newDocument'), testID: 'artifacts:new', onPress: newDocument,
     }), [newDocument]);
-    usePublishPageCreateAction(phoneLayout ? create : null);
+    // A main screen's search waits behind its magnifier (nothing to search in an empty library).
+    const searchPlaceholder = t('artifacts.browser.searchPlaceholder');
+    const firstVisitForSearch = loaded && total === 0 && !loadFailed;
+    const search = React.useMemo<MainScreenSearch | null>(() => firstVisitForSearch ? null
+        : { value: query, onChangeText: setQuery, placeholder: searchPlaceholder, testID: 'artifacts:search' },
+    [firstVisitForSearch, query, searchPlaceholder]);
 
     const viewSwitch = <ArtifactViewSwitch presentation={presentation} onPresentationChange={setPresentation} />;
     const firstVisit = loaded && total === 0 && !loadFailed;
@@ -203,17 +207,13 @@ export function ArtifactsBrowser(props: Readonly<{
                 showPresent={total > 0}
                 reservePresent={!loaded && !loadFailed}
                 create={create}
-                search={firstVisit ? null : { open: searchOpen, onToggle: toggleSearch }}
+                search={search}
                 // A phone's title opens the library's choices (kind and order), as every main screen's title does.
                 titleFilters={phoneLayout && !firstVisit ? { kind, onKindChange: setKind, counts, sort, onSortChange: setSort } : null}
                 // A phone's view switch sits with the count, below the choices (lab A1p keeps the search a full row).
                 viewSwitch={firstVisit ? null : viewSwitch}
                 toolbar={firstVisit ? null : (
                     <BrowserToolbar
-                        query={query}
-                        onQueryChange={setQuery}
-                        searchOpen={searchOpen}
-                        searchAutoFocus={searchOpened && query.length === 0}
                         kind={kind}
                         onKindChange={setKind}
                         counts={counts}
@@ -300,7 +300,7 @@ export function ArtifactsBrowser(props: Readonly<{
                     minListWidth={LIST_MIN_WIDTH_PX}
                     minDetailWidth={LIST_MIN_WIDTH_PX}
                     preferredListRatio={1}
-                    minCardWidth={CARD_MIN_WIDTH_PX}
+                    minCardWidth={phoneLayout ? PHONE_CARD_MIN_WIDTH_PX : CARD_MIN_WIDTH_PX}
                     header={header}
                     loading={!loaded && total === 0 && !loadFailed}
                     empty={empty}
@@ -385,6 +385,24 @@ function renderBrowserPageScroller(children: React.ReactNode): React.ReactNode {
     );
 }
 
+/** A phone row's second line: "Prompt", or "Document · Shared with you" — only facts the artifact carries. */
+function ArtifactListFacts(props: Readonly<{ row: ArtifactBrowserRow }>) {
+    const { row } = props;
+    const kind = row.artifact.isDecrypted === false ? null : rowKindFact(row).label;
+    const provenance = readArtifactProvenance(row.artifact);
+    const fallback = readArtifactProvenanceFallback(row.artifact);
+    const source = provenance === null && fallback === null ? null : (
+        <ArtifactProvenanceLabel provenance={provenance} fallback={fallback ?? ''} presentation="line" testID={`artifacts:row:${row.key}:provenance`} />
+    );
+    return (
+        <View style={stylesheet.listFacts} testID={`artifacts:row:${row.key}:facts`}>
+            {kind === null ? null : <Text numberOfLines={1} style={stylesheet.listFactsText}>{kind}</Text>}
+            {kind !== null && source !== null ? <Text style={stylesheet.listFactsText}>·</Text> : null}
+            {source}
+        </View>
+    );
+}
+
 /** The page's one hero, its purpose and the present line: count, today, and the meter when there is a budget. */
 function BrowserHeader(props: Readonly<{
     total: number;
@@ -395,8 +413,8 @@ function BrowserHeader(props: Readonly<{
     showPresent: boolean;
     reservePresent: boolean;
     create: PageCreateAction;
-    /** The title row's magnifier; absent while the library is empty (nothing to search yet). */
-    search: Readonly<{ open: boolean; onToggle: () => void }> | null;
+    /** The title row's magnifier and its field; absent while the library is empty (nothing to search yet). */
+    search: MainScreenSearch | null;
     titleFilters: ArtifactTitleFiltersProps | null;
     /** A phone shows the Grid | List | Folders switch on the line with the count. */
     viewSwitch: React.ReactNode;
@@ -405,6 +423,7 @@ function BrowserHeader(props: Readonly<{
     const styles = stylesheet;
     const limit = props.usage?.limitBytes ?? null;
     const phone = useDeviceType() === 'phone';
+    const overQuota = props.usage !== null && limit !== null && props.usage.usedBytes >= limit;
     const present = props.showPresent ? (
         <View style={styles.present} testID="artifacts:present">
             <Text style={styles.presentText}>
@@ -422,48 +441,31 @@ function BrowserHeader(props: Readonly<{
         </View>
     ) : undefined;
     return (
-        <View>
-            {/* A phone's main screen leads with the large title every main screen has; its title row ends with the
-                magnifier and the "+" (the bar's "+" runs the same create action). */}
-            <NavigationLargeTitleProvider largeTitle={phone}>
-                <PageHeader
-                    testID="artifacts:header"
-                    title={t('artifacts.title')}
-                    titleControl={props.titleFilters ? <ArtifactTitleFilters {...props.titleFilters} /> : undefined}
-                    alwaysShowTitle
-                    description={phone && (props.showPresent || props.reservePresent) ? undefined : t('artifacts.browser.description')}
-                    details={phone ? undefined : present}
-                    actionsPlacement="page"
-                    actionsLayout="inline"
-                    actions={(
-                        <>
-                            {props.search ? (
-                                <CollectionSearchToggle
-                                    testID="artifacts:search:toggle"
-                                    open={props.search.open}
-                                    onPress={props.search.onToggle}
-                                    accessibilityLabel={t('artifacts.browser.searchPlaceholder')}
-                                />
-                            ) : null}
-                            <CollectionCreateButton create={props.create} />
-                        </>
-                    )}
-                />
-            </NavigationLargeTitleProvider>
-            {props.toolbar}
-            {/* Under the toolbar, on the grid's edges (lab A8): it blocks saving, not finding. */}
-            {props.usage !== null && limit !== null && props.usage.usedBytes >= limit ? (
-                <View style={[styles.banner, props.toolbar ? null : styles.bannerWithoutToolbar]}>
+        // The main-screen head (owner 11-11): the title opens the library's choices on a phone, its row ends with the
+        // magnifier and the "+" (the bar's "+" runs the same action); the chips sit right under it, the count line last.
+        <MainScreenHeader
+            testID="artifacts:header"
+            title={t('artifacts.title')}
+            titleControl={props.titleFilters ? <ArtifactTitleFilters {...props.titleFilters} /> : undefined}
+            alwaysShowTitle
+            description={phone && (props.showPresent || props.reservePresent) ? undefined : t('artifacts.browser.description')}
+            details={phone ? undefined : present}
+            search={props.search}
+            create={props.create}
+            band={props.toolbar || overQuota ? <>
+                {props.toolbar}
+                {/* Under the toolbar, on the grid's edges (lab A8): it blocks saving, not finding. */}
+                {overQuota && props.usage !== null && limit !== null ? (
                     <ArtifactQuotaNotice testID="artifacts:quota" placement="inline" quota={{ budget: 'account', usedBytes: props.usage.usedBytes, limitBytes: limit }} />
-                </View>
-            ) : null}
-            {phone && (present || props.viewSwitch) ? (
+                ) : null}
+            </> : undefined}
+            status={phone && (present || props.viewSwitch) ? (
                 <View style={styles.phoneStatusRow}>
                     <View style={styles.phonePresentSlot}>{present}</View>
                     {props.viewSwitch}
                 </View>
-            ) : null}
-        </View>
+            ) : undefined}
+        />
     );
 }
 
@@ -604,11 +606,6 @@ function ArtifactTitleFilters(props: ArtifactTitleFiltersProps) {
 }
 
 function BrowserToolbar(props: Readonly<{
-    query: string;
-    onQueryChange: (query: string) => void;
-    searchOpen: boolean;
-    /** Opened by its magnifier just now (not restored with a query): the field takes the caret. */
-    searchAutoFocus: boolean;
     kind: ArtifactBrowserKind | 'all';
     onKindChange: (kind: ArtifactBrowserKind | 'all') => void;
     counts: ReadonlyMap<ArtifactBrowserKind, number>;
@@ -627,20 +624,9 @@ function BrowserToolbar(props: Readonly<{
     const folders = useArtifactFolderCommands();
     const kindOptions = useArtifactKindOptions(props.counts, props.kind);
     const sortOptions = React.useMemo(() => SORTS.map((candidate) => ({ id: candidate, label: sortLabel(candidate) })), []);
-    const search = props.searchOpen ? (
-        <CompactSearchField
-            testID="artifacts:search"
-            value={props.query}
-            onChangeText={props.onQueryChange}
-            placeholder={t('artifacts.browser.searchPlaceholder')}
-            style={[styles.search, phone ? styles.phoneSearch : null]}
-            {...(props.searchAutoFocus ? { autoFocus: true } : {})}
-        />
-    ) : null;
+    // The search field is the main-screen head's, under these choices (its magnifier is on the title row).
     return (
         <View style={styles.toolbar} testID="artifacts:toolbar">
-            {/* A phone gives the search its own full row (lab A1p); the choices and the view switch share the row below. */}
-            {phone && search ? <View style={styles.phoneSearchRow}>{search}</View> : search}
             <View style={styles.toolbarChoices}>
                 <SelectionListFilterChip filter={{
                     id: 'artifacts-kind',
@@ -694,8 +680,8 @@ function useBrowserAnatomy(presentation: 'grid' | 'list'): CollectionAnatomy<Art
     return React.useMemo((): CollectionAnatomy<ArtifactBrowserRow> => ({
         glyph: (row) => <Icon name={row.artifact.isDecrypted === false ? 'lock' : rowKindFact(row).icon} size={20} color={theme.colors.text.secondary} />,
         title: (row) => (row.artifact.isDecrypted === false ? t('settingsAccount.restoreRequiredTitle') : rowTitle(row)),
-        // A source, or who shared it; nothing when it is simply the viewer's own.
-        where: (row) => {
+        // A phone's one list line says what the row is: its kind, then where it came from (owner 11-11).
+        where: phone && presentation === 'list' ? (row) => <ArtifactListFacts row={row} /> : (row) => {
             const provenance = readArtifactProvenance(row.artifact);
             const fallback = readArtifactProvenanceFallback(row.artifact);
             if (provenance === null && fallback === null) return undefined;
@@ -742,8 +728,18 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: theme.space.s8,
-        paddingHorizontal: PAGE_LIST_METRICS.sheetInsetPx,
-        marginBottom: theme.space.s12,
+    },
+    listFacts: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s4,
+        minWidth: 0,
+        flexShrink: 1,
+    },
+    listFactsText: {
+        flexShrink: 0,
+        ...Typography.variant('meta'),
+        color: theme.colors.text.tertiary,
     },
     presentText: {
         fontSize: 12.5,
@@ -777,38 +773,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     freshness: {
         marginHorizontal: PAGE_LIST_METRICS.sheetInsetPx,
     },
-    banner: {
-        marginHorizontal: PAGE_LIST_METRICS.sheetInsetPx,
-        marginBottom: 14,
-    },
-    bannerWithoutToolbar: {
-        marginTop: theme.space.s16,
-    },
+    // The main-screen head stands the toolbar on the sheets' edge right under the title and spaces its rows.
     toolbar: {
         flexDirection: 'row',
         alignItems: 'center',
         flexWrap: 'wrap',
-        gap: theme.space.s8,
-        marginTop: theme.space.s20,
-        marginBottom: 14,
-        marginHorizontal: PAGE_LIST_METRICS.sheetInsetPx,
-    },
-    // The row breaks only when the choices no longer fit beside a narrowed search; until then
-    // the search gives up width first (lab A1: search · kind · sort … view on one row).
-    search: {
-        flexGrow: 1,
-        flexShrink: 1,
-        flexBasis: 160,
-        maxWidth: 280,
-    },
-    phoneSearch: {
-        flexBasis: 0,
-        maxWidth: '100%',
-    },
-    phoneSearchRow: {
-        flexBasis: '100%',
-        flexDirection: 'row',
-        alignItems: 'center',
         gap: theme.space.s8,
     },
     toolbarChoices: {

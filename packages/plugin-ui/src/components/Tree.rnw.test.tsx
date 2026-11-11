@@ -10,6 +10,7 @@ import {
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { Tree, type TreeItem } from './Tree.js';
 import { HappierTreeRow } from '../presentation/navigation/TreeRow.js';
+import { HAPPIER_COLLECTION_ROW_METRICS } from '../presentation/collection/CollectionRowContent.js';
 import { HappierMaterialRoleProvider } from '../presentation/layout/Surface.js';
 
 /**
@@ -81,6 +82,48 @@ function mount(
 }
 
 describe('Tree', () => {
+  it('starts a flat tree\'s rows with their marks: with no branch to disclose there is no disclosure column (owner 11-11 Artifacts 02)', () => {
+    const leaf = (key: string, depth = 0, parentKey: string | null = null): TreeItem => ({
+      key, parentKey, depth, kind: 'leaf', expanded: false, title: key, mark: <span data-mark={key}>m</span>,
+    });
+    const flat = mount([leaf('notes'), leaf('guide')]);
+    for (const key of ['notes', 'guide']) {
+      // The mark's own box is the row's first box: nothing stands before it.
+      expect(flat.row(key).firstElementChild?.querySelector(`[data-mark="${key}"]`)).not.toBeNull();
+    }
+    flat.view.unmount();
+    // Beside a branch, a root leaf keeps the column as space so its mark aligns with the folder's.
+    const nested = mount([{ ...items[0]!, mark: <span data-mark="docs">m</span> }, leaf('docs/guide', 1, 'docs'), leaf('readme')]);
+    expect(nested.row('readme').firstElementChild?.querySelector('[data-mark="readme"]')).toBeNull();
+    nested.view.unmount();
+  });
+
+  it('draws a phone tree row at the one phone list row pitch, in a tree and in a table (owner 11-11 Artifacts 02, PHONE-LISTS 1250 #03)', () => {
+    const context = createSurfaceContext();
+    for (const presentation of ['tree', 'table'] as const) {
+      const view = mountThroughReactNativeWeb(
+        <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+          <HappierTreeRow
+            node={{ key: 'notes', parentKey: null, depth: 0, kind: 'leaf', expanded: false }}
+            title="notes"
+            presentation={presentation}
+            touch
+            tabStop
+            theme={context.theme}
+            onActivate={() => {}}
+            onFocus={() => {}}
+            onKeyDown={() => false}
+            controlRef={() => {}}
+            testID="phone-row"
+          />
+        </PluginUiProvider>,
+      );
+      const row = view.container.querySelector<HTMLElement>('[data-testid="phone-row"]')!;
+      expect(Number.parseFloat(getComputedStyle(row).minHeight)).toBe(HAPPIER_COLLECTION_ROW_METRICS.height.touchCompact);
+      view.unmount();
+    }
+  });
+
   it('fills a selected row through the containing material, so on a glass sidebar the selection is a tint, not an opaque chip (owner 11-11 #13)', () => {
     const glassSelection = 'rgba(235, 230, 225, 0.1)';
     const context = createSurfaceContext();

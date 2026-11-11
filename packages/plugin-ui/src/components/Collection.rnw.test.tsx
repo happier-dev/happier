@@ -5233,6 +5233,28 @@ describe('grid', () => {
     list.unmount();
   });
 
+  it('keeps a preview card one material, and gives two narrow cards across a phone a shorter band (owner 11-11 Artifacts 03)', () => {
+    const previewed: CollectionAnatomy<Entry> = {
+      ...anatomy,
+      preview: (entry) => <Text>{`Preview of ${entry.id}`}</Text>,
+    };
+    const bandHeight = (view: ReturnType<typeof mount>) => Number.parseFloat(view.query('row:a:preview')!.style.height);
+    const wide = mount({ presentation: 'grid', grouped: false, anatomy: previewed });
+    wide.measure(1440);
+    const phone = mount({ presentation: 'grid', grouped: false, anatomy: previewed, minCardWidth: 160 });
+    phone.measure(390);
+    // Two cards share the phone's row.
+    expect(phone.query('row:a:card')!.style.width).toBe(phone.query('row:b:card')!.style.width);
+    expect(Number.parseFloat(phone.query('row:a:card')!.style.width)).toBeLessThan(195);
+    // The band keeps a full card's proportion, so the narrow card reads as a card, not a preview with a caption.
+    expect(bandHeight(phone)).toBeLessThan(bandHeight(wide));
+    expect(bandHeight(phone)).toBeGreaterThan(0);
+    // The band is drawn on the card's own material (lab A1): no second fill that turns the foot into a slab.
+    expect(getComputedStyle(phone.query('row:a:preview')!).backgroundColor).toMatch(/^(transparent|rgba\(0, 0, 0, 0\))$/);
+    wide.unmount();
+    phone.unmount();
+  });
+
   it('stands a preview card on its band: mark beside the title, where under it, kind and age at the foot (lab artifacts A1)', () => {
     const previewed: CollectionAnatomy<Entry> = {
       ...anatomy,
@@ -5409,6 +5431,38 @@ describe('named table orders', () => {
     await view.update({ presentation: 'table' });
     view.measure(360);
     expect(view.query('collection:sort:title')).toBeNull();
+    view.unmount();
+  });
+
+  it('reuses the named order owner for an Age column with only the mapped orders', async () => {
+    const changes: string[] = [];
+    const sort = {
+      key: 'newest',
+      direction: 'descending' as const,
+      orders: [
+        { key: 'newest', label: 'Newest' },
+        { key: 'oldest', label: 'Oldest' },
+        { key: 'smart', label: 'Smart' },
+      ],
+      orderColumns: { age: ['newest', 'oldest'] },
+      onChange: (key: string) => { changes.push(key); },
+    };
+    const view = mount({
+      sort,
+      renderPopover: (input) => input.open ? input.content({ requestClose: input.onRequestClose, maxHeight: 400 }) : null,
+    });
+    view.measure(1440);
+
+    const trigger = view.query('collection:sort:age')!;
+    expect(trigger).not.toBeNull();
+    expect(trigger.closest('[aria-sort]')!.getAttribute('aria-sort')).toBe('descending');
+    act(() => { trigger.click(); });
+    const options = [...view.container.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+    expect(options.map((option) => option.textContent)).toEqual(['Newest', 'Oldest']);
+    act(() => { options[1]!.click(); });
+    expect(changes).toEqual(['oldest']);
+    await view.update({ sort: { ...sort, key: 'oldest', direction: 'ascending' } });
+    expect(view.query('collection:sort:age')!.closest('[aria-sort]')!.getAttribute('aria-sort')).toBe('ascending');
     view.unmount();
   });
 });

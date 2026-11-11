@@ -1003,7 +1003,6 @@ const artifactsBrowserTranslations = { pl: {
             collapse: ({ name }) => `Zwiń ${name}`,
             columnName: 'Nazwa',
             columnEdited: 'Edytowano',
-            emptyInvite: 'Nie ma jeszcze folderów. Pogrupuj to, co do siebie pasuje; tylko ty widzisz swój układ.',
             unavailable: 'Nie udało się wczytać folderów z tego Home. Wszystko jest wyświetlane bez nich.',
             saveFailed: 'Ta zmiana nie została zapisana. Spróbuj ponownie.',
             refusedCycle: 'Folderu nie można przenieść do niego samego',
@@ -2072,6 +2071,7 @@ const pl: ConnectedServicesCollectionCopy = {
     agentSignInTitle: 'Jak logują się agenci',
     subscriptionTitle: 'Subskrypcja',
     subscriptionNone: 'Brak subskrypcji',
+    subscriptionActive: 'Aktywna',
     subscriptionRenewsIn: ({ days }) => days === 0 ? 'Odnawia się dziś' : days === 1 ? 'Odnawia się jutro' : `Odnawia się za ${days} dni`,
     subscriptionEndsIn: ({ days }) => days === 0 ? 'Bez odnowienia · kończy się dziś' : `Bez odnowienia · kończy się za ${days} dni`,
     subscriptionPeriodEndsIn: ({ days }) => days === 0 ? 'Okres kończy się dziś' : `Okres kończy się za ${days} dni`,
@@ -3071,6 +3071,8 @@ const externalSessionOperationTranslations = { pl: {
     browseAgentTimedOut: 'Wybrany Agent na tej maszynie nie odpowiedział na czas. Może być zajęty lub wciąż indeksować, więc spróbuj ponownie.',
     browseAgentFailed: 'Happier nie mógł odczytać sesji wybranego Agenta. Spróbuj ponownie; jeśli błąd się powtarza, sprawdź logi Agenta i daemona na tej maszynie.',
     browseAgentFailedNoRetry: 'Happier nie mógł odczytać sesji z tego źródła. Przed ponownym wyszukiwaniem sprawdź logi Agenta i daemona na tej maszynie.',
+    browseAgentFormatUnsupported: ({ agent }: { agent: string }) => `Ta wersja Happier nie może odczytać formatu sesji ${agent} na tym komputerze. Zaktualizuj Happier, aby przeglądać i otwierać te sesje.`,
+    browseThisAgent: 'tego Agenta',
     browseSourceInvalid: 'Nie można odczytać tego źródła historii. Sprawdź wybrane konto i katalog Agenta na tej maszynie, a następnie wybierz źródło ponownie.',
     operationTitleMaterialize: 'Importuj do Happier',
     operationTitleTakeoverLinked: 'Przejmij i zachowaj połączenie',
@@ -3577,6 +3579,8 @@ const fileViewerTranslations = { pl: {
         audioCantPlayTitle: "Tego dźwięku nie można tu odtworzyć",
         mediaCantPlayBody: "To urządzenie nie obsługuje jego kodowania. Pobierz plik lub otwórz go w domyślnej aplikacji.",
         openInDefaultApp: "Otwórz w domyślnej aplikacji",
+        openInNewTab: "Otwórz w nowej karcie",
+        openInNewTabBlocked: "Przeglądarka zablokowała nową kartę. Zezwól na wyskakujące okna dla Happier i spróbuj ponownie.",
         play: "Odtwórz",
         pause: "Wstrzymaj",
         playbackPosition: "Pozycja odtwarzania",
@@ -3594,6 +3598,7 @@ const fileViewerTranslations = { pl: {
     kind: {
         code: "Plik tekstowy",
         markdown: "Markdown",
+        html: "Strona HTML",
         image: "Obraz",
         svg: "Obraz SVG",
         pdf: "Dokument PDF",
@@ -12350,6 +12355,10 @@ const pl: typeof en = {
     unreadableTitle: ({ home }: { home: string }) => `Nie udało się odczytać maszyn w ${home}`,
     indexViewTitle: 'Widok Wszystkie maszyny',
     indexViewDescription: 'Pokazuje Wszystkie maszyny jako listę lub jedną kartę na maszynę. Zapisywane na tym urządzeniu.',
+    emptyTitle: 'Nie ma jeszcze maszyn',
+    connectFirst: 'Najpierw połącz maszynę',
+    thisComputerNotWorking: 'Usługa w tle nie działa',
+    thisComputerNotConnected: 'Jeszcze niepołączona',
 };
 
 const settingsMachinesTranslations = { pl };

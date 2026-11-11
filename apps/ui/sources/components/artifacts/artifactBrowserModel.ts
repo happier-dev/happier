@@ -268,6 +268,23 @@ const ENVELOPE_KINDS: ReadonlySet<unknown> = new Set(['prompt_doc.v2', 'role.v1'
 const STORED_JSON_TEXT = /^\s*(?:\{\s*"|\[\s*["{[])/;
 const EMPTY_JSON_TEXT = /^\s*(?:\{\s*\}|\[\s*\])\s*$/;
 
+/**
+ * A document that opens on its own title (a Prompt's "# Happier guide") would show that title twice on its card: in
+ * the band and under it. The card's title is the one that stays; the band starts with what follows.
+ */
+function withoutTitleHeading(text: string, title: string | null | undefined): string {
+    const wanted = title?.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+    if (!wanted) return text;
+    const match = /^\s*#{1,6}[ \t]+([^\n]*)(?:\n|$)/.exec(text);
+    if (!match || match[1]!.trim().replace(/\s+/g, ' ').toLocaleLowerCase() !== wanted) return text;
+    return text.slice(match[0].length).replace(/^\s*\n/, '');
+}
+
+function markdownPreview(text: string, title: string | null | undefined): ArtifactPreview {
+    const shown = withoutTitleHeading(text, title);
+    return shown.trim() ? { kind: 'markdown', text: shown } : { kind: 'none' };
+}
+
 export function readArtifactPreview(artifact: Pick<DecryptedArtifact, 'id' | 'header' | 'rawHeader' | 'title' | 'body' | 'provenance'>): ArtifactPreview {
     const header = artifact.rawHeader ?? artifact.header;
     if (getArtifactUseTargetV1({ artifactId: artifact.id, header: header ?? {}, body: null }).kind === 'approval') return { kind: 'none' };
@@ -275,7 +292,7 @@ export function readArtifactPreview(artifact: Pick<DecryptedArtifact, 'id' | 'he
         const stored = artifact.body === undefined ? header?.excerpt : artifact.body;
         if (typeof stored !== 'string') return { kind: 'none' };
         const clipped = deriveArtifactExcerptV1(readEnvelopeText(String(header?.kind), stored) ?? null);
-        return clipped ? { kind: 'markdown', text: clipped } : { kind: 'none' };
+        return clipped ? markdownPreview(clipped, artifact.title) : { kind: 'none' };
     }
     if (header?.kind === 'work-board.v1' && header.v === 1) {
         if (artifact.body !== undefined) {
@@ -318,7 +335,7 @@ export function readArtifactPreview(artifact: Pick<DecryptedArtifact, 'id' | 'he
     const language = readArtifactCodeLanguage(artifact);
     if (language) return { kind: 'code', text: clipped, language };
     if (EMPTY_JSON_TEXT.test(clipped)) return { kind: 'none' };
-    if (!STORED_JSON_TEXT.test(clipped)) return { kind: 'markdown', text: clipped };
+    if (!STORED_JSON_TEXT.test(clipped)) return markdownPreview(clipped, artifact.title);
     // A kind this client has no reader for keeps its record to itself; an ordinary document of JSON is code.
     return typeof header?.kind === 'string' ? { kind: 'none' } : { kind: 'code', text: clipped, language: 'JSON' };
 }

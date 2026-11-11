@@ -1003,7 +1003,6 @@ const artifactsBrowserTranslations = { fr: {
             collapse: ({ name }) => `Réduire ${name}`,
             columnName: 'Nom',
             columnEdited: 'Modifié',
-            emptyInvite: 'Aucun dossier pour l’instant. Regroupe ce qui va ensemble ; toi seul vois ton classement.',
             unavailable: 'Les dossiers n’ont pas pu être chargés depuis ce Home. Tout est listé sans eux.',
             saveFailed: 'Cette modification n’a pas été enregistrée. Réessaie.',
             refusedCycle: 'Un dossier ne peut pas être déplacé dans lui-même',
@@ -2061,6 +2060,7 @@ const fr: ConnectedServicesCollectionCopy = {
     agentSignInTitle: 'Comment les agents se connectent',
     subscriptionTitle: 'Abonnement',
     subscriptionNone: 'Pas d’abonnement',
+    subscriptionActive: 'Actif',
     subscriptionRenewsIn: ({ days }) => days === 0 ? 'Renouvelé aujourd’hui' : days === 1 ? 'Renouvelé demain' : `Renouvelé dans ${days} jours`,
     subscriptionEndsIn: ({ days }) => days === 0 ? 'Non renouvelé · se termine aujourd’hui' : `Non renouvelé · se termine dans ${days} jours`,
     subscriptionPeriodEndsIn: ({ days }) => days === 0 ? 'La période se termine aujourd’hui' : `La période se termine dans ${days} jours`,
@@ -3058,6 +3058,8 @@ const externalSessionOperationTranslations = { fr: {
     browseAgentTimedOut: 'L’Agent sélectionné sur cette machine n’a pas répondu à temps. Il est peut-être occupé ou encore en cours d’indexation, alors réessaie.',
     browseAgentFailed: 'Happier n’a pas pu lire les sessions de l’Agent sélectionné. Réessaie ; si l’échec persiste, consulte les journaux de l’Agent et du daemon sur cette machine.',
     browseAgentFailedNoRetry: 'Happier n’a pas pu lire les sessions de cette source. Consulte les journaux de l’Agent et du daemon sur cette machine avant de relancer la recherche.',
+    browseAgentFormatUnsupported: ({ agent }: { agent: string }) => `Cette version de Happier ne peut pas lire le format de sessions de ${agent} sur cette machine. Mettez Happier à jour pour parcourir et ouvrir ces sessions.`,
+    browseThisAgent: 'cet Agent',
     browseSourceInvalid: 'Cette source d’historique est illisible. Vérifie le compte sélectionné et le répertoire de l’Agent sur cette machine, puis sélectionne à nouveau la source.',
     operationTitleMaterialize: 'Importer dans Happier',
     operationTitleTakeoverLinked: 'Reprendre la main et continuer en lié',
@@ -3564,6 +3566,8 @@ const fileViewerTranslations = { fr: {
         audioCantPlayTitle: "Cet audio ne peut pas être lu ici",
         mediaCantPlayBody: "Cet appareil ne prend pas en charge son encodage. Téléchargez-le ou ouvrez-le dans votre app par défaut.",
         openInDefaultApp: "Ouvrir dans l'app par défaut",
+        openInNewTab: "Ouvrir dans un nouvel onglet",
+        openInNewTabBlocked: "Votre navigateur a bloqué le nouvel onglet. Autorisez les fenêtres pop-up pour Happier et réessayez.",
         play: "Lire",
         pause: "Pause",
         playbackPosition: "Position de lecture",
@@ -3581,6 +3585,7 @@ const fileViewerTranslations = { fr: {
     kind: {
         code: "Fichier texte",
         markdown: "Markdown",
+        html: "Page HTML",
         image: "Image",
         svg: "Image SVG",
         pdf: "Document PDF",
@@ -12332,6 +12337,10 @@ const fr: typeof en = {
     unreadableTitle: ({ home }: { home: string }) => `Impossible de lire les machines de ${home}`,
     indexViewTitle: 'Vue Toutes les machines',
     indexViewDescription: 'Affiche Toutes les machines en liste ou avec une carte par machine. Enregistré sur cet appareil.',
+    emptyTitle: 'Aucune machine pour l’instant',
+    connectFirst: 'Connectez d’abord une machine',
+    thisComputerNotWorking: 'Le service d’arrière-plan ne fonctionne pas',
+    thisComputerNotConnected: 'Pas encore connectée',
 };
 
 const settingsMachinesTranslations = { fr };

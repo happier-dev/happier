@@ -1003,7 +1003,6 @@ const artifactsBrowserTranslations = { ca: {
             collapse: ({ name }) => `Replega ${name}`,
             columnName: 'Nom',
             columnEdited: 'Editat',
-            emptyInvite: 'Encara no hi ha carpetes. Agrupa el que va junt; només tu veus com ho arxives.',
             unavailable: 'No s’han pogut carregar les carpetes des d’aquest Home. Tot es mostra sense elles.',
             saveFailed: 'Aquest canvi no s’ha desat. Torna-ho a provar.',
             refusedCycle: 'Una carpeta no es pot moure dins d’ella mateixa',
@@ -2061,6 +2060,7 @@ const ca: ConnectedServicesCollectionCopy = {
     agentSignInTitle: 'Com inicien sessió els agents',
     subscriptionTitle: 'Subscripció',
     subscriptionNone: 'Sense subscripció',
+    subscriptionActive: 'Activa',
     subscriptionRenewsIn: ({ days }) => days === 0 ? 'Es renova avui' : days === 1 ? 'Es renova demà' : `Es renova d’aquí a ${days} dies`,
     subscriptionEndsIn: ({ days }) => days === 0 ? 'No es renova · acaba avui' : `No es renova · acaba d’aquí a ${days} dies`,
     subscriptionPeriodEndsIn: ({ days }) => days === 0 ? 'El període acaba avui' : `El període acaba d’aquí a ${days} dies`,
@@ -3060,6 +3060,8 @@ const externalSessionOperationTranslations = { ca: {
     browseAgentTimedOut: 'L’Agent seleccionat en aquesta màquina no ha respost a temps. Potser està ocupat o encara indexa, així que torna-ho a provar.',
     browseAgentFailed: 'Happier no ha pogut llegir les sessions de l’Agent seleccionat. Torna-ho a provar; si continua fallant, consulta els registres de l’Agent i del daemon d’aquesta màquina.',
     browseAgentFailedNoRetry: 'Happier no ha pogut llegir les sessions d’aquesta font. Consulta els registres de l’Agent i del daemon de la màquina abans de cercar de nou.',
+    browseAgentFormatUnsupported: ({ agent }: { agent: string }) => `Aquesta versió de Happier no pot llegir el format de sessions de ${agent} en aquesta màquina. Actualitza Happier per explorar i obrir aquestes sessions.`,
+    browseThisAgent: 'aquest Agent',
     browseSourceInvalid: 'No s’ha pogut llegir aquesta font d’historial. Comprova el compte seleccionat i el directori de l’Agent a la màquina i torna a triar la font.',
     operationTitleMaterialize: 'Importa a Happier',
     operationTitleTakeoverLinked: 'Pren el control i continua enllaçada',
@@ -3566,6 +3568,8 @@ const fileViewerTranslations = { ca: {
         audioCantPlayTitle: "Aquest àudio no es pot reproduir aquí",
         mediaCantPlayBody: "Aquest dispositiu no admet la codificació. Baixa'l o obre'l a l'aplicació predeterminada.",
         openInDefaultApp: "Obre a l'aplicació predeterminada",
+        openInNewTab: "Obre en una pestanya nova",
+        openInNewTabBlocked: "El navegador ha bloquejat la pestanya nova. Permet les finestres emergents per a Happier i torna-ho a provar.",
         play: "Reprodueix",
         pause: "Posa en pausa",
         playbackPosition: "Posició de reproducció",
@@ -3583,6 +3587,7 @@ const fileViewerTranslations = { ca: {
     kind: {
         code: "Fitxer de text",
         markdown: "Markdown",
+        html: "Pàgina HTML",
         image: "Imatge",
         svg: "Imatge SVG",
         pdf: "Document PDF",
@@ -12330,6 +12335,10 @@ const ca: typeof en = {
     unreadableTitle: ({ home }: { home: string }) => `No s’han pogut llegir les màquines de ${home}`,
     indexViewTitle: 'Vista de Totes les màquines',
     indexViewDescription: 'Mostra Totes les màquines com a llista o amb una targeta per màquina. Es desa en aquest dispositiu.',
+    emptyTitle: 'Encara no hi ha màquines',
+    connectFirst: 'Connecta primer una màquina',
+    thisComputerNotWorking: 'El servei en segon pla no funciona',
+    thisComputerNotConnected: 'Encara no està connectada',
 };
 
 const settingsMachinesTranslations = { ca };

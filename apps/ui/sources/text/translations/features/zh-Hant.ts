@@ -1003,7 +1003,6 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
             collapse: ({ name }) => `收合 ${name}`,
             columnName: '名稱',
             columnEdited: '編輯時間',
-            emptyInvite: '還沒有資料夾。把相關內容歸在一起；只有你看得到自己的歸檔方式。',
             unavailable: '無法從此 Home 載入資料夾。所有內容皆不依資料夾列出。',
             saveFailed: '變更未儲存。請再試一次。',
             refusedCycle: '資料夾無法移到自身之內',
@@ -2056,6 +2055,7 @@ const zhHant: ConnectedServicesCollectionCopy = {
     agentSignInTitle: '代理如何登入',
     subscriptionTitle: '訂閱',
     subscriptionNone: '沒有訂閱',
+    subscriptionActive: '有效',
     subscriptionRenewsIn: ({ days }) => days === 0 ? '今天續訂' : `${days} 天後續訂`,
     subscriptionEndsIn: ({ days }) => days === 0 ? '不再續訂 · 今天結束' : `不再續訂 · ${days} 天後結束`,
     subscriptionPeriodEndsIn: ({ days }) => days === 0 ? '本期今天結束' : `本期 ${days} 天後結束`,
@@ -3053,6 +3053,8 @@ const externalSessionOperationTranslations = { zhHant: {
     browseAgentTimedOut: '此機器上所選的 Agent 未及時回應。它可能正忙或仍在建立索引，請重試。',
     browseAgentFailed: 'Happier 無法讀取所選 Agent 的工作階段。請重試；如果仍然失敗，請檢查該機器上的 Agent 和 daemon 記錄。',
     browseAgentFailedNoRetry: 'Happier 無法讀取此來源的工作階段資料。再次搜尋前，請檢查該機器上的 Agent 和 daemon 記錄。',
+    browseAgentFormatUnsupported: ({ agent }: { agent: string }) => `此版本的 Happier 無法讀取此機器上 ${agent} 的工作階段格式。請更新 Happier 以瀏覽並開啟這些工作階段。`,
+    browseThisAgent: '此 Agent',
     browseSourceInvalid: '無法讀取此歷程來源。請檢查此機器上的所選帳戶和 Agent 主目錄，然後重新選擇來源。',
     operationTitleMaterialize: '匯入 Happier',
     operationTitleTakeoverLinked: '接管並保持連結',
@@ -3559,6 +3561,8 @@ const fileViewerTranslations = { 'zh-Hant': {
         audioCantPlayTitle: "無法在此播放此音訊",
         mediaCantPlayBody: "此裝置不支援其編碼。請下載，或在預設 App 中打開。",
         openInDefaultApp: "在預設 App 中打開",
+        openInNewTab: "在新分頁中開啟",
+        openInNewTabBlocked: "瀏覽器封鎖了新分頁。請允許 Happier 的彈出式視窗後再試一次。",
         play: "播放",
         pause: "暫停",
         playbackPosition: "播放位置",
@@ -3576,6 +3580,7 @@ const fileViewerTranslations = { 'zh-Hant': {
     kind: {
         code: "文字檔",
         markdown: "Markdown",
+        html: "HTML 頁面",
         image: "圖片",
         svg: "SVG 圖片",
         pdf: "PDF 文件",
@@ -12310,6 +12315,10 @@ const zhHant: typeof en = {
     unreadableTitle: ({ home }: { home: string }) => `無法讀取 ${home} 上的機器`,
     indexViewTitle: '所有機器檢視',
     indexViewDescription: '以清單或每台機器一張卡片的形式顯示所有機器。儲存在此裝置上。',
+    emptyTitle: '還沒有機器',
+    connectFirst: '請先連接一台機器',
+    thisComputerNotWorking: '背景服務無法運作',
+    thisComputerNotConnected: '尚未連接',
 };
 
 const settingsMachinesTranslations = { zhHant };

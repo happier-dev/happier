@@ -1003,7 +1003,6 @@ const artifactsBrowserTranslations = { ja: {
             collapse: ({ name }) => `${name} を折りたたむ`,
             columnName: '名前',
             columnEdited: '編集',
-            emptyInvite: 'フォルダはまだありません。関連するものをまとめましょう。整理の仕方はあなたにしか見えません。',
             unavailable: 'この Home からフォルダを読み込めませんでした。すべてフォルダなしで表示しています。',
             saveFailed: '変更を保存できませんでした。もう一度お試しください。',
             refusedCycle: 'フォルダを自身の中へは移動できません',
@@ -2061,6 +2060,7 @@ const ja: ConnectedServicesCollectionCopy = {
     agentSignInTitle: 'エージェントのサインイン方法',
     subscriptionTitle: 'サブスクリプション',
     subscriptionNone: 'サブスクリプションなし',
+    subscriptionActive: '有効',
     subscriptionRenewsIn: ({ days }) => days === 0 ? '本日更新' : `${days}日後に更新`,
     subscriptionEndsIn: ({ days }) => days === 0 ? '更新なし · 本日終了' : `更新なし · ${days}日後に終了`,
     subscriptionPeriodEndsIn: ({ days }) => days === 0 ? '期間は本日終了' : `期間は${days}日後に終了`,
@@ -3058,6 +3058,8 @@ const externalSessionOperationTranslations = { ja: {
     browseAgentTimedOut: 'このマシンで選択した Agent が時間内に応答しませんでした。処理中またはインデックス作成中の可能性があるため、再試行してください。',
     browseAgentFailed: 'Happier は選択した Agent のセッションを読み取れませんでした。再試行し、失敗が続く場合はマシン上の Agent と daemon のログを確認してください。',
     browseAgentFailedNoRetry: 'Happier はこのソースのセッションデータを読み取れませんでした。再検索する前にマシン上の Agent と daemon のログを確認してください。',
+    browseAgentFormatUnsupported: ({ agent }: { agent: string }) => `このバージョンの Happier は、このマシン上の ${agent} のセッション形式を読み取れません。これらのセッションを表示して開くには Happier を更新してください。`,
+    browseThisAgent: 'この Agent',
     browseSourceInvalid: 'この履歴ソースを読み取れませんでした。マシン上の選択したアカウントと Agent のホームを確認し、ソースを選び直してください。',
     operationTitleMaterialize: 'Happier にインポート',
     operationTitleTakeoverLinked: '引き継いでリンクを維持',
@@ -3564,6 +3566,8 @@ const fileViewerTranslations = { ja: {
         audioCantPlayTitle: "この音声はここでは再生できません",
         mediaCantPlayBody: "このデバイスはこのエンコード形式に対応していません。ダウンロードするか、既定のアプリで開いてください。",
         openInDefaultApp: "既定のアプリで開く",
+        openInNewTab: "新しいタブで開く",
+        openInNewTabBlocked: "ブラウザーが新しいタブをブロックしました。Happier のポップアップを許可して、もう一度お試しください。",
         play: "再生",
         pause: "一時停止",
         playbackPosition: "再生位置",
@@ -3581,6 +3585,7 @@ const fileViewerTranslations = { ja: {
     kind: {
         code: "テキストファイル",
         markdown: "Markdown",
+        html: "HTML ページ",
         image: "画像",
         svg: "SVG 画像",
         pdf: "PDF 書類",
@@ -12315,6 +12320,10 @@ const ja: typeof en = {
     unreadableTitle: ({ home }: { home: string }) => `${home} のマシンを読み込めませんでした`,
     indexViewTitle: 'すべてのマシンの表示',
     indexViewDescription: 'すべてのマシンをリスト、またはマシンごとのカードで表示します。このデバイスに保存されます。',
+    emptyTitle: 'マシンはまだありません',
+    connectFirst: '先にマシンを接続してください',
+    thisComputerNotWorking: 'バックグラウンドサービスが動作していません',
+    thisComputerNotConnected: 'まだ接続されていません',
 };
 
 const settingsMachinesTranslations = { ja };

@@ -219,6 +219,19 @@ describe('artifactBrowserModel', () => {
         expect(readArtifactPreview(artifact('pdf', { title: 'Report.pdf', excerpt: 'stale text' }, { body: reference })))
             .toEqual({ kind: 'file', name: 'Report.pdf', mime: 'application/pdf', sizeBytes: 42 });
     });
+    it('classifies binary references with the existing file viewer kinds', () => {
+        const pdf = artifact('pdf-kind', { title: 'Report.pdf', mime: 'application/pdf' }, { body: {
+            blobId: '00000000-0000-4000-8000-000000000001', mime: 'application/pdf', sizeBytes: 42, sha256: 'a'.repeat(64),
+        } });
+        const image = artifact('image-kind', { title: 'Hero.png', mime: 'image/png' }, { body: {
+            blobId: '00000000-0000-4000-8000-000000000002', mime: 'image/png', sizeBytes: 42, sha256: 'b'.repeat(64),
+        } });
+        const file = artifact('file-kind', { title: 'Archive.zip', mime: 'application/zip' }, { body: {
+            blobId: '00000000-0000-4000-8000-000000000003', mime: 'application/zip', sizeBytes: 42, sha256: 'c'.repeat(64),
+        } });
+        expect([pdf, image, file].map(classifyArtifactBrowserKind)).toEqual(['pdf', 'image', 'file']);
+        expect([...countArtifactBrowserKinds([pdf, image, file])]).toEqual([['pdf', 1], ['image', 1], ['file', 1]]);
+    });
     it('lists ordinary kinds, opens each in its own owner, and leaves approvals and drafts out', () => {
         const note = artifact('n1', { title: 'Root cause' });
         const prompt = artifact('p1', { kind: 'prompt_doc.v2', title: 'Code review' });
@@ -291,7 +304,7 @@ describe('artifactBrowserModel', () => {
             savedBy: { kind: 'person', accountId: 'owner' }, source: { sessionId: 's', machineId: 'm', path: 'src/relayHandshake.ts', sha: 'a'.repeat(64) },
         } });
         expect(readArtifactPreview(code)).toEqual({ kind: 'code', text: 'export const x = 1;', language: 'TypeScript' });
-        expect(readArtifactPreview(artifact('b', { title: 'Notes' }, { body: '# Notes' }))).toEqual({ kind: 'markdown', text: '# Notes' });
+        expect(readArtifactPreview(artifact('b', { title: 'Notes' }, { body: '# Notes\nFirst lines' }))).toEqual({ kind: 'markdown', text: 'First lines' });
         expect(readArtifactPreview(artifact('c', { title: 'Notes', excerpt: 'First lines' }))).toEqual({ kind: 'markdown', text: 'First lines' });
         expect(readArtifactPreview(artifact('d', { title: 'hero.png', mime: 'image/png' }))).toEqual({ kind: 'image', name: 'hero.png' });
         expect(readArtifactPreview(artifact('e', { title: 'Empty' }))).toEqual({ kind: 'none' });
@@ -301,6 +314,18 @@ describe('artifactBrowserModel', () => {
             .toEqual({ kind: 'markdown', text: 'a'.repeat(599) });
         expect(readArtifactPreview(artifact('g', { title: 'Unicode', excerpt: atBoundary })))
             .toEqual({ kind: 'markdown', text: 'a'.repeat(599) });
+    });
+
+    it('never repeats the card title as the preview heading: a document opening on its own title previews what follows (owner 11-11 Artifacts 03)', () => {
+        expect(readArtifactPreview(artifact('guide', { title: 'Happier guide' }, { body: '\n#  happier Guide \nYou are Happier.\n## Work with the person' })))
+            .toEqual({ kind: 'markdown', text: 'You are Happier.\n## Work with the person' });
+        const prompt = deriveArtifactExcerptV1(JSON.stringify({ v: 1, markdown: '# Happier guide\nYou are Happier.', createdAtMs: 1, updatedAtMs: 2 }));
+        expect(readArtifactPreview(artifact('prompt', { kind: 'prompt_doc.v2', title: 'Happier guide', excerpt: prompt })))
+            .toEqual({ kind: 'markdown', text: 'You are Happier.' });
+        // Another heading, or the title said in prose, is the document's own content and stays.
+        expect(readArtifactPreview(artifact('other', { title: 'Notes' }, { body: '# Release notes\nNotes for 0.3' })))
+            .toEqual({ kind: 'markdown', text: '# Release notes\nNotes for 0.3' });
+        expect(readArtifactPreview(artifact('only-title', { title: 'Notes' }, { body: '# Notes' }))).toEqual({ kind: 'none' });
     });
 
     it('never prints a stored record as prose: an unknown kind previews nothing, a document of JSON previews as code', () => {
@@ -382,8 +407,9 @@ describe('artifactBrowserModel', () => {
             { path: 'scripts/check.sh', contentBase64: btoa('echo ok'), contentKind: 'utf8' },
             { path: 'SKILL.md', contentBase64: btoa(skill), contentKind: 'utf8' },
         ] });
+        // The card's title already names the skill: its preview starts after a heading that repeats it.
         expect(readArtifactPreview(artifact('skill', { kind: 'prompt_bundle.v2', title: 'API style guide', bundleSchemaId: 'skills' }, { body: bundle })))
-            .toEqual({ kind: 'markdown', text: skill });
+            .toEqual({ kind: 'markdown', text: 'Prefer plain nouns.' });
         expect(readArtifactPreview(artifact('skill', { kind: 'prompt_bundle.v2', title: 'API style guide', excerpt: bundle.slice(0, 40) })))
             .toEqual({ kind: 'none' });
     });

@@ -640,9 +640,10 @@ export const ArtifactFolderTree = React.forwardRef(function ArtifactFolderTree(
     [nodesByKey],
   );
 
+  // With no folder to disclose the tree is a list: its rows start on their marks (the shared Tree drops the column).
+  const flat = !items.some((item) => item.kind === 'branch');
   const unavailable =
     scope !== null && !canWrite && (catalog.value !== null || catalog.status !== 'loading');
-  const noFolders = canWrite && (folders?.folders.length ?? 0) === 0;
   const folderPending = catalog.value === null && catalog.status === 'loading';
   const retry = React.useCallback(() => {
     if (settingsScope)
@@ -665,9 +666,9 @@ export const ArtifactFolderTree = React.forwardRef(function ArtifactFolderTree(
           />
         </View>
       ) : null}
-      <View ref={hostRef} style={styles.sheet} testID={`${props.testID}:sheet`}>
+      <View ref={hostRef} style={[styles.sheet, wide ? null : styles.sheetWithoutColumns]} testID={`${props.testID}:sheet`}>
         {wide ? (
-          <View style={styles.columns} aria-hidden>
+          <View style={[styles.columns, flat ? styles.columnsFlat : null]} aria-hidden>
             <Text style={[styles.columnTitle, styles.columnName]}>
               {t('artifacts.browser.folders.columnName')}
             </Text>
@@ -714,20 +715,6 @@ export const ArtifactFolderTree = React.forwardRef(function ArtifactFolderTree(
         />}
         <RootDropZone nodeRef={rootZoneNode} />
       </View>
-      {noFolders && !currentEdit ? (
-        <View style={styles.invite} testID={`${props.testID}:invite`}>
-          <Text style={styles.inviteText}>
-            {t('artifacts.browser.folders.emptyInvite')}
-          </Text>
-          <RoundButton
-            testID={`${props.testID}:invite:new`}
-            size="small"
-            display="secondary"
-            title={t('artifacts.browser.folders.newFolder')}
-            onPress={() => createFolder(null)}
-          />
-        </View>
-      ) : null}
     </TreeContext.Provider>
   );
 });
@@ -1413,15 +1400,24 @@ const stylesheet = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface.base,
     paddingBottom: theme.space.s6,
   },
+  // Without the column titles above them, the rows keep the same air at the sheet's top as at its foot.
+  sheetWithoutColumns: {
+    paddingTop: theme.space.s6,
+  },
   columns: {
     flexDirection: 'row',
     alignItems: 'center',
     height: 32,
-    paddingLeft: 62,
+    // Over the names: the page row's inset (16), the disclosure column and its gap (26), the mark and its gap (26).
+    paddingLeft: 68,
     paddingRight: theme.space.s10,
     marginBottom: theme.space.s6,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.border.default,
+  },
+  // A flat tree's names stand where its disclosure column (20) and that column's gap (6) were.
+  columnsFlat: {
+    paddingLeft: 42,
   },
   columnTitle: {
     ...Typography.default(),
@@ -1497,20 +1493,5 @@ const stylesheet = StyleSheet.create((theme) => ({
     ...Typography.default(),
     ...happierPageTextMetrics('meta'),
     color: theme.colors.text.tertiary,
-  },
-  invite: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: theme.space.s12,
-    marginTop: 14,
-    paddingHorizontal: theme.space.s4,
-  },
-  inviteText: {
-    flex: 1,
-    minWidth: 200,
-    ...Typography.default(),
-    ...happierPageTextMetrics('meta'),
-    color: theme.colors.text.secondary,
   },
 }));
