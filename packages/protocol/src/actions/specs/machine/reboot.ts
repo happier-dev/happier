@@ -30,6 +30,7 @@ function createMachineRebootActionSpecs() {
   return [{
   id: 'machines.reboot', title: 'Reboot Machine',
   description: 'Reboot this exact installation only after fresh maintenance admission and administrator authorization.',
+  originalExecution: { daemonIngressSurfaces: ['ui'] },
   approval: { result: 'required' }, approvalScope: 'machine', approvalPolicy: { uiConfirmation: 'policy' },
   safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'machine', placements: [],
   operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' } },
