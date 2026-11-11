@@ -4,6 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { assertConnectedAccountOperationTransportV1 } from '@happier-dev/protocol';
+import { createConnectedAccountDaemonRuntime, createUnavailableConnectedAccountDaemonPersistence } from '@/daemon/connectedServices/ConnectedAccountDaemonRuntime';
+import { createPluginReloadController } from './reload/controller';
+import { createCredentialedConnectedAccountAuthenticationHost } from './connectedAccounts/authenticationHost';
 
 import type {
     ConnectedAccountBindingSummary as PluginConnectedAccountBindingSummary,
@@ -158,6 +163,58 @@ function createNetworkFixture(respond: (request: ObservedHttpRequest) => Respons
 }
 
 describe('executable plugin runtime Connected Accounts integration', () => {
+    it.each([
+        ['happier.agent.muse', 'muse-account', true],
+        ['happier.agent.codex', 'openai-codex', true],
+        ['happier.agent.claude', 'claude-subscription', true],
+        ['happier.agent.kimi', 'kimi-code', true],
+        ['happier.agent.antigravity', 'antigravity-account', true],
+        ['happier.agent.grok', 'xai', true],
+        [GITHUB_PLUGIN_ID, 'github-account', false],
+    ] as const)('admits %s quota refresh from its registered capability through the authentication host', async (pluginId, localId, supportsQuota) => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-muse-quota-admission-'));
+        temporaryRoots.push(happyHomeDir);
+        const registry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir, resolveDevelopmentSourceAuthority,
+            pluginIds: [pluginId] });
+        const reloadController = createPluginReloadController({ resolveRuntimeRegistry: async () => registry });
+        const daemon = createConnectedAccountDaemonRuntime({ reloadController,
+            persistence: createUnavailableConnectedAccountDaemonPersistence(),
+            resolvePeerOperationTransport: () => ({ kind: 'v4' }),
+            configurationConsequences: { assertAvailable: async () => {}, apply: async () => {} },
+            revocation: {} as never,
+        });
+        const service = { pluginId, localId };
+        // Home HTTP is the boundary; registration and both admission hosts stay real.
+        const home = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { service, accounts: [] } });
+        try {
+            const authentication = createCredentialedConnectedAccountAuthenticationHost({
+                credentials: { token: 'quota-admission-fixture', encryption: null }, serverHttpBaseUrl: 'https://quota-admission.invalid',
+                contributions: registry.connectedAccountContributions!, invoker: registry.connectedAccountRuntimeInvoker!,
+            });
+            const result = await authentication.controlCommand('selected-machine',
+                { operation: 'describeService', service, requiredOperation: 'quota_refresh' },
+                { native: async (_machineId, command) => daemon.control(command) });
+            if (supportsQuota) {
+                expect(result).toMatchObject({ status: 'described', operationTransport: { kind: 'v4' } });
+                expect(() => assertConnectedAccountOperationTransportV1(result, service, { kind: 'v4' })).not.toThrow();
+            } else {
+                expect(result).toEqual({ status: 'unavailable', code: 'connected_account_v4_operation_unsupported' });
+            }
+            const deletion = await authentication.controlCommand('selected-machine',
+                { operation: 'describeService', service, requiredOperation: 'credential_delete' },
+                { native: async (_machineId, command) => daemon.control(command) });
+            expect(() => assertConnectedAccountOperationTransportV1(deletion, service, { kind: 'v4' })).not.toThrow();
+            await expect(authentication.controlCommand(undefined,
+                { operation: 'describeService', service, requiredOperation: 'quota_refresh' },
+                { native: async () => { throw new Error('No Machine was selected'); } }))
+                .resolves.toEqual({ status: 'unavailable', code: 'connected_account_peer_operation_admission_unavailable' });
+        } finally {
+            home.mockRestore();
+            daemon.dispose();
+            registry.retireConsumers();
+            await registry.dispose();
+        }
+    });
     it('admits the real native CI authority port and carries its owner retirement without invoking a native read', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-ci-authority-port-'));
         temporaryRoots.push(happyHomeDir);
