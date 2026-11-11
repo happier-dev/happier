@@ -304,6 +304,22 @@ describe('normalizeSessionCreateSpawnRequest', () => {
     }, createDeps())).rejects.toThrow(/--backend does not identify an executable Agent/);
   });
 
+  it('preserves the catalog refusal when the selected Agent is unavailable', async () => {
+    await expect(normalizeSessionCreateSpawnRequest({
+      directory: '/repo/project',
+      backendTargetKey: 'backend:pi',
+    }, createDeps({
+      readAgentDefinitions: () => ({
+        definitions: [],
+        unavailableAgentPluginsByBackendId: {
+          pi: { pluginId: 'happier.agent.pi', code: 'plugin_account_execution_unavailable' },
+        },
+      }),
+    }))).rejects.toMatchObject({
+      details: { reason: 'plugin_account_execution_unavailable' },
+    });
+  });
+
   it('normalizes explicit environment variables into the strict V2 Action input', async () => {
     await expect(normalizeSessionCreateSpawnRequest({
       directory: '/repo/project',

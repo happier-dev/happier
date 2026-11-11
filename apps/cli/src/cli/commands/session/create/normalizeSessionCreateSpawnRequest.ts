@@ -21,6 +21,7 @@ import { createCliMcpServerStore } from '@/settings/mcp/mcpServerStore';
 import { readSkillLibraryItems } from '@/prompts/skills/library/readSkillLibraryItems';
 import { readAccountPluginSkills } from '@/prompts/skills/library/readAccountPluginSkills';
 import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
+import type { UnavailableAgentPlugin } from '@/plugins/projection/registry/types';
 
 import type { SessionCreateSpawnRequest } from './parseSessionCreateSpawnOptions';
 
@@ -28,6 +29,17 @@ type SpawnAgentDefinition = Readonly<{
   id: string;
   identity?: SessionSpawnNewInputV2['agentTarget']['identity'];
 }>;
+
+type SpawnAgentCatalog = Readonly<{
+  definitions: Iterable<SpawnAgentDefinition>;
+  unavailableAgentPluginsByBackendId?: Readonly<Record<string, Pick<UnavailableAgentPlugin, 'pluginId' | 'code'>>>;
+}>;
+
+type SpawnAgentDefinitions = Iterable<SpawnAgentDefinition> | SpawnAgentCatalog;
+
+function isSpawnAgentCatalog(value: SpawnAgentDefinitions): value is SpawnAgentCatalog {
+  return typeof value === 'object' && value !== null && 'definitions' in value;
+}
 
 type SessionCreateMachineSettings = Pick<
   Settings,
@@ -38,7 +50,7 @@ export type SessionCreateSpawnRequestNormalizerDeps = Readonly<{
   activeServerId: string;
   defaultAgentId: string;
   readSettings: () => Promise<SessionCreateMachineSettings>;
-  readAgentDefinitions: () => Iterable<SpawnAgentDefinition> | Promise<Iterable<SpawnAgentDefinition>>;
+  readAgentDefinitions: () => SpawnAgentDefinitions | Promise<SpawnAgentDefinitions>;
   now: () => number;
   readCapabilityCatalogs?: (kinds: Readonly<{ mcp: boolean; skills: boolean }>) => Promise<Readonly<{
     mcp: readonly Readonly<{ id: string; name: string }>[];
@@ -56,9 +68,13 @@ function nonEmptyString(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+type SessionCreateArgumentDetails =
+  | Readonly<{ field: 'serverId'; allowedValues: readonly string[] }>
+  | Readonly<{ reason: UnavailableAgentPlugin['code'] }>;
+
 function invalidSessionCreateArgument(
   message: string,
-  details?: Readonly<{ field: 'serverId'; allowedValues: readonly string[] }>,
+  details?: SessionCreateArgumentDetails,
 ): never {
   throw Object.assign(new Error(`Invalid session create argument: ${message}`), details ? { details } : {});
 }
@@ -70,7 +86,11 @@ function defaultNormalizerDeps(): SessionCreateSpawnRequestNormalizerDeps {
     readSettings,
     readAgentDefinitions: async () => {
       const { ensureMergedAgentCommandRegistryLoaded } = await import('@/cli/commandRegistry');
-      return (await ensureMergedAgentCommandRegistryLoaded()).agentDefinitionsById.values();
+      const registry = await ensureMergedAgentCommandRegistryLoaded();
+      return {
+        definitions: registry.agentDefinitionsById.values(),
+        unavailableAgentPluginsByBackendId: registry.unavailableAgentPluginsByBackendId,
+      };
     },
     now: () => Date.now(),
     readCapabilityCatalogs: async (kinds) => {
@@ -182,12 +202,31 @@ async function resolveAgentTarget(
   if (!requestedTarget && !selectedAgentId) {
     invalidSessionCreateArgument('the default Agent is unavailable.');
   }
-  const definitions = [...await deps.readAgentDefinitions()];
+  const catalog = await deps.readAgentDefinitions();
+  const isCatalog = isSpawnAgentCatalog(catalog);
+  const definitions = [...(isCatalog ? catalog.definitions : catalog)];
   const resolvedAgentId = requestedTarget?.kind === 'agent'
     ? readAgentRoutingIdForContributionIdentity(indexAgentRoutingIdsByContributionIdentity(definitions), requestedTarget.identity)
     : selectedAgentId;
   const agent = definitions.find((candidate) => candidate.id === resolvedAgentId);
   if (!agent?.identity) {
+    const unavailable = isCatalog
+      ? [
+          resolvedAgentId,
+          requestedTarget?.kind === 'backend' ? requestedTarget.backendId : null,
+          requestedTarget?.kind === 'agent' ? requestedTarget.identity.localId : null,
+        ].map((agentId) => agentId ? catalog.unavailableAgentPluginsByBackendId?.[agentId] : undefined)
+        .find((entry) => entry !== undefined
+          && (requestedTarget?.kind !== 'agent' || entry.pluginId === requestedTarget.identity.pluginId))
+      : undefined;
+    if (unavailable) {
+      invalidSessionCreateArgument(
+        unavailable.code === 'plugin_disabled'
+          ? 'This Agent plugin is disabled. Re-enable it in Plugins before starting a Session.'
+          : 'Account plugin execution is unavailable.',
+        { reason: unavailable.code },
+      );
+    }
     invalidSessionCreateArgument('--backend does not identify an executable Agent.');
   }
   const agentTarget = requestedTarget?.kind === 'agent'
