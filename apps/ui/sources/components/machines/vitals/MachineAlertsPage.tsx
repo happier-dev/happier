@@ -23,6 +23,7 @@ import { useMachineDaemonReadIdentities } from '@/sync/domains/machines/useMachi
 import { useMachineOfflineAlert } from '@/sync/domains/machines/resources/useMachineOfflineAlert';
 import { useMachineResourcesPolicy } from '@/sync/domains/machines/resources/useMachineResourcesPolicy';
 import { t } from '@/text';
+import { openFollowNotificationSettings } from '@/components/sessions/follow/openFollowNotificationSettings';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { readMachinePublishedResources } from '@/components/machines/summary/machineResourceSentences';
@@ -254,7 +255,7 @@ export function MachineAlertsPage(
           title={t('machineVitals.alerts.where.title')}
           subtitle={t('machineVitals.alerts.where.subtitle')}
           showChevron
-          onPress={() => router.push('/settings/notifications' as never)}
+          onPress={() => void openFollowNotificationSettings({ serverId: props.serverId, navigate: () => router.push('/settings/notifications' as never) })}
         />
       </ItemGroup>
     </>
@@ -573,8 +574,6 @@ function readLargestRetainedVolumeBytes(key: MachineResourceKey): number | null 
 export function MachineOfflineAlertRow(props: Readonly<{ serverId: string; machine: Pick<Machine, 'id' | 'isShared'>; machineName: string }>) {
   const { theme } = useUnistyles();
   const offline = useMachineOfflineAlert({ serverId: props.serverId, machineId: props.machine.id });
-  const [pending, setPending] = React.useState<boolean | null>(null);
-  const [failed, setFailed] = React.useState(false);
   // Offline alerts reach the machine's custodian only (plan 20 §4.7, D1): a recipient's choice could not enroll
   // the owner's notifications, so the row says who gets them instead of offering a switch that would not deliver.
   // Only a machine projected as shared with this viewer (`isShared === true`) is someone else's; unknown is ours.
@@ -592,25 +591,18 @@ export function MachineOfflineAlertRow(props: Readonly<{ serverId: string; machi
     <Item testID="machine-alerts-offline" title={t('machineVitals.alerts.offline.title')}
       subtitle={t('machineVitals.alerts.row.unreadable')} detail={t('common.unavailable')} mode="info" />
   );
-  const enabled = pending ?? offline.enabled === true;
   const toggle = (next: boolean) => {
-    setPending(next);
-    setFailed(false);
-    fireAndForget((async () => {
-      const result = await offline.set(next);
-      setPending(null);
-      if (!result.saved) setFailed(true);
-    })(), { tag: 'MachineAlertsPage.offline' });
+    fireAndForget(offline.set(next), { tag: 'MachineAlertsPage.offline' });
   };
   return (
     <Item
       testID="machine-alerts-offline"
       title={t('machineVitals.alerts.offline.title')}
-      subtitle={failed ? t('machineVitals.alerts.saveFailed') : t('machineVitals.alerts.offline.rule', { machine: props.machineName })}
-      subtitleStyle={failed ? { color: theme.colors.state.danger.textForeground } : undefined}
+      subtitle={offline.failed ? t('machineVitals.alerts.saveFailed') : t('machineVitals.alerts.offline.rule', { machine: props.machineName })}
+      subtitleStyle={offline.failed ? { color: theme.colors.state.danger.textForeground } : undefined}
       mode="info"
       rightElement={(
-        <Switch testID="machine-alerts-offline-switch" value={enabled} disabled={pending !== null}
+        <Switch testID="machine-alerts-offline-switch" value={offline.enabled === true}
           accessibilityLabel={t('machineVitals.alerts.offline.title')} onValueChange={toggle} />
       )}
     />
