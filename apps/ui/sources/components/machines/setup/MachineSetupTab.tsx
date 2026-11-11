@@ -85,6 +85,7 @@ const selectCanManage = canManageMachine;
 export function MachineSetupTab(props: MachinePageTabBodyProps) {
   const params = props.params as SetupParams;
   const setParams = props.setParams;
+  const canManage = useServerScopedMachine(props.serverId, props.machineId, selectCanManage);
   if (params.page === 'tools') {
     return (
       <View testID="machine-setup-tools">
@@ -100,6 +101,7 @@ export function MachineSetupTab(props: MachinePageTabBodyProps) {
           serverId={props.serverId}
           machineId={props.machineId}
           machineSentenceName={props.machineName}
+          canManage={canManage}
         />
       </View>
     );

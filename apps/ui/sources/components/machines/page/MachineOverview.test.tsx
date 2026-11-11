@@ -38,9 +38,12 @@ let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> |
 afterEach(async () => { standardCleanup(); machineResourceStore.reset(); boundary.rpc.mockReset(); boundary.rpc.mockImplementation(() => new Promise(() => {})); clearMachineRequestReachabilityForTest(); await accountConnection?.dispose(); accountConnection = null; });
 
 it('retains known presence across socket withdrawal and changes daemon read admission only for its exact Account observations', async () => {
-    const serverId = await home.addHome({ name: 'Presence Home', serverUrl: 'https://resource-presence.test', accountId: 'owner' });
+    const homeId = await home.addHome({ name: 'Presence Home', serverUrl: 'https://resource-presence.test', accountId: 'owner' });
+    accountConnection = await restoreServerAccountForTest({ serverUrl: 'https://resource-presence.test', accountId: 'owner', request: home.request });
+    const serverId = accountConnection.serverId;
     const machine = createMachineFixture({ id: 'presence-machine', active: true, activeAt: Date.now(), storageMode: 'plain' });
     storage.setState({ machines: {}, machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    recordMachineRequestSucceeded({ serverId, accountId: 'owner', machineId: machine.id });
     const hook = await renderHook(() => ({
         read: useMachineDaemonReadTarget({ serverId, machineId: machine.id }),
         fleet: useMachineDaemonReadTargets({ serverId, machineIds: [machine.id] }),
@@ -85,16 +88,27 @@ it('retains known presence across socket withdrawal and changes daemon read admi
     expect(daemon.findByTestId('machine-detail-stop-daemon-button')?.props.disabled).toBe(true);
 });
 
+it('hides daemon Stop from a Use viewer while retaining status facts', async () => {
+    const machine = createMachineFixture({ id: 'viewer-machine', access: {
+        custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready',
+    } });
+    const daemon = await renderScreen(<MachineDaemonSection serverId="viewer-home" machine={machine} />);
+    expect(daemon.findByProps({ title: t('machine.status') })).not.toBeNull();
+    expect(daemon.findByTestId('machine-detail-stop-daemon')).toBeNull();
+});
+
 it('shares the Account-qualified Overview sample and retries the same retained read from the tab bar', async () => {
-    const serverId = await home.addHome({ name: 'Freshness Home', serverUrl: 'https://overview-freshness.test', accountId: 'owner' });
+    const homeId = await home.addHome({ name: 'Freshness Home', serverUrl: 'https://overview-freshness.test', accountId: 'owner' });
     // The real resource Action needs the Home's authenticated runtime authority as well as stored credentials.
-    home.answer(serverId, '/v1/machines', { body: [], respondAfter: new Promise<void>(() => {}) });
+    home.answer(homeId, '/v1/machines', { body: [], respondAfter: new Promise<void>(() => {}) });
     accountConnection = await restoreServerAccountForTest({ serverUrl: 'https://overview-freshness.test', accountId: 'owner', request: home.request });
+    const serverId = accountConnection.serverId;
     const machine = createMachineFixture({ id: 'freshness-machine', active: true, activeAt: Date.now(), storageMode: 'plain' });
     storage.setState({ machines: {}, machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
     const authority = await renderHook(() => ({ binding: useServerCredentialAccountScopeBinding(serverId).binding,
         managedEnrolled: useManagedEnrolledMachine({ enrolledMachineId: machine.id, serverId }) }));
     await vi.waitFor(() => expect(authority.getCurrent().binding?.isCurrent()).toBe(true));
+    recordMachineRequestSucceeded({ serverId, accountId: 'owner', machineId: machine.id });
     const key = { serverId, expectedAccountId: 'owner', machineId: machine.id, view: 'overview' as const };
     let sampledAt = Date.now() - 60_000;
     let snapshot = { state: 'reporting', sample: { v: 1, sampledAt, intervalMs: 15_000,
@@ -134,12 +148,15 @@ it('shares the Account-qualified Overview sample and retries the same retained r
 });
 
 it('uses the page Home credential scope rather than treating a reachable Machine as unavailable', async () => {
-    const serverId = await home.addHome({ name: 'Overview Home', serverUrl: 'https://overview-scope.test', accountId: 'owner' });
+    const homeId = await home.addHome({ name: 'Overview Home', serverUrl: 'https://overview-scope.test', accountId: 'owner' });
+    accountConnection = await restoreServerAccountForTest({ serverUrl: 'https://overview-scope.test', accountId: 'owner', request: home.request });
+    const serverId = accountConnection.serverId;
     const machine = createMachineFixture({ id: 'overview-machine', active: true, activeAt: Date.now(), storageMode: 'plain' });
     storage.setState({ machines: {}, machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
     const authority = await renderHook(() => ({ binding: useServerCredentialAccountScopeBinding(serverId).binding,
         managedEnrolled: useManagedEnrolledMachine({ enrolledMachineId: machine.id, serverId }) }));
     await vi.waitFor(() => expect(authority.getCurrent().binding?.isCurrent()).toBe(true));
+    recordMachineRequestSucceeded({ serverId, accountId: 'owner', machineId: machine.id });
     const state = {
         target: { machineId: machine.id, requestedServerId: serverId, serverId, activeServerId: serverId, machine,
             machineName: 'Overview Machine', machineSentenceName: 'Overview Machine', isServerSwitching: false, isHydratingMachine: false, switchReady: true },

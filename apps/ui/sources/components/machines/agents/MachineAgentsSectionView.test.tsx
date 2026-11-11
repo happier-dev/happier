@@ -35,6 +35,15 @@ describe('machine agent inventory recovery', () => {
         expect(changed).toHaveBeenCalledWith(secondKey, false);
     });
 
+    it('does not expose mutating row actions to a Use viewer', async () => {
+        const screen = await renderSettingsView(<MachineAgentsSectionView testID="machine-agents"
+            agents={[{ ...definitions[0]!, state: 'notInstalled' as const }]} status="ready" lastCheckedAt={1} machineName="Workstation"
+            renderMark={() => null} sessionFor={() => null} renderForm={() => null}
+            expandedAgentIds={new Set()} onExpandedChange={() => {}} onAction={() => {}} onCheckAgain={() => {}}
+            canManage={false} />);
+        expect(screen.findByTestId('machine-agents.custom-acp:first.action.install')).toBeNull();
+    });
+
     it('keeps the chosen first-agent definition after the inventory order changes', async () => {
         const props = { testID: 'first-agent', machineName: 'Workstation', phone: false, agents: definitions,
             renderMark: () => null, renderForm: (agent: typeof definitions[number]) => <Text testID="chosen-definition">{agent.definitionId}</Text>,

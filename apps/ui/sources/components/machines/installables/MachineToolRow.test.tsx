@@ -44,6 +44,7 @@ async function renderRow(props: Partial<MachineToolRowProps>) {
             entry={entry}
             machineId="machine-1"
             serverId="server-1"
+            canManage
             status={null}
             capabilitiesStatus="loaded"
             policy={{ autoInstallWhenNeeded: false, autoUpdateMode: 'notify' }}
@@ -91,6 +92,19 @@ describe('MachineToolRow', () => {
     it('offers no install while the machine cannot answer', async () => {
         const { screen } = await renderRow({ status: dep({ installed: false, installedVersion: null }), capabilitiesStatus: 'idle' });
         expect(screen.findRowByTitle('common.install')).toBeNull();
+        await screen.unmount();
+    });
+
+    it('hides install and policy controls when the viewer cannot manage the machine', async () => {
+        const { screen, onPolicyChange } = await renderRow({
+            status: dep({ installed: false, installedVersion: null }),
+            canManage: false,
+        });
+        expect(screen.findRowByTitle('common.install')).toBeNull();
+        await act(async () => { screen.pressRow('machine-tool-tool'); });
+        await vi.waitFor(() => expect(screen.findRowByTitle('machineDetailPage.toolsPage.autoInstallTitle')).not.toBeNull());
+        await act(async () => { screen.pressRowByTitle('machineDetailPage.toolsPage.autoInstallTitle'); });
+        expect(onPolicyChange).not.toHaveBeenCalled();
         await screen.unmount();
     });
 });

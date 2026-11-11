@@ -4,6 +4,8 @@ import { buildMachineAgentInventoryKey } from '@happier-dev/protocol/capabilitie
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import { useMachineAgents } from '@/agents/machineAgents/useMachineAgents';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
+import { useServerScopedMachine } from '@/sync/store/hooks';
 
 import { AgentSetupForm } from './AgentSetupForm';
 import { MachineAgentMark } from './MachineAgentMark';
@@ -24,6 +26,7 @@ export const MachineAgentsSection = React.memo(function MachineAgentsSection(pro
     onStartSession?: (agent: MachineAgent) => void;
 }>) {
     const inventory = useMachineAgents({ serverId: props.serverId, machineId: props.machineId });
+    const canManage = useServerScopedMachine(props.serverId, props.machineId, canManageMachine);
     const [expanded, setExpanded] = React.useState<ReadonlySet<string>>(() => new Set());
     const setAgentExpanded = React.useCallback((agentId: string, open: boolean) => {
         setExpanded((current) => {
@@ -62,6 +65,7 @@ export const MachineAgentsSection = React.memo(function MachineAgentsSection(pro
             expandedAgentIds={expanded}
             onExpandedChange={setAgentExpanded}
             onAction={onAction}
+            canManage={canManage}
             onCheckAgain={() => { fireAndForget(refresh(), { tag: 'MachineAgentsSection.refresh' }); }}
         />
     );

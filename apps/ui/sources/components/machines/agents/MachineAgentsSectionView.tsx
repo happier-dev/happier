@@ -30,6 +30,7 @@ export type MachineAgentsSectionViewProps = Readonly<{
     onExpandedChange: (agentId: string, expanded: boolean) => void;
     onAction: (agent: MachineAgent, action: MachineAgentRowAction) => void;
     onCheckAgain: () => void;
+    canManage?: boolean;
     /** A page whose own header already says "Agents" hosts the section without repeating its title. Default: titled. */
     titled?: boolean;
     testID: string;
@@ -62,6 +63,7 @@ export const MachineAgentsSectionView = React.memo(function MachineAgentsSection
             expanded={props.expandedAgentIds.has(buildMachineAgentInventoryKey(agent))}
             onExpandedChange={(expanded) => props.onExpandedChange(buildMachineAgentInventoryKey(agent), expanded)}
             showDivider={index < list.length - 1}
+            canManage={props.canManage}
         />
     );
     // "No agent here" is a claim about a finished check. Descriptor-only rows (still checking, or the machine could not

@@ -8,6 +8,8 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
 import { useMachine } from '@/sync/domains/state/storage';
 import { useSettingsSelector } from '@/sync/store/hooks';
+import { useServerScopedMachine } from '@/sync/store/hooks';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
 import { getInstallablesRegistryEntries, INSTALLABLES_PROJECTION_SECTIONS, type InstallableAutoUpdateMode } from '@/capabilities/installablesRegistry';
@@ -32,8 +34,10 @@ function buildAutoUpdateModeOptions(): ReadonlyArray<SegmentedChoiceOption<Insta
  * version, state and next action; each row opens in place into its auto-install and auto-update policy.
  * Agents and their parts install from the machine's Agents page (lab agent-setup M1).
  */
-export function MachineInstallablesSection(props: Readonly<{ machineId: string; serverId: string; machineSentenceName: string }>) {
+export function MachineInstallablesSection(props: Readonly<{ machineId: string; serverId: string; machineSentenceName: string; canManage?: boolean }>) {
     const { machineId, serverId, machineSentenceName } = props;
+    const managedByOwner = useServerScopedMachine(serverId, machineId, canManageMachine);
+    const canManage = props.canManage ?? managedByOwner;
     const machine = useMachine(machineId);
     const presence = useMachinePresenceSummary(serverId, machineId);
     const isOnline = !!machine && presence.reachability === 'reachable';
@@ -114,14 +118,14 @@ export function MachineInstallablesSection(props: Readonly<{ machineId: string; 
     }, [capabilitiesSnapshot, installables, isOnline, machineId, refreshDetectedCapabilities]);
 
     const setPolicyPatch = React.useCallback((installableKey: string, patch: { autoInstallWhenNeeded?: boolean; autoUpdateMode?: InstallableAutoUpdateMode }) => {
-        if (!machineId) return;
+        if (!machineId || !canManage) return;
         void policyAction.execute('settings.set', { anchor: 'machines.installables.policy', key: machineId,
             value: { installableKey, patch } }).then(result => {
             if (!result.ok) Modal.alert(t('common.error'), result.error);
         }).catch(error => {
             Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.requestFailed'));
         });
-    }, [machineId, policyAction.execute]);
+    }, [canManage, machineId, policyAction.execute]);
 
     // Labels come from `t()`, so the options are rebuilt when the language changes.
     const preferredLanguage = getPreferredLanguage();
@@ -130,10 +134,11 @@ export function MachineInstallablesSection(props: Readonly<{ machineId: string; 
     const visible = installables.filter((d) => d.enabled);
     const capabilitiesStatus = isOnline ? detectedCapabilities.status : 'idle';
     const refreshStatus = React.useCallback(() => {
+        if (!canManage) return;
         void policyAction.execute('machines.capabilities.detect', { serverId, machineId }).then(result => {
             if (!result.ok) Modal.alert(t('common.error'), result.error);
         }).catch(error => Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.requestFailed')));
-    }, [machineId, policyAction.execute, serverId]);
+    }, [canManage, machineId, policyAction.execute, serverId]);
     const checking = isOnline && detectedCapabilities.status === 'loading';
     // Like the machine's Agents: what is here, then what can be added. Only a finished answer makes a tool one
     // "to install"; a tool still being checked stays with the machine's tools and says so.
@@ -147,12 +152,13 @@ export function MachineInstallablesSection(props: Readonly<{ machineId: string; 
             machineId={machineId}
             serverId={serverId}
             status={d.status}
+            canManage={canManage}
             capabilitiesStatus={capabilitiesStatus}
             policy={d.policy}
             autoUpdateModeOptions={autoUpdateModeOptions}
             onPolicyChange={setPolicyPatch}
             refreshStatus={refreshStatus}
-            refreshLatestVersion={isOnline
+            refreshLatestVersion={canManage && isOnline
                 ? () => refreshDetectedCapabilities({ request: d.entry.buildLatestVersionDetectRequest(), timeoutMs: 12_000 })
                 : undefined}
             showDivider={index < list.length - 1}
@@ -162,7 +168,7 @@ export function MachineInstallablesSection(props: Readonly<{ machineId: string; 
         <>
             <ItemGroup
                 description={machine ? t('machineDetailPage.toolsPage.description', { machine: machineSentenceName }) : undefined}
-                action={isOnline ? (
+                action={isOnline && canManage ? (
                     // The section's quiet text action, as Security's Updates "Check again".
                     <TextLinkButton
                         testID="machine-tools-check-again"

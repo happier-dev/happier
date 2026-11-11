@@ -89,6 +89,7 @@ export type MachineToolRowProps = Readonly<{
   entry: InstallableRegistryEntry;
   machineId: string;
   serverId: string;
+  canManage: boolean;
   status: InstallableDepDataLike | null;
   capabilitiesStatus: MachineToolCapabilitiesStatus;
   policy: Readonly<{
@@ -134,7 +135,7 @@ export const MachineToolRow = React.memo(function MachineToolRow(
   const canAct = props.capabilitiesStatus === 'loaded' && !isInstalling;
   const installed = status?.installed === true;
   const updateAvailable = installed && isInstallableDepUpdateAvailable(status);
-  const action = !installed
+  const action = !props.canManage ? null : !installed
     ? props.capabilitiesStatus === 'loaded' || isInstalling
       ? t('common.install')
       : null
@@ -207,25 +208,30 @@ export const MachineToolRow = React.memo(function MachineToolRow(
             rightElement={
               <Switch
                 value={policy.autoInstallWhenNeeded}
+                disabled={!props.canManage}
                 onValueChange={(next) =>
-                  onPolicyChange(entry.key, { autoInstallWhenNeeded: next })
+                  props.canManage && onPolicyChange(entry.key, { autoInstallWhenNeeded: next })
                 }
               />
             }
             showChevron={false}
-            onPress={() =>
-              onPolicyChange(entry.key, {
-                autoInstallWhenNeeded: !policy.autoInstallWhenNeeded,
-              })
-            }
+            disabled={!props.canManage}
+            onPress={() => {
+              if (props.canManage) {
+                onPolicyChange(entry.key, {
+                  autoInstallWhenNeeded: !policy.autoInstallWhenNeeded,
+                });
+              }
+            }}
           />
           <SegmentedChoiceItem<InstallableAutoUpdateMode>
             title={t('machineDetailPage.toolsPage.autoUpdateTitle')}
             options={props.autoUpdateModeOptions}
             value={policy.autoUpdateMode}
-            onChange={(next) =>
-              onPolicyChange(entry.key, { autoUpdateMode: next })
-            }
+            disabled={!props.canManage}
+            onChange={(next) => {
+              if (props.canManage) onPolicyChange(entry.key, { autoUpdateMode: next });
+            }}
             testIDPrefix={`machine-installables-auto-update-${entry.key}`}
           />
           {latestVersion && !updateAvailable ? (
@@ -275,10 +281,10 @@ export const MachineToolRow = React.memo(function MachineToolRow(
             <Item
               testID={`${testID}.reinstall`}
               title={entry.installLabels.reinstall}
-              disabled={!canAct}
+              disabled={!canAct || !props.canManage}
               showChevron={false}
               onPress={() => {
-                if (canAct) void run();
+                if (canAct && props.canManage) void run();
               }}
             />
           ) : null}

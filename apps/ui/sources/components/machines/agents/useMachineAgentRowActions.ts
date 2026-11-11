@@ -6,6 +6,8 @@ import { ensureMachineAgentInstallJobs } from '@/agents/machineAgents/installJob
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
+import { useServerScopedMachine } from '@/sync/store/hooks';
 
 import type { MachineAgentRowAction } from './machineAgentPresentation';
 import { showAgentSignInTerminalSheet } from './AgentSignInTerminalSheet';
@@ -22,9 +24,12 @@ export function useMachineAgentRowActions(input: Readonly<{
     machineId: string;
     machineName: string;
     onOpenForm: (agent: MachineAgent) => void;
+    canManage?: boolean;
 }>): (agent: MachineAgent, action: MachineAgentRowAction) => void {
     const terminalHost = useAgentSignInTerminalHost();
     const { serverId, machineId, machineName, onOpenForm } = input;
+    const scopedCanManage = useServerScopedMachine(serverId, machineId, canManageMachine);
+    const canManage = input.canManage ?? scopedCanManage;
     const { binding, execute, isCurrent } = useMountedActionExecution(serverId);
     return React.useCallback((agent, action) => {
         const target = { serverId, machineId, agentId: agent.agentId, definitionId: agent.definitionId };
@@ -32,6 +37,7 @@ export function useMachineAgentRowActions(input: Readonly<{
             case 'install':
             case 'retry':
             case 'update': {
+                if (!canManage) return;
                 if (!binding?.isCurrent()) return;
                 if (action.kind === 'retry' && agent.job?.readFailure) {
                     fireAndForget(ensureMachineAgentInstallJobs({ ...target, ...binding.scope }), { tag: 'machineAgentRowAction.refreshJob' });
@@ -48,12 +54,14 @@ export function useMachineAgentRowActions(input: Readonly<{
             }
             case 'remove':
                 // Removing confirms through the uninstall Action's own policy (D22: deletions confirm).
+                if (!canManage) return;
                 if (!binding?.isCurrent()) return;
                 fireAndForget(withAgentInstallJobFailureFeedback(execute('machines.agents.uninstall', {
                     machineId, agentId: agent.agentId, ...(agent.definitionId === undefined ? {} : { definitionId: agent.definitionId }),
                 }), isCurrent), { tag: 'machineAgentRowAction.remove' });
                 return;
             case 'cancel':
+                if (!canManage) return;
                 if (!binding?.isCurrent() || !agent.job || agent.job.outcome) return;
                 fireAndForget(withAgentInstallJobFailureFeedback(execute('machines.agents.install.cancel', { machineId, jobId: agent.job.jobId }), isCurrent), { tag: 'machineAgentRowAction.cancel' });
                 return;
@@ -70,5 +78,5 @@ export function useMachineAgentRowActions(input: Readonly<{
                 fireAndForget(openExternalUrl(action.url), { tag: 'machineAgentRowAction.guide' });
                 return;
         }
-    }, [binding, execute, isCurrent, machineId, machineName, onOpenForm, serverId, terminalHost]);
+    }, [binding, canManage, execute, isCurrent, machineId, machineName, onOpenForm, serverId, terminalHost]);
 }

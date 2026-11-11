@@ -17,6 +17,7 @@ import { MACHINE_PAGE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/action
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 
 const styles = StyleSheet.create((theme) => ({
     identifier: {
@@ -34,6 +35,7 @@ export const MachineDaemonSection = React.memo(function MachineDaemonSection(pro
     const { theme } = useUnistyles();
     const { machine } = props;
     const machineId = machine.id;
+    const canManage = canManageMachine(machine);
     const machineServerId = props.serverId;
     const shouldContinue = useMountedShouldContinue();
     const stopExecution = useMountedActionExecution(machineServerId);
@@ -89,7 +91,7 @@ export const MachineDaemonSection = React.memo(function MachineDaemonSection(pro
                 mode="info"
                 showChevron={false}
             />
-            <Item
+            {canManage ? <Item
                 testID="machine-detail-stop-daemon"
                 title={t('machine.stopDaemon')}
                 subtitle={t('machineDetailPage.stopDaemonDescription')}
@@ -108,7 +110,7 @@ export const MachineDaemonSection = React.memo(function MachineDaemonSection(pro
                         onPress={handleStopDaemon}
                     />
                 )}
-            />
+            /> : null}
             {machine.daemonState && (
                 <>
                     {machine.daemonState.pid && (
