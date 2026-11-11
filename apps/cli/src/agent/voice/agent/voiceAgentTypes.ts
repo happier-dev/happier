@@ -91,14 +91,8 @@ export type VoiceAgentTurnStreamReadResult = Readonly<{
 }>;
 
 export class VoiceAgentError extends Error {
-  readonly code:
-    | 'VOICE_AGENT_NOT_FOUND'
-    | 'VOICE_AGENT_BUSY'
-    | 'VOICE_AGENT_INVALID_CURSOR'
-    | 'VOICE_AGENT_TURN_COMPLETED'
-    | 'VOICE_AGENT_UNSUPPORTED'
-    | 'VOICE_AGENT_START_FAILED'
-    | ConnectedServiceUxDiagnosticV1['code'];
+  /** Native runtime refusal codes share the existing execution-run error channel. */
+  readonly code: string;
 
   readonly details?: Readonly<{ uxDiagnostic: ConnectedServiceUxDiagnosticV1 }>;
 

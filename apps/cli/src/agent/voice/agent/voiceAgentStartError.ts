@@ -2,8 +2,9 @@ import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { readConnectedServiceUxDiagnosticFromError } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { buildConnectedServiceCredentialSpawnErrorResult } from '@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 import { VoiceAgentError } from './voiceAgentTypes';
+import { readExecutionRunErrorCode } from '@/agent/runtime/bridges/executionRun/errors';
 
-/** Keep the credential owner's result when adapting runtime startup to Voice. */
+/** Keep the runtime and credential owners' results when adapting startup to Voice. */
 export function toVoiceAgentStartError(
   error: unknown,
   agentId: CatalogAgentId,
@@ -19,5 +20,6 @@ export function toVoiceAgentStartError(
   if (diagnostic) {
     return new VoiceAgentError(diagnostic.code, diagnostic.code, diagnostic);
   }
-  return new VoiceAgentError(fallbackCode, error instanceof Error ? error.message : fallback);
+  return new VoiceAgentError(readExecutionRunErrorCode(error) ?? fallbackCode,
+    error instanceof Error ? error.message : fallback);
 }

@@ -13,6 +13,16 @@ import {
 } from './voiceMachineError';
 
 describe('createVoiceMachineError', () => {
+    it('presents the native model-policy startup refusal with its reason and settings repair', () => {
+        const failure = classifyVoiceMachineError(createRpcCallError({
+            error: 'Codex cannot enforce the requested native tool policy for this configuration.',
+            errorCode: 'codex_tool_restriction_unsupported_model',
+        }), { kind: 'provider_error' });
+        expect(failure).toMatchObject({ kind: 'provider_setup_required',
+            reason: 'codex_tool_restriction_unsupported_model',
+            providerMessage: 'Codex cannot enforce the requested native tool policy for this configuration.',
+            recoveryAction: 'open_settings', presentation: 'error', recoverable: false });
+    });
     it.each(['VOICE_AGENT_TARGET_SESSION_INACTIVE', 'VOICE_AGENT_TARGET_SESSION_OFFLINE'])(
         'retains %s as a Session refusal with no futile provider retry', code => {
             const failure = classifyVoiceMachineError(createVoiceTextTurnRejectedBeforeEffectError(

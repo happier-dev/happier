@@ -1717,6 +1717,20 @@ describe('VoiceAgentManager', () => {
     await manager.dispose();
   });
 
+  it('retains a native model-policy refusal through Voice startup', async () => {
+    const manager = new VoiceAgentManager({ createBackend: () => {
+      throw Object.assign(new Error('Codex cannot enforce the requested native tool policy for this configuration.'), {
+        code: 'codex_tool_restriction_unsupported_model',
+      });
+    } });
+    await expect(manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      chatModelId: 'claude-haiku-4-5', commitModelId: 'claude-haiku-4-5', permissionIntent: 'read-only',
+      idleTtlSeconds: 60, initialContext: 'CTX',
+    })).rejects.toMatchObject({ code: 'codex_tool_restriction_unsupported_model',
+      message: 'Codex cannot enforce the requested native tool policy for this configuration.' });
+    await manager.dispose();
+  });
+
   it('retains the connected account owner diagnostic when Voice start requires profile action', async () => {
     const manager = new VoiceAgentManager({ createBackend: () => {
       throw new ConnectedServiceSpawnProfileActionRequiredError({

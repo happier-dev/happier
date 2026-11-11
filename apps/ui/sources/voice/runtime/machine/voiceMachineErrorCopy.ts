@@ -17,7 +17,8 @@ export function presentVoiceUsageLimitMessage(usageLimit: VoiceMachineError['usa
 
 /** Only a typed Agent turn failure admits provider prose into the shared presenter. */
 export function readSafeVoiceProviderFailureMessage(reason: string, cause: unknown): string | undefined {
-    if (reason !== 'acp_turn_failed' && reason !== 'usage_limit') return undefined;
+    if (reason !== 'acp_turn_failed' && reason !== 'usage_limit'
+        && reason !== 'codex_tool_restriction_unsupported_model') return undefined;
     const message = cause instanceof Error ? cause.message : undefined;
     if (!message || message === reason) return undefined;
     return redactVoicePathLikeString(redactBugReportSensitiveText(message)).trim() || undefined;

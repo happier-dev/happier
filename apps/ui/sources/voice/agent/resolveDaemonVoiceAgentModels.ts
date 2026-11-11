@@ -5,6 +5,8 @@ import {
     describeEffectiveModelMode,
 } from '@/sync/domains/models/describeEffectiveModelMode';
 import type { Metadata } from '@happier-dev/session-core/state';
+import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
+import { getAgentModelConfig } from '@happier-dev/agents';
 
 export type DaemonVoiceAgentModelIds = Readonly<{
     chatModelId?: string;
@@ -38,16 +40,21 @@ export function resolveDaemonVoiceAgentModelIds(params: {
         : resolveVoiceSessionAgentSelection(metadata);
     const agentId = selection.ok ? readBackendTargetRefV2(selection.backendTarget).backendId : null;
     if (!agentId) return null;
+    const modelConfig = getAgentModelConfig(agentId);
+
+    const resolveCustomModel = (modelId: string) => describeEffectiveModelMode({
+        agentType: agentId,
+        // Installed Agents without catalog model policy validate their own custom ids.
+        selectedModelId: modelId === 'default' || !modelConfig || isModelSelectableForSession(agentId, metadata, modelId)
+            ? modelId : 'default',
+        metadata,
+    }).effectiveModelId;
 
     const chatSelected =
         params.agent.chatModelSource === 'session'
             ? undefined
             : (params.agent.chatModelId ?? 'default');
-    const chatModelId = chatSelected === undefined ? undefined : describeEffectiveModelMode({
-        agentType: agentId,
-        selectedModelId: chatSelected,
-        metadata,
-    }).effectiveModelId;
+    const chatModelId = chatSelected === undefined ? undefined : resolveCustomModel(chatSelected);
 
     const commitSelected = (() => {
         switch (params.agent.commitModelSource) {
@@ -61,11 +68,7 @@ export function resolveDaemonVoiceAgentModelIds(params: {
         }
     })();
 
-    const commitModelId = commitSelected === undefined ? undefined : describeEffectiveModelMode({
-        agentType: agentId,
-        selectedModelId: commitSelected,
-        metadata,
-    }).effectiveModelId;
+    const commitModelId = commitSelected === undefined ? undefined : resolveCustomModel(commitSelected);
 
     return {
         ...(chatModelId === undefined ? {} : { chatModelId }),

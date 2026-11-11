@@ -51,8 +51,6 @@ import {
     resolveBoundTargetSessionAddress,
     resolvePersistedDaemonConversationSessionId,
     resolveVoiceRunMetadataSessionId,
-    resolveVoiceAgentSessionFromState,
-    type VoiceAgentSessionState,
 } from '@/voice/agent/voiceAgentRunState';
 import { readLocalConversationSettingsFromAccountSettings } from '@/voice/local/localVoiceSettings';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
@@ -235,10 +233,6 @@ export async function initializeVoiceAgentHandle({
         return undefined;
     };
 
-    const resolveDaemonSessionFromState = (target: SessionAddress | string): VoiceAgentSessionState | null => (
-        resolveVoiceAgentSessionFromState(target)
-    );
-
     const hydratedSessions = new Set<string>();
     const ensureSessionContextReady = async (
         target: SessionAddress | string | null,
@@ -270,16 +264,6 @@ export async function initializeVoiceAgentHandle({
         }
     };
 
-    // The configured voice models are the one model fact that does not depend on
-    // reading the target Session's Agent. They answer both cases where no Session
-    // Agent fact exists: no Session in state, and a Session whose Agent identity
-    // is unreadable.
-    const resolveConfiguredModelIds = () => {
-        const chatModelId = String(agentCfg?.chatModelId ?? 'default');
-        const commitModelId = String(agentCfg?.commitModelId ?? chatModelId);
-        return { chatModelId, commitModelId };
-    };
-
     const throwVoiceAgentSelectionUnavailable = (): never => {
         throw Object.assign(new Error('voice_agent_selection_unavailable'), {
             code: 'VOICE_AGENT_SELECTION_UNAVAILABLE',
@@ -298,14 +282,11 @@ export async function initializeVoiceAgentHandle({
             };
         }
 
-        const session = resolveDaemonSessionFromState(targetAddress ?? daemonSessionId);
-        if (!session) return resolveConfiguredModelIds();
-
         return resolveDaemonVoiceAgentModelIds({
             metadata: readVoiceSessionOwnerMetadataFromState(storage.getState(), targetAddress ?? daemonSessionId),
-            admittedAgentTarget: agentSource === 'session' ? admittedBackendTarget : undefined,
+            admittedAgentTarget: admittedBackendTarget,
             agent: agentCfg ?? {},
-        }) ?? resolveConfiguredModelIds();
+        }) ?? throwVoiceAgentSelectionUnavailable();
     };
 
     const boundTargetSessionAddress = resolveBoundTargetSessionAddress(sessionId);

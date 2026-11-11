@@ -77,6 +77,7 @@ export function resolveVoiceMachineErrorKind(reason: string, preferredKind?: Voi
     if (reason === 'provider_setup_required' || reason === 'realtime_byo_not_configured' || reason === 'realtime_agent_update_required'
         || reason === 'VOICE_AGENT_STARTUP_INSTRUCTIONS_UNSUPPORTED'
         || reason === 'execution_run_protocol_unsupported'
+        || reason === 'codex_tool_restriction_unsupported_model'
         || reason === 'VOICE_AGENT_TEAM_MODEL_UNSUPPORTED'
         || reason === 'VOICE_AGENT_SELECTION_UNAVAILABLE'
         || reason === 'voice_agent_selection_unavailable') return 'provider_setup_required';

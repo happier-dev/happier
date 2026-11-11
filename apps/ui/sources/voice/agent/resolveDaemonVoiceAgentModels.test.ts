@@ -11,6 +11,13 @@ const baseMetadata = (() => {
 })();
 
 describe('resolveDaemonVoiceAgentModelIds', () => {
+    it('uses Codex defaults for a retained Claude chat and commit model', () => {
+        expect(resolveDaemonVoiceAgentModelIds({ metadata: { ...baseMetadata, flavor: 'codex' }, agent: {
+            chatModelSource: 'custom', chatModelId: 'claude-haiku-4-5',
+            commitModelSource: 'custom', commitModelId: 'claude-sonnet-4-5',
+        } })).toEqual({ chatModelId: getAgentCore('codex')?.model?.defaultMode,
+            commitModelId: getAgentCore('codex')?.model?.defaultMode });
+    });
     it('keeps configured ACP custom models and leaves Session model inheritance to admission', () => {
         const metadata = { ...baseMetadata, flavor: 'custom-acp', acpConfiguredBackendV1: {
             v: 1 as const, backendId: 'qa-c-exact-args', title: 'QA configured ACP', updatedAt: 1,

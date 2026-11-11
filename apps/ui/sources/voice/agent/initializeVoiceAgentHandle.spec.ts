@@ -287,6 +287,27 @@ describe('initializeVoiceAgentHandle', () => {
         await getServerFeaturesSnapshot({ serverId: home.id, force: true });
     });
 
+    it('drops a Claude custom model when following a Codex Session at daemon admission', async () => {
+        omitIncidentalProfile();
+        const current = storage.getState();
+        const voice = voiceSettingsParse(current.settings.voice);
+        const local = readLocalConversationSettingsFromAccountSettings(current.settings);
+        storage.setState({ settings: { ...current.settings, voice: { ...voice, providers: { ...voice.providers,
+            local_conversation: { schemaVersion: 1, config: { ...local, agent: { ...local.agent,
+                agentSource: 'session', chatModelSource: 'custom', chatModelId: 'claude-haiku-4-5',
+                commitModelSource: 'chat', permissionIntent: 'read-only',
+            } } },
+        } } } });
+        const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+        await initializeVoiceAgentHandle({ sessionId: 's1',
+            getDaemonVoiceAgentClient: scope => new DaemonVoiceAgentClient(scope),
+            setDeferredTargetSessionContext: () => {} });
+        expect(buildBackendTargetKeyV2(admittedStart().backendTarget)).toBe(buildAgentUniverseBackendTargetKey('codex'));
+        expect(admittedStart().chatModelId).toBeUndefined();
+        expect(admittedStart().modelSelection).toBeNull();
+        expect(admittedStart().commitModelId).toBe(getAgentModelConfig('codex')?.defaultMode);
+    });
+
     it('takes the transcript epoch from Account memory when starting a different carrier', async () => {
         omitIncidentalProfile();
         await transcriptMemory.handleFetch('https://voice-initialize.example.test/v1/kv', { method: 'POST',
