@@ -157,7 +157,12 @@ export function useSharedSavedSecretReveal(input: Readonly<{
         const exact = () => isCurrentCustody(held) && stateRef.current === displayed;
         const facts = { ref: held.ref, expectedRevision: held.revision,
             historyEntryId: held.historyEntryId, deviceId: held.deviceId };
+        let copyAccount: LazyActionAccountContext | undefined;
         try {
+            // Clipboard permission UI can hide the value and end its display lifetime.
+            // The admitted Copy's value-free receipt belongs to the Account instead.
+            copyAccount = await captureLazyActionAccountContext(held.scope.serverId);
+            if (copyAccount.accountId !== held.scope.accountId || !exact()) return 'refused';
             held.account.assertCurrent();
             const requested = await recordSavedSecretDisclosureInContext(held.account, { ...facts, outcome: 'requested' }, 'copy', held.controller.signal);
             if (!requested.ok || !exact()) { hide(); return 'refused'; }
@@ -168,7 +173,7 @@ export function useSharedSavedSecretReveal(input: Readonly<{
             // The platform write exists only in this explicit person gesture.
             const copied = await writeClipboard(displayed.value, { signal: held.controller.signal });
             const outcome = copied ? 'succeeded' as const : 'refused' as const;
-            const recorded = await recordSavedSecretDisclosureInContext(held.account, { ...facts, outcome }, 'copy', held.controller.signal);
+            const recorded = await recordSavedSecretDisclosureInContext(copyAccount, { ...facts, outcome }, 'copy');
             const settled = recorded.ok ? outcome : 'outcome_unknown' as const;
             if (exact()) {
                 const next = { ...displayed, copyOutcome: settled };
@@ -177,6 +182,7 @@ export function useSharedSavedSecretReveal(input: Readonly<{
             }
             return settled;
         } catch { hide(); return 'outcome_unknown'; }
+        finally { copyAccount?.dispose(); }
     }, [hide, isCurrentCustody, writeClipboard]);
     const held = custody.current;
     const visibleState = state.status === 'revealed' && (!held || !isCurrentCustody(held)) ? hiddenState : state;

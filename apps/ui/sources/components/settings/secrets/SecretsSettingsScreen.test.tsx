@@ -437,6 +437,31 @@ describe('Shared Saved Secret person disclosure controller', () => {
         expect(writeClipboard).not.toHaveBeenCalled();
     });
 
+    it('confirms the Copy record after clipboard focus loss hides the revealed value', async () => {
+        const { scope, entries } = await mount(false);
+        const { useSharedSavedSecretReveal } = await import('@/components/secrets/useSharedSavedSecretReveal');
+        const { reactNativeWebAppState } = await import('@/dev/testkit/mocks/reactNative');
+        const activityPath = '/v1/account/saved-secrets/resources/activity';
+        const copyPath = `${activityPath}/copy`;
+        harness.answer(scope.serverId, activityPath, { body: { historyEntryId: 'disclosure-entry' } });
+        harness.answer(scope.serverId, copyPath, { body: { historyEntryId: 'disclosure-entry' } });
+        const hook = await renderHook(() => useSharedSavedSecretReveal({ scope, entry: entries[0]!,
+            confirmDisclosure: async () => true }));
+        await act(async () => { await hook.getCurrent().reveal(); });
+        installBrowserClipboardBoundary(async () => {
+            // A browser permission prompt can hide the disclosure after the write starts.
+            reactNativeWebAppState.emit('background');
+        });
+        try {
+            await act(async () => { expect(await hook.getCurrent().copy()).toBe('succeeded'); });
+            expect(hook.getCurrent().state.status).toBe('hidden');
+            expect(harness.requestsFor(copyPath).map(request => request.input)).toEqual([
+                expect.objectContaining({ historyEntryId: 'disclosure-entry', outcome: 'requested' }),
+                expect.objectContaining({ historyEntryId: 'disclosure-entry', outcome: 'succeeded' }),
+            ]);
+        } finally { reactNativeWebAppState.emit('active'); }
+    });
+
     it('keeps display transient and copies only by a fresh person gesture on the same history entry', async () => {
         const { scope, entries } = await mount(false);
         const { useSharedSavedSecretReveal } = await import('@/components/secrets/useSharedSavedSecretReveal');
