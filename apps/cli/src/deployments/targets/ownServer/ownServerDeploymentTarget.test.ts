@@ -1703,13 +1703,6 @@ describe('own-server target at the Action host boundary', () => {
                             installationId: 'installation-a', environmentId: environment.environment.id, resourceId, resourceRevision: 1 },
                             installationPublicKey, content: { kind: 'secret', value: `private-destination-${role}` } }));
                     }
-                    const databaseBinding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'DB_NAME',
-                        source: { kind: 'value' as const, value: destinationDatabase } };
-                    environment.content.bindings.push(databaseBinding);
-                    runtimeGrants.push(sealMachineSecretGrant({ subject: { v: 1, kind: 'environmentValues', machineId: 'machine-a',
-                        installationId: 'installation-a', environmentId: environment.environment.id,
-                        binding: { purpose: 'variable', phase: 'runtime', name: 'DB_NAME' } }, installationPublicKey,
-                        content: { kind: 'environmentValues', definition: databaseBinding.source } }));
                     if (previewCopy) {
                         const sourceValues = previewCompanion ? [{ name: 'DB_USER', value: 'source-database-user' },
                             { name: 'DB_HOST', value: 'source.invalid' }, { name: 'DB_PORT', value: '5432' }]
@@ -1726,6 +1719,22 @@ describe('own-server target at the Action host boundary', () => {
                                 content: { kind: 'environmentValues', definition: binding.source } }));
                         }
                     }
+                }
+                if (scenario === 'standalone_public_restore_upload') {
+                    environment.content = DeploymentEnvironmentContentV1Schema.parse({ ...environment.content,
+                        template: { templateRef: { sourceId: 'apps', itemId: 'app', version: '1',
+                            ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } }, services: ['app'],
+                            definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
+                            data: { engine: 'postgres', service: 'app', logicalBackup: { adapter: 'postgres-v1', database: 'DB_NAME' } } } });
+                }
+                if (publicCopy || scenario === 'standalone_public_restore_upload') {
+                    const databaseBinding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'DB_NAME',
+                        source: { kind: 'value' as const, value: publicCopy ? destinationDatabase : database } };
+                    environment.content.bindings.push(databaseBinding);
+                    runtimeGrants.push(sealMachineSecretGrant({ subject: { v: 1, kind: 'environmentValues', machineId: 'machine-a',
+                        installationId: 'installation-a', environmentId: environment.environment.id,
+                        binding: { purpose: 'variable', phase: 'runtime', name: 'DB_NAME' } }, installationPublicKey,
+                        content: { kind: 'environmentValues', definition: databaseBinding.source } }));
                 }
                 const activateDestination = async () => {
                     const initial = await target.review({ actionId: request.actionId, input: request.input, content: receipt.content, context: sourceContext });
@@ -1796,8 +1805,8 @@ describe('own-server target at the Action host boundary', () => {
                             const produced = await runDeploymentBackupV1({ environmentId: promotionSource.environment.id,
                                 configuration: { ...capture.configuration, sources: [{ kind: 'dump', sourceId: 'database',
                                     service: 'database', consistency: 'logical' }] },
-                                data: { engine: 'postgres', service: 'database', logicalBackup: { adapter: 'postgres-v1', database: 'DB_NAME' } },
-                                restoreTarget: { service: 'database', adapter: 'postgres-v1', database },
+                                data: [{ engine: 'postgres', service: 'database', logicalBackup: { adapter: 'postgres-v1', database: 'DB_NAME' } }],
+                                restoreTargets: [{ service: 'database', adapter: 'postgres-v1', database }],
                                 access: { ...capture.repository, passwordFilePath: '/run/secrets/repository-password',
                                     credentialFiles: [{ hostPath: '/private/source-password',
                                         containerPath: '/run/secrets/repository-password', readOnly: true }], environmentVariableNames: [] },
