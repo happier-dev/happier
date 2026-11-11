@@ -453,7 +453,8 @@ function projectAcceptedDeploymentPrincipal(binding: ExternalActionExecutionAuth
 /**
  * A later step of an admitted finite native operation (restart, restore, backup)
  * carries the identity its mint admitted. Home keeps no job row for these, so the
- * signed root (expiry, exact Action, Environment, Machine and installation) and
+ * signed root (exact Action, Environment, Machine, installation and envelope; the
+ * persistent root token has no expiry and the native admission no deadline) and
  * the executor's local cancel signal are the whole authority: no per-step
  * principal, Session-source, Source, Team or Machine re-admission. A Workflow
  * root keeps its active-Run lookup instead, and a person-presented relay is new
