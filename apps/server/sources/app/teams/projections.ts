@@ -2,7 +2,7 @@ import { z } from "zod/mini";
 import type { Prisma } from "@prisma/client";
 
 import { resolveTeamAdmissionProjectionV1, type TeamSummaryCountsV1, type TeamSummaryV1 } from '@happier-dev/protocol/teams/projections';
-import { readManagedDefaultsV1, type TeamCapabilitiesV1, type TeamPolicyV1 } from '@happier-dev/protocol/teams';
+import { isTeamPrincipalRoleV1, readManagedDefaultsV1, type TeamCapabilitiesV1, type TeamPolicyV1 } from '@happier-dev/protocol/teams';
 import { normalizeTeamAuthenticationPolicyV1, TeamAuthenticationPolicyV1Schema } from '@happier-dev/protocol/auth/entry';
 
 import type { HomeGovernanceAuthority } from "@/app/home/governance/homeCapabilities";
@@ -161,7 +161,7 @@ export type TeamSummaryCountFacts = Readonly<Omit<TeamSummaryCountsV1, "groups" 
 /**
  * The one Team summary builder used by `teams.get`, `teams.list`, and every
  * mutation result, so a client never has to reconcile two shapes of the same
- * Team. Capabilities arrive already decided; nothing here compares a role.
+ * Team. Capabilities arrive already decided; Team-default eligibility uses the protocol role owner.
  * Counts arrive unqualified from `readTeamSummaryCountsInTx` and are narrowed
  * here to what those capabilities may read.
  */
@@ -184,6 +184,8 @@ export function projectTeamSummaryV1(input: Readonly<{
     if (!input.capabilities.viewTeam) {
         policy.managedDefaults = null;
         policy.homeDefaults = null;
+    } else if (input.viewerRole !== null && !isTeamPrincipalRoleV1(input.viewerRole)) {
+        policy.managedDefaults = null;
     } else if (policy.managedDefaults && !input.capabilities.manageSettings && !input.teamCapabilities.manageGroups) {
         const applicable = new Set(input.managedDefaultsGroupIds ?? []);
         policy.managedDefaults = {
