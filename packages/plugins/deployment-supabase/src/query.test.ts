@@ -44,7 +44,9 @@ describe('Supabase qualified read-only SQL', () => {
       expect(h.requests[0]).toMatchObject({ url: 'https://api.supabase.com/v1/projects/preview-ref/database/query/read-only', method: 'POST',
         credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'deploy-manage' } });
       expect(JSON.parse(new TextDecoder().decode(h.requests[0]?.body))).toEqual({ query: input.sql, parameters: ['hello'] });
-      expect(entry.manifest.contributes.deploymentTargets?.[0]?.dataV1?.query?.readOnly).toBe('query-read');
+      const target = entry.manifest.contributes.deploymentTargets?.[0];
+      if (target?.role !== 'data') throw new Error('Missing Supabase data target');
+      expect(target.dataV1?.query?.readOnly).toBe('query-read');
     } finally { await h.kit.dispose(); }
   });
 

@@ -96,7 +96,9 @@ describe('activated Supabase managed data target', () => {
       expect(entry.manifest.contributes.deploymentTargets).toEqual([expect.objectContaining({ role: 'data', targetKind: 'supabase',
         dataV1: expect.objectContaining({ projects: expect.objectContaining({ provision: 'projects-provision', link: 'projects-link' }),
           branches: expect.objectContaining({ create: 'branches-create', delete: 'branches-delete' }), connectionSecret: { save: 'connections-save' } }) })]);
-      expect(entry.manifest.contributes.deploymentTargets?.[0]?.dataV1?.query).toEqual({ readOnly: 'query-read' });
+      const target = entry.manifest.contributes.deploymentTargets?.[0];
+      if (target?.role !== 'data') throw new Error('Missing Supabase data target');
+      expect(target.dataV1?.query).toEqual({ readOnly: 'query-read' });
       expect(h.requests).toHaveLength(0);
     } finally { await h.kit.dispose(); }
   });
