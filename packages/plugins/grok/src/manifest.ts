@@ -54,11 +54,11 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
           native: { systemTool: 'grok-cli' },
           defaultModeId: 'device',
           modes: [{
-            id: 'device', kind: 'oauthDeviceCode', title: 'Grok subscription',
+            id: 'device', kind: 'oauthDeviceCode', title: 'Sign in with Grok',
             browserReachability: 'unreachable', outcomeReconciliation: 'none',
             scopes: [...XAI_DEVICE_SCOPES],
           }, {
-            id: 'api-key', kind: 'manual', apiKey: true, title: 'Paid xAI API key',
+            id: 'api-key', kind: 'manual', apiKey: true, title: 'xAI API key',
             credentialOrigin: 'authentication', outcomeReconciliation: 'none',
             fields: [{ id: 'apiKey', title: 'xAI API key', secret: true, schema: { type: 'string', minLength: 1 } }],
           }, {

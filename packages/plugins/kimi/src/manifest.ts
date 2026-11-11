@@ -57,16 +57,17 @@ export const KIMI_PLUGIN = definePlugin({
     'kimi-code': {
       declaration: {
         title: 'Kimi Code',
+        ui: { iconResourceId: 'agent-mark' },
         authentication: {
           account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
           native: { systemTool: KIMI_ACP_COMMAND.toolId },
           defaultModeId: 'device',
           modes: [{
-            id: 'device', kind: 'oauthDeviceCode', title: 'Kimi Code subscription',
+            id: 'device', kind: 'oauthDeviceCode', title: 'Sign in with Kimi',
             browserReachability: 'unreachable', outcomeReconciliation: 'none', scopes: [],
             configuration: regionConfiguration,
           }, {
-            id: 'api-key', kind: 'manual', apiKey: true, title: 'Kimi API key', outcomeReconciliation: 'none',
+            id: 'api-key', kind: 'manual', apiKey: true, title: 'API key', outcomeReconciliation: 'none',
             credentialOrigin: 'authentication',
             fields: [{ id: 'token', title: 'API key', secret: true, schema: { type: 'string', minLength: 1 } }],
             configuration: { ...regionConfiguration, fields: [...regionConfiguration.fields, {
@@ -74,7 +75,7 @@ export const KIMI_PLUGIN = definePlugin({
               schema: { type: 'string', enum: ['code', 'platform'] },
             }] },
           }, {
-            id: 'native-import', kind: 'manual', title: 'Import Node Kimi login',
+            id: 'native-import', kind: 'manual', title: 'Import Kimi login',
             browserReachability: 'unreachable', credentialOrigin: 'native_import', outcomeReconciliation: 'none',
             fields: [{ id: 'source', title: 'Source', secret: false, default: 'native', schema: { type: 'string', enum: ['native'] } }],
           }],
@@ -222,6 +223,7 @@ export const KIMI_PLUGIN = definePlugin({
     { locale: "ja", resourceId: "i18n-ja" },
   ] },
   resources: {
+    'agent-mark': { kind: 'asset', path: 'assets/agent-mark.svg', contentType: 'image/svg+xml' },
     "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
     "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
     "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
