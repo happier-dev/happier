@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import { create, type ReactTestRenderer } from 'react-test-renderer';
+import { View } from 'react-native';
 import { afterEach, expect, it, vi } from 'vitest';
 import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 
@@ -26,6 +27,7 @@ vi.mock('react-native', () => ({
 import { Collection, HostCollection, useHappierCollection } from '../index.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
+import { Row } from './Layout.js';
 
 let renderer: ReactTestRenderer | undefined;
 afterEach(() => { act(() => renderer?.unmount()); renderer = undefined; vi.unstubAllGlobals(); });
@@ -65,4 +67,18 @@ it('keeps a native Collection row readable when its timestamp hint has no Relati
   });
   expect(renderer!.root.find(node => node.type === 'Pressable' && node.props.testID === 'task').props.accessibilityHint)
     .toBe(new intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(at));
+});
+
+it('mounts the native task-detail layout through the current HappierStack owner', () => {
+  const context = createSurfaceContext({ platform: 'ios' });
+  act(() => {
+    renderer = create(
+      <PluginUiProvider context={context} hostApi={createHostApiStub(context)}>
+        <Row testID="task-detail-layout"><View testID="task-detail-child" /></Row>
+      </PluginUiProvider>,
+    );
+  });
+  expect(renderer!.root.find(node => node.type === 'View' && node.props.testID === 'task-detail-layout').props.style).toEqual(
+    expect.arrayContaining([expect.objectContaining({ flexDirection: 'row' })]),
+  );
 });
