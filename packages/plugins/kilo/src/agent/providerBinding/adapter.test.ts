@@ -80,6 +80,37 @@ describe('registered Kilo Provider binding', () => {
     } finally { await activation.dispose(); }
   });
 
+  it('materializes managed gateway custom bearer and companion headers', async () => {
+    const { activation, adapter } = await registeredAgent();
+    try {
+      const input = materializeInput(adapter, 'anthropic');
+      const transport = {
+        ...input.credential.transport,
+        id: 'cloudflare-anthropic-gateway',
+        destination: { kind: 'httpHeader', name: 'cf-aig-authorization', format: 'bearer' },
+        additionalCredentials: [{
+          slotId: 'anthropicApiKey',
+          destination: { kind: 'httpHeader', name: 'x-api-key', format: 'raw' },
+        }],
+      } as const;
+      const result = await adapter.materialize({ ...input,
+        binding: { ...input.binding, runtimeCredentialTransport: transport },
+        credential: { kind: 'apiKey', transport, value: 'gateway-token', additionalCredentials: [{ slotId: 'anthropicApiKey', value: 'upstream-key' }] },
+      });
+      const env = Object.fromEntries(result.env.map(entry => [entry.name, entry.value]));
+      expect(JSON.parse(env.KILO_CONFIG_CONTENT!)).toMatchObject({
+        provider: { [input.prepared.adapterBindingKey!]: { options: {
+          headers: {
+            'cf-aig-authorization': '{env:HAPPIER_KILO_PROVIDER_API_KEY}',
+            'x-api-key': '{env:HAPPIER_KILO_PROVIDER_ANTHROPIC_API_KEY}',
+          },
+        } } },
+      });
+      expect(env.HAPPIER_KILO_PROVIDER_API_KEY).toBe('gateway-token');
+      expect(env.HAPPIER_KILO_PROVIDER_ANTHROPIC_API_KEY).toBe('upstream-key');
+    } finally { await activation.dispose(); }
+  });
+
   it('preserves credential-free local Chat and refuses incompatible protocols/auth with typed reasons', async () => {
     const { activation, adapter } = await registeredAgent();
     try {
@@ -99,7 +130,7 @@ describe('registered Kilo Provider binding', () => {
       expect(compatibility('openai-chat')).toMatchObject({ selectedProtocol: 'openai-chat' });
       expect(compatibility('openai-responses')).toMatchObject({ status: 'incompatible', reasons: ['no_auth_unsupported'] });
       expect(compatibility('gemini-generate-content')).toMatchObject({ status: 'incompatible', reasons: ['no_compatible_protocol'] });
-      const wrongTransport = { ...input.credential, transport: { id: 'wrong-header', protocols: ['openai-chat'], uses: ['runtime'],
+      const wrongTransport = { ...input.credential, transport: { id: 'probe-only', protocols: ['openai-chat'], uses: ['probe'],
         destination: { kind: 'httpHeader', name: 'x-api-key', format: 'raw' } } } as const;
       expect(resolveProviderBindingCompatibilityWithFingerprintV1({
         agentTargetKey: input.binding.agentTargetKey, adapterVersion: adapter.adapterVersion, agent,

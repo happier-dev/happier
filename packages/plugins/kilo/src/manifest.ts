@@ -79,11 +79,12 @@ export const KILO_PLUGIN = definePlugin({
           required: { streaming: true, toolRoundTrips: true },
           credentialSupport: {
             supportsNoAuth: true,
+            supportsAdditionalCredentials: true,
             noAuthProtocols: ['openai-chat'],
             apiKeyTransports: [
-              { protocol: 'openai-chat', destination: { kind: 'httpHeader', names: ['Authorization'], formats: ['bearer'] } },
-              { protocol: 'openai-responses', destination: { kind: 'httpHeader', names: ['Authorization'], formats: ['bearer'] } },
-              { protocol: 'anthropic', destination: { kind: 'httpHeader', names: ['x-api-key'], formats: ['raw'] } },
+              { protocol: 'openai-chat', destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] } },
+              { protocol: 'openai-responses', destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] } },
+              { protocol: 'anthropic', destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] } },
             ],
           },
           authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: [...KILO_PROVIDER_OWNED_ENV_KEYS] },
