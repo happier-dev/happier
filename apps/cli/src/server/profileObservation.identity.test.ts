@@ -13,6 +13,67 @@ describe('authenticated Home profile identity reuse', () => {
   const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
   afterEach(() => { env.restore(); vi.unstubAllGlobals(); reloadConfiguration(); });
 
+  it('refuses a different-URL server claiming another saved Home identity without redirecting its credential', async () => {
+    await withTempDir('happier-profile-identity-hijack-', async homeDir => {
+      env.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: undefined,
+        HAPPIER_WEBAPP_URL: undefined, HAPPIER_ACTIVE_SERVER_ID: undefined });
+      reloadConfiguration();
+      const ownerUrl = 'https://owner.example.test';
+      const selectedUrl = 'https://different-home.example.test';
+      const descriptor = { v: 1 as const, homeServerIdentityId: 'srv_fixture', canonicalServerUrl: ownerUrl,
+        revision: 1, endpoints: [{ kind: 'https' as const, url: ownerUrl }] };
+      await setServerProfileEndpointsById({ id: 'owner', serverUrl: ownerUrl, webappUrl: ownerUrl });
+      await setServerProfileEndpointsById({ id: 'selected', serverUrl: selectedUrl, webappUrl: selectedUrl });
+      await adoptServerProfileHomeConnectionDescriptor({ descriptor, expectedProfileId: 'owner', observation: 'exact' });
+      await writeCredentialsTokenOnlyForServerId('owner', { token: 'fake-owner-token' });
+      await writeCredentialsTokenOnlyForServerId('selected', { token: 'fake-selected-token' });
+      const before = await readSettings();
+      const leakedDestinations: string[] = [];
+      vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (input, init) => {
+        const url = String(input);
+        const isSelected = url.startsWith(`${selectedUrl}/`);
+        if (isSelected && new Headers(init?.headers).get('Authorization') === 'Bearer fake-owner-token') {
+          leakedDestinations.push(url);
+        }
+        return Response.json({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_fixture' } },
+          homeConnectionDescriptor: isSelected ? { ...descriptor, revision: 2, canonicalServerUrl: selectedUrl,
+            endpoints: [{ kind: 'https', url: selectedUrl }] } : descriptor });
+      }));
+      const refusal = await observeServerProfileHomeConnection({ profileId: 'selected', serverUrl: selectedUrl,
+        token: 'fake-selected-token' }).then(() => null, (error: unknown) => error);
+      const owner = await getServerProfile('owner');
+      const credential = await readStoredCredentialsForServerId(owner.id);
+      await observeServerProfileHomeConnection({ profileId: owner.id,
+        serverUrl: owner.localServerUrl ?? owner.serverUrl, token: credential!.token });
+      expect(leakedDestinations).toEqual([]);
+      expect(refusal).toMatchObject({ code: 'identity_mismatch' });
+      expect(await readSettings()).toEqual(before);
+      expect(owner.serverUrl).toBe(ownerUrl);
+      expect(owner.homeConnectionDescriptor).toEqual(descriptor);
+    });
+  });
+
+  it.each(['localServerUrl', 'descriptor'] as const)('allows reuse at a known %s URL', async knownRoute => {
+    await withTempDir('happier-profile-known-route-', async homeDir => {
+      env.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: undefined,
+        HAPPIER_WEBAPP_URL: undefined, HAPPIER_ACTIVE_SERVER_ID: undefined });
+      reloadConfiguration();
+      const ownerUrl = 'https://owner.example.test';
+      const knownUrl = 'https://known-route.example.test';
+      const descriptor = { v: 1 as const, homeServerIdentityId: 'srv_fixture', canonicalServerUrl: ownerUrl,
+        revision: 1, endpoints: [{ kind: 'https' as const, url: knownRoute === 'descriptor' ? knownUrl : ownerUrl }] };
+      await setServerProfileEndpointsById({ id: 'owner', serverUrl: ownerUrl, webappUrl: ownerUrl,
+        ...(knownRoute === 'localServerUrl' ? { localServerUrl: knownUrl } : {}) });
+      await setServerProfileEndpointsById({ id: 'selected', serverUrl: knownUrl, webappUrl: knownUrl });
+      await adoptServerProfileHomeConnectionDescriptor({ descriptor, expectedProfileId: 'owner', observation: 'exact' });
+      const advanced = { ...descriptor, revision: 2, canonicalServerUrl: `${knownUrl}/` };
+      const adopted = await adoptServerProfileHomeConnectionDescriptor({ descriptor: advanced,
+        expectedProfileId: 'selected', observation: 'exact' });
+      expect(adopted.profile.id).toBe('owner');
+      expect(adopted.profile.homeConnectionDescriptor).toEqual(advanced);
+    });
+  });
+
   it.each(['advisory', 'different-home'] as const)('refuses profile reuse for %s observations', async scenario => {
     await withTempDir('happier-profile-identity-refusal-', async homeDir => {
       env.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: undefined,

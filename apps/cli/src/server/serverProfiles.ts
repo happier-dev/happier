@@ -590,14 +590,18 @@ export async function adoptServerProfileHomeConnectionDescriptor(opts: Readonly<
     }
 
     const identityMatchId = identityMatches[0]?.[0] ?? null;
-    // An exact observation may discover the Home already saved by an earlier
-    // env-only invocation. Reuse that owner without moving credential scopes.
-    // Advisory observations cannot bind a different selected profile.
-    if (expectedProfileId && identityMatchId && expectedProfileId !== identityMatchId
-      && opts.observation !== 'exact') {
-      throw new ServerProfileIdentityMismatchError(
-        `Observed Home identity belongs to profile ${identityMatchId}, not ${expectedProfileId}`,
-      );
+    // A server asserts its Home identity. Cross-profile reuse also needs an
+    // already-known canonical URL; identity alone cannot redirect saved credentials.
+    if (expectedProfileId && identityMatchId && expectedProfileId !== identityMatchId) {
+      const owner = coerceProfile(servers[identityMatchId])!;
+      const knownUrls = [owner.serverUrl, owner.localServerUrl, owner.homeConnectionDescriptor?.canonicalServerUrl,
+        ...owner.homeConnectionDescriptor!.endpoints.flatMap(endpoint => endpoint.kind === 'https' ? [endpoint.url] : [])];
+      if (opts.observation !== 'exact'
+        || !knownUrls.some(url => url && urlsReferToSameServer(url, incoming.canonicalServerUrl))) {
+        throw new ServerProfileIdentityMismatchError(
+          `Observed Home identity belongs to profile ${identityMatchId}, not ${expectedProfileId}`,
+        );
+      }
     }
     const expectedRaw = expectedProfileId ? servers[expectedProfileId] : null;
     const expected = expectedRaw ? coerceProfile(expectedRaw) : null;
