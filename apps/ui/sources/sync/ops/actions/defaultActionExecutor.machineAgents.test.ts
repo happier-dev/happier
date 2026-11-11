@@ -7,12 +7,13 @@ import { AccountSettingsV2UpdateRequestSchema, ARTIFACT_PLAIN_DATA_KEY_MARKER, B
     buildRoleArtifactHeaderV1, encodePlainArtifactStoredContent, readLegacyRolesV1 } from '@happier-dev/protocol';
 import { ArtifactReadBatchInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import tweetnacl from 'tweetnacl';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createPlainV2SessionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
@@ -34,7 +35,8 @@ const network = await installSessionOpsNetworkBoundary();
 await loadSyncSingletonForTests();
 async function addHome(options: Parameters<typeof harness.addHome>[0]) {
     const serverId = await harness.addHome(options);
-    await network.addHome(options.serverUrl, options.accountId ?? 'alice');
+    await network.addHome(options.serverUrl, options.accountId ?? 'alice',
+        options.serverIdentityId ? { serverIdentityId: options.serverIdentityId } : {});
     return serverId;
 }
 // These imports must follow the harness's doMock boundary installation. Load
@@ -60,6 +62,7 @@ describe('UI machine Agent inventory Action transport', () => {
         network.setHttpResponder(async (input, init) => {
             const url = new URL(String(input));
             if (url.pathname.startsWith('/v1/machines/')) return null;
+            if (url.pathname === '/v2/sessions/read-batch') return null;
             if (url.pathname.startsWith('/v2/sessions/')) {
                 const sessionId = url.pathname.split('/').at(-1)!;
                 return Response.json({ session: createPlainV2SessionRecordFixture({ id: sessionId }) });
@@ -120,8 +123,8 @@ describe('UI machine Agent inventory Action transport', () => {
     it.each([false, true])('lists Role content without reading unrelated Artifact bodies (unclassified=%s)', async unclassified => {
         const serverId = await addHome({ name: 'Selected Roles Home', serverUrl: `https://selected-roles-${unclassified}.test`, accountId: 'alice' });
         const rows = harness.artifacts(serverId);
-        const seed = (id: string, header: Record<string, unknown>, kind: Artifact['kind'], body: string) => rows.replaceStoredRow({
-            id, kind, ownerAccountId: 'alice', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+        const seed = (id: string, header: Record<string, unknown>, kind: Artifact['kind'], body: string, classified = true) => rows.replaceStoredRow({
+            id, kind, ...(classified && typeof header.kind === 'string' ? { kindHint: header.kind } : {}), ownerAccountId: 'alice', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
             header: encodePlainArtifactStoredContent(header), body: encodePlainArtifactStoredContent({ body }),
             dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
             headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
@@ -129,7 +132,7 @@ describe('UI machine Agent inventory Action transport', () => {
         for (let index = 0; index < 48; index++) seed(`other-${index}`, { kind: 'memory_doc.v1', title: 'Unrelated' }, 'other', 'Unrelated body');
         seed('prompt', { kind: 'prompt', title: 'Prompt' }, 'prompt', 'Unrelated prompt');
         seed('role-selected', buildRoleArtifactHeaderV1(BUILT_IN_ROLES_V1.reviewer), 'other', JSON.stringify(BUILT_IN_ROLES_V1.reviewer));
-        seed('role-legacy', buildRoleArtifactHeaderV1(BUILT_IN_ROLES_V1.builder), unclassified ? null : 'other', JSON.stringify(BUILT_IN_ROLES_V1.builder));
+        seed('role-legacy', buildRoleArtifactHeaderV1(BUILT_IN_ROLES_V1.builder), unclassified ? null : 'other', JSON.stringify(BUILT_IN_ROLES_V1.builder), !unclassified);
         const urls: URL[] = [];
         network.setHttpResponder(async (input, init) => {
             const url = new URL(String(input));
@@ -145,7 +148,9 @@ describe('UI machine Agent inventory Action transport', () => {
         expect(urls.filter(url => url.searchParams.get('includeBody') === 'true')).toHaveLength(0);
         expect(harness.requestsFor('/v1/artifacts/read').flatMap(request => ArtifactReadBatchInputV1Schema.parse(request.input).artifactIds).sort())
             .toEqual(['role-legacy', 'role-selected']);
-        expect(urls.map(url => url.searchParams.get('kind'))).toEqual(unclassified ? ['other', null] : ['other']);
+        expect(urls.map(url => ({ kinds: url.searchParams.get('kinds'), unclassified: url.searchParams.get('unclassified') })))
+            .toEqual([{ kinds: JSON.stringify(['role.v1']), unclassified: null },
+                ...(unclassified ? [{ kinds: null, unclassified: 'true' }] : [])]);
     });
 
     it('lists and mutates Account roles through the ordinary UI executor without a running Session', async () => {
@@ -323,10 +328,14 @@ describe('UI machine Agent inventory Action transport', () => {
         let dispatched!: () => void;
         const pendingResponse = new Promise<void>((resolve) => { release = resolve; });
         const reachedTransport = new Promise<void>((resolve) => { dispatched = resolve; });
-        harness.answer(serverId, 'GET /v1/artifacts?limit=500&kind=other', { select: () => {
-            dispatched();
-            return { body: [], respondAfter: pendingResponse };
-        } });
+        network.setHttpResponder(async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v1/artifacts' && (init?.method ?? 'GET') === 'GET') {
+                dispatched();
+                await pendingResponse;
+            }
+            return harness.request(input, init);
+        });
         const pending = createDefaultActionExecutor().execute('roles.list', {}, { surface: 'ui', serverId, expectedAccountId: 'alice' });
         await reachedTransport;
         await harness.switchAccount(serverId, 'bob');
@@ -336,7 +345,8 @@ describe('UI machine Agent inventory Action transport', () => {
 
     it('keeps built-in role reads available when the serving daemon cannot supply a projection', async () => {
         const serverId = await addHome({ name: 'Offline Plugin Home', serverUrl: 'https://offline-plugin.test', accountId: 'alice' });
-        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ activeAt: Date.now() })] } });
+        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ activeAt: Date.now(),
+            access: createPlainMachineRowFixture({ id: 'machine-1', accountId: 'alice' }).access })] } });
         rpc.machine.mockRejectedValue(new Error('Daemon transport unavailable'));
         const result = await createDefaultActionExecutor().execute('roles.list', {}, { surface: 'ui', serverId });
         expect(result.ok).toBe(true);
@@ -349,7 +359,8 @@ describe('UI machine Agent inventory Action transport', () => {
         const serverId = await addHome({ name: 'Plugin Roles Home', serverUrl: 'https://plugin-roles.test', accountId: 'alice' });
         const catalog = createPromptLibraryCatalogBoundary();
         catalogs.set(serverId, catalog.handle);
-        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ activeAt: Date.now() })] } });
+        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ activeAt: Date.now(),
+            access: createPlainMachineRowFixture({ id: 'machine-1', accountId: 'alice' }).access })] } });
         rpc.machine.mockResolvedValue({ protocolVersion: 1, projection: { v: 2, generation: 1, agentsById: {},
             installedPackagesById: { acme: { id: 'acme', displayName: 'Roles plugin', version: '1.0.0', enabled: true,
                 source: { kind: 'path', locator: '/plugins/acme' }, occurrenceId: 'roles-plugin-occurrence' } }, familiesById: {
@@ -499,13 +510,21 @@ describe('UI machine Agent inventory Action transport', () => {
     });
 
     it.each(['install', 'update'] as const)('starts a %s job on the captured Home with explicit vendor consent', async (intent) => {
-        const serverId = await addHome({ name: 'Setup Home', serverUrl: 'https://setup.test', accountId: 'alice' });
+        const serverId = await addHome({ name: 'Setup Home', serverUrl: 'https://setup.test', accountId: 'alice',
+            serverIdentityId: 'srv_install_observation', currentAccount: true });
         const signal = new AbortController().signal;
         const job = { jobId: 'job-1', agentId: 'acme/helper', intent, startedAt: 1, steps: [], progress: [], done: true,
             outcome: { kind: 'succeeded', version: '1.1.0' } };
         rpc.machine.mockImplementation(async ({ method }) => method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START
             ? { ok: true, jobId: job.jobId } : method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST
                 ? { ok: true, jobs: [job] } : { error: 'Unsupported fixture RPC' });
+        harness.answer(serverId, '/v1/actions/machines.agents.install.status', { select: body => {
+            const request = ExternalActionRequestEnvelopeV1Schema.parse(body);
+            expect(request.input).toMatchObject({ machineId: 'machine-1', jobId: job.jobId });
+            return { body: { v: 1, actionId: 'machines.agents.install.status', requestId: request.requestId,
+                execution: { ok: true, result: { ok: true, steps: job.steps, progress: job.progress,
+                    events: [], nextCursor: 0, done: job.done, outcome: job.outcome } } } };
+        } });
         const result = await createDefaultActionExecutor().execute('machines.agents.install', {
             machineId: 'machine-1', agentId: 'acme/helper', intent,
             ...(intent === 'update' ? { consent: { vendorRecipe: true }, force: true } : {}),
@@ -519,7 +538,8 @@ describe('UI machine Agent inventory Action transport', () => {
             },
         });
         const { readAgentInstallJob, waitForAgentInstallJob } = await import('@/agents/machineAgents/installJobs/installJobStore');
-        const target = { serverId, accountId: 'alice', machineId: 'machine-1', agentId: 'acme/helper' };
+        const target = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'alice',
+            machineId: 'machine-1', agentId: 'acme/helper' };
         expect(readAgentInstallJob(target)?.jobId).toBe(job.jobId);
         expect(await waitForAgentInstallJob(target)).toEqual(job.outcome);
     });
@@ -572,9 +592,11 @@ describe('UI machine Agent inventory Action transport', () => {
             } });
             harness.answer(serverId, `/v1/actions/${actionId}`, { select: body => {
                 const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-                expect(openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
-                    purpose: { kind: 'external_action' }, machineId: 'machine-1', installationId: 'installation', serverIdentityId: homeId,
-                    installationPrivateKey: installation.secretKey })).toEqual({ token: harness.findByServerUrl(serverUrl)?.token });
+                const codecTarget = { authorization: request.executionAuthorization, machineId: 'machine-1',
+                    installationId: 'installation', serverIdentityId: homeId, installationPrivateKey: installation.secretKey };
+                expect(openManagedControllerActionCodecV1(codecTarget)).toMatchObject({ type: 'dataKey', machineKey: expect.any(Uint8Array) });
+                expect(openExternalActionRequesterAccountContextV1({ ...codecTarget,
+                    purpose: { kind: 'external_action' } })).toBeNull();
                 calls.push({ actionId, input: request.envelope.input });
                 return { body: { v: 1, actionId, requestId: request.envelope.requestId,
                     execution: actionId === 'machines.agents.install.status'

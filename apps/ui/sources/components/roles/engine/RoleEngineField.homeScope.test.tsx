@@ -15,7 +15,7 @@ import { useRoleRailItems } from '../rail/useRoleRailItems';
 import { RolesRailDetailView } from '../rail/RolesRailDetail';
 import { t } from '@/text';
 import { RoleEngineField } from './RoleEngineField';
-import { applyAcpCatalogSnapshot, resetAcpCatalogSnapshotsForTests } from '@/sync/store/settings/acpCatalogSnapshot';
+import { applyAcpCatalogSnapshot, getAcpCatalogSnapshot, resetAcpCatalogSnapshotsForTests } from '@/sync/store/settings/acpCatalogSnapshot';
 import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { resetAcpCatalogEngineForTests } from '@/sync/engine/settings/acpCatalogEngine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -100,6 +100,10 @@ describe('role engine exact Home qualification', () => {
     });
 
     it('names the agent a role without an engine runs on, with that agent\'s own mark', async () => {
+        // Configured catalog presence is not a preference (dc905138273).
+        rememberLastUsedBackendSelection(storage.getState().settingsScope, {
+            lastUsedBackendTarget: { kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: 'focused-review' },
+        });
         const hook = await renderHook(() => useRoleEnginePresentation());
         const presented = hook.getCurrent()(undefined);
         // The role follows the Account's preferred agent: its title and mark, not "Default agent".
@@ -139,6 +143,9 @@ describe('role engine exact Home qualification', () => {
         expect(hook.getCurrent()(undefined)).toMatchObject({ label: null, pending: true });
     });
     it('keeps Account Settings while a Home-qualified presentation retires and reopens with its runtime', async () => {
+        const scope = { serverId: 'focused-home', accountId: 'focused-account' };
+        const catalog = getAcpCatalogSnapshot(scope)?.catalog;
+        if (catalog?.status !== 'ready') throw new Error('Expected the seeded ready catalog');
         const settings = await renderHook(() => useRoleEnginePresentation());
         const session = await renderHook(() => useRoleEnginePresentation('focused-home'));
         expect(settings.getCurrent()(engine).label).toBe('Focused Review · stored-model · high');
@@ -152,6 +159,9 @@ describe('role engine exact Home qualification', () => {
         expect(settings.getCurrent()(engine).unavailable).toBe(false);
 
         await act(async () => { publishAppliedActiveServerRuntimeAvailability(true); });
+        // Retirement withdraws catalog freshness (53135463ad0); the returning
+        // runtime's catalog producer supplies a fresh snapshot before naming it.
+        await act(async () => { applyAcpCatalogSnapshot(scope, catalog, true); });
         expect(session.getCurrent()(engine).label).toBe('Focused Review · stored-model · high');
         expect(session.getCurrent()(engine).unavailable).toBe(false);
 
@@ -162,6 +172,7 @@ describe('role engine exact Home qualification', () => {
         await act(async () => {
             publishAppliedActiveServerSnapshot({ serverId: 'focused-home', serverUrl: 'https://focused-home.test', generation: 3 });
         });
+        await act(async () => { applyAcpCatalogSnapshot(scope, catalog, true); });
         expect(session.getCurrent()(engine).unavailable).toBe(false);
     });
 
