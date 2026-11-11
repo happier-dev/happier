@@ -7,6 +7,7 @@ import type { RegistryContentRefV1, RegistryItemSummaryV1, RegistryItemV1, Regis
 import { RegistryFetchErrorV1, type RegistryListPageV1 } from '../registryListV1.js';
 import type { RegistrySourceV1 } from '../registrySourcesV1.js';
 import type { RegistryFetchContextV1, RegistryFormatAdapterV1 } from './registryFormatAdapterV1.js';
+import type { MarketplaceCatalogDiscoveryV1 } from '../../marketplace/marketplaceIndexV1.js';
 
 export const CHROME_WEB_STORE_RPC_URL_V1 = 'https://chromewebstore.google.com/_/ChromeWebStoreConsumerFeUi/data/batchexecute';
 const SEARCH_RPC = 'zTyKYc';
@@ -42,15 +43,62 @@ export function parseChromeWebStoreResultV1(value: unknown): StoreResult {
   return { extensionId: id, title: text(2) ?? id,
     ...(text(6) ? { description: text(6) } : {}), ...(text(1) ? { iconUrl: text(1) } : {}),
     ...(text(7) ? { website: text(7) } : {}), ...(Array.isArray(categories) && typeof categories[0] === 'string' ? { category: categories[0] } : {}),
-    ...(typeof tuple[4] === 'number' ? { installs: tuple[4] } : {}), ...(manifest?.version ? { version: manifest.version as string } : {}),
+    ...(typeof tuple[14] === 'number' ? { installs: tuple[14] } : {}), ...(manifest?.version ? { version: manifest.version as string } : {}),
     ...(manifest ? { manifest, ...(Array.isArray(manifest.permissions) ? { permissions: manifest.permissions.filter((value): value is string => typeof value === 'string') } : {}) } : {}) };
 }
 
+function readJsonArrayAfter(value: string, start: number): unknown[] | undefined {
+  let depth = 0; let quoted = false; let escaped = false; let end = -1;
+  for (let index = start; index < value.length; index += 1) {
+    const char = value[index]!;
+    if (quoted) { if (escaped) escaped = false; else if (char === '\\') escaped = true; else if (char === '"') quoted = false; continue; }
+    if (char === '"') { quoted = true; continue; }
+    if (char === '[') depth += 1;
+    else if (char === ']' && --depth === 0) { end = index + 1; break; }
+  }
+  if (end < 0) return undefined;
+  try { const parsed: unknown = JSON.parse(value.slice(start, end)); return Array.isArray(parsed) ? parsed : undefined; }
+  catch { return undefined; }
+}
+
+/** Visit each positional item once; containers never stand in for their first item. */
+function parseResults(value: unknown): readonly StoreResult[] {
+  const items = new Map<string, StoreResult>();
+  const visit = (candidate: unknown): void => {
+    if (!Array.isArray(candidate)) return;
+    if (typeof candidate[0] === 'string' && STORE_ID.test(candidate[0])) {
+      const item = parseChromeWebStoreResultV1(candidate);
+      items.set(item.extensionId, item);
+      return;
+    }
+    candidate.forEach(visit);
+  };
+  visit(value);
+  return [...items.values()];
+}
+
+/** Parses the store's SSR AF_initDataCallback arrays used by home/collection/category pages. */
+export function parseChromeWebStoreSsrListingsV1(value: string): readonly StoreResult[] {
+  const data: unknown[] = [];
+  const marker = /AF_initDataCallback\(\{key:\s*'ds:\d+'\s*,\s*hash:\s*'[^']*'\s*,\s*data:/gu;
+  for (const match of value.matchAll(marker)) {
+    const parsed = readJsonArrayAfter(value, (match.index ?? 0) + match[0].length);
+    if (parsed) data.push(parsed);
+  }
+  return parseResults(data);
+}
+
 function parseBatchResponse(text: string): unknown {
-  const body = text.replace(/^\)\]\}'\s*/, '');
   const chunks: unknown[] = [];
-  for (const match of body.matchAll(/\["wrb\.fr","[^"]+","((?:\\.|[^"\\])*)"\]/gu)) {
-    try { chunks.push(JSON.parse(JSON.parse(`"${match[1]}"`))); } catch { throw new RegistryFetchErrorV1({ state: 'invalid_source' }); }
+  // The upstream frames are JSON lines following the XSSI prefix and byte counts.
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('[')) continue;
+    try {
+      const frames: unknown = JSON.parse(line);
+      walk(frames, candidate => {
+        if (Array.isArray(candidate) && candidate[0] === 'wrb.fr' && typeof candidate[2] === 'string') chunks.push(JSON.parse(candidate[2]));
+      });
+    } catch { throw new RegistryFetchErrorV1({ state: 'invalid_source' }); }
   }
   if (!chunks.length) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
   return chunks.length === 1 ? chunks[0] : chunks;
@@ -58,10 +106,45 @@ function parseBatchResponse(text: string): unknown {
 
 async function rpc(ctx: RegistryFetchContextV1, rpcid: string, args: unknown, source: RegistrySourceV1): Promise<unknown> {
   const encoded = JSON.stringify([[rpcid, JSON.stringify(args), null, 'generic']]);
-  const url = `${CHROME_WEB_STORE_RPC_URL_V1}?rpcids=${rpcid}&hl=en&rt=c&f.req=${encodeURIComponent(JSON.stringify([encoded]))}`;
-  const response = await ctx.http.getText(url, { source });
+  const url = `${CHROME_WEB_STORE_RPC_URL_V1}?rpcids=${rpcid}&hl=en&rt=c`;
+  const postForm = ctx.http.postForm;
+  if (!postForm) throw new RegistryFetchErrorV1({ state: 'needs_machine' });
+  const response = await postForm(url, `f.req=${encodeURIComponent(`[${encoded}]`)}`, { source });
   if (!response.ok) throw new RegistryFetchErrorV1(response.status);
   return parseBatchResponse(response.value);
+}
+
+type DiscoveryGroup = Readonly<{ id: string; title: string; items: readonly string[] }>;
+function discovery(source: RegistrySourceV1, items: readonly RegistryItemSummaryV1[], groups: readonly DiscoveryGroup[], featuredItem?: string): MarketplaceCatalogDiscoveryV1 {
+  const ids = items.map(item => JSON.stringify(['browserExtension', source.id, item.itemId]));
+  const idByItem = new Map(items.map((item, index) => [item.itemId, ids[index]!]));
+  const discovered = items.map((item, index) => ({ id: ids[index]!, title: item.title, ...(item.description === undefined ? {} : { description: item.description }),
+    reference: { type: 'registryItem' as const, kind: 'browserExtension' as const, sourceId: source.id, itemId: item.itemId } }));
+  const categories = groups.map(group => ({ id: group.id, title: group.title, items: group.items.flatMap(itemId => { const id = idByItem.get(itemId); return id ? [id] : []; }) }));
+  const featured = idByItem.get(featuredItem ?? items[0]?.itemId);
+  return { items: discovered, ...(featured ? { featured: { item: featured, reason: 'Featured on the Chrome Web Store home page' } } : {}), categories, jobs: [] };
+}
+
+async function readDiscoveryListings(ctx: RegistryFetchContextV1, source: RegistrySourceV1): Promise<Readonly<{ items: readonly StoreResult[]; groups: readonly DiscoveryGroup[]; featuredItem?: string }>> {
+  const routes = [
+    { path: '/', id: 'featured', title: 'Featured' },
+    { path: '/collection/by_google', id: 'collection-by-google', title: 'Google collection' },
+    { path: '/category/extensions', id: 'extensions', title: 'Extensions' },
+  ] as const;
+  const items = new Map<string, StoreResult>();
+  const groups: DiscoveryGroup[] = [];
+  let featuredItem: string | undefined;
+  for (const route of routes) {
+    const response = await ctx.http.getText(`https://chromewebstore.google.com${route.path}`, { source });
+    if (!response.ok) throw new RegistryFetchErrorV1(response.status);
+    const parsed = parseChromeWebStoreSsrListingsV1(response.value);
+    if (!parsed.length) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
+    parsed.forEach(item => items.set(item.extensionId, item));
+    const ids = parsed.map(item => item.extensionId);
+    if (route.id === 'featured') featuredItem = ids[0];
+    groups.push({ id: route.id, title: route.title, items: ids });
+  }
+  return { items: [...items.values()], groups, featuredItem };
 }
 
 function summary(source: RegistrySourceV1, item: StoreResult): RegistryItemSummaryV1 {
@@ -77,9 +160,14 @@ export const chromeWebStoreRegistryAdapterV1: RegistryFormatAdapterV1 = {
   format: 'chrome-web-store', kinds: ['browserExtension'], browserFetchable: () => true, supportsQuery: true,
   async list(ctx, req): Promise<RegistryListPageV1> {
     try {
-      const raw = await rpc(ctx, SEARCH_RPC, [[null, [null, null, null, [req.query?.trim() ?? '', [20], null, null, null, null, 1]]]], req.source);
-      const items = Array.isArray(raw) ? raw.flatMap(value => { try { return [parseChromeWebStoreResultV1(value)]; } catch { return []; } }) : [];
-      return { sourceId: req.source.id, status: { state: 'ok', fetchedAt: Date.now() }, items: items.map(item => summary(req.source, item)), total: items.length, nextCursor: null };
+      const query = req.query?.trim();
+      const listing = query ? undefined : await readDiscoveryListings(ctx, req.source);
+      const items = listing?.items ?? parseResults(await rpc(ctx, SEARCH_RPC,
+        [[null, [null, null, null, [query, [20], null, null, null, null, 1]]]], req.source));
+      const summaries = items.map(item => summary(req.source, item));
+      return { sourceId: req.source.id, status: { state: 'ok', fetchedAt: Date.now() }, items: summaries, nextCursor: null,
+        ...(listing ? { discovery: discovery(req.source, summaries, listing.groups, listing.featuredItem) } : {}) };
+
     } catch (error) { if (!(error instanceof RegistryFetchErrorV1)) throw error; return { sourceId: req.source.id, status: error.status, items: [], nextCursor: null }; }
   },
   async read(ctx, req): Promise<RegistryItemV1> {

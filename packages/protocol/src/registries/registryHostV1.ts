@@ -119,6 +119,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     getJson: (...args) => transport(() => source.getJson(...args)),
     getText: (...args) => transport(() => source.getText(...args)),
     getBytes: (...args) => transport(() => source.getBytes(...args)),
+    ...(source.postForm ? { postForm: (...args: Parameters<NonNullable<RegistryHttpV1['postForm']>>) => transport(() => source.postForm!(...args)) } : {}),
   });
   const wrapAppCatalog = (read: RegistryFetchContextV1['withAppCatalog']): RegistryFetchContextV1['withAppCatalog'] => read
     ? (input, consume) => read(input, sharedHttp => consume(wrapHttp(sharedHttp)))
@@ -213,6 +214,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       getJson: (url) => operationCtx.http.getJson(url, { source }),
       getText: (url) => operationCtx.http.getText(url, { source }),
       getBytes: (url) => operationCtx.http.getBytes(url, { source }),
+      ...(operationCtx.http.postForm ? { postForm: (url, body) => operationCtx.http.postForm!(url, body, { source }) } : {}),
     };
     return fetchRegistrySkillFilesV1({...operationCtx,http},skill);
   };
@@ -485,6 +487,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
         const tokenCtx:RegistryFetchContextV1=tokenSource?{...admittedCtx,http:{
           getJson:(url)=>admittedHttp.getJson(url,{source:tokenSource}),getText:(url)=>admittedHttp.getText(url,{source:tokenSource}),
           getBytes:(url)=>admittedHttp.getBytes(url,{source:tokenSource}),
+          ...(admittedHttp.postForm ? { postForm:(url,body)=>admittedHttp.postForm!(url,body,{source:tokenSource}) } : {}),
         }}:ctx;
         const detection = tokenSource?{op:'detect' as const,detected:await detectRegistrySourceV1(tokenCtx,url)}:await fetchRequest({ op: 'detect', url });
         if (detection.op !== 'detect') {

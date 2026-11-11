@@ -1,4 +1,5 @@
 import {describe,expect,it} from 'vitest';
+import {readFileSync} from 'node:fs';
 import {createRegistryHostV1} from './registryHostV1.js';
 import {listRegistrySourcesV1,type RegistrySourceDescriptorV1} from './registrySourcesV1.js';
 import type {RegistryHttpV1} from './formats/registryFormatAdapterV1.js';
@@ -9,6 +10,23 @@ const source=(id:string):RegistrySourceDescriptorV1=>({id,title:id,format:'git',
 const tree={sha:'tree',tree:[{path:'review/SKILL.md',type:'blob',mode:'100644',sha:'blob',size:3},{path:'review',type:'tree',mode:'040000',sha:'subtree'}]};
 
 describe('registry link operation',()=>{
+  it('carries form POST through admitted transport to the Chrome Web Store parser', async () => {
+    const selected: RegistrySourceDescriptorV1 = { id: 'cws-test', title: 'CWS', format: 'chrome-web-store', kinds: ['browserExtension'], url: 'https://chromewebstore.google.com', enabled: true, addedAt: 0, origin: {kind: 'user'}, removable: true };
+    const forbidden = async (): Promise<never> => { throw new Error('Unexpected transport'); };
+    const http: RegistryHttpV1 = { getJson: forbidden, getText: forbidden, getBytes: forbidden,
+      postForm: async (_url, body, opts) => {
+        expect(opts?.source?.id).toBe(selected.id);
+        expect(new URLSearchParams(body).get('f.req')).toContain('ublock');
+        return {ok: true, fetchedAt: 1, value: readFileSync(new URL('./formats/fixtures/chromeWebStoreSearch.txt', import.meta.url), 'utf8')};
+      },
+    };
+    const host = createRegistryHostV1({host: 'node', http, readSources: async () => [selected]});
+    const result = await host.fetchRequest({op: 'list', sourceId: selected.id, kind: 'browserExtension', query: 'ublock'});
+    expect(result).toMatchObject({op: 'list', page: {status: {state: 'ok'}}});
+    if (result.op !== 'list') throw new Error('Expected list');
+    expect(result.page.items).toHaveLength(20);
+  });
+
   it('uses one admitted credential context for every transport read and refreshes it for the next fetch', async () => {
     const selected = source('vault-registry');
     let credential = 'first';

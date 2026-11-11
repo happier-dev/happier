@@ -4,6 +4,18 @@ import type {RegistrySourceV1} from '@happier-dev/protocol/registries';
 import {RegistrySourceStatusV1Schema} from '@happier-dev/protocol/registries';
 const source:RegistrySourceV1={id:'repo',title:'Repo',url:'https://github.com/a/b',format:'git',kinds:['skill'],enabled:true,addedAt:0,token:{secretRef:'secret'}};
 describe('registry HTTP boundary',()=>{
+  it('posts form data with the same success semantics as GET',async()=>{
+    let method=''; let body:unknown; let contentType:string|null=null;
+    const http=createRegistryHttpV1({fetch:async(_url,init)=>{
+      method=init?.method??''; body=init?.body; contentType=new Headers(init?.headers).get('content-type');
+      return new Response('\"ok\"',{status:200});
+    }});
+    await expect(http.postForm?.('https://registry-form.example/rpc','f.req=fixture')).resolves
+      .toMatchObject({ok:true,value:'\"ok\"'});
+    expect(method).toBe('POST');
+    expect(body).toBe('f.req=fixture');
+    expect(contentType).toBe('application/x-www-form-urlencoded');
+  });
   it('uses the admitted Account credential for a GitHub source without a source token',async()=>{
     const {token:_token,...publicSource}=source;
     let authorization:string|null=null;

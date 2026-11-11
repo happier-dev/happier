@@ -8,7 +8,7 @@ type RegistryFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<R
 export function createUiRegistryHttpV1(fetch: RegistryFetch, signal?: AbortSignal,
     nowMs: () => number = Date.now, rateLimitedUntil = new Map<string, number>()): RegistryHttpV1 {
     const read = async <T>(url: string, opts: { source?: RegistrySourceV1 } | undefined,
-        decode: (response: Response) => Promise<T>): Promise<RegistryHttpResultV1<T>> => {
+        decode: (response: Response) => Promise<T>, init: RequestInit = {}): Promise<RegistryHttpResultV1<T>> => {
         signal?.throwIfAborted();
         // Saved Secrets materialize only in CLI/daemon processes, including on native clients.
         if (opts?.source?.token) return { ok: false, status: { state: 'auth_failed' } };
@@ -18,7 +18,7 @@ export function createUiRegistryHttpV1(fetch: RegistryFetch, signal?: AbortSigna
             return { ok: false, status: { state: 'rate_limited', retryAt: limitedUntil } };
         }
         // TypeError stays intact: only protocol's ordered fetch plan may move to a daemon.
-        const response = await fetch(url, { credentials: 'omit', ...(signal ? { signal } : {}) });
+        const response = await fetch(url, { ...init, credentials: 'omit', ...(signal ? { signal } : {}) });
         signal?.throwIfAborted();
         if (!response.ok) {
             const rateLimit = readRegistryHttpRateLimitV1({ status: response.status, headers: response.headers, nowMs: nowMs() });
@@ -43,5 +43,6 @@ export function createUiRegistryHttpV1(fetch: RegistryFetch, signal?: AbortSigna
         getJson: (url, opts) => read(url, opts, response => response.json()),
         getText: (url, opts) => read(url, opts, response => response.text()),
         getBytes: (url, opts) => read(url, opts, async response => new Uint8Array(await response.arrayBuffer())),
+        postForm: (url, body, opts) => read(url, opts, response => response.text(), { method: 'POST', body, headers: { 'content-type': 'application/x-www-form-urlencoded' } }),
     };
 }
