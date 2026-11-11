@@ -45,6 +45,19 @@ describe('navigation row parity between core and the plugin list anatomy', () =>
         expect(readSurfaceStyleProperty(ground('plane-rail').props.style, 'backgroundColor')).toBe('transparent');
     });
 
+    // Owner 2026-11-11 (desktop #13 / OWNER-1334-ROWS 05): the Settings sidebar's selected row painted an opaque
+    // brownish chip on glass while hover was translucent. A selected navigation row resolves through the plane's material.
+    it('fills a selected navigation row through the containing material, never the raw opaque chip', async () => {
+        const { HappierMaterialRoleProvider } = await import('@happier-dev/plugin-ui/presentation');
+        const glass = 'rgba(235, 230, 225, 0.1)';
+        const screen = await renderScreen(React.createElement(HappierMaterialRoleProvider, { role: 'sidebar', resolveMaterialColor: () => glass },
+            React.createElement(CollectionNavigationRow, { title: 'Agents', selected: true, onPress: () => {}, testID: 'nav-selected' })));
+        const pressable = screen.root.findAll(node => node.type === Pressable)[0]!;
+        const style = typeof pressable.props.style === 'function' ? pressable.props.style({ pressed: false, hovered: false }) : pressable.props.style;
+        const fills = [style].flat(Infinity).filter(Boolean).map((entry: Record<string, unknown>) => entry.backgroundColor).filter(value => value !== undefined);
+        expect(fills.at(-1)).toBe(glass);
+    });
+
     it('keeps described navigation compact and lets explicitly declared catalog records grow', async () => {
         const title = 'A long translated capability name that identifies the account';
         const described = await renderScreen(React.createElement(CollectionNavigationRow, {

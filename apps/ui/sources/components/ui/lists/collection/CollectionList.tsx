@@ -20,6 +20,7 @@ import {
     type HappierCollectionListProps,
     type HappierCollectionRowRole,
     HAPPIER_ICON_BUTTON_SIZE,
+    useHappierMaterialColorResolver,
 } from '@happier-dev/plugin-ui/presentation';
 
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
@@ -146,11 +147,6 @@ const styles = StyleSheet.create((theme) => ({
         height: HAPPIER_COLLECTION_LIST_METRICS.troubleDotSize,
         borderRadius: HAPPIER_COLLECTION_LIST_METRICS.troubleDotSize / 2,
         backgroundColor: theme.colors.state.warning.foreground,
-    },
-    // The plane's selected chip: `Item`'s own `surface.selected` is the plane's colour, so an open
-    // navigation row lifts to the elevated surface (the plugin realm's `navigationSelected`).
-    navigationRowSelected: {
-        backgroundColor: theme.colors.surface.elevated,
     },
     // The chip is ~1.06:1 against the plane, below WCAG 1.4.11's 3:1, so the title's weight carries
     // the state as well.
@@ -425,6 +421,7 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
     const { theme } = useUnistyles();
     const reducedMotion = useReducedMotionPreference();
     const onPlane = props.surface !== 'page';
+    const selectedFill = useCollectionRowSelectedOnPlaneFill();
     const rowRole = props.rowRole ?? 'item';
     const needsYouFacts = React.useMemo(() => props.needsYouStatus
         ? { unopened: !props.selected, visible: true } : null, [props.needsYouStatus, props.selected]);
@@ -512,7 +509,7 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
             density="compact"
             selected={props.selected}
             showChevron={false}
-            pressableStyle={props.selected && onPlane ? [HAPPIER_COLLECTION_LIST_ROW_STYLE, styles.navigationRowSelected] : HAPPIER_COLLECTION_LIST_ROW_STYLE}
+            pressableStyle={props.selected && onPlane ? [HAPPIER_COLLECTION_LIST_ROW_STYLE, selectedFill] : HAPPIER_COLLECTION_LIST_ROW_STYLE}
             titleStyle={props.selected && onPlane ? styles.navigationRowTitleSelected : undefined}
             dimmed={props.dimmed === true && !(props.selected && onPlane)}
             style={resolveHappierCollectionListRowPadding(indentPx)}
@@ -523,10 +520,22 @@ export const CollectionNavigationRow = React.memo(function CollectionNavigationR
     return props.href ? <WorkspaceDestinationRow href={props.href}>{actions => React.cloneElement(row, { onLongPress: actions.openMenu })}</WorkspaceDestinationRow> : row;
 });
 
+/**
+ * The plane's selected chip: `Item`'s own `surface.selected` is the plane's colour, so an open navigation row lifts to
+ * the elevated surface (the plugin realm's `navigationSelected`), resolved through the containing material: over glass
+ * it is the plane's tint, never an opaque chip (owner 2026-11-11, desktop #13). The one owner for every column row; it
+ * is a plain resolved style because `Item` cannot read a Unistyles stylesheet colour to resolve it itself.
+ */
+export function useCollectionRowSelectedOnPlaneFill(): Readonly<{ backgroundColor: string }> {
+    const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
+    const elevated = theme.colors.surface.elevated;
+    return React.useMemo(() => ({ backgroundColor: paintColor(elevated) }), [paintColor, elevated]);
+}
+
 /** Host styles for rows inside a collection list. */
 export const collectionListStyles: Readonly<{
     row: typeof HAPPIER_COLLECTION_LIST_ROW_STYLE;
-    rowSelectedOnPlane: typeof styles.navigationRowSelected;
     rowTitleSelectedOnPlane: typeof styles.navigationRowTitleSelected;
     dimmedTitle: typeof styles.dimmedTitle;
     troubleDot: typeof styles.troubleDot;
@@ -534,8 +543,7 @@ export const collectionListStyles: Readonly<{
 }> = {
     /** A row's pressable: inset from the list's edges, with a soft rounded selection. */
     row: HAPPIER_COLLECTION_LIST_ROW_STYLE,
-    /** The plane's selected chip and title weight, for a row richer than `CollectionNavigationRow` on a column. */
-    rowSelectedOnPlane: styles.navigationRowSelected,
+    /** The plane's selected title weight, for a row richer than `CollectionNavigationRow` on a column. Its chip is `useCollectionRowSelectedOnPlaneFill`. */
     rowTitleSelectedOnPlane: styles.navigationRowTitleSelected,
     dimmedTitle: styles.dimmedTitle,
     /** Only trouble gets a dot (needs sign-in, not running, failed). */

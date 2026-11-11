@@ -18,7 +18,7 @@ import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
 import { classifyAccountActorLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import { Item } from '@/components/ui/lists/Item';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
-import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
+import { collectionListStyles, useCollectionRowSelectedOnPlaneFill } from '@/components/ui/lists/collection/CollectionList';
 import { HAPPIER_COLLECTION_ROW_METRICS, resolveHappierCollectionListRowPadding } from '@happier-dev/plugin-ui/presentation';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { ITEM_SUBTITLE_TEXT_METRICS, ITEM_TITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
@@ -228,6 +228,7 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
     const { discussion } = props;
     const workStatus = resolveWorkStatusTone({ kind: 'discussion', facts: props });
     const { theme } = useUnistyles();
+    const selectedFill = useCollectionRowSelectedOnPlaneFill();
     const requestRef = React.useMemo<CollectionRequestRef | null>(() => props.serverId && props.approvalArtifactId
         ? { kind: 'approval', serverId: props.serverId, artifactId: props.approvalArtifactId } : null,
     [props.approvalArtifactId, props.serverId]);
@@ -306,7 +307,7 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
             rightElementOutsidePressable={requestRef !== null}
             onPress={() => props.onOpenDiscussion(discussion.id, discussion.title)}
             {...(column ? {
-                pressableStyle: selected ? [collectionListStyles.row, collectionListStyles.rowSelectedOnPlane] : collectionListStyles.row,
+                pressableStyle: selected ? [collectionListStyles.row, selectedFill] : collectionListStyles.row,
                 style: resolveHappierCollectionListRowPadding(0),
                 iconBoxSize: COLUMN_MARK_PX,
             } : {})}
