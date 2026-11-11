@@ -56,7 +56,7 @@ type MachineLiveStreamRelayState = {
     nextSequenceToRelay: number;
     lastAckNextSequence: number;
     awaitingKeyframe: boolean;
-    retireAfterSessionAccessChange?: () => void;
+    retireAfterSessionAccessChange?: () => void | Promise<void>;
 };
 
 type RelayIo = Pick<Server, 'to'> | Readonly<{
@@ -76,7 +76,9 @@ const VIEWER_SOCKET_REQUIRED_REASON = 'viewer_socket_required';
 export function retireSessionBrowserLiveStreamsAfterAccessChange(sessionId: string): void {
     for (const state of [...streamStateByKey.values()]) {
         const payload = state.startRequest.authorization?.payload;
-        if (payload?.v === 2 && payload.sessionBrowserAccess?.sessionId === sessionId) state.retireAfterSessionAccessChange?.();
+        if (payload?.v === 2 && payload.sessionBrowserAccess?.sessionId === sessionId) {
+            void state.retireAfterSessionAccessChange?.();
+        }
     }
 }
 
@@ -347,7 +349,7 @@ function createState(input: Readonly<{
     maxWindowBytes: number;
     nowMs: number;
     expiresAtMs: number;
-    retireAfterSessionAccessChange?: () => void;
+    retireAfterSessionAccessChange?: () => void | Promise<void>;
 }>): MachineLiveStreamRelayState {
     const existing = streamStateByKey.get(input.key);
     if (existing) return existing;
@@ -1194,7 +1196,17 @@ export function machineLiveStreamRelayHandler(
                     maxWindowBytes: Math.max(1, Math.floor(ctx.relayWindowBytes ?? socketMaxHttpBufferSize)),
                     nowMs,
                     expiresAtMs,
-                    ...(sessionBrowserAccess ? { retireAfterSessionAccessChange: () => {
+                    ...(sessionBrowserAccess ? { retireAfterSessionAccessChange: async () => {
+                        try {
+                            const currentAccess = await resolveSessionAccessForOperation(db, {
+                                accountId: sessionBrowserAccess.actorAccountId,
+                                sessionId: sessionBrowserAccess.sessionId,
+                                authentication: viewerSessionAuthentication,
+                                capability: sessionBrowserAccess.effectiveAccess.capabilities.submitAgentInput
+                                    ? 'submitAgentInput' : 'readTranscript',
+                            });
+                            if (currentAccess.status === 'allowed') return;
+                        } catch { /* Fail closed at the access-change boundary. */ }
                         const state = streamStateByKey.get(streamKey);
                         if (!state) return;
                         const stop = createStateStopControlEnvelope(state, 'capture_source_denied');

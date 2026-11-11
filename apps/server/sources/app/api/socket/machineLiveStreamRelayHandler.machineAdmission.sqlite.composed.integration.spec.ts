@@ -271,6 +271,7 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                         });
                         else await db.sessionShare.deleteMany({ where: { sessionId: session!.id } });
                         notifySessionHumanPresenceAccessChanged({ sessionId: session!.id });
+                        await new Promise(resolve => setTimeout(resolve, 100));
                         expect(delivered).toContainEqual(expect.objectContaining({ message: {
                             kind: 'control', control: expect.objectContaining({ streamId, kind: 'stop' }),
                         } }));
