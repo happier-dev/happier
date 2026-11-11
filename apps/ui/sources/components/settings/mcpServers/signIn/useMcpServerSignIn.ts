@@ -24,7 +24,7 @@ import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { resolveMcpServerAdministrationMachineId } from '@/sync/ops/actions/mcpServerAdministrationTarget';
 
 import type { McpServerSignInFact } from '../status/mcpServerStatus';
-import { aggregateMcpMachineOnline, findMcpSignInGrant, mcpSignInGrantView, mcpSignInFact, type McpSignInView } from './mcpSignInGrantView';
+import { aggregateMcpMachineOnline, findMcpSignInGrant, isMcpServerSignInAvailable, mcpSignInGrantView, mcpSignInFact, type McpSignInView } from './mcpSignInGrantView';
 import { useMcpSignInGrantDiagnostics } from './useMcpSignInGrantDiagnostics';
 export { findMcpSignInGrant, mcpSignInGrantIdentity, mcpSignInGrantView, mcpSignInFact, type McpSignInView } from './mcpSignInGrantView';
 
@@ -88,10 +88,9 @@ function failureView(
 export function useMcpServerSignIn(
   server: McpServerCatalogEntryV1 | null,
   machines: readonly McpSignInMachine[],
-  options?: Readonly<{ returnTo?: string; scope?: AccountSettingsScope | null }>,
+  options?: Readonly<{ returnTo?: string; scope?: AccountSettingsScope | null; authenticationRequired?: boolean }>,
 ): McpServerSignIn {
-  const signsIn =
-    server !== null && server.transport !== 'stdio' && server.remote?.auth?.kind === 'oauth';
+  const signsIn = isMcpServerSignInAvailable(server, options?.authenticationRequired);
   const activeSettingsScope = useAccountSettingsScope();
   const settingsScope = options?.scope === undefined ? activeSettingsScope : options.scope;
   const homeId = settingsScope?.serverId;
@@ -330,9 +329,10 @@ export function useMcpServerSignIn(
     }
     return mcpSignInGrantView(server, grant, anyOnline, {
       ...diagnostics[server.id],
+      authenticationRequired: options?.authenticationRequired,
       ...(revocation?.key === targetKey && (!grant || grant.credentialRevision === revocation.credentialRevision) ? { revoked: revocation.receipt } : {}),
     });
-  }, [anyOnline, diagnostics, grant, local, machines, revocation, server, signsIn, targetKey]);
+  }, [anyOnline, diagnostics, grant, local, machines, options?.authenticationRequired, revocation, server, signsIn, targetKey]);
 
   const fact = React.useMemo(() => mcpSignInFact(view), [view]);
   return {

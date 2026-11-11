@@ -102,6 +102,7 @@ export const DaemonMcpServersTestErrorCodeSchema = lazyZodSchema(() => z.enum([
   'server_disabled',
   'materialization_failed',
   'mcp_connect_failed',
+  'mcp_sign_in_required',
   'mcp_list_tools_failed',
 ]));
 export type DaemonMcpServersTestErrorCode = z.infer<typeof DaemonMcpServersTestErrorCodeSchema>;

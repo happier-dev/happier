@@ -109,7 +109,7 @@ network or permission to invoke an installed CLI. Run
 
 ## Sign in to a remote server
 
-For a server configured for OAuth, choose **Sign in** on its detail to start an Account-owned attempt through a connected daemon. The collection's **Needs sign-in** fix opens that same saved-server detail; it does not start authorization automatically. Complete authorization in the browser, use the phone handoff, or paste the **full callback URL** into the fallback form, including its `state` and any `iss` value.
+For a server configured for OAuth, choose **Sign in** on its detail to start an Account-owned attempt through a connected daemon. In 0.3 development, a remote server whose Test returns an HTTP 401 Bearer challenge also offers **Sign in**, even when its definition did not declare OAuth. Choosing it enables the existing OAuth flow for later Tests and Sessions. The collection's **Needs sign-in** fix opens that same saved-server detail; it does not start authorization automatically. Complete authorization in the browser, use the phone handoff, or paste the **full callback URL** into the fallback form, including its `state` and any `iss` value.
 
 The stable client metadata URL is
 `https://app.happier.dev/oauth/mcp/client-metadata.json`, and its callback is

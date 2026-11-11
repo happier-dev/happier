@@ -20,10 +20,11 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { RemoteMcpAuthenticationRequiredError } from './remoteMcpAuthenticationFailure';
 import { extractWWWAuthenticateParams } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
 import {
-  CallToolRequestSchema, CallToolResultSchema, InitializeResultSchema, JSONRPCMessageSchema,
+  ErrorCode, CallToolRequestSchema, CallToolResultSchema, InitializeResultSchema, JSONRPCMessageSchema,
   JSONRPCNotificationSchema, JSONRPCRequestSchema, JSONRPCResultResponseSchema,
   ListToolsRequestSchema, ListToolsResultSchema, ProgressNotificationSchema, ProgressTokenSchema, RequestIdSchema,
 } from '@modelcontextprotocol/sdk/types.js';
@@ -171,10 +172,19 @@ async function connectRemoteClient(config: RemoteBridgeConfig): Promise<Client> 
   // EventSource converts fetch failures into SseError. Keep the closed refusal
   // at this transport boundary so startup cleanup preserves its public code.
   let redirectRefusal: CredentialRequestRedirectError | undefined;
+  let authenticationRequired: RemoteMcpAuthenticationRequiredError | undefined;
   let connected = false;
   const fetchRemote: FetchLike = async (target, init) => {
     if (config.transport === 'sse' && redirectRefusal) throw redirectRefusal;
-    try { return await fetchRemoteRequest(target, init); }
+    try {
+      const response = await fetchRemoteRequest(target, init);
+      if (response.status === 401 && /^Bearer(?:\s|$)/iu.test(response.headers.get('WWW-Authenticate')?.trim() ?? '')) {
+        await response.body?.cancel().catch(() => undefined);
+        authenticationRequired = new RemoteMcpAuthenticationRequiredError();
+        throw authenticationRequired;
+      }
+      return response;
+    }
     catch (error) {
       if (error instanceof CredentialRequestRedirectError) {
         redirectRefusal = error;
@@ -204,7 +214,7 @@ async function connectRemoteClient(config: RemoteBridgeConfig): Promise<Client> 
   } catch (error) {
     await client.close().catch(() => {});
     await transport.close().catch(() => {});
-    throw redirectRefusal ?? error;
+    throw redirectRefusal ?? authenticationRequired ?? error;
   }
 }
 
@@ -231,7 +241,28 @@ async function main(): Promise<void> {
     readCredentialRedactionValues({ rawCredential: value, authorizationValue: value })
       .flatMap((credential: string) => [credential, JSON.stringify(credential).slice(1, -1)]),
   ));
-  const remoteClient = await connectRemoteClient(config);
+  let remoteClient: Client;
+  try { remoteClient = await connectRemoteClient(config); }
+  catch (error) {
+    if (!(error instanceof RemoteMcpAuthenticationRequiredError)) throw error;
+    // The Agent-facing stdio client needs the challenge as an initialize result,
+    // rather than a child exit or stderr heuristic. stdin buffers until start.
+    const stdio = new StdioServerTransport();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        stdio.onclose = resolve;
+        stdio.onerror = reject;
+        stdio.onmessage = message => {
+          if (!('method' in message) || message.method !== 'initialize' || !('id' in message)) return;
+          void stdio.send({ jsonrpc: '2.0', id: message.id, error: {
+            code: ErrorCode.InternalError, message: error.message, data: error.data,
+          } }).then(resolve, reject);
+        };
+        void stdio.start().catch(reject);
+      });
+    } finally { await stdio.close(); }
+    return;
+  }
   const serverInfo = remoteClient.getServerVersion();
   if (!serverInfo) {
     await remoteClient.close();

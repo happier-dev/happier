@@ -24,10 +24,11 @@ import { authorizationServer, registeredRegistry, registerMcpOAuthFixtureCleanup
 
 describe('Cloudflare MCP catalog composition', () => {
     it.each([
-        { suggestionId: 'cloudflare-api', resource: 'https://mcp.cloudflare.com/mcp', oauth: true },
-        { suggestionId: 'cloudflare-docs', resource: 'https://docs.mcp.cloudflare.com/mcp', oauth: false },
-    ])('composes discovery, selected create, exported import and saved-row use for $suggestionId', async ({ suggestionId, resource, oauth }) => {
-        const fixture = await authorizationServer({ resource, tool: oauth ? 'oauth' : 'public' });
+        { suggestionId: 'cloudflare-api', resource: 'https://mcp.cloudflare.com/mcp', oauth: true, challenge: false },
+        { suggestionId: 'cloudflare-docs', resource: 'https://docs.mcp.cloudflare.com/mcp', oauth: false, challenge: false },
+        { suggestionId: 'cloudflare-docs', resource: 'https://docs.mcp.cloudflare.com/mcp', oauth: false, challenge: true },
+    ])('composes discovery, selected create, exported import and saved-row use for $suggestionId', async ({ suggestionId, resource, oauth, challenge }) => {
+        const fixture = await authorizationServer({ resource, tool: oauth || challenge ? 'oauth' : 'public' });
         const registry = await registeredRegistry();
         const service = HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1;
         const serverFeatures = { status: 'ready', features: FeaturesResponseSchema.parse({ features: {},
@@ -142,7 +143,7 @@ describe('Cloudflare MCP catalog composition', () => {
         expect(authenticationRequests).toBe(0);
         const signIn = () => execute({ actionId: 'mcp.servers.signIn.start', input: { serverId: saved.id }, context });
         let headers: Record<string, string> = {};
-        if (oauth) {
+        if (oauth || challenge) {
             {
                 const start = await signIn();
                 expect(start.ok).toBe(true);
@@ -185,8 +186,6 @@ describe('Cloudflare MCP catalog composition', () => {
             expect(JSON.stringify({ preview, imported, start, completed, catalog })).not.toContain('access-1');
             expect(JSON.stringify(record.values)).not.toContain('registration-secret');
         } else {
-            const refused = await signIn();
-            expect(refused).toMatchObject({ ok: false, errorCode: 'mcp_sign_in_not_supported' });
             expect(fixture.requests).toEqual([]);
             expect(persisted).toEqual([]);
             expect(authenticationRequests).toBe(0);

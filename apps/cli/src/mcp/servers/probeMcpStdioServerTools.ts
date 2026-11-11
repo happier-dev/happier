@@ -4,6 +4,7 @@ import type { Readable, Stream } from 'node:stream';
 import type { McpToolAnnotationsV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 
 import type { McpServerConfig } from '@/agent';
+import { RemoteMcpAuthenticationFailureSchema } from '../bridges/remoteMcpAuthenticationFailure';
 import { withMcpTimeout } from '@/mcp/runtime/withMcpTimeout';
 import { appendBoundedStderrTail, sanitizeChildStderrTail } from '@/daemon/spawn/childStderrDiagnostic';
 import type { ProviderStreamingSanitizer } from '@/providers/spawn/redaction';
@@ -19,14 +20,15 @@ export type McpServerProbeResult = Readonly<{
 }>;
 
 export class McpServerProbeError extends Error {
-  readonly code = 'mcp_tool_catalog_unavailable';
+  readonly code: 'mcp_tool_catalog_unavailable' | 'mcp_sign_in_required';
   readonly phase: 'connect' | 'list_tools';
   readonly stderrTail: string | undefined;
   readonly spawnFailure: StdioMcpServerStartupFailure | undefined;
 
-  constructor(cause: unknown, phase: 'connect' | 'list_tools', stderrTail: string | undefined, spawnFailure?: StdioMcpServerStartupFailure) {
+  constructor(cause: unknown, phase: 'connect' | 'list_tools', stderrTail: string | undefined, spawnFailure?: StdioMcpServerStartupFailure, authenticationRequired = false) {
     super(cause instanceof Error ? cause.message : String(cause), { cause });
     this.name = 'McpServerProbeError';
+    this.code = authenticationRequired ? 'mcp_sign_in_required' : 'mcp_tool_catalog_unavailable';
     this.phase = phase;
     this.stderrTail = stderrTail;
     this.spawnFailure = spawnFailure;
@@ -156,7 +158,8 @@ export async function probeMcpStdioServerTools(params: Readonly<{
     await close().catch(() => {});
     finishStderr();
     const failure = error instanceof McpError ? StdioMcpServerStartupFailureSchema.safeParse(error.data) : null;
-    throw new McpServerProbeError(error, phase, stderrTail(), failure?.success ? failure.data : undefined);
+    throw new McpServerProbeError(error, phase, stderrTail(), failure?.success ? failure.data : undefined,
+      error instanceof McpError && RemoteMcpAuthenticationFailureSchema.safeParse(error.data).success);
   } finally {
     params.signal?.removeEventListener('abort', onAbort);
     await close().catch(() => {});

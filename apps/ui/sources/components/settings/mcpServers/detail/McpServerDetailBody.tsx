@@ -140,7 +140,9 @@ export function useMcpServerDetail(
       }));
   }, [machines, projection]);
 
-  const signIn = useMcpServerSignIn(server, placeMachines);
+  const signIn = useMcpServerSignIn(server, placeMachines, { authenticationRequired:
+    Object.values(tests.results).some(result => result?.ok === false && result.errorCode === 'mcp_sign_in_required'),
+  });
   const startSignIn = signIn.start;
   const runTest = tests.run;
   const { afterRegistryAdd } = useLocalSearchParams<{ afterRegistryAdd?: string }>();

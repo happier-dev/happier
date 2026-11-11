@@ -42,6 +42,14 @@ const headline = (statuses: ReturnType<typeof mcpServerStatus>) => {
 };
 
 describe('mcpServerStatus', () => {
+    it('offers existing sign-in for an unmarked remote server challenged during Test', () => {
+        const current = input({ entry: { ...remote, remote: { ...remote.remote!, auth: undefined } }, signIn: null,
+            tests: { mbp: { ok: false, errorCode: 'mcp_sign_in_required', checkedAt: 1 } } });
+        const status = mcpServerMachineStatuses(current).get('mbp');
+        expect(status).toMatchObject({ kind: 'signin', fix: { kind: 'sign_in' } });
+        status?.fix?.onPress();
+        expect(current.fixes.signIn).toHaveBeenCalledOnce();
+    });
     it('does not label an unobserved machine offline or reuse its previous test as a live failure', () => {
         const status = mcpServerMachineStatuses(input({
             machines: [{ machineId: 'unknown', name: 'Unknown machine', online: null }],

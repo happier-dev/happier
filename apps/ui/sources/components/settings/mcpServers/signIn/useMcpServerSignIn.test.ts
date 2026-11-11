@@ -119,6 +119,16 @@ afterEach(async () => {
 });
 
 describe('useMcpServerSignIn', () => {
+  it('uses the incumbent sign-in action for a challenged remote without an OAuth marker', async () => {
+    boundary.execute.mockResolvedValueOnce({ ok: true, result: started });
+    const unmarked = { ...server, remote: { ...server.remote!, auth: undefined } };
+    const hook = await renderHook(() => useMcpServerSignIn(unmarked, online, { authenticationRequired: true }));
+    expect(hook.getCurrent().view?.state).toBe('not_connected');
+    await act(async () => { await hook.getCurrent().start(); });
+    expect(boundary.execute.mock.calls[0]?.[0]).toBe('mcp.servers.signIn.start');
+    expect(hook.getCurrent().view?.state).toBe('signing');
+  });
+
   it('signs out through the saved second Administration Machine rather than presentation order', async () => {
     const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
     const home = await activateSignInHome('https://mcp-signout-target.test', 'srv_mcp_signout_target');

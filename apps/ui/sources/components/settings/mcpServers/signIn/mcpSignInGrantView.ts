@@ -30,6 +30,7 @@ export function findMcpSignInGrant(profiles: readonly QualifiedConnectedAccountP
 }
 
 export type McpSignInGrantDiagnostics = Readonly<{
+  authenticationRequired?: boolean;
   configuration?: ReturnType<(typeof CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1)['connectedServices.configuration.get']['parse']>;
   revoked?: ReturnType<typeof ConnectedAccountRevokedResponseV1Schema.parse>;
   unavailable?: boolean;
@@ -50,9 +51,14 @@ export function aggregateMcpMachineOnline(machines: readonly Readonly<{ online: 
   return unknown ? null : false;
 }
 
+export function isMcpServerSignInAvailable(server: McpServerCatalogEntryV1 | null, authenticationRequired = false): server is McpServerCatalogEntryV1 & { remote: NonNullable<McpServerCatalogEntryV1['remote']> } {
+  return server !== null && server.transport !== 'stdio' && server.remote !== undefined
+    && (server.remote.auth?.kind === 'oauth' || authenticationRequired);
+}
+
 /** The ONE projection of grant facts for the detail page, homepage and session sheet. */
 export function mcpSignInGrantView(server: McpServerCatalogEntryV1, grant: QualifiedConnectedAccountProfileV4 | null, anyMachineOnline: boolean | null, diagnostics?: McpSignInGrantDiagnostics): McpSignInView | null {
-  if (server.transport === 'stdio' || server.remote?.auth?.kind !== 'oauth') return null;
+  if (!isMcpServerSignInAvailable(server, diagnostics?.authenticationRequired)) return null;
   const matches = (ref: QualifiedConnectedAccountProfileV4['ref']) => isMcpSignInService(ref.service) && ref.accountId === server.id;
   if (diagnostics?.revoked && matches(diagnostics.revoked.account)) return { state: 'revoked' };
   if (grant && !matches(grant.ref)) return { state: 'did_not_finish' };

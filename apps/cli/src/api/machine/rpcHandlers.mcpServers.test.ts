@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -24,7 +25,7 @@ import { createMcpOwnerRpcContext, MCP_TEST_HOME_ID } from './mcpServers.testkit
 
 // Only the Home HTTP/cache I/O boundaries are simulated. Reach, materialization,
 // the SDK probe and catalog CAS run their production implementations.
-vi.mock('axios', () => ({ default: { get: vi.fn(), post: vi.fn(), isAxiosError: () => false } }));
+vi.mock('axios', () => ({ default: { defaults: {}, get: vi.fn(), post: vi.fn(), isAxiosError: () => false } }));
 vi.mock('@/api/client/serverHttpBaseUrl', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/client/serverHttpBaseUrl')>(),
   resolveServerHttpBaseUrl: () => 'https://home.example.test',
@@ -107,13 +108,37 @@ function register(conflict = false, env: NodeJS.ProcessEnv = process.env, stored
 }
 
 describe('Machine MCP Test pipeline', () => {
-  beforeEach(() => { resetInMemoryAccountSettingsContextForTests(); vi.mocked(axios.get).mockReset(); vi.mocked(axios.post).mockReset(); });
-  afterEach(() => resetInMemoryAccountSettingsContextForTests());
+  it('decodes a real remote Bearer challenge as the typed sign-in repair without writing a tool snapshot', async () => {
+    const remote = createServer((_request, response) => {
+      response.writeHead(401, { 'WWW-Authenticate': 'Bearer resource_metadata="https://issuer.example.test/metadata"' });
+      response.end();
+    });
+    await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve));
+    const address = remote.address();
+    if (!address || typeof address === 'string') throw new Error('fixture address unavailable');
+    try {
+      const owner = register(false, process.env, { ...catalog, servers: [{ id: 'server', name: 'fixture',
+        transport: 'http', remote: { url: `http://127.0.0.1:${address.port}/mcp`, headers: {} },
+        env: {}, createdAt: 1, updatedAt: 1 }] });
+      const result = await owner.test({ t: 'byId', machineId: 'm1', directory: tmpdir(), serverId: 'server' });
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'mcp_sign_in_required' });
+      expect(owner.writes).toEqual([]);
+    } finally { await new Promise<void>((resolve, reject) => remote.close(error => error ? reject(error) : resolve())); }
+  }, 60_000);
 
-  it.each(['draft', 'byId'] as const)('withdraws %s admission during the credential read before disclosing configuration state', async t => {
+  beforeEach(() => {
+    resetInMemoryAccountSettingsContextForTests(); vi.mocked(axios.get).mockReset(); vi.mocked(axios.post).mockReset();
+    // Exercise the moving source in every native bridge child, including workspace exports.
+    vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
+    vi.stubEnv('NODE_OPTIONS', `${process.env.NODE_OPTIONS ?? ''} --conditions=happier-source`);
+  });
+  afterEach(() => { resetInMemoryAccountSettingsContextForTests(); vi.unstubAllEnvs(); });
+
+  it.each(['draft', 'byId'] as const)('retains %s admission when its later verifier changes during the credential read', async t => {
     const handlers = new Map<string, RpcHandler<unknown, unknown>>();
     let current = true;
     let reads = 0;
+    let rechecks = 0;
     registerMachineMcpServersRpcHandlers({
       rpcHandlerManager: { registerHandler(method: string, handler: RpcHandler<unknown, unknown>) { handlers.set(method, handler); } } as never,
       deps: { hostHomeServerIdentityId: MCP_TEST_HOME_ID,
@@ -126,9 +151,25 @@ describe('Machine MCP Test pipeline', () => {
       : { t, machineId: 'm1', directory: tmpdir(), serverId: server.id };
     const test = handlers.get(RPC_METHODS.DAEMON_MCP_SERVERS_TEST);
     if (!test) throw new Error('Missing registered MCP Test');
-    await expect(test(request, { ...createMcpOwnerRpcContext(), verifyMachineAdmissionCurrent: async () => current }))
-      .rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+    await expect(test(request, { ...createMcpOwnerRpcContext(), verifyMachineAdmissionCurrent: async () => { rechecks++; return current; } }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'missing_credentials' });
     expect(reads).toBe(1);
+    expect(rechecks).toBe(0);
+  });
+
+  it('refuses a requester without original Machine admission before reading credentials', async () => {
+    const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+    let reads = 0;
+    registerMachineMcpServersRpcHandlers({
+      rpcHandlerManager: { registerHandler(method: string, handler: RpcHandler<unknown, unknown>) { handlers.set(method, handler); } } as never,
+      deps: { hostHomeServerIdentityId: MCP_TEST_HOME_ID, readCredentials: async () => { reads++; return null; } },
+    });
+    const test = handlers.get(RPC_METHODS.DAEMON_MCP_SERVERS_TEST);
+    if (!test) throw new Error('Missing registered MCP Test');
+    await expect(test({ t: 'byId', serverId: server.id, machineId: 'm1', directory: tmpdir() }, {
+      ...createMcpOwnerRpcContext(), machineAdmission: undefined, verifyMachineAdmissionCurrent: undefined,
+    })).rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+    expect(reads).toBe(0);
   });
 
   it('writes metadata and token estimates through the captured catalog CAS', async () => {
@@ -145,12 +186,12 @@ describe('Machine MCP Test pipeline', () => {
     expect(JSON.stringify(result)).not.toContain('fixture-private-token');
   });
 
-  it('rechecks Machine custody after Account preparation before the saved tools CAS (S0-6)', async () => {
+  it('finishes an admitted healthy probe and tools CAS after later Machine withdrawal', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-mcp-cas-withdrawal-'));
     const marker = join(directory, 'probe-completed');
     let current = true;
     let withdrew = false;
-    const { test, writes } = register(false, { ...process.env, MI1_MCP_TOOLS_RECEIPT: marker }, catalog, () => current);
+    const { test, writes, readStoredCatalog } = register(false, { ...process.env, MI1_MCP_TOOLS_RECEIPT: marker }, catalog, () => current);
     const homeGet = vi.mocked(axios.get).getMockImplementation()!;
     // Home Account-currentness HTTP is a genuine system boundary. Retire the
     // original Machine admission only after the useful OS probe has completed.
@@ -168,12 +209,13 @@ describe('Machine MCP Test pipeline', () => {
     try {
       const outcome = await test({ t: 'byId', serverId: server.id, machineId: 'machine', directory })
         .then(result => ({ result }), (error: unknown) => ({ error }));
-      // Prove the genuine boundary was reached before deciding the security
-      // assertion; a broken marker is setup failure, not an admission RED.
+      // Prove withdrawal happened after the real probe, then preserve the
+      // admitted finite operation's result and authoritative tools snapshot.
       expect(await readFile(marker, 'utf8')).toBe('completed');
       expect(withdrew).toBe(true);
-      expect(writes).toHaveLength(0);
-      expect(outcome).toMatchObject({ error: { code: 'agent_isolation_unavailable', retryable: false } });
+      expect(writes).toHaveLength(1);
+      expect(outcome).toMatchObject({ result: { ok: true, toolCount: 1 } });
+      expect(readStoredCatalog().servers[0]?.toolsSnapshot).toMatchObject({ machineId: 'machine', tools: [{ name: 'read_records' }] });
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
 

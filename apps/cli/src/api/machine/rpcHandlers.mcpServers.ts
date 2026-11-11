@@ -415,7 +415,8 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
             && 'code' in cause && cause.code === 'ENOENT' && 'path' in cause && cause.path === configuredCommand
             ? configuredCommand : undefined;
           const stderrTail = error instanceof McpServerProbeError ? error.stderrTail : undefined;
-          const code = probeCompleted ? 'materialization_failed'
+          const code = error instanceof McpServerProbeError && error.code === 'mcp_sign_in_required' ? error.code
+            : probeCompleted ? 'materialization_failed'
             : error instanceof McpServerProbeError ? error.phase === 'connect' ? 'mcp_connect_failed' : 'mcp_list_tools_failed'
               : message.includes('mcp_connect_timeout') ? 'mcp_connect_failed' : 'mcp_list_tools_failed';
           return { ok: false, errorCode: code, error: message, durationMs,

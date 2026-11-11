@@ -445,12 +445,20 @@ export function createMcpServerActionExecuteV1(ports: McpServerActionPortsV1) {
           }
           const server = snapshot.catalog.servers.find(entry => entry.id === serverId);
           if (!server) return { ok: false, errorCode: 'mcp_server_not_found', error: 'mcp_server_not_found' };
-          if (!server.remote || server.remote.auth?.kind !== 'oauth') {
+          if (!server.remote || server.transport === 'stdio') {
             return { ok: false, errorCode: 'mcp_sign_in_not_supported', error: 'mcp_sign_in_not_supported' };
           }
           stage = 'machine_selection';
           const machineId = await ports.resolveAdministrationMachine?.(context);
           if (!machineId) return { ok: false, errorCode: 'no_machine_online', error: 'no_machine_online' };
+          if (server.remote.auth?.kind !== 'oauth') {
+            const receipt = await ports.mutate({ kind: 'server-update', entry: { ...server,
+              remote: { ...server.remote, auth: { kind: 'oauth' } },
+            } }, snapshot.revision, context);
+            if (receipt.status !== 'updated') return projectMcpServerActionFailureV1({
+              code: 'code' in receipt ? receipt.code : 'mcp_catalog_conflict',
+            });
+          }
           stage = 'service_description';
           const service = await describe(machineId, 'credential_write');
           const account = service.accounts.find(profile => profile.ref.accountId === serverId

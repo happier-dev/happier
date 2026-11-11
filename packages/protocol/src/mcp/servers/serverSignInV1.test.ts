@@ -12,13 +12,13 @@ const mode = { id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https:
   pkce: 'required', outcomeReconciliation: 'none' } as const;
 const custody = { occurrenceId: 'host-occurrence', sourceCustody: { kind: 'host' } } as const;
 
-function harness(options: { online?: boolean; revokeFails?: boolean; conflict?: boolean; reconnect?: boolean;
+function harness(options: { unmarked?: boolean; online?: boolean; revokeFails?: boolean; conflict?: boolean; reconnect?: boolean;
   waitForRevoke?: Promise<void>; onRevoke?: () => void; revokeOutcomeUnknown?: boolean;
   clientMetadata?: boolean; beginConnectFailure?: Error; describeFailure?: Error; inconsistentConfigurationPeer?: boolean;
   waitingSignal?: AbortSignal; onRead?: () => void;
   httpsRefusal?: 'mcp_oauth_resource_requires_https' | 'mcp_oauth_endpoints_require_https' } = {}) {
   let catalog: McpServerCatalogV1 = { v: 1, bindings: [], servers: [{ id: 'server', name: 'linear', transport: 'http',
-    remote: { url: options.httpsRefusal === 'mcp_oauth_resource_requires_https' ? 'http://resource.example.test/mcp' : 'https://resource.example.test/mcp', headers: {}, auth: { kind: 'oauth' } }, env: {}, createdAt: 1, updatedAt: 1 }] };
+    remote: { url: options.httpsRefusal === 'mcp_oauth_resource_requires_https' ? 'http://resource.example.test/mcp' : 'https://resource.example.test/mcp', headers: {}, ...(options.unmarked ? {} : { auth: { kind: 'oauth' as const } }) }, env: {}, createdAt: 1, updatedAt: 1 }] };
   let revision = 9;
   let values: Record<string, unknown> = options.reconnect ? { issuer: 'https://issuer.example.test',
     registrations: { 'https://issuer.example.test': { clientId: 'cached-client' } }, stepUpScopes: ['tasks:write'] } : {};
@@ -137,6 +137,18 @@ describe('MCP sign-in through canonical Connected Services', () => {
     const owner = harness({ clientMetadata: true });
     expect(await owner.execute({ actionId: 'mcp.servers.signIn.start', input: { serverId: 'server', client: { clientId: 'unused-app' } }, context }))
       .toMatchObject({ ok: true, result: { clientRegistration: 'not_needed' } });
+  });
+  it('admits discovered sign-in without a configured OAuth marker and enables its later materialization', async () => {
+    const owner = harness({ unmarked: true });
+    expect(await owner.execute({ actionId: 'mcp.servers.signIn.start', input: { serverId: 'server' }, context })).toMatchObject({ ok: true });
+    expect(owner.read().catalog.servers[0]?.remote?.auth).toEqual({ kind: 'oauth' });
+  });
+  it('refuses a conflicting OAuth-intent write before creating an attempt', async () => {
+    const owner = harness({ unmarked: true, conflict: true });
+    expect(await owner.execute({ actionId: 'mcp.servers.signIn.start', input: { serverId: 'server' }, context }))
+      .toMatchObject({ ok: false, errorCode: 'mcp_catalog_conflict' });
+    expect(owner.commands).toEqual([]);
+    expect(owner.read().catalog.servers[0]?.remote?.auth).toBeUndefined();
   });
   it('admits the OAuth marker in the canonical Account catalog', async () => {
     const owner = harness();

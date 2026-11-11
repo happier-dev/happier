@@ -163,7 +163,9 @@ export function mcpServerMachineStatuses(input: Pick<McpServerStatusInput, 'test
             continue;
         }
         if (!test || test.ok) continue;
-        result.set(machine.machineId, test.runtimeMissing
+        result.set(machine.machineId, test.errorCode === 'mcp_sign_in_required'
+            ? { kind: 'signin', machineName: machine.name, fix: { kind: 'sign_in', onPress: input.fixes.signIn } }
+            : test.runtimeMissing
             ? { kind: 'cantrun', machineName: machine.name, detail: test.runtimeMissing, fix: { kind: 'how_to_fix', onPress: () => input.fixes.howToFix(machine.machineId) } }
             : { kind: 'error', machineName: machine.name, fix: { kind: 'try_again', onPress: () => input.fixes.tryAgain(machine.machineId) } });
     }
