@@ -343,7 +343,11 @@ export function buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota
       providerLimitId: limit.providerLimitId ?? limit.id,
       ...(limit.windowDurationMs === undefined ? {} : { windowDurationMs: limit.windowDurationMs }),
       ...(limit.modelId === undefined ? {} : { modelId: limit.modelId }),
-      isExhausted: limit.isExhausted ?? (remaining !== null ? remaining <= 0 : false),
+      ...(limit.isExhausted !== undefined
+        ? { isExhausted: limit.isExhausted }
+        : remaining !== null
+          ? { isExhausted: remaining <= 0 }
+          : {}),
       unit: limit.unit ?? 'unknown' as const,
       utilizationPct: usedPct,
       resetsAt,

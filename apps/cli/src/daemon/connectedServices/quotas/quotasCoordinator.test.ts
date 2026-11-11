@@ -1334,6 +1334,29 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     }
   });
 
+  it('does not infer exhaustion when a plugin leaves remaining unknown', () => {
+    const profile: QualifiedConnectedAccountProfileV4 = {
+      ref: { service: { pluginId: 'acme.quota', localId: 'account' }, accountId: 'work' },
+      status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuv', configurationReady: true, configurationRevision: null,
+      providerIdentity: { accountId: 'provider-user' }, displayName: 'Work', scopes: [],
+    };
+    const buildSnapshot = (input: Readonly<{ remaining: number | null; isExhausted?: boolean }>) =>
+      buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
+        profile,
+        quota: { observedAtMs: 1_000, limits: [{ id: 'weekly', ...input }] },
+        staleAfterMs: 60_000,
+      });
+
+    const unknown = buildSnapshot({ remaining: null });
+    expect(unknown.meters[0]).not.toHaveProperty('isExhausted');
+    expect(buildSnapshot({ remaining: 0 }).meters[0]?.isExhausted).toBe(true);
+    expect(buildSnapshot({ remaining: 10 }).meters[0]?.isExhausted).toBe(false);
+    expect(buildSnapshot({ remaining: null, isExhausted: true }).meters[0]?.isExhausted).toBe(true);
+    expect(buildSnapshot({ remaining: null, isExhausted: false }).meters[0]?.isExhausted).toBe(false);
+    expect(buildSnapshot({ remaining: 10, isExhausted: true }).meters[0]?.isExhausted).toBe(true);
+  });
+
   it('preserves provider window labels, fractional allowance and disabled status in qualified quota projection', () => {
     const snapshot = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
       profile: { ref: { service: { pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' }, accountId: 'selected' },
