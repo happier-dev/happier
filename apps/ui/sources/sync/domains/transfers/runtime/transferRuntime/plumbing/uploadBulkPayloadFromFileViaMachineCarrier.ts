@@ -13,6 +13,7 @@ import type {
 import { resolveMachineCarrierRoute } from './machineCarrierHttpLease';
 import { captureFilesystemTransferAccountScope } from './filesystemTransferAccountScope';
 import { isTransferFinalizeRecoveryFailure } from './directTransferFinalizeRecovery';
+import { userRequestLeaseOwner } from '@/sync/runtime/connectivity/userRequestLease';
 import { readTransferFailureCode } from './transferFailureCode';
 
 function toDirectFailure(error: unknown): BulkTransferFailureResponse {
@@ -39,6 +40,7 @@ export async function uploadBulkPayloadFromFileViaMachineCarrier<
     signal?: AbortSignal | null;
     onProgress?: ((progress: Readonly<{ uploadedBytes: number; totalBytes: number }>) => void) | null;
 }>): Promise<TResponse | BulkTransferFailureResponse | TransferFinalizeRecoveryFailure<TResponse>> {
+    const releaseRequestLease = userRequestLeaseOwner.acquire();
     let account: Awaited<ReturnType<typeof captureFilesystemTransferAccountScope>> | undefined;
     let recoveryOwnsAccount = false;
     try {
@@ -92,7 +94,12 @@ export async function uploadBulkPayloadFromFileViaMachineCarrier<
             return toDirectFailure(error);
         }
     } finally {
-        if (!recoveryOwnsAccount) account?.dispose();
-        await params.fileReader.close();
+        try {
+            if (!recoveryOwnsAccount) account?.dispose();
+            await params.fileReader.close();
+        } finally {
+            // A returned recovery continuation retains Account custody, not live networking.
+            releaseRequestLease();
+        }
     }
 }

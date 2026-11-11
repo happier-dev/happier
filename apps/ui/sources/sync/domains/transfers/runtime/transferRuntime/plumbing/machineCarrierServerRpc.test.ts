@@ -182,6 +182,10 @@ beforeEach(async context => {
 });
 
 afterEach(async () => {
+    const { userRequestLeaseOwner } = await import('@/sync/runtime/connectivity/userRequestLease');
+    userRequestLeaseOwner.cancelDeferredRoutineTeardown();
+    const { setServerReachabilityNetworkAllowed } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+    setServerReachabilityNetworkAllowed(true);
     const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
     const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
     serverScopedRpcSocketPool.resetForTests();
@@ -376,7 +380,13 @@ describe('prepared transfer Home RPC carrier', () => {
         expect(outgoing).toEqual([]);
     });
 
-    it.each(['preview', 'download', 'cold-preview', 'opening-preview'] as const)('reads a workspace %s through real Action admission and strict Home transfer framing', async surface => {
+    it.each(['preview', 'download', 'hidden-download', 'hidden-preview', 'cold-preview', 'opening-preview'] as const)('reads a workspace %s through real Action admission and strict Home transfer framing', async surface => {
+        const hidden = surface.startsWith('hidden-');
+        const downloading = surface === 'download' || surface === 'hidden-download';
+        const { userRequestLeaseOwner } = await import('@/sync/runtime/connectivity/userRequestLease');
+        const { setServerReachabilityNetworkAllowed } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        const teardown = vi.fn(() => setServerReachabilityNetworkAllowed(false));
+        let teardownDeferred: boolean | undefined;
         const bytes = new Uint8Array([0, 255, 128, 10]);
         const transferId = 'export / unicode-λ';
         const manifestHash = `sha256:${Buffer.from(await crypto.subtle.digest('SHA-256', bytes.buffer)).toString('hex')}`;
@@ -409,7 +419,7 @@ describe('prepared transfer Home RPC carrier', () => {
                     transferId, sequence: 0, payload: bytes, recipientPublicKeyBase64,
                 }) };
             } else {
-                if (surface === 'download') expect(closed).toBe(true);
+                if (downloading) expect(closed).toBe(true);
                 expect(phase.body).toMatchObject({ success: true, sizeBytes: bytes.length, manifestHash });
                 body = { success: true };
             }
@@ -439,7 +449,12 @@ describe('prepared transfer Home RPC carrier', () => {
             homes.answer(serverId, path, { select: async (_input, request) => {
                 const response = await external.handle(new URL(request.url), request.init);
                 if (!response) throw new Error(`Unhandled external Action boundary: ${request.url}`);
-                return { status: response.status, body: await response.json() };
+                const body = await response.json();
+                if (hidden && new URL(request.url).pathname === `/v1/actions/${actionId}`) {
+                    // The real visibility owner defers this exact connectivity teardown.
+                    teardownDeferred = userRequestLeaseOwner.deferRoutineTeardown(teardown);
+                }
+                return { status: response.status, body };
             } });
         }
         const received: number[] = [];
@@ -457,7 +472,7 @@ describe('prepared transfer Home RPC carrier', () => {
         }
         const { resolveMachineCarrierRoute } = await import('./machineCarrierHttpLease');
         expect(await resolveMachineCarrierRoute(machineId, serverId)).toMatchObject({ kind: 'server_rpc' });
-        if (surface !== 'download') {
+        if (!downloading) {
             vi.stubEnv('EXPO_PUBLIC_HAPPIER_SESSION_FILE_INLINE_MAX_BYTES', '1');
             const { workspaceReadFile } = await import('@/sync/ops/workspaceFileSystem/fileReadWrite');
             // This file exceeds the configured inline ceiling, independently
@@ -475,14 +490,21 @@ describe('prepared transfer Home RPC carrier', () => {
         // Preview selection and the bounded byte reader each admit the file
         // size; the accepted publication and byte phases must still run once.
         expect(admittedActions).toEqual([actionId]);
-        expect(outgoing.map(value => value.method)).toEqual([...(surface !== 'download' ? [RPC_METHODS.STAT_FILE, RPC_METHODS.STAT_FILE] : []),
+        if (hidden) {
+            expect(teardownDeferred).toBe(true);
+            expect(teardown).toHaveBeenCalledTimes(1);
+            expect(userRequestLeaseOwner.hasActiveLease()).toBe(false);
+        }
+        expect(outgoing.map(value => value.method)).toEqual([...(!downloading ? [RPC_METHODS.STAT_FILE, RPC_METHODS.STAT_FILE] : []),
             RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT,
             RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK, RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE].map(method => `${machineId}:${method}`));
         const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
         expect(getSyncSingleton().encryption).toBeNull();
     });
 
-    it('encrypts imports on a plain Account and returns the typed terminal file result', async () => {
+    it.each([false, true])('encrypts imports on a plain Account and returns the typed terminal file result (hidden=%s)', async hidden => {
+        const { userRequestLeaseOwner } = await import('@/sync/runtime/connectivity/userRequestLease');
+        const teardown = vi.fn();
         const uploadId = 'import / unicode-λ';
         const bytes = new Uint8Array([0, 255, 128, 10]);
         const { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } = await import('./transferChunkEncryption');
@@ -508,17 +530,25 @@ describe('prepared transfer Home RPC carrier', () => {
             }
             return { ok: true, result: rpcResponse({ success: true, finalized: { success: true, path: '/repo/binary', sizeBytes: bytes.length }, sha256: 'binary-digest' }) };
         };
-        const request = await requester(uploadId);
-        const { uploadBulkPayloadFromFileViaDirectImport } = await import('./directTransferImportUpload');
+        const { uploadBulkPayloadFromFileViaMachineCarrier } = await import('./uploadBulkPayloadFromFileViaMachineCarrier');
         const { callAdmittedFilesystemTransferActionRpc } = await import('./filesystemTransferActionClient');
-        const result = await uploadBulkPayloadFromFileViaDirectImport({ machineId, serverId, accountId: 'account-a',
+        const result = await uploadBulkPayloadFromFileViaMachineCarrier({ machineId, serverId,
             callAdmittedAction: callAdmittedFilesystemTransferActionRpc,
-            request: { t: 'session_file_upload_v1', workingDirectory: '/repo', path: 'binary', sizeBytes: bytes.length, overwrite: false },
-            fileReader: { sizeBytes: bytes.length, readBytes: async (offset, length) => bytes.slice(offset, offset + length), close: async () => {} },
-            acquirePreparedCarrier: async () => ({ kind: 'server_rpc', request, release: async () => {} }),
+            directImportRequest: { t: 'session_file_upload_v1', workingDirectory: '/repo', path: 'binary', sizeBytes: bytes.length, overwrite: false },
+            fileReader: { sizeBytes: bytes.length, readBytes: async (offset, length) => {
+                if (hidden) {
+                    expect(userRequestLeaseOwner.deferRoutineTeardown(teardown)).toBe(true);
+                    expect(teardown).not.toHaveBeenCalled();
+                }
+                return bytes.slice(offset, offset + length);
+            }, close: async () => {} },
         });
         expect(result).toEqual({ success: true, path: '/repo/binary', sizeBytes: bytes.length, sha256: 'binary-digest' });
         expect(received).toEqual([...bytes]);
+        if (hidden) {
+            expect(teardown).toHaveBeenCalledTimes(1);
+            expect(userRequestLeaseOwner.hasActiveLease()).toBe(false);
+        }
         expect(outgoing.filter(value => value.method.endsWith(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE))).toHaveLength(1);
     });
 

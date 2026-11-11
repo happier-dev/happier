@@ -162,6 +162,8 @@ describe('uploadBulkPayloadFromFileViaMachineCarrier', () => {
         if (!isTransferFinalizeRecoveryFailure<FileUploadResponse>(result)) {
             throw new Error(`expected a finalize recovery continuation, received ${JSON.stringify(result)}`);
         }
+        const { userRequestLeaseOwner } = await import('@/sync/runtime/connectivity/userRequestLease');
+        expect(userRequestLeaseOwner.hasActiveLease()).toBe(false);
         expect(liveLeases.size).toBe(0);
 
         // Another file of the same workspace batch fails and cancels the shared

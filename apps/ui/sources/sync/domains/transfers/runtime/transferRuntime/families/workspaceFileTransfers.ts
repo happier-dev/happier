@@ -1,6 +1,7 @@
 import { RPC_ERROR_CODES, RPC_METHODS, type WorkspaceStatFileRequestV1 } from '@happier-dev/protocol/rpc';
 import type { FilesystemEffectFailureDetailsV1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 
+import { userRequestLeaseOwner } from '@/sync/runtime/connectivity/userRequestLease';
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 
 import { uploadBulkPayloadFromFileViaMachineCarrier } from '../plumbing/uploadBulkPayloadFromFileViaMachineCarrier';
@@ -248,7 +249,10 @@ async function downloadWorkspaceFileToDestination(params: Readonly<{
 }
 
 export async function downloadDaemonWorkspaceFileToDestination(params: Parameters<typeof downloadWorkspaceFileToDestination>[0]) {
-    return await downloadWorkspaceFileToDestination(params);
+    // The Action receipt is only admission; keep connectivity through the byte phases.
+    const releaseRequestLease = userRequestLeaseOwner.acquire();
+    try { return await downloadWorkspaceFileToDestination(params); }
+    finally { releaseRequestLease(); }
 }
 
 export async function downloadDaemonWorkspaceFileToBase64(params: Readonly<{
@@ -261,6 +265,7 @@ export async function downloadDaemonWorkspaceFileToBase64(params: Readonly<{
     signal?: AbortSignal | null;
     callAdmittedAction?: Parameters<typeof downloadBulkPayloadViaDirectExportToDestination>[0]['callAdmittedAction'];
 }>): Promise<Readonly<{ ok: true; contentBase64: string }> | Readonly<{ ok: false; error: string; errorCode?: string }>> {
+    const releaseRequestLease = userRequestLeaseOwner.acquire();
     let account: Awaited<ReturnType<typeof captureFilesystemTransferAccountScope>> | undefined;
     try {
     account = await captureFilesystemTransferAccountScope(params.serverId, params.signal);
@@ -329,5 +334,8 @@ export async function downloadDaemonWorkspaceFileToBase64(params: Readonly<{
     return directExportResult;
     } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : 'Download Account custody is unavailable', errorCode: 'action_account_scope_changed' };
-    } finally { account?.dispose(); }
+    } finally {
+        try { account?.dispose(); }
+        finally { releaseRequestLease(); }
+    }
 }
