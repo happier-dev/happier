@@ -21,10 +21,16 @@ export async function executeCliManagedAccountPower(input: Readonly<{
 }>) {
     const port = input.context.hostReviewedChild;
     const requestId = input.context.actionRequestId;
-    if (!port || !requestId) throw new ManagedMachineControllerError('admission_unavailable');
+    if (!requestId || input.body.when === 'now' && !port) throw new ManagedMachineControllerError('admission_unavailable');
     const request = ManagedControlAdmissionInputV1Schema.parse({ action: 'machines.managed.power.set', input: input.body, requestId });
     const admitted = await input.post('admit-control', request, ManagedAdmissionOutputV1Schema);
     let machine = admitted.machine;
+    // Home retains the deferred intent; the existing controller/guest drain
+    // reconciler submits its native effect when activity has settled.
+    if (input.body.when === 'after-idle') return ManagedIntentResultSchema.parse({
+        kind: 'accepted', managedId: machine.id, intentRevision: machine.intentRevision,
+        ...(input.context.operationAcceptance ? { operation: { operationId: input.context.operationAcceptance.operationId } } : {}),
+    });
     if (machine.controller) throw new ManagedMachineControllerError('controller_unavailable');
     const provisioner = machine.reviewedFacts?.provisioner;
     if (!provisioner) throw new ManagedMachineControllerError('provider_unavailable');

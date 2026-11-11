@@ -912,7 +912,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
         return result;
       }
-      if (actionId === MANAGED_RESIZE_ACTION_ID_V1 || actionId === 'machines.managed.power.set' && 'when' in body && body.when === 'now') {
+      if (actionId === MANAGED_RESIZE_ACTION_ID_V1 || actionId === 'machines.managed.power.set') {
         try {
           const execution: Omit<Parameters<typeof executeCliManagedAccountPower>[0], 'body'> = {
             context: actionContext, credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },

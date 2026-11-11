@@ -123,6 +123,20 @@ describe('managed inventory CLI Home adapter', () => {
       .resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
   });
 
+  it.each(['stop', 'suspend'] as const)('admits deferred %s through the control endpoint without native dispatch', async intent => {
+    const actionInput = { homeId: 'srv_home', managedId: machine.id, when: 'after-idle' as const, intent };
+    const requests: unknown[] = [];
+    app.post('/v1/machines/managed/controller/admit-control', async request => {
+      requests.push(request.body);
+      return { machine: { ...machine, desired: intent, desiredWhen: 'after-idle', intentRevision: 2 }, replayed: false };
+    });
+    await app.ready();
+    const deps = createAccountServerActionDeps({ token: 'bound', serverId: 'route-home', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'http://home.test' });
+    expect(await deps.managedMachineAction!({ actionId: 'machines.managed.power.set', input: actionInput,
+      context: { ...context, actionRequestId: 'deferred-power' } })).toEqual({ kind: 'accepted', managedId: machine.id, intentRevision: 2 });
+    expect(requests).toEqual([{ action: 'machines.managed.power.set', input: actionInput, requestId: 'deferred-power' }]);
+  });
+
   it.each([undefined, 'controller-1'])('discovers Account provisioner declarations through CLI composition with transport Machine %s', async machineId => {
     let inventoryReads = 0;
     app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
