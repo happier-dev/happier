@@ -163,13 +163,7 @@ export function MachineComputerUseSectionView(
     <ItemGroup
       testID="machine-computer-use-providers"
       title={t('computerUse.providers.sectionTitle')}
-      description={
-        props.online
-          ? t('computerUse.providers.sectionDescription')
-          : t('computerUse.providers.offlineDescription', {
-              machine: props.machineName,
-            })
-      }
+      description={t('computerUse.providers.sectionDescription')}
     >
       {providers.map((row) => {
         const state = resolveComputerProviderRowState({
@@ -178,7 +172,11 @@ export function MachineComputerUseSectionView(
           online: props.online,
         });
         const name = COMPUTER_PROVIDER_DISPLAY_NAMES[row.provider];
-        const text = statusText(state.status.kind);
+        const lockedReason = state.toggle?.lockedReason;
+        const disabledReason = lockedReason === 'offline'
+          ? t('computerUse.providers.offlineDescription')
+          : lockedReason === 'unavailable' ? statusText('unavailable') : undefined;
+        const text = disabledReason ?? statusText(state.status.kind);
         const testID = `machine-computer-use-provider-${row.provider}`;
         const action = state.action
           ? {
@@ -219,6 +217,7 @@ export function MachineComputerUseSectionView(
                   value={state.toggle.value}
                   disabled={state.toggle.disabled}
                   accessibilityLabel={name}
+                  accessibilityHint={disabledReason ?? undefined}
                   onValueChange={(next) => props.onToggle(row, next)}
                 />
               ) : undefined

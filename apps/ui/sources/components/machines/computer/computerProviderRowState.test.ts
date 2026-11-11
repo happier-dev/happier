@@ -45,8 +45,8 @@ describe('computer provider row state', () => {
     it('says a provider is unavailable on this platform and cannot be turned on', () => {
         expect(resolveComputerProviderRowState({ row: row({ availability: 'unavailable' }), mutation: idle, online: true }))
             .toMatchObject({ status: { kind: 'unavailable', tone: 'quiet' }, toggle: { value: false, disabled: true, lockedReason: 'unavailable' } });
-        expect(resolveComputerProviderRowState({ row: row({ enabled: true, availability: 'unavailable' }), mutation: idle, online: true }).status.tone)
-            .toBe('warn');
+        expect(resolveComputerProviderRowState({ row: row({ enabled: true, availability: 'unavailable' }), mutation: idle, online: true }))
+            .toMatchObject({ status: { tone: 'warn' }, toggle: { value: true, disabled: true, lockedReason: 'unavailable' } });
     });
 
     it('keeps the default on with no switch, and turning on waits for the machine to be online', () => {
@@ -54,9 +54,11 @@ describe('computer provider row state', () => {
             .toMatchObject({ status: { kind: 'installed' }, action: null, toggle: null });
         expect(resolveComputerProviderRowState({ row: row({ availability: 'unknown' }), mutation: idle, online: false }))
             .toMatchObject({ status: { kind: 'none' }, toggle: { value: false, disabled: true, lockedReason: 'offline' } });
-        // Turning a provider off, or making it the default, is only a saved preference, so both stay possible offline.
+        expect(resolveComputerProviderRowState({ row: row({ enabled: true, availability: 'not_installed' }), mutation: idle, online: false }))
+            .toMatchObject({ action: null, toggle: { disabled: true, lockedReason: 'offline' } });
+        // VISUAL-SWEEP-1111 F-6: an unavailable Machine keeps the enabled preference visible but locks the switch.
         expect(resolveComputerProviderRowState({ row: row({ enabled: true, availability: 'unknown' }), mutation: idle, online: false }))
-            .toMatchObject({ action: 'makeDefault', toggle: { disabled: false } });
+            .toMatchObject({ action: 'makeDefault', toggle: { value: true, disabled: true, lockedReason: 'offline' } });
     });
 
     it('offers no next step while a change is saving', () => {

@@ -10,7 +10,7 @@ export type ComputerUseTranslations = Readonly<{
         pageDescription: (params: MachineParams) => string;
         sectionTitle: string;
         sectionDescription: string;
-        offlineDescription: (params: MachineParams) => string;
+        offlineDescription: () => string;
         cuaDescription: string;
         agentDesktopDescription: string;
         status: Readonly<{ checking: string; installsOnEnable: string; installing: string; installed: string; missing: string; failed: string; unavailable: string }>;
@@ -237,7 +237,7 @@ export const computerUseTranslationsEnglish = { en: {
             pageDescription: ({ machine }) => `How agents see and control ${machine}’s screen.`,
             sectionTitle: "Providers",
             sectionDescription: "Agents use the default unless they ask for another provider that’s on.",
-            offlineDescription: ({ machine }) => `${machine} is offline, so providers can’t be turned on right now.`,
+            offlineDescription: () => "Reconnect to change providers.",
             cuaDescription: "Fast. Works from what’s on screen.",
             agentDesktopDescription: "Acts on named controls. Slower, uses fewer tokens.",
             status: {

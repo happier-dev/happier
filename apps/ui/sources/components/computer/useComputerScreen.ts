@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { noteSessionComputerMachine } from '@/sync/domains/computer/sessionComputerMachines';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { describeCheckoutUnreachable, useCheckoutReachabilityPresentation } from '@/components/workspaces/reachability/checkoutReachabilityModel';
 
 import type { ComputerScreenViewerProps } from './ComputerScreenViewer';
 import { computerTargetKey } from './ComputerTargetPicker';
@@ -92,6 +93,7 @@ export function useComputerScreen(props: Readonly<{
     const agent = React.useMemo(() => props.agent ?? { agentId: null, name: fallbackName }, [fallbackName, props.agent]);
     // The machine's presence, when this client holds its row: an unreachable machine is a cause to say.
     const machinePresence = useMachinePresenceSummary(serverId, enabled ? scope.machineId : null);
+    const reachability = useCheckoutReachabilityPresentation(serverId ? { serverId, machineId: scope.machineId } : null, machinePresence);
     const machineOnline = machinePresence.reachability === 'unknown' ? undefined : machinePresence.reachability === 'reachable';
     // Control owns the Machine's readable name. Presence titles can be "Loading…" or "Locked machine",
     // which are status placeholders, not names to put in recovery sentences. Unnamed copy stays generic.
@@ -131,6 +133,7 @@ export function useComputerScreen(props: Readonly<{
         selectionPending: control.selection === null && control.failure === null,
         inputDenied: control.inputDenied,
         machineOnline,
+        offlineReason: reachability.unreachable ? describeCheckoutUnreachable(reachability) : null,
         grants: control.grants,
         openSettings: control.openSettings,
         onOpenSettings: control.requestSettings,

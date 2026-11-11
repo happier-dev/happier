@@ -39,13 +39,12 @@ export function resolveComputerProviderRowState(args: Readonly<{
         : status.kind === 'missing' ? 'install'
             : row.enabled && !row.isDefault && (status.kind === 'installed' || status.kind === 'none') ? 'makeDefault' : null;
 
-    // Turning one on installs it, so it needs a platform that has it and the machine online; turning one off is
-    // only a saved preference.
-    const lockedReason = !row.enabled && row.availability === 'unavailable' ? 'unavailable'
-        : !row.enabled && !args.online ? 'offline' : null;
+    // Preserve the saved preference while unavailable, but offer no switch the person cannot use here.
+    const lockedReason = !args.online ? 'offline'
+        : row.availability === 'unavailable' ? 'unavailable' : null;
     return {
         status,
-        action: busy ? null : action,
+        action: busy || (!args.online && action !== 'makeDefault') ? null : action,
         toggle: row.isDefault ? null : { value: row.enabled || installing, disabled: lockedReason !== null, lockedReason },
     };
 }

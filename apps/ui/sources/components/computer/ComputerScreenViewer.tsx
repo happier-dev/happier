@@ -162,6 +162,8 @@ export type ComputerScreenViewerProps = Readonly<{
     inputDenied?: boolean;
     /** The machine's presence, when known: an unreachable machine is the cause said in the picture. */
     machineOnline?: boolean;
+    /** The reachability owner's one explanation for an unavailable Machine. */
+    offlineReason?: string | null;
     /**
      * The machine's OS grants for the shared source. While screen capture is not granted there is no
      * picture to show, and the picture says which permission to allow and where.
@@ -329,6 +331,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
     // A sentence that must name where the Computer is never leaves a blank while the Machine's name is unreadable.
     const machineInSentence = machineWords || t('computerUse.presentation.tabFallback');
     const agentName = props.agent.name;
+    const offlineTitle = props.offlineReason ?? t('computerUse.presentation.offlineTitle', { machine: machineInSentence });
     const screenUnanswered = !stopFailed && recovery?.cause === 'failed' && !props.shared && props.machineOnline === true;
     const recoveryTitle = stopFailed ? t('computerUse.presentation.stopFailed')
         : recovery?.cause === 'driver_missing' ? t('computerUse.presentation.driverMissing')
@@ -341,7 +344,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
         // Before any window is known to be shared, a failed call says which Machine didn't answer, unless
         // the Machine's own presence says it answers: then the cause is its screen, never the Machine.
         : screenUnanswered ? t('computerUse.presentation.screenUnavailableTitle', { machine: machineInSentence })
-        : recovery?.cause === 'offline' || (recovery?.cause === 'failed' && !props.shared) ? t('computerUse.presentation.offlineTitle', { machine: machineInSentence })
+        : recovery?.cause === 'offline' || (recovery?.cause === 'failed' && (!props.shared || props.offlineReason != null)) ? offlineTitle
         : recovery?.cause === 'access_removed' || recovery?.cause === 'permission_denied' ? t('errors.permissionDenied')
         : recovery?.cause === 'source_lost' ? t('computerUse.presentation.endedTitle', { target })
         : t('computerUse.presentation.unavailableTitle');
@@ -350,7 +353,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
         : recovery?.cause === 'headless' ? t('computerUse.picker.noScreenBody')
         : recovery?.cause === 'unsupported' ? t('computerUse.picker.unsupportedBody')
         : recovery?.cause === 'machine_mismatch' ? t('computerUse.picker.otherMachineBody')
-        : recovery?.cause === 'offline' ? t('computerUse.presentation.offlineBody')
+        : recovery?.cause === 'offline' ? props.offlineReason ?? t('computerUse.presentation.offlineBody')
         : recovery?.cause === 'source_lost' ? t('computerUse.presentation.endedBody', { agent: agentName })
         : recoveryTitle;
     // "You can still stop {agent} here" only holds while the capsule offers Take control on a shared window.
@@ -403,6 +406,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                 iconName={recovery?.cause === 'failed' && props.shared && !stopFailed ? 'eye-slash' : undefined}
                 title={recoveryTitle}
                 reason={stopFailed ? undefined
+                    : recovery?.cause === 'failed' && props.offlineReason != null ? undefined
                     : screenUnanswered ? t('computerUse.presentation.screenUnavailableBody')
                     : recovery?.cause === 'failed' ? unavailableReason
                     : recoveryTitle !== recoveryReason ? recoveryReason : undefined}
@@ -417,8 +421,8 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
         <ComputerStateStage testID={`${testID}-offline`}>
             <SurfaceStateCard
                 kind="unavailable"
-                title={t('computerUse.presentation.offlineTitle', { machine: machineInSentence })}
-                reason={t('computerUse.presentation.offlineBody')}
+                title={offlineTitle}
+                reason={props.offlineReason ? undefined : t('computerUse.presentation.offlineBody')}
                 action={checkAgain(props.onRefresh ?? props.onCheckAgain)}
             />
         </ComputerStateStage>

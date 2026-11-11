@@ -39,6 +39,18 @@ describe('Computer use page body', () => {
         expect(props.onRepair).toHaveBeenCalledWith(rows[1]);
     });
 
+    it('locks an enabled provider while the Machine is unreachable and explains the next step on its row', async () => {
+        const props = base({ online: false, providers: [{ ...rows[0]!, isDefault: false, availability: 'unknown' },
+            { ...rows[1]!, enabled: true, isDefault: true, availability: 'unknown' }] });
+        const screen = await renderSettingsView(<MachineComputerUseSectionView {...props} />);
+        const toggle = screen.findByTestId('machine-computer-use-provider-cua.switch');
+        expect(toggle?.props.value).toBe(true);
+        expect(toggle?.props.disabled).toBe(true);
+        expect(toggle?.props.accessibilityHint).toBeTruthy();
+        expect(screen.findByTestId('machine-computer-use-provider-cua.status')).not.toBeNull();
+        expect(props.onToggle).not.toHaveBeenCalled();
+    });
+
     it('shows loading until preferences are readable, and says when they cannot be', async () => {
         expect((await renderSettingsView(<MachineComputerUseSectionView {...base({ preferences: null })} />))
             .findByTestId('machine-computer-use-loading')).not.toBeNull();

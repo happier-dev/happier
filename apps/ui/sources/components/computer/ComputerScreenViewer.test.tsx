@@ -546,6 +546,31 @@ describe('ComputerScreenViewer', () => {
     expect(onOpenSettings).toHaveBeenCalledWith('capture');
   });
 
+  it('uses the canonical reachability explanation in the offline card', async () => {
+    const screen = await renderScreen(<ComputerScreenViewer {...props({
+      machineOnline: false,
+      offlineReason: 'NLDW4-5-40-40 is out of reach',
+    })} />);
+    expect(screen.getTextContent()).toContain('NLDW4-5-40-40 is out of reach');
+    expect(screen.getTextContent()).not.toContain('computerUse.presentation.offlineBody');
+    await screen.update(<ComputerScreenViewer {...props({
+      machineOnline: false, failure: 'machine_unreachable',
+      offlineReason: 'NLDW4-5-40-40 is out of reach',
+    })} />);
+    expect(screen.getTextContent()).toContain('NLDW4-5-40-40 is out of reach');
+    expect(screen.getTextContent()).not.toContain('computerUse.presentation.offlineBody');
+  });
+
+  it('keeps the known Machine cause when a shared stream refresh fails with a generic timeout', async () => {
+    const screen = await renderScreen(<ComputerScreenViewer {...props({
+      machineOnline: false, failure: 'MACHINE_RPC_TIMEOUT',
+      offlineReason: 'Studio is out of reach',
+    })} />);
+    const card = screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'v-recovery');
+    expect(card?.props.title).toBe('Studio is out of reach');
+    expect(card?.props.reason).toBeUndefined();
+  });
+
   // The menu's popover portal is a platform boundary; its items and selection are this viewer's own.
   const viewMenu = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
     screen.tree.root.findByType(DropdownMenu).props as { items: Array<{ id: string }>; onSelect: (id: string) => void };
