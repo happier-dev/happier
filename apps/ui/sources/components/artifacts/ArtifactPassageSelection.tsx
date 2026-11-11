@@ -597,7 +597,6 @@ function WebPassageSelection(
           >
             <FloatingOverlay
               scrollEnabled={false}
-              role="menu"
               surfaceChrome="theme"
             >
               <Pressable

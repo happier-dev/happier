@@ -132,9 +132,7 @@ export function SidebarFooterPopoverButton(props: Readonly<{
                 >
                     {({ maxHeight, maxWidth }) => (
                         <View testID={`${props.testID}-popover`} {...hoverProps}>
-                            {/* Rail rosters (Inbox, Usage, Bots, Machines) are large anchored panels: the panel coat keeps the page beneath from reading through their rows. */}
                             <FloatingOverlay
-                                role="panel"
                                 maxHeight={Math.min(maxHeight, popoverMaxHeightPx)}
                                 edgeFades={{ top: true, bottom: true, size: 18 }}
                                 edgeIndicators

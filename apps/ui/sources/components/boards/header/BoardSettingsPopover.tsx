@@ -84,7 +84,6 @@ export const BoardSettingsButton = React.memo(function BoardSettingsButton(props
                     {({ maxHeight, maxWidth, presentation }) => (
                         <View testID="board-settings.popover">
                             <FloatingOverlay
-                                role="panel"
                                 maxHeight={Math.min(maxHeight, POPOVER_MAX_HEIGHT_PX)}
                                 scrollEnabled={false}
                                 edgeFades={{ top: true, bottom: true, size: 18 }}

@@ -1727,7 +1727,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             <Popover open anchorRef={triggersAnchorRef} onRequestClose={() => setTriggersOpen(false)} placement="auto"
                 phonePresentation="sheet" accessibilityLabel={t('workflows.triggers.section.title')}
                 portal={{ web: true, native: true, matchAnchorWidth: false }}>
-                {({ maxHeight }) => <FloatingOverlay role="panel" maxHeight={maxHeight} scrollEnabled>
+                {({ maxHeight }) => <FloatingOverlay maxHeight={maxHeight} scrollEnabled>
                     <View testID={`${testIDPrefix}-triggers-popover`}>{props.triggersSection}</View>
                 </FloatingOverlay>}
             </Popover>

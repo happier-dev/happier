@@ -662,7 +662,7 @@ export function useFileBlameRegion(
       }}
     >
       {({ maxHeight, presentation }) => (
-        <FloatingOverlay role="panel" maxHeight={maxHeight}>
+        <FloatingOverlay maxHeight={maxHeight}>
           <BlameCard
             run={open}
             inSession={input.sessionAddress !== null}

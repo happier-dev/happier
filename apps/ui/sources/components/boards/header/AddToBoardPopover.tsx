@@ -130,7 +130,6 @@ export const AddToBoardPopover = React.memo(function AddToBoardPopover(props: Ad
                     {({ maxHeight, maxWidth }) => (
                         <View testID="board-add.popover">
                             <FloatingOverlay
-                                role="panel"
                                 maxHeight={Math.min(maxHeight, POPOVER_MAX_HEIGHT_PX)}
                                 scrollEnabled={false}
                                 surfaceChrome="theme"

@@ -131,9 +131,9 @@ export type PopoverProps = Readonly<{
   /** Accessible name for the non-menu dialog surface; defaults to the trigger label. */
   contentAccessibilityLabel?: string;
   /**
-   * What the floating layer is: `menu` (the default) is a small popover that keeps the host's light
-   * coat; `panel` is a large anchored panel (a form, a picker with search, a detail view) that takes
-   * the host's heavy dialog coat so its words stay legible over the page. The host owns the paint.
+   * Accepted for compatibility and no longer changes the paint: every anchored popover, menu and panel is the host's
+   * menu glass (owner, 2026-11-11), legible through its blur and the host's solved coat. Dialogs carry their own
+   * material. The host owns the paint.
    */
   floatingRole?: HappierFloatingRole;
   children?: ReactNode;
@@ -215,7 +215,7 @@ function PopoverPresentation({
   triggerMarks,
   triggerContent,
   contentAccessibilityLabel: requestedContentAccessibilityLabel,
-  floatingRole,
+  floatingRole: _floatingRole,
   children,
   placement,
   disabled,
@@ -289,7 +289,7 @@ function PopoverPresentation({
     }
     const contentBody = (
       <OverlayFieldTriggerContext.Provider value={null}>
-        <FloatingScrollSurface maxHeight={controls.maxHeight} floatingRole={floatingRole} menu={isMenuPresentation}>
+        <FloatingScrollSurface maxHeight={controls.maxHeight} menu={isMenuPresentation}>
           {renderedChildren}
           {/* Anchored (a wide viewport, or a host without a sheet): the sheet's footer ends the same surface. */}
           {sheet?.footer == null ? null : <View style={anchoredSheetFooterStyle}>{sheet.footer}</View>}
@@ -307,7 +307,7 @@ function PopoverPresentation({
           {contentBody}
         </View>
       );
-  }, [children, contentAccessibilityLabel, floatingRole, isMenuPresentation, renderContent, sheet]);
+  }, [children, contentAccessibilityLabel, isMenuPresentation, renderContent, sheet]);
 
   return (
     <View ref={anchorRef} collapsable={false}>
@@ -922,7 +922,7 @@ const menuTextEdgeStyle = { paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingH
  * content scrolls inside it, so a long menu never ends in a flat cut. Floating content stands outside
  * the page column, so the page's sheet edge does not inset it either.
  */
-function FloatingScrollSurface(props: Readonly<{ maxHeight: number; floatingRole?: HappierFloatingRole; menu?: boolean; children: ReactNode }>): ReactElement {
+function FloatingScrollSurface(props: Readonly<{ maxHeight: number; menu?: boolean; children: ReactNode }>): ReactElement {
   // The Surface's 1px border on each side sits outside the scroller.
   const scrollMaxHeight = Math.max(0, props.maxHeight - 2);
   const theme = usePluginTheme();
@@ -931,7 +931,7 @@ function FloatingScrollSurface(props: Readonly<{ maxHeight: number; floatingRole
   return (
     <HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL.Provider value={null}>
       <View style={[{ borderRadius: theme.radii.panel }, lift ?? null]}>
-        <Surface padding="none" materialRole="floating" floatingRole={props.floatingRole}>
+        <Surface padding="none" materialRole="floating">
           <HappierScrollArea style={{ maxHeight: scrollMaxHeight }} contentContainerStyle={props.menu ? FLOATING_MENU_SCROLL_INSET : FLOATING_SURFACE_SCROLL_INSET}>
             <HappierStack gap={4}>{props.children}</HappierStack>
           </HappierScrollArea>
@@ -1030,7 +1030,6 @@ export function SheetMenu(props: SheetMenuProps): ReactElement {
     <PopoverPresentation
       {...popover}
       onOpenChange={onOpenChange}
-      floatingRole="panel"
       // Anchored (a wide viewport), a form hangs below its trigger, as a dropdown does, never over it.
       placement={popover.placement ?? 'bottom'}
       renderContent={(controls) => content({

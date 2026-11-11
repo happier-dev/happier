@@ -9,7 +9,7 @@ import {
     GLASS_SURFACE_GROUPS, glassPresetMaterials, readGlassMaterials, readGlassPreset, resolveGlassPresetSettingsDelta,
     resolveGlassSurfaceMaterial, resolveGlassSurfaceSettingsDelta, resolveGlassIntensitySettingsDelta, resolveGlassBackdropTone,
     resolveGlassBackdropMap, readGlassTintedMaterials,
-    resolveGlassNotchPaint, resolveGlassReadingCoatOpacity,
+    resolveGlassNotchPaint, resolveGlassReadingCoatOpacity, resolveGlassPanelCoatOpacity,
 } from './glassMaterial';
 
 describe('glass material Account owner', () => {
@@ -116,10 +116,9 @@ describe('glass material Account owner', () => {
                         for (const atmosphereBehind of ['none', 'wallpaper'] as const) {
                             const environment = { atmosphereBehind, desktopWindow: true, nativeWindowMaterialLive: true };
                             const map = resolveGlassBackdropMap(settings, group, dark, environment)!;
-                            // Under the default glass a light floating surface takes Strong's panel coat (ink behind it).
-                            const readable = group === 'floating' && !dark && tint === DEFAULT_GLASS_TINT_INTENSITY;
-                            const opacity = readable ? map.opacity! : resolveGlassSurfaceMaterial(settings, group, environment).material.opacity;
-                            const compression = readable ? 0.15 : dark ? atmosphereBehind === 'none' ? plainDark : pictureDark : Math.min(light, 1 - opacity);
+                            // Menus are glass like Elements in both themes (owner, 2026-11-11 OWNER-1330-COAT/03).
+                            const opacity = resolveGlassSurfaceMaterial(settings, group, environment).material.opacity;
+                            const compression = dark ? atmosphereBehind === 'none' ? plainDark : pictureDark : Math.min(light, 1 - opacity);
                             const filtered = applyGlassBackdropFilter(map.tone, [60, 60, 60]);
                             expect((1 - opacity) * filtered[0]! / 60).toBeCloseTo(compression, 3);
                         }
@@ -183,9 +182,9 @@ describe('glass material Account owner', () => {
                 }
             }
         });
-        it('keeps the ink behind a light floating surface to the Strong panel share under the default glass, so a dark control leaves no grey smudge', () => {
-            // What lies under a light menu or Share card is ink content (a black button, text, field edges):
-            // blurred through the tint's hair it reads as a dirty ghost on the white glass.
+        it('lands every light floating surface on its own paint over the page, and lets a menu show what lies behind through its blur', () => {
+            // Owner 2026-11-11 (OWNER-1330-COAT/03): menus and popovers are glass like the cards, not the old near-opaque
+            // coat; the strong blur keeps what lies behind from competing. Panels keep the tint's panel coat.
             const theme = lightTheme;
             const solid = rgb(theme.colors.edge.floatingFill);
             for (const tint of [undefined, DEFAULT_GLASS_TINT_INTENSITY]) {
@@ -197,7 +196,7 @@ describe('glass material Account owner', () => {
                         const over = (backdrop: [number, number, number]) => renderGlassOver({ filter: map.tone, coat: rgb(map.coat!), opacity, backdrop });
                         const label = `${tint} ${atmosphereBehind} ${role ? 'panel' : 'menu'}`;
                         over(rgb(theme.colors.surface.base)).forEach((value, channel) => expect(Math.abs(value - solid[channel]!), label).toBeLessThanOrEqual(1));
-                        over([0, 0, 0]).forEach((value, channel) => expect(Math.abs(value - solid[channel]!), label).toBeLessThanOrEqual(0.15 * 255 + 2));
+                        if (!role) expect(Math.abs(over([0, 0, 0])[0]! - solid[0]!), label).toBeGreaterThan(0.3 * 255);
                     }
                 }
             }
@@ -525,3 +524,43 @@ describe('Elements over a picture solve against the reading coat they stand on',
     }
 });
 
+// Owner 2026-11-11 (OWNER-1330-COAT/03): popovers kept the old, near-opaque coat next to the new card glass. Menus,
+// dropdowns and anchored popovers are glass like the cards: the tint's hair, solved against the picture, with the
+// strong blur keeping what lies under them from competing. Only native renderers (no real blur, NATIVE-SWEEP M3)
+// keep light glass's coat; panels (dialogs, sheets) and live pictures keep theirs.
+describe('floating menus solve like Elements', () => {
+    type Rgb = [number, number, number];
+    const rgb = (value: string) => Color(value).rgb().array().slice(0, 3) as Rgb;
+    const grey = (l: number): Rgb => {
+        const value = 255 * (l <= 0.0031308 ? l * 12.92 : 1.055 * l ** (1 / 2.4) - 0.055);
+        return [value, value, value];
+    };
+    const pictures = {
+        bright: { dark: 0.3, light: 0.88, focus: 0.6 },
+        busy: { dark: 0.01, light: 0.85, focus: 0.2 },
+        dark: { dark: 0.005, light: 0.1, focus: 0.03 },
+    } as const;
+    const settings = { glassSurfaceMaterials: glassPresetMaterials('auto'), glassTintIntensity: DEFAULT_GLASS_TINT_INTENSITY };
+    for (const theme of [darkTheme, lightTheme]) {
+        for (const [name, atmosphereTone] of Object.entries(pictures)) {
+            it(`${theme.dark ? 'dark' : 'light'} ${name}: a web menu is the tint's thin glass and body ink holds 4.5:1`, () => {
+                const environment = { atmosphereBehind: 'wallpaper' as const, atmosphereTone };
+                const ground = { page: theme.colors.surface.base, solid: theme.colors.edge.floatingFill, ink: theme.colors.text.primary, controlFill: theme.colors.surface.selected };
+                const map = resolveGlassBackdropMap(settings, 'floating', theme.dark, environment, ground)!;
+                const opacity = map.opacity ?? resolveGlassSurfaceMaterial(settings, 'floating', environment).material.opacity;
+                expect(opacity).toBeLessThan(0.2);
+                const out = renderGlassOver({ filter: map.tone, coat: rgb(map.coat!), opacity, backdrop: grey(theme.dark ? atmosphereTone.light : atmosphereTone.dark) });
+                expect(glassContrastRatio(out, rgb(theme.colors.text.primary))).toBeGreaterThanOrEqual(4.5);
+            });
+        }
+    }
+    it('keeps the coat where it is still the readable answer: native light menus, panels and live pictures', () => {
+        expect(resolveGlassPanelCoatOpacity(settings, false, false, { nativeRenderer: true })).toBeGreaterThan(0.5);
+        expect(resolveGlassPanelCoatOpacity(settings, false, false)).toBeUndefined();
+        expect(resolveGlassPanelCoatOpacity(settings, true, false)).toBeUndefined();
+        for (const dark of [true, false]) {
+            expect(resolveGlassPanelCoatOpacity(settings, dark, true)).toBeGreaterThan(0.5);
+            expect(resolveGlassPanelCoatOpacity(settings, dark, 'livePicture')).toBeGreaterThan(0.5);
+        }
+    });
+});

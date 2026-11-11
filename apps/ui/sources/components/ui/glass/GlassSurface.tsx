@@ -282,7 +282,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         // so the web's fixed-point hair is not painted: a dark menu or bar stays clear glass (owner, 2026-11-10).
         const nativeCoatOpacity = !nativeBackdrop ? undefined
             : props.atmosphereCoat === 'reading' ? material.opacity
-            : group === 'floating' ? resolveGlassPanelCoatOpacity(settings, theme.dark, panel) : undefined;
+            : group === 'floating' ? resolveGlassPanelCoatOpacity(settings, theme.dark, panel, { nativeRenderer: true }) : undefined;
         const backgroundColor = transparentPlane && enabled ? 'transparent' : nativeBackdrop || inheritsTranslucentMaterial ? 'transparent'
             : (capability === 'tint' || Platform.OS === 'android') && enabled
                 ? withMaterialOpacity(tintColor, material.opacity) : solidColor;

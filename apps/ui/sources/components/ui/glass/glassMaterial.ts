@@ -110,11 +110,14 @@ function isDefaultGlassAppearance(settings: GlassMaterialSettings): boolean {
 
 /**
  * The heavy coat a named-preset floating surface carries over its glass, or undefined for the tint's hair.
- * Panels take the tint's panel coat; over a live picture, and in light under the default glass, every floating
- * surface takes Strong's. Native glass paints exactly this coat (it has no backdrop tone to solve against).
+ * Panels take the tint's panel coat; over a live picture every floating surface takes Strong's. Menus and popovers
+ * are glass like the cards (owner, 2026-11-11 OWNER-1330-COAT/03): the hair, solved against the picture, with the
+ * strong blur keeping what lies under them from competing. Native light glass has no real blur (NATIVE-SWEEP M3:
+ * rows read through popovers), so there, under the default glass, it keeps Strong's coat. Native glass paints
+ * exactly this coat (it has no backdrop tone to solve against).
  */
-export function resolveGlassPanelCoatOpacity(settings: GlassMaterialSettings, dark: boolean, panel: GlassFloatingCoat = false): number | undefined {
-    const readable = isDefaultGlassAppearance(settings) && (panel === 'livePicture' || !dark);
+export function resolveGlassPanelCoatOpacity(settings: GlassMaterialSettings, dark: boolean, panel: GlassFloatingCoat = false, environment: Pick<GlassMaterialEnvironment, 'nativeRenderer'> = {}): number | undefined {
+    const readable = isDefaultGlassAppearance(settings) && (panel === 'livePicture' || (!dark && environment.nativeRenderer === true));
     const coat: GlassFloatingCoat = readable ? 'livePicture' : panel === 'livePicture' ? false : panel;
     if (!coat || readGlassPreset(settings) === 'custom') return undefined;
     const tint = resolveGlassTintValues(settings.glassTintIntensity);
@@ -278,12 +281,10 @@ export function resolveGlassBackdropMap(settings: GlassMaterialSettings, group: 
     if (group === 'floating' || group === 'card') {
         const picture = environment.atmosphereBehind === 'band' || environment.atmosphereBehind === 'wallpaper';
         const tint = resolveGlassTintValues(settings.glassTintIntensity);
-        // Under the default glass, Strong's panel coat carries a floating surface over a live picture and,
-        // in light, over everything: what lies under a light menu or Share card is ink (a black button, text,
-        // field edges), and through the tint's hair its blur reads as a grey ghost on the white glass. Native
-        // light glass is as thin (iOS QA, NATIVE-SWEEP M3: rows read through popovers), so it takes the coat too.
-        // A customized appearance is the plain floating surface it would be anywhere else.
-        const alpha = group === 'floating' ? resolveGlassPanelCoatOpacity(settings, dark, panel) : undefined;
+        // Panels and live pictures carry a heavy coat (`resolveGlassPanelCoatOpacity`); menus and popovers are the
+        // tint's hair solved below, as Elements are (owner, 2026-11-11). A customized appearance is the plain
+        // floating surface it would be anywhere else.
+        const alpha = group === 'floating' ? resolveGlassPanelCoatOpacity(settings, dark, panel, environment) : undefined;
         if (alpha !== undefined) {
             // The heavy coat carries the panel: the backdrop passes at most at 1 − α, never brightened.
             const compression = legibleCompression(Math.min(1 - alpha, dark ? 1 : tint.lightCompression), dark, picture ? environment.atmosphereTone : undefined, ground);

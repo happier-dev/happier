@@ -435,7 +435,6 @@ export function BotFacePicker(
           panel('sheet')
         ) : (
           <FloatingOverlay
-            role="panel"
             maxHeight={Math.min(maxHeight, PICKER_MAX_HEIGHT_PX)}
             surfaceChrome="theme"
             keyboardShouldPersistTaps="always"

@@ -60,7 +60,6 @@ export function FollowEditorPanel(
           style={{ width: Math.min(FOLLOW_PANEL_WIDTH_PX, maxWidth) }}
         >
           <FloatingOverlay
-            role="panel"
             maxHeight={maxHeight}
             edgeFades={{ top: true, bottom: true }}
             header={

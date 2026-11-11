@@ -727,11 +727,10 @@ describe('web glass material', () => {
             return { filter: style.backdropFilter!, coat: mix ? rgb(mix[1]!) : null, opacity: mix ? Number(mix[2]) / 100 : null };
         };
         const page = rgb(darkTheme.colors.surface.base);
-        // A dialog declares the panel role on the material; an anchored panel declares it on the floating overlay.
+        // A dialog declares the panel role on the material. Anchored popovers are glass like menus (owner, 2026-11-11).
         for (const panel of [
             await paint(<GlassSurface surfaceGroup="floating" floatingRole="panel"><DraftInput /></GlassSurface>),
-            await paint(<FloatingOverlay role="panel" scrollEnabled={false}><DraftInput /></FloatingOverlay>),
-            // A plugin's anchored panel reaches the same owner through the public material request.
+            // A plugin's panel reaches the same owner through the public material request.
             await paint(<HappierSurface materialRole="floating" floatingRole="panel" renderMaterialSurface={renderThemeMaterialSurface}><DraftInput /></HappierSurface>),
         ]) {
             expect(panel.opacity).toBeGreaterThanOrEqual(0.5);
@@ -1161,7 +1160,7 @@ describe('web glass material', () => {
             .filter(node => { for (let parent = node.parent; parent; parent = parent.parent) if (parent.props?.testID === testID) return true; return false; });
         useAutoPreset();
         const shipped = await renderScreen(
-            <FloatingOverlay role="panel" scrollEnabled={false}>
+            <FloatingOverlay scrollEnabled={false}>
                 <GlassSurface testID="inner" surfaceGroup="floating"><DraftInput /></GlassSurface>
             </FloatingOverlay>,
         );

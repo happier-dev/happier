@@ -90,7 +90,6 @@ export function LookPopover(
           <View testID="look-popover">
             {/* A large anchored editor (Look, a profile's Details and Public data): the panel coat keeps its captions legible over a band. */}
             <FloatingOverlay
-              role="panel"
               maxHeight={Math.min(maxHeight, LOOK_POPOVER_MAX_HEIGHT_PX)}
               edgeFades={{ top: true, bottom: true, size: 18 }}
               surfaceChrome="theme"

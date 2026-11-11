@@ -657,7 +657,6 @@ export function CodeEditSetPopover(
         ) : (
           <FloatingOverlay
             maxHeight={Math.min(maxHeight, POPOVER_MAX_HEIGHT)}
-            role="panel"
           >
             <View
               testID="code-edit-set-card"

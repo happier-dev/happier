@@ -306,3 +306,67 @@ describe('FloatingOverlay scroll source', () => {
         expect(external.current).toBe(scroller);
     });
 });
+
+describe('FloatingOverlay scroll edge under fixed chrome', () => {
+    it('anchors its scroll-edge fades and indicators to the scroll viewport, not to the surface around a pinned header and footer', async () => {
+        const screen = await renderScreen(
+            React.createElement(FloatingOverlay, {
+                maxHeight: 300,
+                edgeFades: { top: true, bottom: true },
+                edgeIndicators: true,
+                header: React.createElement('View', { testID: 'menu-header' }),
+                footer: React.createElement('View', { testID: 'menu-footer' }),
+                children: React.createElement(Child),
+            } as React.ComponentProps<typeof FloatingOverlay>),
+        );
+        const scroller = screen.findAllByType('AnimatedScrollView' as never)[0]!;
+        // Scrolled into the middle: rows run past both edges of the viewport.
+        await act(async () => {
+            scroller.props.onScroll({ nativeEvent: {
+                contentOffset: { x: 0, y: 100 },
+                layoutMeasurement: { width: 200, height: 100 },
+                contentSize: { width: 200, height: 500 },
+            } });
+        });
+        const contains = (node: { findAll: (p: (n: { props: Record<string, unknown> }) => boolean) => unknown[] }, testID: string) =>
+            node.findAll((candidate) => candidate.props.testID === testID).length > 0;
+        const edgeCues = [
+            ...screen.findAllByType('LinearGradient' as never),
+            ...screen.findAll((node) => String(node.type) === 'Icon' && (node.props.name === 'caret-up' || node.props.name === 'caret-down')),
+        ];
+        expect(edgeCues.length).toBeGreaterThanOrEqual(2);
+        for (const cue of edgeCues) {
+            // The cue's frame is the nearest box that also holds the scroll viewport.
+            let frame = cue.parent;
+            while (frame && !frame.findAll((node) => node === scroller).length) frame = frame.parent;
+            expect(frame).toBeTruthy();
+            // Absolute cues positioned in that frame start at the viewport's edges only when the pinned chrome is outside it.
+            expect(contains(frame!, 'menu-header')).toBe(false);
+            expect(contains(frame!, 'menu-footer')).toBe(false);
+        }
+    });
+
+    it('fades the rows themselves at a scrolled-past viewport edge on the web, where the glass surface leaves a painted fade nothing to paint', async () => {
+        const screen = await renderScreen(
+            React.createElement(FloatingOverlay, {
+                maxHeight: 300,
+                edgeFades: { top: true, bottom: true },
+                header: React.createElement('View', { testID: 'menu-header' }),
+                children: React.createElement(Child),
+            } as React.ComponentProps<typeof FloatingOverlay>),
+        );
+        const scroller = () => screen.findAllByType('AnimatedScrollView' as never)[0]!;
+        expect(flattenStyle(scroller().props.style).maskImage).toBeUndefined();
+        await act(async () => {
+            scroller().props.onScroll({ nativeEvent: {
+                contentOffset: { x: 0, y: 100 },
+                layoutMeasurement: { width: 200, height: 100 },
+                contentSize: { width: 200, height: 500 },
+            } });
+        });
+        const style = flattenStyle(scroller().props.style);
+        // Clear at the viewport's top and bottom edges, solid between.
+        expect(String(style.maskImage)).toMatch(/^linear-gradient\(to bottom, transparent 0px, black \d+px, black calc\(100% - \d+px\), transparent 100%\)$/);
+        expect(style.WebkitMaskImage).toBe(style.maskImage);
+    });
+});

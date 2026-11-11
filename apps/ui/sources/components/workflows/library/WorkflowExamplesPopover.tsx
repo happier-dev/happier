@@ -42,7 +42,7 @@ export function WorkflowExamplesPopover(props: Readonly<{
         // width, so a description takes two lines at most (lab `b-habit T`). The card picker keeps its room.
         portal={{ web: true, native: true, matchAnchorWidth: false, ...(list ? { sizeToContent: true } : {}) }}>
         {/* Rows under the list ("New trigger") stay at the picker's foot while the examples scroll. */}
-        {({ maxHeight, presentation }) => <FloatingOverlay role="panel" maxHeight={maxHeight} scrollEnabled footer={props.footer}><View testID={props.testID}>
+        {({ maxHeight, presentation }) => <FloatingOverlay maxHeight={maxHeight} scrollEnabled footer={props.footer}><View testID={props.testID}>
             <WorkflowExamplesSection onUse={props.onUse} onDidUse={props.onRequestClose} hideTitle={presentation === 'sheet'}
                 {...(list ? { session: props.session, presentation: 'list' as const } : {})} />
         </View></FloatingOverlay>}

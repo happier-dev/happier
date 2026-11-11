@@ -22,7 +22,7 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 describe('FloatingOverlay content on its sheet', () => {
     it('draws a freshness line inside a popover or panel as one plain line, not a ruled strip boxed in the floating surface', async () => {
         const screen = await renderScreen(
-            <FloatingOverlay role="panel" maxHeight={400}>
+            <FloatingOverlay maxHeight={400}>
                 <SurfaceFreshnessLine testID="line" reason="Some items may be missing." />
             </FloatingOverlay>,
         );
@@ -34,7 +34,7 @@ describe('FloatingOverlay content on its sheet', () => {
 
     it('lays a flat section on the menu text edge like a carded one, so a popover mixing both keeps one edge', async () => {
         const screen = await renderScreen(
-            <FloatingOverlay role="panel" maxHeight={400}>
+            <FloatingOverlay maxHeight={400}>
                 <ItemGroup><Item testID="carded-row" title="Include in Voice" showChevron={false} /></ItemGroup>
                 <ItemGroup surface="none"><Item testID="flat-row" title="Notification settings" showChevron={false} /></ItemGroup>
             </FloatingOverlay>,
@@ -46,7 +46,7 @@ describe('FloatingOverlay content on its sheet', () => {
 
     it('stands free content in a flat popover section (a button row) on the menu rows\' text edge', async () => {
         const screen = await renderScreen(
-            <FloatingOverlay role="panel" maxHeight={400}>
+            <FloatingOverlay maxHeight={400}>
                 <ItemGroup surface="none"><BareSectionContent><SurfaceFreshnessLine testID="free" reason="Ready." /></BareSectionContent></ItemGroup>
             </FloatingOverlay>,
         );

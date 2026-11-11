@@ -485,7 +485,6 @@ function PropertyFieldPopover(
         : { triggerAppearance: 'status' as const })}
       triggerAccessibilityLabel={props.triggerAccessibilityLabel}
       contentAccessibilityLabel={item.label}
-      floatingRole="panel"
       sheet={{ title: item.label }}
       {...(props.testID === undefined ? {} : { testID: props.testID })}
     >

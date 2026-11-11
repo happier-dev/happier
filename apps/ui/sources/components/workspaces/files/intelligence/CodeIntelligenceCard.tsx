@@ -213,7 +213,6 @@ export function CodeIntelligenceCard(
             maxHeight={Math.min(maxHeight, CARD_MAX_HEIGHT)}
             // A card at a name reads over dense code: the panel coat keeps the lines under it from
             // showing through its text (the rename and fix card at a name carries the same coat).
-            role="panel"
             edgeFades={{ top: true, bottom: true }}
           >
             <View

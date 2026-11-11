@@ -17,6 +17,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { useScrollEdgeFades, type ScrollEdgeVisibility } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
+import { resolveVerticalScrollEdgeMaskStyle } from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
 import { shadowLevelStyle } from '@/shadowElevation';
 import {
     resolveThemeSurfaceBorderStyle,
@@ -33,7 +34,6 @@ import { Typography } from '@/constants/Typography';
 
 import { FLOATING_OVERLAY_METRICS } from './floatingOverlayMetrics';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
-import type { FloatingSurfaceRole } from '@/components/ui/glass/glassMaterial';
 import { createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import { useGlassSurfaceBackdropTone, useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
 import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
@@ -41,6 +41,8 @@ import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presenta
 import { SurfaceFreshnessOnSheetProvider } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 
 const OVERLAY_BORDER_RADIUS = FLOATING_OVERLAY_METRICS.radiusPx;
+// Shrinks with the scroller under the surface's height cap and positions its edge cues.
+const SCROLL_VIEWPORT_FRAME_STYLE: ViewStyle = { position: 'relative', flexShrink: 1, minHeight: 0 };
 
 // A sheet already owns its material and corners. Keep the same scrolling content
 // without nesting a second floating card inside the shared modal surface.
@@ -174,12 +176,6 @@ interface FloatingOverlayProps {
     /** Selects the existing border/shadow chrome; both variants follow the floating material. */
     surfaceChrome?: 'modal' | 'theme';
     /**
-     * The surface's job on the floating material: `panel` for a large anchored panel (Add widget, About
-     * this widget, run inputs, Board settings) takes the dialogs' heavy coat; `menu` (default) for menus,
-     * pickers and small popovers keeps the hair of tint.
-     */
-    role?: FloatingSurfaceRole;
-    /**
      * Initial visibility for scroll edge fades before measurement.
      * Useful for optimistic trailing-edge fades (e.g., bottom: true for lists
      * that typically have more content below).
@@ -208,7 +204,6 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         edgeIndicators = false,
         arrow = false,
         surfaceChrome = 'modal',
-        role = 'menu',
         containerStyle,
         scrollViewStyle,
         scrollViewRef,
@@ -288,8 +283,16 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
         if (typeof scrollViewRef === 'function') scrollViewRef(node);
         else if (scrollViewRef) (scrollViewRef as React.MutableRefObject<ScrollView | null>).current = node;
     }, [scrollViewRef]);
+    // On the web the floating surface is glass, so a painted fade has no colour to cover a row with: the rows
+    // themselves fade out at a scrolled-past edge of the viewport instead. Native keeps the painted fades.
+    const webEdgeMask = React.useMemo(() => (Platform.OS === 'web' && fadeCfg ? resolveVerticalScrollEdgeMaskStyle({
+        top: fadeCfg.top && fades.visibility.top,
+        bottom: fadeCfg.bottom && fades.visibility.bottom,
+        left: false,
+        right: false,
+    }, { fadeSize: fadeCfg.size }) : null), [fadeCfg, fades.visibility]);
     const scrollProps: FloatingOverlayScrollProps = {
-            style: [{ maxHeight, flexShrink: 1 }, scrollViewStyle],
+            style: [{ maxHeight, flexShrink: 1 }, scrollViewStyle, webEdgeMask],
             keyboardShouldPersistTaps,
             showsVerticalScrollIndicator: showScrollIndicator,
             scrollEventThrottle: 32,
@@ -324,22 +327,26 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
 
     // The floating surface is the sheet its content sits on: a freshness line inside is one plain line, never a strip.
     // A view pushed inside a phone popover leads with its way back; surfaces nested in it don't repeat it.
+    // The edge fades and indicators frame the scroll viewport itself, so a pinned header (a search field) and footer
+    // stay clear of them and a row scrolled past either edge fades out at the viewport's edge instead of being cut there.
     const surfaceContent = <SurfaceFreshnessOnSheetProvider>
         {pushedView ? <PushedViewBackRow view={pushedView} /> : null}
         {props.header}
-        {pushedView ? <PhonePushedViewContext.Provider value={null}>{content}</PhonePushedViewContext.Provider> : content}
+        <View style={SCROLL_VIEWPORT_FRAME_STYLE}>
+            {pushedView ? <PhonePushedViewContext.Provider value={null}>{content}</PhonePushedViewContext.Provider> : content}
+            {scrollEnabled && fadeCfg && Platform.OS !== 'web' ? (
+                <ScrollEdgeFades color={fadeColor} size={fadeCfg.size} edges={fades.visibility} />
+            ) : null}
+            {scrollEnabled && indicatorCfg ? (
+                <ScrollEdgeIndicators
+                    edges={fades.visibility}
+                    color={theme.colors.text.secondary}
+                    size={indicatorCfg.size}
+                    opacity={indicatorCfg.opacity}
+                />
+            ) : null}
+        </View>
         {props.footer}
-        {scrollEnabled && fadeCfg ? (
-            <ScrollEdgeFades color={fadeColor} size={fadeCfg.size} edges={fades.visibility} />
-        ) : null}
-        {scrollEnabled && indicatorCfg ? (
-            <ScrollEdgeIndicators
-                edges={fades.visibility}
-                color={theme.colors.text.secondary}
-                size={indicatorCfg.size}
-                opacity={indicatorCfg.opacity}
-            />
-        ) : null}
     </SurfaceFreshnessOnSheetProvider>;
 
     if (insideSheet) {
@@ -359,7 +366,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
             containerStyle,
             containerPaint,
         ]}>
-            <GlassSurface surfaceGroup="floating" floatingRole={role} style={[
+            <GlassSurface surfaceGroup="floating" style={[
                 surfaceChrome === 'theme' ? styles.themedSurfaceClip : styles.modalClipSurface,
                 { maxHeight },
             ]}>

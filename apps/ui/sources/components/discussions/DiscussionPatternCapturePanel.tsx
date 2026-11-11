@@ -193,7 +193,6 @@ export function DiscussionPatternCapturePanel(
     >
       {({ maxHeight }) => (
         <FloatingOverlay
-          role="panel"
           maxHeight={maxHeight}
           surfaceChrome="theme"
           scrollEnabled

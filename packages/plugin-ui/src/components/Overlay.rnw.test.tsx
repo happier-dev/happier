@@ -553,7 +553,8 @@ describe('controlled overlay presentation', () => {
     mount.unmount();
   });
 
-  it('asks the host material for a panel coat only when a Popover declares itself a panel, and never for a Menu', () => {
+  // Owner 2026-11-11 (OWNER-1330-COAT/03): anchored popovers are menu glass; a declared panel is accepted for compatibility.
+  it('never asks the host material for a panel coat from an anchored popover or a Menu, even when one declares itself a panel', () => {
     const floatingRoles: Array<string | undefined> = [];
     const host: PluginUiPresentationHost = {
       ...createPresentationHost((input) => input.content),
@@ -574,7 +575,7 @@ describe('controlled overlay presentation', () => {
     mountOverlay(<Popover open onOpenChange={() => undefined} trigger="Options" triggerAccessibilityLabel="Open options" floatingRole="panel"><Text value="Panel" /></Popover>);
     mountOverlay(<Popover open onOpenChange={() => undefined} trigger="Options" triggerAccessibilityLabel="Open options"><Text value="Small popover" /></Popover>);
     mountOverlay(<Menu open onOpenChange={() => undefined} trigger="Options" triggerAccessibilityLabel="Open options" items={[{ id: 'one', label: 'One' }]} onSelect={() => undefined} />);
-    expect(floatingRoles).toEqual(['panel', undefined, undefined]);
+    expect(floatingRoles).toEqual([undefined, undefined, undefined]);
   });
 
   it('uses a named controlled radio group to keep menuitemradio checks exclusive', async () => {

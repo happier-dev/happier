@@ -76,7 +76,7 @@ export function AnchoredWidgetShell(props: Readonly<{
                 <View style={{ alignSelf: 'flex-start', width: Math.min(props.width, maxWidth) }}>
                     <CrampedReport cramped={maxWidth < props.width} onChange={setCramped} />
                     {/* The flow scrolls its own body inside this room, so its header and footer stay put. */}
-                    <FloatingOverlay role="panel" maxHeight={maxHeight} scrollEnabled={false} keyboardShouldPersistTaps="always">
+                    <FloatingOverlay maxHeight={maxHeight} scrollEnabled={false} keyboardShouldPersistTaps="always">
                         <WidgetFlowHeightBoundContext.Provider value={maxHeight}>
                             {props.children}
                         </WidgetFlowHeightBoundContext.Provider>

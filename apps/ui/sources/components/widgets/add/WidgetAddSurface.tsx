@@ -209,7 +209,7 @@ function AnchoredWidgetAddContent(props: Readonly<{
     const height = Math.min(props.maxHeight, WIDGET_ADD_SURFACE_PX.height);
     return (
         <View style={{ alignSelf: 'center', width }}>
-            <FloatingOverlay role="panel" maxHeight={height} scrollEnabled={false} keyboardShouldPersistTaps="always">
+            <FloatingOverlay maxHeight={height} scrollEnabled={false} keyboardShouldPersistTaps="always">
                 <View style={{ height }}>
                     <WidgetAddPanel {...props.panel} composition={split ? 'split' : 'push'} />
                 </View>
