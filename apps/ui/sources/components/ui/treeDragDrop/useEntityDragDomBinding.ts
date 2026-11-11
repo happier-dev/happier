@@ -85,6 +85,7 @@ export function useEntityDragDomBinding(input: EntityDragDomBindingInput): (node
             if (active) deliverDragPointer(latest.current.runtime, event, active.move);
         };
         const start = (event: DragEvent) => {
+            if (event.defaultPrevented) return;
             const current = latest.current;
             if (!current.enabled || current.canStart?.(event, element) === false) { event.preventDefault(); return; }
             const handle = current.begin ? current.begin() : current.runtime.begin(current.sourceId, 'pointer');

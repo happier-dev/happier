@@ -6,13 +6,14 @@ import type { CollectionAnatomy } from './Collection.js';
 /** Retain the one List.Item menu when the host decorates a Collection item in any presentation. */
 export function renderCollectionItemDestination<Item>(host: PluginUiPresentationHost | null, anatomy: CollectionAnatomy<Item>, item: Item, row: ReactElement<ItemProps>): ReactNode {
   const destination = anatomy.destination?.(item);
-  const decorated = destination && host?.renderDestinationRow ? host.renderDestinationRow({
-    ...destination, children: row,
-    renderWithSecondaryActions: additional => cloneElement(row, {
+  // The row's own interactions stay nearest its content, including its explicit native drag source.
+  const wrap = (content: ReactElement<ItemProps>) => anatomy.wrapItem ? anatomy.wrapItem(item, content) : content;
+  return destination && host?.renderDestinationRow ? host.renderDestinationRow({
+    ...destination, children: wrap(row),
+    renderWithSecondaryActions: additional => wrap(cloneElement(row, {
       secondaryActions: [...(row.props.secondaryActions ?? []), ...additional.secondaryActions],
       onSecondaryAction: (id, selection) => additional.secondaryActions.some(action => action.id === id)
         ? additional.onSecondaryAction(id, selection) : row.props.onSecondaryAction?.(id, selection),
-    }),
-  }) : row;
-  return anatomy.wrapItem ? anatomy.wrapItem(item, decorated) : decorated;
+    })),
+  }) : wrap(row);
 }
