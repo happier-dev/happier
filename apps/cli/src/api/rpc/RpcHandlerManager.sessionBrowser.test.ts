@@ -16,7 +16,12 @@ it.each([
     { mode: 'plain', accountMode: 'plain' },
     { mode: 'plain', accountMode: 'e2ee' },
     { mode: 'e2ee', accountMode: 'e2ee' },
-] as const)('opens Home-admitted Browser RPC with the exact Session content ($mode Session, $accountMode Account)', async ({ mode, accountMode }) => {
+    { mode: 'e2ee', accountMode: 'e2ee', contentFailure: 'cancelled' },
+    { mode: 'e2ee', accountMode: 'e2ee', contentFailure: 'unavailable' },
+] as const)('opens Home-admitted Browser RPC with the exact Session content ($mode Session, $accountMode Account, failure=$contentFailure)', async testCase => {
+    const { mode, accountMode } = testCase;
+    const contentFailure = 'contentFailure' in testCase ? testCase.contentFailure : null;
+    const sessionReadStarted = Promise.withResolvers<void>();
     const seed = new Uint8Array(32).fill(3);
     const publicKey = libsodiumPublicKeyFromSecretKey(seed);
     const sessionKey = new Uint8Array(32).fill(9);
@@ -37,13 +42,18 @@ it.each([
         } };
     const reads: string[] = [];
     // Only HTTP is substituted: Session selection, envelope opening, RPC binding and local admission remain real.
-    vi.spyOn(axios, 'get').mockImplementation(async url => {
+    vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
         const path = new URL(String(url)).pathname;
         reads.push(path);
         if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
             mode: accountMode, version: 1, signingKeyFingerprint: accountMode === 'plain' ? null : 'signing',
             contentKeyFingerprint: accountMode === 'plain' ? null : 'content', updatedAt: 1,
         } };
+        if (path === '/v2/sessions/exact-session' && contentFailure === 'unavailable') throw new Error('private resolver failure fixture');
+        if (path === '/v2/sessions/exact-session' && contentFailure === 'cancelled') return await new Promise((_resolve, reject) => {
+            options?.signal?.addEventListener?.('abort', () => reject(new axios.CanceledError('canceled')));
+            sessionReadStarted.resolve();
+        });
         if (path === '/v2/sessions/exact-session') return { status: 200, data: { session: {
             id: 'exact-session', seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
             encryptionMode: mode, metadata: codec.encodeStored({}), metadataVersion: 1, share: null,
@@ -73,7 +83,18 @@ it.each([
     const request = { method, params, authorization, callerAuthority: 'present_user' as const };
     expect(await manager.handleRequest(request)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
     expect(reads).toEqual([]);
-    const response = await manager.handleRequest(request, undefined, 'authenticated_home_socket');
+    const pendingResponse = manager.handleRequest(request, undefined, 'authenticated_home_socket');
+    if (contentFailure) {
+        if (contentFailure === 'cancelled') {
+            await sessionReadStarted.promise;
+            manager.cancelTransportRequests();
+        }
+        // An unread encrypted envelope permits only a typed refusal, never a rejected receive callback.
+        await expect(pendingResponse).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.UPDATE_REQUIRED });
+        expect(JSON.stringify(await pendingResponse)).not.toContain('private resolver failure fixture');
+        return;
+    }
+    const response = await pendingResponse;
     expect(await socketRpcCodec.decodeResult(content, { ok: true, result: response }, callId)).toEqual({ input, mode });
     expect(reads.sort()).toEqual(['/v1/account/encryption/currentness', '/v2/sessions/exact-session']);
 });

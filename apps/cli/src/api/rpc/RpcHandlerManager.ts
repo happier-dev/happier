@@ -1278,6 +1278,12 @@ export class RpcHandlerManager {
             }
             const rpcErrorCode = readRpcErrorCode(controller.signal.aborted ? controller.signal.reason : error)
                 ?? readRpcErrorCode(error);
+            if (rpcContent.mode === 'e2ee' && callId === null) {
+                // Content acquisition can fail before an encrypted request is opened.
+                // Its only valid reply is a typed refusal without private resolver details.
+                return await respond(request, { error: 'RPC encryption material is unavailable',
+                    errorCode: rpcErrorCode ?? RPC_ERROR_CODES.UPDATE_REQUIRED });
+            }
             const capabilityDetails = readCapabilityFailureDiagnostic(diagnostic.method, error);
             const pluginError = isPluginError(error) ? error : null;
             const forwardedCause = ActionFailureCauseV1Schema.safeParse(
