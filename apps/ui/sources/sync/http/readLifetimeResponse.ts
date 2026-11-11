@@ -3,13 +3,13 @@
  * the latter stringifies a ReadableStream body. Keep the stream here and use the
  * platform Response only for conversions that require its Blob/FormData types.
  */
-export function createReadLifetimeResponse(source: Response, body: ReadableStream<Uint8Array>): Response {
+export function createReadLifetimeResponse(source: Response, body: ResponseBody): Response {
     return new ReadLifetimeResponse(source, body);
 }
 
 export async function bufferReadLifetimeResponse(source: Response): Promise<Response> {
     const bytes = new Uint8Array(await source.arrayBuffer());
-    return createReadLifetimeResponse(source, new ReadableStream<Uint8Array>({
+    return createReadLifetimeResponse(source, new ReadableStream<ResponseBodyChunk>({
         start(controller) {
             controller.enqueue(bytes);
             controller.close();
@@ -17,13 +17,17 @@ export async function bufferReadLifetimeResponse(source: Response): Promise<Resp
     }));
 }
 
-type BodyState = { stream: ReadableStream<Uint8Array>; used: boolean };
+type ResponseBody = NonNullable<Response['body']>;
+type ResponseBodyChunk = ResponseBody extends ReadableStream<infer Chunk> ? Chunk : never;
+type ReactNativeFormData = Awaited<ReturnType<globalThis.Response['formData']>>;
+type ResponseFormData = globalThis.FormData & ReactNativeFormData;
+type BodyState = { stream: ResponseBody; used: boolean };
 
-function trackBody(body: ReadableStream<Uint8Array>): BodyState {
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+function trackBody(body: ResponseBody): BodyState {
+    let reader: ReadableStreamDefaultReader<ResponseBodyChunk> | undefined;
     const state: BodyState = {
         used: false,
-        stream: new ReadableStream<Uint8Array>({
+        stream: new ReadableStream<ResponseBodyChunk>({
             async pull(controller) {
                 state.used = true;
                 reader ??= body.getReader();
@@ -55,7 +59,7 @@ class ReadLifetimeResponse implements Response {
     readonly url: string;
     private state: BodyState;
 
-    constructor(source: Response, body: ReadableStream<Uint8Array>) {
+    constructor(source: Response, body: ResponseBody) {
         this.headers = new Headers(source.headers);
         this.ok = source.ok;
         this.redirected = source.redirected;
@@ -66,7 +70,7 @@ class ReadLifetimeResponse implements Response {
         this.state = trackBody(body);
     }
 
-    get body(): ReadableStream<Uint8Array> { return this.state.stream; }
+    get body(): ResponseBody { return this.state.stream; }
     get bodyUsed(): boolean { return this.state.used; }
 
     clone(): Response {
@@ -104,7 +108,8 @@ class ReadLifetimeResponse implements Response {
     async blob(): Promise<Blob> {
         return new Response(await this.arrayBuffer(), { headers: this.headers }).blob();
     }
-    async formData(): Promise<FormData> {
-        return new Response(await this.arrayBuffer(), { headers: this.headers }).formData();
+    async formData(): Promise<ResponseFormData> {
+        const formData = await new Response(await this.arrayBuffer(), { headers: this.headers }).formData();
+        return formData as unknown as ResponseFormData;
     }
 }
