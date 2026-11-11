@@ -682,7 +682,7 @@ describe('executeExternalAction', () => {
       expect(ApprovalRequestV2Schema.parse(stored).execution?.result).not.toHaveProperty('target');
     } finally { get.mockRestore(); post.mockRestore(); }
   });
-  it('preserves terminal E2EE identity and automation through actual installed custody, effect and reply', async () => {
+  it.each([null, 'credential_scope_denied', 'invalid_token'] as const)('preserves terminal E2EE identity and reports verify authorization refusal (refused: %s)', async refused => {
     const accountId = 'bob-terminal';
     const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId, session: 'bob-terminal-session', tokenEpoch: 7,
       provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
@@ -717,7 +717,9 @@ describe('executeExternalAction', () => {
     });
     const post = vi.spyOn(axios, 'post').mockImplementation(async url => {
       expect(new URL(String(url)).pathname).toBe(`/v1/actions/${actionId}/execution-authorization/verify`);
-      return { status: 200, data: { ok: true } };
+      return refused
+        ? { status: refused === 'invalid_token' ? 401 : 403, data: { error: refused, authorizationRefusal: 'machine_admission_after_principal' } }
+        : { status: 200, data: { ok: true } };
     });
     const run = (requestPrincipal: Parameters<typeof executeExternalAction>[0]['principal']) => executeExternalAction({
       actionId, envelope, principal: requestPrincipal, surface: 'cli', executionAuthorization: authorization,
@@ -743,6 +745,11 @@ describe('executeExternalAction', () => {
     });
     try {
       const result = await run(principal);
+      if (refused) {
+        expect(result).toMatchObject({ kind: 'invalid_request', errorCode: refused, requestId: binding.requestId });
+        expect(effects).toBe(0);
+        return;
+      }
       expect(result, JSON.stringify(result)).toMatchObject({ kind: 'response', response: { v: 2 } });
       if (result.kind !== 'response') throw new Error('Expected terminal encrypted reply');
       expect(openExternalActionResponseV2({ envelope: result.response, request: envelope, binding, material })).toMatchObject({

@@ -840,15 +840,16 @@ describe('requester HTTP authority on the existing external Action carrier', () 
       serverHttpBaseUrl: 'https://home.test' })).rejects.toMatchObject({ code: 'project_requester_home_unavailable', retryable: true });
   });
 
-  it.each([401, 403])('keeps a definitive Home refusal (%s) closed', async status => {
+  it.each([401, 403])('preserves a definitive Home refusal code (%s)', async status => {
     const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     const requestId = '70cc64d3-0386-4914-b7d8-713b7879e99f';
     const nativeAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization,
       binding: { ...authorization.binding, actionId: 'session.message.send', requestId } });
-    vi.spyOn(axios, 'post').mockResolvedValue({ status, data: { error: 'invalid_token' } });
+    const code = status === 403 ? 'credential_scope_denied' : 'invalid_token';
+    vi.spyOn(axios, 'post').mockResolvedValue({ status, data: { error: code } });
     await expect(verifyExternalActionExecutionAuthorizationCurrent({ authorization: nativeAuthorization, effectActionId: nativeAuthorization.binding.actionId,
       target, privateKey: keys.secretKey, installationId: authorization.binding.installationId,
-      serverHttpBaseUrl: 'https://home.test' })).resolves.toBe(false);
+      serverHttpBaseUrl: 'https://home.test' })).rejects.toMatchObject({ ok: false, errorCode: code });
     expect(log).toHaveBeenCalledWith('[external-action-phase]', expect.objectContaining({
       phase: 'signed_root_http_status', httpStatus: status, requestId, actionId: 'session.message.send',
     }));

@@ -12,6 +12,7 @@ import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSche
 import { buildMachineAgentsDetectRequest, MachineAcpInventoryRequestSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import { mintExternalActionExecutionAuthorization } from './externalActionAuthorizationHttp';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { ExternalActionMachineNpmProfileAdmissionResponseV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import type { MachineNpmProfileAdmissionResponseV1 } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -2463,9 +2464,15 @@ export async function verifyExternalActionExecutionAuthorizationCurrent(input: R
     });
     traceExternalActionInnerStage('requester.root_verification.http', { httpStatus: response.status });
     if (response.status < 200 || response.status >= 300) {
-      const failure = createHttpStatusError(response.status, 'External Action authorization is unavailable');
-      refuseExternalActionPhase('signed_root_http_status', input.authorization.binding.machineId, failure,
-        readSessionInputAdmissionDiagnostic(input.authorization.binding));
+      const denied = readActionCredentialScopeDeniedHttpFailureV1(response.status, response.data);
+      const refusal = ExternalActionHttpErrorSchema.safeParse(response.data);
+      const failure = denied ? createActionExecuteFailureError(denied)
+        : response.status === 401 && refusal.success && refusal.data.error === 'invalid_token'
+          ? createActionExecuteFailureError({ ok: false, errorCode: refusal.data.error, error: refusal.data.error })
+          : createHttpStatusError(response.status, 'External Action authorization is unavailable');
+      refuseExternalActionPhase('signed_root_http_status', input.authorization.binding.machineId, failure, {
+        ...readSessionInputAdmissionDiagnostic(input.authorization.binding), httpStatus: response.status,
+      });
       rethrowRequesterHomeReadFailure(failure);
       return false;
     }

@@ -140,7 +140,7 @@ export type PrepareExternalActionRequesterAccountContext = (input: Readonly<{
 export type ExecuteExternalActionResult = Readonly<
   | {
     kind: 'invalid_request';
-    errorCode: 'invalid_action' | 'invalid_envelope' | 'invalid_encrypted_envelope' | 'encrypted_action_unsupported' | 'request_too_large' | 'target_required' | 'target_unavailable' | 'project_requester_home_unavailable' | 'internal_error';
+    errorCode: 'invalid_action' | 'invalid_envelope' | 'invalid_encrypted_envelope' | 'encrypted_action_unsupported' | 'request_too_large' | 'target_required' | 'target_unavailable' | 'project_requester_home_unavailable' | 'internal_error' | 'credential_scope_denied' | 'invalid_token';
     requestId?: string;
     failureCause?: ActionFailureCauseV1;
   }
@@ -346,7 +346,8 @@ async function executeExternalActionRequest(input: Readonly<{
     envelopeCodecMaterial = opened?.material ?? null;
     controllerInvocation = opened?.invocation;
     if (!envelopeCodecMaterial) return { kind: 'invalid_request',
-      errorCode: envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
+      errorCode: !current.ok && current.executionFailure ? current.executionFailure.errorCode
+        : envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
       ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}) };
     rootAdmittedTarget = authorization.binding.target;
   }
@@ -365,7 +366,8 @@ async function executeExternalActionRequest(input: Readonly<{
     envelopeCodecMaterial = opened?.material ?? null;
     controllerInvocation = opened?.invocation;
     if (!opened || managedControllerCodec) return { kind: 'invalid_request',
-      errorCode: envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope', requestId: envelope.data.requestId };
+      errorCode: current && !current.ok && current.executionFailure ? current.executionFailure.errorCode
+        : envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope', requestId: envelope.data.requestId };
     managedReviewedParent = opened.reviewedParent;
   }
   let pluginRuntimeLease: PluginRuntimeRegistryLease | null = null;

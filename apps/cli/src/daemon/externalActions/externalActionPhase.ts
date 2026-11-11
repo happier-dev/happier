@@ -128,7 +128,7 @@ export type ExternalActionPhaseFailure = Readonly<{
   phase: string;
   errorClass: string;
   message: string;
-  executionFailure?: ActionExecuteFailure & Readonly<{ errorCode: 'project_requester_home_unavailable' | 'internal_error' }>;
+  executionFailure?: ActionExecuteFailure & Readonly<{ errorCode: 'project_requester_home_unavailable' | 'internal_error' | 'credential_scope_denied' | 'invalid_token' }>;
 }>;
 
 /** Private diagnostics must not serialize a thrown value, even a Zod or HTTP Error. */
@@ -149,6 +149,8 @@ export function refuseExternalActionPhase(phase: string, machineId: string | und
   const typedFailure = parseActionExecuteFailure(error);
   const executionFailure: ExternalActionPhaseFailure['executionFailure'] = isPluginError(error) && error.code === 'project_requester_home_unavailable'
     ? { ok: false, errorCode: error.code, error: error.code }
+    : typedFailure && (typedFailure.errorCode === 'credential_scope_denied' || typedFailure.errorCode === 'invalid_token')
+      ? { ...typedFailure, errorCode: typedFailure.errorCode }
     : typedFailure?.errorCode === 'internal_error' && typedFailure.failureCause
       ? { ok: false, errorCode: 'internal_error', error: 'internal_error', failureCause: typedFailure.failureCause }
       : undefined;

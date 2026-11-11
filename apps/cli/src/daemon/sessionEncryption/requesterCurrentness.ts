@@ -1,3 +1,4 @@
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError, isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { resolveOfflineReconnectionBackoffDelayMs } from '@/api/offline/serverConnectionErrors';
@@ -26,9 +27,11 @@ export async function captureRequesterCurrentnessRefusal<T>(read: () => Promise<
   return { value, ...(diagnostic.branch ? { branch: diagnostic.branch } : {}) };
 }
 
-/** Unavailable Home evidence is not a rejected requester. Keep the existing
- * runner failure/respawn policy's retryable disposition and expose only a safe code. */
+/** Keep named Home refusals typed; unavailable evidence retains the existing
+ * runner failure/respawn policy's retryable disposition and safe code. */
 export function rethrowRequesterHomeReadFailure(error: unknown): void {
+  const failure = parseActionExecuteFailure(error);
+  if (failure?.errorCode === 'credential_scope_denied' || failure?.errorCode === 'invalid_token') throw error;
   if (isPluginError(error) && error.code === 'project_requester_home_unavailable') throw error;
   const unavailableActionRead = error !== null && typeof error === 'object'
     && 'ok' in error && error.ok === false
