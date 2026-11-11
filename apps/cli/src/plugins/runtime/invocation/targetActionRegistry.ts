@@ -182,6 +182,8 @@ export type InvokeTargetActionParams = Readonly<{
     externalActionContext?: PluginExternalActionContext;
     /** Original host-admitted source, distinct from immediate plugin capability identity. */
     approvalContext?: import('@happier-dev/protocol').ActionExecutorContext;
+    /** Account custody retained by the admitted containing Session. */
+    requesterAccount?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
     /**
      * Exact target-occurrence fact from an admitted targeted operation. It is
      * private Action-dispatch evidence, not a caller assertion or SDK input.
@@ -562,6 +564,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                             signal,
                             isCurrent: indexed.isCurrent,
                             ...(invocation.approvalContext ? { approvalContext: invocation.approvalContext } : {}),
+                    ...(invocation.requesterAccount ? { requesterAccount: invocation.requesterAccount } : {}),
                         });
                         if (admission?.status === 'admitted') {
                             admittedPurposeTarget = admission.connectedAccountPurposeTarget;

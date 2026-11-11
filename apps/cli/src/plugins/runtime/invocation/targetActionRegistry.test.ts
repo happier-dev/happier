@@ -135,6 +135,24 @@ function reviewedActionContext(pluginId: string, localId: string, input: unknown
 }
 
 describe('target action invocation registry', () => {
+    it('preserves requester Account custody in the invocation services seed', async () => {
+        const requesterAccount = { marker: 'requester-account' } as unknown as import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
+        let captured: { requesterAccount?: unknown } | undefined;
+        const unavailable = createUnavailablePluginServicesFactory();
+        const registry = createRegistry({
+            actions: [{ ...action(), handler: async () => ({ echoed: 'ok' }) }],
+            createServices: (seed, binding) => {
+                captured = seed;
+                return unavailable(seed, binding);
+            },
+        });
+        try {
+            await expect(registry.invoke({ pluginId: 'acme.alpha', localId: 'run', surface: 'cli', input: { value: 'ok' }, requesterAccount }))
+                .resolves.toMatchObject({ status: 'executed', value: { echoed: 'ok' } });
+            expect(captured?.requesterAccount).toBe(requesterAccount);
+        } finally { registry.dispose(); }
+    });
+
     it('admits the qualified Supabase read-only query for an agent under default policy without an approval', async () => {
         const manifest = normalizePluginManifestV2(supabaseQueryPlugin.manifest);
         const localId = manifest.contributes.deploymentTargets[0]?.dataV1?.query?.readOnly;

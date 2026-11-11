@@ -5,6 +5,7 @@ import type { ResolvedActionContribution } from '@/plugins/projection/registry/t
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
+import { requesterActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
 import { executeContributedAction } from './executeContributedAction';
 
@@ -79,6 +80,30 @@ function surfacesRegistry(
 }
 
 describe('executeContributedAction invocation-authority derivation', () => {
+    it('forwards admitted requester Account custody into the target invocation seed', async () => {
+        const requesterAccount = { marker: 'requester-account' } as unknown as import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
+        const requesterContext = { savedSecretOperationContext: requesterAccount };
+        const projection = Object.create(null);
+        Object.defineProperty(projection, requesterActionContext, { value: requesterContext, enumerable: false });
+        const authorization = { requesterAccountProjection: projection };
+        let captured: Record<string, unknown> | undefined;
+        const action = { pluginId: 'acme.target', definition: { id: 'commit', surfaces: { cli: true }, execution: { target: 'daemon' } } } as unknown as ResolvedActionContribution;
+        const registry = {
+            contributes: { actionsById: new Map([['acme.target/commit', action]]) },
+            targetActionInvocations: {
+                expects: () => true,
+                has: () => true,
+                invoke: async (invocation: Record<string, unknown>) => { captured = invocation; return { status: 'executed' as const, value: { committed: true } }; },
+            },
+        } as unknown as ResolvedExecutablePluginRuntimeRegistry;
+        await expect(executeContributedAction({
+            runtimeRegistry: registry, actionId: 'acme.target/commit', input: {},
+            approvalContext: { externalActionExecutionAuthorization: authorization } as never,
+            context: { surface: 'cli' },
+        })).resolves.toEqual({ matched: true, result: { ok: true, result: { committed: true } } });
+        expect(captured?.requesterAccount).toBe(requesterAccount);
+    });
+
     it('admits a mounted Plugin UI user press on a UI-declared target as UI authority', async () => {
         const registry = surfacesRegistry({ ui: true });
         await expect(executeContributedAction({

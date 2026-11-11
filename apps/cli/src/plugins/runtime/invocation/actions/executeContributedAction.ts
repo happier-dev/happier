@@ -884,6 +884,11 @@ export async function executeContributedAction(params: Readonly<{
       ?? params.admittedConnectedAccountPurposeBinding?.exactPurposeBindingSubjectId;
     const nativeCredentials = params.admittedManagedProviderOperation?.managedNativeCredentials;
     const requestId = params.context.operationRequestId ?? params.approvalContext?.actionRequestId;
+    const requesterAccount = readRequesterAccountActionContext(
+      params.approvalContext?.externalActionExecutionAuthorization
+        ?? params.context.operationRpcContext?.externalActionExecutionAuthorization
+        ?? params.context.operationRpcContext?.callerInputAuthorization,
+    )?.savedSecretOperationContext;
     const targetInvocation = {
       ...(requestId === undefined ? {} : { requestId }),
       pluginId,
@@ -896,6 +901,7 @@ export async function executeContributedAction(params: Readonly<{
       invocationSurface,
       invocationAuthority: params.approvalContext?.authority ?? 'account_automation',
       ...(params.approvalContext ? { approvalContext: params.approvalContext } : {}),
+      ...(requesterAccount ? { requesterAccount } : {}),
       ...(params.resolveEnvironmentApprovalScope ? { resolveEnvironmentApprovalScope: params.resolveEnvironmentApprovalScope } : {}),
       ...(params.approvalContext?.invocationServices?.machineConnectorSecrets
         ? { machineConnectorSecrets: params.approvalContext.invocationServices.machineConnectorSecrets }
