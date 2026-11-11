@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -20,12 +20,30 @@ test('source CLI placement preserves the local loaded-graph guard', async t => {
   const activeRuntimeState = { placement: { daemon: 'target' },
     remoteTargets: { target: { services: { daemon: true } } },
     sourceRuntimeIdentities: { daemon: { selected: 'target-graph', loaded: 'target-graph' } } };
-  const controller = await resolveStackRuntimeLaunchContext({ argv: ['--runtime=source'], env, activeRuntimeState });
-  assert.equal(controller.runtimeMode.mode, 'source');
-  assert.equal(controller.cliLaunchSpec, undefined);
+  await assert.rejects(resolveStackRuntimeLaunchContext({ argv: ['--runtime=source'], env, activeRuntimeState }),
+    /loaded source CLI.*unavailable/i, 'a remote target without its retained source bundle fails closed');
   await assert.rejects(resolveStackRuntimeLaunchContext({ argv: ['--runtime=source'], env,
     activeRuntimeState: { ...activeRuntimeState, placement: { daemon: 'local' } } }),
   /loaded source CLI.*unavailable/i, 'remote metadata cannot waive the local loaded-daemon guard');
+});
+
+test('remote source-snapshot CLI uses the target loaded source bundle', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-remote-source-cli-' });
+  const entrypoint = fixture.path('source-runtime/bin/happier.mjs');
+  await mkdir(fixture.path('source-runtime/bin'), { recursive: true });
+  await writeFile(entrypoint, 'export {}\n');
+  const env = { HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'), HAPPIER_STACK_STACK: 'consumer' };
+  const activeRuntimeState = {
+    runtimeMode: 'source-snapshot',
+    placement: { daemon: 'target' },
+    remoteTargets: { target: { services: { daemon: true }, runtimeMode: 'source-snapshot' } },
+    sourceRuntimeLaunch: { entrypoint, cliDir: fixture.path('source-runtime') },
+    sourceRuntimeIdentities: { daemon: { selected: 'capture-current', loaded: 'capture-current' } },
+  };
+  const context = await resolveStackRuntimeLaunchContext({ argv: ['--runtime'], env, activeRuntimeState });
+  assert.equal(context.runtimeMode.mode, 'source-snapshot');
+  assert.equal(context.cliLaunchSpec?.entrypoint, entrypoint);
+  assert.equal(context.cliLaunchSpec?.sourceSnapshot, true);
 });
 
 test('source server launch executes nonexecutable emitted JS through its managed runtime and honors disabled migrations', async t => {

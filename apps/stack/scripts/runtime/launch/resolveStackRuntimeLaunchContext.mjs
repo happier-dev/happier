@@ -121,13 +121,17 @@ export async function resolveStackRuntimeLaunchContext({ argv = [], env = proces
     const statePath = join(stackBaseDir, 'stack.runtime.json');
     const recorded = activeRuntimeState ?? await readStackRuntimeStateFile(statePath);
     const remoteDaemon = recorded?.remoteTargets?.[recorded?.placement?.daemon]?.services?.daemon === true;
-    if (purpose === 'cli' && remoteDaemon) {
-      // This host has no loaded daemon graph to pin. Resolve its checkout CLI
-      // through the existing source entrypoint owner; the retained graph and
-      // its dependency publication belong to the execution target.
-      return { stackName, stackBaseDir, runtimeMode: { mode: 'source', source: 'active-runtime' }, snapshot: null };
-    }
     let sourceRuntimeLaunch = recorded?.sourceRuntimeLaunch;
+    if (purpose === 'cli' && remoteDaemon) {
+      // The target's loaded source bundle is the CLI publication for this
+      // stack. Reusing it keeps Stack commands on the same capture identity as
+      // the daemon and guest payload instead of falling through to stale dist.
+      if (!sourceRuntimeLaunch?.entrypoint || !await pathExists(sourceRuntimeLaunch.entrypoint)) {
+        throw new Error('[happier] loaded source CLI is unavailable; restore the recorded source runtime before using this stack.');
+      }
+      return { stackName, stackBaseDir, runtimeMode, snapshot: null,
+        cliLaunchSpec: await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch }) };
+    }
     if (!sourceRuntimeLaunch?.entrypoint || !await pathExists(sourceRuntimeLaunch.entrypoint)) {
       // A remote daemon's loaded graph belongs to its target. Controller CLI
       // commands acquire credentials locally; the supervisor seeds that target.

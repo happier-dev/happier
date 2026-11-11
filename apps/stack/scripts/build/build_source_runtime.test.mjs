@@ -4147,19 +4147,21 @@ test('source CLI commands preserve a pending start selection across source chang
   const command = await resolveStackRuntimeLaunchContext({ argv: ['--runtime=source'], env });
   assert.equal(command.cliLaunchSpec.entrypoint, pending.entrypoint);
   assert.equal(await readFile(selectionPath, 'utf8'), selection);
-  const remoteState = { placement: { daemon: 'remote-host' },
-    remoteTargets: { 'remote-host': { services: { daemon: true } } },
+  const remoteState = { runtimeMode: 'source-snapshot', placement: { daemon: 'remote-host' },
+    remoteTargets: { 'remote-host': { services: { daemon: true }, runtimeMode: 'source-snapshot' } },
+    sourceRuntimeLaunch: { entrypoint: pending.entrypoint, cliDir: dirname(pending.entrypoint) },
     sourceRuntimeIdentities: { daemon: { selected: 'remote-code', loaded: 'remote-code' } } };
   const controller = await resolveStackRuntimeLaunchContext({ argv: ['--runtime=source'], env,
     activeRuntimeState: remoteState });
-  // CONTINUATION 2 §2(a): controller auth resolves its own runnable checkout
-  // CLI; a target-owned graph cannot impose its publication on this host.
-  assert.equal(controller.runtimeMode.mode, 'source');
-  assert.equal(controller.cliLaunchSpec, undefined);
+  // The controller CLI follows the target's retained source publication so
+  // auth and other stack commands use the same capture as the loaded daemon.
+  assert.equal(controller.runtimeMode.mode, 'source-snapshot');
+  assert.equal(controller.cliLaunchSpec.entrypoint, pending.entrypoint);
   assert.equal(await readFile(selectionPath, 'utf8'), selection);
-  await assert.rejects(resolveStackRuntimeLaunchContext({ argv: ['--runtime=source'], env,
-    activeRuntimeState: { ...remoteState, placement: { daemon: 'local' } } }), /loaded source CLI.*unavailable/i,
-    'stale remote-target metadata must not bypass the local loaded-daemon guard');
+  const localController = await resolveStackRuntimeLaunchContext({ argv: ['--runtime=source'], env,
+    activeRuntimeState: { ...remoteState, placement: { daemon: 'local' } } });
+  assert.equal(localController.cliLaunchSpec.entrypoint, pending.entrypoint,
+    'a retained source publication is valid for local placement as well');
   const peer = await native.build({ ...options, stackBaseDir: fixture.path('stacks/peer') });
   await access(pending.entrypoint);
   assert.equal((await import(pathToFileURL(command.cliLaunchSpec.entrypoint))).ready, 1);
