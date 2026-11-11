@@ -8,3 +8,7 @@ export function readXaiPolicyReason(body: Uint8Array): 'BLOCKED_REASON_NO_LOGS' 
     return undefined;
   }
 }
+
+export function xaiDiagnostic(code: string) {
+  return { code, severity: 'error' as const, message: 'The xAI operation could not complete.' };
+}

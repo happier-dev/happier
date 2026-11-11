@@ -4,7 +4,8 @@ import type { AgentConnectedAccountLaunchContributionV1, AgentConnectedAccountRe
 import type { XaiCredential } from '../connectedAccounts/credential.js';
 import { isSessionId } from './externalSessions/source.js';
 
-export const GROK_CONNECTED_ACCOUNT_MODE_ENV = 'GROK_CONNECTED_ACCOUNT_MODE';
+import { GROK_CONNECTED_ACCOUNT_MODE_ENV } from '../connectedAccounts/service.js';
+export { GROK_CONNECTED_ACCOUNT_MODE_ENV } from '../connectedAccounts/service.js';
 export const GROK_OAUTH2_ISSUER_ENV = 'GROK_OAUTH2_ISSUER';
 export type GrokConnectedAccountMode = XaiCredential['mode'];
 
