@@ -5,7 +5,7 @@ import { buildExecutionRunConfiguration } from '@/agent/runtime/bridges/executio
 import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
 import { readMuseRecord } from './events.js';
 
-// Regression verification of existing unsupported mappings, not new native policy semantics.
+// Refused permission selections retain their typed startup cause.
 it.each(['yolo', 'safe-yolo', 'plan'] as const)('refuses explicit %s intent before native launch', async intent => {
   const fixture = await createAdmittedMuseSessionFixture();
   const configuration: AgentSessionConfigurationUpdate = {
@@ -14,7 +14,9 @@ it.each(['yolo', 'safe-yolo', 'plan'] as const)('refuses explicit %s intent befo
   };
   try {
     await expect(fixture.open({ kind: 'create', sessionId: fixture.context.session.id,
-      cwd: process.cwd(), configuration })).rejects.toMatchObject({ code: 'unsupported' });
+      cwd: process.cwd(), configuration })).rejects.toMatchObject({ code: 'agent_startup_invalid_state', retryable: false,
+        details: { failureCause: { code: 'agent_startup_invalid_state', phase: 'client_start',
+          failureReason: 'unclassified_provider_error' } } });
     expect(fixture.launchCount).toBe(0);
   } finally { await fixture.dispose(); }
 });
@@ -49,7 +51,7 @@ it('refuses a read-only fork before native launch because fork cannot override t
       source: { sessionId: 'source-host-session', providerSessionId: '00000000-0000-7000-8000-000000000002', cwd: process.cwd() },
       configuration: { model: { value: null, updatedAtMs: 0 }, mode: { value: null, updatedAtMs: 0 },
         permissionIntent: { value: 'read-only', updatedAtMs: 0 }, options: {} },
-    })).rejects.toMatchObject({ code: 'unsupported' });
+    })).rejects.toMatchObject({ code: 'agent_startup_invalid_state', retryable: false });
     expect(fixture.launchCount).toBe(0);
   } finally { await fixture.dispose(); }
 });

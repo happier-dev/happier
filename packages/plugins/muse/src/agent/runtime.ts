@@ -23,6 +23,13 @@ function musePermissionProfile(configuration: AgentSessionConfigurationUpdate | 
   return intent === 'read-only' || configuration?.workspaceWrites === 'deny' ? ':read-only' : ':ask-me';
 }
 
+function museStartupConfigurationError(message: string) {
+  return new PluginError({ code: 'agent_startup_invalid_state', retryable: false, message,
+    details: { failureCause: { code: 'agent_startup_invalid_state', phase: 'client_start',
+      failureReason: 'unclassified_provider_error', providerErrorMessage: message } },
+  });
+}
+
 async function openMuseConversation<SessionId extends string | undefined>(
   request: AgentSessionOpenRequest | AgentExecutionRunOpenRequest,
   context: AgentSessionRuntimeContext | AgentExecutionRunRuntimeContextV1,
@@ -48,8 +55,8 @@ async function openMuseConversation<SessionId extends string | undefined>(
     throw new PluginError({ code: 'unsupported', message: 'The selected native Muse skill delivery is unavailable on this launch path.' });
   }
   const selectedMcp = Object.entries(request.mcpServers ?? {});
-  if (request.kind === 'fork' && selectedMcp.length) throw new PluginError({ code: 'unsupported',
-    message: 'Native Muse fork cannot apply the selected MCP startup configuration.' });
+  if (request.kind === 'fork' && selectedMcp.length) throw museStartupConfigurationError(
+    'Native Muse fork cannot apply the selected MCP startup configuration.');
   // MSP has no tool-filter or per-tool policy field. Preserve the host's
   // selection by refusing shapes that cannot be represented before any effect.
   if (request.configuration?.allowedTools !== undefined || request.configuration?.unlistedTools !== undefined
@@ -68,7 +75,7 @@ async function openMuseConversation<SessionId extends string | undefined>(
   // MSP 1.4.14 admits profiles at start/resume; fork inherits its source profile
   // and has no profile override. Never widen a requested read-only fork.
   if (!permissionProfile || (request.kind === 'fork' && permissionProfile === ':read-only')) {
-    throw new PluginError({ code: 'unsupported', message: 'The requested permission intent has no characterized native Muse mapping.' });
+    throw museStartupConfigurationError('The requested permission intent has no characterized native Muse mapping.');
   }
   if (request.configuration?.mode.value) throw new PluginError({ code: 'unsupported', message: 'Native Muse behavior modes are unavailable.' });
   const workflowSnapshots = new Map<string, SessionWorkflowRunSnapshotV1>();
