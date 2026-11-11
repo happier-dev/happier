@@ -471,6 +471,11 @@ describe('Machine → Setup tab (P-M1)', () => {
     if (status === 'unsupported') {
       expect(screen.findByTestId('machine-setup-recipe-remove:0.0')).not.toBeNull();
       expect(screen.findByTestId('machine-setup-recipe-retry:0.0')).toBeNull();
+      // A retained desktop/phone Setup body must drop Docker Remove as soon as access becomes Use.
+      await publishManagedDevbox(serverId, 'use');
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-read-only')).not.toBeNull());
+      expect(screen.findByTestId('machine-setup-recipe-remove:0.0')).toBeNull();
+      expect(screen.findByTestId('machine-setup-recipe-more:0.0')).toBeNull();
     } else {
       expect(screen.findByTestId('machine-setup-recipe-remove:0.0')).toBeNull();
       expect(screen.findByTestId('machine-setup-recipe-more:0.0')).toBeNull();

@@ -17,6 +17,8 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useConnectedAccountPurposeDefaults } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
+import { useServerScopedMachine } from '@/sync/store/hooks';
 
 import { AgentSetupFormView, type AgentSetupFormHandlers } from './AgentSetupFormView';
 import { useAgentSignInTerminalHost } from './signInTerminalHost';
@@ -49,6 +51,7 @@ export type AgentSetupFormProps = Readonly<{
 export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSetupFormProps) {
     const target = { serverId: props.serverId, machineId: props.machineId, agentId: props.agentId, definitionId: props.definitionId };
     const agent = useMachineAgent(target);
+    const canManage = useServerScopedMachine(props.serverId, props.machineId, canManageMachine);
     const installJob = useAgentInstallJob(target);
     const signIn = useAgentSignIn(target);
     const terminalHost = useAgentSignInTerminalHost();
@@ -71,10 +74,10 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
 
     const install = React.useCallback((intent: 'install' | 'update' | 'uninstall') => {
         const current = agentRef.current;
-        if (!current) return;
+        if (!canManage || !current) return;
         // The form itself reviews the install and any vendor-recipe consent; its press confirms.
         fireAndForget(installJob.start(intent), { tag: 'AgentSetupForm.install' });
-    }, [installJob]);
+    }, [canManage, installJob]);
 
     const openTerminal = React.useCallback(() => {
         const current = agentRef.current;
@@ -96,7 +99,7 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
             if (agentRef.current?.job?.readFailure) fireAndForget(installJob.refresh(), { tag: 'AgentSetupForm.refreshJob' });
             else install(agentRef.current?.job?.intent ?? 'install');
         },
-        onCancelInstall: () => { fireAndForget(installJob.cancel(), { tag: 'AgentSetupForm.cancel' }); },
+        onCancelInstall: () => { if (!canManage) return; fireAndForget(installJob.cancel(), { tag: 'AgentSetupForm.cancel' }); },
         onCheckAgain: () => { fireAndForget(signIn.checkAgain(), { tag: 'AgentSetupForm.checkAgain' }); },
         onOpenGuide: (url) => { fireAndForget(openExternalUrl(url), { tag: 'AgentSetupForm.guide' }); },
         onUseService: (serviceId, selection) => {
@@ -135,13 +138,14 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
         onCancelSignIn: () => { fireAndForget(signIn.cancel(), { tag: 'AgentSetupForm.cancelSignIn' }); },
         ...(props.onStartSession ? { onStartSession: () => { if (agentRef.current) props.onStartSession?.(agentRef.current); } } : {}),
         ...(props.onSetUpAnother ? { onSetUpAnother: props.onSetUpAnother } : {}),
-    }), [credentialFailure, execution.binding, install, installJob, openTerminal, props.machineId, props.onConnectService, props.onLeave, props.onSetUpAnother, props.onStartSession, props.serverId, router, selectCredential, signIn]);
+    }), [canManage, credentialFailure, execution.binding, install, installJob, openTerminal, props.machineId, props.onConnectService, props.onLeave, props.onSetUpAnother, props.onStartSession, props.serverId, router, selectCredential, signIn]);
 
     if (!agent) return null;
     return (
         <AgentSetupFormView
             testID={props.testID}
             agent={agent}
+            canManage={canManage}
             machineName={props.machineName}
             layout={props.layout}
             session={signIn}

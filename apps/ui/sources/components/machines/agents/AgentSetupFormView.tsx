@@ -46,6 +46,7 @@ export type AgentSetupFormHandlers = Readonly<{
 
 export type AgentSetupFormViewProps = Readonly<{
     agent: MachineAgent;
+    canManage?: boolean;
     machineName: string;
     /** `full`: the machine's Agents section and Settings → Agents. `compact`: the engine popover and Home. */
     layout: 'full' | 'compact';
@@ -178,10 +179,11 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
     const { agent, handlers, machineName: machine, compact, testID } = props;
     // Installed by this setup: the step list carries the flow on into sign-in.
     const installedHere = isMachineAgentInstalledBySetup(agent);
+    const canManage = props.canManage !== false;
     if (agent.job?.readFailure && !agent.job.outcome) {
         const failure = presentAgentInstallJobRpcFailure(new AgentInstallJobRpcError(agent.job.readFailure));
         return <AttentionBanner testID={`${testID}.failure`} title={failure.title} description={failure.body}
-            action={{ label: t('machineAgents.actionRetry'), onPress: handlers.onRetry, testID: `${testID}.retry` }} announce="alert" />;
+            action={canManage ? { label: t('machineAgents.actionRetry'), onPress: handlers.onRetry, testID: `${testID}.retry` } : undefined} announce="alert" />;
     }
     switch (props.phase) {
         case 'install':
@@ -191,7 +193,7 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
                     <Steps agent={agent} signIn="upcoming" testID={testID} />
                     <Actions>
                         {/* The pane is the review of what this installs and where: its press is the confirmation. */}
-                        <RoundButton testID={`${testID}.install`} size="small" title={t('machineAgents.installAgent', { agent: agent.title })} onPress={handlers.onInstall} />
+                        {canManage ? <RoundButton testID={`${testID}.install`} size="small" title={t('machineAgents.installAgent', { agent: agent.title })} onPress={handlers.onInstall} /> : null}
                         {!compact && agent.install.guideUrl ? (
                             <RoundButton testID={`${testID}.installMyself`} size="small" display="secondary" title={t('machineAgents.installMyself')} onPress={() => handlers.onOpenGuide(agent.install.guideUrl!)} />
                         ) : null}
@@ -223,7 +225,7 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
                     <Actions>
                         <Text style={styles.quiet}>{t('machineAgents.closeNote', { machine })}</Text>
                         <View style={styles.grow} />
-                        <RoundButton testID={`${testID}.cancel`} size="small" display="inverted" title={t('machineAgents.actionCancel')} onPress={handlers.onCancelInstall} />
+                        {canManage ? <RoundButton testID={`${testID}.cancel`} size="small" display="inverted" title={t('machineAgents.actionCancel')} onPress={handlers.onCancelInstall} /> : null}
                     </Actions>
                 </>
             );
@@ -249,7 +251,7 @@ function PhaseBody(props: AgentSetupFormViewProps & Readonly<{ phase: AgentSetup
                                 ? handlers.onSetUpAnother
                                     ? { label: failure.recovery.label, onPress: handlers.onSetUpAnother, testID: `${testID}.chooseAgent` }
                                     : undefined
-                            : { label: failure?.recovery.label ?? t('machineAgents.actionRetry'), onPress: handlers.onRetry, testID: `${testID}.retry` }}
+                            : canManage ? { label: failure?.recovery.label ?? t('machineAgents.actionRetry'), onPress: handlers.onRetry, testID: `${testID}.retry` } : undefined}
                         announce="alert"
                     />
                 </>

@@ -132,6 +132,34 @@ async function stepsOf(agent: MachineAgent) {
 }
 
 describe('agent setup steps', () => {
+  it.each(['full', 'compact'] as const)('hides installation mutations for Use and preserves Manage in %s setup', async (layout) => {
+    const agent = pi({});
+    for (const canManage of [false, true]) {
+      const onInstall = vi.fn();
+      const screen = await renderScreen(<AgentSetupFormView testID="setup" agent={agent} machineName="devbox"
+        layout={layout} canManage={canManage} handlers={{ ...HANDLERS, onInstall }} />);
+      expect(screen.findByTestId('setup.install') !== null).toBe(canManage);
+      if (canManage) {
+        await screen.pressByTestIdAsync('setup.install');
+        expect(onInstall).toHaveBeenCalledOnce();
+      }
+      await screen.unmount();
+    }
+  });
+
+  it.each(['full', 'compact'] as const)('hides cancel and retry mutations for Use in %s setup', async (layout) => {
+    const running = job([step(cliStep, 'Pi CLI', 'running')]);
+    const failed = job([step(cliStep, 'Pi CLI', 'failed')], { kind: 'failed', code: 'download_failed', stepId: cliStep, message: 'Download failed' });
+    for (const [record, action] of [[running, 'cancel'], [failed, 'retry']] as const) {
+      for (const canManage of [false, true]) {
+        const screen = await renderScreen(<AgentSetupFormView testID="setup" agent={pi({ job: record })} machineName="devbox"
+          layout={layout} canManage={canManage} handlers={HANDLERS} />);
+        expect(screen.findByTestId(`setup.${action}`) !== null).toBe(canManage);
+        await screen.unmount();
+      }
+    }
+  });
+
   it('keeps unknown sign-in distinct from a failed installation check in the expanded setup', async () => {
     const agent = pi({ installed: true, signIn: 'unknown' });
     expect(agent.state).toBe('unknown');

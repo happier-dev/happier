@@ -20,6 +20,14 @@ const base = (overrides: Partial<MachineComputerUseSectionViewProps> = {}): Mach
 });
 
 describe('Computer use page body', () => {
+    it.each([false, true])('allows native provider installation only for Manage (%s)', async (canManage) => {
+        const props = base({ canManage, providers: [rows[0]!, { ...rows[1]!, enabled: true }] });
+        const screen = await renderSettingsView(<MachineComputerUseSectionView {...props} />);
+        expect(screen.findByTestId('machine-computer-use-provider-agent-desktop.install') !== null).toBe(canManage);
+        expect(screen.findByTestId('machine-computer-use-provider-agent-desktop.switch')?.props.disabled).toBe(!canManage);
+        await screen.unmount();
+    });
+
     it('keeps the default on without a switch, and makes another enabled provider the default from its row', async () => {
         const both: readonly ComputerProviderSettingsRow[] = [rows[0]!, { ...rows[1]!, enabled: true, availability: 'ready' }];
         const props = base({ providers: both, preferences: { enabledProviders: ['cua', 'agent-desktop'], defaultProvider: 'cua' } });

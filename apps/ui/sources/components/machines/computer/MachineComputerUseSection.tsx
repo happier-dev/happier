@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
+import { useServerScopedMachine } from '@/sync/store/hooks';
 
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
@@ -53,6 +55,7 @@ export function MachineComputerUseSection(
     online: boolean;
   }>,
 ) {
+  const canManage = useServerScopedMachine(props.serverId, props.machineId, canManageMachine);
   const activeAccountScope = useActiveServerAccountScope();
   const sameAccount =
     activeAccountScope !== null &&
@@ -107,6 +110,7 @@ export function MachineComputerUseSection(
     <MachineComputerUseSectionView
       machineName={props.machineName}
       online={props.online}
+      canManage={canManage}
       preferences={preferences}
       unavailable={accountLifetime !== null && !sameAccount}
       providers={providers}
@@ -121,6 +125,7 @@ export function MachineComputerUseSection(
 export type MachineComputerUseSectionViewProps = Readonly<{
   machineName: string;
   online: boolean;
+  canManage?: boolean;
   /** Null while the Account's preferences are not readable here. */
   preferences: ComputerUseSettingsV1 | null;
   /** The preferences belong to an Account this page cannot read (not merely still loading). */
@@ -178,7 +183,7 @@ export function MachineComputerUseSectionView(
           : lockedReason === 'unavailable' ? statusText('unavailable') : undefined;
         const text = disabledReason ?? statusText(state.status.kind);
         const testID = `machine-computer-use-provider-${row.provider}`;
-        const action = state.action
+        const action = props.canManage !== false && state.action
           ? {
               label: t(ACTION_LABEL_KEYS[state.action]),
               onPress: () =>
@@ -215,10 +220,10 @@ export function MachineComputerUseSectionView(
                 <Switch
                   testID={`${testID}.switch`}
                   value={state.toggle.value}
-                  disabled={state.toggle.disabled}
+                  disabled={state.toggle.disabled || props.canManage === false}
                   accessibilityLabel={name}
                   accessibilityHint={disabledReason ?? undefined}
-                  onValueChange={(next) => props.onToggle(row, next)}
+                  onValueChange={(next) => { if (props.canManage !== false) props.onToggle(row, next); }}
                 />
               ) : undefined
             }
