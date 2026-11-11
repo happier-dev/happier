@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest';
 import nacl from 'tweetnacl';
 import type { WebSocket } from 'ws';
 import { createDirectRouteGrantSigningInputV2, createEphemeralPeerRouteProofHandleV2,
-    encodePeerTcpTunnelBinaryFrameV2, type DirectRouteGrantPayloadV2,
+    encodePeerTcpTunnelBinaryFrameV2, createTcpTunnelServiceExportCommitmentV1, type DirectRouteGrantPayloadV2,
     type TcpTunnelServiceExportBindingV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { MACHINE_ACCESS_LOSS_SERVER_ORIGIN } from '@happier-dev/protocol/socketRpc';
@@ -28,7 +28,7 @@ it('admits the requester against B current export and closes only its open strea
     try {
         await withOwnServerBuildFixture(async ({ host, request, environment, referenceEnvironment, custody }) => {
             referenceEnvironment.content.ownServer!.serviceExports = [{ key: 'database', service: 'db', containerPort: 5432,
-                scheme: 'postgres', exposure: 'loopback', transport: { kind: 'iroh' } }];
+                scheme: 'postgres', exposure: 'privateNetwork', privateNetwork: 'network', transport: { kind: 'iroh' } }];
             const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
             if (!lease) throw new Error('Real managed service owner missing');
             const installedKeys = nacl.sign.keyPair.fromSeed(custody.installations[0]!.seed);
@@ -45,7 +45,7 @@ it('admits the requester against B current export and closes only its open strea
                 } });
             const signal = new AbortController().signal;
             const resolve = () => resolvePrivateServiceExportAdmissionForHost({
-                source: { kind: 'reference', environmentId: 'source-database', export: 'database', via: 'privateNetwork' },
+                source: { kind: 'reference', environmentId: 'source-database', export: 'database', via: 'auto' },
                 environment, readEnvironment: async () => referenceEnvironment, host,
                 context: request.context, actionId: request.actionId, signal,
                 owner: lease.registry.projectManagedServices, homeServerIdentityId: host.serverId,
@@ -66,9 +66,10 @@ it('admits the requester against B current export and closes only its open strea
             });
             const open = (binding: TcpTunnelServiceExportBindingV1, id: string, accountId = 'requester') => {
                 const proof = createEphemeralPeerRouteProofHandleV2({ randomBytes: length => new Uint8Array(length).fill(9) });
+                const nonce = '7'.repeat(64);
                 const payload: DirectRouteGrantPayloadV2 = { v: 2, grantId: id, accountId, machineId: host.machineId,
                     flowKind: 'tcp_tunnel', routeKind: 'iroh_peer', scope: { kind: 'tcp_tunnel', tunnelId: id,
-                        allowedPorts: [binding.destination.port], serviceExport: binding }, iat: 1_000, exp: 61_000,
+                        allowedPorts: [binding.destination.port], serviceExport: { commitment: createTcpTunnelServiceExportCommitmentV1(binding, nonce) } }, iat: 1_000, exp: 61_000,
                     aud: 'happier-daemon-route-grant', endpointFingerprint: endpointId, proofKind: 'ephemeral_ed25519',
                     ephemeralPublicKeyBase64Url: proof.publicKeyBase64Url, iroh: { operationKind: 'tcp_tunnel',
                         initiator: { kind: 'machine', machineId: 'consumer', endpointId: 'a'.repeat(64) },
@@ -76,7 +77,7 @@ it('admits the requester against B current export and closes only its open strea
                 const grant = { payload, signature: { keyId: 'key', alg: 'Ed25519' as const,
                     valueBase64Url: Buffer.from(nacl.sign.detached(Buffer.from(createDirectRouteGrantSigningInputV2(payload)), key.secretKey)).toString('base64url') } };
                 try { return { v: 2, kind: 'open', tunnelId: id, targetMachineId: host.machineId, routeKind: 'iroh_peer',
-                    destination: binding.destination, grant, proof: proof.sign(grant) }; }
+                    destination: binding.destination, serviceExport: { binding, nonce }, grant, proof: proof.sign(grant) }; }
                 finally { proof.dispose(); }
             };
             try {
@@ -138,6 +139,6 @@ it('admits the requester against B current export and closes only its open strea
                 await closed;
                 expect(await rpc.handleRequest(census)).toEqual({ kind: 'requesters', accountIds: [], coverage: 'complete' });
             } finally { installedIdentity.mockRestore(); for (const socket of sockets) socket.destroy(); await app.close(); await lease.release(); }
-        }, { buildReference: true, referenceBindAddress: '127.0.0.1', referencePublishedPort: address.port, referenceIroh: true });
+        }, { buildReference: true, referencePublishedPort: address.port, referenceDualPublication: true, referenceNetworkObserved: false });
     } finally { for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => upstream.close(() => resolve())); }
 });

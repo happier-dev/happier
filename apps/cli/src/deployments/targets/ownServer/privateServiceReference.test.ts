@@ -3,7 +3,7 @@ import nacl from 'tweetnacl';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { withOwnServerBuildFixture } from './buildReceipt.testkit';
 import { resolvePrivateServiceReferenceForHost, resolvePrivateServiceExportAdmissionForHost, resolvePrivateServiceReferenceMaterialForHost } from './privateServiceReference';
-import { DeploymentReferenceSourceV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentReferenceSourceV1Schema, DeploymentServiceExportV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 
 it('verifies B against its applied declarations without reading a later saved Environment', async () => {
     await withOwnServerBuildFixture(async ({ host, request, environment, referenceEnvironment, custody }) => {
@@ -125,4 +125,38 @@ it.each([undefined, 'host', 'port'] as const)('materializes an admitted Iroh exp
                 route: { kind: 'iroh', observedPath: 'relay' } });
         } finally { await lease.release(); }
     }, { buildReference: true, referenceBindAddress: '127.0.0.1' });
+});
+
+// Owner ruling 2026-11-10: auto prefers the shared observed publication, then Iroh.
+it.each([
+    { via: 'auto', shared: true, iroh: true, expected: 'privateNetwork' },
+    { via: 'auto', shared: false, iroh: true, expected: 'iroh' },
+    { via: 'auto', shared: false, iroh: false, expected: 'refusal' },
+    { via: 'privateNetwork', shared: true, iroh: true, expected: 'privateNetwork' },
+] as const)('selects $expected with via=$via shared=$shared iroh=$iroh', async ({ via, shared, iroh, expected }) => {
+    await withOwnServerBuildFixture(async ({ host, request, environment, referenceEnvironment, custody }) => {
+        const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+        if (!lease) throw new Error('The real source service owner must be mounted');
+        try {
+            const input = { source: { kind: 'reference' as const, environmentId: 'source-database', export: 'database', via },
+                environment, readEnvironment: async () => referenceEnvironment, host,
+                context: request.context, actionId: request.actionId, signal: new AbortController().signal,
+                owner: lease.registry.projectManagedServices, homeServerIdentityId: host.serverId,
+                installationId: 'installation-c', privateKey: nacl.sign.keyPair.fromSeed(custody.installations[0]!.seed).secretKey };
+            if (expected === 'refusal') {
+                await expect(resolvePrivateServiceExportAdmissionForHost(input)).rejects.toMatchObject({ code: 'reference_unavailable' });
+                return;
+            }
+            const admission = await resolvePrivateServiceExportAdmissionForHost(input);
+            // The authored declaration must also cross the real schema.
+            expect(DeploymentServiceExportV1Schema.safeParse(referenceEnvironment.content.ownServer!.serviceExports![0]).success).toBe(true);
+            if (expected === 'privateNetwork') {
+                expect(admission).toEqual({ kind: 'privateNetwork', url: 'postgres://100.64.0.7:25432', networkIdentity: 'network' });
+                expect(await resolvePrivateServiceReferenceMaterialForHost(input)).toEqual({ value: 'postgres://100.64.0.7:25432',
+                    route: { kind: 'privateNetwork', networkIdentity: 'network' } });
+            } else {
+                expect(admission).toMatchObject({ kind: 'iroh', serviceExport: { destination: { host: '127.0.0.1', port: 25433 } } });
+            }
+        } finally { await lease.release(); }
+    }, { buildReference: true, referenceDualPublication: iroh, referenceNetworkObserved: shared });
 });

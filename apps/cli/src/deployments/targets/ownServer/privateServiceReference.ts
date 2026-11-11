@@ -27,10 +27,13 @@ export type PrivateServiceReferenceHostInput = Readonly<{
     homeServerIdentityId: string; installationId: string; privateKey: Uint8Array;
     /** Exact destination selector used by B's local admission adapter. */
     targetMachineId?: string;
+    /** Cold recovery restores the transport already embedded in the consumer. */
+    retainedRoute?: 'iroh';
 }>;
 
 export type PrivateServiceExportAdmissionForHost =
-    | Readonly<{ kind: 'compose' | 'privateNetwork'; url: string }>
+    | Readonly<{ kind: 'compose'; url: string }>
+    | Readonly<{ kind: 'privateNetwork'; url: string; networkIdentity: string }>
     | Readonly<{ kind: 'iroh'; machineId: string; scheme: string; serviceExport: TcpTunnelServiceExportBindingV1 }>;
 
 export type PrivateServiceAppliedExportHostInput = Readonly<{
@@ -42,12 +45,13 @@ export type PrivateServiceAppliedExportHostInput = Readonly<{
 function selectIrohExport(exported: DeploymentServiceExportV1 | undefined, row: MachineServiceRowV1,
     expected: Readonly<{ environmentId: string; machineId: string; installationId: string }>):
     Extract<PrivateServiceExportAdmissionForHost, { kind: 'iroh' }> | null {
-    if (!exported || exported.transport?.kind !== 'iroh' || exported.exposure !== 'loopback' || exported.privateNetwork !== undefined
+    if (!exported || exported.transport?.kind !== 'iroh' || (exported.exposure !== 'loopback' && exported.exposure !== 'privateNetwork')
         || row.environmentId !== expected.environmentId || row.deployment?.installationId !== expected.installationId
         || row.deployment.service.machineId !== expected.machineId || row.deployment.service.environmentId !== expected.environmentId
         || row.deployment.service.composeService !== exported.service || row.health?.freshness !== 'current'
         || row.health.status === 'down' || row.native?.phase !== 'running') return null;
-    const ports = (row.configuration?.ports ?? []).filter(port => Number(port.target) === exported.containerPort && port.protocol === 'tcp');
+    const ports = (row.configuration?.ports ?? []).filter(port => Number(port.target) === exported.containerPort && port.protocol === 'tcp'
+        && TcpTunnelServiceExportBindingV1Schema.shape.destination.shape.host.safeParse(port.bindAddress).success);
     if (ports.length !== 1) return null;
     const port = ports[0]!;
     const binding = TcpTunnelServiceExportBindingV1Schema.safeParse({
@@ -74,8 +78,8 @@ export async function resolvePrivateServiceExportAdmissionForHost(input: Private
     // Compose owns service DNS within this Environment's native project.
     if (sameEnvironment && source.via === 'auto') return { kind: 'compose', url: `${exported.scheme}://${exported.service}:${exported.containerPort}` };
     const iroh = exported.transport?.kind === 'iroh';
-    if (source.via === 'public' || (iroh ? exported.exposure !== 'loopback' || exported.privateNetwork !== undefined
-        : exported.exposure !== 'privateNetwork' || !exported.privateNetwork)) return unavailable();
+    const network = exported.exposure === 'privateNetwork' && exported.privateNetwork !== undefined;
+    if (source.via === 'public' || (!iroh && !network)) return unavailable();
     const link = environment.targetLinks.find(item => item.targetLink.id === environment.environment.runtimeTargetLinkId)?.targetLink;
     if (!link) return unavailable();
     const authorization = input.context.externalActionExecutionAuthorization;
@@ -115,8 +119,8 @@ export async function resolvePrivateServiceExportAdmissionForHost(input: Private
                 const admitted = selectIrohExport(exported, row, { environmentId: source.environmentId,
                     machineId: member.machineId, installationId: member.installationId });
                 if (admitted) forwards.push(admitted);
-                continue;
             }
+            if (!network || input.retainedRoute === 'iroh') continue;
             if (row.environmentId !== source.environmentId || row.deployment?.installationId !== member.installationId
                 || row.deployment.service.composeService !== exported.service
                 || row.health?.freshness !== 'current' || row.health.status === 'down'
@@ -133,9 +137,13 @@ export async function resolvePrivateServiceExportAdmissionForHost(input: Private
             }
         }
     }
-    if (iroh) return forwards.length === 1 ? forwards[0]! : unavailable();
-    if (urls.size !== 1) return unavailable();
-    return { kind: 'privateNetwork', url: [...urls][0]! };
+    if (input.retainedRoute !== 'iroh' && network && urls.size === 1)
+        return { kind: 'privateNetwork', url: [...urls][0]!, networkIdentity: exported.privateNetwork! };
+    // Explicit network references keep exact-network semantics. Loopback-only
+    // Iroh exports retain their existing privateNetwork reference syntax.
+    if (iroh && (source.via === 'auto' || !network || input.retainedRoute === 'iroh'))
+        return forwards.length === 1 ? forwards[0]! : unavailable();
+    return unavailable();
 }
 
 export async function resolvePrivateServiceReferenceForHost(input: PrivateServiceReferenceHostInput): Promise<string> {
@@ -158,7 +166,9 @@ export async function resolvePrivateServiceReferenceMaterialForHost(input: Priva
         const address = new URL(url.replace(/^[^:]+:/, 'tcp:'));
         return input.source.component === 'host' ? address.hostname : address.port;
     };
-    if (admission.kind !== 'iroh') return project(admission.url);
+    if (admission.kind === 'compose') return project(admission.url);
+    if (admission.kind === 'privateNetwork') return { value: project(admission.url),
+        route: { kind: 'privateNetwork', networkIdentity: admission.networkIdentity } };
     if (!input.acquireForward) return unavailable();
     const forward = await input.acquireForward(admission).catch(error => { throw privateServiceForwardAcquisitionError(error); });
     const address = input.materializeForwardAddress ? await input.materializeForwardAddress(forward) : forward;

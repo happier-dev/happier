@@ -85,7 +85,10 @@ does not make a service reachable, and variable changes apply on deployment.
 
 Unreleased 0.3 source also accepts an Iroh export through the Environment update
 Action: `exposure: 'loopback'` with `transport: { kind: 'iroh' }` and no private
-network selection. It requires a TCP publication bound to loopback. The sharing
+network selection. It requires a TCP publication bound to loopback. An exact
+private-network export may also carry Iroh with an additional loopback publication.
+An `auto` reference chooses the shared observed network first, then Iroh, and its
+receipt records the selected route. The sharing
 editor shows **Happier network** as **Not available yet** while its native and
 security validation is pending. Machine forwarding,
 container networking and platform validation are separate from accepting that

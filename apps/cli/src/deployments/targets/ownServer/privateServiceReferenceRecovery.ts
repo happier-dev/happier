@@ -36,16 +36,18 @@ export async function restorePrivateServiceReferencesForHost(input: Omit<Private
         const environment = await input.readEnvironment({ environmentId: input.environmentId, context: input.context });
         const restored = new Map<string, ActionExecuteFailure | undefined>();
         for (const address of addresses) {
-            const key = JSON.stringify([address.source, address.address, address.route?.containerNetworkId]);
+            const route = address.route;
+            if (route?.kind !== 'iroh') continue;
+            const key = JSON.stringify([address.source, address.address, route.containerNetworkId]);
             if (restored.has(key)) continue;
             restored.set(key, undefined);
             const admission = await resolvePrivateServiceExportAdmissionForHost({ ...input, environment,
-                source: address.source, actionId: 'machines.services.list' });
+                source: address.source, retainedRoute: 'iroh', actionId: 'machines.services.list' });
             if (admission.kind !== 'iroh' || !input.host.acquireServiceExportForward) return unavailable();
             const saved = new URL(address.address);
             const port = Number(saved.port);
             if (!port || saved.protocol !== `${admission.scheme}:`) return unavailable();
-            const networkId = address.route?.containerNetworkId;
+            const networkId = route.containerNetworkId;
             if (!networkId && saved.hostname !== '127.0.0.1') return unavailable();
             const forward = await input.host.acquireServiceExportForward({ targetMachineId: admission.machineId,
                 serviceExport: admission.serviceExport, context: input.context, signal: input.signal,

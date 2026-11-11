@@ -229,7 +229,7 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
 }>) => Promise<void>, options: Readonly<{ mode?: 'source' | 'mixed' | 'prebuilt' | 'stored' | 'closure'; secretRevision?: number;
     deploymentId?: string; buildSecret?: boolean; revokeAfter?: 'config' | 'build'; registryAccess?: 'pull' | 'pushPull'; failBuild?: boolean;
     coldImages?: boolean; buildReference?: boolean; changingBuildReference?: boolean;
-    referenceBindAddress?: string; referencePublishedPort?: number; referenceIroh?: boolean }> = {}) {
+    referenceBindAddress?: string; referencePublishedPort?: number; referenceIroh?: boolean; referenceDualPublication?: boolean; referenceNetworkObserved?: boolean }> = {}) {
     const root = await mkdtemp(join(tmpdir(), 'happier-build-receipt-'));
     const homeServerIdentityId = 'srv_build_receipt';
     const previousConfiguration = { happyHomeDir: configuration.happyHomeDir, settingsFile: configuration.settingsFile,
@@ -300,7 +300,7 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
         referenceEnvironment.environment.runtimeTargetLinkId = 'source-link';
         referenceEnvironment.content.ownServer = { rollout: 'recreate', autoRestorePreviousRelease: false,
             serviceExports: [{ key: 'database', service: 'db', containerPort: 5432, scheme: 'postgres',
-                ...(options.referenceIroh ? { exposure: 'loopback' as const, transport: { kind: 'iroh' as const } }
+                ...(options.referenceDualPublication ? { exposure: 'privateNetwork' as const, privateNetwork: 'network', transport: { kind: 'iroh' as const } } : options.referenceIroh ? { exposure: 'loopback' as const, transport: { kind: 'iroh' as const } }
                     : { exposure: 'privateNetwork' as const, privateNetwork: 'network' }) }] };
         referenceEnvironment.targetLinks[0]!.targetLink = { ...referenceEnvironment.targetLinks[0]!.targetLink,
             id: 'source-link', environmentId: 'source-database', activeDeploymentId: 'source-release', machines: ['builder-c'],
@@ -318,7 +318,7 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
                         happyCliVersion: '0.0.0', homeDir: root, happyHomeDir: root })), metadataVersion: 1,
                     daemonState: encodePlainMachineStoredContent({ status: 'running', reachability: { revision: 1,
                         management: { daemon: 'ready', providers: [], publicSsh: 'closed' }, ingress: [],
-                        privateNetworks: [{ provider: { kind: 'builtin', id: 'tailscale' }, networkIdentity: 'network',
+                        privateNetworks: options.referenceNetworkObserved === false ? [] : [{ provider: { kind: 'builtin', id: 'tailscale' }, networkIdentity: 'network',
                             displayName: null, dnsName: null, addresses: ['100.64.0.7'], state: 'ready', interfaceName: 'tailscale0',
                             sourceRanges: ['100.64.0.0/10'], magicDnsEnabled: false }] } }),
                     daemonStateVersion: 1, storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
@@ -349,7 +349,7 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
                     runtimeFacts(): ProjectNativeRuntimeFacts { return { observedAt: 1, freshness: 'current', configuration: {
                         name: 'db', replicas: null, resources: { cpus: null, memory: null }, restartPolicy: 'unless-stopped',
                         healthcheck: 'absent', mounts: [], ports: [{ target: 5432, published: referencePort,
-                            bindAddress: options.referenceBindAddress ?? '100.64.0.7', protocol: 'tcp' }] } }; },
+                            bindAddress: options.referenceBindAddress ?? '100.64.0.7', protocol: 'tcp' }, ...(options.referenceDualPublication ? [{ target: 5432, published: options.referencePublishedPort ?? 25433, bindAddress: '127.0.0.1', protocol: 'tcp' as const }] : [])] } }; },
                     async stop() { return { status: 'stopped' }; },
                 } } } });
         }

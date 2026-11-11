@@ -18,8 +18,10 @@ const referenceBinding = () => ({ name: EnvironmentVariableBindingV1Schema.shape
 /** Nonsecret address actually supplied to the exact installed build/runtime phase. */
 export const DeploymentReferenceAddressV1Schema = lazyZodSchema(() => z.strictObject({
   ...referenceBinding(), machineId: id, installationId: id, address: z.string(),
-  route: z.optional(z.strictObject({ kind: z.literal('iroh'), observedPath: z.enum(['direct', 'relay', 'unknown']),
-    containerNetworkId: z.optional(id) })),
+  route: z.optional(z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('iroh'), observedPath: z.enum(['direct', 'relay', 'unknown']), containerNetworkId: z.optional(id) }),
+    z.strictObject({ kind: z.literal('privateNetwork'), networkIdentity: id }),
+  ])),
 }));
 export type DeploymentReferenceAddressV1 = z.infer<typeof DeploymentReferenceAddressV1Schema>;
 export const DeploymentSecretRevisionFactV1Schema = lazyZodSchema(() => z.strictObject({
