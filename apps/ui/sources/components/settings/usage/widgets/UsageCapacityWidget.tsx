@@ -679,7 +679,7 @@ function CapacityCell(
         <View style={styles.listedRow}>
           <View style={styles.listedIdentity}>
             <View style={styles.cellHead}>
-              <View style={styles.cellIdentity}><UsagePlanIdentity name={props.name} compact /></View>
+              <View style={styles.cellIdentity}><UsagePlanIdentity name={props.name} compact column /></View>
               {cell.rank !== null ? <UsagePlanRank rank={cell.rank} selected={cell.selected} /> : null}
             </View>
             {props.lone ? null : detailLine}
@@ -690,7 +690,7 @@ function CapacityCell(
         <>
           {props.lone ? null : <View style={styles.cellHead}>{valueText}</View>}
           <View style={styles.cellHead}>
-            <View style={styles.cellIdentity}><UsagePlanIdentity name={props.name} compact /></View>
+            <View style={styles.cellIdentity}><UsagePlanIdentity name={props.name} compact column /></View>
             {/* A left-out account says why in words on its caption line; an unnumbered badge would only repeat it. */}
             {cell.rank !== null ? <UsagePlanRank rank={cell.rank} selected={cell.selected} /> : null}
           </View>

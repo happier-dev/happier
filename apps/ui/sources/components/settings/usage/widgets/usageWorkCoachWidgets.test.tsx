@@ -484,6 +484,19 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.findHostByTestId('first-coach.empty')).not.toBeNull();
     expect(metric('findings')).toBe(0);
   });
+  it('never reassures a first-use Coach whose every check still needs evidence, and leads to a session (C3)', async () => {
+    const settled = resolveUsagePageAggregation({ queries: [query],
+      accounting: [{ query, status: 'available', value: slice.accounting! }],
+      howYouWork: [{ query, asOfMs: 1000, detail: { status: 'available', facts: [] } }], nowMs: 1000 }).results[0]!;
+    expect(settled.coach!.evaluations.some(row => row.status === 'no_finding')).toBe(false);
+    const screen = await renderScreen(<UsageCoachWidget {...props} slice={settled} id="usage_coach" testID="new-coach" />);
+    const empty = screen.findHostByTestId('new-coach.empty');
+    expect(empty).not.toBeNull();
+    const words = screen.getTextContent();
+    expect(words).not.toContain(t('usage.board.coach.emptyTitle'));
+    expect(words).toContain(t('usage.board.coach.firstUseTitle'));
+    expect(words).toContain(t('usage.board.coach.firstUseAction'));
+  });
   it('shows admitted Sessions checked from the canonical result and recovers after retry', async () => {
     const project = (admitted: number, notRead?: number) => resolveUsagePageAggregation({ queries: [query],
       accounting: [{ query, status: 'available', value: slice.accounting!, asOfMs: 1000 }],

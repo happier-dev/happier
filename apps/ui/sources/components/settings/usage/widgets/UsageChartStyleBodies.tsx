@@ -249,8 +249,10 @@ export function UsageRiverStyleBody(props: UsageChartStyleBodyProps) {
   const calendar = useCalendar(props);
   const metric = resolveUsageChartMetric(props.query.metric, 'tokens');
   const model = React.useMemo(() => calendar ? projectUsageRiverModel(calendar, metric) : null, [calendar, metric]);
-  const agents = React.useMemo(() => [...new Set((model?.weeks ?? []).flatMap((week) => week.shares.flatMap(row => row.agentId === null ? [] : [row.agentId])))].map(host.agent), [model, host.agent]);
+  const agents = React.useMemo(() => [...new Set((model?.weeks ?? []).flatMap((week) => (week.shares ?? []).flatMap(row => row.agentId === null ? [] : [row.agentId])))].map(host.agent), [model, host.agent]);
   if (!model) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.riverEmptyTitle')} reason={t('usage.board.charts.riverEmptyReason')} />;
+  // Weeks were read but no agent holds a share of any: the chart has nothing to draw, so it says so like its siblings.
+  if (!model.weeks.some(week => (week.shares?.length ?? 0) > 0)) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.needsDataTitle')} reason={t('usage.board.charts.needsCalendarReason')} />;
   const dates = usageChartDateLabels(props.query);
   return <View style={{ gap: 12 }} testID={`${props.testID}.river`}>
     <UsageAgentRiver theme={host.theme} paint={host.paint} agents={agents} model={model} testID={`${props.testID}.riverChart`}
@@ -297,7 +299,7 @@ export function UsageConstellationBody(props: UsageChartStyleBodyProps) {
       labels={{ kinds: { session: t('usage.board.charts.edgeSession'), run: t('usage.board.charts.edgeRun'), native: t('usage.board.charts.edgeNative') },
         arrowNote: t('usage.board.charts.edgeNote'), unknownStarts: (count) => t('usage.board.charts.unknownStarts', { count }),
         nodesOnly: props.slice.howYouWork?.collaboration ? t('usage.board.charts.nodesOnly') : t('usage.board.charts.collaborationNotRecorded'),
-        unknownAgent: usageAgentTitle('') }} />
+        unknownAgent: usageAgentTitle(''), unknownLabel: usageChartValuesLabels().unknownLabel }} />
     <UsageChartFooter slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />
   </View>;
 }
@@ -307,10 +309,9 @@ export function UsageConstellationBody(props: UsageChartStyleBodyProps) {
 export function UsagePlanetBody(props: UsageChartStyleBodyProps) {
   const host = useUsageChartHost(props.serverId);
   const calendar = useCalendar(props);
-  const intervals = props.slice.howYouWork?.intervals ?? null;
   const model = React.useMemo(() => {
-    return calendar ? projectUsagePortraitModel(calendar, intervals?.maxParallel ?? null, Date.now()) : null;
-  }, [calendar, intervals]);
+    return calendar ? projectUsagePortraitModel(calendar, Date.now()) : null;
+  }, [calendar]);
   useWidgetFrameBodyCaption(usagePeriodPhrase(props.query));
   if (!model) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.needsDataTitle')} reason={t('usage.board.charts.needsCalendarReason')} />;
   return <View style={{ gap: 12 }} testID={`${props.testID}.planet`}>
@@ -321,6 +322,7 @@ export function UsagePlanetBody(props: UsageChartStyleBodyProps) {
 
 export function UsageSteeringStyleBody(props: UsageChartStyleBodyProps) {
   const host = useUsageChartHost(props.serverId);
+  const unknown = usageChartValuesLabels().unknownLabel;
   useStyleCaption(t('usage.board.charts.inputSteering'));
   const model = React.useMemo(() => projectUsageSteeringModel(props.slice), [props.slice]);
   const agents = React.useMemo(() => (model?.rows ?? []).flatMap((row) => row.agentId ? [host.agent(row.agentId)] : []), [model, host.agent]);
@@ -329,9 +331,9 @@ export function UsageSteeringStyleBody(props: UsageChartStyleBodyProps) {
     <UsageSteeringTide theme={host.theme} paint={host.paint} agents={agents} model={model} testID={`${props.testID}.steeringChart`} label={t('usage.board.charts.steeringA11y')}
       labels={{ clock: usageChartClock, unknownAgent: usageAgentTitle(''), perBusyHourHeader: t('usage.board.charts.steersPerBusyHour'),
         fromPhoneHeader: t('usage.board.charts.fromPhone'), perBusyHourUnit: t('usage.board.charts.steersPerBusyHourUnit'), answers: t('usage.board.charts.answers'),
-        rate: (value) => value === null ? '—' : (Math.round(value * 10) / 10).toString(),
-        detail: (steers, busyMs) => t('usage.board.charts.steersDetail', { steers: steers ?? '—', busy: busyMs === null ? '—' : formatUsageDuration(busyMs) }),
-        count: (value) => value === null ? '—' : String(value), caption: t('usage.board.charts.steeringCaption') }} />
+        rate: (value) => value === null ? unknown : (Math.round(value * 10) / 10).toString(),
+        detail: (steers, busyMs) => t('usage.board.charts.steersDetail', { steers: steers ?? unknown, busy: busyMs === null ? unknown : formatUsageDuration(busyMs) }),
+        count: (value) => value === null ? unknown : String(value), caption: t('usage.board.charts.steeringCaption') }} />
     <UsageChartFooter slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />
   </View>;
 }

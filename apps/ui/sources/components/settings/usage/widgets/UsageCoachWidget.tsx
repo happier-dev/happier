@@ -13,6 +13,7 @@ import type {
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { TriggerPopover } from '@/components/workflows/triggers/TriggerPopover';
+import { useOpenNewSession } from '@/components/sessions/new/navigation/newSessionEntry';
 import { TriggerRunsOnRow } from '@/components/workflows/triggers/TriggerRunsOnRow';
 import { resolveTriggerEditorHref } from '@/components/workflows/triggers/triggerEditorDestination';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
@@ -285,6 +286,7 @@ export function UsageCoachWidget(props: UsageBodyProps) {
   const coach = props.slice.coach;
   const { refresh } = props.model;
   const { controller, snapshot } = useUsageCoachController(refresh);
+  const openNewSession = useOpenNewSession();
   // Anywhere but its own view (size Large) the Coach is a glance: up to three findings, the rest of
   // the Coach (hidden, checks, digest, preferences) stays on the Coach view.
   const glance = presentation?.size !== undefined && presentation.size !== 'large';
@@ -332,6 +334,9 @@ export function UsageCoachWidget(props: UsageBodyProps) {
   );
   const clear = coach.evaluations.filter((row) => row.status === 'no_finding');
   const disabled = coach.evaluations.filter(row => row.status === 'disabled');
+  // Nothing was actually checked: every check still waits for evidence. That is a first use, not "nothing needs you",
+  // and the way forward is work for the Coach to read.
+  const firstUse = insufficient.length > 0 && clear.length === 0;
   // What the checks found, as one row of facts (lab d2coach "This week"). Savings are never summed:
   // overlapping estimates would double count, so the band counts findings and checks only.
   const checked = coach.evaluations.length - disabled.length;
@@ -371,6 +376,13 @@ export function UsageCoachWidget(props: UsageBodyProps) {
         {glance ? null : <UsageCoachSummaryBand facts={summary} testID={`${props.testID}.summary`} />}
         {visible.length === 0 && appliedOnly.length === 0 ? (
           reading ? <UsageBodyReading testID={`${props.testID}.loading`} {...(strip ? { shape: { kind: 'strip' as const } } : {})} /> :
+          firstUse ? <UsageBodyInsufficient
+            testID={`${props.testID}.empty`}
+            replacesContent={false}
+            title={t('usage.board.coach.firstUseTitle')}
+            {...(glance ? {} : { reason: t('usage.board.coach.firstUseReason'),
+              action: { label: t('usage.board.coach.firstUseAction'), onPress: () => openNewSession() } })}
+          /> :
           <SurfaceStateCard
             testID={`${props.testID}.empty`}
             kind="empty"

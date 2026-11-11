@@ -19,12 +19,13 @@
  * dimension other than Agent is a review-rejectable regression.
  */
 
-import { resolveHappierSeriesRampColor } from '@happier-dev/plugin-ui/presentation';
+import { mixHappierColorOverPaper, resolveHappierSeriesRampColor } from '@happier-dev/plugin-ui/presentation';
 import { getNeutralAgentIdentityColor } from '@/agents/catalog/catalog';
 
 type UsageAccentThemeSlice = Readonly<{
     colors: Readonly<{
         text: Readonly<{
+            primary?: string;
             link: string;
             secondary: string;
         }>;
@@ -68,5 +69,13 @@ export function usageSeriesColor(theme: UsageAccentThemeSlice, index: number): s
  * only for the row that carries meaning (leader / selected / over-threshold).
  */
 export function usageMeterFill(theme: UsageAccentThemeSlice, emphasized: boolean): string {
-    return emphasized ? usageSignatureAccent(theme) : theme.colors.text.secondary;
+    if (emphasized) return usageSignatureAccent(theme);
+    // The ordinary bar is a light ink step on its paper (lab kitcharts `--uk-neu`), so the accent leader is what
+    // the eye finds; secondary text ink read as a row of heavy grey bars beside it (R4).
+    const { primary } = theme.colors.text;
+    const paper = theme.colors.surface?.base;
+    return (primary && paper ? mixHappierColorOverPaper(primary, paper, USAGE_METER_NEUTRAL_INK) : null) ?? theme.colors.text.secondary;
 }
+
+/** Lab kitcharts: `--uk-neu` is the text ink at 38% over the paper. */
+const USAGE_METER_NEUTRAL_INK = 0.38;

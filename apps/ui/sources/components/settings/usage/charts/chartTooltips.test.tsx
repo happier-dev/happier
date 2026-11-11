@@ -344,6 +344,10 @@ describe('usage chart tooltips (one ChartTooltip owner across all charts)', () =
 
         const triggers = screen.findAllHostsByTestId('usage-efficiency-mix-trigger');
         expect(triggers).toHaveLength(2);
+        // The segment's colour is a height:100% fill: a trigger that does not fill the segment's height paints nothing,
+        // leaving the strip a flat grey track (R4).
+        expect(screen.findAllByType(ChartTooltip).filter(node => node.props.triggerTestID === 'usage-efficiency-mix-trigger')
+            .map(node => node.props.triggerStyle)).toEqual([{ flex: 1 }, { flex: 1 }]);
         act(() => {
             pressTestInstance(triggers[0]!, 'usage-efficiency-mix-trigger');
         });

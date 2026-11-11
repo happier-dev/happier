@@ -41,6 +41,9 @@ import {
   UsageBodyNoUsage,
 } from './usageBodyKit';
 
+/** A segment's colour is a height:100% fill, so its tooltip trigger fills the segment or the strip paints only its track. */
+const MIX_SEGMENT_TRIGGER_STYLE = { flex: 1 } as const;
+
 /** Below this width the mix is the dot waffle (lab `kitcharts`: "waffle on tile and phone"). */
 const WAFFLE_BELOW_PX = 360;
 /** From this width the four figures share one row (a full-width band); narrower, they pair up two a row. */
@@ -217,6 +220,7 @@ export function UsageEfficiencyWidget(props: UsageBodyProps) {
               }
               accentColor={segment.color ?? chartTheme.colors.accent}
             >
+              triggerStyle={MIX_SEGMENT_TRIGGER_STYLE}
               {visual}
             </ChartTooltip>
           )}

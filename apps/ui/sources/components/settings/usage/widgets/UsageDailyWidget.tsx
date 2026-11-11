@@ -232,7 +232,8 @@ export function UsageDailyWidget(props: UsageBodyProps) {
   const shape = useUsageDailyChartShape();
   const hasGapDay = (series[0]?.points ?? []).some((_, index) => series.every(entry => entry.points[index]?.y == null));
   const height = shape.plotPx;
-  if (!view || count === 0)
+  // A period that recorded nothing says so once, rather than drawing its days as unrecorded on a 0-to-0 axis.
+  if (!view || count === 0 || props.slice.accounting?.totals.eventCount === 0)
     // Until the first read answers, the body holds the settled chart's shape (its plot, axis and legend room).
     return <UsageBodyNoUsage slice={props.slice} testID={props.testID} readingShape={shape} onRetry={props.model.refresh} />;
   return (

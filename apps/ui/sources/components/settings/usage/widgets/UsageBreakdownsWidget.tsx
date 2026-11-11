@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import { resolveUsageCostForSelection } from '@happier-dev/protocol/usage/usageCostFacts';
+import { compareUsageMeasurementsDescending } from '@happier-dev/protocol/usage/usageAggregation';
 import { type UsageAnalyticsBreakdownDimension, type UsageAnalyticsBreakdownEntry } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import {
   HappierPressable,
@@ -103,7 +104,7 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
     if (!entries?.length) return [];
     const rows = [...entries]
       .filter((entry) => dimension !== 'model' || valueOf(entry) !== null)
-      .sort((left, right) => (valueOf(right) ?? -1) - (valueOf(left) ?? -1))
+      .sort((left, right) => compareUsageMeasurementsDescending(valueOf(left), valueOf(right)))
       .map((entry) => ({
         id: entry.key,
         value: valueOf(entry),
@@ -128,6 +129,9 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
     ];
   });
   if (!accounting)
+    return <UsageBodyNoUsage slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />;
+  // Nothing recorded in the period: the ranking waits for usage, it is not missing a choice.
+  if (blocks.length === 0 && accounting.totals.eventCount === 0)
     return <UsageBodyNoUsage slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />;
   if (blocks.length === 0)
     return (

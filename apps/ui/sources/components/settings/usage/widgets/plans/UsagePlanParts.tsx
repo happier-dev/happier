@@ -276,9 +276,16 @@ export function UsagePlanIdentity(
     detail?: string | null;
     testID?: string;
     compact?: boolean;
+    /**
+     * A narrow column (a Capacity cell): the name and the identity that tells same-name accounts apart take a
+     * line each, so "Leeroy · codex3@happier.dev" never breaks across three lines mid-address.
+     */
+    column?: boolean;
   }>,
 ) {
   const text = usePlanText();
+  const split = props.column && props.name.primaryLabel && props.name.identity
+    ? { primary: props.name.primaryLabel, identity: props.name.identity } : null;
   const qualifier = [props.name.qualifier, props.detail]
     .filter(Boolean)
     .join(' · ');
@@ -290,16 +297,25 @@ export function UsagePlanIdentity(
           size="inline"
         />
       </View>
-      <View style={styles.identityText}>
+      <View style={[styles.identityText, split ? styles.identityColumn : null]}>
         <ConnectedAccountIdentityText
-          value={props.compact ? props.name.title : props.name.primaryLabel ?? props.name.title}
+          value={split ? split.primary : props.compact ? props.name.title : props.name.primaryLabel ?? props.name.title}
           style={[styles.identityTitle, text.title]}
           // In a narrow column (capacity segments, reset rows) a name wraps at a space instead of being cut, so
           // "ChatGPT account 2" never reads as "ChatGPT account". A compact title also carries the address that tells
           // same-name accounts apart ("Leeroy · codex3@happier.dev"): it keeps a third line so the address is never
           // the part that is cut (sweep 1110 #12).
-          numberOfLines={props.compact ? 3 : 2}
+          numberOfLines={split ? 1 : props.compact ? 3 : 2}
         />
+        {split ? (
+          <ConnectedAccountIdentityText
+            value={split.identity}
+            style={[styles.identityQualifier, text.detail]}
+            // One line: a cell keeps its rows level across the bar. A long address loses its domain tail, never the
+            // local part that tells same-name accounts apart; the cell's accessibility label keeps it whole.
+            numberOfLines={1}
+          />
+        ) : null}
         {qualifier && !props.compact ? (
           <ConnectedAccountIdentityText
             value={qualifier}
@@ -442,6 +458,7 @@ const styles = StyleSheet.create((theme) => ({
     flexWrap: 'wrap',
     columnGap: theme.space.s6,
   },
+  identityColumn: { flexDirection: 'column', alignItems: 'flex-start' },
   identityTitle: {
     ...Typography.default('semiBold'),
     color: theme.colors.text.primary,

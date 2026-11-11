@@ -29,6 +29,7 @@ import {
 import {
   UsageAgentMark,
   UsageBodyInsufficient,
+  UsageBodyNoUsage,
   UsageBodyReadFailed,
   isUsageReadFailed,
   UsageCoverageLine,
@@ -155,6 +156,9 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
       waitingOn={{ slice: props.slice, sources: ['accounting'] }} />;
   if ((series.length === 0 || (!cost && !sourceSeries.length && !mix?.hasData)) && isUsageReadFailed(props.slice, ['accounting']))
     return <UsageBodyReadFailed slice={props.slice} sources={['accounting']} testID={props.testID} onRetry={props.model.refresh} />;
+  // A period that recorded nothing says so, like the daily bars beside it; "needs more history" is for real but thin usage.
+  if (props.slice.accounting?.totals.eventCount === 0)
+    return <UsageBodyNoUsage slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />;
   if (series.length === 0 || (!cost && !sourceSeries.length && !mix?.hasData))
     return (
       <UsageBodyInsufficient

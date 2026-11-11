@@ -32,6 +32,8 @@ export type UsagePlanAccountName = Readonly<{
   title: string;
   /** The original primary for a row that also displays the account identity in its qualifier. */
   primaryLabel?: string;
+  /** The identity that tells same-name accounts apart, for a consumer that gives it its own line (with `primaryLabel`). */
+  identity?: string;
   /** The plan and account identity, quiet beside the title. */
   qualifier: string;
   serviceLabel: string;
@@ -132,7 +134,7 @@ export function useUsagePlans(slice: UsageQueryResultSlice, refresh: UsageWidget
       const plan = account.planLabel;
       return {
         title: name?.inlineLabel ?? accountName,
-        ...(name?.inlineLabel ? { primaryLabel: accountName } : {}),
+        ...(name?.inlineLabel ? { primaryLabel: accountName, ...(name.identityLabel ? { identity: name.identityLabel } : {}) } : {}),
         qualifier: [plan, name?.identityLabel ?? null]
           .filter(Boolean)
           .join(' · '),

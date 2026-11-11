@@ -8,6 +8,7 @@ import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { ITEM_ROW_PADDING_HORIZONTAL } from '@/components/ui/lists/itemDensityMetrics';
@@ -74,9 +75,15 @@ export function UsageModelPricesEditor(props: Readonly<{ slice: UsageQueryResult
     // What needs a decision first: unpriced, then the viewer's own prices, then the catalog.
     .sort((left, right) => rank(left) - rank(right)), [model.rows]);
   const mounted = React.useDeferredValue(rows.length, Math.min(rows.length, firstScreen));
+  const rowInset = useModelPriceRowInset();
   return (
     <View style={styles.body} testID={props.testID}>
       <UsagePriceProvenance provenance={model.provenance} serverId={props.serverId} testID={`${props.testID}.provenance`} />
+      {/* A read that recorded no model yet: say where models come from, so Refresh is not read as the way to get them. */}
+      {rows.length === 0 && props.slice.accounting ? <View style={rowInset}>
+        <SurfaceStateCard testID={`${props.testID}.empty`} kind="empty" layout="inline"
+          title={t('usage.board.page.pricesEmptyTitle')} reason={t('usage.board.page.pricesEmptyReason')} />
+      </View> : null}
       <View style={styles.rows}>
         {rows.slice(0, mounted).map((row, index) => <UsageModelPriceRow key={row.modelId!} row={row} overrides={overrides}
           mappingTargets={model.mappingTargets} serverId={props.serverId} last={index === rows.length - 1}

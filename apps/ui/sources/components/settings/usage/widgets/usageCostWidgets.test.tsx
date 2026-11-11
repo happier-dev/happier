@@ -33,6 +33,7 @@ import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import { leadingUsageRows, UsageCoverageLine, UsageShowAllRows, usagePartialHistoryLabel } from './usageBodyKit';
 import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
 import { UsageEfficiencyWidget } from './UsageEfficiencyWidget';
+import { UsageModelPricesEditor } from './UsageModelPrices';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 
 let controlsHome: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
@@ -102,6 +103,34 @@ describe('one selected money basis across Usage bodies', () => {
     ]));
   });
 
+  it('says a chosen ranking with nothing recorded is waiting for usage, never asks to choose a breakdown (C5)', async () => {
+    const base = mountedCosts();
+    const query = normalizeUsageQuery({ ...base.query, metric: 'tokens', breakdown: ['model'] });
+    const accounting = base.slice.accounting!;
+    const slice = { ...base.slice, accounting: { ...accounting, totals: { ...accounting.totals, eventCount: 0 }, breakdowns: { model: [] } } };
+    const screen = await renderScreen(<UsageBreakdownsWidget {...base} query={query} slice={slice}
+      model={{ ...base.model, slice }} id="usage_breakdowns" testID="first-models" />);
+    expect(screen.getTextContent()).not.toContain(t('usage.board.page.breakdownEmptyReason'));
+    expect(screen.findHostByTestId('first-models.empty')).not.toBeNull();
+    // The daily bars say the same once, instead of a plot of unrecorded days on a 0-to-0 axis.
+    const daily = await renderScreen(<UsageDailyWidget {...base} query={query} slice={slice}
+      model={{ ...base.model, slice }} id="usage_daily" testID="first-daily" />);
+    expect(daily.findHostByTestId('first-daily.drawn')).toBeNull();
+    expect(daily.findHostByTestId('first-daily.empty')).not.toBeNull();
+    // And the flow says no usage, not that it needs more history.
+    const flow = await renderScreen(<UsageFlowWidget {...base} query={query} slice={slice}
+      model={{ ...base.model, slice }} id="usage_flow" testID="first-flow" />);
+    expect(flow.getTextContent()).toContain(t('usage.board.page.noUsageTitle'));
+    expect(flow.getTextContent()).not.toContain(t('usage.board.page.flowEmptyTitle'));
+  });
+  it('tells a new Account that models appear after recorded usage instead of an empty price sheet (C6)', async () => {
+    const base = mountedCosts();
+    const slice = { ...base.slice, accounting: { ...base.slice.accounting!, contributions: [], breakdowns: {} } };
+    const screen = await renderScreen(<UsageModelPricesEditor slice={slice} serverId="home" testID="prices" />);
+    expect(screen.findHostByTestId('prices.empty')).not.toBeNull();
+    const priced = await renderScreen(<UsageModelPricesEditor slice={base.slice} serverId="home" testID="priced" />);
+    expect(priced.findHostByTestId('priced.empty')).toBeNull();
+  });
   it('keeps unknown token figures as dashes in the period summary and unpriced fact widgets', async () => {
     const base = mountedCosts(true);
     const unknownTokens = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
@@ -121,6 +150,23 @@ describe('one selected money basis across Usage bodies', () => {
     expect(screen.findAllByType(HappierDataMetric).find(node => node.props.testID === 'unknown-facts.fact.unpriced')?.props.value).toBe('—');
   });
 
+  it('draws no empty river plot when weeks were read but no agent recorded a share (C7)', async () => {
+    const props = mountedCosts();
+    const query = normalizeUsageQuery({ ...props.query, metric: 'tokens', includeActivity: true });
+    const slice = resolveUsagePageAggregation({ queries: [query],
+      accounting: [{ query, status: 'available', value: props.slice.accounting! }],
+      howYouWork: [{ query, asOfMs: day, detail: { status: 'available', facts: [] } }],
+    }).results[0]!;
+    const calendar = slice.howYouWork!.agentCalendar!;
+    const week = (startMs: number) => ({ startMs, endMs: startMs + 7 * day, date: '', weekday: 1, hour: null,
+      totals: { ...calendar.periodSummary.totals, tokens: null, eventCount: 0 }, agents: [], leaders: calendar.periodSummary.leaders });
+    const empty = { ...slice, howYouWork: { ...slice.howYouWork!, agentCalendar: { ...calendar,
+      weeks: [week(0), week(7 * day)], weeklyAgentMix: [] } } };
+    const screen = await renderScreen(<UsageFlowWidget {...props} query={query} slice={empty} presentation={{ style: 'agentRiver' }}
+      id="usage_flow" testID="river" />);
+    expect(screen.findHostByTestId('river.river')).toBeNull();
+    expect(screen.findHostByTestId('river.needsData')).not.toBeNull();
+  });
   it('uses the agent presentation owner for Constellation unattributed identities', async () => {
     const props = mountedCosts();
     const query = normalizeUsageQuery({ ...props.query, includeActivity: true });
