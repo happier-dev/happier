@@ -216,8 +216,10 @@ export async function prepareDeploymentRestoreV1(input: DeploymentRestorePrepare
             || !input.safetyBackup.configuration.sources.some(source => source.kind === 'dump' && source.service === destination.service))) refuse('backup_required');
         }
         await verifySource(input);
-        if (destination.adapter === 'sqlite-v1' && input.source.kind !== 'upload') await steps.run('integrity', async () =>
-            completed(await input.execute({ kind: 'sqliteStage', destination, source: input.source, operationId: input.operationId })));
+        // Staging validates the source before writers stop; failures belong to
+        // the safety phase already running above, alongside manifest validation.
+        if (destination.adapter === 'sqlite-v1' && input.source.kind !== 'upload')
+            completed(await input.execute({ kind: 'sqliteStage', destination, source: input.source, operationId: input.operationId }));
         const safetyBackup = destination.hasMeaningfulData && input.safetyBackup
             ? await runDeploymentBackupV1({ ...input.safetyBackup, signal: input.signal }) : undefined;
         steps.record('safety', safetyBackup ? 'completed' : 'skipped');

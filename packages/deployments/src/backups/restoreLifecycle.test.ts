@@ -3,6 +3,7 @@ import * as owners from '../index.js';
 import type { DeploymentRestoreConfirmInputV1, DeploymentRestoreNativeRequestV1, DeploymentRestoreNativeResultV1,
     DeploymentRestorePrepareInputV1, DeploymentRestorePrepareReceiptV1 } from '../index.js';
 import type { DeploymentBackupRunInputV1 } from '../actions/backups.js';
+import { DeploymentRestoreStepV1Schema } from '@happier-dev/deployment-protocol';
 import type { DeploymentBackupManifestV1, DeploymentPreMigrationBackupV1 } from '@happier-dev/deployment-protocol';
 
 const snapshotId = 'a'.repeat(64), treeId = 'b'.repeat(64), repositoryId = 'c'.repeat(64), checksum = 'd'.repeat(64);
@@ -95,6 +96,28 @@ function boundary(options: Readonly<{ healthFails?: boolean; streamFails?: boole
     return { execute, effects, get names() { return [...names].sort(); }, get writersRunning() { return writersRunning; },
         get callsAfterAbort() { return callsAfterAbort; }, setNativeSignal(signal: AbortSignal) { nativeSignal = signal; } };
 }
+
+it.each([false, true])('records sqlite source validation within safety (fails=%s)', async fails => {
+    const native = boundary();
+    const input: DeploymentRestorePrepareInputV1 = {
+        operationId: 'sqlite-prepare', source: manifest, sourceFormat: 'sqlite', access,
+        destination: { environmentId: 'target', revision: 2, service: 'db', adapter: 'sqlite-v1',
+            path: '/data/app.sqlite', stagingVolume: 'sqlite-staging', hasMeaningfulData: false, writerServices: ['web'] },
+        signal: new AbortController().signal,
+        async execute(request) {
+            if (request.kind === 'sqliteStage') return { ...complete(), exitCode: fails ? 1 : 0 };
+            return native.execute(request);
+        },
+    };
+    if (fails) {
+        await expect(owners.prepareDeploymentRestoreV1(input)).rejects.toMatchObject({ code: 'restore_failed',
+            details: { steps: [{ id: 'safety', status: 'failed' }] } });
+    } else {
+        const receipt = await owners.prepareDeploymentRestoreV1(input);
+        expect(receipt.steps?.every(step => DeploymentRestoreStepV1Schema.safeParse(step).success)).toBe(true);
+        expect(receipt.steps).toEqual([{ id: 'safety', status: 'skipped' }]);
+    }
+});
 
 async function prepare(native: ReturnType<typeof boundary>, overrides: Partial<DeploymentRestorePrepareInputV1> = {}) {
     return owners.prepareDeploymentRestoreV1({ operationId: 'prepare-1', source: manifest, sourceFormat: 'postgresCustom', destination, access, signal: new AbortController().signal,
