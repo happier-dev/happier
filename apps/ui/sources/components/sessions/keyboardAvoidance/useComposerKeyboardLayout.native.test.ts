@@ -668,7 +668,7 @@ describe('useComposerKeyboardLayout native', () => {
         expect(source).toMatch(/function resolveKeyboardHeightWithinScaffold[^{]*{\s*['"]worklet['"];/);
     });
 
-    it('rests after modal-owned keyboard events when suppression clears', async () => {
+    it('lifts over a keyboard that settled while a modal suppressed the lift, once suppression clears', async () => {
         const { useComposerKeyboardLayout } = await import('./useComposerKeyboardLayout.native');
         const hook = await renderHook(
             ({ keyboardLiftSuppressed }: { keyboardLiftSuppressed: boolean }) => useComposerKeyboardLayout({
@@ -682,6 +682,7 @@ describe('useComposerKeyboardLayout native', () => {
         act(() => {
             hook.getCurrent().setComposerMeasuredHeight(120);
         });
+        nativeHookState.reanimatedKeyboardHeight = 300;
         act(() => {
             nativeHookState.keyboardHandlers?.onEnd?.({ height: 300, progress: 1 });
         });
@@ -691,11 +692,63 @@ describe('useComposerKeyboardLayout native', () => {
         expect(hook.getCurrent().bottomInset.value).toBe(20);
         expect(hook.getCurrent().listBottomInset.value).toBe(140);
 
+        // The keyboard sends no further frame when the modal goes. The composer must follow it to
+        // the same seat the UI-thread transcript inset already derives from the live keyboard.
         await hook.rerender({ keyboardLiftSuppressed: false });
+
+        expect(hook.getCurrent().bottomInset.value).toBe(300);
+        expect(hook.getCurrent().listBottomInset.value).toBe(420);
+        expect(hook.getCurrent().listBottomInsetAnimated.value).toBe(420);
+        expect(hook.getCurrent().availablePanelHeight.value).toBe(400);
+
+        // A keyboard that then leaves still brings the composer back to rest.
+        nativeHookState.reanimatedKeyboardHeight = 0;
+        act(() => {
+            nativeHookState.keyboardListeners.get('keyboardDidHide')?.();
+        });
 
         expect(hook.getCurrent().bottomInset.value).toBe(20);
         expect(hook.getCurrent().listBottomInset.value).toBe(140);
-        expect(hook.getCurrent().availablePanelHeight.value).toBe(680);
+    });
+
+    it('re-seats the composer above a keyboard that stayed open while a modal suppressed the lift', async () => {
+        // Native app modals are portal overlays: opening one does not resign the composer's first
+        // responder, so the keyboard stays up and emits no frames across the modal's lifetime.
+        // Clearing the suppression must seat the composer where the transcript inset already
+        // is — above that keyboard — instead of leaving it behind the keyboard (issue #893).
+        nativeHookState.platformOS = 'ios';
+        const { useComposerKeyboardLayout } = await import('./useComposerKeyboardLayout.native');
+        const hook = await renderHook(
+            ({ keyboardLiftSuppressed }: { keyboardLiftSuppressed: boolean }) => useComposerKeyboardLayout({
+                headerHeight: 100,
+                keyboardLiftSuppressed,
+                safeAreaBottom: 20,
+            }),
+            { initialProps: { keyboardLiftSuppressed: false } },
+        );
+
+        act(() => {
+            hook.getCurrent().setComposerMeasuredHeight(120);
+            hook.getCurrent().setComposerInputFocused?.(true);
+        });
+        nativeHookState.reanimatedKeyboardHeight = 300;
+        act(() => {
+            nativeHookState.keyboardHandlers?.onStart?.({ height: 300, progress: 1 });
+            nativeHookState.keyboardHandlers?.onEnd?.({ height: 300, progress: 1 });
+        });
+
+        expect(hook.getCurrent().bottomInset.value).toBe(300);
+
+        await hook.rerender({ keyboardLiftSuppressed: true });
+
+        expect(hook.getCurrent().bottomInset.value).toBe(20);
+
+        await hook.rerender({ keyboardLiftSuppressed: false });
+
+        expect(hook.getCurrent().bottomInset.value).toBe(300);
+        expect(hook.getCurrent().listBottomInset.value).toBe(420);
+        expect(hook.getCurrent().listBottomInsetAnimated.value).toBe(420);
+        expect(hook.getCurrent().availablePanelHeight.value).toBe(400);
     });
 
     it('retains the previous keyboard lift while a composer overlay transfers focus', async () => {
