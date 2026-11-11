@@ -39,6 +39,9 @@ import { linkDeploymentTargetInTx } from './deploymentTargetLinkService';
 import { createDeploymentInTx } from './deploymentService';
 import { readEnvironmentSecretLaunchAdmissionInTx } from './environmentSecretLaunchAdmission';
 import { createDeploymentDomainInTx } from './deploymentDomainService';
+import type { Server } from 'socket.io';
+import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
+import { createExternalActionDaemonDispatcher, type ExternalActionForwardRpcCall } from '@/app/api/socket/externalActionDispatcher';
 
 describe('private installed Environment secret launch transport', () => {
     const serverId = `srv_${'c'.repeat(32)}`;
@@ -305,6 +308,50 @@ describe('private installed Environment secret launch transport', () => {
             const continued = await app.inject(request());
             expect(continued.statusCode, continued.body).toBe(200);
             expect(continued.json()).toEqual({ ok: true, grants: [f.grant] });
+        }, { authentication: 'real' });
+    });
+
+    it('refuses a person-presented data.query root after its member left the Source Team', async () => {
+        const f = await admittedTeamDelivery('plain', false, 'postgres');
+        const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
+        const deploymentId = f.payload.materialization.kind === 'deployment' ? f.payload.materialization.deploymentId : '';
+        await db.deployment.update({ where: { id: deploymentId }, data: { state: 'succeeded' } });
+        await db.deploymentTargetLink.update({ where: { id: f.payload.targetLinkId }, data: { activeDeploymentId: deploymentId,
+            machines: { updateMany: { where: { machineId: f.payload.machineId, installationId: f.payload.installationId },
+                data: { state: 'active' } } } } });
+        // The member owns the executing Machine, so Machine admission alone cannot see the withdrawal.
+        await db.machine.update({ where: { id: f.payload.machineId }, data: { accountId: f.owner.id, active: true, operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
+        const actionId = 'deployments.data.query' as const;
+        const input = { serverId, environmentId: row.id, expectedRevision: row.revision, deploymentId,
+            targetLinkId: f.payload.targetLinkId, machineId: f.payload.machineId, installationId: f.payload.installationId,
+            service: 'postgres', sql: 'SELECT 1', params: {} };
+        const target = { kind: 'machine' as const, machineId: input.machineId };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const root = await auth.mintExternalActionExecutionAuthorization({ accountId: f.owner.id,
+            serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.owner.tokenEpoch },
+            actionId, machineId: input.machineId, target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, input) });
+        // The daemon transport is the system boundary; Home's relay and dispatcher admission run for real.
+        const forwarded: unknown[] = [];
+        const forwardRpc = (async (request: unknown) => {
+            forwarded.push(request);
+            return { ok: false, error: 'daemon_boundary', errorCode: 'daemon_boundary' };
+        }) as unknown as ExternalActionForwardRpcCall;
+        const token = await auth.createToken(f.owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        await withAuthenticatedTestApp(app => registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({
+            io: { to: () => ({ emit: () => undefined }) } as unknown as Server, forwardRpc }) }), async app => {
+            const execute = () => app.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+                headers: { authorization: `Bearer ${token}` },
+                payload: { v: 1, machineId: input.machineId, envelope, executionAuthorization: root } });
+            const started = await execute();
+            expect(forwarded, started.body).toHaveLength(1);
+            // Only Source Team membership is withdrawn; the member still owns the Machine.
+            await db.teamMembership.deleteMany({ where: { teamId: f.team.id, accountId: f.owner.id } });
+            const retried = await execute();
+            expect(forwarded, retried.body).toHaveLength(1);
+            expect(retried.json()).toMatchObject({ error: 'credential_scope_denied' });
         }, { authentication: 'real' });
     });
 

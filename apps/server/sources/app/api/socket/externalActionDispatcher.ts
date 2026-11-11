@@ -745,8 +745,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         let executionAuthorization = request.executionAuthorization;
         let capturedMachineAdmission: SocketRpcMachineAdmissionContextV1 | undefined;
         if (executionAuthorization) {
-            // Dispatch is also an internal ingress: prove its supplied root token,
-            // then retain native member admission without another permission evaluation.
+            // Dispatch is also an internal ingress: prove its supplied root token.
+            // Its only producer, the person-presented relay, already re-ran admission.
             const root = await auth.verifyExternalActionExecutionAuthorization(executionAuthorization.token);
             const current = root ? await verifyCurrentExternalActionPrincipalInTx(db, root) : null;
             const principal = root && current

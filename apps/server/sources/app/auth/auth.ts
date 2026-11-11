@@ -612,56 +612,15 @@ class AuthModule {
         if ((nativeAdmission || input.actionId === 'deployments.targets.link' || approvalMetadataRoot || moveDefinitionRoot) && !('authentication' in input)
             && !mintApiTokenPrincipal) throw new ApiTokenOperationError('invalid_token');
         let nativeSource: Readonly<{ id: string; revision: number }> | undefined;
-        if (nativeAdmission && !domainRoot) {
-            const { loadDeploymentEnvironmentInTx } = await import('../deployments/deploymentEnvironmentService');
-            const { canDeployDeploymentEnvironment, projectDeploymentControllerPlacementFailure } = await import('../deployments/deploymentAdmission');
-            const environment = await loadDeploymentEnvironmentInTx(db, input.accountId, input.serverIdentityId, nativeAdmission.environmentId, {
-                authenticationAuthority: 'account_automation', authenticationEvidence: 'authentication' in input
-                    ? input.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence,
-            });
-            if (!environment.ok) throw new ApiTokenOperationError('credential_scope_denied');
-            if ('kind' in nativeAdmission && nativeAdmission.kind === 'restore'
-                && nativeAdmission.source.kind === 'repository' && nativeAdmission.source.origin) {
-                const source = await loadDeploymentEnvironmentInTx(db, input.accountId, input.serverIdentityId,
-                    nativeAdmission.source.origin.environmentId, {
-                        authenticationAuthority: 'account_automation', authenticationEvidence: 'authentication' in input
-                            ? input.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence,
-                    });
-                const { readDeploymentTargetAuthorizationInTx } = await import('@/app/deployments/deploymentReadAuthorization');
-                // The reviewed revision belongs to the destination, not the source read.
-                const { expectedRevision: _expectedRevision, ...sourceAdmission } = nativeAdmission;
-                // Copy executes on an existing source member. Both principals are
-                // admitted here once; the finite signed invocation retains custody.
-                if (!environment.admission.canManage || !source.ok || !source.admission.canManage
-                    || !await readDeploymentTargetAuthorizationInTx(db, source.row, {
-                        ...sourceAdmission, source: { ...nativeAdmission.source, origin: undefined }, environmentId: source.row.id,
-                        targetLinkId: nativeAdmission.source.origin.targetLinkId,
-                    }, { actorAccountId: input.accountId, owner: source.admission.owner })) throw new ApiTokenOperationError('credential_scope_denied');
+        if (nativeAdmission) {
+            const { admitDeploymentNativeRootEnvironmentInTx } = await import('@/app/deployments/deploymentRootEnvironmentAdmission');
+            const environment = await admitDeploymentNativeRootEnvironmentInTx(db, input, nativeAdmission, 'authentication' in input
+                ? input.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence);
+            if (!environment.ok) {
+                throw new ApiTokenOperationError('credential_scope_denied', undefined,
+                    environment.placement?.details, environment.placement?.failureCause);
             }
-            if (input.actionId !== 'action.operations.get' && !isDeploymentBackupReadActionIdV1(input.actionId)) {
-                if (!(ingressUpdateRoot || configureRoot ? environment.admission.canManage && !environment.row.deletedAt
-                    : canDeployDeploymentEnvironment(environment.admission, environment.row))) {
-                    throw new ApiTokenOperationError('credential_scope_denied');
-                }
-                if (!nativeMemberRoot && environment.row.controllerMachineId !== input.machineId) {
-                    const failure = projectDeploymentControllerPlacementFailure(environment.row.controllerMachineId);
-                    throw new ApiTokenOperationError('credential_scope_denied', undefined, failure.details, failure.failureCause);
-                }
-            }
-            if (configureRoot && isDeploymentBackupConfigureNativeAdmissionV1(nativeAdmission)
-                && environment.row.revision !== nativeAdmission.expectedRevision) throw new ApiTokenOperationError('credential_scope_denied');
-            if (nativeMemberRoot) {
-                const { readDeploymentTargetAuthorizationInTx } = await import('@/app/deployments/deploymentReadAuthorization');
-                if (!('kind' in nativeAdmission) || nativeAdmission.kind !== 'restart' && nativeAdmission.kind !== 'restore' && nativeAdmission.kind !== 'backup'
-                    || !await readDeploymentTargetAuthorizationInTx(db, environment.row, nativeAdmission,
-                        nativeAdmission.kind === 'restore' && nativeAdmission.source.kind === 'repository' && nativeAdmission.source.origin
-                            ? { actorAccountId: input.accountId, owner: environment.admission.owner } : undefined)) {
-                    throw new ApiTokenOperationError('credential_scope_denied');
-                }
-            }
-            if (input.actionId !== 'action.operations.get' && !ingressUpdateRoot && !configureRoot) {
-                nativeSource = { id: environment.admission.source.id, revision: environment.admission.source.revision };
-            }
+            nativeSource = environment.source;
         }
         let metadataEnvironmentId: string | undefined;
         try {

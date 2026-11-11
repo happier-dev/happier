@@ -49,7 +49,8 @@ function confirmationMismatch(actionId: ActionId, input: unknown, context: Actio
     || binding && binding.accountId !== context.runtimeAccountId) return { field: 'account' };
   if (context.externalActionCredential || context.rpcSessionAuthorization
     || binding && !((readExternalActionBindingAuthority(binding) === 'present_user'
-        || 'authentication' in binding && binding.authentication.kind === 'terminal' && context.surface === 'cli')
+        || 'authentication' in binding && binding.authentication.kind === 'terminal' && context.surface === 'cli'
+          && !binding.sessionActionOrigin && !binding.workflowActionOrigin)
       && binding.requestId === context.actionRequestId
       && binding.actionId === actionId && sameStrictJsonValue(binding.target, context.externalActionTarget))
     || !context.actionRequestId || confirmation.requestId !== context.actionRequestId

@@ -13,7 +13,7 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import { ArtifactReadBatchHttpInputV1Schema, ArtifactReadHeadersBatchInputV1Schema, ArtifactTemplateAcceptedVersionInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { ArtifactSignedInLinkCreateRequestV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { MachineReadBatchRequestV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
-import { isBotTemplateRetainedExecutionRootActionIdV1, isBotTemplateRestrictedPatHttpPurposeRootActionIdV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
+import { isBotTemplateRestrictedPatHttpPurposeRootActionIdV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
 import { isDeploymentReadActionIdV1, isDeploymentPreparationActionIdV1,
     deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readDeploymentReadAuthorizationInTx, readAdmittedRegistryAppUpdateScopeInTx,
@@ -496,28 +496,6 @@ export async function verifyWorkflowExternalActionRequesterAuthorization(input: 
     const captured = projectAcceptedDeploymentPrincipal(receiverBinding);
     const principal = captured && projectExternalActionBoundPrincipal({ ...receiverBinding, workflowActionOrigin: input.origin }, captured);
     return principal ? { binding: { ...receiverBinding, admittedMachineRole: binding.admittedMachineRole }, principal } : null;
-}
-
-/** Only a Home-verified native member root may spend its captured finite admission. */
-export function readAdmittedDeploymentNativePrincipal(binding: ExternalActionExecutionAuthorizationBindingV1,
-    authorityCeiling?: ExternalActionServerPrincipalV1['authority']): VerifiedExternalActionPrincipal | null {
-    const configure = binding.deploymentNativeAdmission;
-    if (isDeploymentBackupConfigureNativeAdmissionV1(configure)) {
-        if (binding.actionId !== configure.actionId || binding.environmentId !== configure.environmentId
-            || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId) return null;
-    } else {
-        const query = binding.actionId === 'deployments.data.query'
-            && binding.deploymentReadAdmission?.actionId === binding.actionId ? binding.deploymentReadAdmission : undefined;
-        const native = query ?? binding.deploymentNativeAdmission;
-        if (!native || (!query && (!('kind' in native) || native.kind !== 'restart' && native.kind !== 'restore' && native.kind !== 'backup'))
-            || binding.actionId !== native.actionId
-            || (!query && native.environmentId !== binding.environmentId) || native.machineId !== binding.machineId
-            || native.installationId !== binding.installationId || binding.target.kind !== 'machine'
-            || binding.target.machineId !== binding.machineId) return null;
-    }
-    const captured = projectAcceptedDeploymentPrincipal(binding);
-    const principal = captured && projectExternalActionBoundPrincipal(binding, captured, authorityCeiling);
-    return captured && principal ? { ...captured, ...principal } : null;
 }
 
 function readHandoffContinuationIssuanceAction(path: string): string | null {
@@ -1073,7 +1051,6 @@ export async function readCurrentManagedGuestActivityInTx(reader: Tx,
         || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId) return null;
     try {
         if (!await verifyCurrentExternalActionPrincipalInTx(reader, binding)) return null;
-        if (!binding.managedAccountExecutor && binding.accountId !== binding.custodianAccountId) return null;
         const enrolled = await reader.managedMachine.findUnique({ where: { enrolledMachineId: machineId } });
         if (!enrolled || enrolled.homeId !== binding.serverIdentityId || enrolled.custodianAccountId !== binding.custodianAccountId) return null;
         const currentTarget = target ?? { homeId: enrolled.homeId, managedId: enrolled.id, expectedRevision: enrolled.intentRevision,
@@ -1689,9 +1666,6 @@ async function verifyCommon(
             : refuseExternalActionExecutionRequest('principal', proof);
     }
 
-    // Native member work has no Home receipt job: mint admitted its exact target.
-    // The signed root and installation proof retain that finite admission;
-    // the native operation owner stops it through the executor's local signal.
     // One signed request admits each fact once. A change after this point applies
     // at the next request; the holder stops already-admitted work on its local signal.
     const currentPrincipal = await verifyCurrentExternalActionPrincipalForPurpose(binding, purpose, deploymentContinuation);

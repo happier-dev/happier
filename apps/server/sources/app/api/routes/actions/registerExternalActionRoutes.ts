@@ -285,13 +285,6 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
     const authorization = body.executionAuthorization;
     if (!authorization || body.sessionActionOrigin || body.sessionActionSource || body.installationProof
         || body.managedContinuation || body.handoffContinuation || body.handoffPreflight) return null;
-    // The parsed-body authenticator proved this exact token, envelope and installation.
-    // A finite restart spends that typed result instead of admitting the requester again.
-    const admitted = request.externalActionExecutionAuthorizationBinding;
-    if (request.externalActionExecutionAuthorized === true && admitted
-        && sameManagedInput(admitted, authorization.binding)
-        && request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] === authorization.token) {
-    }
     const root = await auth.verifyExternalActionExecutionAuthorization(authorization.token);
     if (!root || root.serverIdentityId !== await getOrCreateServerIdentityId() || root.accountId !== request.userId
         || !sameManagedInput(root, authorization.binding)
@@ -310,6 +303,13 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
             authentication: { authenticationAuthority: current.authority, authenticationEvidence: current.authenticationEvidence } });
     if (!admission || admission.kind !== 'admitted' || admission.installationId !== root.installationId
         || admission.custodianAccountId !== root.custodianAccountId) return null;
+    // A person-presented start, restart or retry is new work: it passes the same
+    // Environment admission its mint ran, once, before any dispatch.
+    let nativeAdmission: ReturnType<typeof projectExternalActionDeploymentNativeEnvelopeAdmissionV1>;
+    try { nativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope: body.envelope }); }
+    catch { return null; }
+    const { hasCurrentDeploymentRootEnvironmentAdmissionInTx } = await import('@/app/deployments/deploymentRootEnvironmentAdmission');
+    if (!await hasCurrentDeploymentRootEnvironmentAdmissionInTx(db, root, nativeAdmission, current.authenticationEvidence)) return null;
     const principal = projectExternalActionBoundPrincipal(root, current, request.authAuthority);
     // A signed Account root proves credential provenance, not a higher
     // invocation authority than this authenticated request's lowering ceiling.

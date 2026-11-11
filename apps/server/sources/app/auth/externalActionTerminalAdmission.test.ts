@@ -1,27 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { isOriginalAccountExecutionAction, isOriginalTerminalExecutionAction, readAdmittedDeploymentNativePrincipal } from './externalActionExecutionAuthorization';
-import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { DEPLOYMENT_BACKUP_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { isOriginalAccountExecutionAction, isOriginalTerminalExecutionAction } from './externalActionExecutionAuthorization';
 
 describe('paired terminal Action admission', () => {
-    it.each(DEPLOYMENT_BACKUP_ACTION_IDS_V1)('spends only the exact admitted native backup principal for %s', actionId => {
-        const input = { serverId: 'srv_home', environmentId: 'environment', machineId: 'runtime', installationId: 'installation',
-            targetLinkId: 'target', deploymentId: 'deployment', expectedRevision: 3, configRevision: 2,
-            ...(actionId === 'deployments.backups.verify' ? { backupOperationId: 'capture', snapshotId: 'a'.repeat(64), level: 'manifestReadBack' } : {}),
-            ...(actionId === 'deployments.backups.prune' ? { retention: { kind: 'keepEverything' } } : {}) };
-        const { binding } = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'proof', binding: {
-            accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
-            serverIdentityId: input.serverId, machineId: input.machineId, installationId: input.installationId,
-            actionId, requestId: 'backup', target: { kind: 'machine', machineId: input.machineId },
-            accountEncryptionMode: 'plain', environmentId: input.environmentId,
-            deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, input), requestEnvelopeDigest: 'a'.repeat(43),
-        } });
-        expect(readAdmittedDeploymentNativePrincipal(binding)).toMatchObject({ accountId: 'owner' });
-        expect(readAdmittedDeploymentNativePrincipal({ ...binding, environmentId: 'foreign' })).toBeNull();
-        expect(readAdmittedDeploymentNativePrincipal({ ...binding, machineId: 'foreign' })).toBeNull();
-        expect(readAdmittedDeploymentNativePrincipal({ ...binding, installationId: 'replaced' })).toBeNull();
-    });
     it('admits catalog Account roots and input-placed Provider Machine roots', () => {
         expect(isOriginalAccountExecutionAction('providers.connections.describe')).toBe(true);
         expect(isOriginalAccountExecutionAction('providers.defaults.set')).toBe(true);

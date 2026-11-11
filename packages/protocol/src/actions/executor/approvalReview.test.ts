@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { ExternalActionExecutionAuthorizationV1Schema } from '../externalActionApi.js';
+import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import type { ActionExecutorContext } from './types.js';
-import { admitAccountActionInvokeConfirmationV1, recordPresentUserApprovalV1 } from './approvalReview.js';
+import { admitAccountActionInvokeConfirmationV1, admitPresentUserConfirmationV1, recordPresentUserApprovalV1 } from './approvalReview.js';
 
 function consentContext(): ActionExecutorContext {
   const target = { kind: 'machine', machineId: 'machine-local' } as const;
@@ -61,5 +62,35 @@ describe('Account consent mismatch diagnostics', () => {
     expect(admitAccountActionInvokeConfirmationV1(input, context, null)).toEqual({ admitted: true });
     expect(admitAccountActionInvokeConfirmationV1(input, context, null))
       .toEqual({ admitted: false, mismatch: { field: 'child_proof' } });
+  });
+});
+
+describe('terminal CLI confirmation binding', () => {
+  function terminalContext(origin?: Readonly<{ runId: string; requestId: string }>): ActionExecutorContext {
+    const target = { kind: 'machine', machineId: 'machine-local' } as const;
+    const { binding } = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-proof', binding: {
+      serverIdentityId: 'home', accountId: 'alice', custodianAccountId: 'alice',
+      authentication: { kind: 'terminal', tokenEpoch: 0 }, installationId: 'installation',
+      machineId: target.machineId, actionId: 'machines.managed.delete', requestId: 'request', requestEnvelopeDigest: 'A'.repeat(43), target,
+      ...(origin ? { workflowActionOrigin: origin } : {}),
+    } });
+    return {
+      surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'alice', serverId: 'home', serverIdentityId: 'home', actionRequestId: 'request',
+      externalActionTarget: target, externalActionExecutionAuthorization: { v: 1, token: 'fixture-proof', binding },
+      presentUserConfirmation: { actionId: 'machines.managed.delete', requestId: 'request', accountId: 'alice',
+        serverId: 'home', target, inputDigest: 'private-fingerprint' },
+    };
+  }
+
+  it('refuses a Workflow-origin terminal root and keeps the direct terminal confirmation', () => {
+    const input = { homeId: 'home', managedId: 'managed' };
+    const confirmed = (context: ActionExecutorContext): ActionExecutorContext => ({ ...context,
+      presentUserConfirmation: { ...context.presentUserConfirmation!,
+        inputDigest: computeActionInputApprovalDigestV1('machines.managed.delete', input, context.sessionTargetsV1) } });
+    expect(admitPresentUserConfirmationV1('machines.managed.delete', input,
+      confirmed(terminalContext({ runId: 'run', requestId: 'request' })))).toBeNull();
+    expect(admitPresentUserConfirmationV1('machines.managed.delete', input, confirmed(terminalContext())))
+      .toMatchObject({ actionId: 'machines.managed.delete' });
   });
 });
