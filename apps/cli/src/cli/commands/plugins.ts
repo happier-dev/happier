@@ -22,7 +22,7 @@ import {
 import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { resolveInvokerName } from '@/cli/runtime/resolveInvokerName';
 import { configuration } from '@/configuration';
-import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { isCanonicalAbsolutePathInsideRoot, resolveAbsolutePathFromWorkingDirectory } from '@/utils/path/expandHomeDirPath';
 import { readInstalledPluginCatalog, readInstalledPluginCatalogEntry, type PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import {
   projectPluginCatalogEntrySnapshot,
@@ -1017,11 +1017,14 @@ async function runPluginsDevCommand(
     return;
   }
 
+  // Keep the caller's root through the install Action rejoin, whose receiver
+  // can run in a different working directory.
+  const rootPath = resolveAbsolutePathFromWorkingDirectory(requestedPath) ?? requestedPath;
   const control = deps.controlPluginDevelopment ?? controlDaemonPluginDevelopment;
   await (deps.ensureDaemon ?? ensureDaemonRunningForSessionCommand)();
   const result = await control({
     kind: 'registerExplicit',
-    rootPath: requestedPath,
+    rootPath,
     ...(sdkRegistryOrigin ? { sdkRegistryOrigin } : {}),
   }, runtime.signal ? { signal: runtime.signal } : {});
   if (result.kind === 'failed') {
@@ -1029,7 +1032,7 @@ async function runPluginsDevCommand(
       // Rejoin the daemon-retained candidate through the ordinary install
       // Action, which owns the approval Artifact and its decision lifecycle.
       await handlePluginsCommand([
-        'install', requestedPath, '--dev',
+        'install', rootPath, '--dev',
         ...(sdkRegistryOrigin ? ['--sdk-registry', sdkRegistryOrigin] : []),
         ...(wantsJson(args) ? ['--json'] : []),
       ], deps, runtime);
@@ -1052,7 +1055,7 @@ async function runPluginsDevCommand(
     await printJsonEnvelope({
       ok: true,
       kind: 'plugins_dev',
-      data: { rootPath: requestedPath, status: result.status },
+      data: { rootPath, status: result.status },
     });
   } else {
     printPluginDevelopmentStatus(result.status);
