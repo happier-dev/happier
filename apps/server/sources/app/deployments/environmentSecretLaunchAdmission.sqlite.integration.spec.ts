@@ -33,7 +33,7 @@ import { computeExternalActionRequestEnvelopeDigestV1, encodeExternalActionResol
     signExternalActionMachineRequestV1, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
     EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
     EXTERNAL_ACTION_RESOLVED_TARGET_HEADER } from '@happier-dev/protocol/actions';
-import { projectDeploymentReadAdmissionV1, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectDeploymentReadAdmissionV1, projectDeploymentPreparationAdmissionV1, projectDeploymentNativeAdmissionV1, DeploymentPreparationAdmissionV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectRegistryAppUpdateAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createDeploymentEnvironmentInTx, setDeploymentEnvironmentBindingsInTx, updateDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import { linkDeploymentTargetInTx } from './deploymentTargetLinkService';
@@ -184,10 +184,113 @@ describe('private installed Environment secret launch transport', () => {
         const payload = { ...body, proof: signMachineInstallationProof({ payload: { version: 1, machineId, installationId,
             accountId: requester.id, deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } },
             privateKey: keys.secretKey }) };
-        return { owner, requester, team, keys, controller, resourceId, resourceRevision: resource.value.revision, grant, payload,
-            artifact, content, envelopes, recipients,
+        return { owner, requester, team, keys, controller, authorization, resourceId, resourceRevision: resource.value.revision, grant, payload,
+            artifact, content, envelopes, recipients, receipt,
             url: `/v1/deployments/environments/${environment.environmentId}/secret-launch-admission` };
     }
+
+
+    it('keeps query sibling reads on the exact admitted receipt at the scope owner', async () => {
+        const f = await admittedTeamDelivery('plain', false, 'postgres');
+        const { isDeploymentReadOperandInAdmittedScopeInTx } = await import('./deploymentPreparationAuthorization');
+        const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
+        const receipt = await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.deploymentId } });
+        const content = await f.artifact('deployment-receipt.v1');
+        const other = await db.deployment.create({ data: { ...receipt, id: crypto.randomUUID(),
+            requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), ...content } });
+        const admission = projectDeploymentReadAdmissionV1('deployments.data.query', { serverId,
+            environmentId: row.id, expectedRevision: row.revision, targetLinkId: receipt.targetLinkId,
+            deploymentId: receipt.id, machineId: f.payload.machineId,
+            installationId: f.payload.installationId, service: 'postgres', sql: 'SELECT 1', params: {} });
+        const binding = { ...f.authorization.binding, actionId: 'deployments.data.query',
+            deploymentNativeAdmission: undefined, deploymentReadAdmission: admission };
+        for (const [deploymentId, expected] of [[receipt.id, true], [other.id, false]] as const) {
+            expect(await isDeploymentReadOperandInAdmittedScopeInTx(db, binding,
+                { serverId, environmentId: row.id, deploymentId }, undefined, undefined,
+                'deployments.receipts.get')).toBe(expected);
+        }
+    });
+    it('keeps health Domain reads on the live admitted target at the scope owner', async () => {
+        const f = await admittedTeamDelivery();
+        const { isDeploymentReadOperandInAdmittedScopeInTx: inScope } = await import('./deploymentPreparationAuthorization');
+        const link = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.payload.targetLinkId } });
+        const other = await db.deploymentTargetLink.create({ data: { ...link, id: crypto.randomUUID(),
+            ...await f.artifact('deployment-target-link.v1') } });
+        const binding = { ...f.authorization.binding, actionId: 'deployments.health.current',
+            deploymentNativeAdmission: undefined, deploymentReadAdmission: projectDeploymentReadAdmissionV1('deployments.health.current', {
+                serverId, environmentId: link.environmentId, targetLinkId: link.id, machineId: f.payload.machineId }) };
+        for (const [targetLinkId, deletedAt, expected] of [[link.id, null, true], [other.id, null, false],
+            [link.id, new Date(), false]] as const) {
+            const domain = await db.deploymentDomain.create({ data: { environmentId: link.environmentId, targetLinkId,
+                state: 'pending', deletedAt, createdByAccountId: f.owner.id, ...await f.artifact('deployment-domain.v1') } });
+            expect(await inScope(db, binding, { serverId, environmentId: link.environmentId, domainId: domain.id },
+                undefined, undefined, 'deployments.domains.get')).toBe(expected);
+        }
+    });
+
+    it('keeps backup receipt selection on the destination and copy-source targets at the scope owner', async () => {
+        const f = await admittedTeamDelivery();
+        const { isDeploymentReadOperandInAdmittedScopeInTx: inScope } = await import('./deploymentPreparationAuthorization');
+        const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
+        const receipt = await db.deployment.findUniqueOrThrow({ where: { id: f.receipt.deploymentId } });
+        const link = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: receipt.targetLinkId } });
+        const sourceLink = await db.deploymentTargetLink.create({ data: { ...link, id: crypto.randomUUID(),
+            activeDeploymentId: null, ...await f.artifact('deployment-target-link.v1') } });
+        const active = await db.deployment.create({ data: { ...receipt, id: crypto.randomUUID(),
+            requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), ...await f.artifact('deployment-receipt.v1') } });
+        const sourceActive = await db.deployment.create({ data: { ...receipt, id: crypto.randomUUID(), targetLinkId: sourceLink.id,
+            requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), ...await f.artifact('deployment-receipt.v1') } });
+        await db.deploymentTargetLink.update({ where: { id: link.id }, data: { activeDeploymentId: active.id } });
+        await db.deploymentTargetLink.update({ where: { id: sourceLink.id }, data: { activeDeploymentId: sourceActive.id } });
+        const binding = { ...f.authorization.binding, actionId: 'deployments.backups.restore',
+            deploymentNativeAdmission: projectDeploymentNativeAdmissionV1('deployments.backups.restore', { serverId,
+                environmentId: row.id, targetLinkId: link.id, deploymentId: receipt.id, expectedRevision: row.revision,
+                machineId: f.payload.machineId, installationId: f.payload.installationId, mode: 'prepare',
+                source: { kind: 'repository', snapshotId: 'snapshot', origin: { environmentId: row.id, targetLinkId: sourceLink.id } } }) };
+        for (const [deploymentId, expected] of [[receipt.id, true], [active.id, true], [sourceActive.id, false]] as const)
+            expect(await inScope(db, binding, { serverId, environmentId: row.id, deploymentId },
+                undefined, undefined, 'deployments.receipts.get')).toBe(expected);
+    });
+
+    it('keeps catalog Source revision and setup receiver selections at the scope owner', async () => {
+        const f = await admittedTeamDelivery();
+        const { isDeploymentReadOperandInAdmittedScopeInTx: inScope } = await import('./deploymentPreparationAuthorization');
+        const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
+        const source = await db.projectSource.findUniqueOrThrow({ where: { id: row.projectSourceId } });
+        const binding = { ...f.authorization.binding, actionId: 'deployments.publish.prepare', deploymentNativeAdmission: undefined,
+            deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('deployments.publish.prepare', { serverId,
+                projectSourceId: source.id, sourceRevision: source.revision, machineId: f.controller.machineId,
+                installationId: f.authorization.binding.installationId }) };
+        const operand = { serverId, sourceId: source.id };
+        expect(await inScope(db, binding, operand, undefined, undefined, 'projects.sources.read')).toBe(true);
+        await db.projectSource.update({ where: { id: source.id }, data: { revision: { increment: 1 } } });
+        expect(await inScope(db, binding, operand, undefined, undefined, 'projects.sources.read')).toBe(false);
+        const setup = { ...binding, actionId: 'machines.setup.apply', deploymentPreparationAdmission:
+            DeploymentPreparationAdmissionV1Schema.parse({ operation: 'setup', deployments: [],
+                catalogSources: [{ machineId: f.payload.machineId, source: { id: source.id } }] }) };
+        expect(await inScope(db, setup, operand, undefined, undefined, 'projects.sources.read', f.payload.machineId)).toBe(true);
+        expect(await inScope(db, setup, operand, undefined, undefined, 'projects.sources.read', 'another-machine')).toBe(false);
+    });
+
+    it('keeps preview inventory and allocated Create receipts at the scope owner', async () => {
+        const f = await admittedTeamDelivery();
+        const { isDeploymentReadOperandInAdmittedScopeInTx: inScope } = await import('./deploymentPreparationAuthorization');
+        const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
+        const create = { ...f.authorization.binding, actionId: 'deployments.environments.create', deploymentNativeAdmission: undefined,
+            deploymentPreparationAdmission: DeploymentPreparationAdmissionV1Schema.parse({ operation: 'create', mode: 'apply',
+                source: { id: row.projectSourceId }, requestKey: 'not-allocated', protection: 'nonProduction', purpose: 'preview',
+                deployerMode: 'managers', copyFrom: { environmentId: row.id, expectedRevision: row.revision },
+                preview: { templateEnvironmentId: row.id, expectedTemplateRevision: row.revision, pullRequestId: '17', runtimeTargetLinkId: f.payload.targetLinkId } }) };
+        const inventory = { serverId, projectSourceId: row.projectSourceId, previewRepositoryId: row.projectSourceId, previewTemplateEnvironmentId: row.id, previewPullRequestIds: ['17'] };
+        expect(await inScope(db, create, inventory, undefined, undefined, 'deployments.environments.list')).toBe(true);
+        expect(await inScope(db, create, { ...inventory, previewPullRequestIds: ['18'] }, undefined, undefined,
+            'deployments.environments.list')).toBe(false);
+        expect(await inScope(db, create, { serverId, environmentId: row.id }, undefined, undefined, 'deployments.receipts.list')).toBe(false);
+        expect(await inScope(db, create, { serverId, environmentId: row.id }, undefined, undefined,
+            'deployments.environments.get')).toBe(true);
+        expect(await inScope(db, create, { serverId, environmentId: row.id }, undefined, undefined,
+            'deployments.environments.get', undefined, true)).toBe(false);
+    });
 
     it('delivers runtime grants to a plugin scalar placement without native member rows', async () => {
         const fixture = await admittedTeamDelivery('plain', true, undefined, 'plugin');
@@ -218,7 +321,7 @@ describe('private installed Environment secret launch transport', () => {
         expect(await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, f.owner.id, { serverId,
             environmentId: other.environmentId, expectedRevision: otherTarget.revision, ...otherContent, grants: [otherGrant],
             referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(otherDefinition.bindings) }))).toMatchObject({ ok: true });
-        const deploymentId = f.payload.materialization.kind === 'deployment' ? f.payload.materialization.deploymentId : '';
+        const deploymentId = f.payload.materialization.kind === 'deployment' ? f.receipt.deploymentId : '';
         await db.deployment.update({ where: { id: deploymentId }, data: { state: 'succeeded' } });
         await db.deploymentTargetLink.update({ where: { id: f.payload.targetLinkId }, data: { activeDeploymentId: deploymentId,
             machines: { updateMany: { where: { machineId: f.payload.machineId, installationId: f.payload.installationId },
@@ -315,7 +418,7 @@ describe('private installed Environment secret launch transport', () => {
     it('refuses a person-presented data.query root after its member left the Source Team', async () => {
         const f = await admittedTeamDelivery('plain', false, 'postgres');
         const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
-        const deploymentId = f.payload.materialization.kind === 'deployment' ? f.payload.materialization.deploymentId : '';
+        const deploymentId = f.payload.materialization.kind === 'deployment' ? f.receipt.deploymentId : '';
         await db.deployment.update({ where: { id: deploymentId }, data: { state: 'succeeded' } });
         await db.deploymentTargetLink.update({ where: { id: f.payload.targetLinkId }, data: { activeDeploymentId: deploymentId,
             machines: { updateMany: { where: { machineId: f.payload.machineId, installationId: f.payload.installationId },
@@ -366,10 +469,10 @@ describe('private installed Environment secret launch transport', () => {
                 operationProtocolCapabilitiesRevision: 1,
                 operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
             const target = { kind: 'machine' as const, machineId: f.payload.machineId };
-            const input = actionId === 'registries.updates.check'
-                ? { kind: 'app', environments: [{ environmentId: row.id, expectedRevision: row.revision }] }
-                : { serverId, projectSourceId: source.id, sourceRevision: source.revision,
-                    machineId: f.payload.machineId, installationId: f.payload.installationId };
+            const registryInput = { kind: 'app', environments: [{ environmentId: row.id, expectedRevision: row.revision }] };
+            const prepareInput = { serverId, projectSourceId: source.id, sourceRevision: source.revision,
+                machineId: f.payload.machineId, installationId: f.payload.installationId };
+            const input = actionId === 'registries.updates.check' ? registryInput : prepareInput;
             const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
             const root = await auth.mintExternalActionExecutionAuthorization({ accountId: f.owner.id,
                 serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.owner.tokenEpoch },

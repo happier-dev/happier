@@ -99,7 +99,7 @@ function collectDeploymentOperands(value: unknown, visit: (kind: ReturnType<type
  */
 export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1,
-    acceptedEnvironmentId?: string, readActionId?: string, setupReceiverMachineId?: string, operands?: unknown,
+    acceptedEnvironmentId?: string, readActionId?: string, setupReceiverMachineId?: string, operands?: unknown, preparationDeployRead = false,
 ): Promise<Readonly<{ environmentIds: ReadonlySet<string>; sourceIds: ReadonlySet<string>;
     artifactIds: ReadonlySet<string>; machineIds: ReadonlySet<string>; deploymentIds?: ReadonlySet<string>; receiptTargets?: readonly { environmentId: string; targetLinkId: string }[]; preparationSource?: ProjectSourceV1 }> | null> {
     const seeds = { environment: new Set<string>(), source: new Set<string>(), artifact: new Set<string>(),
@@ -117,7 +117,7 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     const nativeAdmission = binding.deploymentNativeAdmission;
     const defaults = binding.actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
         && isDeploymentEnvironmentUpdateNativeAdmissionV1(nativeAdmission) && nativeAdmission.defaultsFor !== undefined;
-    const resolvedEnvironmentId = binding.environmentId ?? (preparation?.operation === 'create'
+    const resolvedEnvironmentId = preparationDeployRead ? await readTemplateDeploymentEnvironmentIdInTx(tx, binding) : binding.environmentId ?? (preparation?.operation === 'create'
         ? await readPreviewCreateEnvironmentIdInTx(tx, binding, preparation)
         : preparation?.operation === 'template' ? await readTemplateEnvironmentId(tx, binding, preparation) : null);
     if (resolvedEnvironmentId) seeds.environment.add(resolvedEnvironmentId);
@@ -129,13 +129,24 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
         const selected = selectedPreparation.deployments.find(selected => selected.environment.id === environmentId);
         if (!selected || !await readAdmittedSetupDeploymentEnvironmentInTx(tx, binding, selected)) seeds.environment.clear();
     }
+    const native = binding.deploymentNativeAdmission;
+    const backup = native && 'kind' in native && (native.kind === 'backup' || native.kind === 'restore') ? native : undefined;
+    // Environment identity is already signed; expand owned rows only when the read needs them.
+    if (readActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 && !backup) {
+        if (preparation?.operation === 'template' || preparation?.operation === 'create' && preparationDeployRead) {
+            seeds.environment.clear();
+            if (resolvedEnvironmentId) seeds.environment.add(resolvedEnvironmentId);
+        }
+        if (preparation?.operation === 'prepare') {
+            for (const id of seeds.environment) if (id !== preparation.environment?.id) seeds.environment.delete(id);
+        }
+        return { environmentIds: seeds.environment, sourceIds: seeds.source, artifactIds: seeds.artifact, machineIds: seeds.machine };
+    }
     let environments = await tx.deploymentEnvironment.findMany({ where: { id: { in: [...seeds.environment] } },
         select: { id: true, projectSourceId: true, contentArtifactId: true, controllerMachineId: true, buildMachineId: true,
             previewTemplateEnvironmentId: true, purpose: true, deletedAt: true,
             targetLinks: { select: { id: true, contentArtifactId: true, activeDeploymentId: true, machineId: true, machines: { select: { machineId: true } } } },
             domains: { select: { id: true, contentArtifactId: true } } } });
-    const native = binding.deploymentNativeAdmission;
-    const backup = native && 'kind' in native && (native.kind === 'backup' || native.kind === 'restore') ? native : undefined;
     let deploymentIds: Set<string> | undefined;
     let receiptTargets: { environmentId: string; targetLinkId: string }[] | undefined;
     if (backup) {
@@ -154,7 +165,7 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
         });
     }
     const receiptRead = readActionId === 'deployments.receipts.get' || readActionId === 'deployments.receipts.list';
-    if (preparation?.operation === 'create' && receiptRead) {
+    if (preparation?.operation === 'create' && (receiptRead || preparationDeployRead)) {
         const environmentId = await readPreviewCreateEnvironmentIdInTx(tx, binding, preparation);
         environments = environments.filter(environment => environment.id === environmentId);
     }
@@ -202,9 +213,6 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     if (preparation?.operation === 'prepare' && readActionId === PROJECT_SOURCE_READ_ACTION_ID_V1) {
         sourceIds.clear();
         if (preparation.source) sourceIds.add(preparation.source.id);
-    }
-    if (preparation?.operation === 'prepare' && readActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1) {
-        for (const id of environmentIds) if (id !== preparation.environment?.id) environmentIds.delete(id);
     }
     let preparationSource: ProjectSourceV1 | undefined;
     const admission = binding.deploymentPreparationAdmission;
@@ -261,7 +269,7 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
  */
 export async function isDeploymentReadOperandInAdmittedScopeInTx(tx: Tx,
     binding: Parameters<typeof readAdmittedDeploymentScopeInTx>[1], operands: unknown, acceptedEnvironmentId?: string,
-    operandKind?: AdmittedDeploymentOperandKind, readActionId?: string, setupReceiverMachineId?: string,
+    operandKind?: AdmittedDeploymentOperandKind, readActionId?: string, setupReceiverMachineId?: string, preparationDeployRead = false,
 ): Promise<boolean | null> {
     if (readActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1) {
         const parsed = DeploymentEnvironmentListInputV1Schema.safeParse(operands);
@@ -301,7 +309,7 @@ export async function isDeploymentReadOperandInAdmittedScopeInTx(tx: Tx,
         && 'serverId' in operands && operands.serverId !== binding.serverIdentityId) return false;
     if (operands && typeof operands === 'object' && 'projection' in operands && operands.projection === 'approvalScope'
         && 'environmentId' in operands && operands.environmentId !== binding.environmentId) return false;
-    const scope = await readAdmittedDeploymentScopeInTx(tx, binding, acceptedEnvironmentId, readActionId, setupReceiverMachineId, operands);
+    const scope = await readAdmittedDeploymentScopeInTx(tx, binding, acceptedEnvironmentId, readActionId, setupReceiverMachineId, operands, preparationDeployRead);
     if (!scope) return null;
     const owned = { deployment: [] as string[], targetLink: [] as string[], domain: [] as string[] };
     let constrained = false;
@@ -1080,7 +1088,10 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     if (deployEffect && !proof.path.startsWith('/v1/artifacts/')) {
         const read = await readDeploymentPreparationHttpReadPurpose(tx, binding, effectActionId, proof,
             actionId => isNativeHttpPurpose?.(proof, actionId) === true);
-        if (read) return reviewedDeploy ? admit(true) : { rootActionId: 'deployments.environments.create', effectActionId };
+        if (read) {
+            const allowed = await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, read, undefined, undefined, read.actionId, undefined, true) === true;
+            return allowed ? reviewedDeploy ? admit(true) : { rootActionId: 'deployments.environments.create', effectActionId } : null;
+        }
         const parsed = DeploymentDeployAdmissionInputV1Schema.safeParse(proof.body);
         if (parsed.success) {
             const { actionOperationId: _operation, ...reviewedInput } = parsed.data;
@@ -1440,9 +1451,7 @@ export async function readDeploymentPreparationHttpReadPurpose(
     const read = actionId === 'deployments.environments.get' ? DeploymentEnvironmentGetInputV1Schema.safeParse(proof.routeInput)
         : actionId === 'deployments.receipts.list' ? DeploymentReceiptListInputV1Schema.safeParse(proof.routeInput)
             : actionId === 'deployments.receipts.get' ? DeploymentReceiptGetInputV1Schema.safeParse(proof.routeInput) : null;
-    return actionId && read?.success && read.data.serverId === binding.serverIdentityId
-        && await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, read.data, undefined, undefined, actionId) !== false
-        ? { ...read.data, actionId } : null;
+    return actionId && read?.success && read.data.serverId === binding.serverIdentityId ? { ...read.data, actionId } : null;
 }
 
 export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
@@ -1521,7 +1530,7 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
         // preparation read transports. Bind those through the transport owner.
         const read = await readDeploymentPreparationHttpReadPurpose(tx, binding, effectActionId, proof,
             actionId => isNativeHttpPurpose?.(proof, actionId) === true);
-        if (read) return true;
+        if (read) return await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, read, undefined, undefined, read.actionId, undefined, true) === true;
         if (!isNativeHttpPurpose?.(proof)) return false;
         const native = DeploymentDeployAdmissionInputV1Schema.safeParse(proof.body);
         if (!native.success) return isNativeDeploymentPreparationRead(method, proof.path);

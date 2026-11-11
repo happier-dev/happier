@@ -21,10 +21,7 @@ describe('admitted deployment read scope (real SQLite)', () => {
   });
 
   const binding = (admission: unknown) =>
-    ({ deploymentPreparationAdmission: admission }) as unknown as Pick<
-      ExternalActionExecutionAuthorizationBindingV1,
-      'deploymentPreparationAdmission'
-    >;
+    ({ deploymentPreparationAdmission: admission }) as unknown as ExternalActionExecutionAuthorizationBindingV1;
 
   it('admits a nested { id } Source operand and refuses another Source', async () => {
     const admitted = binding({
