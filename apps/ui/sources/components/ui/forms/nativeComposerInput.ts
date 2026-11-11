@@ -29,6 +29,18 @@ type Selection = Readonly<{ start: number; end: number }>;
 type NativeInputGeometry = Readonly<{ nativeInputTag?: number; caretRect?: CaretRect | null }>;
 type NativeBoundReference = Readonly<{ ref: string; token: string; start: number; end: number }>;
 
+export type NativeComposerInputCommandResult =
+    | Readonly<{ kind: 'applied' }>
+    | Readonly<{ kind: 'not_attached'; reason: 'native_view_missing' }>;
+
+/** Expo rejects an AsyncFunction when the native view was torn down before the command reached it. */
+export function classifyNativeComposerInputCommandError(error: unknown): NativeComposerInputCommandResult | null {
+    const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+    return /Unable to find (?:the )?'?HappierComposerInputView'? view/i.test(message)
+        ? { kind: 'not_attached', reason: 'native_view_missing' }
+        : null;
+}
+
 /** The module's `AsyncFunction` commands settle as promises; a view gone by the time one runs rejects it. */
 export type NativeComposerInputHandle = Readonly<{
     focus: () => Promise<void> | void;

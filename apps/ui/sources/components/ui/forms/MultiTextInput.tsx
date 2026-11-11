@@ -27,6 +27,7 @@ import type {
     NativeComposerInputProps, NativeComposerInputHandle,
     NativeComposerAttachmentDrop,
 } from './nativeComposerInput';
+import { classifyNativeComposerInputCommandError } from './nativeComposerInput';
 import type { ComposerEditorReference } from './composerEditor/composerEditorTypes';
 import { boundComposerEditorReferences } from './composerEditor/composerTextDocMapping';
 import { reconcileStructuredInputMentionsWithTextChange } from '@/components/sessions/agentInput/structuredInputMentions';
@@ -165,7 +166,15 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         if (!input) return;
         const pending = command(input);
         if (pending && typeof pending.then === 'function') {
-            pending.then(undefined, (error: unknown) => { if (mountedRef.current) throw error; });
+            pending.then(undefined, (error: unknown) => {
+                if (classifyNativeComposerInputCommandError(error)) {
+                    // The JS editor can survive a docked-host replacement while Expo has already retired its view.
+                    // Retire only this stale handle; the next render may attach a fresh native view.
+                    if (inputRef.current === input) inputRef.current = null;
+                    return;
+                }
+                if (mountedRef.current) throw error;
+            });
         }
     }, []);
     const dropCaretRef = React.useRef<number | null>(null);

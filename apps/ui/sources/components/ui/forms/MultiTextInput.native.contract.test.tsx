@@ -5,6 +5,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { MultiTextInputHandle } from './MultiTextInput';
+import { classifyNativeComposerInputCommandError } from './nativeComposerInput';
 import { storage } from '@/sync/domains/state/storage';
 const openUrl = vi.hoisted(() => vi.fn(async () => {}));
 
@@ -26,6 +27,12 @@ afterEach(async () => {
 });
 
 describe('MultiTextInput native composer boundary', () => {
+    it('classifies only the native-view teardown error as not attached', () => {
+        expect(classifyNativeComposerInputCommandError(new Error("Unable to find the 'HappierComposerInputView' view with tag '22162'")))
+            .toEqual({ kind: 'not_attached', reason: 'native_view_missing' });
+        expect(classifyNativeComposerInputCommandError(new Error('native editor command failed'))).toBeNull();
+    });
+
     it.each(['native', 'imperative'] as const)('keeps a shifted reference in the real document owner after a %s edit', async entry => {
         const { MultiTextInput } = await import('./MultiTextInput');
         const { createEphemeralComposerDocumentOwner } = await import('@/components/sessions/composer/composerDocumentOwner');
@@ -302,6 +309,36 @@ describe('MultiTextInput native composer boundary', () => {
         } finally { process.off('unhandledRejection', unhandled); }
         expect(rejections).toHaveLength(4);
         expect(unhandled).not.toHaveBeenCalled();
+    });
+
+    it('retires a native handle when its view disappears while the editor remains mounted', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput');
+        const ref = React.createRef<MultiTextInputHandle>();
+        const rejectFocus: Array<(error: Error) => void> = [];
+        const nativeFocus = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectFocus.push(reject); }));
+        const native = {
+            focus: nativeFocus,
+        };
+        const screen = await renderScreen(<MultiTextInput ref={ref} value="abc" onChangeText={() => {}} />, {
+            createNodeMock: element => element.type === 'HappierComposerInput' ? native : null,
+        });
+        const handle = ref.current!;
+        const unhandled = vi.fn();
+        process.on('unhandledRejection', unhandled);
+        try {
+            act(() => { handle.focus(); });
+            expect(nativeFocus).toHaveBeenCalledOnce();
+            rejectFocus[0]!(new Error("Unable to find the 'HappierComposerInputView' view with tag '22162'"));
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect(unhandled).not.toHaveBeenCalled();
+
+            // The editor is still mounted, but its native view is no longer attached.
+            act(() => { handle.focus(); });
+            expect(nativeFocus).toHaveBeenCalledOnce();
+        } finally {
+            process.off('unhandledRejection', unhandled);
+            await act(async () => screen.unmount());
+        }
     });
 
     it('does not dispatch an idle drop-caret clear while mounting or retiring a native editor', async () => {
