@@ -1,4 +1,7 @@
-import { collectExternalRuntimeDependencies } from '../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
+import {
+  collectExternalRuntimeDependencies,
+  collectInternalRuntimeWorkspaceDepNames,
+} from '../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
 import { readWorkspacePackages } from '../../../packages/cli-common/sourceRuntimeEntries.mjs';
 
 /**
@@ -17,12 +20,8 @@ export async function resolveHsetupRuntimeDependencyNames(repoRoot) {
     packageClosure.push(packageName);
     const packageInfo = workspacePackages.get(packageName);
     if (!packageInfo) continue;
-    for (const dependencyMap of [packageInfo.manifest.dependencies, packageInfo.manifest.optionalDependencies]) {
-      for (const dependencyName of Object.keys(dependencyMap ?? {})) {
-        if (dependencyName.startsWith('@happier-dev/') && workspacePackages.has(dependencyName)) {
-          queued.add(dependencyName);
-        }
-      }
+    for (const dependencyName of collectInternalRuntimeWorkspaceDepNames(packageInfo.manifest)) {
+      if (workspacePackages.has(dependencyName)) queued.add(dependencyName);
     }
   }
   const dependencies = new Set();
