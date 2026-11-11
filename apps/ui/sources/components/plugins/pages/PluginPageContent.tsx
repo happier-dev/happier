@@ -17,7 +17,6 @@ import { NavigationLargeTitleProvider, useNavigationTitleChromeShowsTitle } from
 import { PluginPagePresentation } from './PluginPagePresentation';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBackLayerBoundary';
-import { RouteRemovalStepConsumer } from '@/utils/navigation/RouteRemovalStepConsumer';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
 import { createPluginSurfaceHostApiError, type PluginSurfaceHostApiMethodHandler } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
@@ -176,10 +175,8 @@ export function PluginPageContent(props: Readonly<{
     // through the one app-target binding installed by the shell.
     const openSurface = appTargetBinding?.openSurface;
 
-    // `NAV-2`/`NAV-3`. The page's own location — replaced, never pushed — and
-    // the one page-internal step system Back returns to. Both are the same
-    // owner because they are the same fact: a page-internal Back step is a
-    // location, declared by the replacement that created the step it undoes.
+    // The page location owner decides when a detail needs a history entry.
+    // Back and Forward traverse that history on every platform.
     //
     // The live location and mount currentness are read through refs so the
     // owner's identity is the PAGE's, not a value that changes on every
@@ -223,9 +220,6 @@ export function PluginPageContent(props: Readonly<{
         return () => retirement?.dispose();
     }, [accountLifetime, publishDirty]);
     const locationOwnerRef = React.useRef<PluginPageLocationOwner | null>(null);
-    const performPageBack = React.useCallback(() => {
-        if (!locationOwnerRef.current?.consumeBack()) router.back();
-    }, [router]);
     const canLeaveHistoryWithoutDiscard = React.useCallback(() => locationOwnerRef.current?.hasPreservingBackStep() === true, []);
     const discardDirtyFact = React.useCallback(() => publishDirty(false), [publishDirty]);
     const captureDecisionCurrentness = React.useCallback(() => {
@@ -236,7 +230,7 @@ export function PluginPageContent(props: Readonly<{
     }, [accountLifetime]);
     const navigation = React.useContext(NavigationContext);
     const departure = useUnsavedDraftNavigationGuard({ navigation, isDirty: hasUnsavedChanges, isDirtyRef: dirtyFact,
-        onDiscard: discardDirtyFact, onBack: performPageBack, captureDecisionCurrentness, canLeaveHistoryWithoutDiscard, tag: 'PluginPageContent.unsavedChanges' });
+        onDiscard: discardDirtyFact, captureDecisionCurrentness, canLeaveHistoryWithoutDiscard, tag: 'PluginPageContent.unsavedChanges' });
     const requestDeparture = departure.requestLeaveAndWait;
     const allowPreservingReplacement = page?.placement.renderer.kind === 'reactNative';
     // Read once per owner: later routes this owner writes carry the view it settled, not the one the mount arrived on.
@@ -249,6 +243,7 @@ export function PluginPageContent(props: Readonly<{
         replaceLocation: (routePath) => {
             router.replace(routePath as Parameters<typeof router.replace>[0]);
         },
+        pushLocation: routePath => { router.push(routePath as Parameters<typeof router.push>[0]); },
         isCurrent: () => pageIsMountedRef.current && accountLifetime?.isCurrent() !== false,
         beforeReplace: options => requestDeparture(() => pageIsMountedRef.current
             && accountLifetime?.isCurrent() === true && options?.signal?.aborted !== true),
@@ -283,7 +278,7 @@ export function PluginPageContent(props: Readonly<{
     // user's own history walk — retires the declared step. Losing the live
     // page does the same even if its route sub-path has not moved; otherwise a
     // later renderer could inherit a Back step declared by a retired one.
-    React.useEffect(() => {
+    React.useLayoutEffect(() => {
         locationOwner.retireForeignLocationChange(pageIsLive ? props.subPath : null);
     }, [locationOwner, pageIsLive, props.subPath]);
     // Registered through the app's ONE native-Back layer owner for the whole
@@ -297,12 +292,10 @@ export function PluginPageContent(props: Readonly<{
     // an enclosing pane yield to this page, and what keeps a retained,
     // invisible underlay from answering a Back the user aimed at what they see.
     const consumePageBack = React.useCallback(() => {
-        if (dirtyFact.current) {
-            departure.requestBack();
-            return true;
-        }
-        return locationOwner.consumeBack();
-    }, [departure.requestBack, dirtyFact, locationOwner]);
+        if (!dirtyFact.current && !locationOwner.hasBackStep()) return false;
+        router.back();
+        return true;
+    }, [dirtyFact, locationOwner, router]);
     useNativeBackLayerBackHandler(
         Platform.OS === 'android' && isFocused && pageIsLive,
         consumePageBack,
@@ -493,17 +486,6 @@ export function PluginPageContent(props: Readonly<{
     return renderPage(
         <>
             {props.appChrome ? <PluginPageRouteChrome title={chromeTitle} options={pageHeaderOptions} /> : null}
-            {/*
-                The other three ways back, in one participant.
-                `useNativeBackLayerBackHandler` above answers Android's hardware
-                Back; a browser's Back button, an iOS header Back and an iOS
-                edge-swipe are all one fact instead — the route is being REMOVED
-                — and the shared consumer spends the page's declared step before
-                that happens. Without it a page-internal Back existed on exactly
-                one of the four platforms Happier ships, and every other client
-                left the page while its own detail stayed open behind it.
-            */}
-            <RouteRemovalStepConsumer active={isFocused && pageIsLive && !hasUnsavedChanges} consume={consumePageBack} />
             <PluginSurfaceFocusEligibilityProvider
                 active={isFocused}
                 presentationActive={isVisible}

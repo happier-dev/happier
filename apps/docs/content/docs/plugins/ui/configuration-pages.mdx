@@ -208,8 +208,9 @@ const detailActions = <DetailsPaneOpenAsPageButton onPress={openAsPage} />;
 
 Here `fullPageSubPath`, `detailSubPath` and the list location come from your
 plugin's validated local route grammar; `setSubPath` updates the existing
-controlled page model. Return replaces the location with `detailSubPath` and
-sets `backLocation` to the list. Render the settled result because a navigation
+controlled page model. Opening this layout preserves its source in host history,
+so Back returns to it and Forward restores the full page. Return replaces the
+location with `detailSubPath`. Render the settled result because a navigation
 request can be refused. Keep filters, selection, scroll and Find above the
 pane/page presentation so moving the same detail does not fetch it again.
 

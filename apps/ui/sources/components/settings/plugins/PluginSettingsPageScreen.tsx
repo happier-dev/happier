@@ -11,7 +11,6 @@ import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/bo
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
 import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBackLayerBoundary';
-import { RouteRemovalStepConsumer } from '@/utils/navigation/RouteRemovalStepConsumer';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import { PluginSurfaceFallback } from '@/components/sessions/panes/PluginSurfaceFallback';
 import { PluginPageBackStepProvider } from '@/components/plugins/shared/PluginPageBackStep';
@@ -110,12 +109,8 @@ export const PluginSettingsPageScreen = React.memo(function PluginSettingsPageSc
             : undefined;
     }, [props.pluginId, router]);
 
-    // The route's one page location and page-internal Back step, through the
-    // SAME owner the App Page route uses (`NAV-2`/`NAV-3`): same fact, same
-    // rules, no second decision-maker. The live location and mount currentness
-    // are read through refs so the owner's identity is the ROUTE's, not a value
-    // that changes on every navigation — rebuilding it per location would rearm
-    // a fresh participant mid-interaction and lose the declared step.
+    // Settings and App Pages share the location owner and ordinary detail
+    // history. Live route refs keep the owner stable across selection changes.
     const subPath = props.subPath === undefined ? '' : props.subPath;
     const subPathRef = React.useRef<string | null>(subPath);
     subPathRef.current = subPath;
@@ -136,6 +131,7 @@ export const PluginSettingsPageScreen = React.memo(function PluginSettingsPageSc
         replaceLocation: (route) => {
             router.replace(route as Parameters<typeof router.replace>[0]);
         },
+        pushLocation: route => { router.push(route as Parameters<typeof router.push>[0]); },
         isCurrent: () => screenIsMountedRef.current,
     }), [props.pageId, props.pluginId, router]);
     React.useEffect(() => () => locationOwner.dispose(), [locationOwner]);
@@ -144,10 +140,14 @@ export const PluginSettingsPageScreen = React.memo(function PluginSettingsPageSc
     // A foreign location or a retired renderer clears the declared step. A
     // renderer that later becomes available at the same route must not inherit
     // a Back step declared by the previous live instance.
-    React.useEffect(() => {
+    React.useLayoutEffect(() => {
         locationOwner.retireForeignLocationChange(pageIsLive ? subPath : null);
     }, [locationOwner, pageIsLive, subPath]);
-    const consumePageBack = React.useCallback(() => locationOwner.consumeBack(), [locationOwner]);
+    const consumePageBack = React.useCallback(() => {
+        if (!locationOwner.hasBackStep()) return false;
+        router.back();
+        return true;
+    }, [locationOwner, router]);
     useNativeBackLayerBackHandler(
         Platform.OS === 'android' && isFocused && pageIsLive,
         consumePageBack,
@@ -249,15 +249,6 @@ export const PluginSettingsPageScreen = React.memo(function PluginSettingsPageSc
                 active={isFocused}
                 currentUiContextActive={isFocused}
             >
-                {/**
-                  * The other three ways back, in one participant: a browser's
-                  * Back button, an iOS header Back and an iOS edge-swipe are
-                  * one fact — the route is being REMOVED — and the shared
-                  * consumer spends the page's declared step before that
-                  * happens. (Android hardware Back answered above; Escape in
-                  * the keyboard layer stack.)
-                  */}
-                <RouteRemovalStepConsumer active={isFocused && pageIsLive} consume={consumePageBack} />
                 <PluginPageBackStepProvider owner={locationOwner}>
                 {destination.page.renderer.kind === 'declarative'
                     // A declarative page is the author's content only; like every Settings page it

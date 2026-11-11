@@ -24,12 +24,9 @@ const fallbackSpy = vi.hoisted(() => vi.fn());
 const stackScreenSpy = vi.hoisted(() => vi.fn());
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const routerReplaceSpy = vi.hoisted(() => vi.fn());
+const routerBackSpy = vi.hoisted(() => vi.fn());
 const nativeBackState = vi.hoisted(() => ({
     enabled: false,
-    consume: null as null | (() => boolean),
-}));
-const routeRemovalState = vi.hoisted(() => ({
-    active: false,
     consume: null as null | (() => boolean),
 }));
 const appShellState = vi.hoisted(() => ({
@@ -66,7 +63,7 @@ const administrationSelectionFixture = vi.hoisted(() => Object.freeze({
 
 vi.mock('expo-router', () => ({
     usePathname: () => '/settings/plugins/examples.descriptor-only/settings',
-    useRouter: () => ({ push: routerPushSpy, replace: routerReplaceSpy }),
+    useRouter: () => ({ push: routerPushSpy, replace: routerReplaceSpy, back: routerBackSpy }),
     Stack: {
         Screen: (props: unknown) => {
             stackScreenSpy(props);
@@ -82,13 +79,6 @@ vi.mock('@/components/ui/overlays/NativeBackLayerBoundary', () => ({
     },
 }));
 
-vi.mock('@/utils/navigation/RouteRemovalStepConsumer', () => ({
-    RouteRemovalStepConsumer: (props: Readonly<{ active: boolean; consume: () => boolean }>) => {
-        routeRemovalState.active = props.active;
-        routeRemovalState.consume = props.consume;
-        return null;
-    },
-}));
 
 vi.mock('@/keyboard/escape', () => ({
     ESCAPE_LAYER_PRIORITIES: { pane: 10 },
@@ -313,15 +303,14 @@ afterEach(async () => {
     stackScreenSpy.mockClear();
     routerPushSpy.mockClear();
     routerReplaceSpy.mockClear();
+    routerBackSpy.mockClear();
     nativeBackState.enabled = false;
     nativeBackState.consume = null;
-    routeRemovalState.active = false;
-    routeRemovalState.consume = null;
     administrationTargetSelectorSpy.mockClear();
 });
 
 describe('PluginSettingsPageScreen', () => {
-    it('uses the shared plugin page-location owner for internal route replacement and system Back', async () => {
+    it('preserves the Settings list when its shared page-location owner opens a detail', async () => {
         const page = settingsPage();
         appShellState.projection = {
             ...EMPTY_PLUGIN_UI_PROJECTION,
@@ -343,7 +332,7 @@ describe('PluginSettingsPageScreen', () => {
             subPath: 'bindings/7',
             backLocation: '',
         }))).toEqual({ subPath: 'bindings/7' });
-        expect(routerReplaceSpy).toHaveBeenCalledWith(expect.objectContaining({
+        expect(routerPushSpy).toHaveBeenCalledWith(expect.objectContaining({
             pathname: '/(app)/settings/plugins/[pluginId]/[pageId]',
             params: expect.objectContaining({
                 pluginId: 'examples.descriptor-only',
@@ -352,11 +341,7 @@ describe('PluginSettingsPageScreen', () => {
             }),
         }));
         expect(latestHostProps().subPath).toBe('');
-        expect(routeRemovalState.active).toBe(true);
-        expect(routeRemovalState.consume?.()).toBe(true);
-        expect(routerReplaceSpy).toHaveBeenLastCalledWith(expect.objectContaining({
-            params: expect.objectContaining({ subPath: '' }),
-        }));
+        expect(routerReplaceSpy).not.toHaveBeenCalled();
     });
 
     it('retires a declared Back step when the page renderer becomes unavailable', async () => {
@@ -410,7 +395,8 @@ describe('PluginSettingsPageScreen', () => {
         );
 
         routerReplaceSpy.mockClear();
-        expect(routeRemovalState.consume?.()).toBe(false);
+        expect(nativeBackState.consume?.()).toBe(false);
+        expect(routerBackSpy).not.toHaveBeenCalled();
         expect(routerReplaceSpy).not.toHaveBeenCalled();
     });
 

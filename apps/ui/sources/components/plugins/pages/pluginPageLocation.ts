@@ -12,55 +12,17 @@ import {
 } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
 
 /**
- * The app page's own location, and the one page-internal step system Back
- * returns to (`plugin.ui` §3.7 navigation; `NAV-2`/`NAV-3`).
- *
- * `openSurface` selects a DESTINATION and pushes a history entry. That is the
- * right contract for "take me somewhere" and the wrong one for "the thing I am
- * already looking at is now filtered, ordered or selected differently": a page
- * that pushed on every such change would bury the user's real previous screen
- * under its own interaction trail, and Back would then walk that trail instead
- * of leaving the page. This owner is the other half — same page, new location,
- * no new history entry — and it is deliberately a separate host method rather
- * than a flag on `openSurface`, because it also answers with the location the
- * host settled on.
- *
- * The Back participant is expressed as a LOCATION rather than a callback. A
- * callback cannot be answered synchronously across the host boundary, and a
- * Back whose outcome depends on an in-flight round trip is exactly the bug a
- * user cannot describe — the same press sometimes dismissing a panel and
- * sometimes leaving the page, depending on invisible timing. A declared
- * location lets the host decide from a fact it already holds, and the user
- * always sees the location change that resulted.
- *
- * Three rules keep that decision honest, and each of them exists because its
- * absence is a silent failure:
- *
- * - a declared location equal to the one this owner is settling on is INERT.
- *   It yields rather than consuming a press that would visibly do nothing —
- *   which is also what makes the step SINGLE-SHOT without a second rule:
- *   performing it settles the page AT that location, so the next press finds
- *   it inert and becomes ordinary navigation. A page that wants a further
- *   page-internal step declares it with the replacement that produced it;
- * - any location change the page did not perform itself RETIRES it, so a push,
- *   a deep link or the user's own history walk can never leave a stale Back
- *   step armed against a location it was not declared for.
+ * One page-location owner, using ordinary host history. Opening a detail
+ * preserves its source with a push; later selection changes replace the detail.
+ * Back and Forward therefore undo and restore the same location. The declaration
+ * also tells page chrome and the dirty guard whether the current view is a detail.
  */
 
 export type PluginPageLocationOwner = Readonly<{
     /** The `replacePageLocation` host request handler for this exact mount. */
     handleReplaceRequest: PluginSurfaceHostApiMethodHandler;
     /**
-     * Perform this page's declared Back step, if it currently has one.
-     *
-     * `false` means the page did not consume the press, and the caller must let
-     * ordinary host navigation happen. It is never "handled, but nothing
-     * visible changed".
-     */
-    consumeBack: () => boolean;
-    /**
-     * Whether a Back press would spend a declared step right now: the same fact `consumeBack` decides on,
-     * readable without spending it, so the page chrome can say who answers Back.
+     * Whether the page presents a detail with a declared source in host history.
      */
     hasBackStep: () => boolean;
     /** A declared same-editor layout step can be spent without discarding that editor. */
@@ -93,8 +55,10 @@ export type CreatePluginPageLocationOwnerInput<Route = string> = Readonly<{
     routePathFor: (subPath: string, view: string | null) => Route;
     /** The declared view the route this mount arrived on names; it stands until a location the page did not produce. */
     initialView?: string | null;
-    /** Replace the current history entry. Never a push. */
+    /** Update the current selection or filters. */
     replaceLocation: (routePath: Route) => void;
+    /** Preserve the current list/detail before opening its detail or expanded layout. */
+    pushLocation: (routePath: Route) => void;
     /** The bound controller's mount predicate; this owner never makes a second one. */
     isCurrent: () => boolean;
     /** The existing host dirty decision runs before retiring a page-local target. */
@@ -196,14 +160,21 @@ export function createPluginPageLocationOwner<Route = string>(
             const current = input.currentSubPath();
             if (current === null) return refusal('unavailable', 'plugin_app_page_location_unavailable');
             if (!allowed) return { subPath: settledSubPath ?? current };
-            declaredBackLocation = backLocation === undefined ? null : backLocation;
+            const changesLocation = at === null || !sameLocation(subPath, at);
+            const opensDetail = backLocation !== undefined && !sameLocation(backLocation, subPath)
+                && at !== null && sameLocation(backLocation, at);
+            declaredBackLocation = backLocation ?? null;
             backPreservesUnsavedChanges = preserveUnsavedChanges === true;
             const viewChanged = (view ?? null) !== settledView;
             settledSubPath = subPath;
             settledView = view ?? null;
             // Updating a Back declaration at the same location retires no editor; the same location in another view
             // still rewrites the route, because the view is part of where the reader is.
-            if (subPath !== at || viewChanged) input.replaceLocation(input.routePathFor(subPath, settledView));
+            if (changesLocation || viewChanged) {
+                const route = input.routePathFor(subPath, settledView);
+                if (changesLocation && opensDetail) input.pushLocation(route);
+                else input.replaceLocation(route);
+            }
             notify();
             return { subPath };
         };
@@ -213,14 +184,6 @@ export function createPluginPageLocationOwner<Route = string>(
 
     return Object.freeze({
         handleReplaceRequest,
-        consumeBack: (): boolean => {
-            const target = declaredBackLocation;
-            if (!hasBackStep() || target === null) return false;
-            settledSubPath = target;
-            input.replaceLocation(input.routePathFor(target, settledView));
-            notify();
-            return true;
-        },
         hasBackStep,
         hasPreservingBackStep: () => hasBackStep() && backPreservesUnsavedChanges,
         selectedView: () => settledView,

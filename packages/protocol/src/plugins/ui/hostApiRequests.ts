@@ -584,22 +584,12 @@ export type PluginUiOpenConnectedAccountsResultV1 =
   z.infer<typeof PluginUiOpenConnectedAccountsResultV1Schema>;
 
 /**
- * Same-page location replacement, and the one page-internal Back step it may
- * declare.
- *
- * This is deliberately NOT `openSurface`. An open selects a destination and
- * pushes a history entry, which is the right contract for "take me somewhere"
- * and the wrong one for "the thing I am already looking at is now filtered
- * differently": a page whose every keystroke pushed would bury the user's real
- * previous screen under its own interaction trail.
- *
- * `backLocation` is the page-internal Back participant. It is a LOCATION rather
- * than a callback because a callback cannot be answered synchronously across a
- * transport, and a Back whose outcome depends on an in-flight round trip is the
- * kind of bug a user cannot describe. Declaring it here, atomically with the
- * replacement it belongs to, means the host can decide Back from a fact it
- * already holds and the user always sees the location change that resulted.
- * Absent means this page location has no Back step of its own.
+ * Same-page location and its optional detail source in ordinary host history.
+ * Filters and ordering replace the current entry. Opening a detail whose
+ * `backLocation` is the current location pushes one entry; further selections
+ * within that detail replace it. Back returns to the source and Forward restores
+ * the detail, without a separate page-internal Back callback. The host decides
+ * history behavior from this declaration; the plugin renders its settled location.
  */
 export const PluginUiReplacePageLocationRequestV1Schema = lazyZodSchema(() => z.strictObject({
   subPath: PluginUiSubPathV1Schema,

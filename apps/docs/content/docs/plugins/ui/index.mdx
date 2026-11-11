@@ -453,27 +453,23 @@ permission: every invocation still revalidates authority.
 
 ### Changing your own page's location
 
-`openSurface` selects a destination and adds a history entry. When your own page
-changes what it is showing — a filter, an order, a selected row — that is a
-location change, not a destination selection, so use `replacePageLocation`
-instead. It replaces the current entry, so Back still leaves the page rather
-than walking your page's interaction trail, and it resolves with the location
-the host settled on, which is the one you render.
+In **0.3 development source**, use `replacePageLocation` for your page's own
+filters, order and selected detail. Filter and order changes replace the current
+entry. Opening a detail whose `backLocation` is the current list adds one history entry; changing the
+selection within that detail replaces it. Back returns to the list, and Forward
+restores the detail. Render the location the host settles on.
 
 ```tsx
 const settled = await hostApi.replacePageLocation(`reviews/${reviewId}`, {
-  // The one page-internal step the next system Back returns to. Omit it and
-  // Back leaves the page as usual.
+  // Opening this detail preserves the current list in ordinary host history.
   backLocation: 'reviews',
 });
 ```
 
-The host consumes at most one Back with `backLocation` and then yields, and a
-step equal to the location being replaced to is ignored rather than consuming a
-press that would visibly do nothing. Any navigation your page did not perform
-itself retires the step. `replacePageLocation` is advertised only on a full-page
-destination; check `hostApi.version().methods` before relying on it, and never
-reach for browser history or a local router instead.
+A `backLocation` equal to the selected location declares no detail step.
+`replacePageLocation` is advertised
+only on a full-page destination; check `hostApi.version().methods` before relying
+on it, and use the host API for page navigation.
 
 ### Protecting unsaved edits (development)
 
@@ -495,7 +491,7 @@ declaration cannot prolong that authority or supply a navigation-blocking callba
 
 For a **React Native/RNW** editor that stays mounted while its layout expands
 into a full page, pass `preserveUnsavedChanges: true` with `backLocation` to
-`replacePageLocation`. The replacement and its single Back step then keep the
+`replacePageLocation`. The layout change and its history Back step then keep the
 dirty fact armed; a later page close still asks. Use this only when the same
 editor and its text continue, including through Back. Hosted document replacement
 cannot retain that editor and refuses this option; use the ordinary guarded

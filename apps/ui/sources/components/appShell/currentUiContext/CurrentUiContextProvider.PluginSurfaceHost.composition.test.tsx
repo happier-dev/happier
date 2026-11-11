@@ -1271,6 +1271,7 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
             currentSubPath: () => renderedSubPath,
             routePathFor: subPath => subPath,
             replaceLocation: subPath => { requestedSubPath = subPath; },
+            pushLocation: subPath => { requestedSubPath = subPath; },
             isCurrent: () => true,
         });
         const binding: BoundPluginSurfaceBinding = {

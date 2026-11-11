@@ -643,24 +643,11 @@ export interface PluginUiHostApi {
         options?: PluginCancellationOptions,
     ): Promise<OpenConnectedAccountsResult>;
     /**
-     * Replace THIS full-page surface's own location without adding a history
-     * entry, and declare the one page-internal step system Back returns to.
-     *
-     * This is the interaction counterpart of {@link PluginUiHostApi.openSurface}:
-     * an open selects a destination and pushes, which is right for "take me
-     * somewhere" and wrong for "what I am already looking at is now filtered,
-     * ordered or selected differently". A page that pushed on every such change
-     * would bury the user's real previous screen under its own interaction
-     * trail, and Back would walk that trail instead of leaving.
-     *
-     * `backLocation` is the page's Back participant, expressed as a location
-     * rather than a callback: a callback cannot be answered synchronously
-     * across the host boundary, and a Back whose outcome waits on a round trip
-     * is the kind of bug a user cannot describe. The host consumes at most ONE
-     * Back with it and then yields, so the next press performs ordinary
-     * navigation. A declared location equal to the location being replaced to
-     * is inert rather than a Back that visibly does nothing. It is retired with
-     * this mount and by any navigation the page did not perform itself.
+     * Set THIS full-page surface's plugin-local location. Filters and ordering
+     * replace the current history entry. Opening a detail from the current `backLocation`
+     * pushes one entry; further selections within that detail replace it.
+     * Ordinary Back returns to its source and Forward restores the detail.
+     * A `backLocation` equal to `subPath` declares no detail step.
      *
      * Resolves with the location the host settled on, which the caller renders.
      * It is not necessarily the requested one. Only a full-page destination has

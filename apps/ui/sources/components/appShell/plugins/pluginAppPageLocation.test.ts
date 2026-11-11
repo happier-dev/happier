@@ -1,6 +1,13 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { PluginUiHostApiRequestEnvelopeV1 } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiHostApiRequestEnvelopeV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { createWorkspaceBrowserTransport } from '../workspace/workspaceBrowserTransport';
+import { createWorkspaceNavigationAdapter } from '../workspace/workspaceNavigationAdapter';
+import { createWorkspaceState, reduceWorkspaceState } from '../workspace/workspaceState';
+import { resolveCompactAppDestinations, type CompactAppDestination } from '../destinations/compactAppDestinationCatalog';
+import { buildPluginAppPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
+import { trackBrowserHistoryNavigation } from '@/utils/navigation/browserHistoryNavigation';
+import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 
 import {
     createPluginPageLocationOwner,
@@ -8,43 +15,135 @@ import {
 } from '@/components/plugins/pages/pluginPageLocation';
 
 /**
- * `NAV-2`/`NAV-3` at the app-page navigation owner: same-page location
- * replacement, and the single page-internal Back step it may declare.
- *
- * The interesting cases are all the ones where a wrong implementation is
- * SILENT: a Back that consumes a press and changes nothing, a Back step that
- * survives a navigation it was not declared for, and a replacement that pushes.
+ * Page-location normalization, detail history and mount lifetime. The composed
+ * workspace transport tests exercise real Back/Forward on web and native.
  */
 
 const PAGE_ROUTE = '/plugins/acme.notes/notes';
 
-function request(payload: unknown): PluginUiHostApiRequestEnvelopeV1 {
-    return {
-        v: 1,
+function request(payload: unknown) {
+    return PluginUiHostApiRequestEnvelopeV1Schema.parse({
+        version: 1,
+        requestId: 'page-location',
+        surface: { pluginId: 'acme.notes', contributionId: 'notes', surfaceId: 'notes-page',
+            placement: 'appSurface', platform: 'web', channel: 'internal' },
         method: 'replacePageLocation',
         payload,
-    } as unknown as PluginUiHostApiRequestEnvelopeV1;
+    });
 }
+
+installPanelCommonModuleMocks();
+// Browser navigation never renders Markdown; fail on use of this vendor/native SDK boundary.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => { throw new Error('Unexpected vendor Markdown reveal in workspace browser test'); },
+}));
+// Recipient-envelope HTTP/process APIs are outside this deterministic browser owner harness.
+vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
+    const unavailable = () => { throw new Error('Unexpected recipient-envelope API in workspace browser test'); };
+    return { createSessionDataKeyEnvelopeClient: unavailable, readSessionDataKeyEnvelopeCollectionPage: unavailable,
+        prepareSessionDataKeyEnvelopesForScope: unavailable, prepareSessionDataKeyEnvelopesDetached: unavailable };
+});
+
+describe('plugin page detail history through the workspace transport', () => {
+    it.each(['browser', 'native'] as const)('restores a plugin detail with Forward after ordinary Back (%s)', async platform => {
+        const page = '/plugins/happier.triage/triage';
+        const list = 'q,review';
+        const detail = `${list}/e,change,8`;
+        const route = (subPath: string) => buildPluginAppPageRoutePath({ pluginId: 'happier.triage', localId: 'triage', subPath });
+        const catalog: readonly CompactAppDestination[] = [
+            ...resolveCompactAppDestinations({ builtins: { externalSessions: false, inbox: false, workflows: false, friends: false }, pages: [] }),
+            { kind: 'plugin', container: 'appPage', id: 'plugin:happier.triage:triage', title: 'PRs & Issues',
+                icon: 'list', order: 40, placement: { kind: 'rail', region: 'plugins' }, activation: 'navigate',
+                routePath: page, destination: { pluginId: 'happier.triage', localId: 'triage' },
+                availability: 'available' },
+        ];
+        let layout = createWorkspaceState({ id: 'A', target: { kind: 'session', params: { id: 'A1' } }, pinned: false, preview: false });
+        const entries: Array<{ state: unknown; href: string }> = [{ state: { id: 'initial' }, href: '/session/A1' }];
+        let position = 0;
+        let id = 0;
+        let nativeHref = '/session/A1';
+        const href = () => platform === 'browser' ? entries[position].href : nativeHref;
+        const browser = {
+            get state() { return entries[position].state; },
+            pushState(state: unknown, _title: string, url?: string | URL | null) {
+                entries.splice(position + 1);
+                entries.push({ state, href: String(url) });
+                position++;
+            },
+            replaceState(state: unknown, _title: string, url?: string | URL | null) {
+                entries[position] = { state, href: url ? String(url) : entries[position].href };
+            },
+            go(delta: number) {
+                if (position + delta < 0 || position + delta >= entries.length) return;
+                position += delta;
+                browserTransport.acceptPopState(browser.state);
+            },
+        };
+        const stopTracking = trackBrowserHistoryNavigation(browser, () => {});
+        const browserTransport = createWorkspaceBrowserTransport({
+            history: browser, getHref: href, createId: () => `browser:${++id}`,
+            mirror: next => browser.replaceState({ id: (browser.state as { id: string }).id }, '', next),
+            accept: (next, entry, index) => adapter.acceptUrl(next, entry, index),
+        });
+        const adapter = createWorkspaceNavigationAdapter({
+            getCatalog: () => catalog, getState: () => layout,
+            dispatch: action => { layout = reduceWorkspaceState(layout, action); },
+            transport: platform === 'browser' ? browserTransport : { commit: next => { nativeHref = next; } },
+            createId: () => `tab:${++id}`, onChange: () => {},
+        });
+        const owner = createPluginPageLocationOwner({
+            currentSubPath: () => href().slice(page.length + 1).split('/').map(decodeURIComponent).join('/'),
+            routePathFor: route,
+            replaceLocation: next => { adapter.openHref(next, { replace: true }); },
+            pushLocation: (next: string) => { adapter.openHref(next); },
+            isCurrent: () => true,
+        });
+        try {
+            adapter.initialize('/session/A1');
+            adapter.openHref(route(list));
+            const select = (subPath: string) => owner.handleReplaceRequest(PluginUiHostApiRequestEnvelopeV1Schema.parse({
+                version: 1, requestId: `select:${subPath}`, method: 'replacePageLocation',
+                surface: { pluginId: 'happier.triage', contributionId: 'triage', surfaceId: 'triage-page',
+                    placement: 'appSurface', platform: platform === 'browser' ? 'web' : 'ios', channel: 'internal' },
+                payload: { subPath, backLocation: list, view: 'triage' },
+            }));
+            await select(`${list}/e,change,7`);
+            await select(detail);
+            expect(href()).toBe(route(detail));
+            adapter.step(-1);
+            expect(href()).toBe(route(list));
+            owner.retireForeignLocationChange(list);
+            expect(adapter.canGoForward).toBe(true);
+            adapter.step(1);
+            expect(href()).toBe(route(detail));
+            owner.retireForeignLocationChange(detail);
+            await select(`${list}/e,change,7`);
+            expect(href()).toBe(route(`${list}/e,change,7`));
+            await select(detail);
+            expect(adapter.history.entries).toHaveLength(3);
+        } finally { owner.dispose(); stopTracking(); }
+    });
+});
 
 describe('plugin app page location owner', () => {
     let replaced: string[];
+    let pushed: string[];
     let current: string | null;
     let mounted: boolean;
     let owner: PluginPageLocationOwner;
 
     beforeEach(() => {
         replaced = [];
+        pushed = [];
         current = '';
         mounted = true;
         owner = createPluginPageLocationOwner({
             currentSubPath: () => current,
             routePathFor: (subPath) => (subPath === '' ? PAGE_ROUTE : `${PAGE_ROUTE}/${subPath}`),
             // The real router does NOT settle the screen synchronously: the
-            // location the page renders arrives on a later React render. Two
-            // Back presses inside that window are the exact case a
-            // "still armed" participant gets wrong, so the fixture keeps the
-            // gap rather than closing it.
+            // location the page renders arrives on a later React render.
             replaceLocation: (routePath) => { replaced.push(routePath); },
+            pushLocation: routePath => { pushed.push(routePath); },
             isCurrent: () => mounted,
         });
     });
@@ -73,14 +172,18 @@ describe('plugin app page location owner', () => {
         current = 'entries/7';
         owner = createPluginPageLocationOwner({ currentSubPath: () => current,
             routePathFor: subPath => `${PAGE_ROUTE}/${subPath}`, replaceLocation: route => { replaced.push(route); },
+            pushLocation: route => { pushed.push(route); },
             isCurrent: () => mounted, beforeReplace: () => false, allowPreservingReplacement: true });
+        owner.handleReplaceRequest(request({ subPath: 'entries/7', backLocation: 'entries' }));
         expect(await owner.handleReplaceRequest(request({ subPath: 'entries/7/page', backLocation: 'entries/7', preserveUnsavedChanges: true })))
             .toEqual({ subPath: 'entries/7/page' });
         expect(owner.hasPreservingBackStep()).toBe(true);
-        expect(owner.consumeBack()).toBe(true);
+        expect(await owner.handleReplaceRequest(request({ subPath: 'entries/7', preserveUnsavedChanges: true })))
+            .toEqual({ subPath: 'entries/7' });
         expect(owner.hasPreservingBackStep()).toBe(false);
         expect(await owner.handleReplaceRequest(request({ subPath: 'entries/8' }))).toEqual({ subPath: 'entries/7' });
-        expect(replaced).toEqual([`${PAGE_ROUTE}/entries/7/page`, `${PAGE_ROUTE}/entries/7`]);
+        expect(pushed).toEqual([`${PAGE_ROUTE}/entries/7/page`]);
+        expect(replaced).toEqual([`${PAGE_ROUTE}/entries/7`]);
     });
 
     it('refuses preservation when the physical host replaces its document', async () => {
@@ -100,31 +203,10 @@ describe('plugin app page location owner', () => {
         expect(replaced).toEqual([]);
     });
 
-    it('consumes exactly one Back with the declared step and then yields', () => {
-        owner.handleReplaceRequest(request({ subPath: 'entries/7', backLocation: 'entries' }));
-        replaced = [];
-
-        expect(owner.consumeBack()).toBe(true);
-        expect(replaced).toEqual([`${PAGE_ROUTE}/entries`]);
-
-        // A second press BEFORE the first replacement has reached the screen is
-        // the rapid-navigation case. A participant that stayed armed would fire
-        // twice here and trap the user on the page; the step is spent.
-        expect(owner.consumeBack()).toBe(false);
-        expect(replaced).toEqual([`${PAGE_ROUTE}/entries`]);
-
-        // …and it is still spent once the location does arrive.
-        settle('entries');
-        expect(owner.consumeBack()).toBe(false);
-        expect(replaced).toEqual([`${PAGE_ROUTE}/entries`]);
-    });
-
-    it('yields rather than consuming a press that would visibly do nothing', () => {
-        // Declaring the location you are replacing TO is the shape a page
-        // reaches when it clears its own detail: the step is already where the
-        // user is. Consuming here would be a Back that changes nothing.
+    it('replaces filters without adding a detail history entry', () => {
         owner.handleReplaceRequest(request({ subPath: 'entries', backLocation: 'entries' }));
-        expect(owner.consumeBack()).toBe(false);
+        expect(owner.hasBackStep()).toBe(false);
+        expect(pushed).toEqual([]);
         expect(replaced).toEqual([`${PAGE_ROUTE}/entries`]);
     });
 
@@ -133,13 +215,12 @@ describe('plugin app page location owner', () => {
         // The user pushed, deep-linked or walked history: this location was not
         // the one the step was declared for.
         settle('archive/3');
-        expect(owner.consumeBack()).toBe(false);
+        expect(owner.hasBackStep()).toBe(false);
 
         // …while the owner's OWN settled location keeps the step armed.
         owner.handleReplaceRequest(request({ subPath: 'entries/9', backLocation: 'entries' }));
         settle('entries/9');
-        expect(owner.consumeBack()).toBe(true);
-        expect(replaced.at(-1)).toBe(`${PAGE_ROUTE}/entries`);
+        expect(owner.hasBackStep()).toBe(true);
     });
 
     it('keeps the step armed when the router reports the settled location percent-decoded', () => {
@@ -150,19 +231,17 @@ describe('plugin app page location owner', () => {
         owner.handleReplaceRequest(request({ subPath: 'entries/gh%3A7,7', backLocation: 'entries' }));
         settle('entries/gh%3A7,7');
         settle('entries/gh:7,7');
-        expect(owner.consumeBack()).toBe(true);
-        expect(replaced.at(-1)).toBe(`${PAGE_ROUTE}/entries`);
+        expect(owner.hasBackStep()).toBe(true);
     });
 
-    it('says whether a Back would spend a step, and tells the chrome when that changes', () => {
+    it('tells chrome when a detail has been opened or left through history', () => {
         const seen: boolean[] = [];
         const unsubscribe = owner.subscribe(() => { seen.push(owner.hasBackStep()); });
         expect(owner.hasBackStep()).toBe(false);
 
         owner.handleReplaceRequest(request({ subPath: 'entries/7', backLocation: 'entries' }));
         expect(owner.hasBackStep()).toBe(true);
-        expect(owner.consumeBack()).toBe(true);
-        // The step is spent: the chrome's Back leaves the page again.
+        settle('entries');
         expect(owner.hasBackStep()).toBe(false);
         expect(seen).toEqual([true, false]);
 
@@ -200,6 +279,7 @@ describe('plugin app page location owner', () => {
             currentSubPath: () => current,
             routePathFor: (subPath, view) => `${PAGE_ROUTE}/${subPath}${view ? `?view=${view}` : ''}`,
             replaceLocation: (routePath) => { routed.push(routePath); },
+            pushLocation: routePath => { routed.push(routePath); },
             isCurrent: () => mounted,
         });
         viewOwner.handleReplaceRequest(request({ subPath: 'tasks,mine', view: 'tasks' }));
@@ -214,6 +294,7 @@ describe('plugin app page location owner', () => {
             initialView: 'tasks',
             routePathFor: (subPath) => `${PAGE_ROUTE}/${subPath}`,
             replaceLocation: () => {},
+            pushLocation: () => {},
             isCurrent: () => mounted,
         });
         expect(cold.selectedView()).toBe('tasks');
@@ -230,7 +311,7 @@ describe('plugin app page location owner', () => {
 
         expect(owner.handleReplaceRequest(request({ subPath: 'entries/8' })))
             .toMatchObject({ code: 'stale_surface' });
-        expect(owner.consumeBack()).toBe(false);
+        expect(owner.hasBackStep()).toBe(false);
         expect(replaced).toEqual([]);
     });
 
@@ -244,7 +325,7 @@ describe('plugin app page location owner', () => {
         owner.dispose();
         expect(owner.handleReplaceRequest(request({ subPath: 'b' })))
             .toMatchObject({ code: 'stale_surface' });
-        expect(owner.consumeBack()).toBe(false);
+        expect(owner.hasBackStep()).toBe(false);
     });
 
     it('refuses to replace a location that is not a live page location', () => {

@@ -21,6 +21,50 @@ vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
 });
 
 describe('workspace browser URL transport', () => {
+    it('enables Forward after pushing a detail and returning with Previous', () => {
+        const catalog = resolveCompactAppDestinations({ builtins: { externalSessions: false, inbox: false, workflows: false, friends: false }, pages: [] });
+        let layout = createWorkspaceState({ id: 'A', target: { kind: 'session', params: { id: 'A1' } }, pinned: false, preview: false });
+        const entries: Array<{ state: unknown; href: string }> = [{ state: { id: 'initial' }, href: '/session/A1' }];
+        let position = 0;
+        let id = 0;
+        const browser = {
+            get state() { return entries[position].state; },
+            pushState(state: unknown, _title: string, href?: string | URL | null) {
+                entries.splice(position + 1);
+                entries.push({ state, href: String(href) });
+                position++;
+            },
+            replaceState(state: unknown, _title: string, href?: string | URL | null) {
+                entries[position] = { state, href: href ? String(href) : entries[position].href };
+            },
+            go(delta: number) {
+                if (position + delta < 0 || position + delta >= entries.length) return;
+                position += delta;
+                transport.acceptPopState(browser.state);
+            },
+        };
+        const stopTracking = trackBrowserHistoryNavigation(browser, () => {});
+        const transport = createWorkspaceBrowserTransport({
+            history: browser, getHref: () => entries[position].href, createId: () => `browser:${++id}`,
+            mirror: href => browser.replaceState({ id: (browser.state as { id: string }).id }, '', href),
+            accept: (href, entry, index) => adapter.acceptUrl(href, entry, index),
+        });
+        const adapter = createWorkspaceNavigationAdapter({
+            getCatalog: () => catalog, getState: () => layout,
+            dispatch: action => { layout = reduceWorkspaceState(layout, action); },
+            transport, createId: () => `tab:${++id}`, onChange: () => {},
+        });
+        try {
+            adapter.initialize('/session/A1');
+            adapter.openHref('/session/A2');
+            expect(adapter.canGoForward).toBe(false);
+            adapter.step(-1);
+            expect(entries[position].href).toBe('/session/A1');
+            expect(adapter.canGoForward).toBe(true);
+            adapter.step(1);
+            expect(entries[position].href).toBe('/session/A2');
+        } finally { stopTracking(); }
+    });
     it.each([false, true])('pops retained entries after reload and restores guarded Forward without replacing them (dirty before readmission=%s)', async dirtyBeforeReadmission => {
         const catalog = resolveCompactAppDestinations({ builtins: { externalSessions: false, inbox: false, workflows: false, friends: false }, pages: [] });
         const entries: Array<{ state: unknown; href: string }> = [{ state: { id: 'initial' }, href: '/session/A1' }];

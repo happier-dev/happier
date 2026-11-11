@@ -2997,6 +2997,12 @@ size: `HappierPageHeader` draws the page title everywhere else (DESIGN.md "One t
 
 ### Page views a lens apart (0.3 development source)
 
+The page location owner writes ordinary host history: opening a detail from the current `backLocation`
+pushes one entry, and further selection changes within that detail replace it. Filters and ordering
+without a detail declaration replace the current entry. Back and Forward traverse that same history.
+Plugin pages register no internal-Back replacement callback with the workspace.
+The request shape and wire version are unchanged.
+
 One page may present several of its plugin's declared `appPage` views a lens apart (Triage's Tasks and
 PRs & Issues). `replacePageLocation(subPath, { view })` names the declared page local id the new location
 presents. The page's location owner (`pluginPageLocation.ts`) holds it with the settled location, and
@@ -3013,7 +3019,8 @@ a durable draft. Equal declarations publish nothing. `PluginPageContent` binds
 the fact to `useUnsavedDraftNavigationGuard`; `runUnsavedChangesGuard` remains
 the sole discard/keep decision and serialization owner. The active/tab and
 native-removal hooks are registration/transport layers. `RouteRemovalStepConsumer`
-spends an internal Back location and makes no independent dirty decision.
+spends an embedded guest's document history and makes no independent dirty decision.
+Plugin page URL history uses ordinary workspace Back and Forward.
 
 Back (including native hosted guest history) and page close use the existing host
 confirmation. Catalog activation and `openSurface` settle that same decision before

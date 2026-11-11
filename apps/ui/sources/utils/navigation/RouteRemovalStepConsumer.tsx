@@ -7,9 +7,8 @@ import { isBackwardRouteRemovalAction } from './runGuardedNavigation';
 /**
  * The one owner of "this screen has an internal step; spend it before leaving".
  *
- * A screen that holds its own place — an embedded guest's history, a plugin app
- * page's declared page-internal Back location, an inline detail stacked over the
- * list it came from — needs the SAME thing from every way a user goes back, and
+ * An embedded guest holds its own document history, including the Forward
+ * entry left by its Back. It needs the SAME thing from every way a user goes back, and
  * those ways are not one mechanism:
  *
  * - Android dispatches a hardware Back to React Native's own listener stack;

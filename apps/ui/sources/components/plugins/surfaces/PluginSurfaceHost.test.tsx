@@ -3396,15 +3396,6 @@ describe('PluginSurfacePlacementHost', () => {
             expect(alert).not.toHaveBeenCalled();
             // The navigation boundary removes the actual mounted page, just as the platform router does.
             const leave = vi.fn(() => { setRoute(React.createElement('Text', { testID: 'outside-plugin-page' })); });
-            const { router } = await import('expo-router');
-            // The destination router borrows this method during mount. Keep
-            // that boundary function's identity while supplying its effect.
-            const back = vi.mocked(router.back);
-            const originalBack = back.getMockImplementation();
-            back.mockClear().mockImplementation(() => {
-                setRoute(React.createElement('Text', { testID: 'outside-plugin-page' }));
-            });
-            onTestFinished(() => { back.mockImplementation(originalBack ?? (() => {})); });
             let leaving: true | Promise<boolean> = true;
             await act(async () => {
                 await screen.findByTestId('unsaved-plugin-notes')?.props.onChangeText('Arbitrary unsaved notes 📝');
@@ -3414,7 +3405,6 @@ describe('PluginSurfacePlacementHost', () => {
             expect(buttons.map(button => button.style)).toEqual(['destructive', 'cancel']);
             await act(async () => { buttons.find(button => button.style === 'cancel')?.onPress?.(); expect(await leaving).toBe(false); });
             expect(leave).not.toHaveBeenCalled();
-            expect(back).not.toHaveBeenCalled();
             expect(screen.findByTestId('unsaved-plugin-notes')).not.toBeNull();
             expect(screen.findByTestId('unsaved-plugin-notes')?.props.value).toBe('Arbitrary unsaved notes 📝');
             alert.mockClear();
@@ -3432,8 +3422,7 @@ describe('PluginSurfacePlacementHost', () => {
             expect(notesRenders).toBe(settledRenders);
             await act(async () => { leaving = runGuardedNavigation(leave, 'history'); });
             await act(async () => { buttons.find(button => button.style === 'destructive')?.onPress?.(); expect(await leaving).toBe(true); });
-            expect(back).toHaveBeenCalledOnce();
-            expect(leave).not.toHaveBeenCalled();
+            expect(leave).toHaveBeenCalledOnce();
             expect(screen.findByTestId('unsaved-plugin-notes')).toBeNull();
             expect(screen.findByTestId('outside-plugin-page')).not.toBeNull();
             await act(async () => { setRoute(renderPage()); });
@@ -3441,7 +3430,7 @@ describe('PluginSurfacePlacementHost', () => {
             api = (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext }).renderContext.hostApi;
             await act(async () => { await api.setUnsavedChanges(true); leaving = runGuardedNavigation(leave); });
             await act(async () => { buttons.find(button => button.style === 'destructive')?.onPress?.(); expect(await leaving).toBe(true); });
-            expect(leave).toHaveBeenCalledOnce();
+            expect(leave).toHaveBeenCalledTimes(2);
             expect(screen.findByTestId('unsaved-plugin-notes')).toBeNull();
             await act(async () => { setRoute(renderPage()); });
             await vi.waitFor(() => expect(screen.findByTestId('unsaved-plugin-notes'), surfaceFixtureDiagnostics(screen, 'acme.browser')).not.toBeNull());

@@ -5,8 +5,8 @@ import type { PluginPageLocationOwner } from '@/components/plugins/pages/pluginP
 const PluginPageBackStepContext = React.createContext(false);
 
 /**
- * Whether the navigation's own Back would, right now, return the mounted page to a step it declared
- * (`pluginPageLocation`) instead of leaving it. The page's chrome reads it so a pushed detail does not
+ * Whether the page declares a detail source in the navigation's own history
+ * (`pluginPageLocation`). The page's chrome reads it so a pushed detail does not
  * draw a second Back beside the one the header already answers.
  */
 export function PluginPageBackStepProvider(props: Readonly<{
