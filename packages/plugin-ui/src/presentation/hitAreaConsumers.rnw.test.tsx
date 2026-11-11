@@ -150,19 +150,20 @@ describe('collection filter rows stay designed under a finger', () => {
     touchTargetPx: 44,
   };
   const labels = {
-    title: 'Filter', clear: 'Clear', add: 'Add filter', addSearch: 'Filter by…', back: 'Back', or: 'or',
+    title: 'Filter', clear: 'Clear', add: 'Add filter', addSearch: 'Filter by…', or: 'or',
     operators: { is: 'is', is_not: "isn't", before: 'before', after: 'after', between: 'between', unavailable: 'unavailable' },
     remove: (field: string) => `Remove ${field}`, count: (count: number) => `${count} items`, countPartial: (count: number) => `${count} loaded`,
     saveAsSpace: 'Save as space…', done: 'Done', noFields: 'No fields', noValues: 'No values',
   };
-  it('keeps condition rows, remove and add at their design size and reaches only into the gaps', () => {
+  it('keeps condition rows, remove and the fields to add at their design size and reaches only into the gaps', () => {
     emulateCoarsePointer();
     const filter = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible' });
     const mount = mountThroughReactNativeWeb(<HappierCollectionConditionEditor host={host} labels={labels}
       model={conditionModelFromFilter(sessionWorkFilterFields, filter, {})} onChange={() => {}} />);
     try {
-      const add = byTestId(mount.container, 'collection-filter-add');
-      expect(px(getComputedStyle(add).minHeight)).toBe(32);
+      // A field the filter can add is a list row at the option's height, in the same view as the conditions.
+      const field = mount.container.querySelector<HTMLElement>('[data-testid^="collection-filter-field:"]')!;
+      expect(px(getComputedStyle(field).minHeight)).toBe(34);
       const remove = mount.container.querySelector<HTMLElement>('[data-testid$=":remove"]')!;
       expect(px(getComputedStyle(remove).width)).toBe(22);
       expect(px(getComputedStyle(remove).height)).toBe(22);

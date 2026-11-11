@@ -85,9 +85,7 @@ function ConditionText(props: Readonly<{
 
 const EDITOR_ICONS: Readonly<Record<HappierCollectionConditionIcon, IconName>> =
   {
-    add: 'plus',
     remove: 'x',
-    back: 'caret-left',
     check: 'check',
   };
 
@@ -202,7 +200,6 @@ export function buildCollectionConditionEditorLabels(): HappierCollectionConditi
     clear: t('sessionsList.conditionClear'),
     add: t('sessionsList.conditionAdd'),
     addSearch: t('sessionsList.conditionAddSearch'),
-    back: t('common.back'),
     or: t('sessionsList.conditionOr'),
     operators: {
       is: t('sessionsList.conditionOpIs'),

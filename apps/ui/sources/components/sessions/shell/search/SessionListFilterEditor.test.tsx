@@ -177,7 +177,7 @@ describe('SessionListFilterEditor panel', () => {
         await addField(screen, 'startedBy');
         await screen.pressByTestIdAsync(sharedValue('startedBy', 'triggers'));
         await screen.pressByTestIdAsync(sharedValue('startedBy', 'you'));
-        await screen.pressByTestIdAsync('collection-filter-back');
+        await screen.pressByTestIdAsync('collection-filter-condition:startedBy:is:value');
         expect(screen.findByTestId('collection-filter-condition:startedBy:is')).not.toBeNull();
         expect(screen.getTextContent()).toContain('Triggers');
 
@@ -194,7 +194,6 @@ describe('SessionListFilterEditor panel', () => {
             fixedShow: 'runs',
             filters: { ...createSessionListViewFilterDefaults(), show: 'runs' },
         })} />);
-        await screen.pressByTestIdAsync('collection-filter-add');
         expect(screen.findByTestId(fieldOption('show'))).toBeNull();
         expect(screen.findByTestId(fieldOption('startedBy'))).not.toBeNull();
     });
@@ -267,7 +266,6 @@ describe('SessionListFilterEditor panel', () => {
         await addField(screen, 'homeServerIds');
         await screen.pressByTestIdAsync(sharedValue('homeServerIds', 'home-b'));
         expect(updateFilters).toHaveBeenLastCalledWith(expect.objectContaining({ homeServerIds: ['home-a'] }));
-        await screen.pressByTestIdAsync('collection-filter-back');
 
         await addField(screen, 'tagIds');
         const lastTag = sharedValue('tagIds', JSON.stringify({ serverId: 'home-a', tagId: 'tag-6' }));
@@ -321,9 +319,8 @@ const fieldOption = (fieldId: string) => `collection-filter-field:${fieldId}`;
 const sharedValue = (fieldId: string, value: string) => `collection-filter-value:${fieldId}:${value}`;
 const valueOption = (optionId: string) => `session-list-filter-editor:session-list-filters:option:${optionId}`;
 
-/** Add filter, then the field: a toggle applies at once, a field with values opens them. */
+/** The field, in the editor's one view: a toggle applies at once, a field with values opens them in place. */
 async function addField(screen: Awaited<ReturnType<typeof renderScreen>>, fieldId: string): Promise<void> {
-    await screen.pressByTestIdAsync('collection-filter-add');
     await vi.waitFor(() => expect(screen.findByTestId(fieldOption(fieldId))).not.toBeNull());
     await screen.pressByTestIdAsync(fieldOption(fieldId));
 }

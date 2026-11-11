@@ -448,7 +448,7 @@ it.each(['rail', 'page'] as const)('narrows the %s by a Source condition from th
         expect(editor().props.model.availableFields[0].valueOptions).toEqual(expect.arrayContaining([
             expect.objectContaining({ value: 'you', count: 1 }), expect.objectContaining({ value: 'happier', count: 1 }),
         ]));
-        await screen.pressByTestIdAsync('collection-filter-back');
+        await screen.pressByTestIdAsync('collection-filter-condition:source:is:value');
         await act(async () => screen.pressByTestId('skills.rail-filter-token:source'));
         expect(screen.findByTestId('skills.rail.row.builtin')).not.toBeNull();
     } finally { vi.unstubAllGlobals(); await standardCleanup(); await home.dispose(); }
@@ -492,7 +492,7 @@ it('counts held values only while the actual condition value picker is open and 
         expect(current.model).toBe(countedModel);
         await screen.update(<HeaderProbe readFacts={() => [...facts, { ...facts[0]!, key: 'unknown', fields: {} }]} />);
         expect(current.model.availableFields[0]!.valueOptions.every(option => option.count === undefined)).toBe(true);
-        await screen.pressByTestIdAsync('collection-filter-back');
+        await screen.pressByTestIdAsync('collection-filter-condition:source:is:value');
         expect(current.model.availableFields[0]!.valueOptions.every(option => option.count === undefined)).toBe(true);
         const closedReads = reads;
         await screen.update(<HeaderProbe readFacts={() => { reads++; return [...facts]; }} />);

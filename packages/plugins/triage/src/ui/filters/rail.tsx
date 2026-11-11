@@ -206,7 +206,6 @@ function readTriageConditionLabelsV1(text: TriageTextResolverV1): HappierCollect
     clear: text('plugins.triage.surface.filters.condition.clear', 'Clear'),
     add: text('plugins.triage.surface.filters.condition.add', 'Add filter'),
     addSearch: text('plugins.triage.surface.filters.condition.addSearch', 'Filter by…'),
-    back: text('plugins.triage.surface.filters.condition.back', 'Back'),
     or: text('plugins.triage.surface.filters.condition.or', 'or'),
     operators: {
       is: text('plugins.triage.surface.filters.condition.is', 'is'),

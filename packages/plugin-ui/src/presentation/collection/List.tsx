@@ -47,6 +47,7 @@ import {
   type HappierCollectionRowRole,
   HAPPIER_COLLECTION_LIST_TEXT,
   HappierListRowOpenContext,
+  HappierListRowPrecedesSelectedContext,
   HappierCardSelectionRingContext,
   HappierCardActionsCornerContext,
   resolveHappierCollectionListRowPadding,
@@ -683,6 +684,7 @@ export function HappierListItem({
   const collectionRow = collectionItem !== null && pageSection === null && !navigationRow;
   // The open row (its detail is showing) carries the edge; a row in the bulk set is filled without one.
   const openRow = useContext(HappierListRowOpenContext);
+  const precedesSelected = useContext(HappierListRowPrecedesSelectedContext);
   const cardRing = useContext(HappierCardSelectionRingContext);
   const cardCorner = useContext(HappierCardActionsCornerContext);
   const [cardActionsShown, setCardActionsShown] = useState({ hovered: false, focused: false });
@@ -1309,8 +1311,10 @@ export function HappierListItem({
       {rowContent}
       {collectionRow && resolvedTheme ? (
         <>
-          {/* Overlays, never layout: the row keeps the exact height its Collection planned. */}
-          {collectionItem?.hairline === false || collectionItem?.insetFill === true ? null : (
+          {/* Overlays, never layout: the row keeps the exact height its Collection planned. A selected row's fill
+              parts it from its neighbours and a group's band parts it from the next group: no line there. */}
+          {collectionItem?.hairline === false || collectionItem?.insetFill === true || collectionItem?.beforeBand === true
+            || selected === true || openRow || precedesSelected ? null : (
             <View
               pointerEvents="none"
               style={{

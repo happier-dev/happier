@@ -272,18 +272,20 @@ function BoardCardRow<Item>(props: Readonly<{
 }>): ReactElement {
   const host = useOptionalPluginUiPresentationHost();
   const card = useCardLayout();
+  const cardText = useCardText();
   const { anatomy } = props;
   const item = props.useRowItem?.(props.item) ?? props.item;
   const actions = props.useRowActions?.(item) ?? {};
   // Row actions are the card's own corner control, not a sibling beside the card: they sit at the title line's
-  // end inside the card's body (its top and side insets), revealed like a grid card's.
+  // end inside the card's body (its top and side insets), revealed like a grid card's. The title stands on the
+  // card's top inset (the frame centres its controls on that line), so the corner's box centres there too.
   const hasRowActions = ((actions.secondaryActions !== undefined && actions.secondaryActions.length > 0)
     || (host?.renderDestinationRow !== undefined && anatomy.destination?.(item) != null));
   const actionsCorner = useMemo(() => hasRowActions ? {
-    top: card.padding + card.boardItemStyle.paddingVertical,
+    top: card.padding + card.boardItemStyle.paddingVertical - (CARD.markSize - cardText.title) / 2,
     end: card.padding + card.boardItemStyle.paddingHorizontal,
     height: CARD.markSize,
-  } : null, [card.padding, card.boardItemStyle.paddingHorizontal, card.boardItemStyle.paddingVertical, hasRowActions]);
+  } : null, [card.padding, card.boardItemStyle.paddingHorizontal, card.boardItemStyle.paddingVertical, cardText.title, hasRowActions]);
   const row: ReactElement<ItemProps> = <List.Item
     {...actions} density="compact" showDivider={false} accessoryOutsidePressable contentBesidePressable
     accessibilityLabel={anatomy.accessibilityLabel(item)}
@@ -597,7 +599,8 @@ function useGridGeometryResolver(width: number | null, minCardWidth: number, con
     // The arithmetic of what the one frame draws (WidgetFrame card): its border, insets, identity row and gaps.
     const F = HAPPIER_WIDGET_FRAME_METRICS;
     if (!slots.description && !slots.facts && !slots.body && !slots.headerRight && previewHeight === 0) {
-      return { compact: true, columns, cardWidth, cardHeight: CARD.rowLayerEdge + 2 + 2 * card.padding + Math.max(CARD.markSize, text.title),
+      // One line: the frame centres the mark on the title's line, so the line is the title's.
+      return { compact: true, columns, cardWidth, cardHeight: CARD.rowLayerEdge + 2 + 2 * card.padding + text.title,
         previewHeight };
     }
     if (previewHeight > 0) {

@@ -968,10 +968,8 @@ describe('SessionFollowSourcesEditor', () => {
 
             // Which sessions: the Sessions list's own editor, inline in the same panel; nothing is written until Save.
             await press(screen, 'session-follow-source-rule:rule-1-filter');
-            await press(screen, 'collection-filter-add');
             await press(screen, 'collection-filter-field:statuses');
             await press(screen, 'collection-filter-value:statuses:failed');
-            await press(screen, 'collection-filter-back');
             expect(writes).toHaveLength(0);
             await press(screen, 'collection-filter-done');
             await vi.waitFor(() => expect(writes).toHaveLength(1));
@@ -1001,10 +999,8 @@ describe('SessionFollowSourcesEditor', () => {
                 page={{ sourceKey: 'rule:rule-1', onClose, frame: (parts) => <>{parts.body}{parts.footer}</> }}
             />);
             await press(screen, 'session-follow-source-rule:rule-1-filter');
-            await press(screen, 'collection-filter-add');
             await press(screen, 'collection-filter-field:statuses');
             await press(screen, 'collection-filter-value:statuses:failed');
-            await press(screen, 'collection-filter-back');
             await press(screen, 'collection-filter-done');
             await vi.waitFor(() => expect(writes).toHaveLength(1));
             expect(writes[0]).toMatchObject({ expectedVersion: 3 });

@@ -26,7 +26,7 @@ import {
 } from '../collection/DisclosureChevron.js';
 import { HAPPIER_PAGE_METRICS } from './pageMetrics.js';
 import { HappierBodyEdgeContext } from './columnEdge.js';
-import { resolveHappierPageTextStyle } from './pageText.js';
+import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle } from './pageText.js';
 import { HappierMaterialSurface, type HappierMaterialSurfaceRender } from './Surface.js';
 import type { HappierSurfaceGradient } from './material.js';
 
@@ -458,6 +458,10 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
   // an item with no mark, keeps one line: its title beside the mark and the right slot at its end.
   const stacked = item && !previewItem && !compact && Boolean(props.mark || props.leading || props.disclosure);
   const identityRowPx = HAPPIER_WIDGET_FRAME_METRICS.identityRowPx;
+  // A card's one-line header stands its title on the card's inset, as far down as in (owner 2026-11-11): the mark
+  // and the controls keep their identity-row boxes but centre on the title's first line instead of growing it.
+  const onTitleLine = !plain && !stacked && !previewItem && !row;
+  const titleLineSlack = Math.max(0, (identityRowPx - Number(HAPPIER_PAGE_TEXT.sectionTitle.lineHeight)) / 2);
   const plainStackedPadding = plain && below ? HAPPIER_WIDGET_FRAME_METRICS.plainStackedHeaderPaddingPx : 0;
   // With no disclosure, leading slot or mark there is no identity to draw: its empty slot must not add the
   // header gap, so the title keeps the frame's own inset (plain: the page column's edge).
@@ -506,7 +510,7 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
             style={{
               flexDirection: stacked ? 'column-reverse' : 'row',
               ...(controlsBelow ? { flexWrap: 'wrap' } as const : {}),
-              alignItems: stacked ? 'stretch' : previewItem || controlsBelow ? 'flex-start' : 'center',
+              alignItems: stacked ? 'stretch' : previewItem || controlsBelow || onTitleLine ? 'flex-start' : 'center',
               gap: stacked ? HAPPIER_WIDGET_FRAME_METRICS.cardTitleGapPx : HAPPIER_WIDGET_FRAME_METRICS.headerGapPx,
               minHeight: plain ? HAPPIER_WIDGET_FRAME_METRICS.plainHeaderMinHeightPx : HAPPIER_WIDGET_FRAME_METRICS.headerMinHeightPx,
               paddingLeft: inset,
@@ -523,7 +527,7 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
             {/* Omit absent slots: retaining empty display:none nodes can violate Yoga child ownership on native. */}
             {unmarked ? null : <View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center',
               ...(stacked ? { position: 'absolute', left: inset, top: inset, minHeight: identityRowPx } as const : {}),
-              ...(!plain && !stacked && !previewItem && !row ? { minHeight: identityRowPx,
+              ...(onTitleLine ? { minHeight: identityRowPx, marginVertical: -titleLineSlack,
                 ...(compact && (props.mark || props.leading || props.disclosure) ? { marginRight: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx } : {}) } : {}),
               flexShrink: 0, gap: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx }}>
             {props.disclosure ? (
@@ -614,7 +618,8 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
               // A stacked card's right slot shares the identity row's line: it stops short of the mark's box and its
               // words give way there, so a long state never draws over the mark.
               ...(stacked ? { paddingLeft: identityRowPx + HAPPIER_WIDGET_FRAME_METRICS.headerGapPx, minWidth: 0 } : {}),
-              ...(!plain && !previewItem && !row ? { minHeight: identityRowPx } : {}) }}>
+              ...(!plain && !previewItem && !row ? { minHeight: identityRowPx } : {}),
+              ...(onTitleLine ? { marginVertical: -titleLineSlack } : {}) }}>
               <View pointerEvents="box-none" {...(row ? { onLayout: onControlsLayout } : {})}
                 style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx, flexShrink: 1, minWidth: 0 }}>
                 {meta ? <View pointerEvents="auto" style={{ flexShrink: 0 }}>{meta}</View> : null}

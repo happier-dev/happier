@@ -33,6 +33,7 @@ import { useHappierPageChromeInternal } from '../presentation/layout/pageChrome.
 import { HappierPageHeader } from '../presentation/layout/PageHeader.js';
 import { CollectionToolbarCompactContext, CollectionToolbarOverflowContext, type CollectionToolbarFitReport } from './CollectionToolbar.js';
 import { HAPPIER_RADIUS_V1 } from '../environment/radius.js';
+import { HAPPIER_SPACE_STEPS } from '../environment/spacing.js';
 import { HappierStatusDot } from '../presentation/status/StatusDot.js';
 import { PluginUiIconGlyph, type IconName } from './Icon.js';
 import { resolveHappierIconSize } from '../presentation/content/Icon.js';
@@ -581,7 +582,13 @@ type CollectionCell<Item> =
 
 /** Table geometry, at normal text size. */
 const TABLE = Object.freeze({
-  insetStart: 20,
+  /**
+   * A row's leading inset: its glyph stands as far in from the row's edge as down from its top (`paddingY` plus the
+   * row's 1 pt ring), so a two-line row's status dot is not pushed off its corner (owner 2026-11-11).
+   */
+  insetStart: 11,
+  /** Where a row's trailing facts and the table's foot end, from the list's end edge. */
+  insetTrailing: 20,
   insetEnd: 8,
   glyphWidth: 34,
   gap: 12,
@@ -600,15 +607,18 @@ const TABLE = Object.freeze({
 });
 
 /**
- * A table's group band (its "Pinned", "Needs you"): a filled surface, so it takes the one radius base and stands
- * where a row's fill does, the rows' gutter in from the list's edges, instead of a full-bleed ruled rectangle
- * (owner 2026-11-10). Its words keep the text edge they had (`textInsetPx` from the list's edge).
+ * A group band (its "Pinned", "Needs you"): a filled surface, so it takes the one radius base (owner 2026-11-10) and
+ * the box a row's fill takes, so its ends meet the rows' at both edges (owner 2026-11-11: a one-sided gutter cut its
+ * right end off). A breath above and below keeps a selected row's fill off it, inside the band's planned height.
+ * Its words stand on `textInsetPx` from the list's edge.
  */
-function groupBandFrame(textInsetPx: number) {
+const GROUP_BAND_GAP = HAPPIER_SPACE_STEPS.s4;
+function groupBandFrame(heightPx: number, textInsetPx: number) {
   return {
-    marginHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset,
+    height: heightPx - 2 * GROUP_BAND_GAP,
+    marginVertical: GROUP_BAND_GAP,
     borderRadius: HAPPIER_COLLECTION_LIST_METRICS.rowRadius,
-    paddingHorizontal: textInsetPx - HAPPIER_COLLECTION_LIST_METRICS.rowInset,
+    paddingHorizontal: textInsetPx,
   } as const;
 }
 
@@ -702,6 +712,8 @@ type CollectionStage<Item> = Readonly<{
   expandable: boolean;
   /** On a page section's sheet: the rows that draw the sheet's hairline below them (every row but a group's last). */
   dividedKeys: ReadonlySet<string> | null;
+  /** Ruled rows that end their group with another group's band under them: the band parts them, no hairline. */
+  beforeBandKeys: ReadonlySet<string>;
   onPeekHeight: (key: string, height: number) => void;
   onPeekSettled: (key: string, expanded: boolean) => void;
 }>;
@@ -723,7 +735,7 @@ const CATALOG_ROW = HAPPIER_COLLECTION_LIST_METRICS.catalogRow;
 /** A list row's title keeps this share of the table's title minimum before its title meta moves beneath it. */
 const LIST_TITLE_MIN_SHARE = 0.5;
 /** The list row's action stands at the row's end inset, mirroring where its text starts. */
-const LIST_ACTION_INSET = TABLE.insetStart - TABLE.insetEnd;
+const LIST_ACTION_INSET = TABLE.insetTrailing - TABLE.insetEnd;
 /** The place a row's own ⋯ takes after its meta, on every row of a collection whose rows carry actions. */
 const ROW_ACTIONS_WIDTH = 36;
 /**
@@ -742,11 +754,15 @@ const rowMetaColumnStyle: HappierPortableStyle = { flexShrink: 0, alignSelf: 'ce
 const NO_ROW_ACTIONS: CollectionRowActions = Object.freeze({});
 /** The table's and the side list's rows are ruled; the resting list (a phone, a narrow page) parts its rows by air. */
 const RULED_ROW: HappierCollectionTableRowFacts = Object.freeze({ hairline: true });
+/** A ruled group's last row with another group's band under it: the band parts them. */
+const RULED_ROW_BEFORE_BAND: HappierCollectionTableRowFacts = Object.freeze({ hairline: true, beforeBand: true });
 const RESTING_LIST_ROW: HappierCollectionTableRowFacts = Object.freeze({ hairline: false });
 /** A catalog row beside the detail parts by air with an inset rounded fill (lab m:mcp), never a hairline. */
 const CATALOG_SIDE_ROW: HappierCollectionTableRowFacts = Object.freeze({ hairline: true, insetFill: true });
-/** The catalog side row's content inset: the text edge stays where the ruled row's was, inside its inset fill. */
-const catalogSideRowContentStyle: HappierPortableStyle = { paddingLeft: TABLE.insetStart - 1 - HAPPIER_COLLECTION_LIST_METRICS.rowInset };
+/** The catalog side list's mark edge from the list's edge (lab m:mcp), its group headings on it. */
+const CATALOG_SIDE_INSET = 20;
+/** The catalog side row's content inset: its mark on the side list's edge, inside its inset fill. */
+const catalogSideRowContentStyle: HappierPortableStyle = { paddingLeft: CATALOG_SIDE_INSET - 1 - HAPPIER_COLLECTION_LIST_METRICS.rowInset };
 const NO_CELLS: readonly never[] = Object.freeze([]);
 const CollectionStageContext = createContext<CollectionStage<unknown> | null>(null);
 
@@ -1749,7 +1765,8 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string }>): 
   const destinationRow = (
     <HappierCollectionTableRowContext.Provider value={stage.catalogDirectory && geometry === 'list' ? CATALOG_SIDE_ROW
       : stage.wrapTitles && !stage.restingRuled ? RESTING_LIST_ROW
-      : catalog && geometry === 'list' && !stage.wrapTitles ? CATALOG_SIDE_ROW : RULED_ROW}>
+      : catalog && geometry === 'list' && !stage.wrapTitles ? CATALOG_SIDE_ROW
+      : stage.beforeBandKeys.has(itemKey) ? RULED_ROW_BEFORE_BAND : RULED_ROW}>
       <HappierCollectionTreeRowContext.Provider value={treeFacts}>
         {renderCollectionItemDestination(host, anatomy, item, rowItem)}
       </HappierCollectionTreeRowContext.Provider>
@@ -1870,7 +1887,7 @@ const groupStatementGlyphStyle: HappierPortableStyle = { width: TABLE.glyphWidth
 
 const peekStyle: HappierPortableStyle = {
   paddingLeft: TABLE.insetStart + TABLE.glyphWidth,
-  paddingRight: TABLE.insetStart,
+  paddingRight: TABLE.insetTrailing,
   paddingTop: 4,
   paddingBottom: 14,
 };
@@ -1888,9 +1905,9 @@ function CollectionCellView<Item>(props: Readonly<{ cell: CollectionCell<Item> }
 function CollectionGroupStatement(props: Readonly<{ text: string }>): ReactElement {
   const stage = useStage<unknown>();
   const height = stage.geometry === 'table' ? stage.metrics.tableRow : stage.metrics.listRow;
-  const inset = stage.geometry === 'table' ? TABLE.insetStart : stage.ruledInsetPx ?? 0;
+  const ruled = stage.geometry === 'table' ? null : stage.ruledInsetPx ?? 0;
   return (
-    <View style={[groupStatementStyle, { minHeight: height, paddingLeft: inset, paddingRight: inset }]}>
+    <View style={[groupStatementStyle, { minHeight: height, paddingLeft: ruled ?? TABLE.insetStart, paddingRight: ruled ?? TABLE.insetTrailing }]}>
       <View style={groupStatementGlyphStyle}>
         <PluginUiIconGlyph name="check" size={resolveHappierIconSize('small')} tone="success" />
       </View>
@@ -2279,6 +2296,24 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     previousDividedKeys.current = next;
     return next;
   }, [catalogDirectory, drawnSections, model.keyOf, pageSections, pageTable]);
+  // A group's last row with a band under it (the next group's title): the band parts them. Membership only, so a
+  // selection or item change does not wake every row.
+  const previousBeforeBandKeys = useRef<ReadonlySet<string>>(new Set());
+  const beforeBandKeys = useMemo(() => {
+    const keys: string[] = [];
+    if (grouped) {
+      sections.forEach((section, index) => {
+        const last = section.data[section.data.length - 1];
+        const next = sections[index + 1];
+        if (last?.kind === 'item' && next !== undefined && next.title !== '') keys.push(last.key);
+      });
+    }
+    const previous = previousBeforeBandKeys.current;
+    if (previous.size === keys.length && keys.every(key => previous.has(key))) return previous;
+    const nextKeys = new Set(keys);
+    previousBeforeBandKeys.current = nextKeys;
+    return nextKeys;
+  }, [grouped, sections]);
   // An ungrouped page list (a phone, a narrow page) keeps the table's header recomposed on its sheet: what the rows
   // are on the left, the order they are in on the right (lab `rp` Hp "Started by Happier · Memory ↓").
   const sort = props.sort;
@@ -2387,9 +2422,10 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     useRowItem: props.useRowItem,
     expandable,
     dividedKeys,
+    beforeBandKeys,
     onPeekHeight,
     onPeekSettled,
-  }), [anatomy, rowRole, columns, composition, dividedKeys, expandable, expanded, metrics, model.actions.toggleExpanded, treeStage, wrapTitles, narrowRows, listColumns, ruledInsetPx, restingRuled, pageSections, catalogDirectory, onPeekHeight, onPeekSettled, progress, props.useRowActions, props.useRowItem, rowGeometry, transition]);
+  }), [anatomy, rowRole, columns, composition, dividedKeys, beforeBandKeys, expandable, expanded, metrics, model.actions.toggleExpanded, treeStage, wrapTitles, narrowRows, listColumns, ruledInsetPx, restingRuled, pageSections, catalogDirectory, onPeekHeight, onPeekSettled, progress, props.useRowActions, props.useRowItem, rowGeometry, transition]);
 
   // ---- the List engine's Collection facts ----
   const authorMultiple: NonNullable<CollectionProps<Item>['selection']>['multiple'] = props.selection?.multiple
@@ -2471,9 +2507,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       // One table's groups band its sheet the way the wide table bands them, on the page rows' inset.
       sectionHeaderTitleRole: 'micro' as const,
       sectionHeaderStyle: {
-        height: metrics.groupHeader,
         justifyContent: 'center' as const,
-        ...groupBandFrame(HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx),
+        ...groupBandFrame(metrics.groupHeader, HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx),
         backgroundColor: palette.inset,
       },
       pageSheet: { colors: palette, header: pageSheetHeader, flatSheet: enclosingPageSheet === null, oneSheet: true },
@@ -2504,7 +2539,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         paddingBottom: LIST_LINE_GAP,
         // On the page's text edge, with its rows' marks and trailing facts (`restingListContentStyle`); a ruled list
         // keeps its rows' own inset; a catalog side list stands on its rows' mark edge.
-        paddingHorizontal: catalogSideList ? TABLE.insetStart : ruledInsetPx ?? HAPPIER_PAGE_METRICS.headingOpticalInsetPx,
+        paddingHorizontal: catalogSideList ? CATALOG_SIDE_INSET : ruledInsetPx ?? HAPPIER_PAGE_METRICS.headingOpticalInsetPx,
         // Pinned over scrolling rows, so on an opaque ground it paints that ground (the page role); a translucent
         // material's plane is its own, and the heading is not pinned there.
         ...(containingMaterial === undefined ? { backgroundColor: palette?.page ?? theme.colors.surface } : {}),
@@ -2512,13 +2547,14 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     } : {
       sectionHeaderTitleRole: 'micro' as const,
       sectionHeaderStyle: {
-        height: metrics.groupHeader,
         justifyContent: 'center' as const,
-        ...groupBandFrame(TABLE.insetStart),
+        // Its words on the rows' glyph edge (the row's content inset and its 1 pt ring).
+        ...groupBandFrame(metrics.groupHeader, TABLE.insetStart),
+        paddingRight: TABLE.insetTrailing,
         // A list beside its detail reserves each row's ⋯ place after its meta; the band's hint ends on that meta's
         // edge rather than past it, so the group's words and its rows' ages share one right edge.
         ...(rowGeometry === 'list' && props.useRowActions !== undefined
-          ? { paddingRight: TABLE.insetStart + ROW_ACTIONS_WIDTH - HAPPIER_COLLECTION_LIST_METRICS.rowInset } : {}),
+          ? { paddingRight: TABLE.insetTrailing + ROW_ACTIONS_WIDTH } : {}),
         // A quiet band of the rows' own fill, a hair off them (lab `.grp`).
         backgroundColor: paintColor(palette?.inset ?? theme.colors.elevatedSurface),
       },
@@ -3226,7 +3262,7 @@ function CollectionSummaryRows(props: Readonly<{
           key={row.key}
           {...(row.testID === undefined ? {} : { testID: row.testID })}
           style={[tableRowContentStyle, { minHeight: props.height - 2, borderTopWidth: 1, borderTopColor: palette.rowDivider },
-            props.geometry === 'table' ? { paddingRight: props.paddingEnd } : { paddingRight: TABLE.insetStart }]}
+            props.geometry === 'table' ? { paddingRight: props.paddingEnd } : { paddingRight: TABLE.insetTrailing }]}
         >
           {props.geometry === 'table' ? (
             <>
@@ -3346,7 +3382,8 @@ const footerStyle: HappierPortableStyle = {
   // One line, like the table it closes: the keys keep their width and the window statement truncates.
   flexWrap: 'nowrap',
   gap: 14,
-  paddingHorizontal: TABLE.insetStart,
+  paddingLeft: TABLE.insetStart,
+  paddingRight: TABLE.insetTrailing,
   borderTopWidth: 1,
 };
 const hintStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 0 };

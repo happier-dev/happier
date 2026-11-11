@@ -113,7 +113,7 @@ import {
 import { NATIVE_COLLECTION_VIRTUALIZER } from '../presentation/collection/nativeCollectionVirtualizer.js';
 import { PageCollectionVirtualizer } from '../presentation/collection/pageCollectionVirtualizer.js';
 import { useOptionalPluginUiScrollActivityTracker } from '../presentationHost/scrollActivity.js';
-import { HappierListRowOpenContext, type HappierCollectionRowRole } from '../presentation/collection/CollectionList.js';
+import { HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, type HappierCollectionRowRole } from '../presentation/collection/CollectionList.js';
 import { CatalogDirectory } from '../presentation/collection/CatalogDirectory.js';
 
 const LIST_MORE_ACTIONS_TRANSLATION_KEY = 'happier.plugin-ui.list.moreActions';
@@ -680,6 +680,8 @@ type VirtualizedListRowProps<Item> = Readonly<{
   selected: boolean;
   /** The single selected key's row (the open detail), whatever `selected` means with a bulk set mounted. */
   open: boolean;
+  /** The next row in traversal order is selected or open: the hairline between them is not drawn. */
+  precedesSelected: boolean;
   /**
    * Resolved per row rather than passed as the collection's tab-stop index, so
    * moving the stop commits only the two rows whose tab order actually changed
@@ -765,9 +767,11 @@ class VirtualizedListRow<Item> extends PureComponent<
       row
     ) : (
       <HappierListRowOpenContext.Provider value={props.open}>
-        <ListItemSelectionContext.Provider value={selection}>
-          {row}
-        </ListItemSelectionContext.Provider>
+        <HappierListRowPrecedesSelectedContext.Provider value={props.precedesSelected}>
+          <ListItemSelectionContext.Provider value={selection}>
+            {row}
+          </ListItemSelectionContext.Provider>
+        </HappierListRowPrecedesSelectedContext.Provider>
       </HappierListRowOpenContext.Provider>
     );
   }
@@ -1581,6 +1585,15 @@ function VirtualizedList<Item>(
   // One row projection for both arms. `rowIndex` is the collection-wide
   // navigation position; `index` and `setSize` stay unit-local, which is what a
   // reader hears and what the author's callbacks already receive.
+  // Read at render like `selected`: the selection's extraData re-renders the cells, and the pure row commits
+  // only where this fact changed (the rows just above the old and the new selection).
+  const rowKeysRef = useRef(rowKeys);
+  rowKeysRef.current = rowKeys;
+  const rowPrecedesSelected = useCallback((rowIndex: number) => {
+    const next = rowKeysRef.current[rowIndex + 1];
+    return selectionEnabled && next !== undefined && (selectedKeyRef.current === next
+      || (multiStore !== null && multiSelectedKeysRef.current.has(next)));
+  }, [multiStore, selectionEnabled]);
   const renderRow = useCallback(
     (
       input: Readonly<{
@@ -1631,6 +1644,7 @@ function VirtualizedList<Item>(
           open={
             singleChoice === undefined && selectedKeyRef.current === itemKey
           }
+          precedesSelected={rowPrecedesSelected(input.rowIndex)}
           isTabStop={
             selectionEnabled && tabStopIndexRef.current === input.rowIndex
           }
@@ -1653,6 +1667,7 @@ function VirtualizedList<Item>(
       registerTarget,
       renderItem,
       rovingEntries,
+      rowPrecedesSelected,
       selectItem,
       selectionEnabled,
       singleChoice?.unavailableReason,

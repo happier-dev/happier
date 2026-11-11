@@ -406,7 +406,6 @@ describe('saved Session spaces through the mounted query transport', () => {
                 const queryReadsBeforeDemand = boundary.http.requests.filter(request => request.path === '/v2/sessions/query').length;
                 const targetKeys = targets.map(buildBackendTargetKeyV2);
                 if (demandVia === 'picker' || demandVia === 'persisted warm picker') {
-                    await screen.pressByTestIdAsync('collection-filter-add');
                     await screen.pressByTestIdAsync('collection-filter-field:agents');
                     for (const key of targetKeys) await vi.waitFor(() =>
                         expect(screen.findByTestId(`collection-filter-value:agents:${key}`)).not.toBeNull());
@@ -524,12 +523,11 @@ describe('saved Session spaces through the mounted query transport', () => {
             const project = { serverId: home, projectKey: 'project-a' };
             const section = { serverId: home, sectionId: 'section-a' };
             for (const [fieldId, value] of [['projects', project], ['agents', agent], ['sections', section]] as const) {
-                await screen.pressByTestIdAsync('collection-filter-add');
                 await screen.pressByTestIdAsync(`collection-filter-field:${fieldId}`);
                 const valueId = `collection-filter-value:${fieldId}:${typeof value === 'string' ? value : JSON.stringify(value)}`;
                 await vi.waitFor(() => expect(screen.findByTestId(valueId)).not.toBeNull());
                 await screen.pressByTestIdAsync(valueId);
-                await screen.pressByTestIdAsync('collection-filter-back');
+                await screen.pressByTestIdAsync(`collection-filter-condition:${fieldId}:is:value`);
             }
             expect(screen.getTextContent()).toContain('Release');
             const composed = { projects: { include: [project], exclude: [] }, agents: { include: [agent], exclude: [] },

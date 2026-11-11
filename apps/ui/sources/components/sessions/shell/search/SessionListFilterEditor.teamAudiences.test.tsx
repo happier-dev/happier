@@ -81,7 +81,6 @@ async function openSharedWith(screen: Awaited<ReturnType<typeof renderScreen>>):
         await screen.pressByTestIdAsync('collection-filter-condition:audiences:is:value');
         return;
     }
-    await screen.pressByTestIdAsync('collection-filter-add');
     await vi.waitFor(() => {
         expect(screen.findByTestId('collection-filter-field:audiences')).not.toBeNull();
     });

@@ -373,7 +373,6 @@ describe('WorkflowsColumn', () => {
         const readCount = () => executeMock.mock.calls.filter(call => call[0] === 'workflow.definition.list' || call[0] === 'workflow.run.summaries').length;
         const reads = readCount();
         await screen.pressByTestIdAsync('workflows-column-space-filter-open');
-        await screen.pressByTestIdAsync('collection-filter-add');
         await screen.pressByTestIdAsync('collection-filter-field:view');
         const editor = () => screen.findAll(node => node.props.testID === 'workflows-column-space-editor' && node.props.model)[0]!;
         const options = editor().props.model.availableFields.find((field: { id: string }) => field.id === 'view').valueOptions;

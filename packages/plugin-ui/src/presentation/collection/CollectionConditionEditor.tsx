@@ -18,6 +18,8 @@ import {
   type HappierPressableStyleState,
 } from '../interaction/Pressable.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
+import { useOptionalHappierUiTheme } from '../../environment/context.js';
+import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 import type {
   CollectionConditionEdit,
@@ -32,14 +34,16 @@ import {
   collectionConditionValueLabels,
   isCollectionConditionOptionPicked,
 } from './conditionModel.js';
+import { HAPPIER_DISCLOSURE_CHEVRON_METRICS, HappierDisclosureChevron } from './DisclosureChevron.js';
 
 /**
  * The one condition editor (lab `clfilter:filter`, P6 §4.1): a filter as a list of conditions —
- * Field · operator · values · remove — that starts from what the list shows, grows with Add filter and
- * counts the result live. Sessions, Workflows, Discussions, Settings columns and plugin pages draw
+ * Field · operator · values · remove — that starts from what the list shows, lists the fields it can add
+ * beneath, and counts the result live. One view (owner 2026-11-11): a field opens its values in place, under
+ * it, and a pick becomes its condition there, so existing and new conditions never part across two views. Sessions, Workflows, Discussions, Settings columns and plugin pages draw
  * this same body over the shared condition model; each supplies its own registry, labels and host.
  *
- * The editor holds only which picker is open. Every change leaves as one {@link CollectionConditionEdit}
+ * The editor holds only which field's values are open and the order fields stood in when it opened. Every change leaves as one {@link CollectionConditionEdit}
  * that the owner applies through its registry, so the filter keeps a single writer.
  */
 export type HappierCollectionConditionTextRole =
@@ -57,9 +61,7 @@ export type HappierCollectionConditionTextRole =
   | 'empty';
 
 export type HappierCollectionConditionIcon =
-  | 'add'
   | 'remove'
-  | 'back'
   | 'check';
 
 export type HappierCollectionConditionEditorHost = Readonly<{
@@ -75,7 +77,7 @@ export type HappierCollectionConditionEditorHost = Readonly<{
   >;
   /** The host's glyph for one of the editor's own marks. */
   Icon: ComponentType<Readonly<{ name: HappierCollectionConditionIcon }>>;
-  /** A field's mark in the Add filter list, when the host has one. */
+  /** A field's mark in the list of fields the filter can add, when the host has one. */
   FieldIcon?: ComponentType<Readonly<{ fieldId: string }>>;
   /** The host's search field, for a long value list. */
   SearchField: ComponentType<
@@ -116,7 +118,6 @@ export type HappierCollectionConditionEditorLabels = Readonly<{
   clear: string;
   add: string;
   addSearch: string;
-  back: string;
   /** Joins two values of one condition ("happier or website"). */
   or: string;
   operators: Readonly<
@@ -187,8 +188,6 @@ export const HAPPIER_COLLECTION_CONDITION_EDITOR_METRICS = Object.freeze({
   valueMinHeight: 26,
   valueRadius: 7,
   removeSize: 22,
-  addMinHeight: 32,
-  addRadius: 8,
   optionMinHeight: 34,
   footerMinHeight: 52,
   /** A value list longer than this offers search. */
@@ -214,14 +213,25 @@ const includesValue = (values: readonly JsonValue[], value: JsonValue) =>
 /** One value (a radio choice) or several (a set, OR within the condition). */
 const isMultiValue = (field: CollectionConditionField) => field.kind === 'set';
 
-type Picker = Readonly<{ kind: 'add' } | { kind: 'values'; fieldId: string }>;
+/** The words of an open value list stand one disclosure box in from their field's name, under the field. */
+const VALUE_INDENT = HAPPIER_DISCLOSURE_CHEVRON_METRICS.boxPx;
+// A field or value list is a list picker: its rows run edge to edge across the popover (owner 2026-11-08),
+// stepping out of the body's padding while their words stay on the group titles' edge.
+const OPTION_ROW = {
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: 8,
+  minHeight: M.optionMinHeight,
+  marginHorizontal: -M.padding,
+  paddingHorizontal: M.padding + 8,
+} as const satisfies HappierPortableStyle;
 
 const styles = Object.freeze({
   root: { width: '100%', minWidth: 300 } satisfies ViewStyle,
   body: {
     paddingHorizontal: M.padding,
     paddingTop: M.padding,
-    paddingBottom: 4,
+    paddingBottom: M.padding,
   } satisfies ViewStyle,
   header: {
     flexDirection: 'row',
@@ -274,15 +284,6 @@ const styles = Object.freeze({
   } satisfies HappierPortableStyle,
   removeSlot: { width: M.removeSize } satisfies ViewStyle,
   operatorLabel: { width: M.operatorWidth, height: 24, flexShrink: 0, alignItems: 'center', justifyContent: 'center' } satisfies ViewStyle,
-  add: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    minHeight: M.addMinHeight,
-    marginTop: 4,
-    paddingHorizontal: 8,
-    borderRadius: M.addRadius,
-  } satisfies HappierPortableStyle,
   footer: {
     minHeight: M.footerMinHeight,
     marginHorizontal: M.padding,
@@ -292,40 +293,40 @@ const styles = Object.freeze({
     alignItems: 'center',
     gap: 8,
   } satisfies ViewStyle,
-  pickerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    minHeight: 32,
-    paddingHorizontal: 4,
-  } satisfies ViewStyle,
-  back: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    minHeight: 28,
-    paddingHorizontal: 6,
-    borderRadius: 6,
-  } satisfies HappierPortableStyle,
+  // The fields a filter can add follow its conditions, parted from them by the popover's hairline.
+  fields: { marginTop: 6, paddingTop: 6, borderTopWidth: 1 } satisfies ViewStyle,
   search: { marginVertical: 4 } satisfies ViewStyle,
   groupTitle: {
     paddingHorizontal: 8,
     paddingTop: 8,
     paddingBottom: 2,
   } satisfies ViewStyle,
-  // A field or value list is a list picker: its rows run edge to edge across the popover (owner 2026-11-08),
-  // stepping out of the body's padding while their words stay on the group titles' edge.
-  option: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    minHeight: M.optionMinHeight,
-    marginHorizontal: -M.padding,
-    paddingHorizontal: M.padding + 8,
-  } satisfies HappierPortableStyle,
+  option: OPTION_ROW,
+  // A value under its field: the same edge-to-edge row, its words one disclosure box in.
+  valueOption: { ...OPTION_ROW, paddingLeft: M.padding + 8 + VALUE_INDENT } satisfies HappierPortableStyle,
+  valueSearch: { marginVertical: 4, marginLeft: 8 + VALUE_INDENT } satisfies ViewStyle,
   optionMark: { width: 16, alignItems: 'center' } satisfies ViewStyle,
   empty: { paddingHorizontal: 8, paddingVertical: 10 } satisfies ViewStyle,
+  valuesEmpty: { paddingLeft: 8 + VALUE_INDENT, paddingVertical: 10 } satisfies ViewStyle,
 });
+
+/**
+ * The order fields stand in while the popover is open: its conditions first, then what it can add (in the owner's
+ * groups). A field keeps its place when it gains or loses its condition, so nothing moves under the pointer; a field
+ * that appears later joins the end. The next opening orders afresh.
+ */
+function useStableFieldOrder(
+  conditionIds: readonly string[],
+  addIds: readonly string[],
+): Readonly<{ order: readonly string[]; openedWithConditions: number }> {
+  const state = useRef<{ order: string[]; openedWithConditions: number } | null>(null);
+  if (state.current === null) {
+    state.current = { order: [...conditionIds, ...addIds], openedWithConditions: conditionIds.length };
+  } else {
+    for (const id of [...conditionIds, ...addIds]) if (!state.current.order.includes(id)) state.current.order.push(id);
+  }
+  return state.current;
+}
 
 export const HappierCollectionConditionEditor = memo(
   function HappierCollectionConditionEditor(
@@ -333,9 +334,13 @@ export const HappierCollectionConditionEditor = memo(
   ): ReactElement {
     const { host, labels, model, onChange } = props;
     const colors = host.useColors();
-  const hitTarget = host.touchTargetPx;
-    const [picker, setPicker] = useState<Picker | null>(null);
-    const close = useCallback(() => setPicker(null), []);
+    const theme = useOptionalHappierUiTheme();
+    const hitTarget = host.touchTargetPx;
+    // The one field whose values are open, in place under it; null when every field is folded.
+    const [openFieldId, setOpenFieldId] = useState<string | null>(null);
+    const close = useCallback(() => setOpenFieldId(null), []);
+    const toggle = useCallback((fieldId: string) => setOpenFieldId((open) => open === fieldId ? null : fieldId), []);
+    const [fieldQuery, setFieldQuery] = useState('');
     const shownRows = useMemo(
       () => model.rows.filter((row) => !props.hiddenFieldIds?.has(row.fieldId)),
       [model.rows, props.hiddenFieldIds],
@@ -357,8 +362,8 @@ export const HappierCollectionConditionEditor = memo(
     useEffect(() => { countDemandListener.current = props.onValuePickerChange; }, [props.onValuePickerChange]);
     useEffect(() => {
       if (!props.onValuePickerChange) return;
-      const field = picker?.kind === 'values'
-        ? fieldsById.get(picker.fieldId) ?? rowForField(picker.fieldId)?.field : undefined;
+      const field = openFieldId === null ? undefined
+        : fieldsById.get(openFieldId) ?? rowForField(openFieldId)?.field;
       const request = field ? { fieldId: field.id, options: field.valueOptions.map(({ value, values }) =>
         values ? { value, values } : { value }) } : null;
       // Count arrivals and label-only rebindings cannot feed demand back into the producer.
@@ -366,13 +371,15 @@ export const HappierCollectionConditionEditor = memo(
       if (countDemand.current.key === key) return;
       countDemand.current = { key, request };
       props.onValuePickerChange(request);
-    }, [fieldsById, picker, props.onValuePickerChange, rowForField]);
+    }, [fieldsById, openFieldId, props.onValuePickerChange, rowForField]);
     useEffect(() => () => {
       if (countDemand.current.request === null) return;
       countDemand.current = { key: 'null', request: null };
       countDemandListener.current?.(null);
     }, []);
 
+    // Fills resolve through the containing material: on glass a field is the plane's tint, never an opaque block.
+    const paintColor = useHappierMaterialColorResolver();
     const press = (
       state: HappierPressableStyleState,
       base: HappierPortableStyle,
@@ -381,14 +388,15 @@ export const HappierCollectionConditionEditor = memo(
       base,
       fill !== undefined
         ? {
-            backgroundColor:
+            backgroundColor: paintColor(
               state.hovered || state.pressed ? colors.fillHover : fill,
+            ),
           }
         : null,
       happierFocusRingStyle({ visible: state.focused, color: colors.focus }),
     ];
 
-    // A one-choice field ("Needs me · Waiting on you") is added whole; any other field opens its values.
+    // A one-choice field ("Needs me · Waiting on you") is added whole; any other field opens its values in place.
     const startField = useCallback(
       (field: CollectionConditionField) => {
         const existing = rowForField(field.id);
@@ -408,12 +416,12 @@ export const HappierCollectionConditionEditor = memo(
               ? { type: 'change', rowId: existing.id, condition }
               : { type: 'add', condition },
           );
-          setPicker(null);
+          setOpenFieldId(null);
           return;
         }
-        setPicker({ kind: 'values', fieldId: field.id });
+        toggle(field.id);
       },
-      [close, onChange, props, rowForField],
+      [close, onChange, props, rowForField, toggle],
     );
 
     const pickValue = useCallback(
@@ -437,7 +445,7 @@ export const HappierCollectionConditionEditor = memo(
               ? { type: 'change', rowId: live.id, condition }
               : { type: 'add', condition },
           );
-          setPicker(null);
+          setOpenFieldId(null);
           return;
         }
         const current = live?.values ?? [];
@@ -501,70 +509,202 @@ export const HappierCollectionConditionEditor = memo(
       props.maxHeight === undefined
         ? undefined
         : Math.max(0, props.maxHeight - M.footerMinHeight);
-    const { Text, Icon, Button } = host;
+    const { Text, Icon, Button, FieldIcon, SearchField } = host;
 
-    if (picker) {
-      const field =
-        picker.kind === 'values'
-          ? (fieldsById.get(picker.fieldId) ??
-            rowForField(picker.fieldId)?.field ??
-            null)
-          : null;
-      const custom =
-        field &&
-        props.renderValuePicker?.({
-          field,
-          row: rowForField(field.id),
-          close,
-          ...(props.maxHeight === undefined
-            ? {}
-            : { maxHeight: props.maxHeight }),
-        });
+    // Conditions, then the fields the filter can add, each standing once and keeping its place while open.
+    const addable = addableFields(props);
+    const addableIds = new Set(addable.map((field) => field.id));
+    const groups = props.fieldGroups ?? [];
+    const grouped = new Set(groups.flatMap((group) => group.fieldIds));
+    const groupedAddable = [
+      ...groups.flatMap((group) => group.fieldIds.filter((id) => addableIds.has(id))),
+      ...addable.filter((field) => !grouped.has(field.id)).map((field) => field.id),
+    ];
+    const conditionIds = [...new Set(shownRows.map((row) => row.fieldId))];
+    const { order, openedWithConditions } = useStableFieldOrder(conditionIds, groupedAddable);
+    const conditionedNow = new Set(conditionIds);
+    // A field stands where it stood at opening: with the conditions, or among the fields to add.
+    const openedConditions = new Set(order.slice(0, openedWithConditions));
+    const needle = fieldQuery.trim().toLocaleLowerCase();
+    const searchable = addable.length > M.searchThreshold;
+    const fieldOf = (id: string) => fieldsById.get(id) ?? rowForField(id)?.field ?? null;
+    const conditionsPart = order.filter((id) => openedConditions.has(id) && (conditionedNow.has(id) || addableIds.has(id)));
+    const addPart = order.filter((id) => !openedConditions.has(id) && (conditionedNow.has(id) || addableIds.has(id)))
+      .filter((id) => !needle || conditionedNow.has(id) || (fieldOf(id)?.label.toLocaleLowerCase().includes(needle) ?? false));
+    // Fields outside the owner's groups stand under the filter's own word for them ("Add filter").
+    const groupTitleOf = (id: string) => groups.find((group) => group.fieldIds.includes(id))?.title ?? labels.add;
+
+    const valuesOf = (field: CollectionConditionField): ReactNode => {
+      const custom = props.renderValuePicker?.({
+        field,
+        row: rowForField(field.id),
+        close,
+        ...(bodyMaxHeight === undefined ? {} : { maxHeight: bodyMaxHeight }),
+      });
+      return custom ? (
+        <View testID={`collection-filter-values:${field.id}`}>{custom}</View>
+      ) : (
+        <ValueList
+          field={field}
+          row={rowForField(field.id)}
+          host={host}
+          labels={labels}
+          colors={colors}
+          press={press}
+          onPick={pickValue}
+        />
+      );
+    };
+
+    const conditionRow = (row: CollectionConditionRow) => {
+      const locked = props.lockedFieldIds?.has(row.fieldId) === true;
+      const togglesOperator =
+        row.operator !== 'unavailable' &&
+        row.field.operators.length > 1 &&
+        row.field.kind === 'set';
+      const values =
+        props.summarizeValues?.(row.field, row.values) ??
+        collectionConditionValueLabels(row.field, row.values, props.formatValue);
+      const shown = values.length > 0 ? values : ['—'];
       return (
         <View
-          testID={`${props.testID ?? 'collection-filter'}-picker`}
-          style={styles.root}
+          key={row.id}
+          testID={`collection-filter-condition:${row.fieldId}:${row.operator}`}
+          style={styles.row}
         >
-          <View style={[styles.body, { paddingBottom: M.padding }]}>
-            <View style={styles.pickerHeader}>
-              <HappierPressable
-                testID="collection-filter-back"
-                accessibilityRole="button"
-                accessibilityLabel={labels.back}
-                onPress={close}
-                style={(state) => press(state, styles.back, 'transparent')}
-              >
-                <Icon name="back" />
-                <Text role="action">{labels.title}</Text>
-              </HappierPressable>
+          <View style={styles.field}>
+            <Text role="field" numberOfLines={1}>
+              {row.field.label}
+            </Text>
+          </View>
+          {togglesOperator ? (
+            <HappierPressable
+              testID={`collection-filter-condition:${row.fieldId}:${row.operator}:operator`}
+              accessibilityRole="button"
+              accessibilityLabel={`${row.field.label} ${labels.operators[row.operator]}`}
+              onPress={() => toggleOperator(row)}
+              hitTarget={hitTarget}
+              hitReach={rowControlHitReach(24)}
+              style={(state) =>
+                press(state, styles.operator, 'transparent')
+              }
+            >
+              <Text role="operator">
+                {labels.operators[row.operator]}
+              </Text>
+            </HappierPressable>
+          ) : (
+            <View style={styles.operatorLabel}>
+              <Text role="operator">
+                {labels.operators[row.operator]}
+              </Text>
             </View>
-            {custom ? (
-              custom
-            ) : picker.kind === 'add' ? (
-              <AddFieldList
-                {...props}
-                colors={colors}
-                press={press}
-                onPick={startField}
-              />
-            ) : field ? (
-              <ValueList
-                field={field}
-                row={rowForField(field.id)}
-                host={host}
-                labels={labels}
-                colors={colors}
-                press={press}
-                maxHeight={bodyMaxHeight}
-                onPick={pickValue}
-              />
-            ) : null}
+          )}
+          <HappierPressable
+            testID={`collection-filter-condition:${row.fieldId}:${row.operator}:value`}
+            accessibilityRole="button"
+            accessibilityLabel={`${row.field.label}: ${values.join(', ')}`}
+            expanded={openFieldId === row.fieldId}
+            disabled={!row.available}
+            onPress={() => toggle(row.fieldId)}
+            hitTarget={hitTarget}
+            hitReach={rowControlHitReach(M.valueMinHeight)}
+            style={(state) => press(state, styles.value, colors.fill)}
+          >
+            {/* The chip's long values clip inside it; the chip itself never clips, so its hit area reaches the row. */}
+            <View style={styles.valueContent}>
+              {shown.map((value, index) => (
+                <View
+                  key={`${index}:${value}`}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 4,
+                    flexShrink: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  {index > 0 ? <Text role="join">{labels.or}</Text> : null}
+                  <Text role="value" numberOfLines={1}>
+                    {value}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </HappierPressable>
+          <View style={styles.removeSlot}>
+            {locked ? null : (
+              <HappierPressable
+                testID={`collection-filter-condition:${row.fieldId}:${row.operator}:remove`}
+                accessibilityRole="button"
+                accessibilityLabel={labels.remove(row.field.label)}
+                onPress={() =>
+                  onChange({ type: 'remove', rowId: row.id })
+                }
+                hitTarget={hitTarget}
+                // The row's last control: half the gap toward the value, the row's end padding beyond it.
+                hitReach={{ ...rowControlHitReach(M.removeSize), right: 4 }}
+                style={(state) => press(state, styles.remove, 'transparent')}
+              >
+                <Icon name="remove" />
+              </HappierPressable>
+            )}
           </View>
         </View>
       );
+    };
+
+    // A field with conditions draws them; one without is a row that opens its values in place.
+    const fieldBlock = (id: string) => {
+      const field = fieldOf(id);
+      if (field === null) return null;
+      const rows = shownRows.filter((row) => row.fieldId === id);
+      const open = openFieldId === id;
+      return (
+        <View key={id}>
+          {rows.length > 0 ? rows.map(conditionRow) : (
+            <HappierPressable
+              testID={`collection-filter-field:${id}`}
+              accessibilityRole="button"
+              accessibilityLabel={field.label}
+              expanded={open}
+              onPress={() => startField(field)}
+              style={(state) => press(state, styles.option, 'transparent')}
+            >
+              {FieldIcon ? (
+                <View style={styles.optionMark}>
+                  <FieldIcon fieldId={id} />
+                </View>
+              ) : null}
+              <View style={styles.grow}>
+                <Text role="option" numberOfLines={1}>
+                  {field.label}
+                </Text>
+              </View>
+              <HappierDisclosureChevron expanded={open}
+                color={theme?.colors.secondaryText ?? colors.divider} reducedMotion />
+            </HappierPressable>
+          )}
+          {open ? valuesOf(field) : null}
+        </View>
+      );
+    };
+
+    const titledAddPart: ReactNode[] = [];
+    let lastGroupTitle: string | null = null;
+    for (const id of addPart) {
+      const title = groupTitleOf(id);
+      if (title !== null && title !== lastGroupTitle) {
+        titledAddPart.push(
+          <View key={`group:${title}`} style={styles.groupTitle}>
+            <Text role="groupTitle">{title}</Text>
+          </View>,
+        );
+      }
+      lastGroupTitle = title;
+      titledAddPart.push(fieldBlock(id));
     }
 
-    const canAdd = addableFields(props).length > 0;
     return (
       <View testID={props.testID ?? 'collection-filter'} style={styles.root}>
         <ScrollView
@@ -605,118 +745,26 @@ export const HappierCollectionConditionEditor = memo(
               <Text role="count">{labels.clear}</Text>
             </HappierPressable>
           </View>
-          {shownRows.map((row) => {
-            const locked = props.lockedFieldIds?.has(row.fieldId) === true;
-            const togglesOperator =
-              row.operator !== 'unavailable' &&
-              row.field.operators.length > 1 &&
-              row.field.kind === 'set';
-            const values =
-              props.summarizeValues?.(row.field, row.values) ??
-              collectionConditionValueLabels(row.field, row.values, props.formatValue);
-            const shown = values.length > 0 ? values : ['—'];
-            return (
-              <View
-                key={row.id}
-                testID={`collection-filter-condition:${row.fieldId}:${row.operator}`}
-                style={styles.row}
-              >
-                <View style={styles.field}>
-                  <Text role="field" numberOfLines={1}>
-                    {row.field.label}
-                  </Text>
+          {conditionsPart.map(fieldBlock)}
+          {addPart.length > 0 || searchable ? (
+            <View testID="collection-filter-fields"
+              style={[styles.fields, { borderTopColor: conditionsPart.length > 0 ? colors.divider : 'transparent' }]}>
+              {searchable ? (
+                <SearchField
+                  value={fieldQuery}
+                  onChangeText={setFieldQuery}
+                  placeholder={labels.addSearch}
+                  testID="collection-filter-fields-search"
+                  style={styles.search}
+                />
+              ) : null}
+              {searchable && addPart.length === 0 ? (
+                <View style={styles.empty}>
+                  <Text role="empty">{labels.noFields}</Text>
                 </View>
-                {togglesOperator ? (
-                  <HappierPressable
-                    testID={`collection-filter-condition:${row.fieldId}:${row.operator}:operator`}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${row.field.label} ${labels.operators[row.operator]}`}
-                    onPress={() => toggleOperator(row)}
-                    hitTarget={hitTarget}
-                    hitReach={rowControlHitReach(24)}
-                    style={(state) =>
-                      press(state, styles.operator, 'transparent')
-                    }
-                  >
-                    <Text role="operator">
-                      {labels.operators[row.operator]}
-                    </Text>
-                  </HappierPressable>
-                ) : (
-                  <View style={styles.operatorLabel}>
-                    <Text role="operator">
-                      {labels.operators[row.operator]}
-                    </Text>
-                  </View>
-                )}
-                <HappierPressable
-                  testID={`collection-filter-condition:${row.fieldId}:${row.operator}:value`}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${row.field.label}: ${values.join(', ')}`}
-                                    disabled={!row.available}
-                  onPress={() =>
-                    setPicker({ kind: 'values', fieldId: row.fieldId })
-                  }
-                  hitTarget={hitTarget}
-                  hitReach={rowControlHitReach(M.valueMinHeight)}
-                  style={(state) => press(state, styles.value, colors.fill)}
-                >
-                  {/* The chip's long values clip inside it; the chip itself never clips, so its hit area reaches the row. */}
-                  <View style={styles.valueContent}>
-                    {shown.map((value, index) => (
-                      <View
-                        key={`${index}:${value}`}
-                        style={{
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          gap: 4,
-                          flexShrink: 1,
-                          minWidth: 0,
-                        }}
-                      >
-                        {index > 0 ? <Text role="join">{labels.or}</Text> : null}
-                        <Text role="value" numberOfLines={1}>
-                          {value}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                </HappierPressable>
-                <View style={styles.removeSlot}>
-                  {locked ? null : (
-                    <HappierPressable
-                      testID={`collection-filter-condition:${row.fieldId}:${row.operator}:remove`}
-                      accessibilityRole="button"
-                      accessibilityLabel={labels.remove(row.field.label)}
-                      onPress={() =>
-                        onChange({ type: 'remove', rowId: row.id })
-                      }
-                      hitTarget={hitTarget}
-                      // The row's last control: half the gap toward the value, the row's end padding beyond it.
-                      hitReach={{ ...rowControlHitReach(M.removeSize), right: 4 }}
-                      style={(state) => press(state, styles.remove, 'transparent')}
-                    >
-                      <Icon name="remove" />
-                    </HappierPressable>
-                  )}
-                </View>
-              </View>
-            );
-          })}
-          {canAdd ? (
-            <HappierPressable
-              testID="collection-filter-add"
-              accessibilityRole="button"
-              accessibilityLabel={labels.add}
-                            onPress={() => setPicker({ kind: 'add' })}
-              hitTarget={hitTarget}
-              // Half its top margin toward the last row's controls.
-              hitReach={{ top: 2 }}
-              style={(state) => press(state, styles.add, colors.fill)}
-            >
-              <Icon name="add" />
-              <Text role="action">{labels.add}</Text>
-            </HappierPressable>
+              ) : null}
+              {titledAddPart}
+            </View>
           ) : null}
         </ScrollView>
         {/* Nothing to count and nothing to press: no footer, so the editor never ends in an empty band. */}
@@ -762,7 +810,7 @@ export const HappierCollectionConditionEditor = memo(
   },
 );
 
-/** Fields Add filter offers: available, allowed by the owner, and not already a visible condition. */
+/** Fields the filter can add: available, allowed by the owner, and not already a visible condition. */
 function addableFields(
   props: HappierCollectionConditionEditorProps,
 ): readonly CollectionConditionField[] {
@@ -786,88 +834,7 @@ type PressStyle = (
   fill?: string,
 ) => HappierStyleProp;
 
-function AddFieldList(
-  props: HappierCollectionConditionEditorProps &
-    Readonly<{
-      colors: ReturnType<HappierCollectionConditionEditorHost['useColors']>;
-      press: PressStyle;
-      onPick: (field: CollectionConditionField) => void;
-    }>,
-): ReactElement {
-  const { host, labels } = props;
-  const [query, setQuery] = useState('');
-  const fields = addableFields(props);
-  const needle = query.trim().toLocaleLowerCase();
-  const matching = needle
-    ? fields.filter((field) => field.label.toLocaleLowerCase().includes(needle))
-    : fields;
-  const groups = props.fieldGroups ?? [];
-  const grouped = new Set(groups.flatMap((group) => group.fieldIds));
-  const sections = [
-    ...groups.map((group) => ({
-      id: group.id,
-      title: group.title,
-      fields: group.fieldIds.flatMap((id) =>
-        matching.filter((field) => field.id === id),
-      ),
-    })),
-    {
-      id: 'other',
-      title: null as string | null,
-      fields: matching.filter((field) => !grouped.has(field.id)),
-    },
-  ].filter((section) => section.fields.length > 0);
-  const { Text, FieldIcon, SearchField } = host;
-  return (
-    <View testID="collection-filter-fields">
-      <SearchField
-        value={query}
-        onChangeText={setQuery}
-        placeholder={labels.addSearch}
-        testID="collection-filter-fields-search"
-        style={styles.search}
-      />
-      {sections.length === 0 ? (
-        <View style={styles.empty}>
-          <Text role="empty">{labels.noFields}</Text>
-        </View>
-      ) : null}
-      {sections.map((section) => (
-        <View key={section.id}>
-          {section.title ? (
-            <View style={styles.groupTitle}>
-              <Text role="groupTitle">{section.title}</Text>
-            </View>
-          ) : null}
-          {section.fields.map((field) => (
-            <HappierPressable
-              key={field.id}
-              testID={`collection-filter-field:${field.id}`}
-              accessibilityRole="button"
-              accessibilityLabel={field.label}
-              onPress={() => props.onPick(field)}
-              style={(state) =>
-                props.press(state, styles.option, 'transparent')
-              }
-            >
-              {FieldIcon ? (
-                <View style={styles.optionMark}>
-                  <FieldIcon fieldId={field.id} />
-                </View>
-              ) : null}
-              <View style={styles.grow}>
-                <Text role="option" numberOfLines={1}>
-                  {field.label}
-                </Text>
-              </View>
-            </HappierPressable>
-          ))}
-        </View>
-      ))}
-    </View>
-  );
-}
-
+/** A field's values, open in place under it. The popover's own body scrolls them with everything else. */
 function ValueList(
   props: Readonly<{
     field: CollectionConditionField;
@@ -876,7 +843,6 @@ function ValueList(
     labels: HappierCollectionConditionEditorLabels;
     colors: ReturnType<HappierCollectionConditionEditorHost['useColors']>;
     press: PressStyle;
-    maxHeight?: number;
     onPick: (
       field: CollectionConditionField,
       option: CollectionConditionValueOption,
@@ -903,62 +869,51 @@ function ValueList(
           onChangeText={setQuery}
           placeholder={field.label}
           testID="collection-filter-values-search"
-          style={styles.search}
+          style={styles.valueSearch}
         />
       ) : null}
-      <ScrollView
-        style={
-          props.maxHeight === undefined
-            ? undefined
-            : { maxHeight: props.maxHeight - 48 }
-        }
-        keyboardShouldPersistTaps="handled"
-      >
-        {options.length === 0 ? (
-          <View style={styles.empty}>
-            <Text role="empty">{labels.noValues}</Text>
-          </View>
-        ) : null}
-        {options.map((option) => {
-          const selected =
-            props.row !== null && optionPicked(props.row.values, option);
-          const label =
-            option.label ??
-            (typeof option.value === 'string'
-              ? option.value
-              : JSON.stringify(option.value));
-          const valueKey = typeof option.value === 'string' ? option.value : JSON.stringify(option.value);
-          return (
-            <HappierPressable
-              key={JSON.stringify(option.value)}
-              testID={`collection-filter-value:${field.id}:${valueKey}`}
-              accessibilityRole={multi ? 'checkbox' : 'radio'}
-              accessibilityLabel={label}
-              checked={selected}
-              disabled={option.disabled === true}
-              onPress={() => props.onPick(field, option)}
-              style={(state) =>
-                props.press(state, styles.option, 'transparent')
-              }
-            >
-              <View style={styles.grow}>
-                <Text role="option" numberOfLines={1}>
-                  {label}
-                </Text>
-              </View>
-              {/* How many held rows carry it (lab `clfilter:add`); absent when nothing local says. */}
-              {option.count !== undefined ? (
-                <Text role="optionCount" numberOfLines={1} testID={`collection-filter-value-count:${field.id}:${valueKey}`}>
-                  {String(option.count)}
-                </Text>
-              ) : null}
-              <View style={styles.optionMark}>
-                {selected ? <Icon name="check" /> : null}
-              </View>
-            </HappierPressable>
-          );
-        })}
-      </ScrollView>
+      {options.length === 0 ? (
+        <View style={styles.valuesEmpty}>
+          <Text role="empty">{labels.noValues}</Text>
+        </View>
+      ) : null}
+      {options.map((option) => {
+        const selected =
+          props.row !== null && optionPicked(props.row.values, option);
+        const label =
+          option.label ??
+          (typeof option.value === 'string'
+            ? option.value
+            : JSON.stringify(option.value));
+        const valueKey = typeof option.value === 'string' ? option.value : JSON.stringify(option.value);
+        return (
+          <HappierPressable
+            key={JSON.stringify(option.value)}
+            testID={`collection-filter-value:${field.id}:${valueKey}`}
+            accessibilityRole={multi ? 'checkbox' : 'radio'}
+            accessibilityLabel={label}
+            checked={selected}
+            disabled={option.disabled === true}
+            onPress={() => props.onPick(field, option)}
+            style={(state) => props.press(state, styles.valueOption, 'transparent')}
+          >
+            <View style={styles.grow}>
+              <Text role="option" numberOfLines={1}>
+                {label}
+              </Text>
+            </View>
+            {/* How many held rows carry it (lab `clfilter:add`); absent when nothing local says. */}
+            {option.count !== undefined ? (
+              <Text role="optionCount" numberOfLines={1} testID={`collection-filter-value-count:${field.id}:${valueKey}`}>
+                {String(option.count)}
+              </Text>
+            ) : null}
+            <View style={styles.optionMark}>
+              {selected ? <Icon name="check" /> : null}
+            </View>
+          </HappierPressable>
+        );
+      })}
     </View>
   );
 }

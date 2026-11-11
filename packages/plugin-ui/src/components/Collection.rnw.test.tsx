@@ -3445,20 +3445,74 @@ describe('resting list rows', () => {
 });
 
 describe('the group band', () => {
-  it("draws a table's group label as a quiet rounded band on the rows' gutter, never a full-bleed ruled rectangle (owner 2026-11-10)", () => {
-    // PRs & Issues "Pinned / Needs you / In review": radii derive from one base (DESIGN.md), and the band stands
-    // where a row's fill does, inset from the list's edges, so it groups its rows without shouting.
-    const view = mount({ presentation: 'table' });
-    view.measure(1440);
+  const px = (value: string | undefined) => Number.parseFloat(value || '0');
+  function bandOf(view: ReturnType<typeof mount>, title: string): HTMLElement {
     const label = [...view.container.querySelectorAll<HTMLElement>('*')]
-      .find((node) => node.children.length === 0 && node.textContent === 'Needs you')!;
+      .find((node) => node.children.length === 0 && node.textContent === title)!;
     let band: HTMLElement | null = label;
     while (band !== null && (band.style.backgroundColor === '' || band.style.backgroundColor === 'transparent')) band = band.parentElement;
     expect(band).not.toBeNull();
-    expect(band!.style.borderTopLeftRadius).toBe(`${HAPPIER_COLLECTION_LIST_METRICS.rowRadius}px`);
-    expect(band!.style.marginLeft).toBe(`${HAPPIER_COLLECTION_LIST_METRICS.rowInset}px`);
-    expect(band!.style.marginRight).toBe(`${HAPPIER_COLLECTION_LIST_METRICS.rowInset}px`);
-    expect(Number.parseFloat(band!.style.borderBottomWidth || '0')).toBe(0);
+    return band!;
+  }
+
+  it("draws a group label as a quiet rounded band in the rows' own box: the same edge left and right, a breath off the rows (owner 2026-11-11)", async () => {
+    // PRs & Issues "Pinned / Needs you": radii derive from one base (DESIGN.md). The band stands where a row's fill
+    // does, so its ends meet the rows' (a one-sided gutter cut its right end off), and a selected row under it
+    // keeps a small gap rather than touching it.
+    const view = mount({ presentation: 'table' });
+    view.measure(1440);
+    for (const presentation of ['table', 'list'] as const) {
+      if (presentation === 'list') await view.setOpen('c');
+      const band = bandOf(view, 'Needs you');
+      expect(band.style.borderTopLeftRadius).toBe(`${HAPPIER_COLLECTION_LIST_METRICS.rowRadius}px`);
+      expect(px(band.style.marginLeft)).toBe(0);
+      expect(px(band.style.marginRight)).toBe(0);
+      expect(px(band.style.marginTop)).toBeGreaterThan(0);
+      expect(px(band.style.marginBottom)).toBe(px(band.style.marginTop));
+      expect(Number.parseFloat(band.style.borderBottomWidth || '0')).toBe(0);
+      // Its words stand on the rows' leading edge, where each row's glyph starts (the row's content padding plus
+      // its press target's 1 pt ring).
+      const rowContent = [...view.query('row:a:cell')!.querySelectorAll<HTMLElement>('*')]
+        .find((node) => node.children.length === 0 && node.textContent === '•')!.parentElement!.parentElement!;
+      expect(px(band.style.paddingLeft)).toBe(px(rowContent.style.paddingLeft) + 1);
+    }
+    view.unmount();
+  });
+
+  it("stands a row's glyph as far in from the row's edge as down from its top (owner 2026-11-11)", async () => {
+    // Triage tasks: the status dot sat 20 in but 11 down. One inset: the row's top padding plus its 1 pt ring.
+    const view = mount({ presentation: 'table' });
+    view.measure(1440);
+    await view.setOpen('c');
+    const glyphText = [...view.query('row:a:cell')!.querySelectorAll<HTMLElement>('*')]
+      .find((node) => node.children.length === 0 && node.textContent === '•')!;
+    const rowContent = glyphText.parentElement!.parentElement!;
+    expect(px(rowContent.style.paddingLeft)).toBe(px(rowContent.style.paddingTop));
+    view.unmount();
+  });
+});
+
+describe('row hairlines', () => {
+  /** The hairline a ruled row draws at its foot: an overlay, absolutely placed along the row's bottom edge. */
+  const hasHairline = (cell: HTMLElement) => [...cell.querySelectorAll<HTMLElement>('*')].some((node) =>
+    node.style.position === 'absolute' && node.style.bottom === '0px' && node.style.left === '0px'
+    && node.style.right === '0px' && Number.parseFloat(node.style.height || '9') <= 1 && node.children.length === 0);
+  const ruled = (view: ReturnType<typeof mount>) =>
+    Object.fromEntries(entries.map((entry) => [entry.id, hasHairline(view.query(`row:${entry.id}:cell`)!)]));
+
+  it('draws no hairline where a band already parts the groups, around a selected row, or under the open one', async () => {
+    // Owner 03: the selected row kept a separator under it, and every band seemed to have a top border (the hairline
+    // of the row above it). Rows a, b · band · c. The last row ends the list and keeps its foot.
+    const view = mount({ presentation: 'table' });
+    view.measure(1440);
+    expect(ruled(view)).toEqual({ a: true, b: false, c: true });
+    await view.setOpen('b');
+    view.measure(1440);
+    // b is open: its own foot and the row above it both stop drawing the line between them.
+    expect(ruled(view)).toEqual({ a: false, b: false, c: true });
+    await view.setOpen('c');
+    view.measure(1440);
+    expect(ruled(view)).toEqual({ a: true, b: false, c: false });
     view.unmount();
   });
 });
@@ -4973,7 +5027,9 @@ describe('grid', () => {
     expect(rows.length).toBeGreaterThan(3);
     // One exact row height, the table's (a plain list placeholder draws four two-line rows).
     expect(new Set(rows.map((row) => row.style.height)).size).toBe(1);
-    expect(rows[0]!.style.paddingLeft).toBe('20px');
+    // The placeholder stands on the rows' own leading inset (as far in as a row's glyph is down), so nothing
+    // shifts when the real rows land.
+    expect(rows[0]!.style.paddingLeft).toBe('11px');
     expect(mount.container.querySelector('[aria-busy="true"]')).not.toBeNull();
     mount.unmount();
   });

@@ -40,9 +40,7 @@ const TEXT: Readonly<
 };
 
 const ICONS: Readonly<Record<HappierCollectionConditionIcon, IconName>> = {
-  add: 'add',
   remove: 'close',
-  back: 'back',
   check: 'check',
 };
 

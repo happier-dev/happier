@@ -254,10 +254,8 @@ describe('external author semantic proof', () => {
     try {
       expect(await choices()).toEqual([expect.stringContaining('Choose Current review'), 'Choose Terminal review', 'Choose Release review']);
       await fixture.press(await fixture.getByRole('button', { name: 'Edit release filter' }));
-      await click('[data-testid="collection-filter-add"]');
       await click('[data-testid^="collection-filter-field:"]');
       await click('[data-testid^="collection-filter-value:"][data-testid$=":ready"]');
-      await click('[data-testid="collection-filter-back"]');
       expect(await choices()).toEqual(['Choose Release review']);
       expect(location).toBe('');
       await fixture.press(await fixture.getByRole('button', { name: 'Save release filter' }));

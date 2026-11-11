@@ -13,6 +13,7 @@ import {
   type HappierWidgetFrameProps,
 } from './WidgetFrame.js';
 import { HappierStateLine } from '../state/InfoState.js';
+import { resolveHappierPageTextStyle } from './pageText.js';
 import type { HappierStyleProp } from '../portableTypes.js';
 
 /**
@@ -254,6 +255,28 @@ describe('HappierWidgetFrame', () => {
     expect(headerOf(card.container).style.paddingLeft).toBe(`${HAPPIER_WIDGET_FRAME_METRICS.cardInsetPx}px`);
     expect(headerOf(plain.container).style.paddingLeft).toBe(`${HAPPIER_WIDGET_FRAME_METRICS.plainInsetPx}px`);
     expect(byId(card.container, 'frame.body')!.style.paddingLeft).toBe(`${HAPPIER_WIDGET_FRAME_METRICS.cardInsetPx}px`);
+  });
+
+  it("stands a card's first line as far down from its edge as in from its side; mark and controls centre on that line (owner 2026-11-11)", () => {
+    // Owner 04: "QA33 pull request 2" sat far lower than its left inset because the 32 pt identity row centred a
+    // 20 pt title in it. The mark and the ⋯ keep their boxes, centred on the title's line without growing it.
+    const line = Number(resolveHappierPageTextStyle('sectionTitle', null).lineHeight);
+    const slack = (HAPPIER_WIDGET_FRAME_METRICS.identityRowPx - line) / 2;
+    for (const props of [{}, { anatomy: 'item' as const, mark: undefined }]) {
+      const card = mount(props);
+      const header = byId(card.container, 'frame.header')!;
+      expect(header.style.paddingTop).toBe(header.style.paddingLeft);
+      expect(header.style.alignItems).toBe('flex-start');
+      const slots = [...header.children].map((node) => node as HTMLElement)
+        .filter((node) => node.getAttribute('data-testid') !== 'frame.titleBlock');
+      expect(slots.length).toBeGreaterThan(0);
+      for (const slot of slots) {
+        expect(slot.style.minHeight).toBe(`${HAPPIER_WIDGET_FRAME_METRICS.identityRowPx}px`);
+        expect(slot.style.marginTop).toBe(`${-slack}px`);
+        expect(slot.style.marginBottom).toBe(`${-slack}px`);
+      }
+      card.unmount();
+    }
   });
 
   it('draws a move handle before the mark, and keeps a header for a frame that has only one', () => {

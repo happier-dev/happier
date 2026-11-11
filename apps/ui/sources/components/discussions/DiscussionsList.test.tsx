@@ -386,14 +386,11 @@ describe('DiscussionsList and its Session anchor consumer', () => {
             await screen.pressByTestIdAsync('discussions-column-search:toggle');
             await screen.pressByTestIdAsync('discussions-column-space-filter-open');
             const editor = () => screen.findAll(node => node.props.testID === 'discussions-column-space-editor' && node.props.model)[0]!;
-            await screen.pressByTestIdAsync('collection-filter-add');
             await screen.pressByTestIdAsync('collection-filter-field:state');
             const options = () => editor().props.model.availableFields.find((field: { id: string }) => field.id === 'state').valueOptions;
             expect(options()).toEqual(expect.arrayContaining([
                 expect.objectContaining({ value: 'active', count: 2 }), expect.objectContaining({ value: 'archived', count: 1 }),
             ]));
-            await screen.pressByTestIdAsync('collection-filter-back');
-            await screen.pressByTestIdAsync('collection-filter-add');
             await screen.pressByTestIdAsync('collection-filter-field:attention');
             const attention = editor().props.model.availableFields.find((field: { id: string }) => field.id === 'attention');
             expect(attention.valueOptions[0].count).toBeUndefined();

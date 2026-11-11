@@ -18,6 +18,16 @@ import {
   type HappierCollectionConditionEditorHost,
   type HappierCollectionConditionEditorLabels,
 } from './CollectionConditionEditor.js';
+import { HappierMaterialRoleProvider } from '../layout/Surface.js';
+
+function renderedBackground(color: string): string {
+  const probe = document.createElement('div');
+  probe.style.backgroundColor = color;
+  document.body.appendChild(probe);
+  const resolved = getComputedStyle(probe).backgroundColor;
+  probe.remove();
+  return resolved;
+}
 
 // The host primitives are the injected boundary; the editor's anatomy and edits under test are its own.
 const host: HappierCollectionConditionEditorHost = {
@@ -48,7 +58,6 @@ const labels: HappierCollectionConditionEditorLabels = {
   clear: 'Clear',
   add: 'Add filter',
   addSearch: 'Filter by…',
-  back: 'Back',
   or: 'or',
   operators: {
     is: 'is',
@@ -96,7 +105,7 @@ const press = (container: HTMLElement, testID: string) =>
   });
 
 describe('HappierCollectionConditionEditor', () => {
-  it('demands value counts only for an open value list, keeps demand stable on count arrivals and releases it on Back/unmount', async () => {
+  it('demands value counts only for an open value list, keeps demand stable on count arrivals and releases it on collapse/unmount', async () => {
     const filter = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible' });
     const demands: (CollectionConditionValueCountRequest | null)[] = [];
     const onValuePickerChange = (request: CollectionConditionValueCountRequest | null) => demands.push(request);
@@ -106,8 +115,6 @@ describe('HappierCollectionConditionEditor', () => {
       })} onChange={() => {}} onValuePickerChange={onValuePickerChange} />;
     const mount = mountThroughReactNativeWeb(view());
     expect(demands).toEqual([]);
-    await press(mount.container, 'collection-filter-add');
-    expect(demands).toEqual([]);
     await press(mount.container, 'collection-filter-field:statuses');
     expect(demands).toHaveLength(1);
     expect(demands[0]).toMatchObject({ fieldId: 'statuses', options: expect.arrayContaining([{ value: 'working',
@@ -115,9 +122,9 @@ describe('HappierCollectionConditionEditor', () => {
     await mount.render(view(7));
     await mount.render(view(8));
     expect(demands).toHaveLength(1);
-    await press(mount.container, 'collection-filter-back');
+    // Pressing the field again folds its values away.
+    await press(mount.container, 'collection-filter-field:statuses');
     expect(demands.at(-1)).toBeNull();
-    await press(mount.container, 'collection-filter-add');
     await press(mount.container, 'collection-filter-field:statuses');
     expect(demands).toHaveLength(3);
     mount.unmount();
@@ -131,13 +138,64 @@ describe('HappierCollectionConditionEditor', () => {
       model={conditionModelFromFilter(sessionWorkFilterFields, filter, {
         valueCounts: { fieldId: 'statuses', options: [{ value: 'working', count: 9 }, { value: 'idle', count: 0 }] },
       })} onChange={() => {}} />);
-    await press(mount.container, 'collection-filter-add');
     await press(mount.container, 'collection-filter-field:statuses');
     const countOf = (value: string) => mount.container
       .querySelector(`[data-testid="collection-filter-value-count:statuses:${value}"]`)?.textContent ?? null;
     expect(countOf('working')).toBe('9');
     expect(countOf('idle')).toBe('0');
     expect(countOf('failed')).toBeNull();
+    mount.unmount();
+  });
+
+  it('fills a condition\'s value field with the containing material, so on glass it is a field-on-glass tint, not an opaque block (owner 11-11 #01)', () => {
+    const glassField = 'rgba(235, 230, 225, 0.1)';
+    const registry = createWorkflowListFilterRegistryV1([stageField()]);
+    const mount = mountThroughReactNativeWeb(
+      <HappierMaterialRoleProvider role="floating" resolveMaterialColor={() => glassField}>
+        <HappierCollectionConditionEditor host={host} labels={labels}
+          model={conditionModelFromFilter(registry, { view: 'triggered' as const }, {})} onChange={() => {}} />
+      </HappierMaterialRoleProvider>,
+    );
+    const value = mount.container.querySelector<HTMLElement>('[data-testid="collection-filter-condition:view:is:value"]')!;
+    expect(getComputedStyle(value).backgroundColor).toBe(renderedBackground(glassField));
+    mount.unmount();
+  });
+
+  it('keeps the filter and every field it can add in one view: a field opens its values in place, and a pick becomes its condition there (owner 11-11 #01)', async () => {
+    const stage = stageField();
+    const registry = createWorkflowListFilterRegistryV1([stage]);
+    let filter: Parameters<typeof applyCollectionConditionEdit>[1] = { view: 'triggered' as const };
+    const view = () => (
+      <HappierCollectionConditionEditor host={host} labels={labels}
+        model={conditionModelFromFilter(registry, filter, {})}
+        onChange={(edit) => { filter = applyCollectionConditionEdit(registry, filter, edit); }}
+        result={{ matchedCount: 3, coverage: 'complete' }} onDone={() => {}} doneLabel="Show results" />
+    );
+    const mount = mountThroughReactNativeWeb(view());
+    const query = (testID: string) => mount.container.querySelector<HTMLElement>(`[data-testid="${testID}"]`);
+    // The existing condition and the field to add stand together, with no Add filter step to a second view.
+    expect(query('collection-filter-condition:view:is')).not.toBeNull();
+    const field = query(`collection-filter-field:${stage.id}`)!;
+    expect(field).not.toBeNull();
+    expect(field.getAttribute('aria-expanded')).toBe('false');
+    await press(mount.container, `collection-filter-field:${stage.id}`);
+    expect(query(`collection-filter-field:${stage.id}`)!.getAttribute('aria-expanded')).toBe('true');
+    // Its values open in place: the title, Clear, the other condition and Show results all stay.
+    expect(query(`collection-filter-values:${stage.id}`)).not.toBeNull();
+    expect(query('collection-filter-picker')).toBeNull();
+    expect(query('collection-filter-clear')).not.toBeNull();
+    expect(query('collection-filter-condition:view:is')).not.toBeNull();
+    expect(query('collection-filter-done')).not.toBeNull();
+    await press(mount.container, `collection-filter-value:${stage.id}:ready`);
+    await mount.render(view());
+    // The pick is the field's condition, in the same place, its values still open for a second pick.
+    expect(query(`collection-filter-condition:${stage.id}:is`)).not.toBeNull();
+    expect(query(`collection-filter-values:${stage.id}`)).not.toBeNull();
+    // Its value field folds and unfolds the same values in place.
+    await press(mount.container, `collection-filter-condition:${stage.id}:is:value`);
+    expect(query(`collection-filter-values:${stage.id}`)).toBeNull();
+    await press(mount.container, `collection-filter-condition:${stage.id}:is:value`);
+    expect(query(`collection-filter-values:${stage.id}`)).not.toBeNull();
     mount.unmount();
   });
 
@@ -191,7 +249,6 @@ describe('HappierCollectionConditionEditor', () => {
         ?.textContent,
     ).toBe('3 items');
 
-    await press(mount.container, 'collection-filter-add');
     await press(mount.container, `collection-filter-field:${stage.id}`);
     await press(mount.container, `collection-filter-value:${stage.id}:ready`);
     expect(edits.at(-1)).toEqual({
@@ -206,7 +263,7 @@ describe('HappierCollectionConditionEditor', () => {
       condition: { values: ['ready', 'blocked'] },
     });
     await mount.render(view());
-    await press(mount.container, 'collection-filter-back');
+    await press(mount.container, `collection-filter-condition:${stage.id}:is:value`);
     expect(mount.container.textContent).toContain('Ready');
     expect(mount.container.textContent).toContain('Blocked');
 
@@ -259,7 +316,6 @@ describe('HappierCollectionConditionEditor', () => {
       />
     );
     const mount = mountThroughReactNativeWeb(view());
-    await press(mount.container, 'collection-filter-add');
     await press(mount.container, 'collection-filter-field:statuses');
     await press(mount.container, 'collection-filter-value:statuses:working');
     expect(edits.at(-1)).toEqual({ type: 'add', condition: { fieldId: 'statuses', operator: 'is', values: [...working] } });
@@ -274,7 +330,7 @@ describe('HappierCollectionConditionEditor', () => {
     await mount.render(view());
     await press(mount.container, 'collection-filter-value:statuses:working');
     await mount.render(view());
-    await press(mount.container, 'collection-filter-back');
+    await press(mount.container, 'collection-filter-condition:statuses:is:value');
     // The row names the group once, not each state it stands for.
     const row = mount.container.querySelector('[data-testid="collection-filter-condition:statuses:is"]');
     expect(row?.textContent).toContain('Working');
@@ -325,7 +381,6 @@ describe('HappierCollectionConditionEditor', () => {
         '[data-testid="collection-filter-condition:view:is"]',
       ),
     ).toBeNull();
-    await press(mount.container, 'collection-filter-add');
     await press(mount.container, 'collection-filter-field:view');
     await press(mount.container, 'collection-filter-value:view:running');
     expect(edits.at(-1)).toEqual({

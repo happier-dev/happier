@@ -162,10 +162,8 @@ it('reads its saved rule filter and Include again result back into the open edit
         await vi.waitFor(async () => { await flushHookEffects(); expect(screen.findByTestId(row)).toBeTruthy(); });
         await screen.pressByTestIdAsync(row);
         await screen.pressByTestIdAsync(`${row}-filter`);
-        await screen.pressByTestIdAsync('collection-filter-add');
         await screen.pressByTestIdAsync('collection-filter-field:statuses');
         await screen.pressByTestIdAsync('collection-filter-value:statuses:failed');
-        await screen.pressByTestIdAsync('collection-filter-back');
         await screen.pressByTestIdAsync('collection-filter-done');
         await vi.waitFor(() => expect(rule.version).toBe(4));
         await vi.waitFor(() => expect(screen.findAllByTestId(`${row}-filter`).find(node => typeof node.props.onPress === 'function')?.props.disabled).toBe(false));
@@ -257,10 +255,10 @@ it('acquires one private census for Following rule counts and draft edits, and r
         await screen.pressByTestIdAsync(row('payments'));
         await screen.pressByTestIdAsync(`${row('payments')}-filter`);
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('count=1001'));
-        await screen.pressByTestIdAsync('collection-filter-add');
         await screen.pressByTestIdAsync('collection-filter-field:statuses');
         await screen.pressByTestIdAsync('collection-filter-value:statuses:failed');
-        await screen.pressByTestIdAsync('collection-filter-back');
+        // Its value field folds the values it opened.
+        await screen.pressByTestIdAsync('collection-filter-condition:statuses:is:value');
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('count=0'));
         expect(censusReads()).toBe(1);
         await screen.pressByTestIdAsync(`${row('payments')}-filter-back`);

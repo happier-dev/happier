@@ -373,6 +373,8 @@ export type HappierCollectionTableRowFacts = Readonly<{
    * rowInset in from the list's edges with the catalog row radius, so rows part by air.
    */
   insetFill?: boolean;
+  /** The row ends its group and the next group's band follows: the band parts them, so the row draws no hairline. */
+  beforeBand?: boolean;
 }>;
 export const HappierCollectionTableRowContext = createContext<HappierCollectionTableRowFacts | null>(null);
 
@@ -408,6 +410,12 @@ export const HappierCollectionTreeRowContext = createContext<HappierCollectionTr
  * fact to keep its mark (`HappierCollectionTableRowContext`'s edge).
  */
 export const HappierListRowOpenContext = createContext(false);
+
+/**
+ * The List row right after this one is selected or open, provided by the List row owner (it knows the order and
+ * the selection). A selected row's fill parts it from its neighbours, so the hairline between them is not drawn.
+ */
+export const HappierListRowPrecedesSelectedContext = createContext(false);
 
 /**
  * Set by a card that draws its own selection ring around the row (a Collection grid card). The row then
