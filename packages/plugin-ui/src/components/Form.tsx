@@ -63,8 +63,8 @@ const FORM_CANCEL_TRANSLATION_KEY = 'happier.plugin-ui.form.cancel';
 
 type FormOptionValue = ActionInputOptionValue;
 
-// Re-export the canonical narrowed Action vocabulary alongside FormProps so
-// callers can author against the same type without reaching into internals.
+// Action declarations keep their canonical vocabulary; FormProps narrows the
+// presentation inputs supported by an author Form.
 export type { ActionFormFieldHint, ActionFormHints } from '@happier-dev/plugin-sdk/actions';
 
 type FormOption = Readonly<{
@@ -597,7 +597,10 @@ function FormActions({ children, trailing, footnote, footnoteKey, footnoteTone, 
 }
 
 export type FormProps = Readonly<{
-  hints: ActionFormHints;
+  // Custom-entry hints belong to the host's shared input controls, rather than author Form fields.
+  hints: Omit<ActionFormHints, 'fields'> & Readonly<{
+    fields: readonly Omit<ActionFormHints['fields'][number], 'allowCustomValue'>[];
+  }>;
   value: Readonly<Record<string, unknown>>;
   onChange: (value: Record<string, unknown>) => void;
   onSubmit: (value: Record<string, unknown>) => unknown;

@@ -10834,6 +10834,17 @@ portable `HappierWidgetFrame` chrome; core and plugin consumers share that drawi
 `body: { render, heightAtNormalText? }` slots. The optional body height is a
 text-scaled minimum. The Collection retains identity, framing, activation,
 selection and focus; rich bodies retain their domain data and demand owners.
+Stable `Collection.useRowItem` and `useDetailHeader` hooks subscribe to plugin-owned
+row and selected-header facts below the container. `CollectionAnatomy.titleMinWidth`
+reserves the readable width of short-code table titles. A plugin's detail header
+can supply root-first `breadcrumb` labels through Collection or `DetailsPane`;
+`Step.onPress` opens the full story from its title, and `Tabs.lead` places a detail's
+title and facts above its tabs. These are author props consumed by bundled plugins
+or promised by the [authoring guide](../apps/docs/content/docs/plugins/ui/react-native.mdx).
+The host's Workflow interaction anchors use `HostCollection.retainedRowKeys`
+through the host entry, excluded from the governed author barrel; the renderer is
+the same Collection owner. Author `Form` hints omit `allowCustomValue`; the host's
+shared input controls retain that canonical Action hint for custom-entry choices.
 Cards show only supplied descriptions and have no divided footer band. Truly
 title-only cards remain compact. Existing `WidgetFrame` exposes independent
 header/body controls, quiet `facts` and optional `onOpen`/`openTarget`, retaining

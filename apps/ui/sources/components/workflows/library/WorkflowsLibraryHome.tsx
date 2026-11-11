@@ -8,7 +8,7 @@ import { useEntityComposerMention } from '@/components/ui/treeDragDrop/useEntity
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
-    Collection,
+    HostCollection as Collection,
     useHappierCollection,
     type CollectionAnatomy,
     type CollectionRowActions,

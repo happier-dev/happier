@@ -51,9 +51,9 @@ type IsEqual<Left, Right> = (
 ) ? true : false;
 
 type _AuthorCollectionKeysAreCurated = Assert<IsEqual<keyof CollectionProps<unknown>,
-  | 'model' | 'anatomy' | 'accessibilityLabel' | 'title' | 'presentation' | 'boardLayout' | 'detail' | 'detailOpenIntent' | 'renderDetail' | 'detailHeader'
+  | 'model' | 'anatomy' | 'accessibilityLabel' | 'title' | 'presentation' | 'boardLayout' | 'detail' | 'detailOpenIntent' | 'renderDetail' | 'detailHeader' | 'useDetailHeader'
   | 'minListWidth' | 'minDetailWidth' | 'preferredListRatio' | 'minCardWidth' | 'narrowGrid' | 'groupAction' | 'collapsedGroups'
-  | 'scroll' | 'virtualizer' | 'loading' | 'loadingRows' | 'useRowActions' | 'selection' | 'pageRoot' | 'search' | 'create' | 'empty' | 'afterRows' | 'header' | 'headerPlacement' | 'footer'
+  | 'scroll' | 'virtualizer' | 'loading' | 'loadingRows' | 'useRowActions' | 'useRowItem' | 'selection' | 'pageRoot' | 'search' | 'create' | 'empty' | 'afterRows' | 'header' | 'headerPlacement' | 'footer'
   | 'windowStatement' | 'testID' | 'listTestID' | 'detailTestID'
   | 'sort' | 'summaryRows' | 'labels'
   | 'listWidthPx' | 'onListWidthChange' | 'onListWidthCommit' | 'onListWidthReset' | 'resizeKey'
@@ -63,7 +63,7 @@ type _AuthorCollectionAnatomyKeysAreCurated = Assert<IsEqual<keyof CollectionAna
   | 'reason' | 'listFact' | 'signal'
   | 'agent' | 'age' | 'titleMeta' | 'titleMetaAlign'
   | 'fields' | 'peek' | 'preview' | 'description' | 'action' | 'accessibilityLabel' | 'accessibilityHint'
-  | 'testID' | 'columnTitles'
+  | 'testID' | 'titleMinWidth' | 'columnTitles'
 >>;
 type _AuthorCollectionRowRoleIsPublic = Assert<IsEqual<
   NonNullable<CollectionAnatomy<unknown>['rowRole']>, HappierCollectionRowRole
@@ -84,14 +84,20 @@ type _CollectionNamedOrdersStayPortable = Assert<IsEqual<CollectionSort['orders'
 type _CollectionVirtualizerIsPublic = Assert<IsEqual<CollectionProps<unknown>['virtualizer'], CollectionVirtualizer | undefined>>;
 type _VirtualizedListConsumesSameAdapter = Assert<IsEqual<Extract<ListProps<unknown>, { items: readonly unknown[] }>['virtualizer'], CollectionVirtualizer | undefined>>;
 type _AuthorDetailsPaneKeysAreCurated = Assert<IsEqual<keyof DetailsPaneProps,
-  'open' | 'title' | 'subtitle' | 'leading' | 'subtitleLeading' | 'actions' | 'onClose' | 'children' | 'footer' | 'testID'
+  'open' | 'title' | 'subtitle' | 'breadcrumb' | 'leading' | 'subtitleLeading' | 'actions' | 'onClose' | 'children' | 'footer' | 'testID'
 >>;
 type _AuthorStepKeysAreCurated = Assert<IsEqual<keyof StepProps,
-  'marker' | 'title' | 'titleKey' | 'trailing' | 'children' | 'testID'
+  'marker' | 'title' | 'titleKey' | 'trailing' | 'onPress' | 'children' | 'testID'
 >>;
 type _AuthorTabsKeysAreCurated = Assert<IsEqual<keyof TabsProps,
-  'value' | 'onValueChange' | 'ariaLabel' | 'testID' | 'tabList' | 'layout' | 'sharedPanel' | 'labels' | 'children' | 'presentation' | 'pageKind'
+  'value' | 'onValueChange' | 'ariaLabel' | 'testID' | 'tabList' | 'layout' | 'sharedPanel' | 'labels' | 'lead' | 'children' | 'presentation' | 'pageKind'
 >>;
+type _AuthorCollectionComponentUsesCuratedProps = Assert<IsEqual<
+  Parameters<typeof import('../index.public.js').Collection<unknown>>[0], CollectionProps<unknown>
+>>;
+type _HostCollectionIsNotAnAuthorExport = Assert<
+  Extract<keyof typeof import('../index.public.js'), 'HostCollection' | 'HostCollectionProps'> extends never ? true : false
+>;
 type _AuthorPageTabsAddOnlyTheirPresentationFact = Assert<IsEqual<
   Exclude<keyof Extract<TabsProps, { presentation: 'page' }>, keyof TabsProps>, 'phonePresented'
 >>;

@@ -121,7 +121,7 @@ import {
 import type { HappierCollectionGrouping } from '../presentation/collection/collectionModel.js';
 import type { HappierLayoutChangeEvent } from '../presentation/portableTypes.js';
 import {
-  Collection,
+  HostCollection as Collection,
   CollectionLoadingRows,
   type CollectionAnatomy,
   type CollectionProps,

@@ -478,8 +478,6 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
   scroll?: 'collection' | 'page' | 'page-virtualized';
   /** Platform adapter for collection-scrolling Lists; page modes retain the containing page's scroll owner. */
   virtualizer?: CollectionVirtualizer;
-  /** Rows a live interaction anchors to (a deep link's popover); a windowed page keeps them mounted wherever the viewport is. */
-  retainedRowKeys?: readonly string[];
   /**
    * The items are still arriving: the table and list hold their row geometry with skeleton rows that fill the
    * view, and a grid with skeleton cards (the last known count). `empty` is shown only once loading is over.
@@ -1931,7 +1929,15 @@ function CollectionChoiceMark(): ReactElement {
   return <HappierRadioMark selected={selection?.selected === true} disabled={selection?.activatable === false} theme={theme} />;
 }
 
-export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
+/** Host-owned interactions may retain their anchored rows outside the visible page window. */
+export type HostCollectionProps<Item> = CollectionProps<Item> & Readonly<{
+  retainedRowKeys?: readonly string[];
+}>;
+
+/** The author component uses the same renderer without the host's interaction-retention input. */
+export const Collection: <Item>(props: CollectionProps<Item>) => ReactElement = HostCollection;
+
+export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactElement {
   const { model } = props;
   const singleChoice = props.selection?.single;
   const theme = useHappierUiTheme();

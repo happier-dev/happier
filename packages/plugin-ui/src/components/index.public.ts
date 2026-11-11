@@ -43,7 +43,13 @@ export {
   type ButtonVariant,
   type IconButtonProps,
 } from './Button.js';
-export * from './Collection.js';
+export {
+  Collection, CollectionLoadingRows,
+  type CollectionField, type CollectionAnatomy, type CollectionGlyphBadge, type CollectionGroupAction,
+  type CollectionSort, type CollectionSummaryRow, type CollectionRowActions, type CollectionDetailHeader,
+  type CollectionHeaderSlots, type CollectionDetailRenderContext, type CollectionSingleChoice,
+  type CollectionProps, type CollectionLoadingRowsProps,
+} from './Collection.js';
 export { CollectionRowNeedsYouHighlight, useCollectionRowNeedsYouHighlight,
   type CollectionRowNeedsYouHighlightProps } from './CollectionRowNeedsYouHighlight.js';
 export * from './CollectionSavedViewsStrip.js';

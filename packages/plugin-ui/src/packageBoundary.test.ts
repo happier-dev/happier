@@ -397,7 +397,19 @@ describe('author package boundary', () => {
       const entrypoint = join(packageRoot, 'src', directory, 'index.ts');
       const sourceSpec = join(packageRoot, 'src', directory, 'index.public.ts');
       expect(existsSync(sourceSpec), `${specifier} has no author-owned source spec`).toBe(true);
-      expect(readFileSync(entrypoint, 'utf8').trim()).toBe("export * from './index.public.js';");
+      const syntax = ts.createSourceFile(entrypoint, readFileSync(entrypoint, 'utf8'), ts.ScriptTarget.Latest, true);
+      const exports = syntax.statements.map(statement => ts.isExportDeclaration(statement)
+        && statement.moduleSpecifier && ts.isStringLiteral(statement.moduleSpecifier)
+        ? { from: statement.moduleSpecifier.text, names: statement.exportClause && ts.isNamedExports(statement.exportClause)
+          ? statement.exportClause.elements.map(element => element.name.text) : '*', typeOnly: statement.isTypeOnly }
+        : null);
+      expect(exports).toEqual([
+        // Host interaction retention shares Collection's renderer outside the author barrel.
+        ...(specifier === '.' ? [{ from: './components/Collection.js', names: ['HostCollection', 'HostCollectionProps'], typeOnly: false }] : []),
+        // This host leaf must evaluate before the public presentation graph's import cycle.
+        ...(specifier === './presentation' ? [{ from: './layout/widgetGroupLayout.js', names: ['orderWidgetGroupCellsForStack'], typeOnly: false }] : []),
+        { from: './index.public.js', names: '*', typeOnly: false },
+      ]);
     }
   });
 
