@@ -32,7 +32,7 @@ import { DISCUSSION_AGENT_POST_EVENT_V1, DiscussionMachinePublicationV2Schema,
 import { SESSION_PENDING_RESET_START_RELEASE_EVENT_V1, PendingResetStartReleaseRequestV1Schema, PendingResetStartReleaseResponseV1Schema, type PendingResetStartBindingV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { createMachineDaemonStatePublication, projectMachineDaemonRunningState } from './machine/machineDaemonStatePublication';
-import { projectMachineSetupUpdatesObservation } from './machine/machineSetupObservation';
+import { projectMachineSetupAppliedObservation, projectMachineSetupUpdatesObservation } from './machine/machineSetupObservation';
 import { projectMachineMetadataChange, publishMachineMetadataOnce, publishMachineMetadataUpdate, readOpenedMachineMetadataSnapshot, type MachineMetadataChange } from './machine/machineMetadataPublication';
 import { createApiMachineServicesBinding } from './machine/machineServicesBinding';
 import type { MachineServiceActionDirectTargetInvocation } from '@/session/actions/createCliActionDeps';
@@ -5187,6 +5187,18 @@ export class ApiMachineClient {
 
     getMachineMetadataSnapshot(): MachineMetadataFieldReadV1 {
         return readOpenedMachineMetadataSnapshot(this.machine, this.machineContentReady);
+    }
+
+    getMachineSetupObservationSnapshot(): import('@happier-dev/protocol').MachineSetupObservationV1 | undefined {
+        return this.machine.daemonState?.setup;
+    }
+
+    /** One publication consumes the settled Apply; current reads never rerun native effects. */
+    async publishMachineSetupApplied(plans: readonly import('@happier-dev/protocol/machines/setup/machineRecipeV1').MachineSetupEffectPlanV1[]): Promise<MachinePublicationOutcome> {
+        return this.updateDaemonState(state => {
+            if (!state) throw new Error('Machine daemon state is unavailable');
+            return { ...state, setup: projectMachineSetupAppliedObservation(state.setup, this.machine.metadata, plans) };
+        });
     }
 
     /** Setup-native observations are published through the Machine state owner. */

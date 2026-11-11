@@ -32,7 +32,7 @@ describe('Software Apply group refresh recovery', () => {
     };
     return { input, spawned };
   }
-  it('retains the closed native cause when an elevated mutation fails with an unknown outcome', async () => {
+  it('retains the classified native cause when an elevated mutation fails', async () => {
     const f = await fixture();
     vi.spyOn(process as NodeJS.Process & { getuid: () => number }, 'getuid').mockReturnValue(0);
     const runNative = async (command: MachineSetupNativeCommand) => {
@@ -60,8 +60,9 @@ describe('Software Apply group refresh recovery', () => {
     try {
       expect(await applyMachineSetup({ ...f.input, setup: { items: [item] },
         recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan }], elevation })).toEqual({
-        ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown',
-        details: { kind: 'machineSetup', failure: { kind: 'native_effect_failed', reason: 'native_effect_failed' } },
+        ok: false, errorCode: 'native_effect_failed', error: 'native_effect_failed',
+        details: { kind: 'machineSetup', failure: { kind: 'native_effect_failed', reason: 'native_effect_failed',
+          phase: 'apply', stepId: 'engine-access' } },
       });
     } finally {
       // The supplied OS child has settled. Release this test's uncertain admission
@@ -70,7 +71,7 @@ describe('Software Apply group refresh recovery', () => {
         observeSettled: async operation => operation.operationId === f.input.operation.actionRequestId });
     }
   });
-  it.each(['user', 'system'] as const)('returns a typed %s-service remedy after a real elevated group grant, including a no-op retry', async mode => {
+  it.each(['user', 'system', 'user-with-ack'] as const)('returns a typed %s-service remedy after a real elevated group grant, including a no-op retry', async mode => {
     const f = await fixture();
     vi.spyOn(process as NodeJS.Process & { getuid: () => number }, 'getuid').mockReturnValue(0);
     let member = false;
@@ -97,18 +98,20 @@ describe('Software Apply group refresh recovery', () => {
       observe: async () => ({ version: 1, observedAt: 0, daemonUid: 1000, daemonUsername: 'happier', daemonIdentity: 'nonRoot',
         rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed', managedDropIn: 'valid', tailscaledOperator: { authorization: 'unknown' } }),
     };
-    const input = { ...f.input, setup: { items: [item], scripts: [{ body: 'docker info' }] }, recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan }], elevation,
+    const acknowledges = vi.fn();
+    const input = { ...f.input, operation: { ...f.input.operation, ...(mode === 'user-with-ack' ? { afterTerminalSuccessAcknowledged: acknowledges } : {}) }, setup: { items: [item], scripts: [{ body: 'docker info' }] }, recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan }], elevation,
       groupRefreshNative: { platform: 'linux' as const, user: { username: 'happier', uid: 1000 }, groups: [1000],
-        serviceLabel: 'happier-daemon.default', readCgroup: async () => mode === 'user'
+        serviceLabel: 'happier-daemon.default', readCgroup: async () => mode !== 'system'
           ? '0::/user.slice/user-1000.slice/user@1000.service/app.slice/happier-daemon.default.service\n'
           : '0::/system.slice/happier-daemon.default.service\n' } };
     const required = { ok: false, errorCode: 'requires_session_refresh', details: { requiredStep: {
-      kind: 'requiresSessionRefresh', scope: mode === 'user' ? 'userServices' : 'daemonService', requiresAdministrator: true,
-      command: { executable: 'systemctl', args: ['restart', ...(mode === 'user' ? ['--', 'user@1000.service'] : ['happier-daemon.default.service'])] },
+      kind: 'requiresSessionRefresh', scope: mode !== 'system' ? 'userServices' : 'daemonService', requiresAdministrator: true,
+      command: { executable: 'systemctl', args: ['restart', ...(mode !== 'system' ? ['--', 'user@1000.service'] : ['happier-daemon.default.service'])] },
     } } };
     expect(await applyMachineSetup(input)).toMatchObject(required);
     expect(mutations).toEqual(['usermod']);
     expect(f.spawned).toEqual([]);
+    expect(acknowledges).not.toHaveBeenCalled();
     expect(await applyMachineSetup(input)).toMatchObject(required);
     expect(mutations).toEqual(['usermod']);
     expect(await applyMachineSetup({ ...input, setup: { items: [item] },

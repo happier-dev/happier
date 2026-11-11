@@ -1,5 +1,30 @@
 import type { MachineSetupObservationV1 } from '@happier-dev/protocol';
 import type { MachineMetadata } from '../types';
+import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+
+/** Consume successful native Apply, whose interpreter already verified its effects. */
+export function projectMachineSetupAppliedObservation(
+    previous: MachineSetupObservationV1 | undefined,
+    metadata: MachineMetadata | null,
+    plans: readonly MachineSetupEffectPlanV1[],
+): MachineSetupObservationV1 {
+    const recipes: MachineSetupObservationV1['recipes'] = [];
+    for (const source of metadata?.setup?.sources ?? []) for (const item of source.setup.items ?? []) {
+        if (item.kind === 'app' || recipes.some(recipe => sameStrictJsonValue(recipe.ref, item.selection.ref))) continue;
+        const plan = plans.find(plan => plan.basis.kind === 'setup' && sameStrictJsonValue(plan.basis.selection, item.selection));
+        // Reboot Apply proves dispatch only; its reconnect owner establishes readiness.
+        const status = plan && !plan.steps.some(step => step.kind === 'reboot') ? 'satisfied' : 'unverifiable';
+        recipes.push({ ref: item.selection.ref, status,
+            ...(status === 'unverifiable' ? { reason: 'required_fact_unavailable' as const } : {}),
+            steps: plan?.steps.map(step => ({ stepId: step.id,
+                status: step.kind === 'reboot' ? 'unverifiable' as const : 'satisfied' as const })) ?? [] });
+    }
+    return { version: 1, desiredRevision: metadata?.setup?.revision ?? 0,
+        status: recipes.every(recipe => recipe.status === 'satisfied') ? 'satisfied' : 'unverifiable', recipes,
+        ...(previous?.updates ? { updates: previous.updates } : {}),
+        ...(previous?.attachedPresets ? { attachedPresets: previous.attachedPresets } : {}) };
+}
 
 /** Project only facts already held by the daemon; the state publisher deduplicates. */
 export function projectMachineSetupUpdatesObservation(

@@ -19,6 +19,33 @@ describe('admitted Machine setup snapshot lifetime', () => {
     nativeTerminal.onLaunch = undefined;
     nativeTerminal.autoExit = false;
   });
+  it('publishes successful Apply inventory once and reuses it on inert current-copy reads', async () => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
+    const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { homeId: 'srv_home', machineId: fixture.machine.id, sources: fixture.sources, mode: 'effects' },
+      context: fixture.context('machines.setup.plan'),
+    }));
+    expect(await fixture.apply({ input: { homeId: 'srv_home', machineId: fixture.machine.id,
+      desiredRevision: plan.desiredRevision, sources: plan.sources, exclusions: plan.exclusions,
+      recipePlans: plan.recipePlans ?? [] }, context: fixture.context('machines.setup.apply') }))
+      .toMatchObject({ operationId: expect.any(String) });
+    const commandsAfterApply = fixture.nativeCommands.length;
+    for (let read = 0; read < 2; read++) {
+      expect(await fixture.machineSetupPlan({ input: { homeId: 'srv_home', machineId: fixture.machine.id },
+        context: fixture.context('machines.setup.plan') })).toMatchObject({
+        support: [{ sourceIndex: 0, itemIndex: 0, status: 'satisfied' }],
+      });
+    }
+    await fixture.client.updateDaemonState(state => {
+      if (!state?.setup) throw new Error('Apply must publish its inventory');
+      return { ...state, setup: { ...state.setup, desiredRevision: state.setup.desiredRevision - 1 } };
+    });
+    expect(await fixture.machineSetupPlan({ input: { homeId: 'srv_home', machineId: fixture.machine.id },
+      context: fixture.context('machines.setup.plan') })).toMatchObject({
+      support: [{ sourceIndex: 0, itemIndex: 0, status: 'unverifiable' }],
+    });
+    expect(fixture.nativeCommands).toHaveLength(commandsAfterApply);
+  });
   it.each([false, true])('binds native Apply to the installed recipe plan (tampered: %s)', async tampered => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
     const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({

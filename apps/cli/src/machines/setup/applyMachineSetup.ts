@@ -279,7 +279,10 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
     const requiredStep = await readMachineSetupSessionRefreshRequirement(input.plans, input.groupRefreshNative, daemonRestartRequired);
     if (requiredStep) {
       const elevation = input.elevation;
-      if (requiredStep.scope === 'userServices' && elevation && input.operation.afterTerminalSuccessAcknowledged
+      // A deferred refresh cannot provide groups to scripts that must finish
+      // before that refresh runs. Keep their existing typed recovery remedy.
+      if (!input.sources.some(source => source.scripts?.some(script => script.body))
+        && requiredStep.scope === 'userServices' && elevation && input.operation.afterTerminalSuccessAcknowledged
         && input.plans.some(plan => plan.steps.some(step => step.kind === 'group' && step.name === 'docker'
           && machineSetupStepChangesDaemonGroupsV1(step, requiredStep.username)))) {
         const step = buildUserManagerGroupRefreshStep(input.groupRefreshNative?.user ?? userInfo());
@@ -299,13 +302,14 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
   let terminalId: string | undefined;
   const terminals: { install?: string; setup?: string } = {};
   let env: Readonly<Record<string, string>> = hostEnv;
-  const run = async (phase: string, command: string, args: readonly string[], launchEnv: Readonly<Record<string, string>>, failureCode: string, stage = '') => {
+  const run = async (phase: string, command: string, args: readonly string[], launchEnv: Readonly<Record<string, string>>, failureCode: string, step?: number) => {
     if (signal.aborted) return fail('cancelled');
     const outcome = await executeHostFiniteTerminalProcess({ operation: input.operation, terminalSessions: input.terminalSessions,
       requesterAccountId: input.requesterAccountId, terminalCustody: input.terminalCustody,
       signal,
-      terminalKey: `${operationId}:machineSetup:${phase}${stage}`, launch: { command, args, cwd: input.userHomeDirectory, env: launchEnv },
+      terminalKey: `${operationId}:machineSetup:${phase}${step === undefined ? '' : `:${step}`}`, launch: { command, args, cwd: input.userHomeDirectory, env: launchEnv },
       progress: { phase, label: phase === 'install' ? 'Installing machine tools' : 'Setting up machine' }, failureCode,
+      ...(step === undefined ? {} : { failureStep: step }),
       attachment: observation => {
         if (phase === 'install' || phase === 'setup') terminals[phase] = observation.terminalId;
         return { ...attachment, ...observation, terminals: { ...terminals } };
@@ -381,7 +385,7 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
       if (observed.status !== 'drifted') return fail('machine_setup_script_check_unavailable');
     }
     const shell = resolveFiniteTerminalShell(script.body, hostEnv, platform);
-    const setup = await run('setup', shell.file, shell.args, scriptEnvironment, 'machine_setup_setup_failed', `:${index}`);
+    const setup = await run('setup', shell.file, shell.args, scriptEnvironment, 'machine_setup_setup_failed', index);
     if (!setup.ok) return setup;
     if (observe) {
       const verified = await observe();

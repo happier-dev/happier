@@ -76,7 +76,8 @@ function observeInitialPresence(sources: MachineSetupSourceV1,
 /** Saved copies use the captured content port; new selections demand exact native checks. */
 export function createMachineSetupPlanAction(params: Readonly<{
   apiMachine: Pick<ApiMachineClient, 'getMachineSetupDesiredSnapshot'> & Partial<Pick<ApiMachineClient,
-    'resolveMachineSetupRuntime' | 'captureMachineAdminAccess' | 'refreshMachineSetupUpdates' | 'publishMachineSetupUpdates'>>;
+    'resolveMachineSetupRuntime' | 'captureMachineAdminAccess' | 'refreshMachineSetupUpdates' | 'publishMachineSetupUpdates'
+    | 'getMachineSetupObservationSnapshot'>>;
   machineId: string; homeId: string;
   installation?: MachineSetupInstallation;
   acquirePluginRuntimeRegistryLease?: () => Promise<PluginRuntimeRegistryLease>;
@@ -151,6 +152,7 @@ export function createMachineSetupPlanAction(params: Readonly<{
     let result: Awaited<ReturnType<typeof prepareMachineSetupPlanV1>>;
     try {
       result = await prepareMachineSetupPlanV1({ input, current,
+        observation: params.apiMachine.getMachineSetupObservationSnapshot?.(),
         ...(params.installation ? { installationId: params.installation.installationId } : {}),
         ...(params.apiMachine.captureMachineAdminAccess ? { readAdminAccessObservation: params.apiMachine.captureMachineAdminAccess().observe } : {}),
         ...(signal ?? context.signal ? { signal: signal ?? context.signal } : {}),
@@ -445,6 +447,10 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
           if (written.status !== 'applied' && written.status !== 'unchanged' && written.status !== 'satisfied') {
             const code = written.status === 'conflict' ? 'plan_changed' : `machine_setup_content_${written.status}`;
             throw Object.assign(new Error(code), { code });
+          }
+          if (mode === 'apply' && input.recipePlans.length) {
+            try { await params.apiMachine.publishMachineSetupApplied(input.recipePlans.map(entry => entry.plan)); }
+            catch (error) { logger.warn('[Machine setup] Applied inventory publication failed', error); }
           }
         }
         if (reportedRunning) await report(result.ok ? 'succeeded' : 'failed', result.ok ? undefined : result.errorCode);

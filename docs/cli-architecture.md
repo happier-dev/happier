@@ -3427,6 +3427,10 @@ possible downtime to Plan. When automatic refresh is unavailable, Apply returns
 `requires_session_refresh` with a typed `requiredStep` instead of running later
 scripts or reporting readiness. A no-op retry still requires recovery when the
 account membership is correct but the daemon's kernel groups are stale.
+Pending setup scripts retain that recovery instruction: they cannot inherit the
+new groups from a refresh deferred until after their own successful completion.
+Retry the reviewed setup after refreshing the session. Recipe-only setup can
+finish before the automatic refresh.
 For Docker access on Linux, a daemon inside `user@<uid>.service` runs the existing
 administrator user-manager refresh as its last effect, after the operation has
 settled successfully and Home has acknowledged its terminal snapshot. The review
@@ -3449,6 +3453,13 @@ the distro packages and service startup; an existing engine keeps its package
 source and only needs the target daemon user's Docker membership. Its review
 discloses root-equivalent administrator power.
 Installed lists recorded Software copies only; there is no native Software census.
+Successful explicit Apply publishes its recipe outcome once through Machine daemon
+state. Current-copy Plan reads use that last-known observation for the same desired
+revision; opening Setup or checking again does not poll packages or repeat native
+execution. New effect reviews still observe their selected declarations. A failed
+publication retains the previous last-known or unobserved facts; it does not turn
+completed native effects into a failed installation. Reboot dispatch alone
+does not establish recipe readiness.
 Shared Docker state has no automatic Remove.
 
 ### Devcontainer native roles (0.3 development)
@@ -6635,10 +6646,31 @@ helper-held custody. Once a runner holder dies, the Job name can disappear while
 members live; owner-tag and captured-tree evidence then feed the same remainder and
 Left-behind paths. Job absence is not evidence that all its former members exited.
 
+### Runner start graph
+
+Every runner evaluates the static import graph of
+[`runHostSessionRuntime.ts`](../apps/cli/src/agent/runtime/session/loop/runHostSessionRuntime.ts)
+at start, and each evaluated module stays resident for the Session's lifetime.
+Rare paths load at first use instead: the shared-Provider HTTP application
+(Fastify) when a shared Provider run starts, the Session MCP client side
+(`mcp/runtime/sessionMcpLocalClient.ts`, used by bridges and `happier tools`;
+the runner hosts only the listener in `sessionMcpLocalTransport.ts`), the SDK
+client for API-token automation custody, and Triage sources for a health-check
+auto-start investigation. Module-level work must not read derived Action facts
+for the whole catalog: `ActionSpec.contextualDefaults` derives from the input
+schema, so reading it for every spec builds every Action input schema.
+`runHostSessionRuntime.importGraph.test.ts` and
+`listBuiltInHappierTools.lazySchemas.test.ts` hold these contracts.
+
 ### One tree terminator and owner-end recovery
 
 [`processes/terminate/terminateProcessTree.ts`](../apps/cli/src/processes/terminate/terminateProcessTree.ts)
 is the typed entry to the one shipped algorithm in `scripts/process_tree.cjs`.
+That file has no workspace imports: the CLI, daemon and runners load it in-process
+and pass their own census and process tools as adapters, so it ships unbundled
+(about 15 KB) instead of carrying a second copy of the census closure in every
+runner heap. The standalone `terminal_launch_spec_runner.cjs` composes the same
+owner with its own bundled census, because it runs in a separate process.
 Discovery uses the census/tree owner. In development source, each per-PID signal
 checks the target's native generation, principal and protection immediately before
 effect; the lifecycle callback then checks current ownership. A table admitted for
@@ -8586,6 +8618,18 @@ destination state alone and remains disabled after a Home identity is observed;
 it does not repair an already-split installation.
 
 ### Machine vitals (0.3 development)
+
+macOS free memory comes from `node:os.freemem()` in the host reader, the same
+OS counter Lume uses for its capacity receipt. Used memory is total minus free;
+this is conservative immediate allocation headroom, not a maximum VM size.
+The native helper supplies total memory and pressure independently. Apple's
+[`memorystatus` pressure accounting](https://github.com/apple-oss-distributions/xnu/blob/main/doc/vm/memorystatus_notify.md#available-memory)
+includes active pages and must not be converted into free bytes. The internal
+native sample omits `availableBytes` on Darwin; Windows supplies physical
+availability. The current reader also ignores that field from older Darwin
+helpers. Deploy matching helper/reader versions: an older strict reader rejects
+the new Darwin omission. The public Machine sample and retained format do not
+change.
 
 The current, unreleased machine-vitals primitives keep sampling and retained
 history at the daemon. The Home transports reads; it does not sample the host or

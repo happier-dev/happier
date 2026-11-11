@@ -4,6 +4,7 @@ import {
   projectMachineSetupSourceChangeExecutionV1, areMachineSetupExclusionsBoundV1,
   isMachineSetupRecipeExcludedV1, mergeMachineSetupsV1,
   type MachineSetupPlanInputV1, type MachineSetupPlanResultV1, type MachineSetupV1, type getMachineSetupDesiredV1,
+  type MachineSetupObservationV1,
 } from '@happier-dev/protocol';
 import { readMachineSetupAppOriginsV1, selectMachineSetupRecipeItemsV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -26,6 +27,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   installationId?: string;
   onCredentialSelection?: Parameters<typeof prepareMachineRecipeProgramV1>[0]['onCredentialSelection'];
   current: Awaited<ReturnType<typeof getMachineSetupDesiredV1>>;
+  observation?: MachineSetupObservationV1;
   /** Receiving Apply reuses its prepared changed operands. */
   executionSources?: readonly MachineSetupV1[];
   readRecipes?: () => Promise<readonly PluginProjectedMachineRecipeEntryV1[] | undefined>;
@@ -171,6 +173,17 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
         entry.requiredFact = blocked.facts.requiredFact;
     }
     else delete entry.reason;
+  }
+  if (!reviewing && params.observation?.desiredRevision === current.policy.revision) {
+    for (const entry of support) {
+      const item = sources[entry.sourceIndex]?.setup.items?.[entry.itemIndex];
+      if (!item || item.kind === 'app') continue;
+      const observed = params.observation.recipes.find(recipe => sameStrictJsonValue(recipe.ref, item.selection.ref));
+      if (!observed) continue;
+      entry.status = observed.status;
+      if (observed.reason) entry.reason = observed.reason;
+      else delete entry.reason;
+    }
   }
   const review = input.mode ? (() => {
     const executingSetups = executionSources ?? sources.map(source => source.setup);
