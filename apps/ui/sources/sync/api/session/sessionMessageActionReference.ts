@@ -5,6 +5,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { runWithServerAccountScopeRequestGuard } from '@/sync/runtime/orchestration/serverScopedRpc/serverAccountScopeRequestGuard';
 import { readSessionSnapshotForAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
+import { serverFetch } from '@/sync/http/client';
 
 /** Account placement uses the same server admission and pure snapshot resolver as Machine placement. */
 export async function resolveAccountMessageActionReference(input: Readonly<{
@@ -15,7 +16,7 @@ export async function resolveAccountMessageActionReference(input: Readonly<{
         return await runWithServerAccountScopeRequestGuard({ ...input,
             staleError: () => new Error('Message Action scope retired'),
         }, async guard => runWithServerRequestAuthorityForServerAccountScope({ scope: input.scope,
-            activeRequest: async () => { throw new Error('Message Actions require captured Account authority'); },
+            activeRequest: serverFetch,
         }, async authority => {
             const { reference } = input;
             const response = await authority.request(`/v1/sessions/${encodeURIComponent(reference.sessionId)}/messages/action-reference/resolve`,

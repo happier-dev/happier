@@ -6000,14 +6000,14 @@ describe('plugin-surface action branch selection', () => {
         } finally { await activation.composition.unload(); show.mockRestore(); hide.mockRestore(); }
     });
 
-    it.each(['catalog', 'reference', 'denied', 'stale', 'wrong-row', 'machine-missing'] as const)('admits Account client message menu context and retains reference-only refusal through the shared presenter (%s)', async entry => {
+    it.each(['catalog', 'reference', 'denied', 'stale', 'wrong-row', 'machine-missing'] as const)('admits Account client message menu context and keeps reference refusals at dispatch (%s)', async entry => {
         const { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
         const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
         const previousScope = getStorage().getState().profileScope;
         const previousSnapshot = getAppliedActiveServerSnapshot();
         const previousAvailable = isAppliedActiveServerRuntimeAvailable();
         getStorage().setState({ profileScope: { serverId: 'server-client-action', accountId: 'test-account' } });
-        publishAppliedActiveServerSnapshot({ serverId: 'server-client-action', serverUrl: 'https://client-action.example', generation: 0 });
+        publishAppliedActiveServerSnapshot({ serverId: 'server-client-action', serverUrl: rpcHomes.get('server-client-action')!.serverUrl, generation: 0 });
         const accountLifetime = captureActiveServerAccountScopeLifetime();
         onTestFinished(() => {
             retireActiveServerAccountScopeLifetime();
@@ -6047,12 +6047,11 @@ describe('plugin-surface action branch selection', () => {
             handler: async (_input, context) => { handlerEntered = true; receivedMessage = context.messageAction; return {}; },
         });
         const { Modal } = await import('@/modal');
-        const { t } = await import('@/text');
         const alert = vi.spyOn(Modal, 'alert').mockImplementation(() => {});
         try {
             await activation.composition.reconcile([activation.activation]);
             const { createPluginContributedActionController } = await import('../actions/pluginContributedActionController');
-            const { openPluginContributedAction, openPluginContributedActionReference } = await import('../actions/openPluginContributedAction');
+            const { openPluginContributedAction } = await import('../actions/openPluginContributedAction');
             const plugin = {
                 pluginId: CALLER_PLUGIN_ID, title: 'Message tools', description: null, version: '1.2.3',
                 enabled: true, generation: CLIENT_ACTION_GENERATION, generationLabel: String(CLIENT_ACTION_GENERATION),
@@ -6077,20 +6076,26 @@ describe('plugin-surface action branch selection', () => {
                 expect(handlerEntered).toBe(false);
                 return;
             }
-            if (entry !== 'reference') {
+            if (entry === 'catalog') {
                 const action = controller.list({ placement: 'message.menu', scope: 'message' })[0];
                 if (!action) throw new Error('Missing registered catalog Action');
                 const opened = await openPluginContributedAction({ controller, action });
                 expect(opened).toMatchObject({ kind: 'direct', outcome: {
-                    ...(entry === 'catalog' ? { ok: true, result: {} }
-                        : { ok: false, code: 'unavailable', reason: 'plugin_message_action_unavailable' }),
+                    ok: true, result: {},
                 } });
             } else {
-                await openPluginContributedActionReference({ controller,
-                    action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id }, input: {},
-                });
+                const dispatched = await controller.invokeReference({
+                    pluginId: CALLER_PLUGIN_ID, localId: activation.action.id,
+                }, {});
+                if (entry === 'reference') {
+                    expect(dispatched).toMatchObject({ kind: 'settled', outcome: { ok: true, result: {} } });
+                } else {
+                    expect(dispatched).toMatchObject({ kind: 'settled', outcome: {
+                        ok: false, code: 'unavailable', reason: 'plugin_message_action_unavailable',
+                    } });
+                }
             }
-            if (entry === 'catalog') {
+            if (entry === 'catalog' || entry === 'reference') {
                 expect(handlerEntered).toBe(true);
                 expect(receivedMessage).toMatchObject({ sessionId: reference.sessionId, messageId: reference.messageId,
                     observedRevision: reference.observedRevision, visibleText: 'Selected answer' });
@@ -6100,14 +6105,7 @@ describe('plugin-surface action branch selection', () => {
                 return;
             }
             expect(handlerEntered).toBe(false);
-            expect(alert.mock.calls.at(-1)?.slice(0, 2)).toEqual([t('common.error'), t('pluginRuntime.actionFailed')]);
-            const details = alert.mock.calls.at(-1)?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
-            expect(details, 'Typed client refusals must retain their diagnostic in Technical details').toBeDefined();
-            details?.onPress?.();
-            expect(alert.mock.calls.at(-1)?.[0]).toBe(t('approvals.technicalDetails'));
-            expect(JSON.parse(alert.mock.calls.at(-1)?.[1] ?? 'null')).toEqual({
-                code: 'unavailable', reason: 'plugin_message_action_unavailable',
-            });
+            expect(alert).not.toHaveBeenCalled();
         } finally { await activation.composition.unload(); alert.mockRestore(); }
     });
 
