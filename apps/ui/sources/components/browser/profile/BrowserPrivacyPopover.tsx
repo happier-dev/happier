@@ -12,18 +12,16 @@ import { BrowserProfileStatus, type BrowserProfileStatusModel } from './BrowserP
 
 const stylesheet = StyleSheet.create((theme) => ({
     body: {
-        padding: theme.space.s10,
+        paddingVertical: theme.space.s6,
         minWidth: 0,
         flexShrink: 1,
     },
 }));
 
 /**
- * B-RC5: compact privacy/security control for the browser toolbar. Replaces the
- * always-on "Mode / Storage / Permissions" triad with a single shield trigger
- * that opens a popover containing the full `BrowserProfileStatus` detail. Only
- * mounted when `shouldSurfaceBrowserPrivacy(model)` is true, so a clean browser
- * shows no profile chrome.
+ * The browser toolbar's privacy control: a shield that opens which profile this browser uses and what it
+ * keeps, with the Machine's saved profiles below (a sheet on a phone). Only mounted when
+ * `shouldSurfaceBrowserPrivacy(model)` is true, so a clean browser shows no profile chrome.
  */
 export function BrowserPrivacyPopover(props: Readonly<{
     model: BrowserProfileStatusModel;
@@ -57,18 +55,18 @@ export function BrowserPrivacyPopover(props: Readonly<{
                     anchorRef={anchorRef}
                     placement="bottom"
                     gap={6}
-                    maxHeightCap={420}
-                    maxWidthCap={400}
+                    maxHeightCap={480}
+                    maxWidthCap={360}
                     onRequestClose={() => setOpen(false)}
                     backdrop={{ enabled: false }}
+                    // A phone gets the shared bottom sheet, titled by what it is about.
+                    phonePresentation="sheet"
+                    accessibilityLabel={t('browserShell.profile.title')}
                     portal={MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS}
                 >
                     {({ maxHeight }) => (
                         <FloatingOverlay maxHeight={maxHeight} surfaceChrome="theme" scrollEnabled={!props.model.management}>
-                            <View testID={`${props.testID}-panel`} style={[stylesheet.body, {
-                                maxHeight,
-                                height: props.model.management ? maxHeight : undefined,
-                            }]}>
+                            <View testID={`${props.testID}-panel`} style={[stylesheet.body, { maxHeight }]}>
                                 <BrowserProfileStatus
                                     testID={`${props.testID}-status`}
                                     model={props.model}

@@ -97,13 +97,17 @@ it('gives persisted profiles a visible scroll viewport and usable select/delete 
         await waitForHomeGovernance(() => expect(onSelected).toHaveBeenCalledWith(work, []));
         await waitForHomeGovernance(async () => {
             await harness.flush();
-            expect(harness.container.querySelector('[data-testid="profiles-profile-delete-work"]')?.getAttribute('aria-disabled')).not.toBe('true');
+            expect(harness.container.querySelector('[data-testid="profiles-profile-more-work"]')).toBeTruthy();
         });
-        await act(async () => harness.container.querySelector<HTMLElement>('[data-testid="profiles-profile-delete-work"]')!.click());
+        await act(async () => harness.container.querySelector<HTMLElement>('[data-testid="profiles-profile-more-work"]')!.click());
+        await waitForHomeGovernance(() => expect(document.querySelector('[data-testid="profiles-profile-delete-work"]')?.getAttribute('aria-disabled')).not.toBe('true'));
+        // Each profile's operations carry its name, so a screen reader can tell which one it deletes.
+        expect(document.querySelector('[data-testid="profiles-profile-delete-work"]')?.getAttribute('aria-label')).toContain('Work');
+        await act(async () => document.querySelector<HTMLElement>('[data-testid="profiles-profile-delete-work"]')!.click());
         await waitForHomeGovernance(() => expect(profiles).toEqual([]));
         await waitForHomeGovernance(async () => {
             await harness.flush();
-            expect(harness.container.querySelector('[data-testid="profiles-profile-delete-work"]')?.getBoundingClientRect().height ?? 0).toBe(0);
+            expect(harness.container.querySelector('[data-testid="profiles-profile-select-work"]')?.getBoundingClientRect().height ?? 0).toBe(0);
         });
         expect(profiles).toEqual([]);
     } finally { disposeLoader(); }

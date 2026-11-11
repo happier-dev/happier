@@ -32,6 +32,7 @@ import { ArtifactProvenanceLabel, readArtifactProvenanceFallback } from './Artif
 import { useArtifactOperations } from './useArtifactOperations';
 import { useArtifactNetworkEditor } from './useArtifactNetworkEditor';
 import { useArtifactBody } from './useArtifactBody';
+import { ArtifactBodyActionsProvider, useArtifactBodyActionsHost, type ArtifactBodyActions } from './artifactBodyActions';
 import { ArtifactBody } from './ArtifactBody';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useDocCollaboration, type DocCollaboration } from './useDocCollaboration';
@@ -64,6 +65,8 @@ export function ArtifactView(props: Readonly<{
 function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView>): React.ReactElement {
     const body = useArtifactBody(props.artifactId, props.artifact);
     const artifact = body.result?.artifact ?? props.artifact;
+    const router = useRouter();
+    const [bodyActions, publishBodyActions] = useArtifactBodyActionsHost();
     // Deleting the row retires its toolbar, not this destination's pending operation.
     const operations = useArtifactOperations(artifact, props.onDeleted);
     // Membership is an independent authenticated read: the known Artifact identity starts it
@@ -124,6 +127,10 @@ function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView>):
                 kind="empty"
                 title={t('artifacts.notFound')}
                 reason={t('shareSheet.documents.errors.notFound')}
+                // Its own page leads back to the list; in the browser's pane the list already stands beside it.
+                action={props.presentation === 'page'
+                    ? { label: t('artifacts.backToArtifacts'), onPress: () => router.push('/artifacts' as never) }
+                    : undefined}
             />
         );
     }
@@ -141,7 +148,9 @@ function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView>):
     const content = failure ?? (body.state === 'loading' ? (
         <View style={styles.bodyPlaceholder} testID="artifact:bodyLoading" />
     ) : (
-        <ArtifactBody artifact={body.result?.artifact ?? artifact} prepared={body.result} onRetry={body.retry} margin={margin} />
+        <ArtifactBodyActionsProvider value={publishBodyActions}>
+            <ArtifactBody artifact={body.result?.artifact ?? artifact} prepared={body.result} onRetry={body.retry} margin={margin} />
+        </ArtifactBodyActionsProvider>
     ));
 
     const unreachable = <DocHomeUnreachable />;
@@ -151,7 +160,7 @@ function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView>):
                 <View style={styles.paneColumn}>
                     <ArtifactFacts artifact={artifact} collaboration={collaboration} />
                     <ArtifactActions artifact={artifact} presentation="pane" operations={operations} collaboration={collaboration}
-                        threadMenuOpen={threadMenuOpen} onThreadMenuOpenChange={onThreadMenuOpenChange} />
+                        threadMenuOpen={threadMenuOpen} onThreadMenuOpenChange={onThreadMenuOpenChange} bodyActions={bodyActions} />
                     <View style={styles.paneRule} />
                     {unreachable}
                     {content}
@@ -166,7 +175,7 @@ function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView>):
             <ItemGroup surface="none">
                 {/* The title keeps the whole column; the artifact's operations sit under its facts, as in the pane. */}
                 <ArtifactActions artifact={artifact} presentation="page" operations={operations} collaboration={collaboration}
-                    threadMenuOpen={threadMenuOpen} onThreadMenuOpenChange={onThreadMenuOpenChange} />
+                    threadMenuOpen={threadMenuOpen} onThreadMenuOpenChange={onThreadMenuOpenChange} bodyActions={bodyActions} />
                 <View style={styles.paneRule} />
                 {unreachable}
                 {content}
@@ -251,7 +260,9 @@ function ArtifactPageHeader(props: Readonly<{ artifact: DecryptedArtifact; colla
 
 /** Edit and History quiet, Share bordered, rare operations (Delete) behind ⋯ — in the pane and on the page. */
 function ArtifactActions(props: Readonly<{ artifact: DecryptedArtifact; presentation: 'pane' | 'page'; operations: ReturnType<typeof useArtifactOperations>; collaboration: DocCollaboration | null;
-    threadMenuOpen: boolean; onThreadMenuOpenChange: (open: boolean) => void }>) {
+    threadMenuOpen: boolean; onThreadMenuOpenChange: (open: boolean) => void;
+    /** A file body's View full screen and Download, quiet beside History. */
+    bodyActions: ArtifactBodyActions | null }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
     const styles = stylesheet;
@@ -289,6 +300,29 @@ function ArtifactActions(props: Readonly<{ artifact: DecryptedArtifact; presenta
                 textStyle={{ color: theme.colors.text.secondary }}
                 onPress={() => history(props.collaboration?.acceptedVersions)}
             />
+            {props.bodyActions?.openFullScreen ? (
+                <RoundButton
+                    testID="artifact:fullScreen"
+                    size="small"
+                    display="inverted"
+                    title={t('files.viewer.viewFullScreen')}
+                    leading={<Icon name="arrows-out" size={14} color={theme.colors.text.secondary} />}
+                    textStyle={{ color: theme.colors.text.secondary }}
+                    onPress={props.bodyActions.openFullScreen}
+                />
+            ) : null}
+            {props.bodyActions ? (
+                <RoundButton
+                    testID="artifact:download"
+                    size="small"
+                    display="inverted"
+                    title={t('files.repositoryTree.actions.download')}
+                    leading={<Icon name="download" size={14} color={theme.colors.text.secondary} />}
+                    textStyle={{ color: theme.colors.text.secondary }}
+                    loading={props.bodyActions.downloading}
+                    onPress={props.bodyActions.download}
+                />
+            ) : null}
             {canShare ? (
                 <RoundButton
                     testID="artifact:share"

@@ -14,7 +14,12 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
+import { usePublishArtifactBodyActions, type ArtifactBodyActions } from './artifactBodyActions';
+
+/** A PDF well fits one page at the column's width (US Letter, the common page; taller A4 pages scroll a few points). */
+const PDF_PAGE_ASPECT = 11 / 8.5;
 
 type Preview = Readonly<{ key: string }> & (
     | Readonly<{ phase: 'loading' | 'failed' }>
@@ -88,7 +93,7 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
         sizeBytes: reference.sizeBytes,
     }), [previewable, ready?.bytes, props.name, props.artifactId, key, reference.mime, reference.sizeBytes]);
     const filePreview = useFilePreviewSource(previewInput);
-    const download = async () => {
+    const download = useEventCallback(async () => {
         if (downloadController.current) return;
         const controller = new AbortController();
         downloadController.current = controller;
@@ -103,7 +108,19 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
             if (downloadController.current === controller) downloadController.current = null;
             if (!controller.signal.aborted) setDownloading(false);
         }
-    };
+    });
+    const [columnWidth, setColumnWidth] = React.useState<number | null>(null);
+    const openFullScreen = stage?.open ?? null;
+    const bodyActions = React.useMemo((): ArtifactBodyActions | null => previewable ? {
+        openFullScreen, download: () => { void download(); }, downloading,
+    } : null, [previewable, openFullScreen, download, downloading]);
+    // In the Artifact view these sit in its action row beside Share; a History version keeps them under its body.
+    const hosted = usePublishArtifactBodyActions(bodyActions);
+    const scrollingWellHeight = Math.round(window.height * 0.75);
+    const wellHeight = viewer.kind === 'pdf' && columnWidth !== null
+        // The page sits inside the well's gap on every side (the PDF page CSS uses the same step).
+        ? Math.min(scrollingWellHeight, Math.round((columnWidth - theme.space.s16 * 2) * PDF_PAGE_ASPECT) + theme.space.s16 * 2)
+        : scrollingWellHeight;
     const card = <View style={{ gap: theme.space.s8 }} testID="artifact:fileCard">
         <Icon name={reference.mime.startsWith('image/') ? 'image' : 'file'} size={24} color={theme.colors.text.secondary} />
         <Text>{props.name}</Text>
@@ -113,7 +130,8 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
         {ready && filePreview.status === 'loaded' ? (
             // Pages, players and wells are the File page's bodies over these bytes (lab files AD1); a
             // scrolling page bounds the scrolling kinds to most of the window so the page still scrolls past.
-            <View style={viewer.kind === 'pdf' || viewer.kind === 'video' ? { height: Math.round(window.height * 0.75) } : null}>
+            <View style={viewer.kind === 'pdf' || viewer.kind === 'video' ? { height: wellHeight } : null}
+                onLayout={(event) => setColumnWidth(event.nativeEvent.layout.width)}>
                 <FileViewerBody viewer={viewer} title={props.name} source={previewInput} sizeBytes={reference.sizeBytes}
                     isActive findSurfaceId={`artifact:${props.artifactId}`} layout="inline" stageRef={setStage} testID="artifact:viewerBody" />
             </View>
@@ -125,7 +143,7 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
                 action={{ label: t('common.retry'), onPress: props.onRetry ?? (() => setAttempt(value => value + 1)) }} />
             : !previewable ? <FileViewerBody viewer={viewer} title={props.name} source={previewInput} sizeBytes={reference.sizeBytes}
                 isActive findSurfaceId={`artifact:${props.artifactId}`} onDownload={() => { void download(); }} testID="artifact" /> : card}
-        {!previewable ? null : <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 }}>
+        {!previewable || hosted ? null : <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 }}>
             {stage ? <RoundButton testID="artifact:fullScreen" title={t('files.viewer.viewFullScreen')} size="small" display="secondary" onPress={stage.open} /> : null}
             <RoundButton testID="artifact:download" title={t('files.repositoryTree.actions.download')} size="small" display="secondary" loading={downloading} onPress={() => { void download(); }} />
         </View>}

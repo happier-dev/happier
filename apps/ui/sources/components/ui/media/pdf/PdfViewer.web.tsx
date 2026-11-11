@@ -231,6 +231,8 @@ function PdfViewerBody(props: PdfViewerProps & Readonly<{ onRetry(): void }>) {
           void viewer.ready.then(() => {
             if (signal?.aborted) return;
             setPageInfo({ page: 1, total: next.numPages });
+            // The pill says the page count and zoom once on opening, then fades until the reader moves.
+            setPillTick((value) => value + 1);
             setState({ status: 'ready' });
           });
         })

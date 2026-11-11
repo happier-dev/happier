@@ -277,6 +277,12 @@ describe('Artifact composed view reads', () => {
             expect(screen.findByTestId('artifact:body') === null).toBe(true);
             expect(served.requests.filter(request => request.path === '/v1/artifacts/document')).toHaveLength(1);
             expect(served.requests.filter(request => request.path === '/v1/artifacts')).toHaveLength(0);
+            if (status === 404 && !edit) {
+                // A missing Artifact's own page is not a dead end: it leads back to the Artifacts list.
+                const { router } = await import('expo-router');
+                await screen.pressByTestIdAsync('artifact:notFound-action');
+                await vi.waitFor(() => expect(vi.mocked(router.push)).toHaveBeenCalledWith('/artifacts'));
+            }
         } finally {
             await screen.unmount();
         }

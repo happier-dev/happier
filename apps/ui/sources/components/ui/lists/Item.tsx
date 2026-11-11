@@ -55,7 +55,7 @@ import { buildActionRowAccessibilityLabel } from './actionRowAccessibility';
 import { Icon } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from './DisclosureCaret';
 import { ICON_LABEL_OPTICAL_NUDGE_STYLE } from '@/components/ui/icons/iconOpticalAlignment';
-import { MenuSectionRowsContext, useListPresentation, useSidePaneTextEdge, useWidgetBodyRowEdge } from './listPresentation';
+import { BareSectionRowsContext, MenuSectionRowsContext, useListPresentation, useSidePaneTextEdge, useWidgetBodyRowEdge } from './listPresentation';
 import { PANE_TEXT_INSET_PX } from '@/components/ui/layout/headerBand';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
 import { HAPPIER_RADIUS_V1 } from '@happier-dev/plugin-ui/environment';
@@ -1134,7 +1134,9 @@ export const Item = React.memo<ItemProps>((props) => {
     const pageSheet = isMenuRow || isCatalogRow ? null : pageSheetContext;
     // A row on a drawn sheet rounds its fill with the sheet's corners; a row laid flat on a page or a pane is
     // full-bleed, so its hover, press and selection fills are square and span the whole row.
-    const groupCornerRadius = pageSheet?.framed === false ? 0 : GROUPED_SURFACE_RADIUS_PX;
+    const bareSectionRow = React.useContext(BareSectionRowsContext) && !isMenuRow && !isCatalogRow;
+    const flatRow = pageSheet?.framed === false || bareSectionRow;
+    const groupCornerRadius = flatRow ? 0 : GROUPED_SURFACE_RADIUS_PX;
     const pageRowInsetPx = pageSheet?.rowInsetPx;
     // An independently activated page operation follows the phone rule even when a caller asks
     // for inline placement. Grouped controls retain their explicitly chosen composition. A catalog row's
@@ -1984,9 +1986,11 @@ export const Item = React.memo<ItemProps>((props) => {
     const paintColor = useHappierMaterialColorResolver();
     const pressableBackground = RNStyleSheet.flatten(pressableStyle)?.backgroundColor;
     const resolveInteractiveRowStyle = React.useCallback((pressed: boolean, focused?: boolean) => {
-        // A full-bleed row draws its keyboard ring inside its own box, on the sheet's corners: the shared
-        // outset fallback would overhang the rounded sheet and its neighbours.
-        const focusRing = isWeb ? focusRingStyle({ focused: resolveHappierFocusRingVisible(focused), color: theme.colors.border.focus, placement: 'inset' }) : null;
+        // A row on a drawn sheet draws its keyboard ring inside its own box, on the sheet's corners: an outset
+        // ring would overhang the rounded sheet and its neighbours. A row of a sheetless section has nothing to
+        // clip it, so it takes the one ring everywhere: outset, with a gap in the page colour.
+        const focusRing = isWeb ? focusRingStyle({ focused: resolveHappierFocusRingVisible(focused), color: theme.colors.border.focus,
+            placement: bareSectionRow ? 'outset' : 'inset' }) : null;
         const backgroundColor = (() => {
             if (pressed && isIOS && !isWeb) return theme.colors.surface.pressedOverlay;
             if (pressed && splitRow) return theme.colors.surface.pressed;
@@ -2018,6 +2022,7 @@ export const Item = React.memo<ItemProps>((props) => {
         isMenuRow,
         paintColor,
         groupCornerRadius,
+        bareSectionRow,
         hoverBackgroundColor,
         hoverFill,
         isHovered,

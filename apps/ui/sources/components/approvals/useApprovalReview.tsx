@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
 import { useRouter, type Href } from 'expo-router';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 
@@ -113,6 +114,7 @@ export type ApprovalReviewInput = Readonly<{
  * same pieces in their own chrome, so a request is read and decided the same way wherever it opens.
  */
 export function useApprovalReview(props: ApprovalReviewInput) {
+  const { theme } = useUnistyles();
   const router = useRouter();
   const goBack = props.onBack ?? router.back;
   const retargetNavigationFocusReturn = useRetargetNavigationFocusReturnIntent();
@@ -613,6 +615,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         testID="approvals.status"
         title={t('approvals.fieldStatus')}
         detail={statusLabel}
+        // A failed request reads in the failure role; every other status stays quiet.
+        detailStyle={displayStatus === 'failed' ? { color: theme.colors.state.danger.textForeground } : undefined}
         mode="info"
         showChevron={false}
       />

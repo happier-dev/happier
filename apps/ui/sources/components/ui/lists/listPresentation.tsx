@@ -82,6 +82,12 @@ export function usePaneContentInsetPx(): number {
  */
 export const MenuSectionRowsContext = React.createContext(false);
 
+/**
+ * Rows of a section with no drawn sheet (`ItemGroup surface="none"`): nothing clips them, so their fills are
+ * square and their keyboard ring stands outside the row with a gap, as on every other control.
+ */
+export const BareSectionRowsContext = React.createContext(false);
+
 /** Only repeated states explained by the current page notice defer to this fact. */
 export function usePageNoticeActive(): boolean {
     return React.useContext(PageNoticeActiveContext);

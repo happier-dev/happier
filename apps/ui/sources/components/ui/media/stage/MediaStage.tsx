@@ -520,7 +520,8 @@ function StageDocumentItem(props: Readonly<{
   onDownload?: () => void;
   onOpenInDefaultApp?: () => void;
 }>) {
-  const [zoom, setZoom] = React.useState<PdfZoom>('fit-width');
+  // Full screen shows the whole page first (lab MS1f); the zoom menu and pinch take it closer.
+  const [zoom, setZoom] = React.useState<PdfZoom>('fit-page');
   if (props.item.kind === 'video') {
     return (
       <SessionPaneLazyLoader<MediaPlayerBodyProps>

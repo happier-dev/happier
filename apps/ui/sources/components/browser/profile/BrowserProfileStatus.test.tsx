@@ -31,12 +31,23 @@ const storagePartition = {
 } as const;
 
 describe('BrowserProfileStatus', () => {
-    it('shows profile facts without dormant management controls when no Machine source exists', async () => {
+    it('names the profile first and says what it keeps, without dormant management controls when no Machine source exists', async () => {
         const screen = await renderScreen(<BrowserProfileStatus model={{ profile, storagePartition,
             activePermissionGrantCount: 1 }} testID="browser-profile" />);
-        expect(screen.findByTestId('browser-profile-mode-session')).toBeTruthy();
-        expect(screen.findByTestId('browser-profile-storage-session')).toBeTruthy();
-        expect(screen.findByTestId('browser-profile-permissions-active')).toBeTruthy();
+        const identity = screen.findByTestId('browser-profile-identity');
+        expect(identity).toBeTruthy();
+        const text = screen.getTextContent();
+        expect(text).toContain('Session preview');
+        expect(text).toContain('browserShell.profile.storage.session');
+        expect(text).toContain('browserShell.profile.permissions.active');
         expect(screen.findByTestId('browser-profile-management')).toBeFalsy();
+    });
+
+    it('names an unnamed profile by its kind', async () => {
+        const { displayName: _name, ...unnamed } = profile;
+        const screen = await renderScreen(<BrowserProfileStatus model={{ profile: unnamed, storagePartition: null }} testID="browser-profile" />);
+        const text = screen.getTextContent();
+        expect(text).toContain('browserShell.profile.name.session');
+        expect(text).toContain('browserShell.profile.storage.unavailable');
     });
 });

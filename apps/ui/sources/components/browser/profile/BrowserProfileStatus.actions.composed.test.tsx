@@ -101,7 +101,7 @@ it.each(['none', 'select', 'delete', 'unavailable', 'refused'] as const)('delive
         const profileId = profiles[0]!.profileId;
         await waitForHomeGovernance(async () => {
             await harness.flush();
-            expect(harness.container.querySelector(`[data-testid="profiles-profile-delete-${profileId}"]`)).toBeTruthy();
+            expect(harness.container.querySelector(`[data-testid="profiles-profile-more-${profileId}"]`)).toBeTruthy();
             expect(harness.container.querySelector(`[data-testid="profiles-profile-select-${profileId}"]`)?.getAttribute('aria-disabled')).not.toBe('true');
         });
         await act(async () => harness.container.querySelector<HTMLElement>(`[data-testid="profiles-profile-select-${profileId}"]`)!.click());
@@ -118,9 +118,12 @@ it.each(['none', 'select', 'delete', 'unavailable', 'refused'] as const)('delive
         if (retireDuring !== 'select') {
             await waitForHomeGovernance(async () => {
                 await harness.flush();
-                expect(harness.container.querySelector(`[data-testid="profiles-profile-delete-${profileId}"]`)?.getAttribute('aria-disabled')).not.toBe('true');
+                expect(harness.container.querySelector(`[data-testid="profiles-profile-more-${profileId}"]`)).toBeTruthy();
             });
-            await act(async () => harness.container.querySelector<HTMLElement>(`[data-testid="profiles-profile-delete-${profileId}"]`)!.click());
+            // Delete is the row's rare, destructive operation: it waits behind the row's ⋯ menu.
+            await act(async () => harness.container.querySelector<HTMLElement>(`[data-testid="profiles-profile-more-${profileId}"]`)!.click());
+            await waitForHomeGovernance(() => expect(document.querySelector(`[data-testid="profiles-profile-delete-${profileId}"]`)?.getAttribute('aria-disabled')).not.toBe('true'));
+            await act(async () => document.querySelector<HTMLElement>(`[data-testid="profiles-profile-delete-${profileId}"]`)!.click());
             await waitForHomeGovernance(() => expect(profiles).toEqual([]));
             if (retireDuring === 'delete') {
                 // Purging the active profile also closes its view before the finite receipt.
@@ -131,7 +134,7 @@ it.each(['none', 'select', 'delete', 'unavailable', 'refused'] as const)('delive
             }
             await waitForHomeGovernance(async () => {
                 await harness.flush();
-                expect(harness.container.querySelector(`[data-testid="profiles-profile-delete-${profileId}"]`)?.getBoundingClientRect().height ?? 0).toBe(0);
+                expect(harness.container.querySelector(`[data-testid="profiles-profile-select-${profileId}"]`)?.getBoundingClientRect().height ?? 0).toBe(0);
             });
         }
     } finally { releaseSelection(); disposeLoader(); }

@@ -8,7 +8,11 @@ import type { BrowserProfileV1 } from '@happier-dev/protocol/browser/profile/v1'
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Text } from '@/components/ui/text/Text';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemAddRow } from '@/components/ui/lists/ItemAddRow';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { VirtualizedList } from '@/components/ui/lists/virtualized';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { Modal } from '@/modal';
@@ -30,11 +34,12 @@ export type BrowserProfileManagementModel = Readonly<{
 }>;
 
 const stylesheet = StyleSheet.create(theme => ({
-    root: { width: '100%', gap: theme.space.s6, flex: 1, minHeight: 0 },
-    row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s6 },
-    list: { width: '100%', flex: 1, minHeight: 0 },
+    root: { width: '100%', minHeight: 0, flexShrink: 1, marginTop: theme.space.s8 },
+    list: { width: '100%', flexShrink: 1, minHeight: 0 },
 }));
 const profileKey = (profile: BrowserProfileV1) => profile.profileId;
+/** A one- or two-line profile row, for the list's first layout before its rows are measured. */
+const PROFILE_ROW_ESTIMATE_PX = 52;
 
 function profileFailureMessage(error: unknown): string {
     const fallback = error instanceof HappyError && error.code
@@ -43,7 +48,12 @@ function profileFailureMessage(error: unknown): string {
 }
 
 /** Mounted only in the open privacy panel; the Machine's existing store owns saved profiles. */
-export function BrowserProfileManagement(props: Readonly<{ model: BrowserProfileManagementModel; testID: string }>) {
+export function BrowserProfileManagement(props: Readonly<{
+    model: BrowserProfileManagementModel;
+    testID: string;
+    /** The profile this browser uses now, read as "In use" on its row. */
+    currentProfileId?: string | null;
+}>) {
     const { source } = props.model;
     const { executeValue, ready } = useMountedActionExecution(source.scope);
     const operation = React.useMemo(() => ({ externalActionTarget: { kind: 'machine' as const, machineId: source.machineId },
@@ -103,25 +113,69 @@ export function BrowserProfileManagement(props: Readonly<{ model: BrowserProfile
         } catch (error) { Modal.alert(t('common.error'), profileFailureMessage(error)); }
         finally { setBusy(false); }
     });
+    const rowData = React.useMemo(() => ({ busy, ready, canSelect: Boolean(source.selection), currentProfileId: props.currentProfileId }),
+        [busy, ready, source.selection, props.currentProfileId]);
     const renderProfile = React.useCallback(({ item: profile }: Readonly<{ item: BrowserProfileV1 }>) => (
-        <View style={stylesheet.row}>
-            <RoundButton size="small" display="secondary" title={profile.displayName ?? t('browserShell.profile.management.selectProfile')}
-                testID={`${props.testID}-profile-select-${profile.profileId}`} disabled={busy || !ready || !source.selection}
-                onPress={() => { void select(profile); }} />
-            <RoundButton size="small" display="secondary" title={t('common.delete')}
-                testID={`${props.testID}-profile-delete-${profile.profileId}`} disabled={busy || !ready}
-                onPress={() => { void remove(profile); }} />
-        </View>
-    ), [busy, props.testID, ready, remove, select, source.selection]);
+        <ProfileRow profile={profile} testID={props.testID} state={rowData} onSelect={select} onRemove={remove} />
+    ), [props.testID, remove, rowData, select]);
+    // The list asks for the room its rows need and shrinks to what the panel has left: no empty tail, and it
+    // scrolls once the panel is full.
+    const [contentHeight, setContentHeight] = React.useState<number | null>(null);
     return <View testID={`${props.testID}-management`} style={stylesheet.root}>
-        <RoundButton size="small" display="secondary" title={t('browserShell.profile.management.createProfile')}
-            testID={`${props.testID}-profile-create`} disabled={busy || !ready} onPress={() => { void create(); }} />
-        {failed ? <View style={stylesheet.row}>
-            <Text>{failed}</Text>
-            <RoundButton size="small" display="secondary" title={t('common.retry')}
-                testID={`${props.testID}-profiles-retry`} disabled={!ready} onPress={() => { void refresh(); }} />
-        </View> : null}
-        <VirtualizedList data={profiles} keyExtractor={profileKey} renderItem={renderProfile}
-            style={stylesheet.list} extraData={renderProfile} recycleItems={false} />
+        <ItemGroup title={t('browserShell.profile.management.savedProfiles')}>
+            {failed ? <Item testID={`${props.testID}-profiles-failed`} title={failed} titleLines={2} mode="info" showChevron={false}
+                rightElement={<RoundButton size="small" display="secondary" title={t('common.retry')}
+                    testID={`${props.testID}-profiles-retry`} disabled={!ready} onPress={() => { void refresh(); }} />} /> : null}
+            <VirtualizedList data={profiles} keyExtractor={profileKey} renderItem={renderProfile}
+                // Legend lays rows out inside a measured viewport: start from the rows' estimate, then take their real height.
+                style={[stylesheet.list, { height: contentHeight || profiles.length * PROFILE_ROW_ESTIMATE_PX }]}
+                estimatedItemSize={PROFILE_ROW_ESTIMATE_PX}
+                onContentSizeChange={(_width, height) => setContentHeight(height)}
+                extraData={renderProfile} recycleItems={false} />
+            <ItemAddRow testID={`${props.testID}-profile-create`} title={t('browserShell.profile.management.createProfile')}
+                disabled={busy || !ready} onPress={() => { void create(); }} />
+        </ItemGroup>
     </View>;
 }
+
+type ProfileRowState = Readonly<{ busy: boolean; ready: boolean; canSelect: boolean; currentProfileId: string | null | undefined }>;
+
+/** One saved profile: its name and whether this browser uses it; pressing it switches, Delete waits behind ⋯. */
+const ProfileRow = React.memo(function ProfileRow(props: Readonly<{
+    profile: BrowserProfileV1;
+    testID: string;
+    state: ProfileRowState;
+    onSelect(profile: BrowserProfileV1): Promise<void>;
+    onRemove(profile: BrowserProfileV1): Promise<void>;
+}>) {
+    const { profile, state, onSelect, onRemove } = props;
+    const name = profile.displayName ?? t('browserShell.profile.management.unnamed');
+    const current = state.currentProfileId === profile.profileId;
+    const unusable = profile.lifecycleState === 'unusable';
+    const actions = React.useMemo((): ItemAction[] => [{
+        id: `${props.testID}-profile-delete-${profile.profileId}`,
+        title: t('browserShell.profile.management.deleteProfile'),
+        accessibilityLabel: t('browserShell.profile.management.deleteNamed', { name }),
+        icon: 'trash',
+        destructive: true,
+        disabled: state.busy || !state.ready,
+        onPress: () => { void onRemove(profile); },
+    }], [name, onRemove, profile, props.testID, state.busy, state.ready]);
+    return (
+        <Item
+            testID={`${props.testID}-profile-select-${profile.profileId}`}
+            title={name}
+            subtitle={current ? t('browserShell.profile.management.inUse')
+                : unusable ? t('browserShell.profile.management.profileUnavailable') : undefined}
+            accessibilityLabel={t('browserShell.profile.management.useProfile', { name })}
+            selected={current}
+            showChevron={false}
+            disabled={state.busy || !state.ready || !state.canSelect || current || unusable}
+            onPress={() => { void onSelect(profile); }}
+            rightElement={<ItemRowActions title={name} actions={actions} overflowOnly
+                overflowTriggerTestID={`${props.testID}-profile-more-${profile.profileId}`}
+                overflowTriggerAccessibilityLabel={t('browserShell.profile.management.moreFor', { name })} />}
+            rightElementOutsidePressable
+        />
+    );
+});

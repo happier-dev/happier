@@ -35,7 +35,7 @@ import {
     ITEM_GROUP_HEADER_NO_TITLE_PADDING_TOP_PX,
 } from './itemGroupSpacing';
 import { Text } from '@/components/ui/text/Text';
-import { MenuSectionRowsContext, useFloatingListSurface, useListPresentation, usePageListInsets, useSidePaneTextEdge } from './listPresentation';
+import { BareSectionRowsContext, MenuSectionRowsContext, useFloatingListSurface, useListPresentation, usePageListInsets, useSidePaneTextEdge } from './listPresentation';
 import { MENU_ROW_METRICS } from './itemDensityMetrics';
 import { SelectionListSectionHeader } from '@/components/ui/selectionList/SelectionListSectionHeader';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
@@ -702,6 +702,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                     ? <SelectionListSectionHeader title={title} />
                     : title ?? null}
                 <MenuSectionRowsContext.Provider value={true}>
+                <BareSectionRowsContext.Provider value={false}>
                     {/* Free content (a button row, a details head) stands on the menu rows' text edge, as rows bring
                         their own padding: `BareSectionContent` takes this inset back. */}
                     <BareRowBleedContext.Provider value={MENU_ROW_METRICS.paddingHorizontalPx}>
@@ -726,6 +727,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                         </HappierItemGroupBehavior>
                     </SectionItemDensityProvider>
                     </BareRowBleedContext.Provider>
+                </BareSectionRowsContext.Provider>
                 </MenuSectionRowsContext.Provider>
                 {description ? (
                     <View style={styles.menuSectionDescription}>
@@ -783,6 +785,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                     rows register with it (see `sectionLeadingColumn.tsx`). */}
                 <SectionLeadingColumnProvider>
                 <SectionItemDensityProvider value={density}>
+                <BareSectionRowsContext.Provider value={surface === 'none' && !bleedRows}>
                 <BareRowBleedContext.Provider value={bleedRows ? rowPaddingPx : 0}>
                     <HappierItemGroupBehavior
                         accessibilityRole={accessibilityRole}
@@ -825,6 +828,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                         {children}
                     </HappierItemGroupBehavior>
                 </BareRowBleedContext.Provider>
+                </BareSectionRowsContext.Provider>
                 </SectionItemDensityProvider>
                 </SectionLeadingColumnProvider>
 
