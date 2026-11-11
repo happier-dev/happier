@@ -213,6 +213,29 @@ describe('buildUniversalPluginUiArtifacts hosted static staging', () => {
         });
     });
 
+    it('emits a stylesheet imported by the conventional hosted source entry beside its script', async () => {
+        const root = await hostedFixture();
+        await mkdir(join(root, 'vendor'), { recursive: true });
+        await writeFile(join(root, 'vendor/player.css'), '.player-frame { color: rgb(1, 2, 3); }', 'utf8');
+        await writeFile(
+            join(root, '.happier-plugin/ui/hosted-web/panel/entry.ts'),
+            'import "../../../../vendor/player.css"; globalThis.document?.documentElement.setAttribute("data-status", "ready");',
+            'utf8',
+        );
+
+        const result = await buildUniversalPluginUiArtifacts(root);
+
+        expect(result.manifest.entries[0]?.files.map((file) => file.relativePath)).toEqual([
+            'hosted-web/panel/assets/app.css',
+            'hosted-web/panel/assets/app.js',
+            'hosted-web/panel/index.html',
+        ]);
+        await expect(readFile(join(result.artifactsRoot, 'hosted-web/panel/assets/app.css'), 'utf8'))
+            .resolves.toContain('.player-frame');
+        await expect(readFile(join(result.artifactsRoot, 'hosted-web/panel/assets/app.js'), 'utf8'))
+            .resolves.not.toContain('.player-frame');
+    });
+
     it('rejects symlinks anywhere in a hosted static artifact', async () => {
         const root = await hostedFixture();
         await symlink(

@@ -62,8 +62,10 @@ Hosted web remains a distinct static capability. Put its files under
 `.happier-plugin/ui/hosted-web/<artifactId>/`, including a root `index.html`.
 Files are copied and digested recursively. If the directory contains
 `entry.ts`, the builder compiles it as a browser application to
-`assets/app.js`; `index.html` should load that file. Symlinks and non-regular or
-empty files are rejected.
+`assets/app.js`; `index.html` should load that file. If the entry imports a
+stylesheet (for example a library's CSS), the builder also emits
+`assets/app.css`, which `index.html` should link. Any other build output is
+rejected. Symlinks and non-regular or empty files are rejected.
 
 ## Runtime verification
 

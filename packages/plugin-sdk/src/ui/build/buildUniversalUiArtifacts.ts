@@ -84,6 +84,7 @@ async function collectHostedStaticFiles(
             }
             if (hasConventionalSourceEntry && nestedRelativePath === 'entry.ts') continue;
             if (hasConventionalSourceEntry && nestedRelativePath === 'assets/app.js') continue;
+            if (hasConventionalSourceEntry && nestedRelativePath === 'assets/app.css') continue;
             const bytes = await readFile(sourcePath);
             if (bytes.byteLength === 0) {
                 throw new PluginUiBuildError(
@@ -156,17 +157,27 @@ async function collectHostedStaticFiles(
                 declaration.artifactId,
             );
         }
-        if (compiled.outputFiles.length !== 1) {
+        // esbuild emits imported library stylesheets as one sibling `app.css`;
+        // the author's index.html links it. Any other output shape is refused.
+        const scripts = compiled.outputFiles.filter((file) => file.path.endsWith('.js'));
+        const styles = compiled.outputFiles.filter((file) => file.path.endsWith('.css'));
+        if (scripts.length !== 1 || styles.length > 1 || scripts.length + styles.length !== compiled.outputFiles.length) {
             throw new PluginUiBuildError(
                 'hosted_static_output_graph_invalid',
-                `Hosted-static artifact "${declaration.artifactId}" source entry must emit one JavaScript file`,
+                `Hosted-static artifact "${declaration.artifactId}" source entry must emit one JavaScript file and at most one stylesheet`,
                 declaration.artifactId,
             );
         }
         files.push(Object.freeze({
-            bytes: new Uint8Array(compiled.outputFiles[0]!.contents),
+            bytes: new Uint8Array(scripts[0]!.contents),
             relativePath: `hosted-web/${declaration.artifactId}/assets/app.js`,
         }));
+        if (styles[0]) {
+            files.push(Object.freeze({
+                bytes: new Uint8Array(styles[0].contents),
+                relativePath: `hosted-web/${declaration.artifactId}/assets/app.css`,
+            }));
+        }
         files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
     }
     const expectedEntry = `hosted-web/${declaration.artifactId}/index.html`;
