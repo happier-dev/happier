@@ -1131,6 +1131,31 @@ describe('PluginReactNativeSurface', () => {
         expect(requiredContent.findByTestId('plugin-rn-ui-loading')).toBeNull();
     });
 
+    it('draws the widget frame\'s loading rows while a widget body\'s first artifact loads, never an empty card (owner 1330 01)', async () => {
+        // A widget's body is the card's content, not optional chrome: until the artifact answers, the frame's one
+        // first-load look stands in it, then the plugin's own view replaces it.
+        const pending = createDeferred<PluginReactNativeSurfaceModule>();
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+        const { WidgetFrameBodyRowsContext } = await import('@/components/widgets/frame/widgetFrameBody');
+        const widget = await renderScreen(<WidgetFrameBodyRowsContext.Provider value={4}>
+            <PluginReactNativeSurface
+                surfaceId="surface_widget"
+                renderContext={defaultRenderContext}
+                decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+                load={() => pending.promise}
+                loadPolicy={{ source: 'installedArtifact' }}
+                cacheKey="cache_embedded_widget_body"
+                embeddedPresentation="content"
+            />
+        </WidgetFrameBodyRowsContext.Provider>);
+        await flushHookEffects({ cycles: 1, turns: 2 });
+        expect(widget.findByTestId('plugin-rn-ui-loading')).toBeTruthy();
+        pending.resolve({ renderSurface: () => React.createElement('PluginNativeSurface', { testID: 'plugin-native-widget' }) });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(widget.findByTestId('plugin-native-widget')).toBeTruthy();
+        expect(widget.findByTestId('plugin-rn-ui-loading')).toBeNull();
+    });
+
     it('retries a nonpersisted loader failure with a fresh mount attempt', async () => {
         const healthyModule = {
             renderSurface: () => React.createElement('PluginNativeSurface', { testID: 'plugin-native-loader-retry-healthy' }),

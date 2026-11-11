@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   HAPPIER_WIDGET_FRAME_METRICS,
+  HAPPIER_WIDGET_GROUP_CARD_CELL_INSETS,
   happierPageRowDividerWidth,
   orderWidgetGroupCellsForStack,
   type HappierWidgetFrameSourceDescriptor,
@@ -25,10 +26,8 @@ import {
   type WidgetGroupCellInput,
 } from '@happier-dev/plugin-ui/presentation';
 
-/** A grouped child draws plain; its text keeps the card's inset from the group's edge and dividers. */
-const CELL_INSET_PX =
-  HAPPIER_WIDGET_FRAME_METRICS.cardInsetPx -
-  HAPPIER_WIDGET_FRAME_METRICS.plainInsetPx;
+/** A grouped child draws plain; its text keeps the card's inset from the group's edge and dividers (the frame owner's rule). */
+const CELL_INSET_PX = HAPPIER_WIDGET_GROUP_CARD_CELL_INSETS.horizontalPx;
 
 /** Where a child is drawn: across the whole group (room for its full follow phrase) or in a column. */
 export type WidgetGroupChildPlacement = Readonly<{ wide: boolean }>;
@@ -301,7 +300,7 @@ const styles = StyleSheet.create((theme) => ({
   column: { flex: 1, minWidth: 0 },
   // A column shorter than its band hands the extra height to its cells, so a card fills the room beside a taller neighbour.
   childCell: { minWidth: 0, flexGrow: 1 },
-  cardCell: { paddingHorizontal: CELL_INSET_PX },
+  cardCell: { paddingHorizontal: CELL_INSET_PX, paddingTop: HAPPIER_WIDGET_GROUP_CARD_CELL_INSETS.topPx },
   leftCell: { paddingRight: CELL_INSET_PX },
   rightCell: { paddingLeft: CELL_INSET_PX },
   slotCell: { flexGrow: 1, padding: CELL_INSET_PX },

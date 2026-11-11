@@ -17,7 +17,7 @@ import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfa
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useProjectDashboardOwner } from '@/components/projects/overview/useProjectDashboardOwner';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
-import { WidgetFrameLoadingBody } from '@/components/widgets/frame/WidgetFrame';
+import { WidgetFrameLoadingBody } from '@/components/widgets/frame/WidgetFrameLoadingBody';
 import { useSurfaceStateCardSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { randomUUID } from '@/platform/randomUUID';
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';

@@ -649,6 +649,12 @@ describe('WidgetFrame', () => {
         expect(card.findAllByProps({ name: 'timer' }).length).toBeGreaterThan(0);
     });
 
+    it('heads a plain widget that is a section of a page (Usage, lab wgusage) with its title, still without a mark', async () => {
+        const screen = await renderFrame({ frameStyle: 'plain', placement: 'home', pageSection: true });
+        expect(StyleSheet.flatten(screen.findByTestId('frame.title')!.props.style)?.color).toBe(lightTheme.colors.text.primary);
+        expect(screen.findAllByProps({ name: 'timer' })).toHaveLength(0);
+    });
+
     it('reveals a plain widget\'s controls on hover or keyboard focus with a pointer; a card and touch keep them shown', async () => {
         const menu = <Text testID="frame-menu">menu</Text>;
         const resting = (screen: Awaited<ReturnType<typeof renderFrame>>) =>
@@ -697,6 +703,22 @@ describe('WidgetFrame', () => {
         expect(shift()).toBe(-48);
         act(() => { plain.findByTestId('frame.hover')!.props.onPointerLeave(); });
         expect(shift()).toBe(0);
+    });
+
+    it('stands a card group\'s plain child title on the card inset from the top as from the left (owner 1330 01)', async () => {
+        const { HAPPIER_WIDGET_FRAME_METRICS, HAPPIER_WIDGET_GROUP_CARD_CELL_INSETS } = await import('@happier-dev/plugin-ui/presentation');
+        const screen = await renderScreen(<WidgetGroupFrame testID="group"
+            group={{ id: 'group', frameStyle: 'card', dividers: 'hairline' }} placement="home" columns={1}
+            cells={[{ id: 'one', columnSpan: 1, rowSpan: 2 }]} customizing={false} title={null} accessibilityLabel="Group"
+            renderChild={(id) => <WidgetFrame testID={id} frameStyle="plain" placement="home" grouped title="New for you"
+                body={{ kind: 'content', children: <Text>rows</Text> }} />} />);
+        const cell = StyleSheet.flatten(screen.findByTestId('group.cell.one')!.props.style);
+        // The child is plain: its header centres the title in the control-height line, so the cell adds what the
+        // title still needs to sit one card inset down, the same distance as from the group's left edge.
+        expect(cell.paddingTop).toBe(HAPPIER_WIDGET_GROUP_CARD_CELL_INSETS.topPx);
+        expect(cell.paddingHorizontal).toBe(HAPPIER_WIDGET_GROUP_CARD_CELL_INSETS.horizontalPx);
+        expect(HAPPIER_WIDGET_GROUP_CARD_CELL_INSETS.horizontalPx + HAPPIER_WIDGET_FRAME_METRICS.plainInsetPx).toBe(HAPPIER_WIDGET_FRAME_METRICS.cardInsetPx);
+        expect(HAPPIER_WIDGET_GROUP_CARD_CELL_INSETS.topPx).toBeGreaterThan(0);
     });
 
     it('keeps the same header, body and footer when drawn plain', async () => {

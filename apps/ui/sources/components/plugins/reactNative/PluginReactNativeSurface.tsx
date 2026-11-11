@@ -30,6 +30,9 @@ import {
     type PluginReactNativeModuleRegistryWriteFence,
 } from './moduleRegistry';
 import { PluginReactNativeUnavailable } from './PluginReactNativeUnavailable';
+import { t } from '@/text';
+import { useIsWidgetFrameBody } from '@/components/widgets/frame/widgetFrameBody';
+import { WidgetFrameLoadingBody } from '@/components/widgets/frame/WidgetFrameLoadingBody';
 import type { SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
 import {
     PluginSurfaceFallback,
@@ -695,6 +698,8 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         && (Boolean(props.load) || isPluginReactNativeSurfaceModule(props.module));
     const shouldOfferRetry = canRetryCurrentArtifact
         && (loadFailed || pendingQuarantine);
+    // Inside a widget card the first load draws the frame's rows (see the initial-load branch below).
+    const widgetFrameBody = useIsWidgetFrameBody();
     const animationEnabled = props.renderContext.surface.reducedMotion !== true;
     // Content settles in with one calm opacity fade the first time this mount
     // has something to draw, so the loading placeholder never hard-cuts to the
@@ -792,7 +797,10 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
             {initialLoadInFlight ? (
                 // Optional content stays quiet until it can render. A caller with a fallback reserves a visible
                 // slot, so keep that slot visible while loading too. Composer-owned chrome keeps its placeholder.
-                props.embeddedPresentation === 'content' && props.stateFallback === undefined && props.targetedFallback == null
+                // A widget's body is the card's content, not optional chrome: it takes the frame's one first-load look,
+                // so a card never stands empty while its view arrives (owner 2026-11-11, OWNER-1330-COAT 01).
+                widgetFrameBody ? <WidgetFrameLoadingBody testID="plugin-rn-ui-loading" accessibilityLabel={t('common.loading')} />
+                : props.embeddedPresentation === 'content' && props.stateFallback === undefined && props.targetedFallback == null
                     ? null
                     : <PluginSurfaceFallback testID="plugin-rn-ui-loading" state="loading" />
             ) : props.stateFallback !== undefined ? props.stateFallback : (

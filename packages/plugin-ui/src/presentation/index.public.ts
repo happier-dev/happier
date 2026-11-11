@@ -519,6 +519,7 @@ export {
 export {
   HAPPIER_WIDGET_FRAME_METRICS,
   HAPPIER_WIDGET_FRAME_STYLES,
+  HAPPIER_WIDGET_GROUP_CARD_CELL_INSETS,
   HappierWidgetFrame,
   isHappierWidgetFrameSourceShown,
   isHappierWidgetFrameSourceDescriptor,

@@ -100,6 +100,18 @@ export const HAPPIER_WIDGET_FRAME_METRICS = Object.freeze({
   rowTitleLines: 2,
 } as const);
 
+/**
+ * A card group draws its children plain inside its one card. Each child's text stands one card inset in from the
+ * group's edge, from the left and from the top alike (owner 2026-11-11: header top = left): the cell adds what
+ * the plain frame's own inset leaves on the left, and above the title what the plain header's line does not
+ * already give it (a plain header centres its title in the control-height line).
+ */
+export const HAPPIER_WIDGET_GROUP_CARD_CELL_INSETS = Object.freeze({
+  horizontalPx: HAPPIER_WIDGET_FRAME_METRICS.cardInsetPx - HAPPIER_WIDGET_FRAME_METRICS.plainInsetPx,
+  topPx: Math.max(0, HAPPIER_WIDGET_FRAME_METRICS.cardInsetPx
+    - (HAPPIER_WIDGET_FRAME_METRICS.plainHeaderMinHeightPx - Number(HAPPIER_PAGE_TEXT.meta.lineHeight)) / 2),
+} as const);
+
 /** The caret's box (lab `.wf-cv`): 24pt, extended by the slop to a comfortable target without crowding the mark. */
 const DISCLOSURE_BOX_STYLE = Object.freeze({
   width: HAPPIER_DISCLOSURE_CHEVRON_METRICS.boxPx,
