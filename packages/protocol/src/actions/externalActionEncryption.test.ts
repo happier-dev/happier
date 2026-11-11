@@ -42,7 +42,8 @@ describe('whole external Action encryption', () => {
   it('binds backup configure admission without disclosing authored destination configuration', () => {
     const root = { ...binding, actionId: 'deployments.backups.configure' };
     const input = { serverId: binding.serverIdentityId, environmentId: 'environment', expectedRevision: 2,
-      intent: 'save', configuration: { configRevision: 1,
+      intent: 'save', destinationSetup: { kind: 'anotherMachine', machineId: 'receiver',
+        expectedInstallationId: 'receiver-installation', receiverInputs: {} }, configuration: { configRevision: 1,
         destinationRef: { pluginId: 'happier.backup.local', localId: 'open' }, occurrenceId: 'destination',
         config: { path: '/private/repository' }, credentialBindings: [],
         sources: [{ kind: 'dump', sourceId: 'database', service: 'postgres', consistency: 'logical' }],
@@ -50,7 +51,7 @@ describe('whole external Action encryption', () => {
     const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
       binding: root, input, material, randomBytes });
     expect(envelope.deploymentNativeAdmission).toMatchObject({ kind: 'backupConfigure', actionId: root.actionId,
-      environmentId: input.environmentId, expectedRevision: 2, intent: 'save' });
+      environmentId: input.environmentId, expectedRevision: 2, intent: 'save', receiverMachineId: 'receiver' });
     expect(JSON.stringify(envelope)).not.toContain('/private/repository');
     expect(JSON.stringify(envelope)).not.toContain('private-owner-prefix');
     expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
@@ -58,6 +59,7 @@ describe('whole external Action encryption', () => {
     for (const admission of [undefined,
       { ...envelope.deploymentNativeAdmission, environmentId: 'foreign' },
       { ...envelope.deploymentNativeAdmission, expectedRevision: 3 },
+      { ...envelope.deploymentNativeAdmission, receiverMachineId: 'different-receiver' },
       { ...envelope.deploymentNativeAdmission, intent: 'initializeAndSave' },
       projectDeploymentNativeAdmissionV1(root.actionId, { ...input, configuration: {
         ...input.configuration, config: { path: '/substituted/repository' } } })]) {

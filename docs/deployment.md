@@ -2604,9 +2604,13 @@ occurrence. First setup resolves creation defaults through the Project defaults
 owner; an unset retention policy means Keep everything, and no schedule is created
 implicitly. Destination field labels and choices come from its descriptor's
 `fieldHints`.
-AnotherMachine setup consumes the Environment already read by Configure. The
-selected runtime link's sole member owns its data; the controller is not a
-fallback. With zero or several members, setup returns `source_unavailable`
+AnotherMachine setup consumes the Environment already read by Configure. Its
+signed Configure admission derives `receiverMachineId` from the digested setup
+input. Mint and each person-presented relay admit the requester's current
+Machine use and the Environment owner's access to that receiver. Removing the
+grant refuses the next start, restart or retry; reads of admitted work consume
+the signed scope without repeating those checks. The selected runtime link's
+sole member owns its data; the controller is not a fallback. With zero or several members, setup returns `source_unavailable`
 before sender, credential custody or Machine Setup effects. The shared data
 operand selector uses the same single-member owner for backup and restore.
 Native multi-Machine backup and restore operands remain unavailable until an
@@ -2614,7 +2618,10 @@ admitted per-service placement fact exists.
 Test acquires invocation-scoped credential material through the existing P42
 owner and checks the selected repository with a write/read/delete probe. It does
 not initialize a repository or persist configuration or bindings. Save requires
-an existing repository; only `initializeAndSave` initializes one. SavedSecret
+an existing repository; only `initializeAndSave` initializes one. For a missing
+local destination, Test reports repository absence without creating directories.
+Explicit initialization prepares the full repository directory as the daemon
+before starting the pinned helper, preserving access for later operations. SavedSecret
 references remain on the canonical `deployments.bindings.set` writer with purpose
 `backupDestination`, composed as a reviewed child after a successful probe. Home
 receives prepared Artifact references and public metadata for the Environment

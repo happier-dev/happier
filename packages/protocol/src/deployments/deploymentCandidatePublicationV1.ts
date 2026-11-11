@@ -58,6 +58,7 @@ export type DeploymentBackupNativeAdmissionV1 = z.infer<typeof DeploymentBackupN
 export const DeploymentBackupConfigureNativeAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('backupConfigure'), actionId: z.literal(DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1),
   environmentId: id, expectedRevision: revision, intent: DeploymentBackupConfigureIntentV1Schema,
+  receiverMachineId: z.optional(id),
   inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
 }));
 export type DeploymentBackupConfigureNativeAdmissionV1 = z.infer<typeof DeploymentBackupConfigureNativeAdmissionV1Schema>;
@@ -77,7 +78,8 @@ export const DeploymentNativeAdmissionV1Schema = lazyZodSchema(() => z.union([
 // Signed authority stays closed in stored approvals. A tolerant Environment-only
 // arm would consume typed native facts and change the original envelope digest.
 defineStoredReadProjection(DeploymentNativeAdmissionV1Schema, () => DeploymentNativeAdmissionV1Schema);
-export type DeploymentNativeAdmissionV1 = z.infer<typeof DeploymentNativeAdmissionV1Schema>;
+type NativeAdmissionWithKind<T> = T extends { kind: string } ? T : T & Readonly<{ kind?: never }>;
+export type DeploymentNativeAdmissionV1 = NativeAdmissionWithKind<z.infer<typeof DeploymentNativeAdmissionV1Schema>>;
 export function isDeploymentEnvironmentUpdateNativeAdmissionV1(value: DeploymentNativeAdmissionV1 | undefined):
   value is Extract<DeploymentNativeAdmissionV1, { authoredMetadataDigest: string }> {
   return value !== undefined && !('kind' in value) && 'authoredMetadataDigest' in value;
@@ -91,11 +93,12 @@ export function isDeploymentBackupNativeAdmissionV1(value: DeploymentNativeAdmis
 export function isDeploymentBackupConfigureNativeAdmissionV1(value: DeploymentNativeAdmissionV1 | undefined): value is DeploymentBackupConfigureNativeAdmissionV1 {
   return value !== undefined && 'kind' in value && value.kind === 'backupConfigure';
 }
-export function projectDeploymentNativeAdmissionV1(actionId: string, input: unknown) {
+export function projectDeploymentNativeAdmissionV1(actionId: string, input: unknown): DeploymentNativeAdmissionV1 | undefined {
   if (actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1) {
     const value = DeploymentBackupConfigureInputV1Schema.parse(input);
     return DeploymentBackupConfigureNativeAdmissionV1Schema.parse({ kind: 'backupConfigure', actionId,
       environmentId: value.environmentId, expectedRevision: value.expectedRevision, intent: value.intent,
+      ...('destinationSetup' in value && value.destinationSetup ? { receiverMachineId: value.destinationSetup.machineId } : {}),
       inputDigest: computeCanonicalDomainSeparatedDigest('happier-deployment-backup-configure-input-v1',
         [createCanonicalJsonSigningInput(value)]) });
   }

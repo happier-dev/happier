@@ -17,9 +17,11 @@ import {
 import type { DeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import type { AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
 import type { Tx } from '@/storage/inTx';
+import { resolveMachineAdmissionsInTx } from '@/app/machines/machineAccess';
 import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import {
   canDeployDeploymentEnvironment,
+  admitDeploymentMachineInTx,
   projectDeploymentControllerPlacementFailure,
 } from './deploymentAdmission';
 import {
@@ -135,12 +137,18 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
       };
     }
   }
-  if (
-    configureRoot &&
-    isDeploymentBackupConfigureNativeAdmissionV1(nativeAdmission) &&
-    environment.row.revision !== nativeAdmission.expectedRevision
-  )
-    return { ok: false };
+  if (configureRoot) {
+    if (!isDeploymentBackupConfigureNativeAdmissionV1(nativeAdmission) ||
+      environment.row.revision !== nativeAdmission.expectedRevision) return { ok: false };
+    if (nativeAdmission.receiverMachineId !== undefined) {
+      const receivers = await resolveMachineAdmissionsInTx(tx, {
+        actorAccountId: root.accountId, machineIds: [nativeAdmission.receiverMachineId],
+      });
+      if (receivers.get(nativeAdmission.receiverMachineId)?.kind !== 'admitted' ||
+        await admitDeploymentMachineInTx(tx, environment.admission.owner,
+          nativeAdmission.receiverMachineId, 'target')) return { ok: false };
+    }
+  }
   if (nativeMemberRoot) {
     if (
       !('kind' in nativeAdmission) ||

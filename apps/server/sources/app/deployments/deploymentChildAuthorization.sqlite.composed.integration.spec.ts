@@ -35,7 +35,11 @@ import { logger } from '@/utils/logging/log';
 import nacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { ProjectAccountRowMutationRequestV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { ProjectAccountRowMutationRequestV1Schema, ProjectAccountRowMutationResponseV1Schema,
+    ProjectAccountRowReadResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
+import { ProjectSourcesReadOutputV1Schema, ProjectSourcesUpdateInputV1Schema,
+    ProjectSourceRepositorySelectorV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { DeploymentBindingsSetStorageInputV1Schema, DeploymentDomainContentV1Schema, readDeploymentDomainArtifactV1,
     computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionBodyV1Schema,
     EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretClientBindingsInputV1Schema,
@@ -170,7 +174,7 @@ describe('deployment children retain their controller Action authority', () => {
     async function fixture(ownerKind: 'account' | 'team' = 'account', credential: 'account' | 'api' = 'account',
         options: Readonly<{ readableEnvironment?: boolean; separateMemberCustodian?: boolean; separateControllerCustodian?: boolean; separateContentOwner?: boolean;
             workflowOrigin?: boolean; templateRoot?: boolean; contentMode?: 'plain' | 'e2ee'; platformTarget?: 'vercel' | 'workers';
-            persistedR76Placement?: boolean }> = {}) {
+            persistedR76Placement?: boolean; sourceWithoutRepository?: boolean }> = {}) {
         const contentMode = options.contentMode ?? 'plain';
         const accountKeys = nacl.box.keyPair(), memberContentKeys = nacl.box.keyPair();
         const account = await db.account.create({ data: { encryptionMode: contentMode,
@@ -215,7 +219,7 @@ describe('deployment children retain their controller Action authority', () => {
         if (team) await db.machineTeamGrant.createMany({ data: [controller, member, builder].map(machine => ({
             machineId: machine.id, teamId: team.id, accessLevel: 'view', createdByAccountId: machine.accountId })) });
         const source = await inTx(tx => createProjectSourceInTx(tx, account.id, { serverId, requestKey: crypto.randomUUID(),
-            name: 'Child deployment', audience: [], ...(team ? { owner: { kind: 'team' as const, teamId: team.id } } : {}), repository: { protocol: 'https',
+            name: 'Child deployment', audience: [], ...(team ? { owner: { kind: 'team' as const, teamId: team.id } } : {}), repository: options.sourceWithoutRepository ? undefined : { protocol: 'https',
                 provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
                 repository: { nameWithOwner: 'child/app', cloneUrl: 'https://github.com/child/app.git' } } }));
         if (!source.ok) throw new Error(source.error);
@@ -377,15 +381,24 @@ describe('deployment children retain their controller Action authority', () => {
             accountKeys, memberContentKeys, artifactKeys };
     }
 
-    it.each(['plain', 'e2ee'] as const)('admits Move on its selected workspace without a runtime Link and scopes signed reads (%s)', async contentMode => {
-        const f = await fixture('account', 'account', { readableEnvironment: true, workflowOrigin: true, contentMode });
+    it.each([['plain', 'attach'], ['e2ee', 'attach'], ['plain', 'create'], ['e2ee', 'create']] as const)(
+        'admits Move on its selected workspace without a runtime Link and scopes signed reads (%s, %s)', async (contentMode, repositoryIntent) => {
+        const f = await fixture('account', 'account', { readableEnvironment: true, workflowOrigin: true, contentMode,
+            sourceWithoutRepository: true });
         await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { runtimeTargetLinkId: null } });
         const actionId = DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1;
         const target = { kind: 'machine' as const, machineId: f.member.id };
+        const repository = { kind: 'github' as const, deployment: 'https://github.com', repository: 'child/app' };
+        const sourceRepository = ProjectSourceRepositorySelectorV1Schema.parse({
+            protocol: 'https', provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+            repository: { nameWithOwner: 'child/app', cloneUrl: 'https://github.com/child/app.git' },
+        });
         const input = getActionSpec(actionId).inputSchema.parse({ mode: 'apply', serverId, environmentId: f.environment.id,
             definition: { contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }, path: 'compose.yaml',
-            repository: { kind: 'github', deployment: 'https://github.com', repository: 'child/app' },
-            workspace: { kind: 'workspace-ref', serverId, id: 'selected-workspace' }, baseBranch: 'main', baseCommit: 'a'.repeat(40) });
+            workspace: { kind: 'workspace-ref', serverId, id: 'selected-workspace' },
+            ...(repositoryIntent === 'create' ? { createRepository: {
+                providerKind: 'github', owner: 'child', repositoryName: 'app', visibility: 'private',
+            } } : { repository, sourceRepository, baseBranch: 'main', baseCommit: 'a'.repeat(40) }) });
         const requestId = crypto.randomUUID();
         const authentication = { kind: 'account' as const, tokenEpoch: f.account.tokenEpoch };
         const envelope = contentMode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
@@ -400,14 +413,14 @@ describe('deployment children retain their controller Action authority', () => {
             input: envelope.v === 1 ? input : { environmentId },
         });
         expect(authorization.binding.environmentId).toBe(f.environment.id);
-        const headers = (effectActionId: string, path: string) => ({
+        const headers = (effectActionId: string, path: string, method = 'GET', body?: unknown) => ({
             ...currentAccountStoredContentCompatibilityHeaders,
             [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
             [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
             [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
             [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
                 effectActionId, target, installationId: f.member.installationId, requestId,
-                method: 'GET', path, privateKey: f.member.keys.secretKey }),
+                method, path, body, privateKey: f.member.keys.secretKey }),
         });
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             const path = `/v1/deployments/environments/${f.environment.id}?serverId=${serverId}`;
@@ -428,10 +441,8 @@ describe('deployment children retain their controller Action authority', () => {
         const sourcePath = `/v1/projects/sources/${f.environment.projectSourceId}?serverId=${serverId}`;
         expect(await verify('projects.sources.read', 'GET', sourcePath)).not.toBeNull();
         expect(await verify('projects.sources.read', 'GET', `/v1/projects/sources/unrelated?serverId=${serverId}`)).toBeNull();
-        const sourceUpdate = { serverId, sourceId: f.environment.projectSourceId, expectedRevision: 1, patch: { repository: {
-            protocol: 'https', provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
-            repository: { nameWithOwner: 'child/app', cloneUrl: 'https://github.com/child/app.git' },
-        } } };
+        const sourceUpdate = ProjectSourcesUpdateInputV1Schema.parse({ serverId, sourceId: f.environment.projectSourceId,
+            expectedRevision: 1, patch: { repository: sourceRepository } });
         const sourceUpdatePath = `/v1/projects/sources/${f.environment.projectSourceId}`;
         expect(await verify('projects.sources.update', 'PATCH', sourceUpdatePath, sourceUpdate)).not.toBeNull();
         expect(await verify('projects.sources.update', 'PATCH', sourceUpdatePath, {
@@ -451,7 +462,7 @@ describe('deployment children retain their controller Action authority', () => {
             dataEncryptionKey: privacyKit.encodeBase64(new Uint8Array(stored.artifact.dataEncryptionKey)) });
         expect(await verify(actionId, 'POST', '/v1/artifacts', publication)).not.toBeNull();
         expect(await verify(actionId, 'POST', '/v1/artifacts', { ...publication, id: crypto.randomUUID() })).toBeNull();
-        const workspaceRead = { key: { kind: 'workspace-ref', serverId, id: 'selected-workspace' } };
+        const workspaceRead = { key: { kind: 'workspace-ref' as const, serverId, id: 'selected-workspace' } };
         expect(await verify(actionId, 'POST', '/v1/account/project-rows/read', workspaceRead)).not.toBeNull();
         expect(await verify(actionId, 'POST', '/v1/account/project-rows/read', {
             key: { kind: 'project-organization', serverId, projectKey: 'unrelated' },
@@ -462,8 +473,11 @@ describe('deployment children retain their controller Action authority', () => {
         expect(await verify(actionId, 'POST', '/v1/account/project-rows/list', {
             kinds: ['project-organization'],
         })).toBeNull();
-        const workspaceContent = { t: 'plain', v: { key: workspaceRead.key, value: { id: 'selected-workspace', serverId,
-            rootPath: '/repo', machineId: f.member.id, createdAtMs: 1 } } };
+        const rowCipher = createProjectAccountRowCipherV1({ mode: contentMode,
+            material: contentMode === 'plain' ? null : { type: 'dataKey', machineKey: f.accountKeys.secretKey },
+            randomBytes: nacl.randomBytes });
+        const workspaceValue = { id: 'selected-workspace', serverId, rootPath: '/repo', machineId: f.member.id, createdAtMs: 1 };
+        const workspaceContent = rowCipher.seal({ key: workspaceRead.key, value: workspaceValue });
         const workspaceMutation = ProjectAccountRowMutationRequestV1Schema.parse({
             mutations: [{ key: workspaceRead.key, expectedRevision: 'absent', content: workspaceContent }],
             expectedRefs: [], topologyChange: false });
@@ -471,6 +485,59 @@ describe('deployment children retain their controller Action authority', () => {
         expect(await verify(actionId, 'POST', '/v1/account/project-rows/mutate', {
             ...workspaceMutation, mutations: [{ ...workspaceMutation.mutations[0], content: null }],
         })).toBeNull();
+        await withAuthenticatedTestApp(app => { projectSourceRoutes(app); registerProjectAccountRowRoutes(app); }, async app => {
+            const before = await app.inject({ method: 'GET', url: sourcePath, headers: headers('projects.sources.read', sourcePath) });
+            expect(before.statusCode, before.body).toBe(200);
+            expect(before.json()).toMatchObject({ ok: true, source: { id: f.environment.projectSourceId, revision: 1 } });
+            expect(before.json().source.repository).toBeUndefined();
+            const attached = await app.inject({ method: 'PATCH', url: sourceUpdatePath, payload: sourceUpdate,
+                headers: headers('projects.sources.update', sourceUpdatePath, 'PATCH', sourceUpdate) });
+            expect(attached.statusCode, attached.body).toBe(200);
+            const attachedSource = ProjectSourcesReadOutputV1Schema.parse(attached.json());
+            expect(attachedSource).toMatchObject({ ok: true, source: { id: f.environment.projectSourceId,
+                name: 'Child deployment', revision: 2, repository: sourceUpdate.patch.repository } });
+            if (!attachedSource.ok) throw new Error(attachedSource.error);
+            const staleSource = await app.inject({ method: 'PATCH', url: sourceUpdatePath, payload: sourceUpdate,
+                headers: headers('projects.sources.update', sourceUpdatePath, 'PATCH', sourceUpdate) });
+            expect(staleSource.statusCode, staleSource.body).toBe(409);
+            expect(staleSource.json()).toMatchObject({ ok: false, error: 'source_conflict' });
+
+            const graphKey = { kind: 'relationship-graph' } as const;
+            const initialRows = ProjectAccountRowMutationRequestV1Schema.parse({ ...workspaceMutation, topologyChange: true,
+                mutations: [...workspaceMutation.mutations, { key: graphKey, expectedRevision: 'absent',
+                    content: rowCipher.seal({ key: graphKey, value: { relationships: [] } }) }] });
+            const accountToken = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
+            const seed = await app.inject({ method: 'POST', url: '/v1/account/project-rows/mutate', payload: initialRows,
+                headers: { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${accountToken}` } });
+            expect(seed.statusCode, seed.body).toBe(200);
+            const seeded = ProjectAccountRowMutationResponseV1Schema.parse(seed.json());
+            expect(seeded.status).toBe('updated');
+            if (seeded.status !== 'updated') throw new Error(seeded.status);
+            const workspace = seeded.rows.find(row => row.key.kind === 'workspace-ref' && row.key.id === workspaceRead.key.id);
+            if (!workspace) throw new Error('Workspace row missing from canonical seed response');
+            const acceptedValue = { ...workspaceValue, repositoryIdentity: repository,
+                source: { sourceId: attachedSource.source.id, revision: attachedSource.source.revision } };
+            const acceptance = ProjectAccountRowMutationRequestV1Schema.parse({ mutations: [{ key: workspaceRead.key,
+                expectedRevision: workspace.revision, content: rowCipher.seal({ key: workspaceRead.key, value: acceptedValue }) }],
+                expectedRefs: [], topologyChange: false });
+            const mutationPath = '/v1/account/project-rows/mutate';
+            const accepted = await app.inject({ method: 'POST', url: mutationPath, payload: acceptance,
+                headers: headers(actionId, mutationPath, 'POST', acceptance) });
+            expect(accepted.statusCode, accepted.body).toBe(200);
+            expect(accepted.json()).toMatchObject({ status: 'updated' });
+            const staleWorkspace = await app.inject({ method: 'POST', url: mutationPath, payload: acceptance,
+                headers: headers(actionId, mutationPath, 'POST', acceptance) });
+            expect(staleWorkspace.statusCode, staleWorkspace.body).toBe(200);
+            expect(staleWorkspace.json()).toMatchObject({ status: 'conflict', key: workspaceRead.key });
+            const readPath = '/v1/account/project-rows/read';
+            const read = await app.inject({ method: 'POST', url: readPath, payload: workspaceRead,
+                headers: headers(actionId, readPath, 'POST', workspaceRead) });
+            expect(read.statusCode, read.body).toBe(200);
+            const acceptedRow = ProjectAccountRowReadResponseV1Schema.parse(read.json());
+            expect(acceptedRow.status).toBe('present');
+            if (acceptedRow.status !== 'present' || !acceptedRow.row.content) throw new Error('Accepted Workspace row is unavailable');
+            expect(rowCipher.open(workspaceRead.key, acceptedRow.row.content)).toMatchObject({ key: workspaceRead.key, value: acceptedValue });
+        }, { authentication: 'real' });
         const update = { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
             contentArtifactId: artifactId, contentHeaderVersion: 1, contentBodyVersion: 1 };
         const child = { actionId: 'deployments.environments.update' as const, role: 'move.definition',
@@ -3290,7 +3357,8 @@ describe('deployment children retain their controller Action authority', () => {
         await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { runtimeTargetLinkId: null } });
         const actionId = 'deployments.backups.configure';
         const original = { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
-            intent: 'save' as const, configuration: { configRevision: 1,
+            intent: 'save' as const, destinationSetup: { kind: 'anotherMachine' as const, machineId: f.outsider.id,
+                expectedInstallationId: f.outsider.installationId, receiverInputs: {} }, configuration: { configRevision: 1,
                 destinationRef: { pluginId: 'happier.backup.local', localId: 'open' }, occurrenceId: 'destination',
                 config: { path: '/private/repository' }, credentialBindings: [],
                 sources: [{ kind: 'dump' as const, sourceId: 'database', service: 'postgres', consistency: 'logical' as const }],
@@ -3311,7 +3379,8 @@ describe('deployment children retain their controller Action authority', () => {
         };
         const authorization = await mint();
         expect(authorization.binding.deploymentNativeAdmission).toMatchObject({ kind: 'backupConfigure',
-            actionId, environmentId: f.environment.id, expectedRevision: f.environmentRevision, intent: 'save' });
+            actionId, environmentId: f.environment.id, expectedRevision: f.environmentRevision, intent: 'save',
+            receiverMachineId: f.outsider.id });
         expect(authorization.binding.deploymentCandidatePublication).toBeUndefined();
         await expect(mint({ ...original, expectedRevision: original.expectedRevision + 1 }))
             .rejects.toMatchObject({ code: 'credential_scope_denied' });
@@ -3332,6 +3401,11 @@ describe('deployment children retain their controller Action authority', () => {
                 requestId: active.binding.requestId, method, path, body,
                 ...(reviewedChild ? { reviewedChild } : {}), privateKey: f.controller.keys.secretKey }),
         });
+        expect(await verify('GET', `/v1/machines/${f.outsider.id}`, undefined, { id: f.outsider.id })).not.toBeNull();
+        expect(await verify('GET', `/v1/machines/${foreign.outsider.id}`, undefined, { id: foreign.outsider.id })).toBeNull();
+        await expect(mint({ ...original, destinationSetup: { ...original.destinationSetup,
+            machineId: foreign.outsider.id, expectedInstallationId: foreign.outsider.installationId } }))
+            .rejects.toMatchObject({ code: 'credential_scope_denied' });
         expect(await verify('POST', path, storage, storage)).not.toBeNull();
         for (const change of [{ expectedRevision: storage.expectedRevision + 1 }, { contentArtifactId: crypto.randomUUID() },
             { environmentId: foreign.environment.id }]) {
@@ -3405,6 +3479,48 @@ describe('deployment children retain their controller Action authority', () => {
         const bindingCandidate = { ...candidate, id: bindingArtifactId };
         expect(await verify('POST', '/v1/artifacts', bindingCandidate, bindingCandidate, bindingAction, authorization, reviewedChild)).not.toBeNull();
         expect(await verify('POST', '/v1/artifacts', candidate, candidate, bindingAction, authorization, reviewedChild)).toBeNull();
+    });
+
+    it('refuses backup configure outside the Environment owner domain and after the receiver grant is revoked', async () => {
+        const f = await fixture('team', 'account', { readableEnvironment: true });
+        const actionId = 'deployments.backups.configure';
+        const input: DeploymentBackupConfigureInputV1 = { serverId, environmentId: f.environment.id,
+            expectedRevision: f.environmentRevision, intent: 'test',
+            destinationSetup: { kind: 'anotherMachine', machineId: f.outsider.id,
+                expectedInstallationId: f.outsider.installationId, receiverInputs: {} },
+            configuration: { configRevision: 1, destinationRef: { pluginId: 'happier.backup.local', localId: 'open' },
+                occurrenceId: 'destination', config: { path: '/repository' }, credentialBindings: [],
+                sources: [{ kind: 'dump', sourceId: 'database', service: 'postgres', consistency: 'logical' }],
+                ownership: { environmentId: f.environment.id, prefix: 'repository' }, retention: { kind: 'keepEverything' } } };
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const native = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+        const mint = () => auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId, accountId: f.account.id,
+            authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch }, actionId, machineId: f.controller.id,
+            target, requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
+            { input, deploymentNativeAdmission: native });
+        // The requester owns this receiver, but the Environment's Team cannot use it.
+        await expect(mint()).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await db.machineTeamGrant.create({ data: { machineId: f.outsider.id, teamId: f.team!.id,
+            accessLevel: 'view', createdByAccountId: f.account.id } });
+        const root = await mint();
+        await db.machine.update({ where: { id: f.controller.id }, data: { operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
+        let forwarded = 0;
+        const dispatch = createExternalActionDaemonDispatcher({ io: createSocketRoomDiscoveryHarness(async () => []),
+            forwardRpc: async () => { forwarded += 1; return { ok: false, error: 'daemon_boundary', errorCode: 'daemon_boundary' }; } });
+        const token = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        await withAuthenticatedTestApp(app => registerExternalActionRoutes(app, { dispatch }), async app => {
+            const execute = () => app.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+                headers: { authorization: `Bearer ${token}` },
+                payload: { v: 1, machineId: f.controller.id, envelope, executionAuthorization: root } });
+            await execute();
+            expect(forwarded).toBe(1);
+            await db.machineTeamGrant.deleteMany({ where: { machineId: f.outsider.id, teamId: f.team!.id } });
+            const refused = await execute();
+            expect(refused.json()).toMatchObject({ error: 'credential_scope_denied' });
+            expect(forwarded).toBe(1);
+        }, { authentication: 'real' });
     });
 
     it('updates loopback exports on a fresh Environment through signed CLI preparation and Home storage', async () => {

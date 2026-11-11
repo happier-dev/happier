@@ -1,5 +1,38 @@
 # Compatibility and version skew
 
+## Session external identity (unreleased 0.3)
+
+`Session.externalIdentityTag` is a new nullable column with
+`@@unique([accountId, externalIdentityTag])`, added by the additive migration
+`20261111180000_session_external_identity_tag` (PostgreSQL, SQLite, MySQL). It
+copies every `direct:v1:` creation tag into the column; `(accountId, tag)` is
+already unique, so the copy cannot collide. 0.2 servers and clients never read
+or write it, and 0.2 rows survive unchanged: rows whose conversation identity
+exists only in encrypted metadata (0.2 handoff targets, hosted Sessions) are
+indexed by each Machine's daemon backfill, and until that completes
+`link.ensure` keeps its bounded Account scan (see `search.md`).
+
+`POST /v2/sessions/lookup-by-tags` (a 0.3-only route; the `../0.2` frontier at
+`b141382c277a73d0e81e33c7469eb4f0b30802d6` has none) gains the optional request
+flag `matchExternalIdentity` and the response field `externalIdentities`.
+Without the flag the route answers exactly the creation-tag lookup, so its
+other callers (voice history, workflow and CLI session lookups) never receive
+an identity-only row. `PATCH /v2/sessions/:id` gains a strict
+`{ externalIdentityTag }` body mode (claim, or same-Session replace; another
+Session's identity is a typed 409). Older strict development servers reject
+both additions; Protocol, server and CLI load together. No predecessor adapter
+or capability gate is introduced.
+
+## Backup Configure receiver admission (unreleased 0.3)
+
+The closed native Configure admission optionally carries `receiverMachineId`,
+derived from the same Another Machine setup input as its digest. Matching
+Protocol, CLI envelope producers and Home readers reload together. Older strict
+development readers reject that field; no released epoch or persisted format
+changes. The inspected `../0.2` frontier at
+`b141382c277a73d0e81e33c7469eb4f0b30802d6` has no deployment protocol directory
+or working-tree additions there. No predecessor adapter is introduced.
+
 ## Usage filter inventory (unreleased 0.3)
 
 Private accounting responses add optional closed `scopeKeys` entries containing
@@ -5440,6 +5473,15 @@ it for presentation and expiry-first pool ranking; older readers ignore it.
 Pool-selected display projection filters only meters and
 preserves account-, subscription-, freshness-, and recovery-credit fields.
 
+Provider credits (Codex `credits`, Claude `extra_usage` or an in-band Claude
+`overageStatus`) travel as an ordinary quota meter with `unit: 'credits'` and no
+`details.limitCategory`; Codex adds the balance as `remaining` and the provider
+verdict as `isExhausted`. No wire field or enum value is added. Readers classify it
+with the protocol `isConnectedServiceQuotaCreditMeter` owner: it is never an included
+allowance, every pool `quotaLimitSelection` keeps it, and an account whose included
+usage allowances are spent stays usable (ranked after accounts with included quota)
+while it has credit headroom. A provider usage-limit error remains authoritative.
+
 Provider rejection codes (for example Claude's `rate_limit`) are not allowance
 IDs. When the provider does not identify the exhausted allowance, recovery keeps
 that identity unknown and uses the existing account-level recovery policy; only
@@ -5533,8 +5575,10 @@ retained v1 routes remain unchanged. The batch request, response, query clauses
 and nested accounting envelopes are closed V1 objects. `includeContributions`
 defaults to false and is interpreted only by the new operation, so an older
 server cannot silently ignore the raw-delivery choice. A missing batch operation
-settles as unsupported rather than issuing a scalar fan-out. Existing CLI
-external-Action proofs retain their exact scalar route and request grammar.
+settles as unsupported rather than issuing a scalar fan-out. CLI external-Action
+proofs sign the actual selected path and request body: scalar for one accounting
+read, batch for several primary/comparison reads. The existing Home purpose
+owner admits both routes under the same Usage Action authority.
 The UI negotiates NDJSON delivery of the same closed batch objects and validates
 each delivered chunk. Native fetch without body streaming consumes those lines
 from the same buffered response, never a second acquisition or scalar fallback.
@@ -5545,7 +5589,7 @@ private evidence, not raw accounting. `contributionPages` makes detail continuat
 explicit (`offset`, `totalCount`, nullable `nextOffset`); JSON readers can request
 `contributionOffset`, while NDJSON completes the captured snapshot's pages in one
 response. Omitting the new operand preserves the existing batch delivery choice;
-scalar and signed external-Action transports are unchanged. The matching current
+the scalar grammar and external-Action proof grammar are unchanged. The matching current
 Resource consumes both incumbent rich and compact responses. Because development
 UI hot reload precedes independently loaded strict servers, the existing Usage
 producer advertises the additive `features.usage.compactBatch.enabled` bit.
@@ -5579,7 +5623,13 @@ contributions and dependent merged summary; other admitted summary facts and
 query identities remain intact. The projection reuses the existing complete
 Action envelope budget without changing source/acquisition currentness.
 Matching development readers consume this explicit omission instead of treating
-it as complete evidence. There is no new request operand, persistence format,
+it as complete evidence. Work allocations carry outcome/branch identities; full
+contribution memberships occur once in their respective tables, avoiding
+quadratic response growth. `workSummary` optionally retains `sessionCount`,
+`contributionCount` and `allocatedContributionCount`, including when rich Work
+is omitted. These counts describe admitted contributions, not unobserved history.
+The matching strict 0.3 producer and readers must reload together for the narrowed
+allocation shape; the inspected 0.2 predecessor has no such seam. There is no new request operand, persistence format,
 SDK ABI, released-client floor or compatibility adapter. The scoped-clean 0.2
 frontier above has no corresponding Usage Action result seam.
 
@@ -7904,6 +7954,20 @@ paths, has neither this native launcher schema nor the Move contract; no
 predecessor adapter is introduced.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 committed user runtime events add optional `nativeContent`, a strict
+JSON array retained as opaque data in `raw.meta.nativeContent`. The V1 event and
+its identity, role and lifecycle fields remain closed; nested native values are
+round-trip data and acquire no host or trusted-content authority. Non-user events
+reject the field. Protocol, SDK, Codex plugin and host reload together; earlier
+strict development readers reject the addition. This direct development cut adds
+no wire epoch, capability, persistence migration or reverse-development adapter.
+The inspected 0.2 base `7b37d65ca75e58560f8f3ca850958ac5407d2e75` and PR #905
+through `9308855b1cf55c7ca901fd6d7c1aa56d3ff38fab` write opaque native parts in
+existing message metadata (`codexNativeContent`); they have no 0.3 runtime-event
+contract. Existing stored metadata remains readable. The port preserves 0.3's
+visible unsupported-record projection and hard caller/transport reply budget;
+it does not port 0.2's soft-limit exception for a single oversized record.
 
 Unreleased 0.3 Workspace Sync reconnect accepts the existing signed SOURCE
 relationship projection without a new target bootstrap choice. The target owner
@@ -10738,3 +10802,7 @@ fabricated encryption material. Withdrawal affects the next admission; a finite
 native effect already admitted keeps its signed authority through settlement.
 This is a server authority correction with no wire, persisted-shape, schema or
 protocol-epoch change.
+
+## Chrome Web Store registry format (unreleased 0.3)
+
+`chrome-web-store` is a new registry format id for the built-in browser-extension source. It uses the store's private batchexecute listing and detail reads and the existing update2 content digest check; acquisition remains the daemon browser-extension owner. Older strict development clients reject the unknown format id at source admission, so the source is omitted until the client is upgraded. Paste-link/ID installation remains available.
