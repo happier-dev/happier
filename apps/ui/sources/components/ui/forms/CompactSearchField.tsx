@@ -17,6 +17,8 @@ import { t } from '@/text';
  * touch target through the shared hit area; the field is never drawn taller for it.
  */
 export const COMPACT_SEARCH_FIELD_METRICS = HAPPIER_SEARCH_FIELD_METRICS;
+/** The close button that ends a field the person opened (a main screen's search). */
+export const COMPACT_SEARCH_FIELD_CLOSE_BUTTON_SIZE_PX = 20;
 
 // Callers place the field; the shared owner retains its frame, colours and padding.
 type CompactSearchFieldLayoutStyle = Pick<ViewStyle,

@@ -1,6 +1,7 @@
 import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
+import { COMPACT_SEARCH_FIELD_CLOSE_BUTTON_SIZE_PX } from '@/components/ui/forms/CompactSearchField';
 import type { HeaderControlMetrics } from '@/components/ui/icons/iconButtonGlyphSize';
 
 /** The Sessions header and group rhythm, shared by its paint and column width budget. */
@@ -10,7 +11,7 @@ export const SESSION_LIST_COLUMN_METRICS = Object.freeze({
     iconButtonGapPx: HAPPIER_COLLECTION_LIST_METRICS.headerActionGap,
     /** The narrowest the list title gets before the Projects/Recent segment yields (the shared column floor). */
     titleFloorPx: HAPPIER_COLLECTION_LIST_METRICS.titleFloor,
-    fieldCloseButtonSizePx: 20,
+    fieldCloseButtonSizePx: COMPACT_SEARCH_FIELD_CLOSE_BUTTON_SIZE_PX,
     fieldGapPx: 4,
     groupLabelPaddingTopPx: HAPPIER_COLLECTION_LIST_METRICS.groupLabelPaddingTop,
     groupLabelPaddingBottomPx: HAPPIER_COLLECTION_LIST_METRICS.groupLabelPaddingBottom,

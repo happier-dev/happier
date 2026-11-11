@@ -2,8 +2,6 @@ import * as React from 'react';
 import { View } from 'react-native';
 
 import { sessionListStyles } from '@/components/sessions/shell/sessionListStyles';
-import { HAPPIER_PAGE_TEXT } from '@happier-dev/plugin-ui/presentation';
-import { SESSION_LIST_COLUMN_METRICS } from '@/components/sessions/shell/sessionListColumnMetrics';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 
 /**
@@ -20,12 +18,7 @@ export type PhoneTabNavRow = Readonly<{
 const PhoneTabNavRowContext = React.createContext<PhoneTabNavRow | null>(null);
 
 /** The head's left edge in the phone tab shell: the page edge, where every tab's large title stands. */
-export const PHONE_TAB_HEAD_EDGE_STYLE = { paddingLeft: PAGE_LIST_METRICS.pageTextInsetPx } as const;
-/** A title drawn by the column itself stands as far under the line as a page's large title does. */
-export const PHONE_TAB_TITLE_ROW_STYLE = {
-    marginTop: PAGE_LIST_METRICS.pageHeaderUnderChromePaddingTopPx
-        - (SESSION_LIST_COLUMN_METRICS.titleRowHeightPx - HAPPIER_PAGE_TEXT.heroTitle.lineHeight) / 2,
-} as const;
+const PHONE_TAB_HEAD_EDGE_STYLE = { paddingLeft: PAGE_LIST_METRICS.pageTextInsetPx } as const;
 
 export function PhoneTabNavRowProvider(
   props: Readonly<PhoneTabNavRow & { children: React.ReactNode }>,

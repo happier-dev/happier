@@ -20,7 +20,8 @@ import { CollectionFilterButton } from '@/components/ui/lists/collection/Collect
 import { CollectionTitleNaturalWidthContext } from '@/components/ui/lists/collection/CollectionTitleButton';
 import { CollectionSpaceSwipeTitle, CollectionSpaceSwipeZone, useCollectionSpaceSwipeTrack } from '@/components/ui/lists/collection/CollectionSpaceSwipeZone';
 import { useIsTablet } from '@/utils/platform/responsive';
-import { PHONE_TAB_HEAD_EDGE_STYLE, PHONE_TAB_TITLE_ROW_STYLE, usePhoneTabNavRow } from '@/components/navigation/shell/phoneTabNavRow';
+import { usePhoneTabNavRow } from '@/components/navigation/shell/phoneTabNavRow';
+import { SessionListMainScreenHead } from './SessionListMainScreenHead';
 import { sessionListSubjectCopyKey } from '../sessionListViewEmptyStateModel';
 import type { SessionListViewFilters } from './sessionListViewFilters';
 
@@ -76,6 +77,16 @@ export type SessionListSearchChromeProps = Readonly<{
  * collapse the field and return focus to the search toggle.
  */
 export const SessionListSearchChrome = React.memo(function SessionListSearchChrome(
+    props: SessionListSearchChromeProps,
+) {
+    // On a phone tab My work is a main screen: it draws the one main-screen head (owner 11-11). A column (and the fixed
+    // Runs window) keeps the column's header below.
+    const phoneMainScreen = usePhoneTabNavRow() !== null && props.presentation !== 'runs';
+    return phoneMainScreen ? <SessionListMainScreenHead {...props} /> : <SessionListColumnChrome {...props} />;
+});
+
+/** The session list's header as a column (beside a page, or the Runs window): title row, field, strip and lines. */
+const SessionListColumnChrome = React.memo(function SessionListColumnChrome(
     props: SessionListSearchChromeProps,
 ) {
     const {
@@ -204,10 +215,6 @@ export const SessionListSearchChrome = React.memo(function SessionListSearchChro
     const spaceSwipeCommit = props.spaceSwipe?.onCommit;
     const handleSpaceSwipe = React.useCallback((direction: -1 | 1) => spaceSwipeCommit?.(direction), [spaceSwipeCommit]);
     const spaceSwipeTrack = useCollectionSpaceSwipeTrack();
-    // On a phone tab whose column is the page, the shell's line heads it, the same line as every tab, then the
-    // title with the column's controls as on a wide column, then spaces and chips on one line (lab `mnSessions` A).
-    const shellNavRow = usePhoneTabNavRow();
-    const navRow = props.presentation === 'runs' ? null : shellNavRow;
     const headerControl = useHeaderControlMetrics(SESSION_LIST_HEADER_CONTROL);
     const columnControls = (
         <>
@@ -235,14 +242,7 @@ export const SessionListSearchChrome = React.memo(function SessionListSearchChro
         </>
     );
     return (
-        <View ref={props.anchorRef} collapsable={false} style={[styles.searchChrome, navRow ? PHONE_TAB_HEAD_EDGE_STYLE : null]} testID="session-list-search-chrome">
-            {navRow ? (
-                <View testID="session-list-phone-nav-row" style={styles.searchChromeControlsRow}>
-                    {/* The Home line yields its width before the controls do; the segment yields first. */}
-                    <View style={styles.searchChromeTitleSlot}>{navRow.leading}</View>
-                    {navRow.trailing}
-                </View>
-            ) : null}
+        <View ref={props.anchorRef} collapsable={false} style={styles.searchChrome} testID="session-list-search-chrome">
             <CollectionSpaceSwipeZone
                 testID="session-list-space-swipe-zone"
                 track={spaceSwipeTrack}
@@ -253,7 +253,7 @@ export const SessionListSearchChrome = React.memo(function SessionListSearchChro
             >
             <View
                 testID="session-list-search-primary-controls"
-                style={[styles.searchChromeControlsRow, props.presentation === 'runs' ? styles.searchChromeSummaryRow : null, navRow ? PHONE_TAB_TITLE_ROW_STYLE : null]}
+                style={[styles.searchChromeControlsRow, props.presentation === 'runs' ? styles.searchChromeSummaryRow : null]}
             >
                 <View testID="session-list-title-slot" style={[styles.searchChromeTitleSlot, styles.searchChromeTitleSlotOnRow]} onLayout={handleTitleSlotLayout}>
                     {/* Beside its controls the title says how wide its whole name is. */}
@@ -268,7 +268,7 @@ export const SessionListSearchChrome = React.memo(function SessionListSearchChro
                 </View>
                 {columnControls}
             </View>
-            {spaceChrome && !navRow ? props.spacesStrip : null}
+            {spaceChrome ? props.spacesStrip : null}
             </CollectionSpaceSwipeZone>
             {props.filterSummary && props.presentation !== 'runs' && !spaceChrome ? (
                 <View testID="session-list-filter-summary" style={styles.searchChromeStatusRow}>
@@ -331,11 +331,6 @@ export const SessionListSearchChrome = React.memo(function SessionListSearchChro
                         )}
                     />
                 </Animated.View>
-            ) : null}
-            {navRow && spaceChrome ? (
-                <View testID="session-list-phone-controls" style={styles.searchChromePhoneControls}>
-                    <View style={styles.searchChromePhoneStrip}>{props.spacesStrip}</View>
-                </View>
             ) : null}
             {spaceChrome ? props.filterTokens : null}
             {searchScopeLabel && trimmedQuery.length > 0 ? (

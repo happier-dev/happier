@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { useIsAppDestinationRootPath } from '@/components/appShell/destinations/useCompactAppDestinations';
+import { Stack, usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -6,7 +8,10 @@ import {
   usePublishPageCreateAction,
   type PageCreateAction,
 } from '@/components/navigation/mobile/chrome/pageCreateAction';
-import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
+import { COMPACT_SEARCH_FIELD_CLOSE_BUTTON_SIZE_PX, CompactSearchField } from '@/components/ui/forms/CompactSearchField';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
+import { t } from '@/text';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import {
@@ -65,6 +70,9 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
   props: MainScreenHeaderProps,
 ) {
   const phone = useDeviceType() === 'phone';
+  // A main screen (a rail destination's own route) has no bar above it on a phone: the tab bar is its way around and
+  // this head is its title row. A page pushed over it keeps its bar and Back.
+  const mainScreen = useIsAppDestinationRootPath(usePathname());
   const create = props.create ?? null;
   usePublishPageCreateAction(phone ? create : null);
   const search = props.search ?? null;
@@ -80,6 +88,7 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
     props.actions != null || search !== null || createControl !== null;
   return (
     <>
+      {phone && mainScreen ? <Stack.Screen options={MAIN_SCREEN_BAR} /> : null}
       <NavigationLargeTitleProvider largeTitle={phone}>
         <PageHeader
           {...(props.testID === undefined ? {} : { testID: props.testID })}
@@ -101,6 +110,7 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
                 {search ? (
                   <CollectionSearchToggle
                     testID={`${search.testID}:toggle`}
+                    controlRef={searchState.toggleRef}
                     open={searchState.open}
                     onPress={searchState.toggle}
                     accessibilityLabel={search.placeholder}
@@ -125,7 +135,22 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
               onChangeText={search.onChangeText}
               placeholder={search.placeholder}
               autoFocus={searchState.focusOnOpen}
-              {...(search.trailing == null ? {} : { trailing: search.trailing })}
+              onKeyPress={searchState.onKeyPress}
+              // The field ends with what narrows it (a funnel), then its close (My work's field, owner 11-11).
+              trailing={
+                <>
+                  {search.trailing}
+                  <IconButton
+                    testID={`${search.testID}:close`}
+                    accessibilityLabel={t('sessionsList.closeSearch')}
+                    variant="plain"
+                    size={COMPACT_SEARCH_FIELD_CLOSE_BUTTON_SIZE_PX}
+                    iconSize={ICON_SIZE.xs}
+                    iconName="x"
+                    onPress={searchState.close}
+                  />
+                </>
+              }
             />
           ) : null}
           {props.status}
@@ -137,26 +162,43 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
 });
 
 /**
- * The magnifier's field: closed until pressed; a query keeps it open; pressing again (or clearing) closes it and
- * clears the query. Only an explicit open focuses, so a retained query restoring the page does not steal focus.
+ * The magnifier's field: closed until pressed; a query keeps it open. The magnifier again, the field's close or Escape
+ * clears the query, folds the field away and hands focus back to the magnifier. Only an explicit open focuses, so a
+ * retained query restoring the page does not steal focus.
  */
-export function useMainScreenSearch(
-  search: MainScreenSearch | null,
-): Readonly<{ open: boolean; focusOnOpen: boolean; toggle: () => void }> {
+export function useMainScreenSearch(search: MainScreenSearch | null): Readonly<{
+  open: boolean;
+  focusOnOpen: boolean;
+  toggle: () => void;
+  close: () => void;
+  onKeyPress: (event: Readonly<{ nativeEvent?: Readonly<{ key?: string }> }>) => void;
+  toggleRef: (instance: Readonly<{ focus?: () => void }> | null) => void;
+}> {
   const [opened, setOpened] = React.useState(false);
   const value = search?.value ?? '';
   const onChangeText = search?.onChangeText;
   const open = opened || value.length > 0;
+  const toggleInstance = React.useRef<Readonly<{ focus?: () => void }> | null>(null);
+  const toggleRef = React.useCallback((instance: Readonly<{ focus?: () => void }> | null) => {
+    toggleInstance.current = instance;
+  }, []);
+  const close = React.useCallback(() => {
+    onChangeText?.('');
+    setOpened(false);
+    // The field that held focus is gone: hand focus back to the control that opened it.
+    toggleInstance.current?.focus?.();
+  }, [onChangeText]);
   const toggle = React.useCallback(() => {
-    if (open) {
-      onChangeText?.('');
-      setOpened(false);
-    } else {
-      setOpened(true);
-    }
-  }, [onChangeText, open]);
-  return { open, focusOnOpen: opened && value.length === 0, toggle };
+    if (open) close();
+    else setOpened(true);
+  }, [close, open]);
+  const onKeyPress = React.useCallback((event: Readonly<{ nativeEvent?: Readonly<{ key?: string }> }>) => {
+    if (event.nativeEvent?.key === 'Escape') close();
+  }, [close]);
+  return { open, focusOnOpen: opened && value.length === 0, toggle, close, onKeyPress, toggleRef };
 }
+
+const MAIN_SCREEN_BAR = Object.freeze({ headerShown: false });
 
 const styles = StyleSheet.create((theme) => ({
   // Right under the title (owner 11-11), on the sheets' edge: the header's own bottom padding is the gap above; the

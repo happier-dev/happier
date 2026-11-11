@@ -184,7 +184,8 @@ vi.mock('@/components/sessions/shell/SessionsListPaneContent', () => ({
     SessionsListPaneContent: 'SessionsListPaneContent',
 }));
 
-vi.mock('@/components/navigation/Header', () => ({
+vi.mock('@/components/navigation/Header', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/components/navigation/Header')>()),
     Header: 'Header',
 }));
 

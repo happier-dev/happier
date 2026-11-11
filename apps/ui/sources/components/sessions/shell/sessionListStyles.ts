@@ -196,17 +196,6 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         gap: theme.space.s8,
         minHeight: 28,
     },
-    // On a phone tab the spaces strip takes its own line under the title.
-    searchChromePhoneControls: {
-        flexDirection: 'row' as const,
-        alignItems: 'center' as const,
-        gap: theme.space.s4,
-        paddingTop: theme.space.s8,
-    },
-    searchChromePhoneStrip: {
-        flex: 1,
-        minWidth: 0,
-    },
     searchChromeChipRow: {
         flexDirection: 'row' as const,
         flexWrap: 'wrap' as const,

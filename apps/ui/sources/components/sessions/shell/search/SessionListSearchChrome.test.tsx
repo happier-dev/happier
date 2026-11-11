@@ -472,12 +472,17 @@ describe('SessionListSearchChrome', () => {
         for (const id of ['shell-home-line', 'shell-glyphs']) {
             expect(navRow.findAllByProps({ testID: id }).length).toBeGreaterThan(0);
         }
-        // The line is the one every tab has. The list's controls stand on its title's line, as on a wide column.
-        const titleLine = firstByTestId(screen.root, 'session-list-search-primary-controls');
-        for (const id of ['filter-control', 'session-list-search-trigger', 'session-list-view-options-trigger']) {
+        // My work is a main screen: its title row is the one main-screen head every main screen draws (owner 11-11).
+        const head = firstByTestId(screen.root, 'session-list-header');
+        for (const id of ['filter-control', 'session-list-search:toggle', 'session-list-view-options-trigger']) {
             expect(navRow.findAllByProps({ testID: id })).toHaveLength(0);
-            expect(titleLine.findAllByProps({ testID: id }).length).toBeGreaterThan(0);
+            expect(head.findAllByProps({ testID: id }).length).toBeGreaterThan(0);
         }
+        // The magnifier opens the field; its close clears the query and folds the field away again.
+        await screen.pressByTestIdAsync('session-list-search:toggle');
+        expect(screen.root.findAllByProps({ testID: 'session-list-search' }).length).toBeGreaterThan(0);
+        await screen.pressByTestIdAsync('session-list-search:close');
+        expect(screen.root.findAllByProps({ testID: 'session-list-search' })).toHaveLength(0);
     });
 
     it('on a phone tab page keeps the spaces on their line with no chip row beside them', async () => {
@@ -494,8 +499,10 @@ describe('SessionListSearchChrome', () => {
             </PhoneTabNavRowProvider>,
         );
 
-        const line = firstByTestId(screen.root, 'session-list-phone-controls');
-        expect(line.findAllByProps({ testID: 'spaces-strip' }).length).toBeGreaterThan(0);
+        // The spaces stand right under the title, in the main-screen head (not in a phone-only controls line).
+        expect(firstByTestId(screen.root, 'session-list-header')).toBeTruthy();
+        expect(screen.root.findAllByProps({ testID: 'session-list-phone-controls' })).toHaveLength(0);
+        expect(screen.root.findAllByProps({ testID: 'spaces-strip' }).length).toBeGreaterThan(0);
         expect(screen.root.findAllByProps({ testID: 'session-list-quick-filters' })).toHaveLength(0);
     });
 

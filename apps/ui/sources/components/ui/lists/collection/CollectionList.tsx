@@ -215,11 +215,15 @@ const COLLECTION_SEARCH_TOGGLE_CONTROL: HeaderControlMetrics = Object.freeze({ s
  * The title row's magnifier: a collection's own, and a main screen that is a page rather than a list (People,
  * Settings) draws the same one beside its title.
  */
-export function CollectionSearchToggle(props: React.ComponentProps<NonNullable<HappierCollectionListHost['SearchToggle']>>) {
+export function CollectionSearchToggle(props: React.ComponentProps<NonNullable<HappierCollectionListHost['SearchToggle']>> & Readonly<{
+    /** Receives the toggle, so closing the field can hand focus back to it. */
+    controlRef?: React.ComponentProps<typeof IconButton>['controlRef'];
+}>) {
     const control = useHeaderControlMetrics(COLLECTION_SEARCH_TOGGLE_CONTROL);
     return (
         <IconButton
             {...(props.testID === undefined ? {} : { testID: props.testID })}
+            {...(props.controlRef === undefined ? {} : { controlRef: props.controlRef })}
             accessibilityLabel={props.accessibilityLabel}
             tooltip={props.accessibilityLabel}
             variant="plain"
