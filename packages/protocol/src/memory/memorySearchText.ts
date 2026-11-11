@@ -2,7 +2,15 @@
 export const MEMORY_SEARCH_FTS_TOKENIZER = "unicode61 remove_diacritics 0 tokenchars ''_-$''";
 const UNSPACED_RUN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu;
 const WORDS = /[\p{L}\p{N}\p{M}_$-]+/gu;
-const SNIPPET_SEGMENTER = new Intl.Segmenter('und', { granularity: 'grapheme' });
+function segmentGraphemes(text: string): Iterable<{ segment: string }> {
+  try {
+    const Segmenter = Intl.Segmenter;
+    if (typeof Segmenter === 'function') return new Segmenter('und', { granularity: 'grapheme' }).segment(text);
+  } catch {
+    // Hermes builds may omit Intl.Segmenter; code-point segments preserve safe offsets.
+  }
+  return Array.from(text, (segment) => ({ segment }));
+}
 export type TokenizeMemoryTextOptions = Readonly<{ minLength?: number }>;
 
 export function segmentMemorySearchCjkRuns(text: string): string {
@@ -62,7 +70,7 @@ export function createMemorySearchSnippet(text: string, query: string, maxChars:
   let sourceIndex = 0;
   // Graphemes compose both accents and Hangul Jamo. Case expansion lengths
   // retain original offsets; whole-text lowercasing preserves final sigma.
-  for (const part of SNIPPET_SEGMENTER.segment(text)) {
+  for (const part of segmentGraphemes(text)) {
     const normalized = part.segment.normalize('NFKC');
     haystack += normalized;
     for (let unit = 0; unit < normalized.toLowerCase().length; unit += 1) sourceOffsets.push(sourceIndex);

@@ -8,6 +8,13 @@ import { CredentialRequestRedirectError } from '../homeTarget/credentialRequestR
 
 const DIRECT_HOME_QR_CLEANUP_TIMEOUT_MS = 5_000;
 
+function timeoutSignal(timeoutMs: number): AbortSignal {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
+  return controller.signal;
+}
+
 function handleCleanupFailure(error: unknown): Readonly<{ ok: false }> {
   if (error instanceof CredentialRequestRedirectError) throw error;
   return { ok: false };
@@ -152,7 +159,7 @@ export async function startDirectHomeQrLifecycle(input: Readonly<{
         await input.adapters.consume({
           pairId: started.pairId,
           intent: 'cancel',
-          signal: AbortSignal.timeout(DIRECT_HOME_QR_CLEANUP_TIMEOUT_MS),
+          signal: timeoutSignal(DIRECT_HOME_QR_CLEANUP_TIMEOUT_MS),
           timeoutMs: DIRECT_HOME_QR_CLEANUP_TIMEOUT_MS,
         }).catch(handleCleanupFailure);
       }
@@ -170,7 +177,7 @@ export async function startDirectHomeQrLifecycle(input: Readonly<{
   if (!Number.isSafeInteger(expiresAtMs) || expiresAtMs <= issuedAtMs) {
     const timeoutMs = Math.min(DIRECT_HOME_QR_CLEANUP_TIMEOUT_MS, Math.max(1, expiresAtMs - input.adapters.now()));
     try {
-      await input.adapters.consume({ pairId: started.pairId, intent: 'cancel', signal: AbortSignal.timeout(timeoutMs), timeoutMs }).catch(handleCleanupFailure);
+      await input.adapters.consume({ pairId: started.pairId, intent: 'cancel', signal: timeoutSignal(timeoutMs), timeoutMs }).catch(handleCleanupFailure);
     } finally {
       await input.adapters.close().catch(() => undefined);
     }
@@ -191,7 +198,7 @@ export async function startDirectHomeQrLifecycle(input: Readonly<{
   if (!rendered.ok && rendered.reason === 'invalid_invite') {
     const timeoutMs = Math.min(DIRECT_HOME_QR_CLEANUP_TIMEOUT_MS, Math.max(1, expiresAtMs - input.adapters.now()));
     try {
-      await input.adapters.consume({ pairId: started.pairId, intent: 'cancel', signal: AbortSignal.timeout(timeoutMs), timeoutMs }).catch(handleCleanupFailure);
+      await input.adapters.consume({ pairId: started.pairId, intent: 'cancel', signal: timeoutSignal(timeoutMs), timeoutMs }).catch(handleCleanupFailure);
     } finally {
       await input.adapters.close().catch(() => undefined);
     }
@@ -243,7 +250,7 @@ export function runDirectHomeQrCompletion(input: Readonly<{
   const cleanupTimeoutMs = () => Math.min(DIRECT_HOME_QR_CLEANUP_TIMEOUT_MS, Math.max(1, expiresAtMs - adapters.now()));
   const reject = async (): Promise<void> => {
     const timeoutMs = cleanupTimeoutMs();
-    await adapters.consume({ pairId, intent: 'reject', signal: AbortSignal.timeout(timeoutMs), timeoutMs }).catch(handleCleanupFailure);
+    await adapters.consume({ pairId, intent: 'reject', signal: timeoutSignal(timeoutMs), timeoutMs }).catch(handleCleanupFailure);
   };
 
   let controller = new AbortController();
@@ -262,7 +269,7 @@ export function runDirectHomeQrCompletion(input: Readonly<{
       const outcome = await adapters.consume({
         pairId,
         intent: 'cancel',
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: timeoutSignal(timeoutMs),
         timeoutMs,
       }).catch(handleCleanupFailure);
       if (outcome.ok && outcome.outcome === 'cancelled') {

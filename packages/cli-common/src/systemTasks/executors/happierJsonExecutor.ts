@@ -29,6 +29,7 @@ import {
 import { resolveWindowsCommandInvocation } from '../../process/index.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { applyPublicReleaseRingScopeToEnv } from './releaseRingScopedEnv.js';
+import { mergeAbortSignals } from '../../plugins/http/service.js';
 
 export const DEFAULT_HAPPIER_CLI_ENV_VAR_NAMES = [
   'HAPPIER_BOOTSTRAP_CLI_PATH',
@@ -601,10 +602,10 @@ export function createLocalHappierJsonExecutor(params: FirstPartyAcquisitionOpti
   };
 
   return createHappierJsonExecutorFromTextRunner(async (args, opts) => {
+    const merged = mergeAbortSignals([opts?.signal, params.signal]);
+    try {
       const processEnv = opts?.env ?? defaultProcessEnv;
-      const signal = opts?.signal && params.signal && opts.signal !== params.signal
-        ? AbortSignal.any([opts.signal, params.signal])
-        : opts?.signal ?? params.signal;
+      const signal = merged.signal;
       const command = await ensureCommand(processEnv, signal);
       signal?.throwIfAborted();
       params.onCommandReady?.();
@@ -640,5 +641,8 @@ export function createLocalHappierJsonExecutor(params: FirstPartyAcquisitionOpti
       });
 
       return result;
+    } finally {
+      merged.dispose();
+    }
   });
 }

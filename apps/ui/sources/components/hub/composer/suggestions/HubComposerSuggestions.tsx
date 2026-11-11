@@ -33,7 +33,11 @@ export type HomeComposerSuggestionFill = Readonly<{
 function formatSinceDay(since: HomeComposerSuggestionSince): string {
     const locale = getPreferredLanguage();
     if (since.kind === 'yesterday') {
-        return new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(-1, 'day');
+        try {
+            return new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(-1, 'day');
+        } catch {
+            return new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(new Date(since.atMs));
+        }
     }
     return new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(new Date(since.atMs));
 }

@@ -11,6 +11,14 @@ export {
 
 const MILLIS_PER_DAY = 24 * 60 * 60 * 1_000;
 
+function formatRelativeOrAbsolute(locales: Intl.LocalesArgument | undefined, value: number, unit: Intl.RelativeTimeFormatUnit, date: Date): string {
+    try {
+        return new Intl.RelativeTimeFormat(locales, { numeric: value === 1 ? 'auto' : 'always' }).format(value, unit);
+    } catch {
+        return new Intl.DateTimeFormat(locales, { dateStyle: 'medium' }).format(date);
+    }
+}
+
 function localDayOrdinal(date: Date): number {
     return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / MILLIS_PER_DAY);
 }
@@ -72,11 +80,11 @@ export function formatSessionReminderPresetRuleLabel(
     const resolved = new Date(resolveSessionReminderPresetRule(rule, nowMs));
     const time = new Intl.DateTimeFormat(locales, { hour: 'numeric', minute: '2-digit' }).format(resolved);
     if (rule.kind === 'relative_day' && rule.daysAhead === 1) {
-        const relative = new Intl.RelativeTimeFormat(locales, { numeric: 'auto' }).format(1, 'day');
+        const relative = formatRelativeOrAbsolute(locales, 1, 'day', resolved);
         return `${relative.charAt(0).toLocaleUpperCase() + relative.slice(1)} · ${time}`;
     }
     if (rule.kind === 'relative_day') {
-        const relative = new Intl.RelativeTimeFormat(locales, { numeric: 'always' }).format(rule.daysAhead, 'day');
+        const relative = formatRelativeOrAbsolute(locales, rule.daysAhead, 'day', resolved);
         return `${relative.charAt(0).toLocaleUpperCase() + relative.slice(1)} · ${time}`;
     }
     const weekday = new Intl.DateTimeFormat(locales, { weekday: 'long' }).format(resolved);
@@ -86,8 +94,8 @@ export function formatSessionReminderPresetRuleLabel(
     if (locale.toLowerCase().startsWith('en')) {
         return weeksAhead === 1
             ? `Next ${weekday} · ${time}`
-            : `${weekday} ${new Intl.RelativeTimeFormat(locales, { numeric: 'always' }).format(weeksAhead, 'week')} · ${time}`;
+            : `${weekday} ${formatRelativeOrAbsolute(locales, weeksAhead, 'week', resolved)} · ${time}`;
     }
-    const nextWeek = new Intl.RelativeTimeFormat(locales, { numeric: weeksAhead === 1 ? 'auto' : 'always' }).format(weeksAhead, 'week');
+    const nextWeek = formatRelativeOrAbsolute(locales, weeksAhead, 'week', resolved);
     return `${nextWeek.charAt(0).toLocaleUpperCase() + nextWeek.slice(1)} · ${weekday} · ${time}`;
 }
