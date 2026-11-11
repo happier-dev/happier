@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AgentInputSubmitButton } from './AgentInputSubmitButton';
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
@@ -85,7 +86,6 @@ describe('AgentInputSubmitButton Dictation routing', () => {
     });
 
     it('keeps a disabled send visually inactive and exposes its disabled accessibility state', async () => {
-        const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
         let renderer: ReturnType<typeof create>;
 
         await act(async () => {
@@ -105,8 +105,23 @@ describe('AgentInputSubmitButton Dictation routing', () => {
         expect(button.props.accessibilityState).toMatchObject({ disabled: true });
     });
 
+    it('shows acquisition as busy rather than recording while Dictation capture is starting', async () => {
+        const onDictationPress = vi.fn();
+        const onSend = vi.fn();
+        let renderer: ReturnType<typeof create>;
+        await act(async () => {
+            renderer = create(<AgentInputSubmitButton testID="composer-send" sessionId="session-1"
+                disabled={false} hasSendableContent dictationPressHandler={onDictationPress}
+                dictationStatus="starting" onSend={onSend} />);
+        });
+        const button = renderer!.root.findByType('PrimaryCircleIconButton' as any);
+        expect(button.props.accessibilityLabel).toBe('common.loading');
+        expect(button.props.loading).toBe(true);
+        expect(button.props.accessibilityState.busy).toBe(true);
+        expect(renderer!.root.findAllByProps({ name: 'stop-circle' })).toHaveLength(0);
+    });
+
     it('ends active Dictation instead of sending composer text as a coding turn', async () => {
-        const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
         const onDictationPress = vi.fn();
         const onSend = vi.fn();
         let renderer: ReturnType<typeof create>;
@@ -134,7 +149,6 @@ describe('AgentInputSubmitButton Dictation routing', () => {
     });
 
     it('announces transcription as busy and does not expose it as recording', async () => {
-        const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
         const onDictationPress = vi.fn();
         let renderer: ReturnType<typeof create>;
 
@@ -161,7 +175,6 @@ describe('AgentInputSubmitButton Dictation routing', () => {
     });
 
     it('renders the Stop the composer placed here instead of starting Dictation', async () => {
-        const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
         const onDictationPress = vi.fn();
         const onStop = vi.fn();
         const onSend = vi.fn();
@@ -196,7 +209,6 @@ describe('AgentInputSubmitButton Dictation routing', () => {
     });
 
     it('keeps an in-flight Dictation on the button while the turn can also be stopped', async () => {
-        const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
         const onDictationPress = vi.fn();
         const onStop = vi.fn();
         let renderer: ReturnType<typeof create>;
@@ -227,7 +239,6 @@ describe('AgentInputSubmitButton Dictation routing', () => {
         expect(onStop).not.toHaveBeenCalled();
     });
     it('submits an armed switch on an empty composer', async () => {
-        const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
         const onSend = vi.fn();
         let renderer: ReturnType<typeof create>;
 
@@ -256,7 +267,6 @@ describe('AgentInputSubmitButton Dictation routing', () => {
     });
 
     it('drops the empty-composer hint once there is something to send', async () => {
-        const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
         const onSend = vi.fn();
         let renderer: ReturnType<typeof create>;
 
@@ -283,7 +293,6 @@ describe('AgentInputSubmitButton Dictation routing', () => {
     });
 
     it('submits the armed continuation instead of idle Dictation', async () => {
-        const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
         const onDictationPress = vi.fn();
         let renderer: ReturnType<typeof create>;
 
@@ -312,7 +321,6 @@ describe('AgentInputSubmitButton Dictation routing', () => {
     it('puts the mark on the side the sentence names the Agent on', async () => {
         // English closes with the Agent, Japanese opens with it. Both slots have to
         // stay wired, or half the languages the app ships read as broken grammar.
-        const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
 
         let english: ReturnType<typeof create>;
         translateOverride.fn = (key, params) => (
@@ -360,7 +368,6 @@ describe('AgentInputSubmitButton Dictation routing', () => {
     });
 
     it('offers the armed route\'s cancel beside the send, whichever shape it has, and never for an armed Agent', async () => {
-        const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
         const onUnarmRoute = vi.fn();
         const render = (props: Partial<React.ComponentProps<typeof AgentInputSubmitButton>>) => create(<AgentInputSubmitButton
             testID="composer-send"

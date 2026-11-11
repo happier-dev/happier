@@ -173,6 +173,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
     };
     React.useEffect(() => { setSendMenuOpen(false); }, [props.sessionId, sendMenuEnabled]);
     const dictationTranscribing = props.dictationStatus === 'transcribing';
+    const dictationStarting = props.dictationStatus === 'starting';
     // In-flight Dictation keeps the button so it can be ended; the composer never places Stop here then.
     const showStopWhenEmpty = props.holdsStop === true && !dictationActive;
     const showDictation = Boolean(props.dictationPressHandler)
@@ -307,11 +308,13 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
             // The Stop keeps its one id wherever the composer places it (device flows tap it).
             testID={showStopWhenEmpty && !props.hasSendableContent && !showDictation ? STOP_TEST_ID : props.testID}
             active={!disabled && (props.hasSendableContent || props.isSending || showDictation || showStopWhenEmpty)}
-            loading={props.isSending || dictationTranscribing || (showStopWhenEmpty && props.isStopping)}
+            loading={props.isSending || dictationStarting || dictationTranscribing || (showStopWhenEmpty && props.isStopping)}
             disabled={disabled}
             accessibilityLabel={
                 dictationTranscribing
                     ? t('voiceAssistant.transcribing')
+                    : dictationStarting && showDictation
+                    ? t('common.loading')
                     : dictationActive && showDictation
                     ? t('voiceAssistant.endDictation')
                     : props.hasSendableContent
@@ -330,7 +333,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                     : sendMenuEnabled ? t('agentInput.sendOptions.hint') : undefined
             }
             accessibilityState={{
-                busy: dictationTranscribing,
+                busy: dictationStarting || dictationTranscribing,
                 disabled,
                 ...(sendMenuEnabled ? { expanded: sendMenuOpen } : {}),
             }}
@@ -350,7 +353,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                 if (event.nativeEvent.actionName === 'longpress') openSendMenu();
             } : undefined}
         >
-            {(foreground: string) => dictationActive && showDictation ? (
+            {(foreground: string) => props.dictationStatus === 'listening' && showDictation ? (
                 <Icon name="stop-circle" size={20} color={foreground} />
             ) : props.hasSendableContent ? (
                 <Icon name="arrow-up" size={16} color={foreground} />

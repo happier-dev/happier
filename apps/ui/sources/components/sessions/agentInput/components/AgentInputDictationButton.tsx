@@ -29,10 +29,13 @@ export function AgentInputDictationButton(props: Readonly<{
     onPress: () => void;
     onFocus?: () => void;
 }>) {
-    const listening = props.status !== 'idle';
+    const listening = props.status === 'listening';
+    const starting = props.status === 'starting';
     const transcribing = props.status === 'transcribing';
     const label = transcribing
         ? t('voiceAssistant.transcribing')
+        : starting
+            ? t('common.loading')
         : listening
             ? t('voiceAssistant.endDictation')
             : t('voiceAssistant.startDictation');
@@ -44,11 +47,12 @@ export function AgentInputDictationButton(props: Readonly<{
                 // Chrome ink at rest (owner 11-10); full ink while listening, as the selected control.
                 icon={<ChromeGlyph name={listening ? 'microphone-slash' : 'microphone'} size={16} active={listening} />}
                 accessibilityLabel={label}
-                tooltip={listening ? label : t('voicePresence.dictate')}
+                tooltip={props.status === 'idle' ? t('voicePresence.dictate') : label}
                 tooltipPlacement="bottom"
                 variant="plain"
                 tone={listening ? 'primary' : 'default'}
                 selected={listening}
+                busy={starting}
                 size={DICTATION_VISUAL_SIZE}
                 interactiveTargetEdgesPx={AGENT_INPUT_FIELD_ACCESSORY_EDGES_PX}
                 disabled={props.disabled === true || transcribing}

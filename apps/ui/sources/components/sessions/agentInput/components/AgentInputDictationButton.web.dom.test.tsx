@@ -5,6 +5,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AgentInputDictationButton } from './AgentInputDictationButton';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,18 +34,17 @@ afterEach(() => {
     container = null;
 });
 
-async function renderDictationButton(onPress: () => void): Promise<HTMLElement> {
+async function renderDictationButton(onPress: () => void, status: 'idle' | 'starting' | 'listening' | 'transcribing' = 'idle'): Promise<HTMLElement> {
     // A finger is the primary pointer here, as on a phone browser.
     vi.stubGlobal('matchMedia', (query: string) => ({
         matches: query === '(pointer: coarse)' || query === '(hover: none)',
         media: query,
     }));
-    const { AgentInputDictationButton } = await import('./AgentInputDictationButton');
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
     act(() => {
-        root!.render(React.createElement(AgentInputDictationButton, { status: 'idle', onPress }));
+        root!.render(React.createElement(AgentInputDictationButton, { status, onPress }));
     });
     const element = container.querySelector<HTMLElement>('[data-testid="agent-input-dictation"]');
     if (!element) throw new Error('dictation button did not render');
@@ -57,6 +57,22 @@ async function renderDictationButton(onPress: () => void): Promise<HTMLElement> 
  * reads the drawn box and that frame out of the DOM rather than recomputing them from the props.
  */
 describe('AgentInputDictationButton web pointer geometry', () => {
+    it('shows acquisition as busy without announcing recording before capture is armed', async () => {
+        const onPress = vi.fn();
+        const element = await renderDictationButton(onPress, 'starting');
+        expect(element.getAttribute('aria-label')).toBe('common.loading');
+        expect(element.getAttribute('aria-pressed')).not.toBe('true');
+        expect(element.getAttribute('aria-busy')).toBe('true');
+        act(() => { element.click(); });
+        expect(onPress).not.toHaveBeenCalled();
+    });
+
+    it('announces recording after the capture owner publishes listening', async () => {
+        const element = await renderDictationButton(() => {}, 'listening');
+        expect(element.getAttribute('aria-label')).toBe('voiceAssistant.endDictation');
+        expect(element.getAttribute('aria-pressed')).toBe('true');
+    });
+
     it('draws the 24pt circle and reaches the finger target through its hit frame, never a larger drawn box', async () => {
         const onPress = vi.fn();
         const element = await renderDictationButton(onPress);
