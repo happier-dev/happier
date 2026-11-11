@@ -43,7 +43,7 @@ afterEach(async () => { standardCleanup(); machineStorageStore.reset(); machineR
 describe('machine storage hooks', () => {
     it('keeps cold measurement in Sizing and advances through the existing watch to measured figures', async () => {
         const serverId = await home.addHome({ name: 'Storage Home', serverUrl: 'https://storage-sizing.test', serverIdentityId: 'srv_storage_sizing', accountId: 'owner' });
-        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'machine', active: true, activeAt: Date.now() })]);
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'machine', presenceProtocolVersion: 1, active: true, activeAt: Date.now() })]);
         home.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {} }, version: 1 } });
         const watches: Array<ReturnType<typeof createDeferred<MachineStorageWatchResultV1>>> = [];
         transport.rpc.mockImplementation(async ({ method }: { method: string }) => {
@@ -81,7 +81,7 @@ describe('machine storage hooks', () => {
     });
     it('joins live Vitals capacity without rereading Storage or changing its summary on CPU-only ticks', async () => {
         const serverId = await home.addHome({ name: 'Storage Home', serverUrl: 'https://storage-vitals.test', serverIdentityId: 'srv_storage_vitals', accountId: 'owner' });
-        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'machine', active: true, activeAt: Date.now() })]);
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'machine', presenceProtocolVersion: 1, active: true, activeAt: Date.now() })]);
         home.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {} }, version: 1 } });
         const sample = (sampledAt: number, availableBytes: number, busyPct = 20): MachineVitalsSampleV1 => ({
             v: 1, sampledAt, intervalMs: 15_000, cpu: { reported: true, busyPct },
@@ -137,8 +137,8 @@ describe('machine storage hooks', () => {
         const before = storage.getState();
         const serverId = await home.addHome({ name: 'Storage Home', serverUrl: 'https://storage-expiry.test', serverIdentityId: 'srv_storage_expiry', accountId: 'owner' });
         home.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {} }, version: 1 } });
-        const machine = createMachineFixture({ id: 'machine', active: true, activeAt: Date.now() });
-        storage.setState({ machines: {}, machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+        const machine = createMachineFixture({ id: 'machine', presenceProtocolVersion: 1, active: true, activeAt: Date.now() });
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine]);
         transport.rpc.mockRejectedValue(new Error('Request failed'));
         vi.useFakeTimers();
         const hook = await renderHook(useMachineStorageSummary, { initialProps: { serverId, machineId: 'machine', expectedAccountId: 'owner' } });
@@ -147,7 +147,7 @@ describe('machine storage hooks', () => {
             await act(async () => { await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'error', offline: false, summary: null })); });
             await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
             expect(hook.getCurrent().offline).toBe(false);
-            await act(async () => storage.setState({ machineListByServerId: { [serverId]: [{ ...machine, active: false }] } }));
+            await act(async () => { await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [{ ...machine, active: false, activeAt: Date.now() }]); });
             expect({ storage: hook.getCurrent(), targets: targets.getCurrent() }).toMatchObject({
                 storage: { offline: true, summary: null }, targets: [{ offline: true, enabled: false }],
             });
@@ -157,13 +157,14 @@ describe('machine storage hooks', () => {
             expect(transport.rpc.mock.calls).toHaveLength(dispatches);
             transport.rpc.mockImplementation(async ({ method }: { method: string }) => method === RPC_METHODS.DAEMON_STORAGE_WATCH
                 ? new Promise(() => {}) : report(2));
+            await act(async () => { await vi.advanceTimersByTimeAsync(1); });
             const heartbeat = { ...machine, activeAt: Date.now() };
             await act(async () => {
-                storage.setState({ machineListByServerId: { [serverId]: [heartbeat] } });
+                await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [heartbeat]);
                 await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', offline: false, summary: { revision: 2 } }));
             });
             const known = hook.getCurrent().summary;
-            await act(async () => storage.setState({ machineListByServerId: { [serverId]: [{ ...heartbeat, active: false }] } }));
+            await act(async () => { await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [{ ...heartbeat, active: false, activeAt: Date.now() }]); });
             expect(hook.getCurrent()).toMatchObject({ status: 'ready', offline: true });
             expect(hook.getCurrent().summary).toBe(known);
             expect(hook.getCurrent().summary?.sizedAt).toBe(100);
@@ -177,7 +178,7 @@ describe('machine storage hooks', () => {
     });
     it('reads a private scan view through the bound Action and refuses mutations while offline', async () => {
         const serverId = await home.addHome({ name: 'Storage Home', serverUrl: 'https://storage-scan.test', serverIdentityId: 'srv_storage_scan', accountId: 'owner' });
-        const machine = createMachineFixture({ id: 'machine', active: true, activeAt: Date.now() });
+        const machine = createMachineFixture({ id: 'machine', presenceProtocolVersion: 1, active: true, activeAt: Date.now() });
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine]);
         home.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {} }, version: 1 } });
         const page = { state: null, nodes: [], coverage: [], indexedAt: 100 };
@@ -201,7 +202,7 @@ describe('machine storage hooks', () => {
         });
         expect(transport.rpc).toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.DAEMON_STORAGE_SCAN_SKIP,
             serverId: 'srv_storage_scan', accountId: 'owner', payload: { machineId: 'machine', serverId: 'srv_storage_scan', scanId: 'scan', path: '/slow' } }));
-        await act(async () => { await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [{ ...machine, active: false, activeAt: 1 }]); });
+        await act(async () => { await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [{ ...machine, active: false, activeAt: Date.now() }]); });
         await hook.rerender({ ...input, online: false });
         expect(hook.getCurrent()).toMatchObject({ offline: true, page });
         const count = transport.rpc.mock.calls.length;
@@ -212,7 +213,7 @@ describe('machine storage hooks', () => {
     it('ticks the pile through the bound Account Action and settles optimistic membership from the daemon', async () => {
         const serverId = await home.addHome({ name: 'Storage Home', serverUrl: 'https://storage-pile.test',
             serverIdentityId: 'srv_storage_pile', accountId: 'owner' });
-        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'machine', active: true, activeAt: Date.now() })]);
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'machine', presenceProtocolVersion: 1, active: true, activeAt: Date.now() })]);
         home.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {} }, version: 1 } });
         const pending = createDeferred<unknown>();
         const ref = { itemId: 'log', path: '/logs/old', identity: { dev: '1', ino: '2', kind: 'file' as const },
@@ -240,7 +241,7 @@ describe('machine storage hooks', () => {
     it('keeps the bound Home projection without rereading credentials when only its label changes', async () => {
         const serverUrl = 'https://storage-rebind.test';
         const serverId = await home.addHome({ name: 'Storage Home', serverUrl, serverIdentityId: 'srv_storage_rebind', accountId: 'owner' });
-        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'machine', active: true, activeAt: Date.now() })]);
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'machine', presenceProtocolVersion: 1, active: true, activeAt: Date.now() })]);
         home.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {} }, version: 1 } });
         transport.rpc.mockImplementation(async ({ method }: { method: string }) => method === RPC_METHODS.DAEMON_STORAGE_WATCH ? new Promise(() => {}) : report(1));
         const hook = await renderHook(() => useMachineStorageSummary({ serverId, machineId: 'machine', online: true }));
@@ -265,7 +266,7 @@ describe('machine storage hooks', () => {
 
     it('shares demand, keeps unchanged projection consumers still, and retains reports while offline', async () => {
         const serverId = await home.addHome({ name: 'Storage Home', serverUrl: 'https://storage-home.test', serverIdentityId: 'srv_storage_home', accountId: 'owner' });
-        const machine = createMachineFixture({ id: 'machine', active: true, activeAt: Date.now() });
+        const machine = createMachineFixture({ id: 'machine', presenceProtocolVersion: 1, active: true, activeAt: Date.now() });
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine]);
         home.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {} }, version: 1 } });
         const watches: { signal?: AbortSignal; answer: ReturnType<typeof createDeferred<MachineStorageWatchResultV1>> }[] = [];
@@ -301,7 +302,7 @@ describe('machine storage hooks', () => {
         expect(summary.getCurrent().sizeAgain).toBe(oldCallbacks.sizeAgain);
         await category.unmount(); await pile.unmount(); await scan.unmount();
         expect(watches.at(-1)?.signal?.aborted).toBe(false);
-        await act(async () => { await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [{ ...machine, active: false, activeAt: 1 }]); });
+        await act(async () => { await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [{ ...machine, active: false, activeAt: Date.now() }]); });
         await summary.rerender({ ...input, online: false });
         expect(summary.getCurrent()).toMatchObject({ offline: true, status: 'ready', summary: { revision: 2 } });
         expect(watches.at(-1)?.signal?.aborted).toBe(true);

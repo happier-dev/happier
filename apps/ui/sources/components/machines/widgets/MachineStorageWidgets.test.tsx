@@ -14,6 +14,7 @@ import {
 } from '@happier-dev/protocol/widgets';
 
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -138,6 +139,7 @@ function machine(overrides: Partial<Machine> = {}): Machine {
   return createMachineFixture({
     id: 'machine',
     activeAt: Date.now(),
+    presenceProtocolVersion: 1,
     storageMode: 'plain',
     isShared: false,
     metadata: {
@@ -187,11 +189,7 @@ async function mount(
   home.answer(serverId, '/v2/account/settings', {
     body: { content: { t: 'plain', v: {} }, version: 1 },
   });
-  storage.setState({
-    machines: {},
-    machineListByServerId: { [serverId]: [machine(overrides)] },
-    machineListStatusByServerId: { [serverId]: 'idle' },
-  });
+  await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine(overrides)]);
   let pile: Array<Record<string, unknown>> = [];
   const pileResult = () => ({
     revision: 2,

@@ -231,7 +231,10 @@ describe('MachineStorageTab', () => {
         const { screen, serverId } = await mount({ id: 'storage' }, {}, undefined, false, null, undefined, 'pending');
         const summaryReads = () => transport.rpc.mock.calls.filter(([rpc]) => rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET);
         expect(summaryReads()).toHaveLength(0);
-        expect(screen.findByTestId('machine-storage-loading')).not.toBeNull();
+        expect(screen.findByTestId('machine-storage-loading')).toBeNull();
+        expect(screen.findByTestId('machine-storage-waiting')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(t('projects.checkouts.waiting', { machine: 'leeroy-mbp' }));
+        expect(screen.getTextContent()).not.toContain(t('machineStorage.states.sizingOn', { machine: 'leeroy-mbp' }));
 
         await act(async () => {
             await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine()]);

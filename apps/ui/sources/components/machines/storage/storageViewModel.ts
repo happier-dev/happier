@@ -21,6 +21,8 @@ export type StorageTabView =
     | Readonly<{ kind: 'not_reported' }>
     /** The machine's resources policy cannot be read and nothing was sized before: nothing to show but the notice. */
     | Readonly<{ kind: 'policy_unavailable' }>
+    /** No measurement has started: wait for the Machine instead of claiming sizing is in progress. */
+    | Readonly<{ kind: 'waiting' }>
     /** First sizing in progress (never sized): the boxes are reserved. */
     | Readonly<{ kind: 'loading' }>
     | Readonly<{ kind: 'error'; failure?: MachineStorageState['failure'] }>
@@ -41,6 +43,7 @@ export type StorageTabView =
 export function selectStorageTabView(input: Readonly<{
     status: MachineStorageState['status'];
     summary: StorageSummary | null;
+    enabled: boolean;
     offline: boolean;
     recipient: boolean;
     failure?: MachineStorageState['failure'];
@@ -51,6 +54,7 @@ export function selectStorageTabView(input: Readonly<{
             policyUnavailable: input.status === 'policy_unavailable', recipient: input.recipient };
     }
     if (input.offline) return { kind: 'offline_empty' };
+    if (!input.enabled) return { kind: 'waiting' };
     if (input.status === 'policy_unavailable') return { kind: 'policy_unavailable' };
     if (input.status === 'error') return { kind: 'error', ...(input.failure ? { failure: input.failure } : {}) };
     return { kind: 'loading' };

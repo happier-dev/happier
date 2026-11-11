@@ -150,6 +150,7 @@ function MachineStorageWidgetBody(
   );
   const tabView = selectStorageTabView({
     status: storage.status,
+    enabled: storage.enabled,
     summary: storage.summary,
     offline: storage.offline,
     recipient: facts.recipient,
@@ -204,6 +205,14 @@ function MachineStorageWidgetBody(
         title={t('machineStorage.states.policyUnavailable')}
         reason={t('machineStorage.states.policyUnavailableReason')}
         testID={`${props.testID}.policy`}
+      />
+    );
+  if (tabView.kind === 'waiting')
+    return (
+      <MachineWidgetState
+        kind="unavailable"
+        title={t('projects.checkouts.waiting', { machine: facts.name })}
+        testID={props.testID}
       />
     );
   if (tabView.kind === 'loading')

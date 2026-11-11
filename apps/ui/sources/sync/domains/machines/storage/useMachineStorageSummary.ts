@@ -7,6 +7,7 @@ import { machineResourceStore } from '../resources/machineResourceStore';
 import { useMachineResourceLiveDemand } from '../resources/useMachineResourceLiveDemand';
 
 export type MachineStorageSummaryHookResult = MachineStorageState & Readonly<{
+    enabled: boolean;
     offline: boolean;
     retry: () => void;
     sizeAgain: () => Promise<MachineStorageState>;
@@ -59,5 +60,5 @@ export function useMachineStorageSummary(input: MachineStorageHookInput): Machin
         else machineStorageStore.retry(key);
     }, [key, measurement?.status]);
     const sizeAgain = React.useCallback(() => machineStorageStore.sizeAgain(key), [key]);
-    return React.useMemo(() => ({ status, summary, failure, offline, retry, sizeAgain }), [status, summary, failure, offline, retry, sizeAgain]);
+    return React.useMemo(() => ({ status, summary, failure, enabled, offline, retry, sizeAgain }), [status, summary, failure, enabled, offline, retry, sizeAgain]);
 }

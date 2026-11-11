@@ -287,6 +287,7 @@ function StorageMainView(
   });
   const view = selectStorageTabView({
     status: storage.status,
+    enabled: storage.enabled,
     summary: storage.summary,
     offline: storage.offline,
     recipient,
@@ -295,7 +296,7 @@ function StorageMainView(
   const layout = useMachineTabCompactLayout();
   const { retry } = storage;
 
-  if (view.kind === 'not_reported' || view.kind === 'offline_empty') {
+  if (view.kind === 'not_reported' || view.kind === 'offline_empty' || view.kind === 'waiting') {
     return (
       // The page's tab strip already leaves the gap before a tab's first block.
       <ItemGroup header="none">
@@ -306,7 +307,9 @@ function StorageMainView(
           title={t(
             view.kind === 'not_reported'
               ? 'machineStorage.states.notReported'
-              : 'machineStorage.states.offlineTitle',
+              : view.kind === 'waiting'
+                ? 'projects.checkouts.waiting'
+                : 'machineStorage.states.offlineTitle',
             { machine: props.machineName },
           )}
           {...(view.kind === 'offline_empty' ? { reason: t('machineStorage.states.offlineReason') } : {})}

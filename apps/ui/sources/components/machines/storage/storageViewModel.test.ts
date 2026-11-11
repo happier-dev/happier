@@ -48,21 +48,23 @@ function summary(overrides: Partial<HappierStorageSummaryV1> = {}): HappierStora
 describe('the Storage tab state (STO-24)', () => {
     it('keeps last-known sizes offline and through a failed re-size, and waits on reserved boxes before the first', () => {
         const known = summary();
-        expect(selectStorageTabView({ status: 'not_reported', summary: known, offline: false, recipient: false })).toEqual({ kind: 'not_reported' });
-        expect(selectStorageTabView({ status: 'loading', summary: null, offline: false, recipient: false })).toEqual({ kind: 'loading' });
-        expect(selectStorageTabView({ status: 'error', summary: null, offline: false, recipient: false })).toEqual({ kind: 'error' });
-        expect(selectStorageTabView({ status: 'loading', summary: null, offline: true, recipient: false })).toEqual({ kind: 'offline_empty' });
-        expect(selectStorageTabView({ status: 'error', summary: known, offline: false, recipient: true }))
+        expect(selectStorageTabView({ status: 'loading', enabled: false, summary: null, offline: false, recipient: false })).toEqual({ kind: 'waiting' });
+        expect(selectStorageTabView({ status: 'loading', enabled: false, summary: null, offline: true, recipient: false })).toEqual({ kind: 'offline_empty' });
+        expect(selectStorageTabView({ enabled: true, status: 'not_reported', summary: known, offline: false, recipient: false })).toEqual({ kind: 'not_reported' });
+        expect(selectStorageTabView({ enabled: true, status: 'loading', summary: null, offline: false, recipient: false })).toEqual({ kind: 'loading' });
+        expect(selectStorageTabView({ enabled: true, status: 'error', summary: null, offline: false, recipient: false })).toEqual({ kind: 'error' });
+        expect(selectStorageTabView({ enabled: true, status: 'loading', summary: null, offline: true, recipient: false })).toEqual({ kind: 'offline_empty' });
+        expect(selectStorageTabView({ enabled: true, status: 'error', summary: known, offline: false, recipient: true }))
             .toMatchObject({ kind: 'ready', summary: known, stale: true, offline: false, recipient: true });
         // Offline, an old summary is last known, not a failure.
-        expect(selectStorageTabView({ status: 'error', summary: known, offline: true, recipient: false })).toMatchObject({ kind: 'ready', stale: false, offline: true });
+        expect(selectStorageTabView({ enabled: true, status: 'error', summary: known, offline: true, recipient: false })).toMatchObject({ kind: 'ready', stale: false, offline: true });
     });
     it('keeps the last good sizes while the machine\u2019s resources policy is unavailable, and offers no cleanup claims', () => {
         const known = summary();
-        expect(selectStorageTabView({ status: 'policy_unavailable', summary: known, offline: false, recipient: false }))
+        expect(selectStorageTabView({ enabled: true, status: 'policy_unavailable', summary: known, offline: false, recipient: false }))
             .toMatchObject({ kind: 'ready', summary: known, policyUnavailable: true, stale: false });
-        expect(selectStorageTabView({ status: 'policy_unavailable', summary: null, offline: false, recipient: false })).toEqual({ kind: 'policy_unavailable' });
-        expect(selectStorageTabView({ status: 'ready', summary: known, offline: false, recipient: false })).toMatchObject({ policyUnavailable: false });
+        expect(selectStorageTabView({ enabled: true, status: 'policy_unavailable', summary: null, offline: false, recipient: false })).toEqual({ kind: 'policy_unavailable' });
+        expect(selectStorageTabView({ enabled: true, status: 'ready', summary: known, offline: false, recipient: false })).toMatchObject({ policyUnavailable: false });
         expect(describeStorageSentence(known, { recipient: false, policyUnavailable: true }).canGoBytes).toBeNull();
     });
 });
