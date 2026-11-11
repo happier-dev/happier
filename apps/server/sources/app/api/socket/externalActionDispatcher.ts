@@ -161,6 +161,7 @@ type DispatchPhase =
     | 'managed_finite_wake'
     | 'machine_resolution'
     | 'execution_authorization'
+    | 'managed_refusal_settlement'
     | 'daemon_cancel'
     | 'daemon_forward';
 
@@ -1143,14 +1144,19 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                     requestId: request.envelope.requestId, machineId });
         };
         const result = await dispatchAdmitted();
-        if (managedAdmission && (result.kind === 'placement_error' && !result.managedAdmission
+        if (managedAdmission && !managedAdmission.replayed && (result.kind === 'placement_error' && !result.managedAdmission
             || result.kind === 'invalid_request'
             || result.kind === 'response' && result.prepared.response.v === 1
                 && !result.prepared.response.execution.ok)) {
-            await cancelManagedCreation({ actorAccountId: request.principal.accountId, input: {
-                homeId: managedAdmission.machine.homeId, managedId: managedAdmission.machine.id,
-                expectedIntentRevision: managedAdmission.machine.intentRevision,
-            } }, { onlyIfUnsubmitted: true });
+            const admittedMachine = managedAdmission.machine;
+            const settlement = await runDispatchPhase('managed_refusal_settlement', machineId,
+                () => cancelManagedCreation({ actorAccountId: request.principal.accountId, input: {
+                    homeId: admittedMachine.homeId, managedId: admittedMachine.id,
+                    expectedIntentRevision: admittedMachine.intentRevision,
+                } }, { onlyIfUnsubmitted: true }), request.envelope.requestId);
+            if (settlement.kind === 'failed') emitDispatchPhaseWitness(settlement, machineId, {
+                refusalBranch: 'phase_exception', requestId: request.envelope.requestId,
+            });
         }
         return result;
     };

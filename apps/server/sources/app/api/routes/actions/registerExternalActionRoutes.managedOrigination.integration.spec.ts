@@ -1403,7 +1403,7 @@ describe('ordinary Account managed Action origination', () => {
         } finally { await instance.close(); }
     });
 
-    it.each(['refused', 'encrypted-refused', 'response-refused', 'submitted-refused', 'unknown'] as const)('releases only unsubmitted delegated acquire capacity after dispatch is %s', async outcome => {
+    it.each(['refused', 'encrypted-refused', 'response-refused', 'submitted-refused', 'unknown', 'replay-refused', 'settlement-error'] as const)('releases only unsubmitted delegated acquire capacity after dispatch is %s', async outcome => {
         const custodian = await fixture(true);
         const member = await fixture(true, outcome === 'encrypted-refused' ? 'e2ee' : 'plain');
         const team = await db.team.create({ data: { name: 'Delegated dispatch settlement' } });
@@ -1423,11 +1423,32 @@ describe('ordinary Account managed Action origination', () => {
             retention: preset.retention, wakeOnAcceptedMessage: false });
         const requestId = crypto.randomUUID();
         let deliveries = 0;
+        let markFirstInFlight = () => {};
+        const firstInFlight = new Promise<void>(resolve => { markFirstInFlight = resolve; });
+        let finishFirst = () => {};
+        const firstCanFinish = new Promise<void>(resolve => { finishFirst = resolve; });
+        const triggerName = `settlement_${requestId.replaceAll('-', '')}`;
+        const records: Record<string, unknown>[] = [];
+        const stream = (logger as unknown as { [symbols.streamSym]: DestinationStream })[symbols.streamSym];
+        const capture = outcome === 'settlement-error'
+            ? vi.spyOn(stream, 'write').mockImplementation(message => { records.push(JSON.parse(message)); }) : undefined;
         const instance = await app(async params => {
             const dispatched = ExternalActionDaemonDispatchRequestSchema.parse(params.callParams);
             const row = await db.managedMachine.findUniqueOrThrow({ where: { homeId_admittedActionRequestId: {
                 homeId, admittedActionRequestId: dispatched.envelope.requestId! } } });
             deliveries++;
+            if (outcome === 'replay-refused' && deliveries === 1) {
+                markFirstInFlight();
+                await firstCanFinish;
+                params.onSubmittedUnknown?.();
+                return { ok: false, error: 'Acknowledgement lost' };
+            }
+            if (outcome === 'settlement-error') {
+                // A real SQLite storage failure at cancellation, rather than a
+                // mock of the internal lifecycle owner.
+                await db.$executeRawUnsafe(`CREATE TRIGGER ${triggerName} BEFORE UPDATE OF creationState ON ManagedMachine
+                    WHEN OLD.id = '${row.id}' BEGIN SELECT RAISE(ABORT, 'settlement storage unavailable'); END`);
+            }
             if (outcome === 'submitted-refused') await submitManagedAcquire({ homeId, managedId: row.id,
                 controller: custodian.controller, requestId: row.admittedActionRequestId, expectedIntentRevision: 0 });
             if (outcome === 'unknown') {
@@ -1453,7 +1474,13 @@ describe('ordinary Account managed Action origination', () => {
                     material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) },
                     randomBytes: length => new Uint8Array(length).fill(2) })
                 : { v: 1, requestId: id, target: { kind: 'machine', machineId: custodian.controller.machineId }, input } });
+        let original: ReturnType<typeof dispatch> | undefined;
         try {
+            if (outcome === 'replay-refused') {
+                original = dispatch(requestId);
+                void original.then(() => {});
+                await firstInFlight;
+            }
             const failed = await dispatch(requestId);
             expect(failed.json(), failed.body).toMatchObject(outcome === 'unknown'
                 ? { error: 'invalid_request', code: 'action_outcome_unknown' } : outcome === 'response-refused'
@@ -1463,11 +1490,25 @@ describe('ordinary Account managed Action origination', () => {
             const released = outcome === 'refused' || outcome === 'encrypted-refused' || outcome === 'response-refused';
             expect(row).toMatchObject(released
                 ? { creationState: 'canceled', allocation: 'confirmed-absent' }
-                : { creationState: 'active', allocation: outcome === 'unknown' ? 'unsubmitted' : 'may-exist' });
-            await dispatch(crypto.randomUUID());
-            expect(deliveries).toBe(released ? 2 : 1);
+                : { creationState: 'active', allocation: outcome === 'submitted-refused' ? 'may-exist' : 'unsubmitted' });
+            if (outcome === 'replay-refused') {
+                expect(deliveries).toBe(2);
+            } else if (outcome === 'settlement-error') {
+                expect(records).toContainEqual(expect.objectContaining({ module: 'external-action-dispatch',
+                    phase: 'managed_refusal_settlement', requestId, machineId: custodian.controller.machineId }));
+                expect(JSON.stringify(records)).not.toContain('settlement storage unavailable');
+            } else {
+                await dispatch(crypto.randomUUID());
+                expect(deliveries).toBe(released ? 2 : 1);
+            }
             expect(await resolveMachineAccess({ actorAccountId: member.account.id, machineId: custodian.controller.machineId })).toBeNull();
-        } finally { await instance.close(); }
+        } finally {
+            finishFirst();
+            await original;
+            if (outcome === 'settlement-error') await db.$executeRawUnsafe(`DROP TRIGGER IF EXISTS ${triggerName}`);
+            capture?.mockRestore();
+            await instance.close();
+        }
     });
 
     it.each(['exact', 'pool'] as const)('admits only an explicitly delegated Team %s preset through issuance, dispatch and installed-controller proof without a Machine grant', async targetKind => {
