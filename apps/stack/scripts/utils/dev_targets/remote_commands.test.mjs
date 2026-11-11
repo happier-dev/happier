@@ -5333,3 +5333,32 @@ test('entry-load preparation emits runtime outputs without a strict type verdict
   assert.equal(policy.preparationBuildMode, 'qa-runtime');
   assert.equal(policy.heavyClass, 'entry-loads');
 });
+
+
+test('agents source tests skip publication while ElevenLabs retains runtime in both dispatchers', async t => {
+  const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const fixture = await createTempFixture(t, { prefix: 'qualified-source-configs-' });
+  const artifact = fixture.path('policy.sh');
+  await writeFile(artifact, renderNativeCommandPolicy());
+  for (const component of ['packages/agents', 'packages/plugins/elevenlabs']) {
+    const cwd = join(root, component);
+    const expected = component === 'packages/agents' ? 'source-test' : 'runtime';
+    const requests = [
+      { cwd: root, args: ['pnpm', '--dir', component, 'exec', 'vitest', 'run', 'src/example.test.ts'] },
+      { cwd, args: ['pnpm', 'exec', 'vitest', 'run'] },
+      { cwd, args: ['pnpm', 'run', 'test:local', '--', 'src/example.test.ts'] },
+    ];
+    for (const request of requests) {
+      const policy = await commandPolicy.resolvePackageCommandPolicy(request.args, { repoRoot: root, cwd: request.cwd });
+      assert.equal(policy.kind, expected, `${component}: ${request.args.join(' ')}`);
+      if (process.platform === 'win32') continue;
+      const native = spawnSync('/bin/sh', ['-c',
+        '. "$1"; repo_root=$2; invoked_cwd=$3; shift 3; resolve_native_command_policy "$@" || exit $?; printf "%s" "$policy_kind"',
+        'policy', artifact, root, request.cwd, ...request.args], { encoding: 'utf8' });
+      assert.equal(native.status, 0, native.stderr);
+      assert.equal(native.stdout, expected, component);
+    }
+    const unknown = ['pnpm', 'exec', 'vitest', 'run', '--config', 'vitest.unknown.config.ts'];
+    assert.equal(resolveRemoteCommandPolicy(unknown, { repoRoot: root, cwd }).kind, 'runtime');
+  }
+});

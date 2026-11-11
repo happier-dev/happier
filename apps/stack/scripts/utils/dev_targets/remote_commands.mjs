@@ -59,7 +59,7 @@ export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
   // with emitted SDK/deployment-protocol also need dist preparation.
   sourceTestComponents: Object.freeze([
     'apps/server', 'apps/ui',
-    'packages/deployments', 'packages/forge-ci', 'packages/plugin-ui',
+    'packages/agents', 'packages/deployments', 'packages/forge-ci', 'packages/plugin-ui',
     ...['backup-destinations', 'claude', 'cloudflare-ai-gateway',
       'deepseek', 'deploy-cloudflare', 'deploy-vercel', 'deployment-neon',
       'deployment-supabase', 'devcontainer', 'grok',
