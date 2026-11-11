@@ -1,4 +1,5 @@
 import { deriveTriageListFieldUtf8BytesV1 } from './listFieldAllocation.js';
+import { triagePagingTokenUtf8BytesForFieldBytesV1 } from './listSourceSchemas.js';
 
 export * from './constants.js';
 
@@ -17,7 +18,7 @@ export const MAX_TRIAGE_LOCATION_UTF8_BYTES_V1 = listFieldUtf8Bytes;
 /** Source-private current route: retain native validation and omit rather than shorten. */
 export const MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1 = listFieldUtf8Bytes;
 /** Invocation-local opaque frontier; the allocation preserves every admitted lane's token. */
-export const MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 = listFieldUtf8Bytes;
+export const MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 = triagePagingTokenUtf8BytesForFieldBytesV1(listFieldUtf8Bytes);
 /** Bounded non-secret failure detail and provider-required permission description. */
 export const MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1 = listFieldUtf8Bytes;
 /** A projected fact's source-local id, label or rendered value; the full set stays uncapped. */

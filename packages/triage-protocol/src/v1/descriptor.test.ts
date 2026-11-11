@@ -30,6 +30,16 @@ const MINIMAL = Object.freeze({
 });
 
 describe('the V1 source descriptor', () => {
+    it('declares a closed server-side sort capability set', () => {
+        const parsed = TriageSourceDescriptorV1Schema.parse({
+            ...MINIMAL,
+            sortFields: ['updated', 'created', 'status'],
+        });
+        expect(parsed.sortFields).toEqual(['updated', 'created', 'status']);
+        expect(TriageSourceDescriptorV1Schema.safeParse({ ...MINIMAL, sortFields: ['title'] }).success).toBe(false);
+        expect(TriageSourceDescriptorV1Schema.safeParse({ ...MINIMAL, sortFields: ['updated', 'updated'] }).success).toBe(false);
+    });
+
     it('retains a source-declared minimum scan page without requiring one from other sources', () => {
         expect(TriageSourceDescriptorV1Schema.parse({ ...MINIMAL, minimumScanPageSize: 10 }))
             .toMatchObject({ minimumScanPageSize: 10 });

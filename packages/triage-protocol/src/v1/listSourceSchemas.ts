@@ -17,6 +17,7 @@ import { ScmHostingProviderKindProtocolSchema, type ProtocolScmHostingProviderKi
 
 import {
     MAX_TRIAGE_REPOSITORY_PATH_UTF8_BYTES_V1,
+    MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
     TRIAGE_ENTRY_PRESENTATION_STATES_V1,
     TRIAGE_ROW_FACT_IMPORTANCES_V1,
     TRIAGE_ROW_FACT_NUMBER_FORMATS_V1,
@@ -34,6 +35,14 @@ export type TriageEntryRepositoryRefV1 = Readonly<{
     deployment: string;
     repository: string;
 }>;
+
+/** A field-sort frontier retains a native page, rather than one scalar cursor.
+ * Allocate its share by the existing scan row geometry; the aggregate envelope
+ * allocator solves the resulting byte budget alongside every row and lane.
+ */
+export function triagePagingTokenUtf8BytesForFieldBytesV1(fieldBytes: number): number {
+    return fieldBytes * MAX_TRIAGE_LIST_WINDOW_ROWS_V1;
+}
 
 /** Pure construction shared by source schemas and the aggregate allocation. */
 export function createTriageListSourceSchemasV1(fieldBytes: number) {
@@ -514,7 +523,7 @@ export function createTriageListSourceSchemasV1(fieldBytes: number) {
         v: defineProtocolLiteral(1),
         token: defineProtocolUtf8String({
             minLength: 1,
-            maxUtf8Bytes: fieldBytes,
+            maxUtf8Bytes: triagePagingTokenUtf8BytesForFieldBytesV1(fieldBytes),
             pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
         }),
     }, { policy: 'closed' });

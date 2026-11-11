@@ -30,6 +30,16 @@ it('carries optional text search unchanged through every scan input specializati
     }
 });
 
+it('carries the closed source sort through every scan input specialization', () => {
+    const sort = { field: 'updated', direction: 'desc' } as const;
+    for (const page of [{ kind: 'initial', limit: 20 }, { kind: 'continuation', continuation: { v: 1, token: 'source-private' } }]) {
+        for (const schema of [TriageScanInputV1Schema, TriageSourceConnectedAccountInputsV1.scan, TriageSourceCredentialInputsV1.scan]) {
+            expect(schema.parse({ v: 1, instance, page, sort })).toMatchObject({ sort });
+            expect(schema.safeParse({ v: 1, instance, page, sort: { field: 'title', direction: 'asc' } }).success).toBe(false);
+        }
+    }
+});
+
 it('admits complete forge evidence only on a present exact read, never scan observations', () => {
     const dispatchEvidence = { v: 1, items: [{
         source: { kind: 'alert', label: 'Native advisory', url: 'https://example.test/advisory' },

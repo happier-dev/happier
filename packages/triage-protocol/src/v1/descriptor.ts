@@ -21,6 +21,7 @@ import {
 import { defineTriageSingleLineStringV1 } from './strings.js';
 import { TriageTaskCapabilitiesV1Schema } from './observations.js';
 import { TriageSourceScopeUnitDescriptorV1Schema } from './scopeSelection.js';
+import { TriageListSortFieldsV1Schema } from './sorting.js';
 
 /**
  * One tab a source's detail offers for an entry kind (r0.42).
@@ -125,6 +126,8 @@ export const TriageSourceDescriptorV1Schema = defineProtocolObject({
     minimumScanPageSize: defineProtocolNumber({
         integer: true, minimum: 1, maximum: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
     }).optional(),
+    /** Fields this source can order server-side before returning each page. */
+    sortFields: TriageListSortFieldsV1Schema.optional(),
     /**
      * The local id of the source's OWN `settingsPages[]` entry for putting
      * itself into PRs & Issues.

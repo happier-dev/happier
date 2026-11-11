@@ -32,6 +32,7 @@ import {
     TriageSourceUnresolvedObservationV1ProtocolSchema,
     TriageSourceScanEvidenceV1Schema,
 } from './observations.js';
+import { TriageListSortV1Schema } from './sorting.js';
 
 /**
  * One scan page request.
@@ -57,6 +58,8 @@ function defineTriageScanInputV1<TInput, TOutput>(instance: ProtocolComposableSc
             // Optional source-side text narrowing. The aggregate still applies its
             // matcher and retains the source's completeness evidence.
             query: defineProtocolString().optional(),
+            /** Source-owned field order, applied before this page is cut. */
+            sort: TriageListSortV1Schema.optional(),
             page: defineProtocolObject({
                 kind: defineProtocolLiteral('initial'),
                 limit: defineProtocolNumber({
@@ -70,6 +73,7 @@ function defineTriageScanInputV1<TInput, TOutput>(instance: ProtocolComposableSc
             instance,
             completed,
             query: defineProtocolString().optional(),
+            sort: TriageListSortV1Schema.optional(),
             page: defineProtocolObject({
                 kind: defineProtocolLiteral('continuation'),
                 continuation: TriageScanContinuationV1Schema,

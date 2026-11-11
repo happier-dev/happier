@@ -4,6 +4,7 @@ import { createTriageListSourceSchemasV1 } from './listSourceSchemas.js';
 import { createTriageListResultSchemasV1 } from './listResultSchemas.js';
 import { buildMaximalSchemaValue } from './maximumEncodedValue.js';
 import { ENTRY_REF } from './entryReferenceSeed.js';
+import { MAX_TRIAGE_LIST_SOURCE_BATCH_V1 } from './constants.js';
 
 function withTaskFactsWitness(fragment: PluginJsonSchema): PluginJsonSchema {
     return {
@@ -16,7 +17,9 @@ function withTaskFactsWitness(fragment: PluginJsonSchema): PluginJsonSchema {
             Object.entries(fragment.properties)
                 .filter(([key]) => key !== 'labels' && key !== 'labelColors')
                 .map(([key, child]) => [key,
-                key === 'scope' ? { const: {
+                ['configuredSources', 'lanes', 'continuations'].includes(key) && child.type === 'array'
+                    ? { ...withTaskFactsWitness(child), maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1 }
+                    : key === 'scope' ? { const: {
                     unit: { singularLabel: 'Project', pluralLabel: 'projects' },
                     projection: { kind: 'page', status: 'complete', selection: { kind: 'selected', unitIds: ['project-1'] },
                         units: [{ id: 'project-1', label: 'Platform' }] },

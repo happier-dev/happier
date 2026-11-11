@@ -12,8 +12,9 @@ import {
     type ProtocolObjectProjection,
 } from '@happier-dev/plugin-sdk/protocol';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
-import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1, MAX_TRIAGE_LIST_SOURCE_BATCH_V1 } from './constants.js';
+import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from './constants.js';
 import { defineTriageSingleLineStringV1 } from './strings.js';
+import { TriageListSortFieldsV1Schema } from './sorting.js';
 import type { createTriageListSourceSchemasV1 } from './listSourceSchemas.js';
 
 type TriageListResultSourceSchemasV1 = Pick<ReturnType<typeof createTriageListSourceSchemasV1>,
@@ -136,16 +137,13 @@ function listRowFields(fieldBytes: number, TriageProjectedObservationV1Schema: P
          */
         observation: TriageProjectedObservationV1Schema,
         /** Every other connection's complete folded answer. */
-        otherObservations: defineProtocolArray(TriageProjectedObservationV1Schema, {
-            maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1 - 1,
-        }),
+        otherObservations: defineProtocolArray(TriageProjectedObservationV1Schema),
         /**
          * How many distinct connections answered for this entry.
          */
         observedByCount: defineProtocolNumber({
             integer: true,
             minimum: 1,
-            maximum: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
         }),
     };
 }
@@ -196,6 +194,7 @@ function configuredSourceFields<TScope>(fieldBytes: number, configuredScope: Pro
         displayLabel: triageText.optional(),
         projectionTruncated: defineProtocolLiteral(true).optional(),
         scope: configuredScope.optional(),
+        sortFields: TriageListSortFieldsV1Schema.optional(),
         /** Whether an admitted V1 source contribution can currently be invoked for it. */
         available: defineProtocolUnion([
             defineProtocolLiteral(true),
@@ -210,9 +209,7 @@ function listResultFields<TScope, TTaskProjection>(TriageConfiguredSourceSummary
     TriageLaneContinuationV1Schema: LaneContinuationSchemaV1, taskProjection: ProtocolComposableSchema<TTaskProjection>) {
     return {
         v: defineProtocolLiteral(1),
-        configuredSources: defineProtocolArray(TriageConfiguredSourceSummaryV1Schema, {
-            maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
-        }),
+        configuredSources: defineProtocolArray(TriageConfiguredSourceSummaryV1Schema),
         /**
          * Whether this Action invocation names the whole configured-source
          * Collection, or only its current transport batch.
@@ -229,9 +226,7 @@ function listResultFields<TScope, TTaskProjection>(TriageConfiguredSourceSummary
             rows: defineProtocolArray(TriageListRowV1Schema, {
                 maxItems: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
             }),
-            lanes: defineProtocolArray(TriageListLaneV1Schema, {
-                maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
-            }),
+            lanes: defineProtocolArray(TriageListLaneV1Schema),
             coverage: defineProtocolUnion([
                 defineProtocolLiteral('complete'),
                 defineProtocolLiteral('partial'),
@@ -253,9 +248,7 @@ function listResultFields<TScope, TTaskProjection>(TriageConfiguredSourceSummary
              * witness. Dropping a tail token would restart and starve that lane
              * (`PLAN.md` §0a A9a), so it is never used as an overflow workaround.
              */
-            continuations: defineProtocolArray(TriageLaneContinuationV1Schema, {
-                maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
-            }).optional(),
+            continuations: defineProtocolArray(TriageLaneContinuationV1Schema).optional(),
             assembledAtMs: defineProtocolNumber({ integer: true, minimum: 0 }),
         }, { policy: 'closed' }),
     };
