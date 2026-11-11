@@ -2,7 +2,7 @@ import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, readDe
 import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentMachineTransportActionIdV1, isDeploymentPromoteActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { isActionOutcomeUnknownErrorCodeV1, ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionOutcomeUnknownErrorCodeV1, ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentTemplateInstantiateResultV1Schema, DeploymentMoveToRepositoryResultV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1, type DeploymentTemplateInstantiateInputV1, type DeploymentMoveToRepositoryInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentTemplateInstantiationPartialV1, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -80,7 +80,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         readEnvironmentController(input: Readonly<{ serverId: string; environmentId: string }>, context: ActionExecutorContext):
             Promise<Readonly<{ ok: true; machineId: string }> | Readonly<{ ok: false; errorCode: string; error: string }>>;
     }> {
-    const failure = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
+    const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
     async function machine(actionId: DeploymentTransportActionIdV1 | typeof DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 | typeof DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 | 'deployments.prepare',
         input: DeploymentActionInputV1 | DeploymentTemplateInstantiateInputV1 | DeploymentMoveToRepositoryInputV1 | DeploymentPrepareInputV1,
         context: ActionExecutorContext, machineId: string) {
@@ -100,7 +100,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             onTransportIssued: context.onTransportIssued });
         return recoverUiDeploymentActionResult({ account, actionId, input, machineId, requestId, context, execution: result });
     }
-    async function storage(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1, context: ActionExecutorContext) {
+    async function storage(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1, context: ActionExecutorContext): Promise<DeploymentActionOutputV1 | ActionExecuteFailure> {
         account.assertCurrent();
         if (!areServerProfileIdentifiersEquivalent(input.serverId, account.serverId)) return failure('action_account_scope_changed');
         const spec = getActionSpec(actionId);
@@ -121,7 +121,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             ...(response.failure.details === undefined ? {} : { details: response.failure.details }) };
         return response.value;
     }
-    const readEnvironmentController = async ({ serverId, environmentId }: Readonly<{ serverId: string; environmentId: string }>, context: ActionExecutorContext) => {
+    const readEnvironmentController = async ({ serverId, environmentId }: Readonly<{ serverId: string; environmentId: string }>, context: ActionExecutorContext): Promise<Readonly<{ ok: true; machineId: string }> | ActionExecuteFailure> => {
         const read = await storage('deployments.environments.get', { serverId, environmentId }, context);
         if ('errorCode' in read) return read;
         const current = DeploymentEnvironmentGetResultV1Schema.parse(read);
@@ -246,11 +246,14 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
         }
         else if ('controllerMachineId' in effectInput && typeof effectInput.controllerMachineId === 'string') machineId = effectInput.controllerMachineId;
         else if ('environmentId' in effectInput) {
+            if (!('serverId' in effectInput) || typeof effectInput.serverId !== 'string'
+                || typeof effectInput.environmentId !== 'string') return failure('invalid_parameters');
             const selected = await readEnvironmentController({
                 serverId: effectInput.serverId, environmentId: effectInput.environmentId,
             }, context);
             if (!selected.ok) return selected;
-            machineId = selectedReadInput ? selectedReadInput.machineId : selected.machineId;
+            machineId = selectedReadInput && 'machineId' in selectedReadInput
+                && typeof selectedReadInput.machineId === 'string' ? selectedReadInput.machineId : selected.machineId;
         } else return failure('invalid_parameters');
         // A person's Deploy or Promote asks the controller to prepare its existing review,
         // rather than spending present-user authority before that review is confirmed.

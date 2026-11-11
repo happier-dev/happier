@@ -1,4 +1,4 @@
-import type { z } from 'zod/mini';
+import { z } from 'zod/mini';
 import type { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentActionOutputSchemasV1, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateActionResultV1Schema, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1, type DeploymentTargetLinkInputV1, type DeploymentTargetLinkIntentInputV1, type DeploymentTargetLinkProviderIntentInputV1, type DeploymentEnvironmentHeaderV1, type DeploymentEnvironmentUpdateInputV1, type DeploymentDeployInputV1, type DeploymentRollbackInputV1, type DeploymentTargetUnlinkInputV1, type DeploymentEnvironmentDeleteInputV1, type DeploymentCancelInputV1, type DeploymentRestartInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentBindingsPatchInputV1, DeploymentTeardownActionInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -20,6 +20,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { createFrontDoorActionExecute, createFrontDoorUiActionExecutor, requireActionSuccess, readActionApprovalRequestCreatedError,
     type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+import { EnvironmentSecretBindingV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { HappyError } from '@/utils/errors/errors';
 import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentDomainContentV1Schema, type DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol/v1';
@@ -121,7 +122,7 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                     contentHeaderVersion: environment.contentHeaderVersion, contentBodyVersion: environment.contentBodyVersion,
                     mode: 'preview', defaultsFor }));
             assertCurrent();
-            if (!result.ok) throw new HappyError(result.error, false, result);
+            if (!result.ok) throw new HappyError(result.error, false, { details: result });
             if (!result.creationDefaults) throw new HappyError('invalid_action_output', false);
             return { ...result.creationDefaults,
                 ...(result.backupSourceChoices !== undefined ? { backupSourceChoices: result.backupSourceChoices } : {}) };
@@ -141,7 +142,7 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                         domain: null, bindingBlueprints: [], data: [] },
                         ...(environment.buildMachineId ? { buildMachineId: environment.buildMachineId } : {}) } }, operation));
             assertCurrent();
-            if (!result.ok) throw new HappyError(result.error, false, result);
+            if (!result.ok) throw new HappyError(result.error, false, { details: result });
             if (!result.forkEligibility) throw new HappyError('invalid_action_output', false);
             return result.forkEligibility;
         },
@@ -335,7 +336,8 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
         async setPreviewBindings(environment: DeploymentEnvironmentHeaderV1,
             template: NonNullable<DeploymentEnvironmentContentV1['previewTemplate']>,
             input: DeploymentUiBindingsInput, operation?: UiActionOperation) {
-            const bindingBlueprints = applyEnvironmentSecretBindingsPatchV1(template.bindingBlueprints, input)
+            const set = z.array(EnvironmentSecretBindingV1Schema).parse(input.set);
+            const bindingBlueprints = applyEnvironmentSecretBindingsPatchV1(template.bindingBlueprints, { set, remove: input.remove })
                 .filter(binding => binding.purpose === 'variable');
             return updateEnvironment(environment, { previewTemplate: { ...template, bindingBlueprints } }, operation);
         },
