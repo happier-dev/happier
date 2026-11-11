@@ -2436,9 +2436,6 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
-      '@happier-dev/plugins-gemini':
-        specifier: 0.0.0
-        version: link:../../plugins/gemini
       '@happier-dev/protocol':
         specifier: 0.0.0
         version: link:../../protocol

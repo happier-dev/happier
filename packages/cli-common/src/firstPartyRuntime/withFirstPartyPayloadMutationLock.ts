@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { mkdir } from 'node:fs/promises';
 
 import type { FirstPartyInstallLayout } from './installLayout.js';
@@ -100,16 +101,7 @@ async function withProperLockfile<T>(params: Readonly<{
   operation: () => Promise<T>;
   onReleaseFailure?: (error: unknown) => void;
 }>): Promise<T> {
-  // Keep this dependency lazy so importing the first-party-runtime barrel does not activate
-  // the mutation lock implementation. Bun can statically include this package in compiled
-  // binaries, unlike a package reached only through createRequire().
-  // @ts-expect-error proper-lockfile is CommonJS and ships no declarations; the interop shape is normalized below.
-  const loadedProperLockfile: unknown = await import('proper-lockfile');
-  const properLockfile = (
-    loadedProperLockfile && typeof loadedProperLockfile === 'object' && 'default' in loadedProperLockfile
-      ? loadedProperLockfile.default
-      : loadedProperLockfile
-  ) as ProperLockfileApi;
+  const properLockfile = createRequire(import.meta.url)('proper-lockfile') as ProperLockfileApi;
   const installRoot = params.target;
   const lockfilePath = params.lockfilePath;
   await mkdir(params.lockParentDir, { recursive: true });

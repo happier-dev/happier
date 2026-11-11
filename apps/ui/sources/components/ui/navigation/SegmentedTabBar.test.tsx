@@ -1731,33 +1731,6 @@ describe('SegmentedTabBar value choice that no longer fits', () => {
     expect(screen.findHostByTestId('strategy:select')).toBeNull();
   });
 
-  it('keeps the three Kimi setup methods as tabs at the 560px setup popover width', async () => {
-    const { SegmentedTabBar } = await import('./SegmentedTabBar');
-    const methods = [
-      { id: 'device', label: 'Sign in with Kimi' },
-      { id: 'api-key', label: 'API key' },
-      { id: 'native-import', label: 'Import Kimi login' },
-    ];
-    const screen = await renderScreen(
-      <SegmentedTabBar
-        role="radiogroup"
-        segmentSizing="content"
-        overflow={{ label: 'More' }}
-        tabs={methods}
-        activeTabId="device"
-        onSelectTab={() => {}}
-        testIDPrefix="kimi-method"
-        accessibilityLabel="Kimi setup method"
-      />,
-    );
-    layOut(screen, 560);
-    for (const method of methods) {
-      expect(screen.findHostByTestId(`kimi-method:${method.id}`)).toBeTruthy();
-    }
-    expect(screen.findHostByTestId('kimi-method:more')).toBeNull();
-    expect(screen.findHostByTestId('kimi-method:select')).toBeNull();
-  });
-
   it('keeps an equal-width row only while its widest choice fits its share', async () => {
     const { SegmentedTabBar } = await import('./SegmentedTabBar');
     const screen = await renderScreen(

@@ -1,11 +1,7 @@
 import type { AgentConnectedAccountLaunchContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { GEMINI_API_KEY_ENV } from '@happier-dev/plugins-gemini/connected-account-service';
 
 export const antigravityConnectedAccountLaunch: AgentConnectedAccountLaunchContributionV1 = {
-  environmentUses: [
-    { purpose: 'model_upstream', environmentKey: 'AGY_ACP_FORCE_FILE_STORAGE' },
-    { purpose: 'gemini-api-key', environmentKey: GEMINI_API_KEY_ENV },
-  ],
+  environmentUses: [{ purpose: 'model_upstream', environmentKey: 'AGY_ACP_FORCE_FILE_STORAGE' }],
   environmentUnsetUses: [
     { purpose: 'model_upstream', environmentKey: 'AGY_ACP_CCPA_BASE_URL' },
     { purpose: 'model_upstream', environmentKey: 'AGY_ACP_CCPA_PROJECT' },

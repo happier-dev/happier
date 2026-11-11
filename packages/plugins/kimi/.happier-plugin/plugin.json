@@ -192,75 +192,6 @@
         },
         "id": "kimi",
         "primary": "sessions",
-        "providerRequirements": {
-          "acceptsProtocols": [
-            "openai-chat",
-            "openai-responses",
-            "anthropic"
-          ],
-          "applyPolicy": "restart_session",
-          "authIsolation": {
-            "ownedEnvKeys": [
-              "HAPPIER_KIMI_PROVIDER_API_KEY",
-              "HAPPIER_KIMI_ACCESS_TOKEN",
-              "KIMI_API_KEY",
-              "MOONSHOT_API_KEY",
-              "KIMI_CODE_BASE_URL",
-              "KIMI_CODE_OAUTH_HOST",
-              "KIMI_OAUTH_HOST"
-            ],
-            "suppressConnectedServiceIds": [
-              "happier.agent.kimi/kimi-code"
-            ]
-          },
-          "credentialSupport": {
-            "apiKeyTransports": [
-              {
-                "destination": {
-                  "formats": [
-                    "bearer"
-                  ],
-                  "kind": "httpHeader",
-                  "names": [
-                    "authorization"
-                  ]
-                },
-                "protocol": "openai-chat"
-              },
-              {
-                "destination": {
-                  "formats": [
-                    "bearer"
-                  ],
-                  "kind": "httpHeader",
-                  "names": [
-                    "authorization"
-                  ]
-                },
-                "protocol": "openai-responses"
-              },
-              {
-                "destination": {
-                  "formats": [
-                    "raw"
-                  ],
-                  "kind": "httpHeader",
-                  "names": [
-                    "x-api-key"
-                  ]
-                },
-                "protocol": "anthropic"
-              }
-            ],
-            "supportsNoAuth": false
-          },
-          "materialization": "configFile",
-          "required": {
-            "streaming": true,
-            "toolRoundTrips": true
-          },
-          "supportsFreeformModelIds": true
-        },
         "runtime": {
           "kind": "custom"
         },
@@ -445,10 +376,7 @@
           }
         },
         "id": "kimi-code",
-        "title": "Kimi Code",
-        "ui": {
-          "iconResourceId": "agent-mark"
-        }
+        "title": "Kimi Code"
       }
     ],
     "daemonDatabases": [],
@@ -479,12 +407,6 @@
     "registrySources": [],
     "requestInterceptors": [],
     "resources": [
-      {
-        "contentType": "image/svg+xml",
-        "id": "agent-mark",
-        "kind": "asset",
-        "path": "assets/agent-mark.svg"
-      },
       {
         "contentType": "application/json",
         "id": "i18n-en",
@@ -711,13 +633,12 @@
         "scope": {
           "envKeys": [
             "KIMI_CODE_HOME",
-            "HAPPIER_KIMI_PROVIDER_API_KEY",
             "HAPPIER_KIMI_ACCESS_TOKEN",
-            "KIMI_API_KEY",
-            "MOONSHOT_API_KEY",
             "KIMI_CODE_BASE_URL",
             "KIMI_CODE_OAUTH_HOST",
-            "KIMI_OAUTH_HOST"
+            "KIMI_OAUTH_HOST",
+            "KIMI_API_KEY",
+            "MOONSHOT_API_KEY"
           ],
           "executables": [
             {

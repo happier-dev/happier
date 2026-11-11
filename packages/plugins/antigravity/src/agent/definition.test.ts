@@ -50,12 +50,12 @@ describe('Antigravity agent definition', () => {
       enablementCompatibilityBackendIds: ['antigravity-localharness', 'antigravity-terminal'],
     });
     expect(AGENT_DEFINITION).not.toHaveProperty('runtimeContributions');
-    expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual(expect.arrayContaining([
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual([
       expect.objectContaining({
         service: 'antigravity-account',
         credentialKinds: ['oauth'],
       }),
-    ]));
+    ]);
     expect(AGENT_DEFINITION).not.toHaveProperty('agentCliRuntime');
     expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli).toMatchObject({
       executable: { binaryName: 'agy', sourcePreference: 'system-first' },
@@ -84,7 +84,7 @@ describe('Antigravity agent definition', () => {
         executable: { kind: 'managedDependency', id: 'agy-acp-server' },
       },
       definition: {
-        auth: { methodId: 'gemini-api-key' },
+        auth: { methodId: 'oauth-personal' },
       },
     });
     expect(agent?.runtime).not.toHaveProperty('definition.models');

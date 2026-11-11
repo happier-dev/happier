@@ -203,43 +203,6 @@
         },
         "id": "grok",
         "primary": "sessions",
-        "providerRequirements": {
-          "acceptsProtocols": [
-            "openai-chat"
-          ],
-          "applyPolicy": "restart_session",
-          "authIsolation": {
-            "ownedEnvKeys": [
-              "GROK_CONFIG",
-              "HAPPIER_GROK_PROVIDER_API_KEY",
-              "XAI_API_KEY"
-            ],
-            "suppressConnectedServiceIds": []
-          },
-          "credentialSupport": {
-            "apiKeyTransports": [
-              {
-                "destination": {
-                  "formats": [
-                    "bearer"
-                  ],
-                  "kind": "httpHeader",
-                  "names": [
-                    "authorization"
-                  ]
-                },
-                "protocol": "openai-chat"
-              }
-            ],
-            "supportsNoAuth": false
-          },
-          "materialization": "spawnEnv",
-          "required": {
-            "streaming": true,
-            "toolRoundTrips": true
-          },
-          "supportsFreeformModelIds": true
-        },
         "runtime": {
           "kind": "custom"
         },
@@ -301,10 +264,6 @@
     "connectedAccountDescriptors": [
       {
         "authentication": {
-          "account": {
-            "artifactId": "connected-account-authentication",
-            "exportName": "activate"
-          },
           "defaultModeId": "device",
           "modes": [
             {
@@ -368,10 +327,7 @@
           }
         },
         "id": "xai",
-        "title": "Grok / xAI",
-        "ui": {
-          "iconResourceId": "agent-mark"
-        }
+        "title": "xAI"
       }
     ],
     "daemonDatabases": [],
@@ -402,12 +358,6 @@
     "registrySources": [],
     "requestInterceptors": [],
     "resources": [
-      {
-        "contentType": "image/svg+xml",
-        "id": "agent-mark",
-        "kind": "asset",
-        "path": "assets/agent-mark.svg"
-      },
       {
         "contentType": "application/json",
         "id": "i18n-en",
