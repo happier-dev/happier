@@ -76,8 +76,50 @@ export type TranscriptRenderWindowProjection<TItem extends RenderWindowSegmentab
     listData: readonly TItem[];
     liveTailAnchor: Readonly<{ messageId: string; reason?: TranscriptLiveTailAnchorReason | null }> | null;
     nativeHotTailResetRequired: boolean;
+    /** Diagnostic: true when this projection was derived from `previousProjection` by append-only extension instead of a full rebuild. */
+    reusedAppendOnlyBaseline: boolean;
     targetWindow: ReturnType<typeof resolveTranscriptTargetWindowHostFacts<TItem>>;
 }>;
+
+/**
+ * Internal, projection-keyed structures a later append-only call can extend instead of
+ * rebuilding every full-transcript index. Web standard-order Legend lists keep
+ * `displayItems === canonicalWindowedItems === listData` and one source order, so every index
+ * below is a pure append of the previous call's entries.
+ */
+type AppendReuseInternals<TItem extends RenderWindowSegmentableItem> = Readonly<{
+    items: readonly TItem[];
+    listOrientation: TranscriptListOrientation;
+    platformOS: string;
+    rendererKind: 'flashList' | 'legendList';
+    hadGaps: boolean;
+    hadTailBoundary: boolean;
+    displaySourceIndices: readonly (number | null)[];
+    renderedIndexById: Map<string, number>;
+    sourceIndexById: Map<string, number>;
+    sourceItemById: Map<string, TItem>;
+    sourceToDisplayIndex: Map<number, number>;
+    sourceToRenderedIndex: Map<number, number>;
+    displayItemIds: Set<string>;
+}>;
+
+const appendReuseByProjection = new WeakMap<object, AppendReuseInternals<never>>();
+
+function registerAppendReuseInternals<TItem extends RenderWindowSegmentableItem>(
+    projection: TranscriptRenderWindowProjection<TItem>,
+    internals: AppendReuseInternals<TItem>,
+): void {
+    appendReuseByProjection.set(projection, internals as AppendReuseInternals<never>);
+}
+
+/** Whether `items` still carries every entry of `previousItems` at the same index (append-only). */
+function isStrictPrefixByReference<TItem>(previousItems: readonly TItem[], items: readonly TItem[]): boolean {
+    if (items.length < previousItems.length) return false;
+    for (let index = 0; index < previousItems.length; index += 1) {
+        if (items[index] !== previousItems[index]) return false;
+    }
+    return true;
+}
 
 export function resolveTranscriptRenderWindowProjection<TItem extends RenderWindowSegmentableItem>(params: Readonly<{
     activeThinkingMessageId: string | null;
@@ -99,7 +141,14 @@ export function resolveTranscriptRenderWindowProjection<TItem extends RenderWind
     targetWindowState: TranscriptTargetWindowState;
     transcriptNativeHotTailItemCount: number;
     transcriptWebHotTailItemCount: number;
+    /** Previous projection to extend when the change is append-only (streaming inserts). */
+    previousProjection?: TranscriptRenderWindowProjection<TItem> | null;
 }>): TranscriptRenderWindowProjection<TItem> {
+    const appendReuse = resolveAppendReuseInternals(params);
+    const extended = appendReuse ? tryBuildAppendExtendedProjection(params, appendReuse) : null;
+    if (extended) {
+        return extended;
+    }
     const entrySliceBounds = resolveActiveEntrySliceBounds({
         entrySliceWindow: params.entrySliceWindow,
         items: params.items,
@@ -223,7 +272,7 @@ export function resolveTranscriptRenderWindowProjection<TItem extends RenderWind
         };
     };
 
-    return {
+    const projection: TranscriptRenderWindowProjection<TItem> = {
         canonicalWindowedItems,
         displayItems,
         entrySlice: {
@@ -265,8 +314,196 @@ export function resolveTranscriptRenderWindowProjection<TItem extends RenderWind
         listData,
         liveTailAnchor,
         nativeHotTailResetRequired: params.platformOS !== 'web' && !hotColdActive,
+        reusedAppendOnlyBaseline: false,
         targetWindow,
     };
+    registerAppendReuseInternals(projection, {
+        items: params.items,
+        listOrientation: params.listOrientation,
+        platformOS: params.platformOS,
+        rendererKind: params.rendererKind,
+        hadGaps: hasWindowGap,
+        hadTailBoundary: params.tailContiguousBoundary != null,
+        displaySourceIndices,
+        renderedIndexById,
+        sourceIndexById,
+        sourceItemById,
+        sourceToDisplayIndex,
+        sourceToRenderedIndex,
+        displayItemIds,
+    });
+    return projection;
+}
+
+/** Eligibility check for the append-only fast path; `null` means full rebuild. */
+function resolveAppendReuseInternals<TItem extends RenderWindowSegmentableItem>(
+    params: Readonly<Parameters<typeof resolveTranscriptRenderWindowProjection<TItem>>[0]>,
+): AppendReuseInternals<TItem> | null {
+    const previous = params.previousProjection;
+    if (!previous) return null;
+    const internals = appendReuseByProjection.get(previous) as AppendReuseInternals<TItem> | undefined;
+    if (!internals) return null;
+    // The fast path is the steady streaming shape only: web standard-order Legend list, no
+    // target window, no gaps, no tail-discontinuity floor. Everything else keeps the exact
+    // full-rebuild behavior (including every native path).
+    if (params.platformOS !== 'web') return null;
+    if (params.listOrientation !== 'standard') return null;
+    if (params.rendererKind !== 'legendList') return null;
+    if (internals.platformOS !== params.platformOS) return null;
+    if (internals.listOrientation !== params.listOrientation) return null;
+    if (internals.rendererKind !== params.rendererKind) return null;
+    if (internals.hadGaps || params.targetWindowState.isWindowMode) return null;
+    if (internals.hadTailBoundary || params.tailContiguousBoundary != null) return null;
+    if (!isStrictPrefixByReference(internals.items, params.items)) return null;
+    return internals;
+}
+
+/**
+ * Append-only extension of a previous projection. Display order === source order on the web
+ * standard orientation and `listData === displayItems` with the Legend renderer (no hot/cold
+ * carve), so every index below extends the previous call's entries instead of rebuilding
+ * full-transcript structures per streaming insert. First-wins duplicate-id semantics mirror the
+ * full rebuild exactly. Returns `null` when the recomputed host facts violate the fast-path
+ * shape (e.g. an unexpected gap), so the caller falls back to a full rebuild.
+ */
+function tryBuildAppendExtendedProjection<TItem extends RenderWindowSegmentableItem>(
+    params: Readonly<Parameters<typeof resolveTranscriptRenderWindowProjection<TItem>>[0]>,
+    internals: AppendReuseInternals<TItem>,
+): TranscriptRenderWindowProjection<TItem> | null {
+    const items = params.items;
+    const targetWindow = resolveTranscriptTargetWindowHostFacts({
+        items,
+        isSeqLoaded: params.isSeqLoaded,
+        isSeqRangeLoaded: params.isSeqRangeLoaded,
+        resolveSeq: params.resolveSeq,
+        tailContiguousBoundary: params.tailContiguousBoundary ?? null,
+        resolveMessageIds: params.resolveMessageIds,
+        windowState: params.targetWindowState,
+    });
+    if (targetWindow.gaps.older !== null || targetWindow.gaps.newer !== null) return null;
+    if (targetWindow.items !== items) return null;
+
+    const canonicalWindowedItems = items.slice();
+    // Standard orientation returns the same reference; kept explicit for the invariant.
+    const displayItems = orientTranscriptListItems(canonicalWindowedItems, params.listOrientation);
+    const liveTailAnchor = params.resolveLiveTailAnchor?.(canonicalWindowedItems) ?? null;
+
+    const previousItemCount = internals.items.length;
+    // Mutate the shared index structures in place (additive-only): a Map copy re-hashes every
+    // entry, which measured SLOWER than a full rebuild. Prefix entries never change, so older
+    // projections sharing these maps only ever observe additions, and the has() first-wins
+    // guards make repeated application (React StrictMode double-invoke) idempotent.
+    const sourceIndexById = internals.sourceIndexById;
+    const sourceItemById = internals.sourceItemById;
+    const renderedIndexById = internals.renderedIndexById;
+    const sourceToDisplayIndex = internals.sourceToDisplayIndex;
+    const sourceToRenderedIndex = internals.sourceToRenderedIndex;
+    const displayItemIds = internals.displayItemIds;
+    const appendedDisplaySourceIndices: (number | null)[] = [];
+    for (let sourceIndex = previousItemCount; sourceIndex < items.length; sourceIndex += 1) {
+        const item = items[sourceIndex];
+        if (!item) continue;
+        // Mirrors the full rebuild's `displayItems.map(item => sourceIndexById.get(item.id) ?? null)`:
+        // the mapped value is the FIRST occurrence index of the id, resolved before this row's own
+        // entry is registered so an appended duplicate keeps pointing at the prefix original.
+        const mappedSourceIndex = sourceIndexById.get(item.id) ?? sourceIndex;
+        appendedDisplaySourceIndices.push(mappedSourceIndex);
+        if (!sourceIndexById.has(item.id)) sourceIndexById.set(item.id, sourceIndex);
+        if (!sourceItemById.has(item.id)) sourceItemById.set(item.id, item);
+        if (!sourceToDisplayIndex.has(mappedSourceIndex)) sourceToDisplayIndex.set(mappedSourceIndex, sourceIndex);
+        if (!sourceToRenderedIndex.has(mappedSourceIndex)) sourceToRenderedIndex.set(mappedSourceIndex, sourceIndex);
+        if (!renderedIndexById.has(item.id)) renderedIndexById.set(item.id, sourceIndex);
+        displayItemIds.add(item.id);
+    }
+    const displaySourceIndices = internals.displaySourceIndices.concat(appendedDisplaySourceIndices);
+    const renderedSourceIndices = displaySourceIndices;
+    const renderedWindowContentIndices = displaySourceIndices;
+    const outsideDataFallbackIndex = items.length <= 0
+        ? null
+        : params.listOrientation === 'inverted'
+            ? 0
+            : items.length - 1;
+    const resolveRendererTargetForItemId = (itemId: string): TranscriptRendererDataTarget | null => {
+        const sourceItem = sourceItemById.get(itemId);
+        if (!sourceItem) return null;
+        const renderedIndex = renderedIndexById.get(itemId);
+        if (renderedIndex !== undefined) {
+            return { kind: 'data', index: renderedIndex, itemId };
+        }
+        const rawTargetSeq = params.resolveSeq ? params.resolveSeq(sourceItem) : sourceItem.seq;
+        const targetSeq = typeof rawTargetSeq === 'number' && Number.isFinite(rawTargetSeq) && rawTargetSeq >= 0
+            ? Math.trunc(rawTargetSeq)
+            : null;
+        return {
+            kind: 'outside-data',
+            fallbackIndex: outsideDataFallbackIndex,
+            itemId,
+            reason: displayItemIds.has(itemId) ? 'renderer-edge' : 'projection-window',
+            targetSeq,
+        };
+    };
+
+    const projection: TranscriptRenderWindowProjection<TItem> = {
+        canonicalWindowedItems,
+        displayItems,
+        entrySlice: {
+            bounds: null,
+            items,
+            withheldCount: 0,
+        },
+        hotCold: {
+            active: false,
+            coldCount: items.length,
+            coldItems: canonicalWindowedItems,
+            hotCount: 0,
+            hotItems: [],
+            hotItemsCanonical: [],
+            nativeEdgeSlotItems: [],
+            splitIndex: items.length,
+            webFooterItems: [],
+        },
+        indexMap: {
+            displayIndexToSourceIndex: (displayIndex) => readIndex(displaySourceIndices, displayIndex),
+            hasRenderedContentOutsideRecycler: false,
+            hotEdgeSourceIndices: [],
+            renderedToDisplayIndex: (renderedIndex) => {
+                const sourceIndex = readIndex(renderedSourceIndices, renderedIndex);
+                return sourceIndex === null ? null : sourceToDisplayIndex.get(sourceIndex) ?? null;
+            },
+            renderedToSourceIndex: (renderedIndex) => readIndex(renderedSourceIndices, renderedIndex),
+            renderedToWindowContentIndex: (renderedIndex) => readIndex(renderedWindowContentIndices, renderedIndex),
+            resolveRendererTargetForDisplayIndex: (displayIndex) => {
+                const normalized = Number.isInteger(displayIndex) ? displayIndex : -1;
+                const item = normalized >= 0 ? displayItems[normalized] : undefined;
+                return item ? resolveRendererTargetForItemId(item.id) : null;
+            },
+            resolveRendererTargetForItemId,
+            sourceIndexToDisplayIndex: (sourceIndex) => sourceToDisplayIndex.get(sourceIndex) ?? null,
+            sourceIndexToRenderedIndex: (sourceIndex) => sourceToRenderedIndex.get(sourceIndex) ?? null,
+            windowContentItemCount: targetWindow.items.length,
+        },
+        listData: displayItems,
+        liveTailAnchor,
+        nativeHotTailResetRequired: false,
+        reusedAppendOnlyBaseline: true,
+        targetWindow,
+    };
+    registerAppendReuseInternals(projection, {
+        items,
+        listOrientation: params.listOrientation,
+        platformOS: params.platformOS,
+        rendererKind: params.rendererKind,
+        hadGaps: false,
+        hadTailBoundary: false,
+        displaySourceIndices,
+        renderedIndexById,
+        sourceIndexById,
+        sourceItemById,
+        sourceToDisplayIndex,
+        sourceToRenderedIndex,
+        displayItemIds,
+    });
+    return projection;
 }
 
 function resolveActiveEntrySliceBounds<TItem extends RenderWindowSegmentableItem>(params: Readonly<{
