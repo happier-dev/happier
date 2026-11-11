@@ -118,9 +118,9 @@ export function SessionSkillsPane(props: Readonly<{ sessionId: string; serverId?
         { key: 'session.skills.retry', title: t('capabilities.status.fix.tryAgain'), invoke: () => onRetry() },
         ...(undo ? [{ key: 'session.skills.undo', title: t('common.undo'), invoke: async (_input, _context, invocation) => {
             reportFailure(await owner.undoLast(invocation));
-        } }] : []),
+        } }] satisfies CurrentUiContextLocalCommand[] : []),
         ...(restart.badge?.onPress ? [{ key: 'session.skills.restart', title: t('capabilities.skills.saved.restartNow'),
-            invoke: async (_input, _context, invocation) => { await restart.restart(invocation); } }] : []),
+            invoke: async (_input, _context, invocation) => { await restart.restart(invocation); } }] satisfies CurrentUiContextLocalCommand[] : []),
         ...model.groups.flatMap(group => group.kind === 'skills' ? group.rows.flatMap(row => {
             const removalState = sessionCapabilityRowRemovalState(row);
             const rowAction = row.action;
@@ -132,10 +132,10 @@ export function SessionSkillsPane(props: Readonly<{ sessionId: string; serverId?
                 invoke: () => openMaker(makerSessionId) }] : []),
             ...(rowAction.kind === 'turn_on' ? [{ key: `session.skills.turn-on:${row.id}`,
                 title: t('capabilities.session.sheet.turnOnLabel', { item: row.title }),
-                invoke: async (_input, _context, invocation) => { await onChange({ kind: 'skill', id: row.id, state: rowAction.state }, invocation); } }] : []),
+                invoke: async (_input, _context, invocation) => { await onChange({ kind: 'skill', id: row.id, state: rowAction.state }, invocation); } }] satisfies CurrentUiContextLocalCommand[] : []),
             ...(removalState !== null ? [{ key: `session.skills.remove:${row.id}`,
                 title: t('capabilities.session.sheet.removeLabel', { item: row.title }),
-                invoke: async (_input, _context, invocation) => { await onChange({ kind: 'skill', id: row.id, state: removalState }, invocation); } }] : []),
+                invoke: async (_input, _context, invocation) => { await onChange({ kind: 'skill', id: row.id, state: removalState }, invocation); } }] satisfies CurrentUiContextLocalCommand[] : []),
             ];
         }) : []),
     ], [onOpen, onRetry, undo, owner.undoLast, reportFailure, restart.badge, restart.restart, model.groups, skills, makers, openSkill, openMaker, onChange, destination.available]);

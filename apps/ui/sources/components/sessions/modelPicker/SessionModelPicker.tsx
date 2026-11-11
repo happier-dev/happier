@@ -46,6 +46,7 @@ import {
     isSessionModelGatewaySlotSection,
     sessionModelConnectionTitle,
     withSessionModelSourceSuffixes,
+    type SessionModelPickerOption,
     type SessionModelPickerSection,
     type SessionModelGatewaySlot,
     type SessionModelProjectionGroup,
@@ -532,7 +533,7 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
     const labeledSections = React.useMemo((): ReadonlyArray<SessionModelPickerSection> => {
         // What can run reads first; every model that can't sits in one "Unavailable (n)" group last, each
         // row naming its source and a few words of why (the full reason stays its accessible label).
-        const folded = foldUnavailableRows({
+        const folded = foldUnavailableRows<SessionModelPickerOption, SessionModelPickerSection>({
             sections,
             isUnavailable: (option) => option.availability === 'unavailable',
             group: (options, title): SessionModelPickerSection => ({ id: 'unavailable', title, options }),
