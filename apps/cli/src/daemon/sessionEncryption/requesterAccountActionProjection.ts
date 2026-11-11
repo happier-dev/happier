@@ -245,21 +245,29 @@ async function projectAdmittedAccountCustody(
       try {
         if (input.signal?.aborted) { diagnose('requester_projection_cancelled'); return false; }
         if (!isCustodyLive()) { diagnose('requester_projection_custody'); return false; }
-        if (!isRequesterAccountEncryptionCurrentnessObserved({ accountId: stamp.accountId,
-          token: bootstrap.credentials.token, serverBaseUrl: bootstrap.serverHttpBaseUrl }, currentness)) {
+        const scope = { accountId: stamp.accountId, token: bootstrap.credentials.token,
+          serverBaseUrl: bootstrap.serverHttpBaseUrl, ...(input.signal ? { signal: input.signal } : {}) };
+        const isLocalCustodyCurrent = async () => {
+          if (input.signal?.aborted) { diagnose('requester_projection_cancelled'); return false; }
+          if (!await bootstrap.isCurrent()) { diagnose('requester_projection_custody'); return false; }
+          if (input.signal?.aborted) { diagnose('requester_projection_cancelled'); return false; }
+          if (!isCustodyLive()) { diagnose('requester_projection_custody'); return false; }
+          return true;
+        };
+        if (!admittedCurrentness) {
+          // The reader fences an exact credential's borrowed observation; an independent
+          // Session instead retains its own fresh authenticated HTTP currentness.
+          return await readRequesterAccountEncryptionCurrentness(scope, async next => {
+            if (!sameRequesterAccountEncryptionCurrentness(next, currentness)) {
+              diagnose('requester_projection_encryption_currentness'); return false;
+            }
+            return await isLocalCustodyCurrent();
+          });
+        }
+        if (!isRequesterAccountEncryptionCurrentnessObserved(scope, currentness)) {
           diagnose('requester_projection_observation'); return false;
         }
-        if (!admittedCurrentness) {
-          const next = await readRequesterAccountEncryptionCurrentness({ accountId: stamp.accountId, token: bootstrap.credentials.token,
-            serverBaseUrl: bootstrap.serverHttpBaseUrl, ...(input.signal ? { signal: input.signal } : {}) });
-          // Session custody follows mode/key transitions, independently of Account seq.
-          if (!sameRequesterAccountEncryptionCurrentness(next, currentness)) { diagnose('requester_projection_encryption_currentness'); return false; }
-        }
-        // Preserve the existing short-circuit order and one bootstrap read.
-        if (input.signal?.aborted) { diagnose('requester_projection_cancelled'); return false; }
-        if (!await bootstrap.isCurrent()) { diagnose('requester_projection_custody'); return false; }
-        if (input.signal?.aborted) { diagnose('requester_projection_cancelled'); return false; }
-        if (!isCustodyLive()) { diagnose('requester_projection_custody'); return false; }
+        if (!await isLocalCustodyCurrent()) return false;
         const observed = isRequesterAccountEncryptionCurrentnessObserved({ accountId: stamp.accountId,
           token: bootstrap.credentials.token, serverBaseUrl: bootstrap.serverHttpBaseUrl }, currentness);
         if (!observed) diagnose('requester_projection_observation');
