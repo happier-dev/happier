@@ -139,7 +139,17 @@ const PluginHostedWebAccountDataCollectionOperationV1Schema = lazyZodSchema(() =
   }),
 ]));
 
+/** Content-free observations over the incumbent AccountChange dispatcher. */
+export const PluginAccountDataObservationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('kv'), key: PluginAccountStorageLogicalKeyV1Schema }),
+  z.strictObject({ kind: z.literal('collection'), collectionId: PluginCollectionMemberNameV1Schema }),
+  z.strictObject({ kind: z.literal('internalTasks') }),
+]));
+export type PluginAccountDataObservationV1 = z.infer<typeof PluginAccountDataObservationV1Schema>;
+
 const PluginHostedWebAccountDataStorageOperationV1Schema = lazyZodSchema(() => z.discriminatedUnion('operation', [
+  z.strictObject({ kind: z.literal('data'), operation: z.literal('accountData.watch'), arguments: z.tuple([PluginAccountDataObservationV1Schema]) }),
+  z.strictObject({ kind: z.literal('data'), operation: z.literal('accountData.unwatch'), arguments: z.tuple([OpaqueHostedWebAccountDataQueryIdV1Schema]) }),
   z.strictObject({ kind: z.literal('data'), operation: z.literal('accountKv.get'), arguments: z.tuple([PluginAccountStorageLogicalKeyV1Schema]) }),
   z.strictObject({ kind: z.literal('data'), operation: z.literal('accountKv.set'), arguments: z.tuple([PluginAccountStorageLogicalKeyV1Schema, PluginAccountStorageJsonValueV1Schema, AccountDataExpectedVersionOptionsV1Schema]) }),
   z.strictObject({ kind: z.literal('data'), operation: z.literal('accountKv.delete'), arguments: z.tuple([PluginAccountStorageLogicalKeyV1Schema, AccountDataExpectedDeleteVersionOptionsV1Schema]) }),

@@ -251,6 +251,7 @@ function createHarness(options: Readonly<{
         async openCollectionQuery() {
             throw new Error('This mounted journey opens no declared UI query.');
         },
+        async watchAccountData() { return { dispose() {} }; },
         accountKv: accountKv.kv,
     } as unknown as PluginUiDataClient;
 

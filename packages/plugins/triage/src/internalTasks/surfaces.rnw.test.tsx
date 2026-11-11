@@ -64,6 +64,7 @@ function accountData(options: Readonly<{ waitForSources?: Promise<void>; failSou
       if (!collection) throw new Error(`Undeclared Collection: ${definition.id}`);
       return collection as ReturnType<PluginUiDataClient['collection']>;
     },
+    async watchAccountData() { return { dispose() {} }; },
     accountKv: createTestkitAccountKv().kv,
     async openCollectionQuery() { throw new Error('No UI query is declared here.'); },
   };

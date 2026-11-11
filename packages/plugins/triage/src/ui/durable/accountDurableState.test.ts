@@ -13,6 +13,7 @@ describe('the durable Account binding', () => {
     const client = {
       collection(definition: Readonly<{ id: string }>) { collections.push(definition.id); return {}; },
       async openCollectionQuery() { throw new Error('no queries'); },
+      async watchAccountData() { return { dispose() {} }; },
       accountKv: { get: async () => null, set: async () => undefined },
     } as unknown as PluginUiDataClient;
 

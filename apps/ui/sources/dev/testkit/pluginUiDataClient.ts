@@ -17,6 +17,7 @@ export function completePresentationPluginUiDataClient(
 ): PluginUiDataClient {
     return Object.freeze({
         ...client,
+        async watchAccountData() { throw new Error('This test fixture does not provide mounted Account KV observation.'); },
         accountKv: unavailableAccountKv(),
     });
 }

@@ -1,3 +1,7 @@
+import { useTriagePinnedEntries } from './marks/useTriagePinnedEntries.js';
+import { useTriageConfiguredSources } from './configuration/useTriageConfiguredSources.js';
+import { setTriageEntryPinned } from '../actions/userMarks.js';
+import { removeConfiguredSourceInstance } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 // @vitest-environment jsdom
 import { URL as NodeURL } from 'node:url';
 import { readPluginTranslationResources } from '../../../../../scripts/testing/readPluginTranslationResources.js';
@@ -456,7 +460,13 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
         });
     }
 
+    const collectionReadCounts = new Map<string, number>();
+    const kvReadCount = { count: 0 };
+    const kvObservers = new Map<string, Set<() => void>>();
     return {
+        kvReadCount,
+        collectionReadCounts,
+        kvObservers,
         collections,
         actionCalls,
         executeAction,
@@ -505,12 +515,25 @@ async function mountSurface(
     // Host Account-data boundary: use the same seeded collection stores as the real Action handlers.
     const dataClient = {
         collection: (definition: Readonly<{ id: string }>) => {
-            if (definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION.id) return harness.collections.sourceInstances;
-            if (definition.id === CORPUS_SESSION_LINKS_COLLECTION.id) return harness.collections.sessionLinks;
-            if (definition.id === CORPUS_USER_MARKS_COLLECTION.id) return harness.collections.userMarks;
+            const collection = definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION.id ? harness.collections.sourceInstances
+                : definition.id === CORPUS_SESSION_LINKS_COLLECTION.id ? harness.collections.sessionLinks
+                : definition.id === CORPUS_USER_MARKS_COLLECTION.id ? harness.collections.userMarks : null;
+            if (collection) return { ...collection, query: (...args: Parameters<typeof collection.query>) => {
+                harness.collectionReadCounts.set(definition.id, (harness.collectionReadCounts.get(definition.id) ?? 0) + 1);
+                return collection.query(...args);
+            } };
             throw new Error(`Unexpected fixture collection ${definition.id}`);
         },
-        accountKv: harness.accountKv.kv,
+        accountKv: { ...harness.accountKv.kv, get: (...args: Parameters<typeof harness.accountKv.kv.get>) => {
+            harness.kvReadCount.count++;
+            return harness.accountKv.kv.get(...args);
+        } },
+        watchAccountData: (selection: Parameters<PluginUiDataClient['watchAccountData']>[0], listener: () => void) => {
+            const listeners = harness.kvObservers.get(JSON.stringify(selection)) ?? new Set<() => void>();
+            harness.kvObservers.set(JSON.stringify(selection), listeners);
+            listeners.add(listener);
+            return Promise.resolve({ dispose: () => { listeners.delete(listener); } });
+        },
         // These scenarios seed no marks or Session links; their Data query boundary is genuinely empty.
         openCollectionQuery: async () => ({ getSnapshot: () => emptyQuery, subscribe: () => () => {},
             refresh: async () => {}, loadMore: async () => {}, dispose: () => {} }),
@@ -918,6 +941,76 @@ describe('the mounted PRs & Issues surface', () => {
         await expect(shell.queryByText('Happier cannot reach your account right now, so pins and saved views cannot be changed.')).resolves.toBeUndefined();
         expect(harness.scanCalls.count).toBe(scansBeforeRetry);
         expect(harness.unroutedActions).toEqual([]);
+    });
+
+    it('projects pins and sources deleted elsewhere on their existing collection changes without extra reads', async () => {
+        const harness = createHarness();
+        const ref = { source: SOURCE_A, kindId: 'pull-request', collisionScope: 'example/repository', entryId: 'external-pin' };
+        await setTriageEntryPinned({ v: 1, pinned: true, entryRef: ref, displayAtMark: { title: 'External pin', scopeLabel: 'Example' } },
+            { collections: harness.collections, nowMs: () => 1 });
+        let pins: ReturnType<typeof useTriagePinnedEntries> | undefined;
+        let sources: ReturnType<typeof useTriageConfiguredSources> | undefined;
+        const surface = defineUiSurface(() => { pins = useTriagePinnedEntries(); sources = useTriageConfiguredSources(); return <></>; });
+        await mountSurface(surface, harness, 'external-deletions', {}, { directAccountData: true });
+        expect(pins?.pins).toHaveLength(1);
+        expect(sources?.sources.some(source => source.sourceInstanceId === INSTANCE_A)).toBe(true);
+        await setTriageEntryPinned({ v: 1, pinned: false, entryRef: ref }, { collections: harness.collections, nowMs: () => 2 });
+        expect(await removeConfiguredSourceInstance({ collections: harness.collections, sourceInstanceId: INSTANCE_A,
+            signal: new AbortController().signal })).toMatchObject({ kind: 'removed' });
+        const before = new Map(harness.collectionReadCounts);
+        await act(async () => {
+            for (const collectionId of [CORPUS_USER_MARKS_COLLECTION.id, CORPUS_SOURCE_INSTANCES_COLLECTION.id]) {
+                for (const listener of harness.kvObservers.get(JSON.stringify({ kind: 'collection', collectionId })) ?? []) listener();
+            }
+        });
+        expect.soft(pins?.pins).toHaveLength(0);
+        expect.soft(sources?.sources.some(source => source.sourceInstanceId === INSTANCE_A)).toBe(false);
+        expect(sources?.sources.some(source => source.sourceInstanceId === INSTANCE_B)).toBe(true);
+        for (const id of [CORPUS_USER_MARKS_COLLECTION.id, CORPUS_SOURCE_INSTANCES_COLLECTION.id]) {
+            expect((harness.collectionReadCounts.get(id) ?? 0) - (before.get(id) ?? 0)).toBe(1);
+        }
+    });
+
+    it('clears a selected view on one external KV change with one catalog read and no writes', async () => {
+        const harness = createHarness();
+        const viewId = '00000001-0000-4000-8000-000000000000';
+        const catalog = harness.accountKv.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1);
+        const created = await administerTriageSavedView(TriageAdministerSavedViewInputV1Schema.parse({
+            v: 1, kind: 'create', expectedRevision: 'absent', label: 'External deletion', query: 'normalizer',
+            filters: TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, order: 'newest',
+            smartPolicy: TRIAGE_ROUTE_DEFAULT_LENS_V1.smartPolicy,
+        }), { catalog, mintViewId: () => viewId });
+        expect(created.status).toBe('applied');
+        const shell = await mountSurface(renderShellSurface, harness, 'pushed-view-delete', sourceContextFixture(harness), {
+            directAccountData: true, subPath: `?sv=${viewId}`,
+        });
+        await settleWindow('view', shell);
+        // Select through the mounted public Action, as an actual reader would.
+        const detail = harness.publishedContexts.at(-1)?.detail;
+        if (!detail || typeof detail !== 'object' || Array.isArray(detail)) throw new Error('Missing context');
+        const address = detail.mountedAction;
+        if (!address || typeof address !== 'object' || Array.isArray(address)) throw new Error('Missing mount');
+        await act(async () => {
+            expect(await shell.context.hostApi.executeAction('ui/mounted-v1', {
+                mountId: address.mountId, operation: { kind: 'selectSavedView', viewId },
+            })).toEqual({ status: 'applied' });
+        });
+        expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))?.selectedViewId).toBe(viewId);
+        // Spy at the persistent KV boundary; the projection must need only one read.
+        const readsBefore = harness.kvReadCount.count;
+        await act(async () => {
+            expect((await administerTriageSavedView(TriageAdministerSavedViewInputV1Schema.parse({
+                v: 1, kind: 'delete', viewId, expectedRevision: harness.accountKv.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
+            }), { catalog, mintViewId: () => viewId })).status).toBe('applied');
+        });
+        const before = { reads: harness.kvReadCount.count, writes: harness.accountKv.setCallCount() };
+        await act(async () => {
+            for (const listener of harness.kvObservers.get(JSON.stringify({ kind: 'kv', key: TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 })) ?? []) listener();
+        });
+        expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))?.selectedViewId).toBeNull();
+        expect(harness.kvReadCount.count - before.reads).toBe(1);
+        expect(harness.accountKv.setCallCount()).toBe(before.writes);
+        expect(readsBefore).toBeGreaterThan(0);
     });
 
     it('selects an externally created saved view through the mounted Action using the current Account catalog', async () => {

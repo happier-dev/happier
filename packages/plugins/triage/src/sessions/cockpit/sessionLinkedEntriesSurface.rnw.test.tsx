@@ -200,6 +200,7 @@ function createDataHarness(input: Readonly<{
             opened.push(request);
             return control.pager;
         },
+        async watchAccountData() { return { dispose() {} }; },
         accountKv: createUnavailablePluginUiAccountKv(),
     };
 
@@ -1394,7 +1395,7 @@ describe('undoing a link from the mounted cockpit', () => {
             });
         await unlinkThroughSharedPolicy(fixture, relation.displayPath);
         expect(linked).toBe(false);
-        await expect(fixture.findByText('Link the PRs and issues at hand')).resolves.toBeDefined();
+        await expect(fixture.queryByRole('button', { name: relation.displayPath })).resolves.toBeUndefined();
         expect(harness.deletes).toHaveLength(0);
     });
     /**

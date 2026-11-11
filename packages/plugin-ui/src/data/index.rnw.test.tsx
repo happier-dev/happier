@@ -52,6 +52,7 @@ describe('Plugin UI data provider', () => {
         throw new Error('Collection mutation is outside this query-hook fixture.');
       },
       openCollectionQuery,
+      async watchAccountData() { return { dispose() {} }; },
       accountKv: createUnavailablePluginUiAccountKv(),
     });
 
@@ -104,6 +105,7 @@ describe('Plugin UI data provider', () => {
         throw new Error('Collection mutation is outside this query-hook fixture.');
       },
       openCollectionQuery,
+      async watchAccountData() { return { dispose() {} }; },
       accountKv: createUnavailablePluginUiAccountKv(),
     });
 
@@ -148,6 +150,7 @@ describe('Plugin UI data provider', () => {
         throw new Error('Collection mutation is outside this 200-row query fixture.');
       },
       openCollectionQuery,
+      async watchAccountData() { return { dispose() {} }; },
       accountKv: createUnavailablePluginUiAccountKv(),
     });
     const rowCommits: string[] = [];

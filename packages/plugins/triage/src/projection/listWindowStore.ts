@@ -215,6 +215,8 @@ export type TriageListWindowStoreV1 = Readonly<{
     publishObservation(observation: CorpusQualifiedObservationV1, keepViewerFacts?: boolean): TriageListRowV1 | null;
     /** The only way a consumer causes provider work. */
     refresh(trigger: TriageRefreshTriggerV1): Promise<void>;
+    /** Re-read known changed lanes through the same scheduler, without enumerating unrelated sources. */
+    refreshSources(sourceInstanceIds: readonly string[]): Promise<void>;
     /**
      * Rebuild from retained rows. Ranking and task-scope changes replace
      * acquisition and its frontiers; text and facets remain local projections.
@@ -349,6 +351,7 @@ export function createTriageListWindowStore(deps: Readonly<{
     let error: TriageListWindowErrorV1 | null = null;
     let pending: TriageListWindowSnapshotV1['pending'] = 'idle';
     let pendingTrigger: TriageRefreshTriggerV1 = 'view';
+    let pendingSourceRefresh: Set<string> | undefined;
     /**
      * How many bounded windows this mount holds.
      *
@@ -1294,6 +1297,8 @@ export function createTriageListWindowStore(deps: Readonly<{
         activeCycleReplacesGeneration = generationReplacementPending && !cycleWasAppend;
         activeCycleAggregateFailed = false;
         const trigger = pendingTrigger;
+        const sourceRefresh = pendingSourceRefresh;
+        pendingSourceRefresh = undefined;
         // Each cycle consumes the demand that produced it. Demand arriving
         // while it runs is retained by the same coalesced scheduler.
         pendingTrigger = 'view';
@@ -1304,7 +1309,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             // Enumerating configured instances is a Collection read; it reaches no
             // provider, which is what lets a cold mount and the Composer picker
             // be visibly unsynchronized instead of falsely empty.
-            const enumeration = await enumerateConfiguredSources();
+            const enumeration = sourceRefresh ? { configuredSources, configuredSourcesStatus } : await enumerateConfiguredSources();
             if (!isCurrent()) return;
             const configuredSourceChange = syncConfiguredSources(
                 enumeration.configuredSources,
@@ -1343,7 +1348,7 @@ export function createTriageListWindowStore(deps: Readonly<{
         }
 
         const availableSourceInstanceIds = acquisitionSources()
-            .filter((summary) => summary.available)
+            .filter((summary) => summary.available && (!sourceRefresh || lens.sort !== undefined || sourceRefresh.has(summary.sourceInstanceId)))
             .map((summary) => summary.sourceInstanceId);
         const firstUnvisitedSourceIndex = (windowsRequested - 1) * MAX_TRIAGE_LIST_WINDOW_ROWS_V1;
         const appendSourceInstanceIds = cycleWasAppend
@@ -1490,6 +1495,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             };
         },
         refresh(trigger) {
+            pendingSourceRefresh = undefined;
             if (!isCurrent()) return Promise.resolve();
             // Concurrent view consumers need the same read. Join before changing
             // reset/trigger intent; manual Refresh still queues a fresh cycle.
@@ -1500,7 +1506,16 @@ export function createTriageListWindowStore(deps: Readonly<{
             if (trigger === 'manual' || pendingTrigger !== 'manual') pendingTrigger = trigger;
             return scheduler.flush();
         },
+        refreshSources(sourceInstanceIds) {
+            if (!isCurrent() || window === null || sourceInstanceIds.length === 0) return Promise.resolve();
+            if (!pagingResetPending) {
+                pendingSourceRefresh ??= new Set();
+                for (const id of sourceInstanceIds) pendingSourceRefresh.add(id);
+            }
+            return scheduler.flush();
+        },
         loadMore() {
+            pendingSourceRefresh = undefined;
             if (!isCurrent()) return Promise.resolve();
             // Nothing to append to. A mount with no window has not read a
             // connection yet, and the first read is `refresh`'s to make.

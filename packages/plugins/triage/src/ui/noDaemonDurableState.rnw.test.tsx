@@ -147,6 +147,7 @@ function createDurableHarness(options: Readonly<{
         async openCollectionQuery() {
             throw new Error('These surfaces open no declared UI query.');
         },
+        async watchAccountData() { return { dispose() {} }; },
         accountKv: {
             ...accountKv.kv,
             get: async (...args: Parameters<typeof accountKv.kv.get>) => {

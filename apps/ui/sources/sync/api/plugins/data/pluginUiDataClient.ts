@@ -34,7 +34,7 @@ import {
     type ActivePluginCollectionUnavailableReasonV1,
 } from './activePluginCollectionClient';
 import { createActivePluginCollectionUiQueryPager } from './queryPluginCollectionUiQuery';
-import { captureActivePluginCollectionReadBasis, registerActivePluginCollectionChangeWatch } from './pluginCollectionChangeWatch';
+import { captureActivePluginCollectionReadBasis, registerActivePluginCollectionChangeWatch, registerActivePluginAccountDataChangeWatch } from './pluginCollectionChangeWatch';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { fetchCurrentChangesCursor } from '@/sync/api/session/apiChanges';
 import { ensureActivePluginAccountCollectionContract } from '@/sync/api/plugins/availability/ensureActivePluginAccountCollectionContract';
@@ -635,6 +635,17 @@ function createPluginUiDataBindings(input: PluginUiDataBindingInput) {
     return Object.freeze({
         collection,
         openCollectionQuery,
+        async watchAccountData(selection: Parameters<PluginUiDataClient['watchAccountData']>[0], listener: () => void, options?: Readonly<{ signal?: AbortSignal }>) {
+            assertBindingCurrent(options?.signal);
+            const watch = registerActivePluginAccountDataChangeWatch({ pluginId: input.pluginId, selection,
+                lifetime: input.accountLifetime, onInvalidated: listener });
+            const cancellation = mergeAbortSignals([input.signal, options?.signal]);
+            const signal = cancellation.signal;
+            const dispose = () => { watch.dispose(); signal?.removeEventListener('abort', dispose); cancellation.dispose(); };
+            signal?.addEventListener('abort', dispose, { once: true });
+            if (signal?.aborted) dispose();
+            return Object.freeze({ dispose });
+        },
         accountKv: createActivePluginAccountKvClient({
             pluginId: input.pluginId,
             accountLifetime: input.accountLifetime,

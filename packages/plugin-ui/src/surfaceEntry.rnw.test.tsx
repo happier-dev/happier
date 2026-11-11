@@ -432,6 +432,7 @@ describe('defineUiSurface', () => {
       openCollectionQuery: async () => {
         throw new Error('The test author surface does not open a query.');
       },
+      async watchAccountData() { return { dispose() {} }; },
       accountKv: createUnavailablePluginUiAccountKv(),
     });
     expectedDataClient = client;

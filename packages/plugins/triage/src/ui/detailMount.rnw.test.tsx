@@ -1212,6 +1212,7 @@ function harnessDataClient(harness: NonNullable<typeof currentHarness>): PluginU
             if (collection === null) throw new Error(`Undeclared test Collection: ${definition.id}`);
             return collection as unknown as PluginUiAccountCollectionForDefinition<TDefinition>;
         },
+        async watchAccountData() { return { dispose() {} }; },
         accountKv: createTestkitAccountKv().kv,
         openCollectionQuery: async () => { throw new Error('This mount opens no UI query'); },
     };
@@ -2134,6 +2135,7 @@ describe('opening a row into the source detail', () => {
                 // Real Collection boundary fixtures share one codec; the generic definition selects its handle.
                 return collection as unknown as PluginUiAccountCollectionForDefinition<TDefinition>;
             },
+            async watchAccountData() { return { dispose() {} }; },
             accountKv: createTestkitAccountKv().kv,
             openCollectionQuery: async () => { throw new Error('This detail does not open a UI query'); },
         };

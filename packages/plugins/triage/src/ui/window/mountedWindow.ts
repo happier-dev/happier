@@ -1,5 +1,8 @@
+import { CORPUS_SOURCE_INSTANCES_COLLECTION } from '../../corpus/collections/definitions.js';
+import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
+import { sameTriageSourceIdentity } from '../../corpus/identity/components.js';
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import type { PluginUiEphemeralSharedScope, PluginUiHostReadiness } from '@happier-dev/plugin-ui';
+import type { PluginUiEphemeralSharedScope, PluginUiHostReadiness, PluginUiDataClient } from '@happier-dev/plugin-ui';
 
 import {
   TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
@@ -50,6 +53,8 @@ export type TriageListWindowHostV1 = Readonly<{
 /** A live acquisition. Releasing is the only thing a consumer may do to it. */
 export type TriageListWindowLeaseV1 = Readonly<{ release(): void }>;
 
+type AccountDataObserver = Pick<PluginUiDataClient, 'watchAccountData'>;
+
 type MountedWindow = {
   readonly shared: SharedMountedWindow;
   readonly sharedLease: Readonly<{ release(): void }>;
@@ -67,7 +72,7 @@ const TRIAGE_LIST_WINDOW_SHARED_KEY_V1 = 'triage.list-window.v1';
 
 type SharedMountedWindow = Readonly<{
   store: TriageListWindowStoreV1;
-  registerClient(host: TriageListWindowHostV1, readiness?: PluginUiHostReadiness): () => void;
+  registerClient(host: TriageListWindowHostV1, readiness?: PluginUiHostReadiness, data?: AccountDataObserver | null): () => void;
   // Older v1 artifact producers expose only store/registerClient.
   setClientReadiness?(host: TriageListWindowHostV1, readiness: PluginUiHostReadiness): void;
   readState?(): TriageMountedWindowReadState;
@@ -138,6 +143,7 @@ export function acquireTriageListWindow(
   host: TriageListWindowHostV1,
   scope: PluginUiEphemeralSharedScope | null,
   readiness: PluginUiHostReadiness = UNSPECIFIED_READINESS,
+  data: AccountDataObserver | null = null,
 ): TriageListWindowLeaseV1 {
   if (scope === null) return Object.freeze({ release() {} });
   const byScope = mountedByHost.get(host);
@@ -148,7 +154,7 @@ export function acquireTriageListWindow(
     const sharedLease = scope?.acquire<SharedMountedWindow>(
       TRIAGE_LIST_WINDOW_SHARED_KEY_V1,
       () => {
-        const clients = new Map<TriageListWindowHostV1, { leases: number; readiness: PluginUiHostReadiness | null }>();
+        const clients = new Map<TriageListWindowHostV1, { leases: number; readiness: PluginUiHostReadiness | null; data: AccountDataObserver | null }>();
         const readinessListeners = new Set<() => void>();
         let activeReadiness: PluginUiHostReadiness | null = readiness;
         let readState = UNMOUNTED_READ_STATE;
@@ -195,6 +201,35 @@ export function acquireTriageListWindow(
           },
           nowMs: () => Date.now(),
         });
+        let observedClient: AccountDataObserver | null = null;
+        let observation: AbortController | null = null;
+        const observeChanges = () => {
+          const next = clients.values().next().value?.data ?? null;
+          if (next === observedClient) return;
+          observation?.abort();
+          observation = null;
+          observedClient = next;
+          if (!next) return;
+          const controller = new AbortController();
+          observation = controller;
+          const selections: Parameters<AccountDataObserver['watchAccountData']>[0][] = [
+            { kind: 'internalTasks' },
+            { kind: 'collection', collectionId: CORPUS_SOURCE_INSTANCES_COLLECTION.id },
+          ];
+          for (const selection of selections) void next.watchAccountData(selection, () => {
+            if (controller.signal.aborted) return;
+            if (selection.kind === 'collection') void store.refresh('view');
+            else void store.refreshSources(store.getSnapshot().configuredSources
+              .filter(source => sameTriageSourceIdentity(source.source, INTERNAL_TASK_SOURCE_V1))
+              .map(source => source.sourceInstanceId));
+          }, { signal: controller.signal }).then(watch => {
+            if (controller.signal.aborted) watch.dispose();
+            else controller.signal.addEventListener('abort', () => watch.dispose(), { once: true });
+          }).catch(() => {
+            // Retired/unavailable Data cannot admit a live observation; the
+            // incumbent read path remains available for explicit recovery.
+          });
+        };
         const value: SharedMountedWindow = Object.freeze({
           store,
           readState() {
@@ -214,8 +249,9 @@ export function acquireTriageListWindow(
             current.readiness = next;
             publishReadiness();
           },
-          registerClient(client, next) {
-            clients.set(client, { leases: (clients.get(client)?.leases ?? 0) + 1, readiness: next ?? null });
+          registerClient(client, next, data) {
+            clients.set(client, { leases: (clients.get(client)?.leases ?? 0) + 1, readiness: next ?? null, data: data ?? null });
+            observeChanges();
             publishReadiness();
             let registered = true;
             return () => {
@@ -225,6 +261,7 @@ export function acquireTriageListWindow(
               const remaining = (current?.leases ?? 1) - 1;
               if (remaining > 0 && current) current.leases = remaining;
               else clients.delete(client);
+              observeChanges();
               publishReadiness();
             };
           },
@@ -233,8 +270,8 @@ export function acquireTriageListWindow(
           value,
           // Kept by the host while no surface shows it, so Home ↔ page
           // cycling draws the last rows at once and revalidates them. Idle
-          // holds no live work: the store has no timer or subscription of its
-          // own, every artifact unregisters its client on release, and a read
+          // holds no live work: every artifact unregisters its client on release,
+          // releasing the shared Data observation, and a read
           // still in flight settles without a client and cannot page further.
           // The host retires the value with its Account or plugin occurrence.
           retainWhenIdle: true,
@@ -244,6 +281,7 @@ export function acquireTriageListWindow(
           },
           dispose() {
             clients.clear();
+            observeChanges();
             readinessListeners.clear();
             store.dispose();
           },
@@ -256,7 +294,7 @@ export function acquireTriageListWindow(
     mounted = {
       shared: sharedLease.value,
       sharedLease,
-      unregisterClient: sharedLease.value.registerClient(host, readiness),
+      unregisterClient: sharedLease.value.registerClient(host, readiness, data),
       readState: UNMOUNTED_READ_STATE,
       leases: 0,
     };

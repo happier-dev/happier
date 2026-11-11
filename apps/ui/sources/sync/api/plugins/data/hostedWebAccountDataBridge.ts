@@ -61,6 +61,7 @@ export function createHostedWebAccountDataBridge(input: Readonly<{
     let nextQueryId = 0;
     let nextTransactionId = 0;
     let disposed = false;
+    const dataWatches = new Map<string, Readonly<{ dispose(): void }>>();
     const activeQueries = new Map<string, ActiveHostedWebAccountData>();
     const activeTransactions = new Map<string, ActiveHostedWebAccountKvTransaction>();
 
@@ -387,6 +388,22 @@ export function createHostedWebAccountDataBridge(input: Readonly<{
                 }
             } else {
                 switch (operation.operation) {
+                    case 'accountData.watch': {
+                        const queryId = createQueryId();
+                        const watch = await input.dataClient.watchAccountData(operation.arguments[0],
+                            () => { if (!disposed) input.publish({ kind: 'change', queryId }); }, { signal });
+                        if (disposed || signal?.aborted) watch.dispose();
+                        else dataWatches.set(queryId, watch);
+                        value = queryId;
+                        break;
+                    }
+                    case 'accountData.unwatch': {
+                        const queryId = operation.arguments[0];
+                        dataWatches.get(queryId)?.dispose();
+                        dataWatches.delete(queryId);
+                        value = null;
+                        break;
+                    }
                     case 'accountKv.get':
                         value = await input.dataClient.accountKv.get(args[0] as string, signalOptions) as unknown as JsonValue;
                         break;
@@ -437,6 +454,8 @@ export function createHostedWebAccountDataBridge(input: Readonly<{
         dispose() {
             if (disposed) return;
             disposed = true;
+            for (const watch of dataWatches.values()) watch.dispose();
+            dataWatches.clear();
             for (const queryId of [...activeQueries.keys()]) close(queryId);
             for (const [transactionId, transaction] of activeTransactions) {
                 activeTransactions.delete(transactionId);

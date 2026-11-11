@@ -122,6 +122,8 @@ function createTransportHarness(openSnapshots: readonly unknown[] = [firstSnapsh
       if (operation.operation === 'collection.measureBatch') {
         return { kind: 'data', value: { overheadEncodedBytes: 20, operationEncodedBytes: [52] } };
       }
+      if (operation.operation === 'accountData.watch') return { kind: 'data', value: 'kv-watch-1' };
+      if (operation.operation === 'accountData.unwatch') return { kind: 'data', value: null };
       if (operation.operation === 'accountKv.get') return { kind: 'data', value: { version: 2, value: { cursor: 7 } } };
       if (operation.operation === 'accountKv.set') return { kind: 'data', value: { version: 3 } };
       if (operation.operation === 'accountKv.delete') return { kind: 'data', value: { version: 4, deleted: true } };
@@ -516,4 +518,20 @@ describe('hosted-web Collection UI-query guest pager', () => {
     });
     expect(observed).toHaveBeenCalledTimes(2);
   });
+});
+
+
+it('observes one hosted KV key without reads and stops delivery on disposal', async () => {
+  const harness = createTransportHarness();
+  const client = createClient(harness);
+  const listener = vi.fn();
+  const watch = await client.watchAccountData({ kind: 'kv', key: 'cursor' }, listener);
+  harness.emitChange({ kind: 'change', queryId: 'other' });
+  expect(listener).not.toHaveBeenCalled();
+  harness.emitChange({ kind: 'change', queryId: 'kv-watch-1' });
+  expect(listener).toHaveBeenCalledTimes(1);
+  expect(harness.request.mock.calls.map(([request]) => request.operation)).toEqual(['accountData.watch']);
+  watch.dispose();
+  harness.emitChange({ kind: 'change', queryId: 'kv-watch-1' });
+  expect(listener).toHaveBeenCalledTimes(1);
 });

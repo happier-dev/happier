@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import { usePluginHostApi, usePluginHostReadiness, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginHostReadiness, usePluginTranslation, usePluginUiDataClientOrNull } from '@happier-dev/plugin-ui';
 
 import type { TriageAdministerSavedViewInputV1 } from '../../actions/savedViewsProtocol.js';
+import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../../settings/savedViews.js';
 import type { CorpusSavedViewsReadV1 } from '../../settings/savedViews.js';
 import { useTriageDurableAccount } from '../durable/accountDurableState.js';
 import {
@@ -73,6 +74,7 @@ const UNAVAILABLE_REASON = 'Happier cannot reach your account right now, so save
 export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
   const hostApi = usePluginHostApi();
   const durable = useTriageDurableAccount();
+  const dataClient = usePluginUiDataClientOrNull();
   const readiness = usePluginHostReadiness(durable.savedViews === null && Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
   const text = usePluginTranslation();
   // One owner, two transports. Direct Account KV when this mount can
@@ -116,9 +118,21 @@ export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
   useEffect(() => {
     if (readiness.pending || readiness.ready === false) return;
     const controller = new AbortController();
-    void read(controller.signal);
-    return () => { controller.abort(); };
-  }, [read, readiness.pending, readiness.ready, readiness.revision]);
+    let watch: Readonly<{ dispose(): void }> | undefined;
+    if (dataClient) {
+      void dataClient.watchAccountData({ kind: 'kv', key: TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 },
+        () => { void read(controller.signal); }, { signal: controller.signal }).then(opened => {
+          if (controller.signal.aborted) { opened.dispose(); return; }
+          watch = opened;
+          void read(controller.signal);
+        }).catch(() => {
+          if (!controller.signal.aborted) setUnavailableReason(text('plugins.triage.surface.views.unavailable', UNAVAILABLE_REASON));
+        });
+    } else {
+      void read(controller.signal);
+    }
+    return () => { controller.abort(); watch?.dispose(); };
+  }, [dataClient, read, readiness.pending, readiness.ready, readiness.revision, text]);
 
   const retry = useCallback(() => {
     if (readiness.pending || readiness.ready === false) return;

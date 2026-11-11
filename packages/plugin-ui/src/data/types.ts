@@ -1,3 +1,4 @@
+import type { PluginAccountDataObservationV1 } from '@happier-dev/protocol/plugins/data/hostedWebAccountDataBridgeV1';
 import type {
   PluginAccountCollectionDefinition,
   PluginAccountCollectionForDefinition,
@@ -80,6 +81,8 @@ export type PluginUiDataClient = Readonly<{
   openCollectionQuery(
     input: PluginUiCollectionQueryInput,
   ): Promise<PluginUiCollectionQueryPager>;
+  /** Observe selected Account data through the existing AccountChange feed; no read is performed. */
+  watchAccountData(selection: PluginAccountDataObservationV1, listener: () => void, options?: Readonly<{ signal?: AbortSignal }>): Promise<Readonly<{ dispose(): void }>>;
   /** The plugin's own Account KV scope for this mounted surface. */
   readonly accountKv: PluginUiAccountKv;
 }>;

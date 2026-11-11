@@ -1420,6 +1420,19 @@ second owner of Triage's attachment identity.
 
 The existing Account/plugin/generation ephemeral scope leases only the addressed page's callback. No React state, provider rows, or mount address is persisted. In 0.3 development, choosing a saved view uses the same page-location owner as the Views control. The validated `sv` segment and effective lens are restored by the host's device-local workspace state; selecting writes no Account KV value. Saved definitions remain Account-scoped, with create/update/delete separately admitted through `views/administer-v1`. An absent/inactive page or unavailable tab/selection/continuation returns `unavailable`; refused route settlement returns `rejected`. Agent/MCP callers require an answering mounted client; a headless CLI cannot operate another client's UI. Opaque current-context commands remain subject to the host's existing retirement and Action admission.
 
+In 0.3 development, mounted saved views observe their Account KV key through
+Data's existing AccountChange dispatcher. A matching external change causes one
+catalog read; the existing saved-view binding clears a missing selected view and
+its `sv` route segment while retaining the current lens. The observation performs
+no read itself, ignores other keys, and ends with the mounted Account lifetime.
+Native and hosted-web clients use the same dispatcher; hosted clients carry
+content-free wakeups through the existing Data bridge. Pinned entries and
+configured sources consume their Collection changes through that owner. Core
+Task Account changes invalidate the generation's shared mounted list window;
+two mounted consumers share one Task-lane read, without a source census. A
+sorted window refreshes its selected merge through the existing aggregate owner.
+Source deletion also refreshes that window's configured-source projection.
+
 Reversible saved-view, configured-Action, source-configuration, Session-link and
 Session/review-start UI presses use their Triage Action declaration's
 `confirmationWhen: { presentUserUi: false }` default. A configured Ask still asks;

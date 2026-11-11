@@ -1,3 +1,4 @@
+import type { PlannedKvAction } from '@/sync/runtime/orchestration/changesPlanner';
 import { PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { PluginCollectionUiQueryErrorV1Schema, PluginCollectionUiQueryRequestV1Schema, PluginCollectionUiQueryResultV1Schema, validatePluginCollectionUiQueryParametersV1, type NormalizedPluginCollectionUiQueryDescriptorV1, type PluginCollectionUiQueryErrorV1, type PluginCollectionUiQueryRequestV1, type PluginCollectionUiQueryResultV1 } from '@happier-dev/protocol/plugins/data/collectionUiQueryWireV1';
 import { PluginCollectionUiQueryTransportResultV1Schema, validatePluginCollectionUiQueryResultV1, type NormalizedPluginAccountCollectionContractV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
@@ -412,8 +413,8 @@ export function watchActivePluginCollectionUiQuery(
  * coalesces to at most one wakeup per watched collection and unparseable or
  * non-Data changes are deliberately ignored.
  */
-export function publishActivePluginCollectionUiQueryChanges(changes: readonly unknown[]): void {
-    publishActivePluginCollectionChanges(changes);
+export function publishActivePluginCollectionUiQueryChanges(changes: readonly unknown[], kv?: PlannedKvAction): void {
+    publishActivePluginCollectionChanges(changes, kv);
 }
 
 /**

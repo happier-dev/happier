@@ -240,6 +240,7 @@ function testAccountDataClient(): PluginUiDataClient {
             if (collection === null) throw new Error(`Undeclared test Collection: ${definition.id}`);
             return collection as unknown as PluginUiAccountCollectionForDefinition<TDefinition>;
         },
+        async watchAccountData() { return { dispose() {} }; },
         accountKv: createTestkitAccountKv().kv,
         openCollectionQuery: async () => { throw new Error('This mount opens no UI query'); },
     };

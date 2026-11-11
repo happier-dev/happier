@@ -285,6 +285,7 @@ import {
     clearWarmCacheAccountScope,
     loadMachineDisplayWarmCacheEntries,
     loadSessionListWarmCacheEntries,
+    peekSessionListWarmCacheEntries,
     preparePluginUiProjectionWarmCacheEntries,
     resolveWarmCacheAccountScope,
     setWarmCacheAccountScope,
@@ -808,17 +809,33 @@ function isRetryableTargetWindowLoadError(error: unknown): boolean {
         || isSocketIoAckTimeoutError(error);
 }
 
+/**
+ * Typed daemon answers that elapsed time cannot change: the Agent is unavailable,
+ * it answered with a fault (for example session data it could not read), the
+ * format is unsupported, or the request itself was invalid. They settle into the
+ * visible read issue; existing Machine/authority changes or the person's Retry
+ * invalidate the transcript again. `agent_timeout`, `machine_offline` and
+ * `internal_error` keep the timed recovery unless the daemon marks them terminal.
+ */
+const SETTLED_EXTERNAL_TRANSCRIPT_ERROR_CODES: ReadonlySet<ExternalSessionsRpcErrorCode> = new Set<ExternalSessionsRpcErrorCode>([
+    'agent_unavailable', 'agent_error', 'agent_format_unsupported', 'invalid_request',
+]);
+
 class ExternalSessionTranscriptRpcError extends Error {
-    // Agent/source availability is a settled typed load issue, not transient
-    // connectivity. Existing Machine/authority changes (or explicit user retry)
-    // invalidate the transcript again; elapsed time cannot make it available.
     get retryable(): boolean {
-        return this.code !== 'agent_unavailable';
+        return this.terminalHint !== false && !SETTLED_EXTERNAL_TRANSCRIPT_ERROR_CODES.has(this.code);
     }
 
-    constructor(readonly code: ExternalSessionsRpcErrorCode, message: string) {
-        super(message);
+    readonly code: ExternalSessionsRpcErrorCode;
+    private readonly terminalHint: boolean | undefined;
+
+    constructor(failure: Readonly<{ errorCode: ExternalSessionsRpcErrorCode; error: string; retryable?: unknown }>) {
+        super(failure.error);
         this.name = 'ExternalSessionTranscriptRpcError';
+        this.code = failure.errorCode;
+        // The daemon's optional hint can only make a failure terminal here; a
+        // `retryable: true` Agent fault still settles (a person may retry it).
+        this.terminalHint = failure.retryable === false ? false : undefined;
     }
 }
 
@@ -4290,6 +4307,7 @@ class Sync {
                         const missingCause = readTerminalSessionRouteMissingCause(code);
                         // Terminal errors should not spin forever in route hydration. Let the route render and fail closed.
                         if (missingCause) {
+                            if (code === 'not_found') this.retireLocalSession(normalized, preferredServerId || activeServerId || null);
                             return { ...createMissingSessionRouteResult(normalized, preferredServerId, missingCause), errorCode: code };
                         }
                         return { ...createRetryableSessionRouteResult(
@@ -7422,6 +7440,18 @@ class Sync {
         });
     };
 
+    /**
+     * The cache input of a list fetch: the Home's current rows, over the persisted warm entries.
+     * A cold-restored row has no admission yet; only its persisted entry holds the display proof that
+     * lets the first live page re-admit it instead of dropping it from the list until it decrypts.
+     */
+    private readSessionListCacheEntriesForFetch(serverId: string | null) {
+        if (!serverId) return buildSessionListCacheEntriesFromRenderables({});
+        const state = storage.getState();
+        const persisted = peekSessionListWarmCacheEntries(serverId, resolveWarmCacheAccountScope(state.profile?.id)) ?? undefined;
+        return buildSessionListCacheEntriesFromRenderables(state.sessionListRowsByServerId[serverId] ?? {}, persisted);
+    }
+
     private fetchSessionsOnce = async (
         options: FetchSessionsOptions | undefined,
         appliedTransportTarget: SyncServerTarget,
@@ -7430,8 +7460,7 @@ class Sync {
     ) => {
         const initialState = storage.getState();
         const activeServerId = appliedTransportTarget.serverId || null;
-        const activeRows = activeServerId ? initialState.sessionListRowsByServerId[activeServerId] ?? {} : {};
-        const cachedSessionListEntries = buildSessionListCacheEntriesFromRenderables(activeRows);
+        const cachedSessionListEntries = this.readSessionListCacheEntriesForFetch(activeServerId);
         const activeHydrationSessionIds = this.getActiveSessionHydrationIds();
         const activeHydrationSessionIdSet = new Set(activeHydrationSessionIds);
         const explicitPrioritizedHydrationIds = options?.prioritizeSessionIds ?? [];
@@ -7762,6 +7791,7 @@ class Sync {
                 localSettings: storage.getState().settings,
             }),
             serverId,
+            cachedSessionListEntries: this.readSessionListCacheEntriesForFetch(capturedAppliedServer.serverId),
             source: page.source,
             contentDemand: 'list-projection',
             signal: page.signal,
@@ -10524,11 +10554,6 @@ class Sync {
      */
     private resolveUnlistedSessionOwnerOnHome(sessionId: string): void {
         void this.ensureSessionVisibleForMessageRoute(sessionId)
-            .then((result) => {
-                if (result.kind !== 'missing' || result.cause !== 'not_found') return;
-                if (!storage.getState().sessions[sessionId]) return;
-                this.retireLocalSession(sessionId, result.serverId ?? null);
-            })
             .catch(() => {
                 // `ensureSessionVisibleForMessageRoute` classifies its own failures into the
                 // route result; an unclassified rejection is not absence evidence.
@@ -11276,7 +11301,7 @@ class Sync {
                               errorCode: page.errorCode,
                           });
                       }
-                      throw new ExternalSessionTranscriptRpcError(page.errorCode, page.error);
+                      throw new ExternalSessionTranscriptRpcError(page);
                   }
                   return {
                       items: page.items,
@@ -11301,7 +11326,7 @@ class Sync {
                               errorCode: tail.errorCode,
                           });
                       }
-                      throw new ExternalSessionTranscriptRpcError(tail.errorCode, tail.error);
+                      throw new ExternalSessionTranscriptRpcError(tail);
                   }
                   return {
                       items: tail.items,
@@ -11501,7 +11526,7 @@ class Sync {
                                   errorCode: response.errorCode,
                               });
                           }
-                          throw new ExternalSessionTranscriptRpcError(response.errorCode, response.error);
+                          throw new ExternalSessionTranscriptRpcError(response);
                       }
                       hasMore = response.hasMore === true;
                       recoveryRequired = externalSessionTranscriptReadAfterRequiresResyncV1(
@@ -13409,7 +13434,7 @@ class Sync {
                                     providerAccountUsageRecordIds: readProviderAccountUsageChangedRecordIdsV1(changes),
                                 });
                             }
-                            publishActivePluginCollectionUiQueryChanges(changes);
+                            publishActivePluginCollectionUiQueryChanges(changes, publishedPlan.kv);
                             publishActiveScopedPluginSettingsChanges(changes);
                             const changedAvailabilityPluginIds = this.pluginAvailabilityProjectionHydrator.invalidate(changes);
                             if (changedAvailabilityPluginIds.length > 0) {

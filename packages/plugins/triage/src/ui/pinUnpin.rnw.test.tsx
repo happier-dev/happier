@@ -184,6 +184,7 @@ function createHarness(options: Readonly<{ withRowFacts?: boolean }> = {}) {
             return collection;
         },
         async openCollectionQuery() { throw new Error('No declared UI query is opened by this surface.'); },
+        async watchAccountData() { return { dispose() {} }; },
         accountKv: createTestkitAccountKv().kv,
     } as unknown as PluginUiDataClient : undefined;
 

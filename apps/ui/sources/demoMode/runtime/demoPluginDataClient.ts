@@ -108,5 +108,7 @@ export function createDemoPluginDataClient(input: Readonly<{
         // The generic UI carrier crosses the package fixture's genuine persistence boundary; writes use its declared schema.
         return existing as PluginUiAccountCollectionForDefinition<TDefinition>;
     }
-    return { collection, accountKv, openCollectionQuery: unavailable };
+    // Demo data has no external writer or AccountChange transport.
+    return { collection, accountKv, openCollectionQuery: unavailable,
+        async watchAccountData() { assertCurrent(); return { dispose() {} }; } };
 }

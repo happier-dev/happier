@@ -1,4 +1,8 @@
-import { PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes';
+import type { PlannedKvAction } from '@/sync/runtime/orchestration/changesPlanner';
+import type { PluginAccountDataObservationV1 } from '@happier-dev/protocol/plugins/data/hostedWebAccountDataBridgeV1';
+import { readTaskResourceChangeEntityIdV1 } from '@happier-dev/protocol/actions/internalTaskActions';
+import { classifyAccountJsonKvKey } from '@happier-dev/protocol/account/accountJsonKv';
+import { ChangeEntrySchema, PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes';
 import type { PluginCollectionInvalidation } from '@happier-dev/plugin-sdk/collections';
 
 import {
@@ -18,7 +22,9 @@ export type WatchActivePluginCollectionChangesInput = Readonly<{
 
 type ActivePluginCollectionChangeWatch = Readonly<{
     pluginId: string;
-    collectionId: string;
+    collectionId?: string;
+    kvKey?: string;
+    internalTasks?: boolean;
     rowId?: string;
     lifetime: ActiveServerAccountScopeLifetime;
     onInvalidated: (invalidation?: PluginCollectionInvalidation) => void;
@@ -31,7 +37,9 @@ const activeWatches = new Set<ActivePluginCollectionChangeWatch>();
 
 export function registerActivePluginCollectionChangeWatch(input: Readonly<{
     pluginId: string;
-    collectionId: string;
+    collectionId?: string;
+    kvKey?: string;
+    internalTasks?: boolean;
     rowId?: string;
     lifetime: ActiveServerAccountScopeLifetime;
     onInvalidated(invalidation?: PluginCollectionInvalidation): void;
@@ -107,11 +115,51 @@ export function watchActivePluginCollectionChanges(
     return registerActivePluginCollectionChangeWatch({ ...input, lifetime });
 }
 
-export function publishActivePluginCollectionChanges(changes: readonly unknown[]): void {
+export function registerActivePluginAccountDataChangeWatch(input: Readonly<{
+    pluginId: string;
+    selection: PluginAccountDataObservationV1;
+    lifetime: ActiveServerAccountScopeLifetime;
+    onInvalidated(): void;
+}>): PluginCollectionChangeWatchV1 {
+    const selection = input.selection;
+    return registerActivePluginCollectionChangeWatch({ ...input,
+        ...(selection.kind === 'kv' ? { kvKey: selection.key }
+            : selection.kind === 'collection' ? { collectionId: selection.collectionId } : { internalTasks: true }),
+    });
+}
+
+export function publishActivePluginCollectionChanges(changes: readonly unknown[], kv?: PlannedKvAction): void {
+    // Sync already normalized the content-free KV hint. Consume that fact
+    // rather than parsing a second copy of the hinted-key/full contract.
+    const taskKeysChanged = kv?.type === 'refresh-feature'
+        || kv?.type === 'bulk-keys' && kv.keys.some(key => classifyAccountJsonKvKey(key) === 'todo');
     const affected = new Map<ActivePluginCollectionChangeWatch, number>();
     for (const rawChange of changes) {
+        const accountChange = ChangeEntrySchema.safeParse(rawChange);
+        if (accountChange.success && accountChange.data.kind === 'kv') {
+            const { entityId, cursor } = accountChange.data;
+            if (taskKeysChanged || readTaskResourceChangeEntityIdV1(entityId) || classifyAccountJsonKvKey(entityId) === 'todo') {
+                for (const watch of activeWatches) {
+                    if (!watch.internalTasks || (watch.lastObservedCursor !== null && cursor <= watch.lastObservedCursor)) continue;
+                    affected.set(watch, Math.max(affected.get(watch) ?? cursor, cursor));
+                    watch.lastObservedCursor = cursor;
+                }
+            }
+            continue;
+        }
         const parsed = PluginDomainChangeEntrySchema.safeParse(rawChange);
-        if (!parsed.success || parsed.data.hint.pluginDomain !== 'dataCollection') continue;
+        if (!parsed.success) continue;
+        if (parsed.data.hint.pluginDomain === 'dataKv') {
+            const { hint, cursor } = parsed.data;
+            for (const watch of activeWatches) {
+                if (watch.kvKey === undefined || watch.pluginId !== hint.pluginId
+                    || (watch.lastObservedCursor !== null && cursor <= watch.lastObservedCursor)) continue;
+                if ('full' in hint || hint.keys.includes(watch.kvKey)) affected.set(watch, cursor);
+                watch.lastObservedCursor = cursor;
+            }
+            continue;
+        }
+        if (parsed.data.hint.pluginDomain !== 'dataCollection') continue;
         const { hint } = parsed.data;
         const { pluginId, collectionId } = hint;
         for (const watch of activeWatches) {

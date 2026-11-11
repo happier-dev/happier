@@ -1,5 +1,6 @@
+import { CORPUS_SOURCE_INSTANCES_COLLECTION } from '../../corpus/collections/definitions.js';
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import type { PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
+import type { PluginUiDataClient, PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -8,6 +9,8 @@ import {
   type TriageListEntriesInputV1,
   type TriageListEntriesResultV1,
 } from '../../actions/listEntriesProtocol.js';
+import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
+import { testkitLocator, testkitSnapshot, testkitViewer } from '../../corpus/testkit/observations.test-support.js';
 import { TRIAGE_LIST_DEFAULT_LENS_V1 } from '../../projection/listWindow.js';
 import { createTriageListWindowStore, type TriageListWindowStoreV1 } from '../../projection/listWindowStore.js';
 import {
@@ -597,4 +600,82 @@ describe('the mounted PRs & Issues window is scoped by its host-owned lifetime',
     expect(configuredInstanceIds(picker.host, scope)).toEqual([INSTANCE_A]);
     pickerLease.release();
   });
+});
+
+
+it('pushes one external Task transition into both mounted projections with one read', async () => {
+  const scope = createTriageEphemeralSharedScopeFixture();
+  let state: 'started' | 'canceled' = 'started';
+  let reads = 0;
+  let listener: (() => void) | undefined;
+  const watchAccountData: PluginUiDataClient['watchAccountData'] = async (selection, next) => {
+    if (selection.kind !== 'internalTasks') return { dispose() {} };
+    listener = next;
+    return { dispose() { listener = undefined; } };
+  };
+  const data = { watchAccountData };
+  const host: TriageListWindowHostV1 = { async executeAction() {
+    reads++;
+    return TriageListEntriesResultV1Schema.parse({ v: 1,
+      configuredSources: [{ sourceInstanceId: INSTANCE_A, configurationRowId: INSTANCE_A, source: INTERNAL_TASK_SOURCE_V1, available: true }],
+      configuredSourcesStatus: 'complete', window: { v: 1, coverage: 'complete', assembledAtMs: reads,
+        rows: [{ entryRef: { source: INTERNAL_TASK_SOURCE_V1, kindId: 'task', collisionScope: 'personal', entryId: 'task-a' },
+          lane: '1-open', sortAtMs: 1, presence: { kind: 'present', observedAtMs: reads },
+          selected: { kind: 'selected', sourceInstanceId: INSTANCE_A, reason: 'onlyPresent' },
+          observation: { sourceInstanceId: INSTANCE_A, observedAtMs: reads, outcome: { kind: 'present',
+            locator: testkitLocator(), snapshot: testkitSnapshot({ title: 'Externally changed task',
+              state: state === 'started' ? { presentation: 'active', stage: 'started', nativeLabel: 'In progress' }
+                : { presentation: 'closed', completionReason: 'canceled', nativeLabel: 'Canceled' } }), viewer: testkitViewer() } },
+          otherObservations: [], observedByCount: 1 }],
+        lanes: [{ sourceInstanceId: INSTANCE_A, source: INTERNAL_TASK_SOURCE_V1, health: { kind: 'walkFinished' }, exhausted: true }],
+      } });
+  } };
+  const otherHost: TriageListWindowHostV1 = { executeAction: host.executeAction };
+  const first = acquireTriageListWindow(host, scope, undefined, data);
+  const second = acquireTriageListWindow(otherHost, scope, undefined, data);
+  try {
+    await refreshTriageListWindow('view', host, scope);
+    expect(readTriageListWindowSnapshot(host, scope).window?.rows[0]?.observations[0]?.outcome).toMatchObject({ snapshot: { state: { stage: 'started' } } });
+    const before = reads;
+    state = 'canceled'; // another writer changed the genuine Action boundary's next answer
+    listener?.();
+    await vi.waitFor(() => expect(readTriageListWindowSnapshot(host, scope).window?.rows[0]?.observations[0]?.outcome)
+      .toMatchObject({ snapshot: { state: { completionReason: 'canceled' } } }));
+    expect(readTriageListWindowSnapshot(otherHost, scope)).toBe(readTriageListWindowSnapshot(host, scope));
+    expect(reads - before).toBe(1);
+  } finally { first.release(); second.release(); }
+  expect(listener).toBeUndefined();
+});
+
+
+it('removes a deleted source from both mounted windows on the existing collection change', async () => {
+  const scope = createTriageEphemeralSharedScopeFixture();
+  let deleted = false;
+  let reads = 0;
+  let listener: (() => void) | undefined;
+  const data: Pick<PluginUiDataClient, 'watchAccountData'> = { async watchAccountData(selection, next) {
+    if (selection.kind !== 'collection' || selection.collectionId !== CORPUS_SOURCE_INSTANCES_COLLECTION.id) return { dispose() {} };
+    listener = next;
+    return { dispose() { listener = undefined; } };
+  } };
+  const host: TriageListWindowHostV1 = { async executeAction() {
+    reads++;
+    return TriageListEntriesResultV1Schema.parse({ v: 1, configuredSources: deleted ? [] : [
+      { sourceInstanceId: INSTANCE_A, configurationRowId: INSTANCE_A, source: INTERNAL_TASK_SOURCE_V1, available: true }],
+      configuredSourcesStatus: 'complete', window: { v: 1, coverage: 'complete', assembledAtMs: reads, rows: [], lanes: [] } });
+  } };
+  const secondHost = { executeAction: host.executeAction };
+  const first = acquireTriageListWindow(host, scope, undefined, data);
+  const second = acquireTriageListWindow(secondHost, scope, undefined, data);
+  try {
+    await refreshTriageListWindow('view', host, scope);
+    expect(readTriageListWindowSnapshot(host, scope).configuredSources).toHaveLength(1);
+    const before = reads;
+    deleted = true;
+    listener?.();
+    await vi.waitFor(() => expect(readTriageListWindowSnapshot(host, scope).configuredSources).toHaveLength(0));
+    expect(readTriageListWindowSnapshot(secondHost, scope)).toBe(readTriageListWindowSnapshot(host, scope));
+    expect(reads - before).toBe(1);
+  } finally { first.release(); second.release(); }
+  expect(listener).toBeUndefined();
 });

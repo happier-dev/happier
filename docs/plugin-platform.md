@@ -2064,6 +2064,17 @@ read. Full invalidations and cursor resets still wake the observer. Catch-up
 between an initial read and registration may conservatively wake that exact-row
 reader, without retaining a second row cache or requiring another index.
 
+In matching 0.3 development host and Plugin UI source, Data clients expose
+`watchAccountData(selection, invalidate, { signal })` for a logical Account KV
+key, an Account Collection, or core internal Tasks. It registers with the same
+AccountChange dispatcher and lifetime used by Collection queries, performs no
+read, and returns a disposable observation. The existing Sync change plan owns
+hinted KV-key/full normalization; Data consumes that typed result for Task
+invalidation. Native and hosted-web clients share that owner, with content-free
+change notifications carried on the existing Data bridge. Projection owners
+perform their ordinary read after invalidation; they add no polling or second
+subscription system.
+
 In 0.3 development source, ordinary Collection mutations also publish the
 changed rows' old and new encoded index keys. An index watch narrows wake-ups
 to its admitted equality prefix or prefix set; range bounds remain conservative.
@@ -12210,3 +12221,20 @@ loaded native operation or provider cache lifetime.
 ### Project starter registry items
 
 Plugins may contribute a `starter` registry source alongside app sources. A starter names an HTTPS forge repository, an optional repository subpath, human-facing title and description, tags, an optional preview image, and a build goal. It deliberately carries no commit pin: project creation resolves the repository's current release or default branch through the SCM owner and records the resolved checkout commit on the created Project.
+
+## Plugin UI Action failure presentation (unreleased 0.3)
+
+Native and hosted-web plugin UIs share `hostApi.presentActionFailure(failure)`.
+The closed input is the existing Action failure envelope (`errorCode`, `error`,
+optional `failureCause`, `details` and `requestId`). The host delegates to
+`resolveActionExecutionFailureMessage`; it does not maintain another code map.
+The result carries `reason`, `nextStep` and `technicalDetails` lines compatible
+with TechnicalDetailsDisclosure. Today the presenter combines reason and recovery
+in one message, so `nextStep` is null. Details reuse the safe-detail projection
+and the typed cause; opaque producer data is not disclosed.
+
+This is an optional method in semantic Host API 1.1, wire epoch 1. Authors check
+`version().methods`, or use the SDK's `presentActionFailure(hostApi, failure)`
+helper, which retains the producer message, code and request ID on older hosts.
+Existing closed envelopes and older-host methods are unchanged. Caller-authored
+HTML's existing restricted method ceiling is unchanged.

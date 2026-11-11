@@ -286,6 +286,7 @@ describe('Projects and Tasks Account Collection surface', () => {
         return collection as unknown as PluginUiAccountCollectionForDefinition<TDefinition>;
       },
       openCollectionQuery,
+      async watchAccountData() { return { dispose() {} }; },
       accountKv: createUnavailablePluginUiAccountKv(),
     }) satisfies PluginUiDataClient;
     const renderFixture = createProjectsTasksRenderContext();

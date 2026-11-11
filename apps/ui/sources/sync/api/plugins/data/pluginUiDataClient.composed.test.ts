@@ -1,3 +1,4 @@
+import { planSyncActionsFromChanges } from '@/sync/runtime/orchestration/changesPlanner';
 import { describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import { defineAccountCollection, type PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
@@ -1306,5 +1307,98 @@ describe('mounted Collection contract acquisition through real Home authority', 
             const refused = await createActivePluginCollectionClientForContractRef({ accountLifetime: lifetime, ref: refOf(held) });
             expect(refused.status).not.toBe('ready');
         } finally { await home.dispose(); }
+    });
+});
+
+
+describe('Account KV change delivery through the mounted Data owner', () => {
+    it('delivers keyed external changes without reads, coalesces a batch, and releases native and hosted observers', async () => {
+        await withRowReadClient(() => undefined, async () => {
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected restored Account lifetime');
+            const readAvailability = () => createPluginAccountAvailabilityReader({ scope: lifetime.scope,
+                snapshot: { availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [] } });
+            const client = createPluginUiDataClient({ pluginId, accountLifetime: lifetime, readAvailability });
+            const native = vi.fn();
+            const watch = await client.watchAccountData({ kind: 'kv', key: 'saved-views' }, native);
+            const { createHostedWebAccountDataBridge } = await import('./hostedWebAccountDataBridge');
+            const changes: unknown[] = [];
+            const bridge = createHostedWebAccountDataBridge({ dataClient: client, publish: change => changes.push(change) });
+            const opened = await bridge.handle({ kind: 'data', operation: 'accountData.watch', arguments: [{ kind: 'kv', key: 'saved-views' }] });
+            expect(opened).toMatchObject({ kind: 'data', value: expect.any(String) });
+            const { buildPluginDomainAccountChangeEntityId, PluginDomainChangeEntrySchema } = await import('@happier-dev/protocol/changes');
+            const change = (cursor: number, keys: string[], owner = pluginId) => PluginDomainChangeEntrySchema.parse({
+                kind: 'pluginDomain', cursor, changedAt: 1,
+                entityId: buildPluginDomainAccountChangeEntityId({ pluginId: owner, pluginDomain: 'dataKv', keys }),
+                hint: { pluginDomain: 'dataKv', pluginId: owner, keys },
+            });
+            const boundary = vi.spyOn(globalThis, 'fetch');
+            const before = boundary.mock.calls.length;
+            publishActivePluginCollectionChanges([change(1, ['other']), change(2, ['saved-views'], 'example.other')]);
+            expect(native).not.toHaveBeenCalled();
+            expect(changes).toHaveLength(0);
+            publishActivePluginCollectionChanges([change(3, ['saved-views']), change(4, ['saved-views'])]);
+            expect(native).toHaveBeenCalledTimes(1);
+            expect(changes).toHaveLength(1);
+            expect(boundary.mock.calls.length).toBe(before);
+            watch.dispose();
+            bridge.dispose();
+            publishActivePluginCollectionChanges([change(5, ['saved-views'])]);
+            expect(native).toHaveBeenCalledTimes(1);
+            expect(changes).toHaveLength(1);
+            boundary.mockRestore();
+        });
+    });
+});
+
+
+it('delivers a real hinted Task KV publication using the existing normalized change plan without reads', async () => {
+    await withRowReadClient(() => undefined, async () => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected Account lifetime');
+        const client = createPluginUiDataClient({ pluginId, accountLifetime: lifetime,
+            readAvailability: () => createPluginAccountAvailabilityReader({ scope: lifetime.scope,
+                snapshot: { availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [] } }) });
+        const listener = vi.fn();
+        const watch = await client.watchAccountData({ kind: 'internalTasks' }, listener);
+        const boundary = vi.spyOn(globalThis, 'fetch');
+        const before = boundary.mock.calls.length;
+        const unrelated = [{ kind: 'kv' as const, entityId: 'self', cursor: 100, changedAt: 1,
+            hint: { keys: Array.from({ length: 1000 }, (_, index) => `workspace:other-${index}`) } }];
+        publishActivePluginCollectionChanges(unrelated, planSyncActionsFromChanges(unrelated).kv);
+        expect(listener).not.toHaveBeenCalled();
+        const task = [{ kind: 'kv' as const, entityId: 'self', cursor: 101, changedAt: 1, hint: { keys: ['todo.own-task', 'todo.index'] } }];
+        publishActivePluginCollectionChanges(task, planSyncActionsFromChanges(task).kv);
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(boundary.mock.calls.length).toBe(before);
+        watch.dispose();
+        boundary.mockRestore();
+    });
+});
+
+it('observes external core Task changes through AccountChange without fetching', async () => {
+    await withRowReadClient(() => undefined, async () => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected Account lifetime');
+        const client = createPluginUiDataClient({ pluginId, accountLifetime: lifetime,
+            readAvailability: () => createPluginAccountAvailabilityReader({ scope: lifetime.scope,
+                snapshot: { availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [] } }) });
+        const listener = vi.fn();
+        const watch = await client.watchAccountData({ kind: 'internalTasks' }, listener);
+        const { buildTaskResourceChangeEntityIdV1 } = await import('@happier-dev/protocol/actions/internalTaskActions');
+        const boundary = vi.spyOn(globalThis, 'fetch');
+        const before = boundary.mock.calls.length;
+        publishActivePluginCollectionChanges([{ kind: 'kv', entityId: 'workspace:other', cursor: 100, changedAt: 1 }]);
+        expect(listener).not.toHaveBeenCalled();
+        publishActivePluginCollectionChanges([
+            { kind: 'kv', entityId: buildTaskResourceChangeEntityIdV1({ ownerAccountId: 'other-owner', taskId: 'shared-task' }), cursor: 101, changedAt: 1 },
+            ...Array.from({ length: 1000 }, (_, index) => ({ kind: 'kv', entityId: `todo.own-task-${index}`, cursor: 102 + index, changedAt: 1 })),
+        ]);
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(boundary.mock.calls.length).toBe(before);
+        watch.dispose();
+        publishActivePluginCollectionChanges([{ kind: 'kv', entityId: 'todo.own-task', cursor: 1102, changedAt: 1 }]);
+        expect(listener).toHaveBeenCalledTimes(1);
+        boundary.mockRestore();
     });
 });

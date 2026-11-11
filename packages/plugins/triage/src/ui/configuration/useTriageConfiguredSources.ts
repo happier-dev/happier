@@ -1,6 +1,7 @@
+import { CORPUS_SOURCE_INSTANCES_COLLECTION } from '../../corpus/collections/definitions.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import { usePluginHostApi, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginTranslation, usePluginUiDataClientOrNull } from '@happier-dev/plugin-ui';
 
 import { readActiveConfiguredSourceRows } from '../../corpus/configuration/readConfiguredSourceRows.js';
 import { removeConfiguredSourceInstance } from '../../corpus/configuration/administerConfiguredSourceInstance.js';
@@ -57,6 +58,7 @@ type ConfiguredSourceRead = Readonly<{
  */
 export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
   const host = usePluginHostApi();
+  const dataClient = usePluginUiDataClientOrNull();
   const durable = useTriageDurableAccount();
   const text = usePluginTranslation();
   const [acceptedRead, setAcceptedRead] = useState<ConfiguredSourceRead | null>(null);
@@ -113,9 +115,19 @@ export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
 
   useEffect(() => {
     const controller = new AbortController();
-    void read(controller.signal);
-    return () => { controller.abort(); };
-  }, [read]);
+    let watch: Readonly<{ dispose(): void }> | undefined;
+    if (dataClient) {
+      void dataClient.watchAccountData({ kind: 'collection', collectionId: CORPUS_SOURCE_INSTANCES_COLLECTION.id },
+        () => { void read(controller.signal); }, { signal: controller.signal }).then(opened => {
+          if (controller.signal.aborted) { opened.dispose(); return; }
+          watch = opened;
+          void read(controller.signal);
+        }).catch(() => {
+          if (!controller.signal.aborted) setUnavailableReason(text('plugins.triage.surface.sources.unavailable', UNAVAILABLE_REASON));
+        });
+    } else void read(controller.signal);
+    return () => { controller.abort(); watch?.dispose(); };
+  }, [dataClient, read, setUnavailableReason, text]);
 
   const remove = useCallback(async (sourceInstanceId: string): Promise<boolean> => {
     if (!loaded || durable.collections === null || busySourceInstanceId !== null || unavailableReason !== null) {

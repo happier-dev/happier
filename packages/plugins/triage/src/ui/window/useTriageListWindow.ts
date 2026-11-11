@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
-import { usePluginHostApi, usePluginHostReadiness, usePluginUiEphemeralSharedScope, type PluginUiHostReadiness } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginHostReadiness, usePluginUiEphemeralSharedScope, usePluginUiDataClientOrNull, type PluginUiHostReadiness } from '@happier-dev/plugin-ui';
 
 import type { TriageListLensV1 } from '../../projection/listWindow.js';
 import type { TriageListWindowSnapshotV1, TriageListWindowStoreV1 } from '../../projection/listWindowStore.js';
@@ -59,6 +59,7 @@ export type TriageMountedListWindowV1 = Readonly<{
 
 export function useTriageListWindow(publication?: TriageListPublicationV1): TriageMountedListWindowV1 {
   const hostApi = usePluginHostApi();
+  const dataClient = usePluginUiDataClientOrNull();
   const sharedScope = usePluginUiEphemeralSharedScope();
   const hostReadiness = usePluginHostReadiness(Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
   const committedReadiness = useRef(hostReadiness);
@@ -68,7 +69,7 @@ export function useTriageListWindow(publication?: TriageListPublicationV1): Tria
   }, [hostApi, sharedScope, hostReadiness]);
 
   const subscribe = useCallback((listener: () => void) => {
-    const lease = acquireTriageListWindow(hostApi, sharedScope, committedReadiness.current);
+    const lease = acquireTriageListWindow(hostApi, sharedScope, committedReadiness.current, dataClient);
     const unsubscribe = subscribeToTriageListWindow(hostApi, change => {
       publication?.synchronize(readTriageMountedWindowReadState(hostApi, sharedScope).snapshot, change);
       listener();
@@ -77,7 +78,7 @@ export function useTriageListWindow(publication?: TriageListPublicationV1): Tria
       unsubscribe();
       lease.release();
     };
-  }, [hostApi, sharedScope, publication]);
+  }, [hostApi, sharedScope, publication, dataClient]);
 
   // Host identity addresses this artifact's local lease; Account/plugin/install
   // isolation and retirement belong to the injected shared scope.

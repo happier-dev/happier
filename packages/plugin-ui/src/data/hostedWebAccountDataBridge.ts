@@ -443,5 +443,21 @@ export function createHostedWebPluginUiDataClient(input: Readonly<{
     });
   };
 
-  return Object.freeze({ collection, openCollectionQuery, accountKv });
+  const watchAccountData: PluginUiDataClient['watchAccountData'] = async (selection, listener, options) => {
+    const transport = await input.acquireTransport(options);
+    const queryId = await requestData<string>('accountData.watch', [selection], options);
+    let disposed = false;
+    const subscription = transport.subscribe(change => { if (!disposed && change.queryId === queryId) listener(); });
+    const dispose = () => {
+      if (disposed) return;
+      disposed = true;
+      subscription.dispose();
+      options?.signal?.removeEventListener('abort', dispose);
+      void requestData('accountData.unwatch', [queryId]).catch(() => undefined);
+    };
+    options?.signal?.addEventListener('abort', dispose, { once: true });
+    if (options?.signal?.aborted) dispose();
+    return Object.freeze({ dispose });
+  };
+  return Object.freeze({ collection, openCollectionQuery, accountKv, watchAccountData });
 }
