@@ -145,8 +145,9 @@ export const instrumentStripStyles = StyleSheet.create((theme) => ({
         ...Typography.variant('micro', 'semiBold'),
         color: theme.colors.text.secondary,
     },
+    /** A gauge's value ("100% left"): the shared meta role in the theme's muted ink, which glass reroutes. */
     instrumentValueText: {
-        fontSize: 12,
+        ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
         fontVariant: ['tabular-nums'],
     },

@@ -1,12 +1,13 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { WorkflowRunStateStatus } from '@/components/workflows/presentation/WorkflowLifecycleStatus';
+import { WorkflowRunStateMark } from '@/components/workflows/presentation/WorkflowLifecycleStatus';
+import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import {
     formatWorkflowRunDisplayName,
     resolveWorkflowRunDisplayName,
@@ -24,43 +25,23 @@ import type { SessionManagedWorkflowRunsState } from '@/components/workflows/run
  * recovery. Collapsing the two would be exactly the status guesser the plan
  * forbids.
  *
- * The row is an entry point, not a second Run view: it shows the canonical Run
- * state and opens the exact `runId`, where the one shared Run body owns
- * approvals, results and recovery.
+ * The row is an entry point, not a second Run view: one menu row per Run (its name; its canonical state and
+ * where it came from as one quiet meta line, in the state's tone) that opens the exact `runId`, where the one
+ * shared Run body owns approvals, results and recovery (owner 2026-11-11: the popover's row grammar).
  */
 
 const styles = StyleSheet.create((theme) => ({
-    section: {
-        gap: theme.space.s8,
-        paddingVertical: theme.space.s8,
-    },
-    sectionLabel: {
-        ...Typography.default('semiBold'),
-        color: theme.colors.text.secondary,
-    },
-    row: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s8,
-        paddingVertical: theme.space.s4,
-    },
-    rowBody: {
-        flexShrink: 1,
-        gap: theme.space.s4,
-    },
-    rowMeta: {
-        ...Typography.default('regular'),
+    meta: {
+        ...Typography.variant('meta'),
         ...Typography.tabular(),
         color: theme.colors.text.secondary,
     },
     action: {
-        ...Typography.default('semiBold'),
-        color: theme.colors.button.secondary.tint,
-        marginLeft: 'auto',
-    },
-    note: {
-        ...Typography.default('regular'),
+        ...Typography.variant('meta', 'semiBold'),
         color: theme.colors.text.secondary,
+    },
+    actionAttention: {
+        color: theme.colors.text.primary,
     },
 }));
 
@@ -69,6 +50,7 @@ export function SessionManagedWorkflowSection(props: Readonly<{
     onOpenRun: (runId: string) => void;
     testIDPrefix?: string;
 }>): React.ReactElement | null {
+    const { theme } = useUnistyles();
     const testIDPrefix = props.testIDPrefix ?? 'session-managed-workflows';
     // A read that failed is reported whether or not it had rows: a stale list
     // is still the entry point to a Run that may be waiting on the person, so
@@ -79,54 +61,68 @@ export function SessionManagedWorkflowSection(props: Readonly<{
     if (!readFailed && props.state.runs.length === 0) return null;
 
     return (
-        <View testID={testIDPrefix} style={styles.section}>
-            <Text style={styles.sectionLabel}>{t('workflows.title')}</Text>
+        <ItemGroup testID={testIDPrefix} title={t('workflows.title')}>
             {readFailed ? (
-                <Text testID={`${testIDPrefix}-error`} style={styles.note}>
-                    {t('workflows.loadFailedBody')}
-                </Text>
+                <Item
+                    testID={`${testIDPrefix}-error`}
+                    rowRole="menu"
+                    mode="info"
+                    showChevron={false}
+                    showDivider={false}
+                    title={t('workflows.loadFailedBody')}
+                    titleLines={0}
+                />
             ) : null}
             {props.state.runs.map((run) => {
                 const needsAttention = props.state.attentionRunIds.has(run.id);
                 const title = formatWorkflowRunDisplayName(
                     resolveWorkflowRunDisplayName(props.state.metadataByRunId?.[run.id]),
                 );
+                const state = describeWorkflowRunState(run.state, { workflowCustodyState: run.workflowCustodyState });
+                // A state that asks for the person (interrupted, failed, waiting) reads in its own tone; the rest stay quiet.
+                const toned = state.variant === 'attention' || state.variant === 'warning' || state.variant === 'danger';
+                const origin = formatWorkflowRunOriginLabel(run.origin);
                 return (
-                    <HappierPressable
+                    <Item
                         key={run.id}
                         testID={`${testIDPrefix}-run-${run.id}`}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('workflows.run.openExact', {
-                            title,
-                        })}
+                        rowRole="menu"
+                        showDivider={false}
+                        showChevron={false}
+                        accessibilityLabel={t('workflows.run.openExact', { title })}
                         onPress={() => props.onOpenRun(run.id)}
-                        style={styles.row}
-                    >
-                        <View style={styles.rowBody}>
-                            <Text>{title}</Text>
-                            <WorkflowRunStateStatus
-                                testID={`${testIDPrefix}-run-${run.id}-state`}
+                        icon={(
+                            <WorkflowRunStateMark
                                 state={run.state}
-                                workflowCustodyState={run.workflowCustodyState}
+                                context={{ workflowCustodyState: run.workflowCustodyState }}
+                                size={16}
+                                testID={`${testIDPrefix}-run-${run.id}-state-marker`}
                             />
-                            <Text style={styles.rowMeta} numberOfLines={1}>
-                                {formatWorkflowRunOriginLabel(run.origin)}
+                        )}
+                        title={title}
+                        subtitle={(
+                            <Text
+                                testID={`${testIDPrefix}-run-${run.id}-state`}
+                                accessibilityLabel={state.label}
+                                style={[styles.meta, toned ? { color: theme.colors.state[state.variant].foreground } : null]}
+                                numberOfLines={1}
+                            >
+                                {[state.label, origin].filter(Boolean).join(' · ')}
                             </Text>
-                        </View>
-                        {/*
-                          * Review versus Open is the server's own attention
-                          * predicate, so an approval waiting in an invocation this
-                          * client has never loaded still surfaces here.
-                          */}
-                        <Text
-                            testID={`${testIDPrefix}-run-${run.id}-${needsAttention ? 'review' : 'open'}`}
-                            style={styles.action}
-                        >
-                            {needsAttention ? t('workflows.run.review') : t('workflows.run.open')}
-                        </Text>
-                    </HappierPressable>
+                        )}
+                        // Review versus Open is the server's own attention predicate, so an approval waiting in an
+                        // invocation this client has never loaded still surfaces here.
+                        rightElement={(
+                            <Text
+                                testID={`${testIDPrefix}-run-${run.id}-${needsAttention ? 'review' : 'open'}`}
+                                style={[styles.action, needsAttention ? styles.actionAttention : null]}
+                            >
+                                {needsAttention ? t('workflows.run.review') : t('workflows.run.open')}
+                            </Text>
+                        )}
+                    />
                 );
             })}
-        </View>
+        </ItemGroup>
     );
 }

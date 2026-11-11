@@ -191,6 +191,11 @@ export type AgentInputStatusBadge = Readonly<{
     accessibilityState?: Readonly<{ expanded: boolean }>;
     tone?: AgentInputStatusBadgeTone;
     emphasis?: AgentInputStatusBadgeEmphasis;
+    /**
+     * `withStatus`: a work item (goal, workflow, todo) that stands on the left beside the Session's status, as in
+     * 0.2; the right cluster keeps the gauges and limits. Default: the right cluster.
+     */
+    placement?: 'withStatus';
     icon?: (tint: string) => React.ReactNode;
     onPress?: () => void;
     renderPopover?: (ctx: Readonly<{

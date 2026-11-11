@@ -172,6 +172,41 @@ describe('the status line band (owner 2026-11-11)', () => {
   });
 });
 
+describe('work items on the status line (owner 2026-11-11, as 0.2)', () => {
+  it('stands a work item beside the status on the left, and leaves the instruments on the right', async () => {
+    const { SessionInstrumentStrip } = await import('./SessionInstrumentStrip');
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(
+        <View testID="frame" style={{ width: 800 }}>
+          <SessionInstrumentStrip
+            connectionStatus={{ text: 'Ready', color: '#888', dotColor: '#888' }}
+            statusBadges={[
+              { key: 'work', label: 'Workflow', testID: 'work', placement: 'withStatus' },
+              { key: 'note', label: 'Note', testID: 'note' },
+            ]}
+          />
+        </View>,
+      );
+    });
+    const layout = await measureWebLayout(host, {
+      viewport: { width: 800, height: 300 },
+      texts: ['Ready', 'Workflow', 'Note'],
+      settle: (replay) => act(replay),
+    });
+    const line = layout.rect('agent-input-connection-status-text');
+    const work = layout.rect('work');
+    const note = layout.rect('note');
+    const frame = layout.rect('frame');
+    // Beside the status (one gap after its words), far from the right cluster.
+    expect(work.left - line.right).toBeGreaterThanOrEqual(0);
+    expect(work.left - line.right).toBeLessThanOrEqual(16);
+    expect(frame.right - note.right).toBeLessThanOrEqual(20.5);
+  });
+});
+
 describe('the status line right edge (owner 2026-11-11)', () => {
   it('ends the last visible instrument on the composer content edge when a plugin region renders nothing', async () => {
     // A plugin region with nothing to say (a Session with no pull request) must take no slot or gap.

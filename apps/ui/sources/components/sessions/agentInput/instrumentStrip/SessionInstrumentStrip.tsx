@@ -17,6 +17,8 @@ import { t } from '@/text';
 
 import type { AgentInputStatusBadge as AgentInputStatusBadgeDescriptor, AgentInputStatusRegion } from '../agentInputContracts';
 import { AgentInputStatusBadge } from '../status/AgentInputStatusBadge';
+
+const EMPTY_STATUS_BADGES: ReadonlyArray<AgentInputStatusBadgeDescriptor> = Object.freeze([]);
 import { AgentInputContentPopover } from '../components/AgentInputContentPopover';
 import { getContextWarning } from '../contextWarning';
 import { resolveContextWarningWindowTokens } from '../resolveContextWarningWindowTokens';
@@ -223,13 +225,34 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
     // semantics — summary !== null); a clean repo renders the lone branch icon.
     const showGit = model.git !== null;
     const showQuota = props.quota != null;
-    const badges = props.statusBadges ?? [];
+    const allBadges = props.statusBadges ?? EMPTY_STATUS_BADGES;
+    const badges = allBadges.filter((badge) => badge.placement !== 'withStatus');
+    const workBadges = allBadges.filter((badge) => badge.placement === 'withStatus');
 
     const entranceEnabled = motion.entrance.kind === 'travel' && !motion.reduceMotion;
 
     // The collapsible instruments (context/quota/git/badges). Permission never
     // collapses. Built per compactness so the <300px overflow popover can list
     // the FULL-SIZE variants while the inline row uses the measured compactness.
+    const renderBadge = (badge: AgentInputStatusBadgeDescriptor): React.ReactElement => {
+        const { key, renderPopover, onPress, placement: _placement, ...rest } = badge;
+        return (
+            <AgentInputStatusBadge
+                key={`badge-${key}`}
+                anchorRef={renderPopover ? statusBadgeAnchorRef : undefined}
+                onPress={renderPopover
+                    ? () => {
+                        setActiveStatusBadgeKey(activeStatusBadgeKey === key ? null : key);
+                        onPress?.();
+                    }
+                    : onPress}
+                renderPopover={renderPopover}
+                // The strip owns whether a badge's popover is open, so it announces that to assistive tech.
+                accessibilityState={renderPopover ? { expanded: activeStatusBadgeKey === key } : undefined}
+                {...rest}
+            />
+        );
+    };
     const buildCollapsibleInstruments = (compact: boolean): StripInstrument[] => {
         const instruments: StripInstrument[] = [];
         if (showContextGauge && model.context) {
@@ -291,26 +314,7 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
             });
         }
         for (const badge of badges) {
-            const { key, renderPopover, onPress, ...rest } = badge;
-            instruments.push({
-                yields: badge.emphasis === 'quiet',
-                node: (
-                    <AgentInputStatusBadge
-                        key={`badge-${key}`}
-                        anchorRef={renderPopover ? statusBadgeAnchorRef : undefined}
-                        onPress={renderPopover
-                            ? () => {
-                                setActiveStatusBadgeKey(activeStatusBadgeKey === key ? null : key);
-                                onPress?.();
-                            }
-                            : onPress}
-                        renderPopover={renderPopover}
-                        // The strip owns whether a badge's popover is open, so it announces that to assistive tech.
-                        accessibilityState={renderPopover ? { expanded: activeStatusBadgeKey === key } : undefined}
-                        {...rest}
-                    />
-                ),
-            });
+            instruments.push({ yields: badge.emphasis === 'quiet', node: renderBadge(badge) });
         }
         for (const region of props.statusRegions ?? []) instruments.push({ yields: region.emphasis === 'quiet', node: region.node });
         return instruments;
@@ -335,6 +339,7 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
     const contentInsetStyle = React.useMemo(() => props.contentInsetX === undefined ? null : { paddingHorizontal: props.contentInsetX },
         [props.contentInsetX]);
     const hasAnything = props.connectionStatus
+        || workBadges.length > 0
         || collapsibleInstruments.length > 0
         || permissionChip !== null
         || props.statusTrailingActions != null;
@@ -403,7 +408,11 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
                             disabled={props.connectionStatus.secondaryAction.disabled}
                         />
                     ) : null}
+                    {/* Work items stand beside the status they qualify (0.2); the gauges keep the right. */}
+                    {workBadges.map(renderBadge)}
                 </Animated.View>
+            ) : workBadges.length > 0 ? (
+                <View style={instrumentStripStyles.connectionGroup}>{workBadges.map(renderBadge)}</View>
             ) : null}
 
             <View style={[instrumentStripStyles.spacer, props.connectionStatus ? instrumentStripStyles.spacerBesideLine : null]} />

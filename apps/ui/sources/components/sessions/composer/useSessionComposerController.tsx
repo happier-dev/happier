@@ -1783,6 +1783,8 @@ export function useSessionComposerController({
                     : 'list';
         return [{
             key: SESSION_WORK_STATE_STATUS_BADGE_KEY,
+            // A work item stands beside the status on the left, as in 0.2 (owner 2026-11-11).
+            placement: 'withStatus',
             label: presentation.label,
             testID: 'session-work-state-status-badge',
             accessibilityLabel: t('session.workState.accessibilityLabel'),
