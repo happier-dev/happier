@@ -24,6 +24,7 @@ import {
   prepareDiscussionContentForRecipients,
 } from './discussionComposerDocument';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { SessionDiscussionDraftMutationAttempt } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { SessionDraftMutateRequestV2Schema, SessionDraftMutateResponseV2Schema, type SessionDraftRecordV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
@@ -3289,6 +3290,36 @@ describe('DiscussionDetailsView selection', () => {
     await press(screen, 'session-discussion-mutation-dismiss');
     expect(draftState.releaseSubmittedAttempt).toHaveBeenCalledTimes(1);
     expect(repositoryDismiss).toHaveBeenCalledWith('create-local-failed');
+  });
+
+  it('keeps a retryable conversation creation failure in the composer banner seat', async () => {
+    (snapshot.mutations as Record<string, unknown>)['create-local-retry'] = {
+      kind: 'create',
+      localId: 'create-local-retry',
+      messageLocalId: 'create-message-retry',
+      status: 'failed',
+      errorCode: 'offline',
+      recovery: 'retry',
+      content: { v: 1, parts: [{ t: 'text', text: 'Keep this opener' }] },
+      mentionedAccountIds: [],
+      draftSubmission: {
+        scope: { serverId: 'srv_discussion_selection_a', accountId: 'viewer' },
+        address: { kind: 'newDiscussion' },
+        currentness: { address: { kind: 'newDiscussion' }, mutationIds: {} },
+      },
+    };
+    draftState.text = 'Keep this opener';
+    const screen = await renderScreen(
+      <DiscussionDetailsView
+        target={{ kind: 'new', address: { serverId: 'srv_discussion_selection_a' } }}
+        active
+      />,
+    );
+
+    const failure = screen.findAllByType(SurfaceStateCard).find((node) => node.props.testID === 'session-discussion-create-failure');
+    expect(failure?.props.title.toLowerCase()).toContain('offline');
+    expect(screen.findByTestId('session-discussion-create-retry')).not.toBeNull();
+    expect((composerProps.current?.value as { text: string }).text).toBe('Keep this opener');
   });
 
   it('opens mobile Ask Agent in the same contextual Start with its source reference', async () => {

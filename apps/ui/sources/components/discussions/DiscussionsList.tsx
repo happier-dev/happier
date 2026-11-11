@@ -226,7 +226,7 @@ export function DiscussionsList(props: Readonly<{
     return <DiscussionsListReady address={props.address} scope={props.scope} anchor={props.anchor} accountLifetime={binding} presentation={props.presentation ?? 'pane'} surface={props.surface ?? 'plane'} footer={props.footer ?? null} />;
 }
 
-const DISCUSSIONS_PHONE_PAGE = Object.freeze({ backTestID: 'discussions-column:back' });
+const DISCUSSIONS_PHONE_PAGE = Object.freeze({ backTestID: 'discussions-column:back', rowMark: 'chats-circle' as const });
 
 /**
  * The whole list cannot be read (conversations off on this Home, signed out of it, another account's scope): one

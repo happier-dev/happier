@@ -18,7 +18,7 @@ import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
 import { classifyAccountActorLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import { Item } from '@/components/ui/lists/Item';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
-import { collectionListStyles, useCollectionRowSelectedOnPlaneFill } from '@/components/ui/lists/collection/CollectionList';
+import { CollectionNavigationRow, CollectionRows, useCollectionPhonePageRows, collectionListStyles, useCollectionRowSelectedOnPlaneFill } from '@/components/ui/lists/collection/CollectionList';
 import { HAPPIER_COLLECTION_ROW_METRICS, resolveHappierCollectionListRowPadding } from '@happier-dev/plugin-ui/presentation';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { ITEM_SUBTITLE_TEXT_METRICS, ITEM_TITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
@@ -229,6 +229,7 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
     const workStatus = resolveWorkStatusTone({ kind: 'discussion', facts: props });
     const { theme } = useUnistyles();
     const selectedFill = useCollectionRowSelectedOnPlaneFill();
+    const phonePage = useCollectionPhonePageRows();
     const requestRef = React.useMemo<CollectionRequestRef | null>(() => props.serverId && props.approvalArtifactId
         ? { kind: 'approval', serverId: props.serverId, artifactId: props.approvalArtifactId } : null,
     [props.approvalArtifactId, props.serverId]);
@@ -289,6 +290,47 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
         description={title} presented={props.presented} testID={`discussion-request-peek:${discussion.id}`}>
         {statusContent}
     </CollectionRequestPeek> : statusContent;
+    const mark = column ? <AvatarStack
+                testID={`session-discussion-row-recent-authors-${discussion.id}`}
+                size={COLUMN_MARK_PX}
+                slot
+                entries={glyph ? [{ key: 'glyph', avatar: false, testID: `session-discussion-row-glyph-${discussion.id}`,
+                    content: <Icon name={glyph} size={ICON_SIZE.sm} color={theme.colors.text.secondary} /> }]
+                    : authors.map((accountId) => {
+                    const avatar = faceAvatar(accountId);
+                    return {
+                        key: accountId,
+                        testID: `session-discussion-row-recent-author-${discussion.id}-${accountId}`,
+                        content: <Avatar id={avatar.id} imageUrl={avatar.imageUrl} size={COLUMN_MARK_PX} />,
+                    };
+                })}
+            /> : null;
+    const trailing = <View style={styles.trailing} accessible={false} importantForAccessibility={requestRef ? 'auto' : 'no-hide-descendants'}>
+                {mentioned && !column ? (
+                    <TabBadge testID={`session-discussion-row-mention-${discussion.id}`} variant="dot" tone={workStatus.tone === 'neutral' ? 'neutral' : 'attention'} style={styles.badge} />
+                ) : null}
+                {unread ? (
+                    <TabBadge testID={`session-discussion-row-unread-${discussion.id}`} variant="count" value={discussion.unreadCount} tone="neutral" style={styles.badge} />
+                ) : null}
+                {/* One status slot: the state's glyph, or how long ago it last spoke. */}
+                {statusControl ? statusControl
+                    : relativeTime ? <Text style={styles.time}>{relativeTime}</Text> : null}
+            </View>;
+    if (phonePage) return <CollectionRows><CollectionNavigationRow
+        testID={`session-discussion-row-${discussion.id}`}
+        title={title}
+        subtitle={secondLine}
+        selected={selected}
+        icon={mark}
+        unread={unread}
+        rightElement={trailing}
+        rightElementOutsidePressable={requestRef !== null}
+        onPress={() => props.onOpenDiscussion(discussion.id, discussion.title)}
+        accessibilityLabel={buildDiscussionRowAccessibilityLabel({ title,
+            subtitle: statusGlyph?.word ? [statusGlyph.word] : [],
+            unreadCount: discussion.unreadCount, unreadMentionCount: mentioned ? discussion.unreadMentionCount : 0,
+            relativeTime, labels: rowLabels })}
+    /></CollectionRows>;
     return (
         <Item
             rowRole="item"
@@ -314,21 +356,7 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
             density="compact"
             showChevron={false}
             showDivider={false}
-            {...(column ? { leftElement: <AvatarStack
-                testID={`session-discussion-row-recent-authors-${discussion.id}`}
-                size={COLUMN_MARK_PX}
-                slot
-                entries={glyph ? [{ key: 'glyph', avatar: false, testID: `session-discussion-row-glyph-${discussion.id}`,
-                    content: <Icon name={glyph} size={ICON_SIZE.sm} color={theme.colors.text.secondary} /> }]
-                    : authors.map((accountId) => {
-                    const avatar = faceAvatar(accountId);
-                    return {
-                        key: accountId,
-                        testID: `session-discussion-row-recent-author-${discussion.id}-${accountId}`,
-                        content: <Avatar id={avatar.id} imageUrl={avatar.imageUrl} size={COLUMN_MARK_PX} />,
-                    };
-                })}
-            /> } : {
+            {...(column ? { leftElement: mark } : {
                 // A pane row's one face takes the pane's icon slot itself, so its title starts on the same
                 // text edge as Followers and Following beneath it.
                 icon: authors[0] ? <View testID={`session-discussion-row-recent-authors-${discussion.id}`}>
@@ -345,17 +373,7 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
                     {title}
                 </Text>}
             subtitle={<Text testID={`session-discussion-row-subtitle-${discussion.id}`} style={[styles.subtitle, attentionLine ? workStatusWordStyle('attention') : null]} numberOfLines={1}>{secondLine}</Text>}
-            rightElement={<View style={styles.trailing} accessible={false} importantForAccessibility={requestRef ? 'auto' : 'no-hide-descendants'}>
-                {mentioned && !column ? (
-                    <TabBadge testID={`session-discussion-row-mention-${discussion.id}`} variant="dot" tone={workStatus.tone === 'neutral' ? 'neutral' : 'attention'} style={styles.badge} />
-                ) : null}
-                {unread ? (
-                    <TabBadge testID={`session-discussion-row-unread-${discussion.id}`} variant="count" value={discussion.unreadCount} tone="neutral" style={styles.badge} />
-                ) : null}
-                {/* One status slot: the state's glyph, or how long ago it last spoke. */}
-                {statusControl ? statusControl
-                    : relativeTime ? <Text style={styles.time}>{relativeTime}</Text> : null}
-            </View>}
+            rightElement={trailing}
         />
     );
 });

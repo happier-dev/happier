@@ -331,6 +331,11 @@ export const CollectionList = React.memo(function CollectionList(props: Omit<Hap
 /** Set while the list is a phone main screen's whole body: its rows draw the page row anatomy with this mark. */
 const CollectionPhonePageRowsContext = React.createContext<Readonly<{ mark: IconName }> | null>(null);
 
+/** Whether this list owns the phone page's card anatomy, decided by CollectionList. */
+export function useCollectionPhonePageRows(): boolean {
+    return React.useContext(CollectionPhonePageRowsContext) !== null;
+}
+
 /**
  * A list's rows: on a phone main screen, one inset card (the page row anatomy, as Projects and Artifacts draw);
  * in a column, the rows themselves on the plane.
@@ -426,6 +431,8 @@ export type CollectionNavigationRowProps = Readonly<{
      */
     status?: React.ReactNode;
     selected: boolean;
+    /** Unread news retains its emphasis when the column becomes a phone page. */
+    unread?: boolean;
     /** A disclosed level's indent, added to the content inset. */
     indentPx?: number;
     /**
@@ -450,6 +457,8 @@ export type CollectionNavigationRowProps = Readonly<{
     accessibilityLabel?: string;
     /** The row's own menu, at its end, outside the row's press (a project's rename, pin, remove). */
     rightElement?: React.ReactNode;
+    /** An independently actionable request stays outside row navigation. */
+    rightElementOutsidePressable?: boolean;
     /** Handed down by the page card (`CollectionRows` on a phone main screen) between its rows. */
     showDivider?: boolean;
     onPress: () => void;
@@ -472,6 +481,7 @@ function CollectionPageRow(props: CollectionNavigationRowProps & Readonly<{ mark
             testID={props.testID}
             title={props.title}
             titleLines={1}
+            titleStyle={props.unread ? styles.navigationRowTitleSelected : undefined}
             subtitle={props.subtitle}
             subtitleLeading={props.needsYouStatus ? <WorkStatusRowMark status={props.needsYouStatus} testIDSuffix={props.testID} /> : props.subtitleLeading}
             titleAccessory={props.titleAccessory}
@@ -481,8 +491,10 @@ function CollectionPageRow(props: CollectionNavigationRowProps & Readonly<{ mark
             accessibilityLabel={props.subtitle ? [props.accessibilityLabel ?? props.title, props.subtitle].join('. ') : props.accessibilityLabel}
             detail={props.status ? undefined : props.detail}
             rightElement={props.status ?? props.rightElement}
+            rightElementOutsidePressable={props.rightElementOutsidePressable}
             dimmed={props.dimmed === true}
             showChevron
+            keepChevronWithRightElement
             showDivider={props.showDivider}
             onPress={props.onPress}
         />
@@ -592,7 +604,7 @@ const CollectionColumnRow = React.memo(function CollectionColumnRow(props: Colle
             selected={props.selected}
             showChevron={false}
             pressableStyle={treeRing ? [basePressableStyle, treeRing] : basePressableStyle}
-            titleStyle={props.selected && onPlane ? styles.navigationRowTitleSelected : undefined}
+            titleStyle={props.selected && onPlane || props.unread ? styles.navigationRowTitleSelected : undefined}
             dimmed={props.dimmed === true && !(props.selected && onPlane)}
             style={resolveHappierCollectionListRowPadding(indentPx)}
             showDivider={false}

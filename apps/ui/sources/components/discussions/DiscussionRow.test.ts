@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { DiscussionOpenedSummaryV1 } from '@happier-dev/protocol/discussions/actions';
 import { HAPPIER_COLLECTION_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
 
@@ -12,6 +12,9 @@ installSettingsViewCommonModuleMocks({
     },
 });
 
+import { Dimensions } from 'react-native';
+import { CollectionList } from '@/components/ui/lists/collection/CollectionList';
+import { Item } from '@/components/ui/lists/Item';
 import { sessionCollaborationTranslations } from '@/text/translations/sessionCollaborationTranslations';
 import { buildDiscussionRowAccessibilityLabel, buildDiscussionRowSubtitle, DiscussionRow, readDiscussionRowAccountAvatar, readDiscussionRowAccountAvatarUrl, resolveDiscussionRowGlyph, resolveDiscussionRowSummary } from '@/components/discussions/DiscussionRow';
 
@@ -38,7 +41,29 @@ function discussionFixture(): DiscussionOpenedSummaryV1 {
         };
 }
 
+afterEach(() => vi.restoreAllMocks());
+
 describe('DiscussionRow presentation', () => {
+    it('uses the shared phone page card and chevron while preserving the approval action and row facts', async () => {
+        vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+        const screen = await renderScreen(React.createElement(CollectionList, {
+            title: 'Discussions', phonePage: { backTestID: 'back', rowMark: 'chats-circle' },
+            scrollContent: React.createElement(DiscussionRow, {
+                discussion: discussionFixture(), viewerAccountId: 'viewer', geometry: 'column',
+                onOpenDiscussion: () => {}, serverId: 'approval-home', approvalArtifactId: 'approval-artifact',
+                attentionReason: 'approval_pending', attentionType: 'approval',
+            }),
+        }));
+        const row = screen.findAllByType(Item).find(node => node.props.testID === 'session-discussion-row-many-unread');
+        expect(row?.findAll(node => node.props.name === 'caret-right').length).toBeGreaterThan(0);
+        expect(row?.props.subtitle).toBeTruthy();
+        expect(row?.props.icon).toBeTruthy();
+        expect(screen.findByTestId('session-discussion-row-recent-authors-many-unread')).not.toBeNull();
+        expect(row?.props.rightElementOutsidePressable).toBe(true);
+        expect(screen.findHostByTestId('discussion-request-peek:many-unread')).not.toBeNull();
+        expect(screen.findByTestId('session-discussion-row-unread-many-unread')).not.toBeNull();
+    });
+
     it('gives a glyph, one face and two faces the Session rows\' leading slot, so every title in the column starts on their edge', async () => {
         const base = discussionFixture();
         const actor = (accountId: string) => ({ ...base.latestMessage.accountActor!, accountId });

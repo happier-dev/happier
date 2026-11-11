@@ -40,6 +40,7 @@ import { RowActionRevealSlot } from '@/components/ui/lists/RowActionRevealSlot';
 import { TranscriptMessageSelectionBoundary } from '@/components/sessions/transcript/messageSelection/TranscriptMessageSelectionContext';
 import { TranscriptSelectionToolbar, type TranscriptSelectionToolbarAction, type TranscriptSelectionToolbarMessage } from '@/components/sessions/transcript/messageSelection/TranscriptSelectionToolbar';
 import { createWebDomScrollObservation } from '@/components/sessions/transcript/viewport/driver/webDomObservation';
+import { PaneHeaderLineView } from '@/components/appShell/panes/PaneHeader';
 import { PaneHeaderScrollScope } from '@/components/appShell/panes/paneHeaderScroll';
 import { TranscriptListShell, type TranscriptListShellRef } from '@/components/sessions/transcript/viewport/shell/TranscriptListShell';
 import { OlderLoadContinuationBanner } from '@/components/sessions/transcript/OlderLoadContinuationOverlay';
@@ -393,6 +394,9 @@ function NewDiscussion(props: Readonly<{ target: Extract<DiscussionDetailsTarget
         onOpen: draftPassage ? () => newRouter.push(artifactViewRoute(draftPassage.ref.artifactId) as Href) : undefined,
         onRemove: () => setDraftPassage(null),
     })] : NO_CONTEXT_ITEMS, [draftPassage, newRouter, setDraftPassage, sourceRefused]);
+    const createFailure = mutation && !isTransientMutationStatus(mutation) ? mutationStatusLabel(mutation) : null;
+    const createRetryable = mutation?.status === 'outcome_unknown'
+        || (mutation?.status === 'failed' && mutation.recovery !== 'dismiss');
     if (accessRevoked) {
         return <SurfaceStateCard
             testID="session-discussion-details-empty-state"
@@ -409,13 +413,10 @@ function NewDiscussion(props: Readonly<{ target: Extract<DiscussionDetailsTarget
             title=""
             columnMaxWidthPx={contentWidth.maxWidth}
             titleControl={<TextInput testID="session-discussion-title" style={[styles.titleInput, phone ? styles.titleInputLarge : null]} value={draft.title} onChangeText={(title) => { draft.setTitle(title); if (title.trim()) setTitleRequired(false); }} placeholder={t('session.collaboration.discussion.newPage.namePlaceholder')} accessibilityLabel={t('session.collaboration.discussion.titlePlaceholder')} aria-invalid={titleRequired} autoFocus />}
-            meta={[
-                { key: 'people', text: rosterLine, testID: 'session-discussion-new-roster' },
-                { key: 'audience', text: t('session.collaboration.discussion.participants.invitedOnly'), icon: 'lock' },
-            ]}
-            metaLeadingKind="mark"
-            metaLeading={invited.length ? <DiscussionRosterFaces members={invitedFaces} accountActors={invitedProfiles.accounts}
-                viewerAccountId={props.scope.accountId} accessibilityLabel={rosterLine} /> : null}
+            body={<PaneHeaderLineView testID="session-discussion-new-roster" line={{ segments: [
+                rosterLine,
+                { text: t('session.collaboration.discussion.participants.invitedOnly'), icon: 'lock' },
+            ] }} />}
             actions={<View style={styles.headerActions}>
                 <DiscussionInviteButton scope={props.scope} accountLifetime={props.accountLifetime}
                     draft={{ participants: invited, onChange: draft.setParticipants, accounts: invitedProfiles.accounts }} />
@@ -433,7 +434,7 @@ function NewDiscussion(props: Readonly<{ target: Extract<DiscussionDetailsTarget
                 </>}>
                 <DiscussionMessageContent message={{ id: mutation.messageLocalId ?? mutation.localId, content: mutation.content }} serverId={props.scope.serverId} textStyle={styles.messageText} profile="transcript" />
                 {!isTransientMutationStatus(mutation) && mutationStatusLabel(mutation) ? <Text testID={`session-discussion-message-status-${mutation.messageLocalId}`} accessibilityLiveRegion="polite" style={mutation.status === 'failed' ? styles.error : styles.deliveryStatus}>{mutationStatusLabel(mutation)}</Text> : null}
-                <MutationRecovery mutation={mutation} onRetry={retry} onDismiss={dismissRefusal} />
+                {/* Creation recovery lives in the composer seat below, so the draft and its next action stay together. */}
             </HappierThreadMessage></SentMessageRise>
                 : <EmptyState testID="session-discussion-new-empty" layout="centered" iconName="chats-circle"
                     title={invitedNames.length
@@ -444,6 +445,20 @@ function NewDiscussion(props: Readonly<{ target: Extract<DiscussionDetailsTarget
             input={<>
         {draft.conflict ? <SessionDraftConflictResolution scope={props.scope} address={draftAddress} conflict={draft.conflict} /> : null}
         {createUnavailableLabel ? <View style={styles.stateLine}><SurfaceStateCard size="line" kind="warning" title={createUnavailableLabel} /></View> : null}
+        {createFailure ? <View style={styles.stateLine}>
+            <SurfaceStateCard
+                testID="session-discussion-create-failure"
+                size="line"
+                kind={mutation?.status === 'approval_pending' ? 'warning' : 'error'}
+                title={createFailure}
+                diagnosticCode={mutation?.errorCode}
+                action={createRetryable
+                    ? { testID: 'session-discussion-create-retry', label: t('session.collaboration.discussion.retry'), onPress: retry }
+                    : mutation?.status === 'failed' && mutation.recovery === 'dismiss'
+                        ? { testID: 'session-discussion-mutation-dismiss', label: t('session.collaboration.discussion.dismiss'), onPress: dismissRefusal }
+                        : undefined}
+            />
+        </View> : null}
         <DiscussionDraftComposer scope={props.scope} accountLifetime={props.accountLifetime} address={props.target.address} availability="available" disabled={createDisabled} onSend={(content, attachments) => void submit(content, attachments)} draftAddress={draftAddress} invited={composerInvited} contextItems={contextItems} />
             </>}
         />
