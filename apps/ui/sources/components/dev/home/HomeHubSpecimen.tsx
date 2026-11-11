@@ -338,7 +338,7 @@ function ShowcaseCard(props: Readonly<{ id: string; testID: string; size?: Widge
     if (props.id === 'default:builtin:usage_capacity') {
         // Capacity's empty state as its owner draws it: the one sign-in (58d AF1).
         return (
-            <WidgetFrame testID={props.testID} frameStyle="card" placement="home" fill mark="speedometer" title="Capacity"
+            <WidgetFrame testID={props.testID} frameStyle="card" placement="home" fill mark="speedometer" title={t('usage.widgets.usage_capacity')}
                 widgetPresentation={widgetPresentation}
                 body={{ kind: 'empty', title: t('usage.board.plans.capacitySignInTitle'), reason: t('usage.board.plans.capacityNoneConnectedPromise'),
                     scene: 'connectAccount', action: { label: t('usage.board.plans.capacitySignIn'), onPress: NEVER_OPENS } }} />

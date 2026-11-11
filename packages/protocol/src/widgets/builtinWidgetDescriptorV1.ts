@@ -119,7 +119,7 @@ const nativeMetadata = {
     usage_flow: { title: 'Usage flow', titleKey: 'usage.widgets.usage_flow', descriptionKey: 'usage.board.page.purposeFlow', icon: 'chart-line' },
     usage_efficiency: { title: 'Efficiency', titleKey: 'usage.widgets.usage_efficiency', descriptionKey: 'usage.board.page.purposeEfficiency', icon: 'pulse' },
     usage_breakdowns: { title: 'Breakdowns', titleKey: 'usage.widgets.usage_breakdowns', descriptionKey: 'usage.board.page.purposeBreakdowns', icon: 'list-bullets' },
-    usage_capacity: { title: 'Capacity', titleKey: 'usage.widgets.usage_capacity', descriptionKey: 'usage.board.page.purposeCapacity', icon: 'speedometer' },
+    usage_capacity: { title: 'Limits', titleKey: 'usage.widgets.usage_capacity', descriptionKey: 'usage.board.page.purposeCapacity', icon: 'speedometer' },
     usage_projections: { title: 'Projections', titleKey: 'usage.widgets.usage_projections', descriptionKey: 'usage.board.page.purposeProjections', icon: 'hourglass' },
     usage_resets: { title: 'Resets', titleKey: 'usage.widgets.usage_resets', descriptionKey: 'usage.board.page.purposeResets', icon: 'timer' },
     usage_plan_fit: { title: 'Plan fit', titleKey: 'usage.widgets.usage_plan_fit', descriptionKey: 'usage.board.page.purposePlanFit', icon: 'currency-dollar' },

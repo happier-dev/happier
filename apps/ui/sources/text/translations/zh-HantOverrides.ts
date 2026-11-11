@@ -13333,7 +13333,7 @@ settingsSession: {
           usage_flow: "用量流向",
           usage_efficiency: "效率",
           usage_breakdowns: "分類明細",
-          usage_capacity: "容量",
+          usage_capacity: "限額",
           usage_projections: "預測",
           usage_resets: "重設",
           usage_plan_fit: "方案匹配",
