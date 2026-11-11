@@ -1,4 +1,4 @@
-import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
@@ -50,6 +50,7 @@ const WORKSPACE_SYNC_RPC_ERROR_CODES: ReadonlySet<string> = new Set([
   'workspace_sync_unavailable',
   'workspace_sync_update_required',
   'workspace_sync_operation_conflict',
+  'workspace_sync_recovery_needed',
   'workspace_sync_prepare_missing',
   'workspace_sync_finalize_missing',
   'workspace_write_denied',
@@ -74,7 +75,12 @@ export function projectWorkspaceSyncRpcError(error: unknown, method: string, req
   if (readRpcErrorCode(error) !== undefined) return error;
   if (error instanceof Error && 'code' in error && typeof error.code === 'string'
     && WORKSPACE_SYNC_RPC_ERROR_CODES.has(error.code)) {
-    return Object.assign(new RpcError(error.message, error.code), { code: error.code, cause: error });
+    // Keep the producer's closed failure cause (e.g. the TARGET handler's phase)
+    // when a local refusal wraps a transported Sync error.
+    const carried = ActionFailureCauseV1Schema.safeParse(('failureCause' in error ? error.failureCause : undefined)
+      ?? (error.cause && typeof error.cause === 'object' && 'failureCause' in error.cause ? error.cause.failureCause : undefined));
+    return Object.assign(new RpcError(error.message, error.code, carried.success ? carried.data : undefined),
+      { code: error.code, cause: error });
   }
   if (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE) {
     // Keep OS/native codes as nested diagnostics, never as protocol identity.
