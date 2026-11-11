@@ -45,7 +45,7 @@ export const RecoveryKeyReminderBanner = React.memo((props: Readonly<{
         <HappierPressable
             testID="recovery-key-reminder-dismiss"
             accessibilityRole="button"
-            accessibilityLabel={t('common.dismiss')}
+            accessibilityLabel={t('common.close')}
             // Beside the row's own target: it takes the 8 px accessory gap before it and the free edge after it.
             hitTarget={HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE}
             hitReach={{ left: 8 }}
