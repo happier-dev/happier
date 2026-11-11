@@ -10,6 +10,7 @@ import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { useNewSessionWorkflowStart } from '../hooks/useNewSessionWorkflowStart';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { act } from 'react-test-renderer';
+import { View } from 'react-native';
 import { createMachineFixture, flattenTestStyle } from '@/dev/testkit';
 import Color from 'color';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -219,6 +220,25 @@ describe('New workflow entry', () => {
                 expect(screen.findByTestId('new-session-composer-input')?.props.value).toBe('Keep this brief');
             } finally { await screen.unmount(); }
         }); } finally { platformState.width = previousWidth; }
+    });
+    it('keeps the docked header actions and drops what the composer chips already say once a workflow is chosen', async () => {
+        await withPopoverWebGlobals(async () => {
+            const hostAction = <View testID="docked-header-close" />;
+            const screen = await renderScreen(<NewSessionSimplePanel {...panelProps()} statusTrailingActions={hostAction} />, workflowPopoverOptions);
+            try {
+                expect(screen.findByTestId('docked-header-close')).not.toBeNull();
+                await openWorkflowPicker(screen);
+                await screen.pressByTestIdAsync('workflow-choice:builtin:plan-with-a-panel');
+                expect(screen.findByTestId('workflow-run-inputs')).not.toBeNull();
+                // The docked host's row (close, new draft, collapse) stays in every composer mode (owner 08).
+                expect(screen.findByTestId('docked-header-close')).not.toBeNull();
+                // The composer's chips already name the workflow, the Machine, the folder and the Agent.
+                expect(screen.findByTestId('workflow-start-lead')).toBeNull();
+                expect(screen.findByTestId('workflow-run-inputs-review-where')).toBeNull();
+                expect(screen.findByTestId('workflow-run-inputs-review-target')).toBeNull();
+                expect(screen.findByTestId('workflow-run-inputs-main-label')).toBeNull();
+            } finally { await screen.unmount(); }
+        });
     });
     it('keeps a long draft inside the embedded composer so Send stays on the page', async () => {
         const props = { ...panelProps(), headerHeight: 56 } as NewSessionSimplePanelProps;

@@ -232,6 +232,9 @@ export function useNewSessionWorkflowStart(params: Readonly<{ panelProps: NewSes
         deleteMachine: undefined,
     } : undefined;
     const managedProgressBadge = buildNewSessionManagedProgressBadge(managedMachineDraft);
+    const hostStatusBadges = props.statusBadges;
+    const statusBadges = React.useMemo(() => managedProgressBadge
+        ? [...(hostStatusBadges ?? []), managedProgressBadge] : hostStatusBadges, [hostStatusBadges, managedProgressBadge]);
     const retainedWhere = React.useMemo(() => retained?.project === undefined ? null : [createWorkflowStartWhereChip({
         target: retained.project, machineName: retainedMachine.name ?? retained.project.machineId,
         machineHomeDir: retainedMachine.homeDir,
@@ -261,6 +264,7 @@ export function useNewSessionWorkflowStart(params: Readonly<{ panelProps: NewSes
             currentPath: props.selectedPath, folderChipState: props.folderChipState,
             onRemoveFolder: props.onRemoveFolder, pathPopover: props.pathPopover }}
         extraActionChips={retained ? retainedWhere ?? undefined : props.agentInputExtraActionChips}
-        statusBadges={managedProgressBadge ? [managedProgressBadge] : undefined} />} />;
+        // The host's own status row (a docked draft's status, new draft, collapse and close) stays in every mode.
+        statusBadges={statusBadges} statusTrailingActions={props.statusTrailingActions} />} />;
     return { chip, composer, managedMachineDraft };
 }

@@ -55,6 +55,7 @@ import { useServerScopedMachineLabel } from '@/sync/domains/state/storage';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -258,6 +259,8 @@ export type WorkflowRunComposerProps = Readonly<{
   extraActionChips?: readonly AgentInputExtraActionChip[];
   /** The composer's own status row: a machine being created for this task (D23) shows its progress here. */
   statusBadges?: React.ComponentProps<typeof AgentInput>['statusBadges'];
+  /** The host's own status-row actions (a docked composer's new draft, collapse and close): kept in every mode. */
+  statusTrailingActions?: React.ComponentProps<typeof AgentInput>['statusTrailingActions'];
   workflowChip?: AgentInputExtraActionChip;
   /** Retained, but never submitted, when the selection has no text input. */
   retainedText?: string;
@@ -531,12 +534,27 @@ export function WorkflowRunComposer(
               name: inputTitle(blocked.definition),
             })
           : t('workflows.issue.invalid_input');
+  // Hosted in a composer whose chip names the workflow (New, docked or full page): the chips already say the
+  // workflow, its Machine, folder and Agent, so this owner adds only what they don't (owner 08).
+  const composerHosted = props.workflowChip !== undefined;
   // 07 §3: an untouched missing value is readiness, not an error. It never interrupts as an alert.
   const readinessOnly =
     retained !== null ||
     agentReadinessCause !== null ||
     blocked?.errorCode === 'missing_required_input' ||
     (roleDraft.status === 'loading' && blocked === null);
+  // In a hosted composer, what start still needs is the composer's own status line, not a line under it.
+  const blockedMissing = blocked?.errorCode === 'missing_required_input';
+  const hostStatusBadges = props.statusBadges;
+  const statusBadges = React.useMemo(() => {
+    if (!composerHosted || reason === null) return hostStatusBadges;
+    const readiness: AgentInputStatusBadge = {
+      key: 'workflow-start-readiness', label: reason, testID: `${prefix}-reason`,
+      tone: readinessOnly ? 'neutral' : 'warning',
+      ...(blockedMissing ? { icon: (tint: string) => <Icon name="warning" size={ICON_SIZE.xs} color={tint} /> } : {}),
+    };
+    return [...(hostStatusBadges ?? []), readiness];
+  }, [blockedMissing, composerHosted, hostStatusBadges, prefix, readinessOnly, reason]);
   const visibilityHint =
     retained !== null
       ? undefined
@@ -912,7 +930,9 @@ export function WorkflowRunComposer(
       <View testID={`${prefix}-${main === null ? 'preview' : 'main'}`}>
         <View style={columnStyle}>
           <View style={columnInnerStyle}>
-            {props.definition && props.workflowName ? <WorkflowStartDetailsLead
+            {/* Hosted, the workflow's chip is its identity and the chip's popover previews it (description,
+                steps, inputs); a second header above the composer would repeat it (owner 08). */}
+            {props.definition && props.workflowName && !composerHosted ? <WorkflowStartDetailsLead
               name={props.workflowName} description={main === null ? undefined : props.preview} summary={summary}
               source={props.sourceArtifactId ? t('workflows.start.library')
                 : props.optionsConsumer?.workflow ? (props.optionsConsumer.workflow.startsWith('builtin:')
@@ -920,7 +940,8 @@ export function WorkflowRunComposer(
               inputs={personFields.map(field => inputTitle(field.definition))}>
               {props.leadContent}
             </WorkflowStartDetailsLead> : null}
-            {reviewedDefinition ? <>
+            {/* Hosted, the composer's own chips already say where and with what this starts. */}
+            {reviewedDefinition && !composerHosted ? <>
               {hasWhereChip ? null : <Item testID={`${prefix}-review-where`} title={t('workflows.page.sections.whereTitle')}
                 subtitle={whereSummary} showChevron={false} subtitleLines={0} />}
               {!acceptedRepeat && showsWorkflowAgent
@@ -942,8 +963,8 @@ export function WorkflowRunComposer(
               >
                 {summary}
               </Text>
-            )) : (
-              <Text style={styles.mainLabel}>
+            )) : composerHosted ? null : (
+              <Text testID={`${prefix}-main-label`} style={styles.mainLabel}>
                 {inputTitle(main.definition)}
               </Text>
             )}
@@ -989,7 +1010,8 @@ export function WorkflowRunComposer(
             autocompleteKinds={EMPTY_AUTOCOMPLETE_KINDS}
             autocompleteSuggestions={EMPTY_AUTOCOMPLETE_SUGGESTIONS}
             extraActionChips={chips}
-            statusBadges={props.statusBadges}
+            statusBadges={statusBadges}
+            statusTrailingActions={props.statusTrailingActions}
           />
         </PluginContextualResourceStoreProvider>
         <WorkflowRequesterDisclosureView model={requesterDisclosure} />
@@ -1068,7 +1090,7 @@ export function WorkflowRunComposer(
                 {t('workflows.start.visibility.chooseTeam')}
               </Text>
             ) : null}
-            {reason === null ? null : (
+            {reason === null || composerHosted ? null : (
               <View
                 testID={`${prefix}-reason`}
                 style={styles.readiness}
