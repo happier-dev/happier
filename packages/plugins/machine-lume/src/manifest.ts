@@ -6,6 +6,7 @@ import {
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
   MachineProvisionerPowerResultV1Schema,
   observeMachineProvisionerNativeRead,
+  projectMachineProvisionerActionFailure,
   type MachineProvisionerAuthorDefinitionV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { HttpMethod } from '@happier-dev/plugin-sdk/http';
@@ -134,7 +135,7 @@ export const LUME_PLUGIN = definePlugin({
         } catch (error) {
           // A missing `lume` is its own state, so its card can say how to get it; the server's own refusals stay typed below.
           const notInstalled = error !== null && typeof error === 'object' && 'notInstalled' in error;
-          return machineCheckPresentation({ available: false, code: notInstalled ? 'lume_not_installed' : errorCode(error) });
+          return projectMachineProvisionerActionFailure(error, () => machineCheckPresentation({ available: false, code: notInstalled ? 'lume_not_installed' : errorCode(error) }));
         }
       },
     },
@@ -190,9 +191,9 @@ export const LUME_PLUGIN = definePlugin({
         if (!input.managedId) return { kind: 'rejected' as const, code: 'invalid_request' as const };
         let current: Awaited<ReturnType<typeof runtime>>;
         try { current = await runtime(context); }
-        catch { return { kind: 'rejected' as const, code: 'provider_unavailable' as const }; }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'rejected' as const, code: 'provider_unavailable' as const })); }
         try { return await current.provider.acquire(input.launch, input.managedId, input.resource); }
-        catch { const { lumeOperationForLaunch } = await import('./machine/provider.js');
+        catch (error) { return projectMachineProvisionerActionFailure(error, async () => { const { lumeOperationForLaunch } = await import('./machine/provider.js');
           const operation = lumeOperationForLaunch(input.launch, input.managedId);
           return operation.success ? { kind: 'pending' as const, nativeOperationRef: {
             contributionRef: { pluginId: LUME_PLUGIN_ID, localId: LUME_PROVISIONER_ID }, schemaVersion: 1, value: operation.data } }
@@ -226,7 +227,7 @@ export const LUME_PLUGIN = definePlugin({
       inputSchema: LUME_ROLE_SCHEMAS.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
       async run(input, context) {
         try { return await (await runtime(context)).provider.inspect(input.resource); }
-        catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) }); }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) })); }
       },
     },
     power: { ...defaults, title: 'Change Lume guest power', dangerLevel: 'writesLocal',
@@ -234,7 +235,7 @@ export const LUME_PLUGIN = definePlugin({
       inputSchema: LUME_ROLE_SCHEMAS.powerInput, resultSchema: MachineProvisionerPowerResultV1Schema,
       async run(input, context) {
         try { return await (await runtime(context)).provider.power(input.resource, input.intent); }
-        catch (error) { return { kind: 'unknown' as const, code: errorCode(error) }; }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: errorCode(error) })); }
       },
     },
     destroy: { ...defaults, title: 'Delete exact Lume guest', dangerLevel: 'destructive',
@@ -242,7 +243,7 @@ export const LUME_PLUGIN = definePlugin({
       inputSchema: LUME_RECONCILIATION_SCHEMAS.destroyInput, resultSchema: MachineProvisionerPowerResultV1Schema,
       async run(input, context) {
         try { return await (await runtime(context)).provider.destroy('resource' in input ? input.resource : input.nativeOperation); }
-        catch (error) { return { kind: 'unknown' as const, code: errorCode(error) }; }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: errorCode(error) })); }
       },
     },
   },

@@ -8,6 +8,7 @@ import {
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema,
   MachineProvisionerOptionsResultV1Schema, MachineProvisionerPowerResultV1Schema, MachineProvisionerPutFileResultV1Schema,
+  projectMachineProvisionerActionFailure,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createDockerSandboxesProvider, DOCKER_SANDBOXES_DEPENDENCY_ID, DOCKER_SANDBOXES_PLUGIN_ID,
@@ -130,7 +131,7 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
         // the adapter with its preselected managed-row-derived resource name.
         let native: Awaited<ReturnType<typeof provider>>;
         try { native = await provider(context); }
-        catch { return { kind: 'rejected' as const, code: 'provider_unavailable' as const }; }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'rejected' as const, code: 'provider_unavailable' as const })); }
         return native.acquire(input.launch, input.managedId);
       },
     },
@@ -148,7 +149,7 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
       inputSchema: DOCKER_SANDBOXES_ROLE_SCHEMAS.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
       async run(input, context) {
         try { return await (await provider(context)).inspect(input.resource); }
-        catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) }); }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) })); }
       },
     },
     power: { ...actionDefaults, title: 'Change Docker Sandbox power', dangerLevel: 'writesLocal',
@@ -156,7 +157,7 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
       inputSchema: DOCKER_SANDBOXES_ROLE_SCHEMAS.powerInput, resultSchema: MachineProvisionerPowerResultV1Schema,
       async run(input, context) {
         try { return await (await provider(context)).power(input.resource, input.intent); }
-        catch (error) { return { kind: 'unknown' as const, code: errorCode(error) }; }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: errorCode(error) })); }
       },
     },
     destroy: { ...actionDefaults, title: 'Delete exact Docker Sandbox', dangerLevel: 'destructive',
@@ -164,7 +165,7 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
       inputSchema: DOCKER_SANDBOXES_RECONCILIATION_SCHEMAS.destroyInput, resultSchema: MachineProvisionerPowerResultV1Schema,
       async run(input, context) {
         try { return await (await provider(context)).destroy(input); }
-        catch (error) { return { kind: 'unknown' as const, code: errorCode(error) }; }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: errorCode(error) })); }
       },
     },
     exec: { ...actionDefaults, title: 'Execute private Docker Sandbox bootstrap', dangerLevel: 'writesLocal',
@@ -182,7 +183,7 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
       inputSchema: DOCKER_SANDBOXES_ROLE_SCHEMAS.putFileInput, resultSchema: MachineProvisionerPutFileResultV1Schema,
       async run(input, context) {
         try { return await (await provider(context)).putFile(input.resource, input.guestPath, privateBytes(input.bytesBase64), input.mode); }
-        catch (error) { return { kind: 'unknown' as const, code: errorCode(error) }; }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: errorCode(error) })); }
       },
     },
   },

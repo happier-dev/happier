@@ -45,6 +45,7 @@ export type {
 export type { MachineProvisionerNativeReadOutcomeV1 } from './nativeReadObservation.js';
 export { classifyManagedMachineAllocationV1, type ManagedMachineAllocationPresentationV1 } from './allocationPresentation.js';
 export { observeMachineProvisionerNativeRead } from './nativeReadObservation.js';
+export { projectMachineProvisionerActionFailure } from './actionFailure.js';
 export {
   MACHINE_PROVISIONER_DIMENSIONS_V1,
   MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1,

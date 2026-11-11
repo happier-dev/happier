@@ -1,4 +1,4 @@
-import { projectPluginFailureText } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, projectPluginFailureText } from '@happier-dev/plugin-sdk';
 import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
@@ -66,13 +66,21 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
     async templates(signal?: AbortSignal) {
       try {
         const result = await run(['template', 'ls', '--quiet'], signal);
+        const stderr = new TextDecoder().decode(result.stderr);
+        if (/not signed in to Docker/iu.test(stderr)) {
+          throw new PluginError({ code: 'credential_unavailable', message: 'Sign in to Docker: run sbx login', retryable: true,
+            details: { nativeCause: { localCause: 'not_signed_in' } } });
+        }
         if (completed(result) && !result.stdoutTruncated) {
           const templateIds = new TextDecoder('utf-8', { fatal: true }).decode(result.stdout).split(/\r?\n/u).filter(Boolean);
           if (templateIds.every(templateId => DockerSandboxesLaunchV1Schema.safeParse({ templateId, name: 'happier' }).success)) {
             return { status: 'available', templateIds } as const;
           }
         }
-      } catch { /* A failed/partial native catalog cannot supply choices. */ }
+      } catch (error) {
+        if (isPluginError(error)) throw error;
+        /* A failed/partial native catalog cannot supply choices. */
+      }
       return { status: 'unavailable' } as const;
     },
     async inspect(resource: SandboxLocator, signal?: AbortSignal) {

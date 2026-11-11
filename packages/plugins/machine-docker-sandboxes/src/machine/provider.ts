@@ -1,7 +1,7 @@
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import type { MachineProvisionerNativeIntentV1, MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { observeMachineProvisionerNativeRead } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createDockerSandboxesNativeClient } from './nativeClient.js';
 import { DockerSandboxesLaunchV1Schema, DockerSandboxesResourceV1Schema, DOCKER_SANDBOXES_RECONCILIATION_SCHEMAS } from './schemas.js';
 import type { DockerSandboxesLaunchV1, DockerSandboxesResourceV1 } from './schemas.js';
@@ -99,8 +99,13 @@ export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'>, ex
       if (intent !== 'start' && intent !== 'stop') return { kind: 'refused' as const, code: 'docker_sandbox_intent_unsupported' };
       // Start checks presence at the native owner before its create-capable run.
       try { if (intent === 'stop') await requirePresent(resource); }
-      catch (error) { return { kind: 'refused' as const, code: error !== null && typeof error === 'object'
-        && 'code' in error && typeof error.code === 'string' ? error.code : 'invalid_request' }; }
+      catch (error) {
+        return projectMachineProvisionerActionFailure(error, () => ({
+          kind: 'refused' as const,
+          code: error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+            ? error.code : 'invalid_request',
+        }));
+      }
       const outcome = intent === 'start' ? await native.start(resource, signal) : await native.stop(resource, signal);
       if (outcome.status === 'refused') return { kind: 'refused' as const, code: outcome.code };
       const observed = await native.power(resource, signal);
@@ -127,7 +132,7 @@ export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'>, ex
           'umask 077; cat > "$1" && chmod "$2" "$1"', 'happier-put-file', guestPath, mode.toString(8)], signal, bytes);
         return { kind: result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 0
           && result.termination.requestedBy.kind === 'none' ? 'confirmed' as const : 'unknown' as const };
-      } catch { return { kind: 'unknown' as const }; }
+      } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const })); }
     },
   };
 }

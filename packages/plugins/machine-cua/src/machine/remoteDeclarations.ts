@@ -2,7 +2,7 @@ import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { observeMachineProvisionerNativeRead, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema, MachineProvisionerNativeExecResultV1Schema,
     MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema, MachineProvisionerPowerResultV1Schema,
-    MachineProvisionerPutFileResultV1Schema, type MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+    MachineProvisionerPutFileResultV1Schema, projectMachineProvisionerActionFailure, type MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { ByocLaunchV1Schema, ByocResourceV1Schema, ByocNativeOperationV1Schema, ByocOptionsQueryV1Schema } from './remoteSchemas.js';
 import { ByocProvisionerSchemas as schemas, ByocReconciliationSchemas as reconciliation, byocReconciliationOperation } from './remoteProvisionerSchemas.js';
 import type { CuaRemoteRole } from './remoteProvisioner.js';
@@ -23,7 +23,7 @@ export function remoteRoles() {
     return {
         check: { ...defaults, title: `Check Cua ${id} access`, dangerLevel: 'safe' as const, inputSchema: schemas.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
             async run(input: unknown, context: PluginInvocationContext) { try { return machineCheckPresentation(MachineProvisionerCheckResultV1Schema.parse(await run('check', input, context))); }
-                catch (error) { return machineCheckPresentation({ available: false, code: byocCheckFailureCode(error) }); } } },
+                catch (error) { return projectMachineProvisionerActionFailure(error, () => machineCheckPresentation({ available: false, code: byocCheckFailureCode(error) })); } } },
         options: { ...defaults, title: `Read Cua ${id} native choices`, dangerLevel: 'safe' as const,
             inputSchema: ByocOptionsQueryV1Schema, resultSchema: MachineProvisionerOptionsResultV1Schema,
             inputHints: { fields: [
@@ -38,32 +38,32 @@ export function remoteRoles() {
             inputSchema: reconciliation.input, resultSchema: reconciliation.result,
             async run(input: unknown, context: PluginInvocationContext) {
                 try { return reconciliation.result.parse(await run('reconcile', input, context)); }
-                catch { return reconciliation.result.parse({ kind: 'pending', nativeOperationRef: {
+                catch (error) { return projectMachineProvisionerActionFailure(error, () => reconciliation.result.parse({ kind: 'pending', nativeOperationRef: {
                     contributionRef: { pluginId: 'happier.machine.cua', localId: id }, schemaVersion: 1,
-                    value: byocReconciliationOperation(input) } }); }
+                    value: byocReconciliationOperation(input) } })); }
             } },
         bootstrap: { ...defaults, title: `Resolve private Cua ${id} bootstrap`, dangerLevel: 'writesLocal' as const, confirmation: { title: 'Prepare this Cua resource for Happier?' },
             inputSchema: schemas.bootstrapInput, resultSchema: MachineProvisionerBootstrapCarrierV1Schema,
             async run(input: unknown, context: PluginInvocationContext) { return MachineProvisionerBootstrapCarrierV1Schema.parse(await run('bootstrap', input, context)); } },
         inspect: { ...defaults, title: `Inspect exact Cua ${id} resource`, dangerLevel: 'safe' as const, inputSchema: schemas.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
             async run(input: unknown, context: PluginInvocationContext) { try { return MachineProvisionerObservationV1Schema.parse(await run('inspect', input, context)); }
-                catch { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: 'cua_native_resource_unknown' }); } } },
+                catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: 'cua_native_resource_unknown' })); } } },
         power: { ...defaults, title: 'Change exact Cua BYOC power', dangerLevel: 'destructive' as const, confirmation: { title: 'Change this Cua resource’s power?' },
             inputSchema: schemas.powerInput, resultSchema: MachineProvisionerPowerResultV1Schema,
             async run(input: unknown, context: PluginInvocationContext) { try { return MachineProvisionerPowerResultV1Schema.parse(await run('power', input, context)); }
-                catch { return { kind: 'unknown' as const, code: 'cua_native_power_unknown' }; } } },
+                catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: 'cua_native_power_unknown' })); } } },
         destroy: { ...defaults, title: 'Delete exact created Cua BYOC resource', dangerLevel: 'destructive' as const,
             confirmation: { title: 'Delete this Cua BYOC resource?', body: 'Deletes only the exact created native resource.' },
             inputSchema: reconciliation.destroyInput, resultSchema: MachineProvisionerPowerResultV1Schema,
             async run(input: unknown, context: PluginInvocationContext) { try { return MachineProvisionerPowerResultV1Schema.parse(await run('destroy', input, context)); }
-                catch { return { kind: 'unknown' as const, code: 'cua_cleanup_incomplete' }; } } },
+                catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: 'cua_cleanup_incomplete' })); } } },
         exec: { ...defaults, title: `Execute private Cua ${id} bootstrap IO`, dangerLevel: 'writesLocal' as const, confirmation: { title: 'Run private Cua bootstrap command?' },
             inputSchema: schemas.execInput, resultSchema: MachineProvisionerNativeExecResultV1Schema,
             async run(input: unknown, context: PluginInvocationContext) { return MachineProvisionerNativeExecResultV1Schema.parse(await run('exec', input, context)); } },
         putFile: { ...defaults, title: `Write private Cua ${id} bootstrap file`, dangerLevel: 'writesLocal' as const, confirmation: { title: 'Write this private Cua bootstrap file?' },
             inputSchema: schemas.putFileInput, resultSchema: MachineProvisionerPutFileResultV1Schema,
             async run(input: unknown, context: PluginInvocationContext) { try { return MachineProvisionerPutFileResultV1Schema.parse(await run('putFile', input, context)); }
-                catch { return { kind: 'unknown' as const, code: 'cua_native_file_unavailable' }; } } },
+                catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: 'cua_native_file_unavailable' })); } } },
     };
 }
 export function remoteProvisioner(): MachineProvisionerAuthorDefinitionV1 {

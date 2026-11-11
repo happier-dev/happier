@@ -3,7 +3,7 @@ import { machinePresentationLabel, machineCheckPresentation } from './ui/transla
 import type { ActionContribution } from '@happier-dev/plugin-sdk/actions';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
-  observeMachineProvisionerNativeRead,
+  observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema,
   MachineProvisionerOptionsResultV1Schema, MachineProvisionerPutFileResultV1Schema,
@@ -87,7 +87,7 @@ export const MODAL_PLUGIN = definePlugin({
     check: { ...defaults, title: 'Check Modal availability', dangerLevel: 'safe', inputSchema: MODAL_ROLE_SCHEMAS.checkInput,
       resultSchema: MachineProvisionerCheckResultV1Schema, async run(input, context) {
         try { return machineCheckPresentation(MachineProvisionerCheckResultV1Schema.parse(await invokeScopedModalRole('check', input, context))); }
-        catch (error) { return machineCheckPresentation({ available: false, code: code(error) }); }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => machineCheckPresentation({ available: false, code: code(error) })); }
       } },
     options: { ...defaults, title: 'Read Modal choices', dangerLevel: 'safe', inputSchema: ModalOptionsInputV1Schema,
       inputHints: { fields: [
@@ -106,9 +106,9 @@ export const MODAL_PLUGIN = definePlugin({
         try { return MODAL_RECONCILIATION_SCHEMAS.result.parse(await invokeScopedModalRole('acquire', input, context)); }
         catch (error) { const reason = code(error);
           // Worker qualification fails before the native allocation role runs.
-          if (reason === 'modal_sdk_unsupported') throw error;
-          return reason === 'credential_unavailable' ? { kind: 'rejected' as const, code: 'credential_unavailable' as const }
-            : input.managedId ? { kind: 'pending' as const, nativeOperationRef: {
+          return projectMachineProvisionerActionFailure(error, () => {
+            if (reason === 'credential_unavailable') return { kind: 'rejected' as const, code: 'credential_unavailable' as const };
+            if (input.managedId) return { kind: 'pending' as const, nativeOperationRef: {
               contributionRef: { pluginId: MODAL_PLUGIN_ID, localId: MODAL_PROVISIONER_ID }, schemaVersion: 1,
               value: { appReference: input.launch.appReference, managedId: input.managedId },
             } } : { kind: 'unknown' as const, recovery: { reference: input.launch.appReference, reason } };
@@ -124,12 +124,12 @@ export const MODAL_PLUGIN = definePlugin({
     inspect: { ...defaults, title: 'Inspect retained Modal Sandbox', dangerLevel: 'safe', inputSchema: MODAL_ROLE_SCHEMAS.resourceInput,
       resultSchema: MachineProvisionerObservationV1Schema, async run(input, context) {
         try { return MachineProvisionerObservationV1Schema.parse(await invokeScopedModalRole('inspect', input, context)); }
-        catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: code(error) }); }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: code(error) })); }
       } },
     destroy: { ...defaults, ...destroyConfirmation, title: 'Terminate exact Modal Sandbox', dangerLevel: 'destructive', inputSchema: MODAL_RECONCILIATION_SCHEMAS.destroyInput,
       resultSchema: MODAL_RECONCILIATION_SCHEMAS.destroyResult, async run(input, context) {
         try { return MODAL_RECONCILIATION_SCHEMAS.destroyResult.parse(await invokeScopedModalRole('destroy', input, context)); }
-        catch (error) { return { kind: 'unknown' as const, code: code(error) }; }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: code(error) })); }
       } },
     exec: { ...defaults, ...effectConfirmation, title: 'Execute private Modal bootstrap IO', dangerLevel: 'writesRemote', inputSchema: MODAL_ROLE_SCHEMAS.execInput,
       resultSchema: MachineProvisionerNativeExecResultV1Schema, async run(input, context) {
@@ -138,7 +138,7 @@ export const MODAL_PLUGIN = definePlugin({
     'put-file': { ...defaults, ...effectConfirmation, title: 'Write private Modal bootstrap file', dangerLevel: 'writesRemote', inputSchema: MODAL_ROLE_SCHEMAS.putFileInput,
       resultSchema: MachineProvisionerPutFileResultV1Schema, async run(input, context) {
         try { return MachineProvisionerPutFileResultV1Schema.parse(await invokeScopedModalRole('putFile', input, context)); }
-        catch (error) { return { kind: 'unknown' as const, code: code(error) }; }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: code(error) })); }
       } },
   },
   ui: { translations: [

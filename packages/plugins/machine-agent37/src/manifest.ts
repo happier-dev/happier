@@ -6,7 +6,7 @@ import {
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
   MachineProvisionerPowerResultV1Schema, MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema,
-  observeMachineProvisionerNativeRead, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1,
+  observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, connectedAccountPortableRuntime } from './account.js';
 import { nativeFetch } from './machine/credentials.js';
@@ -59,7 +59,7 @@ export const PLUGIN = definePlugin({
   actions: {
     check: { ...defaults, title: 'Check Agent37 access', dangerLevel: 'safe', inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) { try { return await runtime(context).check(); }
-        catch (error) { return { available: false, code: errorCode(error), status: 'Agent37 unavailable' }; } } },
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ available: false, code: errorCode(error), status: 'Agent37 unavailable' })); } } },
     options: { ...defaults, title: 'Agent37 machine options', dangerLevel: 'safe', inputSchema: Agent37OptionsSchema, resultSchema: MachineProvisionerOptionsResultV1Schema,
       async run(_input, context): Promise<MachineProvisionerOptionsResultV1> {
         const check = await runtime(context).check();
@@ -75,13 +75,13 @@ export const PLUGIN = definePlugin({
       async run(input, context) { return runtime(context).bootstrap(input.resource); } },
     inspect: { ...defaults, title: 'Inspect Agent37 machine', dangerLevel: 'safe', inputSchema: ROLE_SCHEMAS.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
       async run(input, context) { try { return await runtime(context).inspect(input.resource); }
-        catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) }); } } },
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) })); } } },
     power: { ...defaults, title: 'Stop or start Agent37 machine', dangerLevel: 'writesRemote', confirmation, inputSchema: ROLE_SCHEMAS.powerInput, resultSchema: MachineProvisionerPowerResultV1Schema,
       async run(input, context) { try { return await runtime(context).power(input.resource, input.intent); }
-        catch (error) { return { kind: 'unknown', code: errorCode(error) }; } } },
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: errorCode(error) })); } } },
     destroy: { ...defaults, title: 'Delete Agent37 machine', dangerLevel: 'destructive', confirmation, inputSchema: RECONCILIATION.destroyInput, resultSchema: RECONCILIATION.destroyResult,
       async run(input, context) { try { return await runtime(context).destroy(input); }
-        catch (error) { return { kind: 'unknown', code: errorCode(error) }; } } },
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: errorCode(error) })); } } },
     exec: { ...defaults, title: 'Execute Agent37 guest command', dangerLevel: 'writesRemote', confirmation, inputSchema: ROLE_SCHEMAS.execInput, resultSchema: MachineProvisionerNativeExecResultV1Schema,
       async run(input, context) { return runtime(context).exec(input); } },
     'put-file': { ...defaults, title: 'Write Agent37 guest file', dangerLevel: 'writesRemote', confirmation, inputSchema: ROLE_SCHEMAS.putFileInput, resultSchema: MachineProvisionerPutFileResultV1Schema,

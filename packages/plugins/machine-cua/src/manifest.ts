@@ -3,7 +3,7 @@ import { machinePresentationLabel, machineCheckPresentation, configurationLabel 
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { observeMachineProvisionerNativeRead, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
     MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
-    MachineProvisionerPowerResultV1Schema, MachineProvisionerPutFileResultV1Schema,
+    MachineProvisionerPowerResultV1Schema, MachineProvisionerPutFileResultV1Schema, projectMachineProvisionerActionFailure,
     type MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { CuaLocalProvisionerSchemas as schemas, CuaLocalNativeOperationV1Schema, CuaLocalReconciliationSchemas, localReconciliationOperation } from './machine/localProvisionerSchemas.js';
 import { CuaLocalLaunchV1Schema, CuaLocalOptionsQueryV1Schema, CuaLocalResourceV1Schema,
@@ -34,8 +34,8 @@ function roles(id: CuaLocalProvisionerId) {
             async run(input: ReturnType<typeof CuaLocalReconciliationSchemas.input.parse>, context: PluginInvocationContext) {
                 const operation = localReconciliationOperation(id, input);
                 try { return await (await provider(id, context)).reconcile(operation); }
-                catch { return { kind: 'pending' as const, nativeOperationRef: { contributionRef: { pluginId, localId: id },
-                    schemaVersion: 1, value: operation } }; }
+                catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'pending' as const, nativeOperationRef: { contributionRef: { pluginId, localId: id },
+                    schemaVersion: 1, value: operation } })); }
             } },
         check: { ...defaults, title: 'Check Cua local runtime', dangerLevel: 'safe' as const,
             inputSchema: schemas.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
@@ -73,7 +73,7 @@ function roles(id: CuaLocalProvisionerId) {
                 if (!input.managedId) return { kind: 'rejected' as const, code: 'invalid_request' as const };
                 let prepared;
                 try { prepared = await provider(id, context); }
-                catch { return { kind: 'rejected' as const, code: 'provider_unavailable' as const }; }
+                catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'rejected' as const, code: 'provider_unavailable' as const })); }
                 return prepared.acquire(input.launch, input.managedId);
             } },
         bootstrap: { ...defaults, title: 'Resolve Cua private native bootstrap', dangerLevel: 'writesLocal' as const,
@@ -86,14 +86,14 @@ function roles(id: CuaLocalProvisionerId) {
             inputSchema: schemas.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
             async run(input: Readonly<{ resource: CuaLocalResourceV1 }>, context: PluginInvocationContext) {
                 try { return await (await provider(id, context)).inspect(input.resource); }
-                catch { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: 'cua_native_unavailable' }); }
+                catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: 'cua_native_unavailable' })); }
             } },
         power: { ...defaults, title: 'Change Cua local machine power', dangerLevel: 'writesLocal' as const,
             confirmation: { title: 'Change this Cua machine’s power?' },
             inputSchema: schemas.powerInput, resultSchema: MachineProvisionerPowerResultV1Schema,
             async run(input: ReturnType<typeof schemas.powerInput.parse>, context: PluginInvocationContext) {
                 try { return await (await provider(id, context)).power(input.resource, input.intent); }
-                catch { return { kind: 'unknown' as const, code: 'cua_native_unavailable' }; }
+                catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: 'cua_native_unavailable' })); }
             } },
         destroy: { ...defaults, title: 'Delete exact created Cua local machine', dangerLevel: 'destructive' as const,
             confirmation: { title: 'Delete this Cua local machine?', body: 'The exact created resource and its retained storage will be deleted.' },
@@ -104,7 +104,7 @@ function roles(id: CuaLocalProvisionerId) {
                     if ('resource' in input) return await native.destroy(input.resource);
                     return await native.destroyPending(input.nativeOperation);
                 }
-                catch { return { kind: 'unknown' as const, code: 'cua_cleanup_incomplete' }; }
+                catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: 'cua_cleanup_incomplete' })); }
             } },
         exec: { ...defaults, title: 'Execute private Cua bootstrap IO', dangerLevel: 'writesLocal' as const,
             confirmation: { title: 'Run private Cua bootstrap command?' },
@@ -123,7 +123,7 @@ function roles(id: CuaLocalProvisionerId) {
             inputSchema: schemas.putFileInput, resultSchema: MachineProvisionerPutFileResultV1Schema,
             async run(input: ReturnType<typeof schemas.putFileInput.parse>, context: PluginInvocationContext) {
                 try { return await (await provider(id, context)).putFile(input.resource, input.guestPath, bytes(input.bytesBase64), input.mode); }
-                catch { return { kind: 'unknown' as const, code: 'cua_native_file_unavailable' }; }
+                catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: 'cua_native_file_unavailable' })); }
             } },
     };
 }

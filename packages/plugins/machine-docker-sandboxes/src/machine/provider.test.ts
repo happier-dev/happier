@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { createDockerSandboxesNativeClient } from './nativeClient.js';
 import * as nativeModule from './provider.js';
@@ -83,6 +84,20 @@ describe('Docker Sandboxes managed provisioner roles', () => {
       id, title: id, guestPlatform: 'linux', assignments: [{ path: 'templateId', value: id }], nativeFacts: { image: { id, title: id } },
     })));
     expect(process.run).toHaveBeenCalledExactlyOnceWith({ executable, args: ['template', 'ls', '--quiet'] }, { signal: undefined });
+  });
+
+  it('preserves Docker authentication recovery from native template discovery', async () => {
+    const process = { run: vi.fn<ExecService['run']>(async () => ({ ...result(1),
+      stderr: new TextEncoder().encode('not signed in to Docker; try: sbx login') })) };
+    await expect(nativeModule.createDockerSandboxesProvider(process, executable, 123).options()).rejects.toMatchObject({
+      code: 'credential_unavailable', message: 'Sign in to Docker: run sbx login', retryable: true,
+      details: { nativeCause: { localCause: 'not_signed_in' } },
+    });
+    try {
+      await nativeModule.createDockerSandboxesProvider(process, executable, 123).options();
+    } catch (error) {
+      expect(isPluginError(error)).toBe(true);
+    }
   });
 
   it('does not confirm canceled private file delivery even if the native process exits zero', async () => {

@@ -6,7 +6,7 @@ import {
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
   MachineProvisionerPowerResultV1Schema, MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema,
   MachineProvisionerNativeCredentialApplyResultV1Schema,
-  observeMachineProvisionerNativeRead, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1,
+  observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { ACCOUNT_ID, connectedAccountPortableRuntime, connectedAccountRuntime } from './account.js';
 import { ACCOUNT_PURPOSE, nativeFetch, readAccountScope } from './machine/credentials.js';
@@ -79,7 +79,7 @@ export const PLUGIN = definePlugin({
       async run(_input, context) {
         try { const result = await (await runtime(context)).check();
           return MachineProvisionerCheckResultV1Schema.parse({ ...result, status: label(result.available ? 'checkStatus' : 'checkUnavailable') }); }
-        catch (error) { return MachineProvisionerCheckResultV1Schema.parse({ available: false, code: errorCode(error), status: label('checkUnavailable') }); }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => MachineProvisionerCheckResultV1Schema.parse({ available: false, code: errorCode(error), status: label('checkUnavailable') })); }
       } },
     options: { ...defaults, title: label('kind'), dangerLevel: 'safe', inputSchema: VercelOptionsSchema,
       resultSchema: MachineProvisionerOptionsResultV1Schema,
@@ -124,15 +124,13 @@ export const PLUGIN = definePlugin({
         if (!input.managedId) return { kind: 'rejected', code: 'invalid_request' };
         let scope;
         try { scope = await readAccountScope(context); }
-        catch { return RECONCILIATION.result.parse({ kind: 'rejected', code: 'credential_unavailable' }); }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => RECONCILIATION.result.parse({ kind: 'rejected', code: 'credential_unavailable' })); }
         try {
           return await createVercelNativeClient(scope, nativeFetch(context), context.signal, context.invokedAtMs).acquire(input.launch, input.managedId);
-        } catch {
-          // Once the native handler was entered an exception cannot establish
-          // absence. Retain the exact naming/correlation facts for recovery.
-          return RECONCILIATION.result.parse({ kind: 'pending', nativeOperationRef: reference({
+        } catch (error) {
+          return projectMachineProvisionerActionFailure(error, () => RECONCILIATION.result.parse({ kind: 'pending', nativeOperationRef: reference({
             kind: 'acquire', name: 'happier-' + input.managedId, managedId: input.managedId, ...scope,
-          }) });
+          }) }));
         }
       } },
     reconcile: { ...defaults, title: label('kind'), dangerLevel: 'safe', inputSchema: RECONCILIATION.input, resultSchema: RECONCILIATION.result,
@@ -143,9 +141,9 @@ export const PLUGIN = definePlugin({
           operation = 'nativeOperation' in input ? input.nativeOperation : { kind: 'acquire' as const,
             name: 'happier-' + input.correlation.managedId, managedId: input.correlation.managedId, ...scope };
           return await createVercelNativeClient(scope, nativeFetch(context), context.signal, context.invokedAtMs).recover(operation);
-        } catch {
-          return RECONCILIATION.result.parse(operation ? { kind: 'pending', nativeOperationRef: reference(operation) }
-            : { kind: 'unknown', recovery: { reference: 'retained-vercel-acquisition', reason: 'credential_unavailable' } });
+        } catch (error) {
+          return projectMachineProvisionerActionFailure(error, () => RECONCILIATION.result.parse(operation ? { kind: 'pending', nativeOperationRef: reference(operation) }
+            : { kind: 'unknown', recovery: { reference: 'retained-vercel-acquisition', reason: 'credential_unavailable' } }));
         }
       } },
     bootstrap: { ...defaults, title: label('kind'), confirmation, dangerLevel: 'writesRemote',
@@ -155,7 +153,7 @@ export const PLUGIN = definePlugin({
       resultSchema: MachineProvisionerObservationV1Schema,
       async run(input, context) {
         try { return await (await runtime(context)).inspect(input.resource); }
-        catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) }); }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) })); }
       } },
     'native-credential-apply': { ...nativeDefaults, title: label('kind'),
       confirmation: { title: label('nativeCredentialConfirmTitle'), body: label('nativeCredentialConfirmBody') }, dangerLevel: 'writesRemote',
@@ -165,22 +163,22 @@ export const PLUGIN = definePlugin({
         try {
           return await (await runtime(context)).applyNativeCredentials(input,
             request => context.services.machineProvisioners.materializeNativeCredentialHeaders(request));
-        } catch { return { kind: 'unknown', code: 'vercel_policy_unconfirmed' }; }
+        } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: 'vercel_policy_unconfirmed' })); }
       } },
     power: { ...defaults, title: label('confirmTitle'), confirmation, dangerLevel: 'writesRemote',
       inputSchema: ROLE_SCHEMAS.powerInput, resultSchema: MachineProvisionerPowerResultV1Schema,
       async run(input, context) { try { return await (await runtime(context)).power(input.resource, input.intent); }
-        catch (error) { return { kind: 'unknown', code: errorCode(error) }; } } },
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: errorCode(error) })); } } },
     destroy: { ...defaults, title: label('deleteTitle'), confirmation: { title: label('deleteTitle'), body: label('deleteBody') },
       dangerLevel: 'destructive', inputSchema: RECONCILIATION.destroyInput, resultSchema: RECONCILIATION.destroyResult,
       async run(input, context) {
         try { return await (await runtime(context)).destroy(input); }
-        catch (error) { return { kind: 'unknown', code: errorCode(error) }; }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: errorCode(error) })); }
       } },
     'observe-cleanup': { ...defaults, title: label('kind'), dangerLevel: 'safe',
       inputSchema: RECONCILIATION.cleanupInput, resultSchema: RECONCILIATION.cleanupResult,
       async run(input, context) { try { return await (await runtime(context)).cleanup(input.nativeOperation); }
-        catch (error) { return { kind: 'unknown', code: errorCode(error) }; } } },
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: errorCode(error) })); } } },
     exec: { ...defaults, title: label('kind'), confirmation, dangerLevel: 'writesRemote',
       inputSchema: ROLE_SCHEMAS.execInput, resultSchema: MachineProvisionerNativeExecResultV1Schema,
       async run(input, context) { return await (await runtime(context)).exec(input); } },

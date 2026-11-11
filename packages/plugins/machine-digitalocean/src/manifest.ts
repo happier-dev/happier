@@ -5,7 +5,7 @@ import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin
 import { observeMachineProvisionerNativeRead, buildMachineProvisionerPinnedSshBootstrap, defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
-  MachineProvisionerPowerResultV1Schema, MachineProvisionerSnapshotResultV1Schema, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerCloudHostKeyV1,
+  MachineProvisionerPowerResultV1Schema, MachineProvisionerSnapshotResultV1Schema, projectMachineProvisionerActionFailure, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerCloudHostKeyV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
 import { createDigitalOceanProvider } from './machine/provider.js';
@@ -130,7 +130,7 @@ export const PLUGIN = definePlugin({
     },
     check: { ...accountDefaults, title: 'Check DigitalOcean API access', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
-      async run(_input, context) { try { return machineCheckPresentation(await (await accountRuntime(context)).check()); } catch { return machineCheckPresentation({ available: false, code: 'provider_unavailable' }); } },
+      async run(_input, context) { try { return machineCheckPresentation(await (await accountRuntime(context)).check()); } catch (error) { return projectMachineProvisionerActionFailure(error, () => machineCheckPresentation({ available: false, code: 'provider_unavailable' })); } },
     },
     options: { ...accountDefaults, title: 'Discover DigitalOcean options', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerOptionsResultV1Schema,
@@ -151,7 +151,7 @@ export const PLUGIN = definePlugin({
         if (result.kind === 'unknown') return { ...pending(`happier-${input.managedId}`), ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
         return { kind: 'rejected' as const, code: 'provider_unavailable' as const,
           ...('nativeCause' in result && result.nativeCause ? { nativeCause: result.nativeCause } : {}) }; }
-        catch { return pending(`happier-${input.managedId}`); }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => pending(`happier-${input.managedId}`)); }
         finally { await guestHostLease?.dispose(); }
       },
     },
@@ -176,7 +176,7 @@ export const PLUGIN = definePlugin({
           ...(result.kind === 'present' ? { power: result.power, storage: 'retained' as const, billing } : {}),
           ...(result.kind === 'unavailable' ? { reason: result.reason === 'cleanup-unconfirmed' ? 'native_cleanup_incomplete' : result.reason,
             ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) } : {}) });
-        } catch { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: 'provider_unavailable' }); } },
+        } catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: 'provider_unavailable' })); } },
     },
     power: { ...accountDefaults, title: 'Change DigitalOcean power', dangerLevel: 'destructive',
       confirmation: { title: 'Change this DigitalOcean Droplet’s power?', body: 'This starts or stops the exact managed resource. Stopped Droplets remain billable.' },
@@ -190,7 +190,7 @@ export const PLUGIN = definePlugin({
           ...('nativeCause' in changed && changed.nativeCause ? { nativeCause: changed.nativeCause } : {}) };
         const observed = await native.observeAction(input.resource, changed.actionId);
         return observed.kind === 'completed' ? { kind: 'confirmed' as const } : { kind: 'unknown' as const, code: 'native_power_pending',
-          ...('nativeCause' in observed && observed.nativeCause ? { nativeCause: observed.nativeCause } : {}) }; } catch { return { kind: 'unknown' as const, code: 'provider_unavailable' }; }
+          ...('nativeCause' in observed && observed.nativeCause ? { nativeCause: observed.nativeCause } : {}) }; } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: 'provider_unavailable' })); }
       },
     },
     destroy: { ...accountDefaults, title: 'Delete exact DigitalOcean resource', dangerLevel: 'destructive',
@@ -208,7 +208,7 @@ export const PLUGIN = definePlugin({
           }
           return { kind: 'unknown' as const, code: 'reason' in result ? result.reason : 'native_cleanup_incomplete',
             ...('nativeCause' in result && result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
-        } catch { return { kind: 'unknown' as const, code: 'provider_unavailable' }; } },
+        } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: 'provider_unavailable' })); } },
     },
   },
 });

@@ -1,6 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { decodeBase64, encodeBase64, defineProtocolLiteral, defineProtocolNumber, defineProtocolUnion, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
-import { buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, DISK_GB, SIZES, reference, ROLE_SCHEMAS, RECONCILIATION, type Agent37Launch, type Agent37Resource, type Agent37Operation } from './schemas.js';
 import { KINDS } from './kinds.js';
 
@@ -75,7 +75,7 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
       if (!native.success || native.data.id !== resource.instanceId) throw invalid();
       return { observedAt, availability: 'present', power: native.data.status === 'running' ? 'running' : native.data.status === 'stopped' ? 'stopped' : 'unknown',
         storage: 'retained', billing: BILLING };
-    } catch (error) { signal.throwIfAborted(); return observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: safeCode(error) }); }
+    } catch (error) { signal.throwIfAborted(); return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: safeCode(error) })); }
   }
   async function power(resource: Agent37Resource, intent: string): Promise<MachineProvisionerPowerResultV1> {
     if (intent !== 'start' && intent !== 'stop') return { kind: 'refused', code: 'agent37_intent_unsupported' };
@@ -119,7 +119,7 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
         const value = await json(await http('/v1/instances'));
         if (!value || typeof value !== 'object' || !('data' in value) || !Array.isArray(value.data)) throw invalid();
         return { available: true };
-      } catch (error) { signal.throwIfAborted(); return { available: false, code: safeCode(error), status: 'Agent37 unavailable' }; }
+      } catch (error) { signal.throwIfAborted(); return projectMachineProvisionerActionFailure(error, () => ({ available: false, code: safeCode(error), status: 'Agent37 unavailable' })); }
     },
     async acquire(launch: Agent37Launch, managedId: string): Promise<Acquisition> {
       const operation: Agent37Operation = { kind: 'acquire', managedId, launch };
@@ -133,7 +133,7 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
         const native = identity.safeParse(await json(response));
         return native.success ? { kind: 'bound', resource: reference({ instanceId: native.data.id, managedId, ...launch }),
           ...(native.data.status === 'running' ? {} : { startPending: true as const }) } : unknown(operation);
-      } catch (error) { return safeCode(error) === 'credential_unavailable' ? { kind: 'rejected', code: 'credential_unavailable' } : unknown(operation); }
+      } catch (error) { return projectMachineProvisionerActionFailure(error, () => safeCode(error) === 'credential_unavailable' ? { kind: 'rejected', code: 'credential_unavailable' } : unknown(operation)); }
     },
     recover, inspect, power, destroy, exec,
     async bootstrap(resource: Agent37Resource): Promise<MachineProvisionerBootstrapCarrierV1> {
@@ -145,7 +145,7 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
     },
     async putFile(input: ReturnType<typeof ROLE_SCHEMAS.putFileInput.parse>): Promise<MachineProvisionerPowerResultV1> {
       try { await upload(input.resource, input.guestPath, decodeBase64(input.bytesBase64), input.mode ?? 0o600); return { kind: 'confirmed' }; }
-      catch (error) { signal.throwIfAborted(); return { kind: 'unknown', code: safeCode(error) }; }
+      catch (error) { signal.throwIfAborted(); return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: safeCode(error) })); }
     },
   };
 }
