@@ -1,7 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createSecureTempDirectorySync, writeSecureTempTextFileSync } from '@happier-dev/plugin-sdk/fs';
 import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { AgentSessionOpenRequest, AgentSessionConnectedAccountSelection } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import { OPENAI_CONNECTED_ACCOUNT_SERVICE, OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
 import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_SELECTED_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
 import { GROK_CONNECTED_ACCOUNT_SERVICE, XAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-grok/connected-account-service';
@@ -72,21 +72,15 @@ export function createCodeBuddySubscriptionLaunch(configuration: ReturnType<type
 }
 
 export async function prepareCodeBuddyConnectedAccount(
-  request: Readonly<{ modelId?: string | null; providerBinding?: AgentSessionOpenRequest['providerBinding']; connectedAccounts?: readonly AgentSessionConnectedAccountSelection[] }>,
+  request: Readonly<{ modelId?: string | null; providerBinding?: AgentSessionOpenRequest['providerBinding'] }>,
   context: Readonly<{ services: { connectedAccounts: Pick<ConnectedAccountsService, 'getBinding' | 'materialize'> }; signal?: AbortSignal }>,
 ): Promise<ReturnType<typeof createCodeBuddySubscriptionLaunch> | null> {
   const accounts = context.services.connectedAccounts;
-  const admittedBinding = (purpose: string) => {
-    const admitted = request.connectedAccounts?.find(selection => selection.purpose === purpose);
-    return admitted ? { purpose: admitted.purpose, service: admitted.account.service, account: admitted.account } : undefined;
-  };
-  const binding = admittedBinding(CODEBUDDY_CODEX_PURPOSE)
-    ?? await accounts.getBinding(CODEBUDDY_CODEX_PURPOSE, { signal: context.signal });
+  const binding = await accounts.getBinding(CODEBUDDY_CODEX_PURPOSE, { signal: context.signal });
   if (binding) refuse('codebuddy_chatgpt_account_unsupported', 'CodeBuddy requires a CodeBuddy login or provider API key; a ChatGPT account is not supported.');
   const selectedKeys = [];
   for (const row of CODEBUDDY_KEY_ACCOUNTS) {
-    const selected = admittedBinding(row.purpose)
-      ?? await accounts.getBinding(row.purpose, { signal: context.signal });
+    const selected = await accounts.getBinding(row.purpose, { signal: context.signal });
     if (selected) selectedKeys.push({ row, binding: selected });
   }
   if (!binding && selectedKeys.length === 0) return null;

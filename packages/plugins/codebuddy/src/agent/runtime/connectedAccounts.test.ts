@@ -11,12 +11,12 @@ describe('CodeBuddy connected-account declaration', () => {
     const selected = { service: CODEBUDDY_KEY_ACCOUNTS[0]!.service, accountId: 'session-selected' };
     const expectedAccounts: string[] = [];
     const getBinding = vi.fn(async (purpose: string) => purpose === 'openai-api-key'
-      ? { purpose, service: selected.service, account: { service: selected.service, accountId: 'durable-default' }, target: { kind: 'account' as const, displayName: 'Default' } } : null);
+      ? { purpose, service: selected.service, account: selected, target: { kind: 'account' as const, displayName: 'Default' } } : null);
     const materialize = vi.fn(async (_purpose: string, _request: unknown, options?: { expectedAccount?: { accountId: string } }) => {
       expectedAccounts.push(options?.expectedAccount?.accountId ?? 'missing');
       return { kind: 'environment' as const, env: { [OPENAI_SELECTED_API_KEY_ENV]: 'selected-key' } };
     });
-    const prepared = await prepareCodeBuddyConnectedAccount({ modelId: 'gpt-5.6-sol', connectedAccounts: [{ purpose: 'openai-api-key', account: selected }] }, {
+    const prepared = await prepareCodeBuddyConnectedAccount({ modelId: 'gpt-5.6-sol' }, {
       services: { connectedAccounts: { getBinding, materialize } },
     });
     try { expect(expectedAccounts).toEqual(['session-selected']); } finally { prepared?.dispose(); }

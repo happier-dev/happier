@@ -12,9 +12,9 @@ function withDispose<T extends object>(runtime: T, dispose: unknown): T {
     dispose: { value: dispose, enumerable: true } }) as T;
 }
 
-async function prepare(request: Pick<AgentSessionOpenRequest, 'configuration' | 'providerBinding' | 'connectedAccounts'>, context: AgentRuntimeContext) {
+async function prepare(request: Pick<AgentSessionOpenRequest, 'configuration' | 'providerBinding'>, context: AgentRuntimeContext) {
   const account = await prepareQwenConnectedAccount({ modelId: request.configuration?.model.value,
-    ...(request.providerBinding ? { providerBinding: request.providerBinding } : {}), connectedAccounts: request.connectedAccounts }, context);
+    ...(request.providerBinding ? { providerBinding: request.providerBinding } : {}) }, context);
   const providerBinding = request.providerBinding;
   const providerEnv = providerBinding
     ? (() => {
