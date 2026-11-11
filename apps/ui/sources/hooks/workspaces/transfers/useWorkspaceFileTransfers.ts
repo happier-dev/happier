@@ -24,7 +24,10 @@ import { isTransferFinalizeRecoveryFailure } from '@/sync/domains/transfers/runt
 import type { WorkspaceFileUploadFinalizeResponse } from '@/sync/domains/transfers/runtime/transferRuntime/families/workspaceFileTransfers';
 import { desktopHostKind, invokeDesktopHost } from '@/utils/platform/desktopHost';
 import { openInDefaultApp } from '@/sync/runtime/files/openInDefaultApp';
-import { saveFileBytes } from '@/sync/runtime/files/saveFileBytes';
+import { canOpenFileInDefaultApp, opensInBrowserTab, saveFileBytes } from '@/sync/runtime/files/saveFileBytes';
+import { openWebFileInTab } from '@/sync/runtime/files/openWebFileInTab';
+import { Modal } from '@/modal';
+import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { resolveWorkspaceFileDownloadSource, type WorkspaceFileCachedContent } from './workspaceFileDownloadSource';
 export type { WorkspaceFileCachedContent } from './workspaceFileDownloadSource';
 
@@ -332,6 +335,15 @@ async function planUploadEntries(input: UploadEntryPlanInput): Promise<UploadEnt
 
 type NativeDownloadSink = NativeCacheFileSink;
 
+function offerBlockedWebFileTab(open: () => boolean): void {
+    Modal.alert(t('files.viewer.openInNewTabReady'), undefined, [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('files.viewer.openInNewTab'), onPress: () => {
+            if (!open()) Modal.alert(t('common.error'), t('files.viewer.openInNewTabBlocked'));
+        } },
+    ]);
+}
+
 export function useWorkspaceFileTransfers(params: Readonly<{
     workspaceScope: WorkspaceScopeBase | null;
     maxConcurrentUploads?: number;
@@ -612,6 +624,9 @@ export function useWorkspaceFileTransfers(params: Readonly<{
         const controller = new AbortController();
         const desktopOpening = Platform.OS === 'web' && desktopHostKind() === 'tauri' && input.action === 'open';
         const useWebSink = Platform.OS === 'web' && !desktopOpening;
+        // A browser tab shows the bytes with Happier's origin, so the open owner admits the kind first.
+        const tabMimeType = resolveFileViewerKind({ path: input.path }).mimeType;
+        const opensTab = useWebSink && input.action === 'open' && opensInBrowserTab() && canOpenFileInDefaultApp(tabMimeType);
         const operation = { controller, cancelable: true };
         downloadOperationRef.current = operation;
         const isCurrentDownload = (): boolean => (
@@ -800,8 +815,14 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                         await cleanupWebSinkOnce();
                         return { ok: false, error: 'Download canceled', canceled: true };
                     }
-                    webSinkCleanupScheduled = true;
-                    downloadWebFile(file, res.name || 'download', cleanupWebSinkOnce);
+                    if (opensTab) {
+                        const shown = await openWebFileInTab(file, tabMimeType);
+                        // The press expired while the bytes arrived: offer the tab from a new press.
+                        if (!shown.opened) offerBlockedWebFileTab(shown.open);
+                    } else {
+                        webSinkCleanupScheduled = true;
+                        downloadWebFile(file, res.name || 'download', cleanupWebSinkOnce);
+                    }
                 } else if (nativeSinkRef.current) {
                     const action = input.action ?? 'save';
                     if (desktopOpening) {

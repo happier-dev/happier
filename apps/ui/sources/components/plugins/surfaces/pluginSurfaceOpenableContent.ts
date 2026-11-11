@@ -20,7 +20,7 @@ import type {
 
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { randomUUID } from '@/platform/randomUUID';
-import { isBinaryContent, resolveFileViewerKind } from '@/scm/utils/filePresentation';
+import { isBinaryContent, isTextReadableFileViewerKind, resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import {
     workspaceReadFile,
     workspaceStatFile,
@@ -130,7 +130,7 @@ export function deriveWorkspaceFileOpenableContentKind(filePath: string, head?: 
     if (viewer.kind === 'image' || viewer.kind === 'svg') {
         return { contentClass: 'image', mimeType: viewer.mimeType, ...withExtension };
     }
-    if (viewer.kind !== 'code' && viewer.kind !== 'markdown') {
+    if (!isTextReadableFileViewerKind(viewer.kind)) {
         return { contentClass: 'binary', mimeType: viewer.mimeType, ...withExtension };
     }
     return { contentClass: 'text', mimeType: viewer.mimeType, ...withExtension };

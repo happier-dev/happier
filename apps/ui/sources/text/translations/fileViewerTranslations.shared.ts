@@ -74,6 +74,9 @@ export type FileViewerTranslations = Readonly<{
     audioCantPlayTitle: string;
     mediaCantPlayBody: string;
     openInDefaultApp: string;
+    openInNewTab: string;
+    openInNewTabBlocked: string;
+    openInNewTabReady: string;
     play: string;
     pause: string;
     playbackPosition: string;
@@ -92,6 +95,7 @@ export type FileViewerTranslations = Readonly<{
     Record<
       | 'code'
       | 'markdown'
+      | 'html'
       | 'image'
       | 'svg'
       | 'pdf'
@@ -218,6 +222,9 @@ export const fileViewerTranslationsEnglish = {
       mediaCantPlayBody:
         "This device doesn't support how it is encoded. Download it or open it in your default app.",
       openInDefaultApp: 'Open in default app',
+      openInNewTab: 'Open in new tab',
+      openInNewTabBlocked: 'Your browser blocked the new tab. Allow pop-ups for Happier and try again.',
+      openInNewTabReady: 'The file is ready to open',
       play: 'Play',
       pause: 'Pause',
       playbackPosition: 'Playback position',
@@ -238,6 +245,7 @@ export const fileViewerTranslationsEnglish = {
     kind: {
       code: 'Text file',
       markdown: 'Markdown',
+      html: 'HTML page',
       image: 'Image',
       svg: 'SVG image',
       pdf: 'PDF document',

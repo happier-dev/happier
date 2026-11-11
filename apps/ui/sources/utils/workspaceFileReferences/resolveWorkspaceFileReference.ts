@@ -8,7 +8,7 @@ import {
 } from '@/utils/path/resolvePathRelativeToRoot';
 import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { MarkdownImageSource } from '@happier-dev/plugin-ui/components';
-import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
+import { hasRenderedTextPreview, resolveFileViewerKind } from '@/scm/utils/filePresentation';
 
 export type WorkspaceFileReferenceAnchor = Extract<ReviewCommentAnchor, { kind: 'line' | 'range' }>;
 
@@ -276,7 +276,7 @@ export function resolveWorkspaceMarkdownLink(input: WorkspaceMarkdownReferenceIn
     const resolved = resolveMarkdownLocalReference(input);
     if (!resolved) return { kind: 'blocked' };
     return {
-        kind: resolveFileViewerKind({ path: resolved.filePath }).kind === 'markdown' ? 'markdown' : 'file',
+        kind: hasRenderedTextPreview(resolveFileViewerKind({ path: resolved.filePath }).kind) ? 'markdown' : 'file',
         path: resolved.filePath,
         ...(resolved.line ? { line: resolved.line } : {}),
         ...(resolved.column ? { column: resolved.column } : {}),

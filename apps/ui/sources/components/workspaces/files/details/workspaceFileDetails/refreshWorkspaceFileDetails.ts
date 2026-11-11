@@ -2,7 +2,7 @@ import { t } from '@/text';
 import { config } from '@/config';
 import { callDaemonWorkspaceStatFileRpc } from '@/sync/domains/transfers/runtime/transferRuntime';
 import { workspaceReadFile } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
-import { isBinaryContent, resolveFileViewerKind } from '@/scm/utils/filePresentation';
+import { isBinaryContent, isTextReadableFileViewerKind, resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { decodeBase64 } from '@/encryption/base64';
 import type { ScmDiffArea } from '@happier-dev/protocol/scm/workingSnapshot';
 import type { FileDiffMode } from '@/components/workspaces/files/file/filePageModel';
@@ -77,7 +77,7 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
     signal?: AbortSignal;
 }>): Promise<WorkspaceFileDetailsRefreshResult> {
     const viewer = resolveFileViewerKind({ path: input.filePath, isBinaryContent: input.isBinaryContent });
-    const textReadable = input.readAsText === true || viewer.kind === 'code' || viewer.kind === 'markdown' || viewer.kind === 'svg';
+    const textReadable = input.readAsText === true || isTextReadableFileViewerKind(viewer.kind);
     const includeDiff = input.readAsText !== true && input.includeDiff !== false && textReadable && !input.previewSlice && !input.reuseFile?.fileContent.partial;
     // A saved file can be refreshed before the next SCM snapshot advances.
     if (input.forceRefresh && !includeDiff) {

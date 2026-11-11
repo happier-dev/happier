@@ -32,6 +32,7 @@ import {
   type PdfViewerFailure,
   type PdfViewerProps,
 } from './PdfViewerStates';
+import { fileOpenActionLabel } from '@/sync/runtime/files/saveFileBytes';
 
 /**
  * Raw bytes per injected slice: base64 grows 4/3, so one slice fills one injected WebView message
@@ -229,7 +230,7 @@ function PdfViewerDocument(props: PdfViewerProps & Readonly<{
           title={props.title}
           onLoadAgain={props.onRetry}
           {...(props.onOpenInDefaultApp
-            ? { handoff: { label: t('files.viewer.openInDefaultApp'), onPress: props.onOpenInDefaultApp } }
+            ? { handoff: { label: fileOpenActionLabel(), onPress: props.onOpenInDefaultApp } }
             : {})}
         />
       ) : failed ? (

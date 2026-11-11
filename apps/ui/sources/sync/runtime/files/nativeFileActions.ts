@@ -25,3 +25,17 @@ export async function performAndroidFileAction(input: Readonly<{
     else await native.shareFile(input.fileUri, input.name);
     return { canceled: false };
 }
+
+type IosFileActionsModule = {
+    previewFile: (uri: string) => Promise<{ status: 'dismissed' | 'unsupported' }>;
+};
+
+/**
+ * Quick Look for a local file; settles when the person dismisses it. `unavailable` is an installed
+ * app built before this module (JS updates reach it first), so the caller keeps the share sheet.
+ */
+export async function previewIosFile(fileUri: string): Promise<'dismissed' | 'unsupported' | 'unavailable'> {
+    const native = requireOptionalNativeModule<IosFileActionsModule>('HappierFileActions');
+    if (!native) return 'unavailable';
+    return (await native.previewFile(fileUri)).status;
+}

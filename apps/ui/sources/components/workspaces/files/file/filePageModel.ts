@@ -2,6 +2,7 @@ import type { TranscriptAccountActor } from '@happier-dev/session-core/messages'
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveVisibleAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
 import type { WorkspaceFileEditorHeaderModel } from '@/components/workspaces/files/details/workspaceFileDetails/workspaceFileEditorHeaderModel';
+import { hasRenderedTextPreview } from '@/scm/utils/filePresentation';
 
 /** The page body's internal view enum; the segment labels (`FilePageMode`) are a view over it. */
 export type FileDisplayMode = 'file' | 'diff' | 'markdown';
@@ -43,7 +44,7 @@ export function resolveFilePageHeaderModel(input: Readonly<{
     partial?: boolean;
     editorAvailable?: boolean;
 }>) {
-    const preview = input.kind === 'markdown' || input.kind === 'svg';
+    const preview = hasRenderedTextPreview(input.kind);
     const modes: FilePageModeOption[] = input.pluginViewerSelected ? []
         : input.deleted ? [{ id: 'changes', displayMode: 'diff' }]
         : preview ? [{ id: 'preview', displayMode: 'markdown' }, { id: 'source', displayMode: 'file' }]

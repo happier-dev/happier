@@ -5,7 +5,7 @@
  */
 import { isHappierAlphaCapableImageMimeType } from '@happier-dev/plugin-ui/presentation';
 
-export type FileViewerKind = 'code' | 'markdown' | 'image' | 'svg' | 'pdf' | 'video' | 'audio' | 'binary';
+export type FileViewerKind = 'code' | 'markdown' | 'html' | 'image' | 'svg' | 'pdf' | 'video' | 'audio' | 'binary';
 export type FileViewerClass = Readonly<{
     kind: FileViewerKind;
     mimeType: string;
@@ -25,6 +25,7 @@ const FILE_KINDS: readonly FileKindRow[] = [
     { extensions: ['avif'], mimeType: 'image/avif', kind: 'image', labelKey: 'files.kind.avif' },
     { extensions: ['svg'], mimeType: 'image/svg+xml', kind: 'svg' },
     { extensions: ['md', 'markdown', 'mdx'], mimeType: 'text/markdown', kind: 'markdown' },
+    { extensions: ['html', 'htm'], mimeType: 'text/html', kind: 'html' },
     { extensions: ['pdf'], mimeType: 'application/pdf', kind: 'pdf' },
     { extensions: ['mp4'], mimeType: 'video/mp4', kind: 'video', labelKey: 'files.kind.mp4' },
     { extensions: ['m4v'], mimeType: 'video/x-m4v', kind: 'video', labelKey: 'files.kind.mp4' },
@@ -115,7 +116,7 @@ export function resolveFileViewerKind(input: Readonly<{
         row = undefined;
     }
     // Git's binary numstat means no text diff; it does not disqualify a media viewer.
-    if (input.isBinaryContent === true && (kind === 'code' || kind === 'markdown')) {
+    if (input.isBinaryContent === true && (kind === 'code' || kind === 'markdown' || kind === 'html')) {
         kind = 'binary';
         mimeType = 'application/octet-stream';
         row = undefined;
@@ -127,6 +128,16 @@ export function resolveFileViewerKind(input: Readonly<{
         alphaCapable: (kind === 'image' || kind === 'svg') && isHappierAlphaCapableImageMimeType(row?.mimeType),
         labelKey: row?.labelKey ?? `files.kind.${kind}`,
     };
+}
+
+/** Kinds whose page opens on a rendered Preview of the held text, with Source one tap away. */
+export function hasRenderedTextPreview(kind: FileViewerKind | (string & {})): boolean {
+    return kind === 'markdown' || kind === 'svg' || kind === 'html';
+}
+
+/** Kinds the page reads as text (Source, Changes, find), including those with a rendered Preview. */
+export function isTextReadableFileViewerKind(kind: FileViewerKind): boolean {
+    return kind === 'code' || hasRenderedTextPreview(kind);
 }
 
 export function isBinaryContent(content: string): boolean {

@@ -139,8 +139,9 @@ export const FILE_MENU_ITEMS: readonly FileMenuItem[] = [
     item({ id: 'shareFile', group: 'share', titleKey: 'common.share', callback: c => c.shareFile,
         visible: c => c.platform === 'android', requiresContent: true }),
     item({ id: 'rename', group: 'share', titleKey: 'files.repositoryTree.actions.renameEllipsis', callback: c => c.rename, surfaces: ['treeRow'], requiresMachine: true }),
+    // Offered when the open owner (`canOpenFileInDefaultApp`) supplied a callback; on web that is a PDF tab.
     item({ id: 'openInDefaultApp', group: 'share', titleKey: 'files.pane.menu.openInDefaultApp', callback: c => c.openInDefaultApp,
-        visible: c => c.platform !== 'web', requiresMachine: true }),
+        requiresMachine: true }),
     item({ id: 'discardEdits', group: 'change', titleKey: 'files.pane.page.discardEdits', callback: c => c.discardEdits, surfaces: pageSurfaces }),
     item({ id: 'restoreBeforeTurn', group: 'change', titleKey: 'files.pane.menu.restoreBeforeTurnFallback', callback: c => c.changes?.restoreBeforeTurn, requiresMachine: true }),
     item({ id: 'discard', group: 'change', titleKey: 'files.pane.menu.discardAllChanges', callback: c => c.changes?.discardAll, requiresMachine: true, destructive: true }),
@@ -150,7 +151,8 @@ export function resolveFileMenuItems(context: FileMenuContext, surface: FileMenu
     return FILE_MENU_ITEMS.filter(item => item.surfaces.includes(surface)).flatMap(item => {
         const state = item.state(context);
         return state === 'hidden' ? [] : [{ ...item,
-            titleKey: item.id === 'blame' && context.blame ? 'files.pane.menu.hideBlame' as const : item.titleKey,
+            titleKey: item.id === 'blame' && context.blame ? 'files.pane.menu.hideBlame' as const
+                : item.id === 'openInDefaultApp' && context.platform === 'web' ? 'files.viewer.openInNewTab' as const : item.titleKey,
             ...(item.id === 'restoreBeforeTurn' && context.changes?.restoreBeforeTurnTitle ? { title: context.changes.restoreBeforeTurnTitle } : {}),
             state, run: (intent?: FileMenuIntent) => item.run(context, intent) }];
     });

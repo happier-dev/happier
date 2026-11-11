@@ -23,6 +23,7 @@ import { useFileAudioPlayer } from './useFileAudioPlayer';
 import { useMediaPlaybackLifecycle } from './useMediaPlaybackLifecycle';
 import { HeldVideoPlayer, type HeldVideoPlayerSlot } from './HeldVideoPlayer';
 import type { MediaPlayerVideoControls } from './videoFrameAccess';
+import { fileOpenActionLabel } from '@/sync/runtime/files/saveFileBytes';
 
 /** Audio scrub step for the arrow keys (lab files FV6a: ←/→ seek 5 s). */
 const AUDIO_SEEK_STEP_SECONDS = 5;
@@ -75,7 +76,7 @@ function CantPlayState(
       {...(props.onOpenInDefaultApp
         ? {
             secondaryAction: {
-              label: t('files.viewer.openInDefaultApp'),
+              label: fileOpenActionLabel(),
               onPress: props.onOpenInDefaultApp,
             },
           }

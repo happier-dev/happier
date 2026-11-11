@@ -65,6 +65,15 @@ export async function shareNativeCacheFile(input: Readonly<{
             // Android chooser completion does not prove the recipient finished reading.
             return { status: 'shared', retainCacheFile: action !== 'save', completion: action === 'save' ? 'confirmed' : 'unobservable' };
         }
+        if (Platform.OS === 'ios' && input.action === 'open') {
+            // Quick Look renders HTML, PDF and Office files; its share button reaches other apps.
+            const { previewIosFile } = await import('./nativeFileActions');
+            if (!isCurrent()) return { status: 'canceled' };
+            input.onHandoff?.();
+            if (await previewIosFile(input.fileUri) === 'dismissed') {
+                return { status: 'shared', retainCacheFile: false, completion: 'confirmed' };
+            }
+        }
         const sharing = await import('expo-sharing');
         if (!isCurrent()) return { status: 'canceled' };
         const available = await sharing.isAvailableAsync();

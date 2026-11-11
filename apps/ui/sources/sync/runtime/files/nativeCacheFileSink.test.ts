@@ -18,6 +18,34 @@ describe('createNativeCacheFileSink', () => {
             .toEqual({ status: 'canceled' });
     });
 
+    it('opens an iOS file in Quick Look and keeps it until dismissal, else falls back to the share sheet', async () => {
+        const share = vi.fn(async () => ({ action: 'sharedAction' }));
+        vi.doMock('react-native', async () => ({
+            ...(await (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock({ platformOS: 'ios' })),
+            Share: { share, sharedAction: 'sharedAction', dismissedAction: 'dismissedAction' },
+        }));
+        vi.doMock('expo-sharing', () => ({ isAvailableAsync: async () => true, shareAsync: async () => {} }));
+        let native: { previewFile: (uri: string) => Promise<{ status: string }> } | null = {
+            previewFile: vi.fn(async (uri: string) => ({ status: uri.endsWith('.bin') ? 'unsupported' : 'dismissed' })),
+        };
+        vi.doMock('expo-modules-core', () => ({ requireOptionalNativeModule: () => native }));
+        const { shareNativeCacheFile } = await import('./nativeCacheFileSink');
+        const report = { fileUri: 'file:///cache/report.html', name: 'report.html', mimeType: 'text/html', action: 'open' as const };
+        await expect(shareNativeCacheFile(report)).resolves.toEqual({ status: 'shared', retainCacheFile: false, completion: 'confirmed' });
+        expect(native!.previewFile).toHaveBeenCalledWith(report.fileUri);
+        expect(share).not.toHaveBeenCalled();
+        // A kind Quick Look can't render, or an installed app built before the module, still reaches other apps.
+        await shareNativeCacheFile({ ...report, fileUri: 'file:///cache/blob.bin', name: 'blob.bin' });
+        expect(share).toHaveBeenLastCalledWith({ url: 'file:///cache/blob.bin' });
+        native = null;
+        await shareNativeCacheFile(report);
+        expect(share).toHaveBeenLastCalledWith({ url: report.fileUri });
+        // Share keeps its own sheet.
+        native = { previewFile: vi.fn() };
+        await shareNativeCacheFile({ ...report, action: 'share' });
+        expect(native.previewFile).not.toHaveBeenCalled();
+    });
+
     it('offers a local PDF to the iOS share sheet and reports unavailable sharing', async () => {
         const share = vi.fn(async () => ({ action: 'sharedAction' }));
         vi.doMock('react-native', async () => ({

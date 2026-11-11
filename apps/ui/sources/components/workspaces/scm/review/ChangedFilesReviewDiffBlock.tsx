@@ -25,7 +25,7 @@ import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff
 import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedMaxHeight';
 import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
 
-import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
+import { isTextReadableFileViewerKind, resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { useFilePreviewSource, type UseFilePreviewSourceInput } from '@/components/ui/media/useFilePreviewSource';
 import { ImageCompare } from './imageCompare/ImageCompare';
 import { ReviewPdfChange } from './PdfChange';
@@ -270,7 +270,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
     const noteColumnStyle = columnNotes ? { paddingRight: columnNotes.columnWidth, minHeight: notesColumn.minHeight } : null;
     const hasDiff = diffLoaded && Boolean(state.diff);
     const fileViewer = resolveFileViewerKind({ path: filePath, isBinaryContent: props.isBinaryContent });
-    const fileIsBinary = fileViewer.kind !== 'code' && fileViewer.kind !== 'markdown' && fileViewer.kind !== 'svg';
+    const fileIsBinary = !isTextReadableFileViewerKind(fileViewer.kind);
     const fileIsImage = fileViewer.kind === 'image' || fileViewer.kind === 'svg';
 
     const imagePreviewInput: UseFilePreviewSourceInput = {

@@ -61,6 +61,8 @@ describe('resolveFileViewerKind', () => {
             ['logo.png', 'image', 'image/png', true],
             ['icon.svg', 'svg', 'image/svg+xml', true],
             ['README.md', 'markdown', 'text/markdown', false],
+            ['report.html', 'html', 'text/html', false],
+            ['legacy.HTM', 'html', 'text/html', false],
             ['app.ts', 'code', 'text/plain', false],
             ['spec.pdf', 'pdf', 'application/pdf', true],
             ['clip.m4v', 'video', 'video/x-m4v', true],
@@ -76,6 +78,7 @@ describe('resolveFileViewerKind', () => {
         expect(resolveFileViewerKind({ path: 'photo.jpg', mimeType: ' application/pdf; charset=binary ' }).kind).toBe('pdf');
         expect(resolveFileViewerKind({ path: 'icon.SVG', mimeType: 'application/octet-stream' }).kind).toBe('svg');
         expect(resolveFileViewerKind({ path: 'icon.svg', isBinaryContent: true }).kind).toBe('svg');
+        expect(resolveFileViewerKind({ path: 'report.html', isBinaryContent: true }).kind).toBe('binary');
         expect(resolveFileViewerKind({ path: 'unknown.asset', isBinaryContent: true })).toMatchObject({ kind: 'binary', mimeType: 'application/octet-stream' });
         expect(resolveFileViewerKind({ path: 'photo', mimeType: 'image/heic' })).toMatchObject({ kind: 'image', mimeType: 'image/heic', previewable: true });
         expect(resolveFileViewerKind({ path: 'recording', mimeType: 'audio/opus' })).toMatchObject({ kind: 'audio', mimeType: 'audio/opus', previewable: true });

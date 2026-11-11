@@ -84,6 +84,7 @@ describe('plugin surface openable content', () => {
         ['media/clip.mp4', 'binary', 'video/mp4'],
         ['assets/logo.svg', 'image', 'image/svg+xml'],
         ['notes/README.md', 'text', 'text/markdown'],
+        ['reports/index.html', 'text', 'text/html'],
         ['src/app.ts', 'text', 'text/plain'],
     ])('exposes canonical viewer metadata for %s', async (filePath, contentClass, mimeType) => {
         const binding = createWorkspaceFileOpenableContentBinding({ target: TARGET, filePath });

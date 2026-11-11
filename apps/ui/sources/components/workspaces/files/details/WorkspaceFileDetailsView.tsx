@@ -71,7 +71,7 @@ import { getPreferredLanguage, t } from '@/text';
 
 import { buildFileLineSelectionFingerprint, canStartLineSelection, canUseLineSelection } from '@/scm/scmLineSelection';
 import { getFileLanguageFromPath } from '@/utils/code/fileLanguage';
-import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
+import { hasRenderedTextPreview, resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { allowsLiveStaging, isAtomicCommitStrategy } from '@/scm/settings/commitStrategy';
 import { useFileDetailsDiffMode } from '@/scm/diff/useFileDetailsDiffMode';
 import { buildScmFileDiffSnapshotSignature } from '@/scm/diffCache/scmDiffCacheKey';
@@ -723,7 +723,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
 
     const [displayMode, setDisplayMode] = React.useState<FileDisplayMode>(() => (
         fileView.mode === 'edit' || (fileView.mode === undefined && persistedDraft?.isEditingFile) ? 'file' : fileView.mode ?? (deepLinkAnchor?.source === 'file' ? 'file'
-            : fileEntry ? 'diff' : resolveFileViewerKind({ path: filePath }).kind === 'markdown' ? 'markdown' : 'file')
+            : fileEntry ? 'diff' : hasRenderedTextPreview(resolveFileViewerKind({ path: filePath }).kind) ? 'markdown' : 'file')
     ));
     const requestedDisplayMode = fileView.mode ?? null;
     const selectBuiltinViewer = React.useCallback((viewer: 'default' | 'text') => {
@@ -877,8 +877,8 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     // Binary bytes under a text-looking name (`firmware.bin`) are a binary file, not a "Text file" (FV2b).
     const fileViewer = resolveFileViewerKind({ path: filePath, mimeType: fileContent?.binaryMime,
         isBinaryContent: fileEntry?.stats.isBinary === true || fileContent?.isBinary === true });
-    // Markdown and SVG open in Preview (P3 §5 modes; PROGRAM D-F1: an SVG renders as an image), Source one tap away.
-    const previewKind = fileViewer.kind === 'markdown' || fileViewer.kind === 'svg';
+    // Markdown, SVG and HTML open in Preview (P3 §5 modes; PROGRAM D-F1: an SVG renders as an image), Source one tap away.
+    const previewKind = hasRenderedTextPreview(fileViewer.kind);
     const previewAvailable = fileContent?.isBinary !== true && previewKind && typeof fileContent?.content === 'string';
     const hasRenderableDiff = React.useMemo(
         () => resolveFileDetailsRenderableDiff({ diffContent }),
@@ -1556,7 +1556,8 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     const [mediaInfo, setMediaInfo] = React.useState<Readonly<{ path: string; info: FilePageMediaInfo }> | null>(null);
     const onMediaInfo = React.useCallback((info: FilePageMediaInfo) => setMediaInfo({ path: filePath, info }), [filePath]);
     // The non-code body (image, SVG preview, PDF, media, binary identity) and its "View full screen" control.
-    const showsViewerBody = (displayMode === 'file' && isBinaryFile) || (displayMode === 'markdown' && fileViewer.kind === 'svg' && heldText !== null);
+    const showsViewerBody = (displayMode === 'file' && isBinaryFile)
+        || (displayMode === 'markdown' && (fileViewer.kind === 'svg' || fileViewer.kind === 'html') && heldText !== null);
     const viewerStageRef = React.useRef<FileViewerStageHandle | null>(null);
     const stageViewable = showsViewerBody && (fileViewer.kind === 'image' || fileViewer.kind === 'svg' || fileViewer.kind === 'pdf' || fileViewer.kind === 'video');
     const pageExpand = React.useMemo(() => stageViewable ? { onOpen: () => viewerStageRef.current?.open() } : null, [stageViewable]);
@@ -1634,7 +1635,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
         </>
     ), [freshnessShown, errorShown, staleSince, checkoutReachability, unavailableReason, error, onRefresh,
         codeIntelligence.notice, editorHeader, isEditorSelected, editorState.comparison, editorAttribution.agentName, openEditorApproval]);
-    const textKind = fileViewer.kind === 'markdown' || fileViewer.kind === 'code';
+    const textKind = fileViewer.kind === 'markdown' || fileViewer.kind === 'code' || fileViewer.kind === 'html';
     const bodyLoading = !showingCapturedChanges && !isEditingFile && !tooLarge && (
         (displayMode === 'diff' && !diffContent && (isDiffLoading || isLoading))
         || (displayMode !== 'diff' && !fileContent && !error && !previewTooLarge)
@@ -1908,7 +1909,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
                         viewer={fileViewer}
                         title={filePath.split(/[\\/]/).at(-1) || filePath}
                         source={viewerPreviewInput}
-                        svgText={fileViewer.kind === 'svg' ? heldText : null}
+                        heldText={fileViewer.kind === 'svg' || fileViewer.kind === 'html' ? heldText : null}
                         sizeBytes={fileContent?.binarySizeBytes ?? null}
                         isActive={isActive}
                         findSurfaceId={findSurfaceId}

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { saveFileUri } from './saveFileBytes';
+import { canOpenFileInDefaultApp, saveFileUri } from './saveFileBytes';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 afterEach(() => vi.unstubAllGlobals());
@@ -22,5 +22,21 @@ describe('desktop preview handoff', () => {
         expect(invoke.mock.calls.filter(call => call[0] === 'plugin:opener|open_path')).toEqual([
             ['plugin:opener|open_path', { path }],
         ]);
+    });
+});
+
+describe('browser open admission', () => {
+    it('opens only kinds the browser renders without running the file as Happier-origin script', () => {
+        expect(canOpenFileInDefaultApp('application/pdf')).toBe(true);
+        expect(canOpenFileInDefaultApp('application/pdf; charset=binary')).toBe(true);
+        for (const mimeType of ['text/html', 'image/svg+xml', 'image/png', 'application/octet-stream', undefined]) {
+            expect(canOpenFileInDefaultApp(mimeType)).toBe(false);
+        }
+    });
+
+    it('keeps the desktop host opening every file in its default app', () => {
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: vi.fn() });
+        expect(canOpenFileInDefaultApp('text/html')).toBe(true);
+        expect(canOpenFileInDefaultApp()).toBe(true);
     });
 });

@@ -15,6 +15,7 @@ import { useEntityComposerMention } from '@/components/ui/treeDragDrop/useEntity
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { buildFileShareClipboardRequest, resolveFileShareActionScope, type FileShareClipboardIntent } from './fileShareClipboard';
 import { canOpenFileInDefaultApp } from '@/sync/runtime/files/saveFileBytes';
+import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { writeClipboardStringFromUi } from '@/utils/ui/clipboard';
@@ -68,7 +69,7 @@ export function useWorkspaceFileShareActions(input: WorkspaceFileShareActionsInp
         });
         if (!result.ok && !result.canceled) throw new Error(result.error);
     });
-    const openSupported = canOpenFileInDefaultApp();
+    const openSupported = canOpenFileInDefaultApp(resolveFileViewerKind({ path: input.path }).mimeType);
     const openInDefaultApp = openSupported ? () => download('open') : undefined;
     const source = input.workspaceScope;
     const mentionInComposer = actionScope && source ? () => report(async () => {

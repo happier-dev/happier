@@ -20,6 +20,7 @@ import { t } from '@/text';
 
 import type { PdfViewPosition } from './pdfViewPosition';
 import type { PdfZoom } from './pdfZoom';
+import { fileOpenActionLabel } from '@/sync/runtime/files/saveFileBytes';
 
 /** How long the page pill stays after the reader stops scrolling (lab files FV5). */
 export const PDF_PAGE_PILL_IDLE_MS = 1200;
@@ -68,7 +69,7 @@ export function PdfViewerFailureState(
   const handoff = props.onOpenInDefaultApp
     ? {
         action: {
-          label: t('files.viewer.openInDefaultApp'),
+          label: fileOpenActionLabel(),
           onPress: props.onOpenInDefaultApp,
         },
       }

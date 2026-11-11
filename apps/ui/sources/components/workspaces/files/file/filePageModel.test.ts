@@ -18,8 +18,8 @@ describe('File page header behaviour model', () => {
         expect(resolveFilePageAttribution({ ...input, viewerScope: actor }).requesterName).toBe('message.accountActorYou');
         expect(resolveFilePageAttribution({ ...input, agentName: null }).requesterName).toBeNull();
     });
-    it('projects preview/source for Markdown and SVG, and deletion only as Changes', () => {
-        for (const kind of ['markdown', 'svg']) {
+    it('projects preview/source for Markdown, SVG and HTML, and deletion only as Changes', () => {
+        for (const kind of ['markdown', 'svg', 'html']) {
             expect(resolveFilePageHeaderModel({ ...text, kind }).modes.map(mode => mode.id)).toEqual(['preview', 'source', 'changes']);
         }
         expect(resolveFilePageHeaderModel({ ...text, deleted: true }).modes).toEqual([{ id: 'changes', displayMode: 'diff' }]);

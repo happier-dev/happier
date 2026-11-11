@@ -48,7 +48,11 @@ describe('one file menu inventory across page, phone and tree', () => {
         const uncached = resolveFileMenuItems({ ...context, hasCachedContent: false, isDirectory: true }, 'treeRow');
         expect(uncached.find(item => item.id === 'mentionInComposer')?.state).toBe('enabled');
         expect(uncached.find(item => item.id === 'download')?.state).toEqual({ disabledReason: 'offline' });
-        expect(resolveFileMenuItems({ ...context, platform: 'web' }, 'page').some(item => item.id === 'openInDefaultApp')).toBe(false);
+        // The browser's own viewer: offered only when the open owner admitted this file (a PDF), named for a tab.
+        expect(resolveFileMenuItems({ ...context, platform: 'web', machineReachable: true }, 'treeRow')
+            .find(item => item.id === 'openInDefaultApp')?.titleKey).toBe('files.viewer.openInNewTab');
+        expect(resolveFileMenuItems({ ...context, platform: 'tauri', machineReachable: true }, 'treeRow')
+            .find(item => item.id === 'openInDefaultApp')?.titleKey).toBe('files.pane.menu.openInDefaultApp');
     });
 
     it('does not let partial content become a selection or directory become blame', () => {

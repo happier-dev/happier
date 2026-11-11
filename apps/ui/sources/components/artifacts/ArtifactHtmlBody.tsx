@@ -1,12 +1,8 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
-import { HappierHtmlSandboxFrame } from '@happier-dev/plugin-ui/presentation';
 
 import type { ArtifactBodyV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
-import { normalizeUiSurfaceCapabilityRequestV1 } from '@happier-dev/protocol/plugins/contributions/ui/hostedHtmlCapabilitiesV1';
 import type { ArtifactHtmlPreview } from '@/sync/domains/artifacts/artifactTypes';
-import { HostedFrameHost } from '@/components/ui/surfaces/framed/HostedFrameHost';
+import { HtmlDocumentFrame } from '@/components/ui/surfaces/framed/HtmlDocumentFrame';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
@@ -27,7 +23,6 @@ export function ArtifactHtmlBody(props: Readonly<{
     preview?: ArtifactHtmlPreview;
     onRetry?: () => void;
 }>) {
-    const { theme } = useUnistyles();
     const key = `${props.artifactId}:${props.headerVersion}:${props.bodyVersion ?? ''}`;
     const [preview, setPreview] = React.useState<Preview>({ key, body: props.body, phase: 'loading' });
     const [attempt, setAttempt] = React.useState(0);
@@ -45,11 +40,8 @@ export function ArtifactHtmlBody(props: Readonly<{
     }, [key, props.artifactId, props.body, props.readPreview, props.preview, attempt]);
 
     const current = preview.key === key && preview.body === props.body ? preview : null;
-    const requestedCapabilities = current?.phase === 'ready' ? current.bundle.requestedCapabilities : undefined;
-    const networkPolicy = React.useMemo(() => normalizeUiSurfaceCapabilityRequestV1(requestedCapabilities), [requestedCapabilities]);
     const fail = () => setPreview(value => value === current ? { key, body: props.body, phase: 'failed' } : value);
-    return <HappierHtmlSandboxFrame testID="artifact:htmlBody" title={props.name}
-        backgroundColor={theme.colors.surface.elevated}
+    return <HtmlDocumentFrame testID="artifact:htmlBody" frameTestID="artifact:htmlPreview" frameKey={key} title={props.name}
         state={current?.phase === 'ready' ? current : { phase: current?.phase ?? 'loading' }}
         onError={fail}
         failure={<SurfaceStateCard
@@ -62,24 +54,5 @@ export function ArtifactHtmlBody(props: Readonly<{
         />}
         loading={<SurfaceStateCard
             testID="artifact:htmlPreviewLoading" kind="loading" title={t('common.loading')}
-        />}
-        host={{ renderFrame: ({ title, onError, nativeStyle }) => current?.phase === 'ready' ? <View style={nativeStyle}>
-            <HostedFrameHost
-                key={key}
-                title={title}
-                bundle={current.bundle}
-                network={networkPolicy?.network === 'origins' ? undefined : networkPolicy?.network ?? 'none'}
-                networkOrigins={networkPolicy?.networkOrigins}
-                testID="artifact:htmlPreview"
-                sandbox={{ scripts: true, sameOrigin: false, popups: false, topNavigation: false, mixedContent: false }}
-                security={{
-                    allowedNavigationOrigins: [], allowedCallbackOrigins: [], allowedConnectOrigins: [],
-                    csp: { connectSrc: 'none', allowDataUrls: true, allowBlobUrls: false, allowInlineStyles: true, allowEval: false },
-                    sourceMaps: 'disabled', mixedContent: 'deny',
-                }}
-                onError={onError}
-                onUnexpectedNavigation={onError}
-                onNativeHostedHtmlUnavailable={onError}
-            />
-        </View> : null }} />;
+        />} />;
 }

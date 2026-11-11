@@ -5,7 +5,7 @@ import { scmDiffCache } from '@/scm/diffCache/scmDiffCacheSingleton';
 import type { ScmDiffCache } from '@/scm/diffCache/scmDiffCache';
 
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
-import { isBinaryContent, resolveFileViewerKind } from '@/scm/utils/filePresentation';
+import { isBinaryContent, isTextReadableFileViewerKind, resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { buildAddedFileUnifiedDiff } from '@/scm/diff/fallbackUnifiedDiff';
 import { looksLikeUnifiedDiff } from '@/scm/diff/looksLikeUnifiedDiff';
 import { extractUnifiedDiffForSingleFile } from '@/scm/diff/extractUnifiedDiffForSingleFile';
@@ -48,7 +48,7 @@ export async function fetchUnifiedDiffForPath(input: UnifiedDiffInput): Promise<
     const canReadAddedContent = file?.status === 'untracked'
         || (file?.status === 'added' && file.hasIncludedDelta === false);
     const viewer = resolveFileViewerKind({ path: input.path, isBinaryContent: file?.isBinary });
-    if (!canReadAddedContent || (viewer.kind !== 'code' && viewer.kind !== 'markdown' && viewer.kind !== 'svg')) return response;
+    if (!canReadAddedContent || !isTextReadableFileViewerKind(viewer.kind)) return response;
     // Fallback reads have caller-owned preview bounds. Never cache a bounded/unavailable
     // read as backend truth, or share it with a caller using a different read policy.
     const decoded = await input.readFileForFallback();

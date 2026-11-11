@@ -423,6 +423,24 @@ and the platform's open/share options remain available.
 Audio opens with playback and seeking controls. Video downloads before playback
 and reports transfer progress; codec support still depends on the device.
 Opaque binaries show their kind and size with Download and Open as text options.
+
+HTML files (`.html`, `.htm`) open in **Preview**, rendered as a page, with
+**Source** one tap away. The page runs in the same isolated sandbox as HTML
+Artifacts: its scripts run, but it cannot reach Happier's session, storage or
+credentials, and it has no network access. Files it links to, such as a
+separate stylesheet or image, are not loaded in this preview.
+
+To leave Happier with a file:
+
+- In a browser, a PDF offers **Open in new tab**, which shows it in the
+  browser's PDF viewer once the file has arrived. When the browser holds
+  back the tab because the file took a while, Happier asks you to open it
+  with one more tap. Other kinds use Download.
+- On iOS, **Open in default app** shows the file in Quick Look, which previews
+  HTML, PDF, Office and media files; its share button sends the file to Safari,
+  Files or another app. An app build without Quick Look support shows the share
+  sheet instead.
+- On desktop and Android, the file opens in your default app.
 Artifact previews share the file-preview budget, including the browser's 50 MB
 whole-file buffering budget.
 

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { FileIcon } from '@/components/ui/media/FileIcon';
@@ -11,6 +12,7 @@ import type { PdfZoom } from '@/components/ui/media/pdf/pdfZoom';
 import { useMediaStage } from '@/components/ui/media/stage/useMediaStage';
 import type { UseFilePreviewSourceInput } from '@/components/ui/media/useFilePreviewSource';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { HtmlDocumentFrame, type HtmlDocumentFrameState } from '@/components/ui/surfaces/framed/HtmlDocumentFrame';
 import { SessionPaneLazyLoader } from '@/components/sessions/panes/SessionPaneLazyLoader';
 import type { FileViewerClass } from '@/scm/utils/filePresentation';
 import { t } from '@/text';
@@ -18,6 +20,7 @@ import { t } from '@/text';
 import type { FilePageMediaInfo } from './filePageMediaFacts';
 import type { MediaPlayerBodyProps } from './MediaPlayerBody';
 import type { PdfViewerProps } from '@/components/ui/media/pdf/PdfViewerStates';
+import { fileOpenActionLabel } from '@/sync/runtime/files/saveFileBytes';
 
 /** The page's "View full screen" control opens the same stage a press on the picture does. */
 export type FileViewerStageHandle = Readonly<{ open: () => void }>;
@@ -29,8 +32,8 @@ export type FileViewerBodyProps = Readonly<{
   /** Preview bytes with the page's cache identity (`buildWorkspacePreviewIdentity`), so the stage reuses them. */
   source: UseFilePreviewSourceInput;
   sizeBytes?: number | null;
-  /** SVG text the page already read for Source / Changes. */
-  svgText?: string | null;
+  /** SVG or HTML text the page already read for Source / Changes; its Preview renders from it. */
+  heldText?: string | null;
   isActive: boolean;
   findSurfaceId: string;
   /** `fill` (default): the body is the page. `inline`: pictures take the column width (Artifact pages). */
@@ -66,6 +69,39 @@ const loadPdfViewer = () =>
     (module) => module.PdfViewer,
   );
 
+let htmlPreviewGeneration = 0;
+
+/** An HTML file's Preview: the held text, rendered in the shared opaque document sandbox. */
+function HtmlPreview(props: Readonly<{ title: string; text: string | null; testID: string }>) {
+  const [failedText, setFailedText] = React.useState<string | null>(null);
+  const text = props.text;
+  // One bundle (and one guest identity) per held text, so a re-read of the same bytes keeps the frame.
+  const prepared = React.useMemo(() => (text === null ? null
+    : { bundle: artifactHtmlBundleFromBodyV1(text), key: `html-${++htmlPreviewGeneration}` }), [text]);
+  const bundle = prepared?.bundle ?? null;
+  const state: HtmlDocumentFrameState = bundle === null ? { phase: 'loading' }
+    : failedText === text ? { phase: 'failed' } : { phase: 'ready', bundle };
+  return (
+    <HtmlDocumentFrame
+      testID={`${props.testID}:html`}
+      frameTestID={`${props.testID}:htmlPreview`}
+      frameKey={prepared?.key ?? 'loading'}
+      title={props.title}
+      state={state}
+      onError={() => setFailedText(text)}
+      failure={<SurfaceStateCard
+        testID={`${props.testID}:htmlPreviewFailed`}
+        kind="error"
+        size="pane"
+        title={t('files.viewer.loadFailed', { name: props.title })}
+        action={{ label: t('common.retry'), onPress: () => setFailedText(null) }}
+        accessibilitySemantics="alert"
+      />}
+      loading={<SurfaceStateCard kind="loading" size="pane" title={t('common.loading')} />}
+    />
+  );
+}
+
 /** Binary identity (lab files FV2b): what the file is and what you can do with it. */
 function BinaryIdentity(props: FileViewerBodyProps) {
   const kind = t(props.viewer.labelKey as never) as string;
@@ -95,7 +131,7 @@ function BinaryIdentity(props: FileViewerBodyProps) {
         {...(props.onOpenInDefaultApp
           ? {
               secondaryAction: {
-                label: t('files.viewer.openInDefaultApp'),
+                label: fileOpenActionLabel(),
                 onPress: props.onOpenInDefaultApp,
               },
             }
@@ -167,7 +203,7 @@ export function FileViewerBody(props: FileViewerBodyProps) {
           kind={viewer.kind}
           title={props.title}
           source={props.source}
-          svgText={props.svgText ?? null}
+          svgText={props.heldText ?? null}
           alphaCapable={viewer.alphaCapable}
           layout={props.layout ?? 'fill'}
           originRef={originRef}
@@ -214,6 +250,8 @@ export function FileViewerBody(props: FileViewerBodyProps) {
           }}
         />
       );
+    case 'html':
+      return <HtmlPreview title={props.title} text={props.heldText ?? null} testID={props.testID ?? 'file-viewer-body'} />;
     default:
       return <BinaryIdentity {...props} />;
   }

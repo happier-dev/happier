@@ -35,12 +35,12 @@ export function QuickOpenFilePreview(
 ) {
   const { theme } = useUnistyles();
   const pathViewer = resolveFileViewerKind({ path: props.path });
-  const candidateText = pathViewer.kind === 'code' || pathViewer.kind === 'markdown';
+  const candidateText = pathViewer.kind === 'code' || pathViewer.kind === 'markdown' || pathViewer.kind === 'html';
   // Known media needs no text read. Ambiguous paths use the existing read's
   // byte evidence before choosing whether this column can show a text body.
   const file = useCodeTextFile(props.scope, candidateText ? props.path : null);
   const viewer = file.kind === 'ready' ? file.viewer : pathViewer;
-  const textPreview = viewer.kind === 'code' || viewer.kind === 'markdown';
+  const textPreview = viewer.kind === 'code' || viewer.kind === 'markdown' || viewer.kind === 'html';
   const [shown, setShown] = React.useState<Readonly<{
     path: string;
     text: string;

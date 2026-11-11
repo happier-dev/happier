@@ -35,6 +35,7 @@ import {
   type PdfViewerFailure,
   type PdfViewerProps,
 } from './PdfViewerStates';
+import { fileOpenActionLabel } from '@/sync/runtime/files/saveFileBytes';
 
 type Viewer = ReturnType<typeof createPdfCanvasViewer>;
 type Loader = Awaited<ReturnType<typeof createWebPdfDocumentLoader>>;
@@ -361,7 +362,7 @@ function PdfViewerBody(props: PdfViewerProps & Readonly<{ onRetry(): void }>) {
           title={props.title}
           onLoadAgain={props.onRetry}
           {...(props.onOpenInDefaultApp
-            ? { handoff: { label: t('files.viewer.openInDefaultApp'), onPress: props.onOpenInDefaultApp } }
+            ? { handoff: { label: fileOpenActionLabel(), onPress: props.onOpenInDefaultApp } }
             : {})}
         />
       ) : failed ? (

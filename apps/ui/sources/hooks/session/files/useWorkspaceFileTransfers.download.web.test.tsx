@@ -6,9 +6,12 @@ import { createDeferred, renderHook } from '@/dev/testkit';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { createWorkspaceFileDownloadHarness } from '@/dev/testkit/harness/workspaceFileDownloadHarness';
 import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
+import { Modal } from '@/modal';
 import type { DesktopFileInvoke } from '@/sync/runtime/files/openInDefaultApp';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({ Platform: { OS: 'web' } }));
+// The real ModalProvider graph loads the socket client before the harness installs its boundary.
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: key => key }));
 
 const { useWorkspaceFileTransfers } = await import('@/hooks/workspaces/transfers/useWorkspaceFileTransfers');
@@ -56,7 +59,7 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
 
     it('downloads held complete bytes while the Machine is unavailable without opening a transfer', async () => {
         const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:cached-file');
-        vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+        const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
         const click = vi.spyOn(browser.window.HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
         const hook = await renderHook(() => useWorkspaceFileTransfers({ workspaceScope: null }));
         await act(async () => {
@@ -67,6 +70,8 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
         expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
         expect(click).toHaveBeenCalled();
         expect(harness.rpcRequests).toHaveLength(0);
+        // The delayed URL release settles here, not inside a later test.
+        await vi.waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:cached-file'), { timeout: 2_000 });
     });
 
     it('requires a workspace for ZIP creation even when complete file bytes are held', async () => {
@@ -120,6 +125,45 @@ describe('useWorkspaceFileTransfers web download cleanup', () => {
                 .resolves.toEqual({ ok: false, error: 'No handler' });
         });
         expect(invoke).toHaveBeenCalledWith('desktop_download_cache_remove', { path });
+    });
+
+    it('opens an admitted PDF in a tab after its bytes arrive, offers a new press when blocked, and downloads HTML', async () => {
+        await harness.reset();
+        harness = await createWorkspaceFileDownloadHarness({ name: 'spec.pdf', bytes: new Uint8Array([37, 80, 68, 70]) });
+        const tab = { opener: {} as unknown };
+        const open = vi.spyOn(browser.window, 'open').mockImplementation(() => tab as unknown as Window);
+        vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:pdf-tab');
+        const click = vi.spyOn(browser.window.HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+        const alert = vi.mocked(Modal.alert);
+        alert.mockClear();
+        const hook = await renderTransfers();
+
+        let pending!: ReturnType<ReturnType<typeof useWorkspaceFileTransfers>['startDownload']>;
+        await act(async () => { pending = hook.getCurrent().startDownload({ path: 'spec.pdf', asZip: false, action: 'open' }); });
+        await act(async () => { await expect(pending).resolves.toEqual({ ok: true }); });
+        // Happier stays in front while the transfer runs; the tab opens with the finished bytes.
+        expect(open).toHaveBeenCalledExactlyOnceWith('blob:pdf-tab', '_blank');
+        expect(tab.opener).toBeNull();
+        expect(click).not.toHaveBeenCalled();
+
+        // The press expired before the bytes arrived: the person gets a new press for the same file.
+        open.mockReturnValueOnce(null);
+        await act(async () => {
+            await expect(hook.getCurrent().startDownload({ path: 'spec.pdf', asZip: false, action: 'open' })).resolves.toEqual({ ok: true });
+        });
+        const buttons = alert.mock.calls.at(-1)![2]!;
+        act(() => { buttons.at(-1)!.onPress!(); });
+        expect(open).toHaveBeenCalledTimes(3);
+        expect(alert).toHaveBeenCalledTimes(1);
+
+        // Script-capable HTML never becomes a Happier-origin tab, even when asked to open.
+        const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+        await act(async () => {
+            await expect(hook.getCurrent().startDownload({ path: 'index.html', asZip: false, action: 'open' })).resolves.toEqual({ ok: true });
+        });
+        expect(open).toHaveBeenCalledTimes(3);
+        expect(click).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(revokeObjectURL).toHaveBeenCalled(), { timeout: 2_000 });
     });
 
     it('streams into OPFS and delays disk-backed URL cleanup until after the download is triggered', async () => {

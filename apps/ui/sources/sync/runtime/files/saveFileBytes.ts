@@ -30,8 +30,26 @@ type FileHandoffInput = Readonly<{
     action?: 'save' | 'open' | 'share';
 }>;
 
-export function canOpenFileInDefaultApp(): boolean {
-    return Platform.OS === 'android' || Platform.OS === 'ios' || desktopHostKind() === 'tauri';
+/**
+ * Whether this client can hand the file to something outside Happier: the OS default app on
+ * native and the desktop host, or a browser tab for a PDF. A browser tab shows the bytes with
+ * Happier's origin, so HTML and SVG (script-capable) never open that way.
+ */
+export function canOpenFileInDefaultApp(mimeType?: string | null): boolean {
+    if (Platform.OS === 'android' || Platform.OS === 'ios') return true;
+    const host = desktopHostKind();
+    if (host === 'tauri') return true;
+    return host === null && mimeType?.split(';', 1)[0].trim().toLowerCase() === 'application/pdf';
+}
+
+/** The open action's name for this client: a tab in a browser, the default app elsewhere. */
+export function fileOpenActionLabel(): string {
+    return opensInBrowserTab() ? t('files.viewer.openInNewTab') : t('files.viewer.openInDefaultApp');
+}
+
+/** A plain browser opens files in a tab; native and the desktop host hand them to the OS. */
+export function opensInBrowserTab(): boolean {
+    return Platform.OS === 'web' && desktopHostKind() === null;
 }
 
 /**

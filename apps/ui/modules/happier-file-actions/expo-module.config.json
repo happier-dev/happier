@@ -1,6 +1,16 @@
 {
-  "platforms": ["android"],
+  "platforms": [
+    "android",
+    "ios"
+  ],
   "android": {
-    "modules": ["dev.happier.fileactions.HappierFileActionsModule"]
+    "modules": [
+      "dev.happier.fileactions.HappierFileActionsModule"
+    ]
+  },
+  "ios": {
+    "modules": [
+      "HappierFileActionsModule"
+    ]
   }
 }

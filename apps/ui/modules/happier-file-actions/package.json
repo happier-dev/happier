@@ -2,9 +2,10 @@
   "name": "happier-file-actions",
   "version": "0.0.0",
   "private": true,
-  "description": "Local Android document saving and explicit file intents.",
+  "description": "Local Android document saving and explicit file intents; iOS Quick Look preview.",
   "files": [
     "android",
+    "ios",
     "expo-module.config.json"
   ],
   "devDependencies": {
