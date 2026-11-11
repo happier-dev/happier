@@ -46,8 +46,10 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   connectedAccountDescriptors: {
     [GROK_CONNECTED_ACCOUNT_SERVICE.localId]: {
       declaration: {
-        title: 'xAI',
+        title: 'Grok / xAI',
+        ui: { iconResourceId: 'agent-mark' },
         authentication: {
+          account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
           native: { systemTool: 'grok-cli' },
           defaultModeId: 'device',
           modes: [{
@@ -193,6 +195,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     ],
   },
   resources: {
+    "agent-mark": { kind: 'asset', path: "assets/agent-mark.svg", contentType: 'image/svg+xml' },
     "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
     "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
     "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },

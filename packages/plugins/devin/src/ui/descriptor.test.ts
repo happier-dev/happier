@@ -16,12 +16,7 @@ describe('Devin UI projection source', () => {
       picker: { iconName: 'cpu', cliGlyph: 'DV' },
     });
     expect(DEVIN_UI_DESCRIPTOR.assets.svgIcon).toMatchObject({
-      assetId: 'devin',
-      viewBox: '0 0 256 294',
-      paths: [{
-        fillToken: 'text.primary',
-        d: expect.stringMatching(/^M0,98\.5741786/),
-      }],
+      path: 'assets/agent-mark.svg',
     });
     expect(DEVIN_UI_DESCRIPTOR.capabilityStates.mcpDelivery).toBe('supported');
     for (const messages of Object.values(PACKAGED_UI_TRANSLATIONS)) {

@@ -45,6 +45,7 @@ export const CURSOR_PLUGIN = definePlugin({
     'cursor-account': {
       declaration: {
         title: 'Cursor',
+        ui: { iconResourceId: 'agent-mark' },
         authentication: {
           account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
           defaultModeId: 'api-key',
@@ -182,6 +183,9 @@ export const CURSOR_PLUGIN = definePlugin({
   },
   settings: {
     [CURSOR_AGENT_SETTINGS_CONTRIBUTION_ID]: CURSOR_AGENT_SETTINGS_DECLARATION,
+  },
+  resources: {
+    'agent-mark': { kind: 'asset', path: 'assets/agent-mark.svg', contentType: 'image/svg+xml' },
   },
 });
 

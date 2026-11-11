@@ -53,6 +53,7 @@ export const KIMI_PLUGIN = definePlugin({
     'kimi-code': {
       declaration: {
         title: 'Kimi Code',
+        ui: { iconResourceId: 'agent-mark' },
         authentication: {
           account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
           native: { systemTool: KIMI_ACP_COMMAND.toolId },
@@ -206,6 +207,7 @@ export const KIMI_PLUGIN = definePlugin({
     { locale: "ja", resourceId: "i18n-ja" },
   ] },
   resources: {
+    'agent-mark': { kind: 'asset', path: 'assets/agent-mark.svg', contentType: 'image/svg+xml' },
     "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
     "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
     "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },

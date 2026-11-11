@@ -13,8 +13,7 @@ describe('Grok UI projection source', () => {
     });
     expect(PACKAGED_UI_TRANSLATIONS.en['agentInput.agent.grok']).toBe('Grok');
     expect(GROK_UI_DESCRIPTOR.assets.svgIcon).toMatchObject({
-      assetId: 'grok', viewBox: '0 0 1024 1024',
-      paths: [{ fillToken: 'text.primary' }, { fillToken: 'text.primary' }],
+      path: 'assets/agent-mark.svg',
     });
   });
 });
