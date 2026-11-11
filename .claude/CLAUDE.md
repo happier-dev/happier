@@ -133,6 +133,8 @@ Before briefing a lane whose change renders anything (new state, control, copy, 
   Enforcement
   belongs in `.claude/hooks/prevent-destructive-git.sh`, which matches the whole command string and
   therefore catches every clause of a compound command.
+The same guard also refuses controller-wide `rg`, recursive `grep`, `find`, and `du`; route those
+searches through `./apps/stack/bin/hstack-exec -- rg <pattern> <narrow path>` or use a narrow path.
 - **Every open QA row has an owner; briefs carry no size caps.** Before reporting "nothing remains", list each
   PARTIAL / BLOCKED / NOT EXERCISED row in the program's coverage matrix and name its owning lane or the real
   prerequisite (Voice 11-03: two PARTIAL rows sat unowned behind a "nothing remains" report). Never put a file-count

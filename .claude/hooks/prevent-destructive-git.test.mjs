@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
@@ -21,6 +22,23 @@ const denied = [
   'git update-ref -m "log; message" HEAD abc',
   'git stash list >/dev/null; cd x && git stash',
 ];
+const searchDenied = [
+  'rg needle ' + readdirSync(new URL('../../', import.meta.url), { withFileTypes: true }).filter((entry) => entry.isDirectory() && !entry.name.startsWith('.')).map((entry) => "'" + entry.name + "'").join(' '),
+  'rg --hidden "needle"',
+  'grep -R "needle" .',
+  'find . -name package.json',
+  'du -sh .',
+  'cd . && rg "needle"',
+  'cd "$(git rev-parse --show-toplevel)" && rg "needle"',
+  'printf ok; rg "needle" .',
+  'cd apps/cli && rg "needle" ../..',
+  'rg "needle" *',
+  'find apps . -name package.json',
+  'rg -e "needle" -g "*.ts"',
+  'rg "needle" > /tmp/search-hook-output',
+  'rg "needle"\nrg "needle" apps/cli',
+  './apps/stack/bin/hstack-exec --local -- rg "needle" .',
+];
 const allowed = [
   'git update-ref HEAD abc old',
   'cd x && git update-ref refs/heads/main abc old',
@@ -34,6 +52,21 @@ const allowed = [
   "git rev-parse HEAD; printf 'update refs/tags/v1 abc\\n' | git update-ref --stdin",
   "printf 'update refs/tags/v1 HEAD\\n' | git update-ref --stdin",
   'git stash list; git stash show',
+];
+const searchAllowed = [
+  'rg "needle" apps/cli',
+  'grep "needle" README.md',
+  'grep -R "needle" packages/protocol',
+  'find apps/ui/sources -name "*.tsx"',
+  'du -sh apps/cli',
+  './apps/stack/bin/hstack-exec -- rg "needle" .',
+  'cd . && ./apps/stack/bin/hstack-exec -- rg "needle" .',
+  'git grep -n "needle"',
+  'echo "rg needle ."',
+  'cd apps/cli && rg "needle" .',
+  'rg -e "needle" apps/cli',
+  'rg "needle" apps/cli > /tmp/search-hook-output',
+  'cat README.md',
 ];
 
 for (const ingress of ['claude', 'codex']) {
@@ -49,6 +82,30 @@ for (const ingress of ['claude', 'codex']) {
       }
     });
   }
+}
+
+for (const ingress of ['claude', 'codex']) {
+  test(`${ingress}: refuses controller-wide searches and allows narrow or routed searches`, () => {
+    for (const command of searchDenied) {
+      const payload = { tool_name: 'Bash', tool_input: { command } };
+      const result = spawnSync(ingress === 'claude' ? 'bash' : process.execPath, [ingress === 'claude' ? claude : codex], {
+        input: JSON.stringify(payload), encoding: 'utf8', cwd: fileURLToPath(new URL('../../', import.meta.url)),
+        env: { ...process.env, ALLOW_DESTRUCTIVE_GIT: '' },
+      });
+      assert.ifError(result.error);
+      assert.equal(result.status, ingress === 'claude' ? 1 : 2, command);
+      assert.match(`${result.stdout}\n${result.stderr}`, /hstack-exec -- rg <pattern> <narrow path>/, command);
+    }
+    for (const command of searchAllowed) {
+      const payload = { tool_name: 'Bash', tool_input: { command } };
+      const result = spawnSync(ingress === 'claude' ? 'bash' : process.execPath, [ingress === 'claude' ? claude : codex], {
+        input: JSON.stringify(payload), encoding: 'utf8', cwd: fileURLToPath(new URL('../../', import.meta.url)),
+        env: { ...process.env, ALLOW_DESTRUCTIVE_GIT: '' },
+      });
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, command);
+    }
+  });
 }
 
 test('legacy Claude envelope still enforces the same guard', () => {

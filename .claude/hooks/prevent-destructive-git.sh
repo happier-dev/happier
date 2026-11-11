@@ -71,6 +71,10 @@ if [[ -z "$MATCHED" ]]; then
 fi
 
 if [[ -z "$MATCHED" ]]; then
+  MATCHED=$(node "$(dirname "${BASH_SOURCE[0]}")/searchCommandGuard.mjs" <<<"$COMMAND")
+fi
+
+if [[ -z "$MATCHED" ]]; then
   exit 0
 fi
 
@@ -85,6 +89,9 @@ Matched:
   $MATCHED
 
 Repo policy: do not discard, revert, or clean unrelated/uncommitted work unless the user explicitly asked for that exact destructive action.
+
+Search policy: controller-wide searches are blocked to protect the shared checkout. Use:
+  ./apps/stack/bin/hstack-exec -- rg <pattern> <narrow path>
 
 If this destructive operation is truly required, ask for explicit approval first. After approval, re-run with:
   export ALLOW_DESTRUCTIVE_GIT=1
