@@ -2961,7 +2961,12 @@ those placements to inherit a row. Existing persisted-reference and daemon
 legacy placement semantics remain unchanged. Missing, stale, inaccessible or
 invalid snapshots refuse the message invocation. Older daemons reject the new
 preparation field through the existing strict request parser, so no client
-handler runs with an unverified snapshot. Triage's existing Tasks launcher uses
+handler runs with an unverified snapshot. Account-origin client Actions retain
+Account placement: the dispatch owner resolves the same durable reference with
+captured Home/Account authority, opens only the exact current row through the
+Session encryption owner, and consumes the shared Session-core snapshot resolver.
+They require no Machine transport; Machine-origin Actions retain their Machine
+admission and RPC path. A selected Message never changes the Action's placement. Triage's existing Tasks launcher uses
 `visibleText` only as an omitted body seed; explicit drafts remain authoritative
 and opening the draft performs no task write. Loaded-runtime verification and
 registry publication remain separate from this development-source contract.

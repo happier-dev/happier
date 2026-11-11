@@ -13,6 +13,7 @@ import { type ActionExecuteResult } from '@happier-dev/protocol/actions/actionEx
 import type { ActionExecutorContext, ActionExecutorDeps, ActionPrepareResult } from '@happier-dev/protocol/actions/executor/types';
 import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
+import { resolveAccountMessageActionReference } from '@/sync/api/session/sessionMessageActionReference';
 import { projectMarkdownFindText } from '@/components/markdown/rendering/markdownFindProjection';
 import { readActionSessionTargetField, readActionSessionTargetOperands, validateActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { normalizeSessionTargetV1, type ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
@@ -1892,11 +1893,28 @@ async function executeClientContributedAction(
             };
             const reference = current.binding.messageActionReference;
             if (!reference) return invokeHandler();
-            if (!('machineId' in authority)) throw new PluginError({ code: 'plugin_message_action_unavailable' });
             const messageInvocation = input.invocation?.kind === 'hostPresentedMessage' ? input.invocation
                 : invocationSurface === 'cli' || invocationSurface === 'agent' || invocationSurface === 'mcp'
                     ? clientActionInvocation(current) : null;
-            if (!messageInvocation) throw new PluginError({ code: 'plugin_message_action_unavailable' });
+            const unavailable = () => createPluginActionHandlerNotStartedError({
+                code: 'plugin_message_action_unavailable', message: 'The selected Message Action is unavailable',
+            });
+            if (!messageInvocation) throw unavailable();
+            if (current.action.execution.target === 'client' && accountOrigin) {
+                const lifetime = current.registration.accountLifetime;
+                if (!lifetime || !current.action.placementBindings?.includes('message.menu')
+                    || current.binding.sessionId && current.binding.sessionId !== reference.sessionId
+                    || messageInvocation.kind === 'hostPresentedMessage'
+                        && !pluginJsonValuesEqual(messageInvocation.currentMessageIntent, reference)) throw unavailable();
+                return resolveAccountMessageActionReference({ scope: lifetime.scope, reference, signal,
+                    isCurrent: current.isCurrent }).then(resolution => {
+                    if (resolution.status !== 'available') throw unavailable();
+                    return invokeHandler({ ...resolution.snapshot,
+                        visibleText: resolution.snapshot.visibleText === null ? null
+                            : projectMarkdownFindText(resolution.snapshot.visibleText).text });
+                });
+            }
+            if (!('machineId' in authority)) throw unavailable();
             // Reuse daemon Actions' exact current-row resolver after client
             // policy/confirmation, through the same strict Action RPC carrier.
             const execute = current.binding.execute ?? machinePluginStructuredMessageActionExecute;
@@ -1917,7 +1935,7 @@ async function executeClientContributedAction(
                 if (!snapshot?.success || snapshot.data.sessionId !== reference.sessionId
                     || snapshot.data.messageId !== reference.messageId
                     || snapshot.data.observedRevision !== reference.observedRevision) {
-                    throw new PluginError({ code: 'plugin_message_action_unavailable' });
+                    throw unavailable();
                 }
                 return invokeHandler({
                     ...snapshot.data,

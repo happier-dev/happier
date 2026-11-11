@@ -15,3 +15,5 @@ export * from './transcriptOrdering.js';
 export * from './unread.js';
 export * from './unsupportedContentMeta.js';
 export * from './unsupportedContentPresentation.js';
+
+export { resolveMessageActionSnapshotFromCurrentMessageV1, type CurrentMessageActionReferenceRowV1 } from './messageActionReference.js';
