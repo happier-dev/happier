@@ -116,7 +116,7 @@ describe('Project terminal through the incumbent pane workspace', () => {
             await vi.waitFor(() => expect(readCurrentProjectAccountRows(storage.getState())).toMatchObject({ status: 'ready', workspaceRefs: [ref] }));
             observeMachinePresenceForTest({ serverId, accountId: 'bob' }, [workspace.machineId]);
             const scopeId = buildProjectPaneScopeId(workspace.workspaceId, serverId);
-            outputRpc.mockResolvedValue({ ok: true, terminals: [] });
+            outputRpc.mockResolvedValue({ ok: true, terminals: [], machineShell: { ok: true, cwd: workspace.rootPath } });
             screen = await renderScreen(<AppPaneProvider><RoutedProjectTerminal scopeId={scopeId} workspace={workspace} workspaceRef={ref} phone={false} /></AppPaneProvider>);
             await vi.waitFor(() => expect(screen!.findAllByType(SessionTerminalWorkspaceView)).toHaveLength(1));
             const base = storage.getState().machineListByServerId[serverId]?.find(machine => machine.id === workspace.machineId);
@@ -149,7 +149,7 @@ describe('Project terminal through the incumbent pane workspace', () => {
             outputRpc.mockImplementation(async (request: { method: string; payload: { terminalId?: string } }) => {
                 if (request.method === RPC_METHODS.DAEMON_TERMINAL_LIST) return { ok: true, terminals: [...native]
                     .map(([memberId, terminalId]) => ({ terminalId, terminalKey: buildProjectTerminalKey({ serverId, accountId: 'bob' }, workspace, memberId),
-                        cwd: workspace.rootPath, ended: false, exit: null })) };
+                        cwd: workspace.rootPath, ended: false, exit: null })), machineShell: { ok: true, cwd: workspace.rootPath } };
                 if (request.method === RPC_METHODS.DAEMON_TERMINAL_CLOSE) {
                     for (const [id, terminalId] of native) if (terminalId === request.payload.terminalId) native.delete(id);
                     return { ok: true };
@@ -165,8 +165,8 @@ describe('Project terminal through the incumbent pane workspace', () => {
             if (nativeState === 'running') native.set(desktopId, 'native-desktop-created');
             viewport.width = 390;
             await screen.update(tree(true));
-            expect(screen.findAllByType(SessionTerminalPageView)[0]?.props.renderTerminals).toBe(true);
-            expect(screen.findAllByType(WorkspaceEmbeddedTerminalPane).some(node => node.props.terminalInstanceId === desktopId)).toBe(true);
+            await vi.waitFor(() => expect(screen.findAllByType(SessionTerminalPageView)[0]?.props.renderTerminals).toBe(true));
+            await vi.waitFor(() => expect(screen.findAllByType(WorkspaceEmbeddedTerminalPane).some(node => node.props.terminalInstanceId === desktopId)).toBe(true));
             await act(async () => screen.findAllByType(SessionTerminalPageView)[0]!.props.onAction('session.terminals.open', { target: { kind: 'workspace_shell' } }));
             await vi.waitFor(() => expect(readSessionTerminalWorkspaceForScope(scopeId)?.tabs).toHaveLength(2));
             const phoneId = readSessionTerminalWorkspaceForScope(scopeId)!.activeTabId!;
@@ -213,7 +213,8 @@ describe('Project terminal through the incumbent pane workspace', () => {
                     { terminalId: 'native-other-project', terminalKey: key('bob', 'unrelated', otherProject), cwd: otherProject.rootPath, ended: false, exit: null },
                 ];
                 return { ok: true, terminals: request.payload.workspace
-                    ? terminals.filter(terminal => terminal.cwd === request.payload.workspace?.rootPath) : terminals };
+                    ? terminals.filter(terminal => terminal.cwd === request.payload.workspace?.rootPath) : terminals,
+                    machineShell: { ok: true, cwd: workspace.rootPath } };
             });
             const scopeId = buildProjectPaneScopeId(workspace.workspaceId, serverId);
             const screen = await renderScreen(<AppPaneProvider><ActiveProjectPane scopeId={scopeId}><ProjectTerminalSurface
@@ -292,7 +293,7 @@ describe('Project terminal through the incumbent pane workspace', () => {
         } finally { await home.dispose(); }
     });
 
-    it.each(['pending', 'refused'])('keeps New terminal available while running-Shell discovery is %s', async kind => {
+    it.each(['pending', 'refused'])('does not offer New terminal while running-Shell discovery is %s', async kind => {
         const serverId = `srv_census_new_${kind}`;
         const workspace = { serverId, workspaceId: 'accepted', machineId: 'machine', rootPath: '/accepted' };
         const refs = [{ id: workspace.workspaceId, serverId, machineId: workspace.machineId, rootPath: workspace.rootPath, createdAtMs: 1 }];
@@ -314,13 +315,46 @@ describe('Project terminal through the incumbent pane workspace', () => {
             const expectedKind = kind === 'pending' ? 'loading' : 'unavailable';
             await vi.waitFor(() => expect(screen.findAllByType(SurfaceStateCard).some(node => node.props.kind === expectedKind)).toBe(true));
             const card = screen.findAllByType(SurfaceStateCard).find(node => node.props.kind === expectedKind)!;
-            expect(card.props.action?.onPress).toBeTypeOf('function');
-            await act(async () => { card.props.action.onPress(); });
-            await vi.waitFor(() => expect(readSessionTerminalWorkspaceForScope(scopeId)?.tabs[0]?.terminals[0]?.target)
-                .toMatchObject({ kind: 'workspace_shell', workspace }));
+            expect(card.props.action).toBeUndefined();
             expect(outputRpc.mock.calls.every(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_LIST)).toBe(true);
             await screen.unmount();
         } finally { census.resolve({ ok: true, terminals: [] }); await home.dispose(); }
+    });
+
+    it.each([
+        { kind: 'offline', active: false, response: { ok: false, errorCode: 'terminal_unavailable', error: 'offline' } },
+        { kind: 'unsupported', active: true, response: { ok: true, terminals: [] } },
+        { kind: 'online', active: true, response: { ok: true, terminals: [], machineShell: { ok: true, cwd: '/accepted' } } },
+    ] as const)('uses typed Shell availability for an empty Project pane: $kind', async ({ kind, active, response }) => {
+        const serverId = `srv_shell_state_${kind}`;
+        const workspace = { serverId, workspaceId: 'accepted', machineId: 'machine', rootPath: '/accepted' };
+        const refs = [{ id: workspace.workspaceId, serverId, machineId: workspace.machineId, rootPath: workspace.rootPath, createdAtMs: 1 }];
+        const home = await serveCensusHome(serverId, refs);
+        try {
+            publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+            await vi.waitFor(() => expect(readCurrentProjectAccountRows(storage.getState())).toMatchObject({ status: 'ready', workspaceRefs: refs }));
+            const machine = createMachineFixture({ id: workspace.machineId, active, activeAt: active ? Date.now() : 1 });
+            storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+            observeMachinePresenceForTest({ serverId, accountId: 'bob' }, [machine.id]);
+            outputRpc.mockResolvedValue(response);
+            const scopeId = buildProjectPaneScopeId(workspace.workspaceId, serverId);
+            const screen = await renderScreen(<AppPaneProvider><ActiveProjectPane scopeId={scopeId}><ProjectTerminalSurface
+                scopeId={scopeId} workspaceRefId={workspace.workspaceId} machineId={workspace.machineId}
+                rootPath={workspace.rootPath} serverId={serverId} workspace={workspace} /></ActiveProjectPane></AppPaneProvider>);
+            await vi.waitFor(() => expect(outputRpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_LIST)).toBe(true));
+            if (kind === 'online') {
+                await vi.waitFor(() => expect(screen.findAllByType(SessionTerminalWorkspaceView)).toHaveLength(1));
+                expect(screen.findAllByType(SessionTerminalWorkspaceView)[0]!.props.emptyAction).toBeTypeOf('function');
+            } else {
+                await vi.waitFor(() => expect(screen.findAllByType(SurfaceStateCard).some(node => node.props.kind === 'unavailable')).toBe(true));
+                const card = screen.findAllByType(SurfaceStateCard).find(node => node.props.kind === 'unavailable')!;
+                expect(card.props.title).toBe(kind === 'offline'
+                    ? t('terminalWorkspace.states.offline', { machine: getMachineDisplayName(machine) ?? workspace.machineId })
+                    : t('machines.terminals.unavailable'));
+                expect(card.props.action).toBeUndefined();
+            }
+            await screen.unmount();
+        } finally { await home.dispose(); }
     });
 
     it('docks actual worker output from a subdirectory and retains its checkout across hide/reopen', async () => {
@@ -395,7 +429,7 @@ describe('Project terminal through the incumbent pane workspace', () => {
         try {
             publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
             await vi.waitFor(() => expect(readCurrentProjectAccountRows(storage.getState())).toMatchObject({ status: 'ready', workspaceRefs }));
-            outputRpc.mockResolvedValue({ ok: true, terminals: [] });
+            outputRpc.mockResolvedValue({ ok: true, terminals: [], machineShell: { ok: true, cwd: workspace.rootPath } });
             const scopeId = buildProjectPaneScopeId(workspace.workspaceId, serverId);
             // The bottom space the surface reserves under its terminal workspace: every ancestor's bottom padding.
             const reservedBelowTerminal = async (chromeHeight: number) => {
@@ -464,7 +498,7 @@ describe('Project terminal through the incumbent pane workspace', () => {
             await vi.waitFor(() => expect(readCurrentProjectAccountRows(storage.getState())).toMatchObject({
                 status: 'ready', workspaceRefs: [ref, checkout],
             }));
-            outputRpc.mockResolvedValue({ ok: true, terminals: [] });
+            outputRpc.mockResolvedValue({ ok: true, terminals: [], machineShell: { ok: true, cwd: workspace.rootPath } });
             const scopeId = buildProjectPaneScopeId(ref.id, serverId);
             const sessions = storage.getState().sessions;
             const screen = await renderScreen(<AppPaneProvider><ProjectTerminalSurface scopeId={scopeId}

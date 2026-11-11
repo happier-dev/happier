@@ -60,6 +60,7 @@ export type SessionTerminalStripProps = Readonly<{
     /** A tab's menu, from a right click or a long press; the pane owns the menu itself. */
     onTabMenu: (tabId: string, event: unknown) => void;
     onNewShell: () => void;
+    canOpenNewShell?: boolean;
     newMenuOpen: boolean;
     onNewMenuOpenChange: (open: boolean) => void;
     newMenuItems: readonly DropdownMenuItem[];
@@ -138,7 +139,7 @@ export const SessionTerminalStrip = React.memo(function SessionTerminalStrip(pro
             {props.notice ? <SessionTerminalTrustNotice notice={props.notice} compact={props.narrow === true} testID={testId('notice')} /> : null}
             {url ? <SessionTerminalLivePill url={url} onOpen={props.onOpenUrl} testID={testId('live-pill')} /> : null}
             {meta ? <Text style={styles.meta} numberOfLines={1}>{meta}</Text> : null}
-            <View style={[styles.splitButton, props.newMenuOpen ? styles.splitButtonOpen : null]}>
+            {props.canOpenNewShell !== false ? <View style={[styles.splitButton, props.newMenuOpen ? styles.splitButtonOpen : null]}>
                 <IconButton
                     testID={testId('new')}
                     variant="plain"
@@ -180,7 +181,7 @@ export const SessionTerminalStrip = React.memo(function SessionTerminalStrip(pro
                         </Pressable>
                     )}
                 />
-            </View>
+            </View> : null}
             <IconButton
                 testID={testId('split')}
                 variant="plain"

@@ -29,6 +29,7 @@ import { buildProjectMemberTerminalKey, buildProjectTerminalKey, resolveProjectT
 import { SessionTerminalTrustNotice } from '@/components/sessions/terminal/strip/SessionTerminalTrustNotice';
 import { usePaneDestinationWindowActions } from '@/components/appShell/panes/useOpenPaneDestinationWindow';
 import { useProjectRunningTerminals } from '../useProjectRunningTerminals';
+import { useMachineShellAvailability } from '@/hooks/machine/useMachineShellAvailability';
 import { initializeSessionTerminalWorkspaceForScope } from '@/components/sessions/terminal/sessionTerminalWorkspaceRuntime';
 import { presentMachineAuthorityV1 } from '@happier-dev/protocol/machines/machineAuthorityV1';
 import { describeMachineShareTrust } from '@/components/sharing/machines/machineShareTrust';
@@ -59,6 +60,11 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
     const [retired, setRetired] = React.useState(false);
     const dispatch = useAppPaneContext(value => value.dispatch);
     const running = useProjectRunningTerminals(props.scopeId, authority, renderTerminals && !retired && workspace.tabs.length === 0);
+    const shell = useMachineShellAvailability({
+        serverId: authority?.workspace.serverId ?? props.serverId,
+        machineId: authority?.workspace.machineId ?? props.machineId,
+        enabled: renderTerminals && !retired && workspace.tabs.length === 0 && Boolean(authority),
+    });
     const recovering = workspace.tabs.length === 0 && running.status === 'ready' && running.workspace.tabs.length > 0;
     const presentedWorkspace = recovering ? running.workspace : workspace;
     const privateKeys = React.useRef<readonly string[]>([]);
@@ -142,13 +148,18 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
             {...(member.target.kind === 'terminal_view' ? { attachedTerminalId: member.target.terminalId } : {})}
             title={state.descriptor?.title} focused={state.focused} chrome="none" />;
     }, [authority, props.scopeId, tabMenu.presentationId]);
-    if (!authority || retired || running.status === 'loading' || running.status === 'unavailable') {
-        return <SurfaceStateCard kind={authority && !retired && running.status === 'loading' ? 'loading' : 'unavailable'} iconName="terminal"
-            title={!authority || retired ? t('machines.terminals.denied')
-                : running.status === 'loading' ? t('common.loading') : t('machines.terminals.unavailable')}
-            action={authority && !retired ? { label: t('terminalWorkspace.states.emptyAction'), onPress: openShell } : undefined} />;
-    }
     const terminalMachine = context.sessionMachineName ?? props.machineId;
+    const canOpenNewShell = shell.state.kind === 'available';
+    const shellStateBlocksEmpty = workspace.tabs.length === 0 && shell.state.kind !== 'available';
+    if (!authority || retired || running.status === 'loading' || running.status === 'unavailable' || shellStateBlocksEmpty) {
+        const loading = authority && !retired && (running.status === 'loading' || shell.state.kind === 'loading');
+        return <SurfaceStateCard kind={loading ? 'loading' : 'unavailable'} iconName="terminal"
+            title={!authority || retired ? t('machines.terminals.denied')
+                : loading ? t('common.loading')
+                    : shell.state.kind === 'offline' ? t('terminalWorkspace.states.offline', { machine: terminalMachine })
+                        : t('machines.terminals.unavailable')}
+            action={authority && !retired && canOpenNewShell ? { label: t('terminalWorkspace.states.emptyAction'), onPress: openShell } : undefined} />;
+    }
     // Shells this device did not open, found running on the Machine: the list says what they are before one is opened.
     const recoveredNote = recovering ? t('terminalWorkspace.recovered.note', {
         machine: terminalMachine, count: presentedWorkspace.tabs.reduce((total, tab) => total + tab.terminals.length, 0) }) : undefined;
@@ -181,6 +192,6 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
                 tabMenuItems={tabMenu.items} onTabMenuSelect={tabMenu.select} paneMenuItems={paneMenuItems}
                 onPaneMenuSelect={id => { if (openActions.select(id)) return; if (id === 'hide') requestHide(); if (id === 'showList') void run('session.terminals.list_view', { showList: !workspace.showList }); }}
                 onHide={requestHide} hideToward={hideToward} onOpenUrl={url => { void openExternalUrl(url); }}
-                emptyAction={openShell} testIdPrefix="project-terminal-workspace" />}
+                canOpenNewShell={canOpenNewShell} emptyAction={canOpenNewShell ? openShell : undefined} testIdPrefix="project-terminal-workspace" />}
     </View>;
 });

@@ -228,9 +228,9 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
     const machineName = props.managedIdentity && machine
         ? getMachineDisplayName({ ...machine, managedName: props.managedIdentity.name }) : target.machineName;
     const handleOpenTerminal = React.useCallback(() => {
-        if (machineId && machineShell?.ok) showMachineTerminalSheet({ serverId: target.serverId, machineId, machineName, machineShell });
+        if (machineId && machineShell.availability?.ok) showMachineTerminalSheet({ serverId: target.serverId, machineId, machineName, machineShell: machineShell.availability });
     }, [machineId, machineName, machineShell, target.serverId]);
-    const canOpenTerminal = target.online && machineShell?.ok === true;
+    const canOpenTerminal = target.online && machineShell.state.kind === 'available';
 
     // Roles come from the exact deployment references (plan 30 row 28), read only while the page is presented.
     const deploymentRoles = useMachineDeploymentRoles({ serverId: target.serverId, machineId: target.machineId ?? '',

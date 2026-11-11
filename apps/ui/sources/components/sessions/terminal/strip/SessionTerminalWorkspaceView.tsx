@@ -31,6 +31,7 @@ export type SessionTerminalWorkspaceViewProps = Readonly<{
     minimumTerminalWidthPx: number;
     onFocusTerminal: (terminalId: string) => void;
     onResize: (command: ResizeCommand) => void;
+    canOpenNewShell?: boolean;
     tabMenuItems: (tabId: string) => readonly DropdownMenuItem[];
     onTabMenuSelect: (tabId: string, itemId: string) => void;
     emptyAction?: () => void;
@@ -76,6 +77,7 @@ export const SessionTerminalWorkspaceView = React.memo(function SessionTerminalW
                 narrow={narrow}
                 activeTerminal={focusedDescriptor}
                 onTabMenu={onTabMenu}
+                canOpenNewShell={props.canOpenNewShell}
                 testIdPrefix={props.testIdPrefix ? `${props.testIdPrefix}-strip` : undefined}
             />
             {/* A terminal state card takes the Details step: a wide, short pane (lab ST). */}
