@@ -2228,6 +2228,7 @@ export class ApiMachineClient {
                         target: { serverId: executionRunServerId, machineId: this.machine.id, installationId: workSummaryInstallation.installationId },
                         custodianAccountId: executionRunRuntimeAccountId,
                         activity: this.lifecycleDependencies.managedActivity.activity,
+                        summaryActivity: this.getLiveWorkProducer(),
                         ...(this.lifecycleDependencies.readProjectFiniteLoad
                             ? { readFiniteLoad: this.lifecycleDependencies.readProjectFiniteLoad } : {}),
                         readAccess: async (signal) => await readWorkSummaryAccess().machineAccessAction!({ actionId: 'machines.access.grants.list',

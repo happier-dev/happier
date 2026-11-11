@@ -145,6 +145,38 @@ describe('current Machine work summary ingress', () => {
         }
     });
 
+    it('projects from custodian-local activity when managed requester coverage is unavailable', async () => {
+        const managedUnavailable = createLiveWorkProducerGroup(() => null);
+        const managedActivity = createManagedActivityInventory({ producers: [managedUnavailable] });
+        const localOperations = createActionOperationStore();
+        localOperations.create({ operationId: 'local-operation', actionId: 'machines.managed.power.set', title: 'Local managed task',
+            scope: { accountId: 'bob', machineId: target.machineId }, cancellation: 'supported', inputIdentity: '{}',
+            requesterWorkAttributionV1: { ...target, accountId: 'bob' } });
+        const localActivity = createManagedActivityInventory({ producers: [{ read: localOperations.readLiveWork, subscribe: localOperations.subscribe }] });
+        const handlers = new Map<string, RpcHandler>();
+        registerMachineWorkSummaryRpcHandlers({ rpcHandlerManager: {
+            registerHandler(method, handler) { handlers.set(method, handler); },
+        }, target, custodianAccountId: custodian.accountId, activity: managedActivity, summaryActivity: localActivity,
+        readAccess: async () => ({ machineId: target.machineId, custodian,
+            access: { custodian, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' },
+            canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [],
+            currentRequesterDisplayIdentities: [{ accountId: 'bob', displayName: 'Bob' }] }) });
+        const context: RpcHandlerContext = { signal: new AbortController().signal,
+            machineAdmission: { actorAccountId: 'alice', custodianAccountId: 'alice', machineId: target.machineId,
+                installationId: target.installationId, role: 'manage', encryptionMode: 'e2ee' },
+            verifyMachineAdmissionCurrent: async () => true };
+        try {
+            expect((await managedActivity.read()).coverage).toBe('unknown');
+            expect(await handlers.get('machines.work.summary.get')!({ serverId: target.serverId, machineId: target.machineId }, context))
+                .toEqual({ kind: 'current', requesters: [{ accountId: 'bob', displayName: 'Bob', sessions: 0, tasks: 1, terminals: 0 }],
+                    finiteLoad: { kind: 'unknown' } });
+        } finally {
+            managedActivity.dispose();
+            managedUnavailable.dispose();
+            localActivity.dispose();
+        }
+    });
+
     it('reads workspace-free finite load from the same admission without pumping or inferring broad task counts', async () => {
         const operations = createActionOperationStore();
         const activity = createManagedActivityInventory({ producers: [{ read: operations.readLiveWork, subscribe: operations.subscribe }] });

@@ -13,6 +13,8 @@ export type MachineWorkSummaryRpcOwner = Readonly<{
     target: Omit<RequesterWorkAttributionV1, 'accountId'>;
     custodianAccountId: string;
     activity: Pick<ManagedActivityInventory, 'read'>;
+    /** Local machine work only; excludes requester-session reads that require another Account's context. */
+    summaryActivity?: Pick<ManagedActivityInventory, 'read'>;
     /** Incumbent access-list reader bound to this Home and custodian credential. */
     readAccess(signal: AbortSignal): Promise<unknown>;
     /** Pure observation of the same Project admission; never pumps accepted work. */
@@ -45,7 +47,7 @@ export function registerMachineWorkSummaryRpcHandlers(params: MachineWorkSummary
             if (!access.success || access.data.machineId !== params.target.machineId
                 || access.data.custodian.accountId !== params.custodianAccountId || !access.data.canManage
                 || access.data.access.accessState !== 'ready') return { kind: 'unavailable' };
-            const inventory = await params.activity.read();
+            const inventory = await (params.summaryActivity ?? params.activity).read();
             if (context.signal.aborted) return refused();
             const summary = projectMachineWorkSummary({ inventory, target: params.target, custodianAccountId: params.custodianAccountId,
                 requesterIdentities: new Map((access.data.currentRequesterDisplayIdentities ?? []).map(identity => [identity.accountId, identity])),
