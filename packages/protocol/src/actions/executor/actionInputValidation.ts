@@ -3,6 +3,7 @@ import type { ErrorObject } from 'ajv';
 import type { PluginJsonSchemaValidator } from '../../plugins/actions/protocolComposableSchema.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { BotFaceShapeConstraintSchema, type BotFaceShapeConstraint } from '../../sessions/identity/botFaceShapeValidation.js';
+import { INVITATION_TOKEN_EXPECTED_MESSAGE } from '../../teams/invitationToken.js';
 
 import type { ActionExecuteFailure } from '../actionExecutionResult.js';
 
@@ -42,6 +43,9 @@ function projectIssueMessage(issue: core.$ZodIssue): string {
 }
 
 function projectIssue(issue: core.$ZodIssue, parentPath: readonly (string | number)[] = []): ActionInputIssue[] {
+  if (issue.message === 'invitation_token_expected') {
+    return [{ code: 'invitation_token_expected', path: ['token'], message: INVITATION_TOKEN_EXPECTED_MESSAGE }];
+  }
   const values = issue.code === 'invalid_value' ? issue.values
     : issue.code === 'invalid_union' && 'options' in issue ? issue.options : undefined;
   const acceptedValues = values?.filter(isJsonPrimitive);
@@ -110,6 +114,9 @@ export function projectActionInputJsonSchemaIssues(
 
 /** Semantic checks use the same content-free repair envelope as schema validation. */
 export function actionInputIssueFailure(...issues: readonly ActionInputIssue[]): ActionExecuteFailure {
+  if (issues.some(issue => issue.code === 'invitation_token_expected')) {
+    return { ok: false, errorCode: 'invitation_token_expected', error: INVITATION_TOKEN_EXPECTED_MESSAGE };
+  }
   return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters', details: { issues: issues.map(issue => ActionInputIssueSchema.parse({
     ...issue,
     ...(issue.acceptedValues === undefined ? {} : { acceptedValues: issue.acceptedValues.filter(isJsonPrimitive) }),

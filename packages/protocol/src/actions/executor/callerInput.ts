@@ -44,7 +44,8 @@ export async function bindCallerInput(
     const timingIssue = spec.id === 'session.permission_mode.set'
       ? parsed.error.issues.find((issue) => issue.path[0] === 'applyTiming')
       : undefined;
-    return { ...actionInputValidationFailure(parsed.error), error: timingIssue?.message ?? 'invalid_parameters' };
+    const failure = actionInputValidationFailure(parsed.error);
+    return timingIssue ? { ...failure, error: timingIssue.message } : failure;
   }
   const caller = ctx.actionCaller ?? { kind: 'host' as const };
   const apiBinding = ctx.surface === 'api'

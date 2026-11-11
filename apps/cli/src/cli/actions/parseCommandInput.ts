@@ -9,12 +9,13 @@ import { isMissingActionSecretInputError, readMissingActionSecretInputPaths } fr
 import type { ActionCliBindContext, ActionCliBindInput } from '@happier-dev/protocol';
 
 import { z } from 'zod/mini';
+import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 
 import type { ActionCliField, CompiledActionCliCommand } from './compiledCommands';
 
 export type ActionCliParseFailure = Readonly<{
   ok: false;
-  code: 'invalid_arguments';
+  code: 'invalid_arguments' | 'invitation_token_expected';
   message: string;
 }>;
 
@@ -61,6 +62,13 @@ function describeSchemaIssues(error: z.core.$ZodError): string {
       return path ? `${path}: ${issue.message}` : issue.message;
     })
     .join('; ');
+}
+
+function schemaFailure(error: z.core.$ZodError): ActionCliParseFailure {
+  const refusal = actionInputValidationFailure(error);
+  return refusal.errorCode === 'invitation_token_expected'
+    ? { ok: false, code: 'invitation_token_expected', message: refusal.error }
+    : failure(describeSchemaIssues(error));
 }
 
 /**
@@ -129,6 +137,8 @@ function parsePartialInputFields(
     const result = parseInputBeforeSecretPreparation(fieldSchema, value, secretInput, { input: supplied, field });
     if (result.success) parsed[field] = result.data;
     else {
+      const refusal = schemaFailure(result.error);
+      if (refusal.code === 'invitation_token_expected') return refusal;
       issues.push(...result.error.issues.map((issue) => {
         const path = [field, ...issue.path].join('.');
         return `${path}: ${issue.message}`;
@@ -142,7 +152,7 @@ function parsePartialInputFields(
       [field, z.optional(fieldSchema)]
     )));
     const refined = z.object(partialShape).check(...checks).safeParse(parsed);
-    if (!refined.success) return failure(describeSchemaIssues(refined.error));
+    if (!refined.success) return schemaFailure(refined.error);
   }
   return Object.freeze(parsed);
 }
@@ -197,7 +207,7 @@ export function composeActionCliInput(params: Readonly<{
   if (params.parsed.canonicalBase !== null) {
     if (baseShapes === null) {
       const whole = parseInputBeforeSecretPreparation(baseSchema, params.parsed.canonicalBase, params.secretInput);
-      if (!whole.success) return failure(describeSchemaIssues(whole.error));
+      if (!whole.success) return schemaFailure(whole.error);
       if (!whole.data || typeof whole.data !== 'object' || Array.isArray(whole.data)) {
         return failure('Canonical Action input must be an object.');
       }
@@ -220,7 +230,7 @@ export function composeActionCliInput(params: Readonly<{
   if (hasCallerOverlay) {
     if (callerShape === null) {
       const whole = parseInputBeforeSecretPreparation(params.callerSchema, params.parsed.callerOverlay, params.secretInput);
-      if (!whole.success) return failure(describeSchemaIssues(whole.error));
+      if (!whole.success) return schemaFailure(whole.error);
       callerValue = whole.data;
     } else {
       // Only a binder can discard fields before the final canonical check.
@@ -244,7 +254,7 @@ export function composeActionCliInput(params: Readonly<{
     }
     boundOverlay = candidate as Readonly<Record<string, unknown>>;
   } catch (error) {
-    if (error instanceof z.core.$ZodError) return failure(describeSchemaIssues(error));
+    if (error instanceof z.core.$ZodError) return schemaFailure(error);
     throw error;
   }
 
@@ -288,10 +298,10 @@ export function composeActionCliInput(params: Readonly<{
     // Re-admit the completed public union before the broader internal schema.
     // Single-object commands retain their authenticated preparation boundary.
     const publicInput = parseInputBeforeSecretPreparation(baseSchema, merged, params.secretInput);
-    if (!publicInput.success) return failure(describeSchemaIssues(publicInput.error));
+    if (!publicInput.success) return schemaFailure(publicInput.error);
   }
   const canonical = parseInputBeforeSecretPreparation(params.canonicalSchema, merged, params.secretInput);
-  if (!canonical.success) return failure(describeSchemaIssues(canonical.error));
+  if (!canonical.success) return schemaFailure(canonical.error);
   if (!canonical.data || typeof canonical.data !== 'object' || Array.isArray(canonical.data)) {
     return failure('Canonical Action input must be an object.');
   }

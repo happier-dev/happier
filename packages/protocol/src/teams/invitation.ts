@@ -12,6 +12,7 @@ import {
   TeamRoleSchema,
 } from './membership.js';
 import {
+  TEAM_INVITATION_TOKEN_PATTERN,
   TeamInvitationTokenV1Schema,
   type TeamInvitationTokenV1,
 } from './invitationToken.js';
@@ -301,7 +302,15 @@ export type TeamInvitationPostAuthContinuationV1 = z.infer<
 >;
 
 export const TeamInvitationAcceptInputV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ v: z.literal(1), token: TeamInvitationTokenV1Schema }),
+  z.strictObject({
+    v: z.literal(1),
+    // Full links require bound Home resolution in the join flow. Keep the
+    // bearer grammar owned by its codec and attach only a content-free repair code.
+    token: z.string({ error: 'invitation_token_expected' }).check(z.regex(
+      TEAM_INVITATION_TOKEN_PATTERN,
+      { error: 'invitation_token_expected' },
+    )),
+  }),
   z.strictObject({
     v: z.literal(1),
     continuation: TeamInvitationPostAuthContinuationV1Schema,

@@ -68,6 +68,26 @@ it('accepts a matching interleaved Session selector with whole input but rejects
     .toMatchObject({ ok: false, code: 'invalid_arguments' });
 });
 
+it.each(['json', 'flags'])('keeps invitation links refused with typed guidance while admitting raw bearers (%s)', mode => {
+  const spec = getActionSpec('teams.invitations.accept');
+  const compiled = compileActionCliFields(spec);
+  const token = 'a'.repeat(43);
+  const compose = (value?: string) => {
+    const parsed = parseActionCliInput({ fields: compiled.fields, positionals: [] },
+      mode === 'json' ? ['--input-json', JSON.stringify({ v: 1, token: value })]
+        : ['--v', '1', ...(value === undefined ? [] : ['--token', value])]);
+    if (!parsed.ok) return parsed;
+    return composeActionCliInput({ parsed, canonicalSchema: spec.inputSchema,
+      callerSchema: compiled.callerSchema, wholeInputSchema: compiled.wholeInputSchema,
+      bindInput: compiled.bindInput, context: { actionId: spec.id, invocationId: 'invite', commandPath: ['actions', 'invoke'] } });
+  };
+  const refused = compose(`https://app.example/join/${token}?target=opaque&targetBinding=binding`);
+  expect(refused).toMatchObject({ ok: false, code: 'invitation_token_expected', message: expect.stringContaining('open the link in the app') });
+  expect(JSON.stringify(refused)).not.toContain(token);
+  expect(compose()).toMatchObject({ ok: false, code: 'invitation_token_expected' });
+  expect(compose(token)).toMatchObject({ ok: true, input: { v: 1, token } });
+});
+
 const CallerSchema = z.strictObject({
   sessionId: z.string().check(z.minLength(1)),
   message: z.string().check(z.minLength(1)),

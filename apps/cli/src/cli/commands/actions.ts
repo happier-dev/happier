@@ -106,8 +106,8 @@ const DEFAULT_DEPS: ActionsDeps = {
 };
 
 
-function invalidInvokeArguments(message: string, actionId?: string): never {
-  throw Object.assign(new Error(`${message}\n${invokeUsage(actionId)}`), { code: 'invalid_arguments' });
+function invalidInvokeArguments(message: string, actionId?: string, code = 'invalid_arguments'): never {
+  throw Object.assign(new Error(`${message}\n${invokeUsage(actionId)}`), { code });
 }
 
 function hasInvokeOption(args: readonly string[], ...flags: readonly string[]): boolean {
@@ -183,7 +183,7 @@ function resolveInvokeActionInput(
         output: wantsJson(args) ? 'json' : 'human',
       },
     });
-    if (!composed.ok) invalidInvokeArguments(composed.message, args[1]);
+    if (!composed.ok) invalidInvokeArguments(composed.message, args[1], composed.code);
     return composed.input;
   }
   // A discovered definition publishes canonical top-level data fields only and

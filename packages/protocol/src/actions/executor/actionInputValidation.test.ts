@@ -6,6 +6,15 @@ import { BotFaceSetInputSchema } from '../../sessions/identity/sessionBotFaceV1.
 import { createActionExecutor } from '../actionExecutor.js';
 
 describe('Action input validation diagnostics', () => {
+  it.each(['link', 'missing'])('refuses %s invitation input with token guidance before any Home call', async kind => {
+    const token = 'a'.repeat(43);
+    const input = kind === 'link' ? { v: 1, token: `https://app.example/join/${token}?target=opaque&targetBinding=binding` } : { v: 1 };
+    const failure = await createActionExecutor({}).execute('teams.invitations.accept', input,
+      { surface: 'cli', authority: 'account_automation', serverId: 'home' });
+    expect(failure).toMatchObject({ ok: false, errorCode: 'invitation_token_expected', error: expect.stringContaining('open the link in the app') });
+    expect(JSON.stringify(failure)).not.toContain(token);
+  });
+
   it.each([false, true])('reports repair messages for an incomplete Doc passage through the real executor (interception: %s)', async intercepted => {
     // Incident-shaped rather than recorded payload: omit anchor facts and retry identity so both authoring forms report their issues.
     const executor = createActionExecutor(intercepted ? {

@@ -37,6 +37,23 @@ import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '@hap
 
 afterEach(() => { vi.restoreAllMocks(); process.exitCode = undefined; });
 
+it('preserves invitation token guidance at actions invoke dispatch', async () => {
+  const token = 'a'.repeat(43);
+  const output: string[] = [];
+  vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+    output.push(String(chunk));
+    const callback = args.find(argument => typeof argument === 'function');
+    if (typeof callback === 'function') callback();
+    return true;
+  });
+  await handleActionsCommand(['invoke', 'teams.invitations.accept', '--input-json',
+    JSON.stringify({ v: 1, token: `https://app.example/join/${token}?target=opaque&targetBinding=binding` }), '--json']);
+  expect(JSON.parse(output.join(''))).toMatchObject({ ok: false, error: {
+    code: 'invitation_token_expected', message: expect.stringContaining('open the link in the app'),
+  } });
+  expect(output.join('')).not.toContain(token);
+});
+
 describe('public Action failure evidence', () => {
   it.each([
     { json: false, phase: 'preview' }, { json: true, phase: 'preview' },
