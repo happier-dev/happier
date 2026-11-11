@@ -860,8 +860,11 @@ describe('ordinary managed creation continuation', () => {
             const preset = ManagedMachinePresetV1Schema.parse({ ...exactPreset, controller: undefined, controllerPoolId: poolId,
                 delegatedAcquire: { ...exactPreset.delegatedAcquire, controller: undefined, reviewedFacts: receipt } });
             const selection = { kind: 'preset' as const, homeId, id: preset.id, revision: preset.revision };
-            let machine: ManagedMachineV1 = { ...baseMachine, homeId, custodianAccountId: 'company', enrollmentAccountId: 'account',
+            const boundMachine: ManagedMachineV1 = { ...baseMachine, homeId, custodianAccountId: 'company', enrollmentAccountId: 'account',
                 controllerAccess: exactPreset.delegatedAcquire.controller };
+            // Admission can return before native allocation; the operation's next snapshot advances it.
+            let machine: ManagedMachineV1 = status === 'unknown'
+                ? { ...boundMachine, allocation: 'unsubmitted', resource: undefined } : boundMachine;
             let answered = false;
             installation = installManagedInstallationResponseBoundary({ homes, serverId, serverUrl, homeId, token,
                 enrollmentAccountId: 'account', readMachine: () => machine, onAnswer: () => { answered = true; } });
@@ -890,6 +893,7 @@ describe('ordinary managed creation continuation', () => {
                         reviewedFacts: { controller, prerequisites } });
                     else expect(envelope.input).toMatchObject({ machineId: controller.machineId,
                         managed: { homeId, managedId: machine.id }, operationId: 'pool-install', includeManagedPrompt: true });
+                    if (actionId === 'action.operations.get' && machine.allocation === 'unsubmitted') machine = boundMachine;
                     if (answered) machine = { ...machine, enrolledMachineId: 'guest' };
                     return { body: { v: 1, requestId: envelope.requestId, actionId, execution: { ok: true,
                         result: actionId === 'machines.managed.acquire' ? { managedId: machine.id, operation: { operationId: 'pool-install' } }
@@ -922,7 +926,7 @@ describe('ordinary managed creation continuation', () => {
             expect(homes.requestsFor('/v1/machines/read-batch')).toHaveLength(0);
         } finally { installation?.dispose(); confirmation.mockRestore(); restoreLoader(); await homes.reset(); }
     });
-    it('observes the admitted requester creation operation through exact resource scope without a controller grant', async () => {
+    it.each([true, false])('observes the admitted requester creation operation without a controller grant only for its exact resource (resource matches: %s)', async resourceMatches => {
         const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
         const restoreLoader = await installRealActionExecutorModuleLoader();
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
@@ -943,7 +947,8 @@ describe('ordinary managed creation continuation', () => {
                     nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(6)).publicKey, 'base64url') } };
             const operation = { version: 1, operationId: 'install', revision: 1, actionId: 'machines.managed.acquire', state: 'running',
                 scope: { accountId: 'account', machineId: controller.machineId }, title: 'Create Team sandbox', createdAt: 1, startedAt: 2,
-                cancellation: 'supported', domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller,
+                cancellation: 'supported', domainRef: { kind: 'managedMachine', id: machine.id,
+                    resource: resourceMatches ? machine.resource : { ...machine.resource!, value: { nativeId: 'other-native-id' } }, controller,
                     bootstrapTask: { id: 'installation-task', taskKind: 'remote.ssh.bootstrapMachine.v1' } } };
             homes.answer(serverId, '/v1/machines/managed/actions/get', { body: machine });
             homes.answer(serverId, '/v1/actions/action.operations.get/execution-authorization', { select: value => {
@@ -970,8 +975,10 @@ describe('ordinary managed creation continuation', () => {
                 scope: { serverId, accountId: 'account' }, signal: new AbortController().signal, isCurrent: () => true,
                 onAcquisitionChange: () => {}, onProgress: value => progress.push(value), onApprovalPending: () => {},
                 executeAction: createFrontDoorActionExecute(createDefaultActionExecutor()) });
-            expect(result).toEqual({ kind: 'pending', managedId: machine.id });
-            expect(progress).toContainEqual({ kind: 'acquiring', managedId: machine.id, operation });
+            expect(result).toEqual(resourceMatches ? { kind: 'pending', managedId: machine.id }
+                : { kind: 'failed', code: 'operation_scope_mismatch' });
+            if (resourceMatches) expect(progress).toContainEqual({ kind: 'acquiring', managedId: machine.id, operation });
+            else expect(progress).not.toContainEqual({ kind: 'acquiring', managedId: machine.id, operation });
             expect(homes.requestsFor('/v1/machines/read-batch')).toHaveLength(0);
         } finally { restoreLoader(); await homes.reset(); }
     });

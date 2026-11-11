@@ -211,8 +211,9 @@ export async function runManagedMachineCreation(input: Readonly<{
     if (!current()) return fail('continuation_retired');
     if (acquisition.operation && acquisition.selection.kind === 'preset' && !scopedMachine) return fail(readFailureCode);
     controller ??= scopedMachine?.controller;
+    let machine: ManagedMachineV1 | null = null;
     if (controller && acquisition.operation && (!alreadyAdmitted?.enrolledMachineId || awaitingSetupWithoutGuestOperation)) {
-        const requesterMachine = scopedMachine && scopedMachine.enrollmentAccountId === input.scope.accountId
+        let requesterMachine = scopedMachine && scopedMachine.enrollmentAccountId === input.scope.accountId
             && scopedMachine.custodianAccountId !== input.scope.accountId ? scopedMachine : null;
         input.onProgress({ kind: 'acquiring', managedId: acquisition.managedId });
         while (current()) {
@@ -225,8 +226,16 @@ export async function runManagedMachineCreation(input: Readonly<{
             const found = ActionOperationGetV1ResponseSchema.parse(outcome.result);
             if (found.kind === 'not_found') return fail('operation_not_found');
             if (found.operation.operationId !== acquisition.operation.operationId || found.operation.scope.machineId !== controller.machineId
-                || found.operation.scope.accountId !== input.scope.accountId
-                || requesterMachine && !managedMachineOperationMatchesResource(requesterMachine, found.operation)) return fail('operation_scope_mismatch');
+                || found.operation.scope.accountId !== input.scope.accountId) return fail('operation_scope_mismatch');
+            if (requesterMachine) {
+                // Allocation can advance while the operation waits. Correlate its
+                // resource with the current row, not the row read at admission.
+                machine = await read();
+                if (!current()) return fail('continuation_retired');
+                if (!machine) return fail(readFailureCode);
+                if (!managedMachineOperationMatchesResource(machine, found.operation)) return fail('operation_scope_mismatch');
+                requesterMachine = machine;
+            }
             observedOperation = found.operation;
             if (found.operation.domainRef?.kind === 'managedMachine') agentUpdate = found.operation.domainRef.agentUpdate;
             input.onProgress({ kind: 'acquiring', managedId: acquisition.managedId, operation: found.operation });
@@ -265,7 +274,7 @@ export async function runManagedMachineCreation(input: Readonly<{
             break;
         }
     }
-    let machine = await read();
+    machine ??= await read();
     if (!current()) return fail('continuation_retired');
     if (!machine) return fail(readFailureCode);
     if (machine.creationState !== 'active' || machine.allocation === 'confirmed-absent') return fail('enrollment_retired');
