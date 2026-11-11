@@ -44,13 +44,13 @@ const metaContributorModel = {
     input: { text: true, audio: true, image: true, video: true, pdf: true },
     output: { text: true, audio: false, image: false, video: false, pdf: false } },
 };
-const metaCases = ['manual', 'native'].map(mode => ({
+const metaCases = ['manual', 'native'].flatMap(mode => ['muse-spark-1.3-contributor', 'muse-spark-1.2-contributor'].map(model => ({
   purpose: 'meta-inference', service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
-  provider: 'meta', model: metaContributorModel.id, modelRecord: metaContributorModel,
+  provider: 'meta', model, modelRecord: { ...metaContributorModel, id: model },
   materialize: museAccountRuntimeDefinition.materialize,
   context: producerContext({ credentialMode: mode, inferenceKey: 'fake-meta-selected', accountToken: 'fake-identity-token' }),
   key: 'fake-meta-selected',
-}));
+})));
 function launchFixture(row: { purpose: string; service: { pluginId: string; localId: string }; materialize: Materialize; context: Parameters<Materialize>[1] }) {
   let acquisitions = 0;
   const context: Parameters<typeof prepareOpenCodeQualifiedConnectedAccounts>[1] = { services: { connectedAccounts: {
@@ -66,7 +66,8 @@ function request(provider: string, model: string) {
   return { configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: `${provider}/${model}`, updatedAtMs: 1 },
     permissionIntent: { value: null, updatedAtMs: 0 }, options: {} },
     launchEnvironment: { values: { XAI_API_KEY: 'fake-ambient', GOOGLE_API_KEY: 'fake-ambient', KIMI_API_KEY: 'fake-ambient',
-      OPENCODE_AUTH_CONTENT: JSON.stringify({ xai: { type: 'api', key: 'fake-ambient' } }) } } };
+      OPENCODE_AUTH_CONTENT: JSON.stringify({ xai: { type: 'api', key: 'fake-ambient' } }),
+      OPENCODE_CONFIG_CONTENT: JSON.stringify({ enabled_providers: ['ollama'] }) } } };
 }
 describe('OpenCode selected native accounts', () => {
   it('uses the admitted Session account instead of re-reading a durable default', async () => {
@@ -86,7 +87,7 @@ describe('OpenCode selected native accounts', () => {
     } finally { await prepared.dispose(); }
   });
 
-  it.each([...cases, ...metaCases, { ...cases[2], provider: 'google-vertex',
+  it.each([...cases, ...metaCases, { ...metaCases[0]!, missingNativeProvider: true }, { ...cases[2], provider: 'google-vertex',
     context: producerContext({ serviceAccountJson }, 'service-account'), serviceAccountJson }])(
     'passes the selected $purpose credential through the real Session entry to managed launch', async row => {
     const f = launchFixture(row);
@@ -98,11 +99,17 @@ describe('OpenCode selected native accounts', () => {
             controller.enqueue(new TextEncoder().encode('data: {"type":"server.connected","properties":{}}\n\n'));
             input.signal?.addEventListener('abort', () => controller.close(), { once: true });
           } }) };
+        // OpenCode 1.19.0 filters /provider by enabled_providers after auth loading.
+        // nl1's global filter was [ollama]; a selected-account launch must enable its native provider.
+        const spec = vi.mocked(boundary.managedServices.supervise).mock.calls[0]?.[0];
+        const config = spec?.mode.kind === 'spawn'
+          ? JSON.parse(spec.mode.launch.env?.OPENCODE_CONFIG_CONTENT ?? '{}') : {};
+        const selectedProviderEnabled = Array.isArray(config.enabled_providers) && config.enabled_providers.includes(row.provider);
         const body = path === '/session' || path === '/session/oc-native-account' ? { id: 'oc-native-account' }
           : path === '/agent' ? [{ name: 'build', mode: 'primary' }]
-            : path === '/provider' ? { all: [{ id: row.provider,
+            : path === '/provider' ? ('missingNativeProvider' in row || !selectedProviderEnabled ? { all: [{ id: 'ollama', models: {} }], connected: ['ollama'] } : { all: [{ id: row.provider,
               models: { [row.model]: 'modelRecord' in row ? row.modelRecord : { id: row.model } },
-              options: { apiKey: 'fake-private-provider-key' } }], connected: [row.provider] }
+              options: { apiKey: 'fake-private-provider-key' } }], connected: [row.provider] })
             : path.endsWith('/message') ? [] : {};
         return { ok: true, status: 200, headers: { 'content-type': 'application/json' }, body: new Response(JSON.stringify(body)).body };
       } });
@@ -114,13 +121,29 @@ describe('OpenCode selected native accounts', () => {
         requestApproval: boundary.sessions.current.permissions.requestDecision },
     } } as unknown as AgentRuntimeContext;
     const runtime = createOpenCodeAgentRuntime({ plugin: { id: 'happier.agent.opencode', version: '0.0.0' }, agent: { id: 'opencode' }, signal });
-    const session = await runtime.sessions!.open({ ...request(row.provider, row.model), kind: 'create', sessionId: 'native-account', cwd: '/repo',
+    const launch = request(row.provider, row.model);
+    // r1111d rows 2a/2b: explicit contributor model, yolo permission and minimal thinking.
+    // The public modelSelection is projected into configuration.model before this plugin boundary.
+    const replayConfiguration = 'modelRecord' in row ? {
+      ...launch.configuration,
+      model: { value: `meta/${row.model}`, updatedAtMs: 1794436944459 },
+      permissionIntent: { value: 'yolo' as const, updatedAtMs: 1794436944459 },
+      options: { reasoning_effort: { value: 'minimal', updatedAtMs: 1794436944459 } },
+    } : launch.configuration;
+    const opening = runtime.sessions!.open({ ...launch, configuration: replayConfiguration, kind: 'create', sessionId: 'native-account', cwd: '/repo',
       runtimeDescriptorV1: { v: 1, agentId: 'opencode', agent: { backendMode: 'server' } } }, context);
+    if ('missingNativeProvider' in row) {
+      // Exact r1111d native response: only Ollama is present, so Meta cannot be selected.
+      await expect(opening).rejects.toThrow(/OpenCode model .* is not selectable/u);
+      return;
+    }
+    const session = await opening;
     let adcFile: string | undefined;
     try {
       const spec = vi.mocked(boundary.managedServices.supervise).mock.calls[0]![0];
       if (spec.mode.kind !== 'spawn') throw new Error('Expected managed native launch');
       const env = spec.mode.launch.env!;
+      expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT!).enabled_providers).toContain(row.provider);
       const auth = JSON.parse(env.OPENCODE_AUTH_CONTENT!);
       if ('serviceAccountJson' in row) {
         adcFile = env.GOOGLE_APPLICATION_CREDENTIALS!;
@@ -166,11 +189,14 @@ describe('OpenCode selected native accounts', () => {
       expect(f.acquisitions()).toBe(1);
     } finally { await prepared.dispose(); }
   });
-  it('requires a model for a selected account before acquiring its secrets', async () => {
+  it.each([null, 'openai/gpt-5'])('requires a selected-account model before acquiring secrets (%s)', async modelId => {
     const f = launchFixture(cases[1]);
-    await expect(prepareOpenCodeQualifiedConnectedAccounts(request('openai', 'gpt-5'), f.context)).rejects.toMatchObject({
+    const launch = request('openai', 'gpt-5');
+    await expect(prepareOpenCodeQualifiedConnectedAccounts({ ...launch, configuration: {
+      ...launch.configuration, model: { value: modelId, updatedAtMs: 1 },
+    } }, f.context)).rejects.toMatchObject({
       code: 'agent_startup_model_reconciliation_failed',
-      details: { failureCause: { failureReason: 'model_selection_required' } },
+      details: { failureCause: { code: 'opencode_connected_account_model_required', failureReason: 'model_selection_required' } },
     });
     expect(f.acquisitions()).toBe(0);
   });

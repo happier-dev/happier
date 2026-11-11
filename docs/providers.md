@@ -1223,7 +1223,11 @@ native account changes within the same probe scope; an unavailable transport
 retains the previous usable observation through the existing failed-refresh path.
 For a selected native Connected Account, OpenCode requires a concrete native
 model belonging to a selected account's declared provider before acquiring
-credentials. Resolved helper and Session model selections remain usable when
+credentials. Selected-account materialization also enables the selected native
+providers in the child OpenCode config, so an inherited `enabled_providers` filter
+(such as an Ollama-only Machine config) cannot hide an authenticated account.
+The same declaration-derived rule covers API keys, request-auth accounts and
+Vertex service accounts. Resolved helper and Session model selections remain usable when
 inherited. A missing native model could select another provider's saved default,
 so preparation returns the typed `model_selection_required` startup reason
 instead. Selected-account and Provider-bound Session inventories remain

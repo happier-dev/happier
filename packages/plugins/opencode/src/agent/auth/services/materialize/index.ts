@@ -226,8 +226,13 @@ export function buildOpenCodeQualifiedAuthContent(input: Readonly<{
       ? { type: 'oauth', refresh: credential.key, access: '', expires: 0 }
       : { type: 'api', key: credential.key };
   }
+  const enabledProviders = OPEN_CODE_NATIVE_PROVIDERS.filter(provider =>
+    auth[provider] || input.directAccountCredentials?.[provider]);
+  const nativeConfigPart = buildOpenCodeNativeAccountConfigPart(input.directAccountCredentials ?? {});
   return Object.freeze({ authContent: JSON.stringify(auth),
-    configPart: buildOpenCodeNativeAccountConfigPart(input.directAccountCredentials ?? {}),
+    configPart: enabledProviders.length > 0
+      ? { ...nativeConfigPart, enabled_providers: enabledProviders }
+      : nativeConfigPart,
     nativeAccountServicesByProvider: Object.freeze(nativeAccountServicesByProvider) });
 }
 

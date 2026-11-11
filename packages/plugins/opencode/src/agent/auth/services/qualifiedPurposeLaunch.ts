@@ -141,7 +141,7 @@ function mergeQualifiedLaunchEnvironment<Request extends OpenCodeAccountLaunchRe
 function modelSelectionRequired(): PluginError {
   return new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
     message: 'Choose a model for the selected OpenCode Connected Account provider.',
-    details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
+    details: { failureCause: { code: 'opencode_connected_account_model_required',
       phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
 }
 
