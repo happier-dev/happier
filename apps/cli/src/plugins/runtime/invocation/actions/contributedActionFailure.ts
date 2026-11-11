@@ -10,6 +10,7 @@ import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-commo
 export function projectContributedActionFailure(result: Readonly<{
   errorCode: string;
   error: string;
+  details?: unknown;
   retryable?: boolean;
   actionHandlerInvocation?: 'notStarted';
   data?: JsonValue;
@@ -20,7 +21,8 @@ export function projectContributedActionFailure(result: Readonly<{
   const error = result.actionHandlerInvocation === 'notStarted'
     ? createPluginActionHandlerNotStartedError(data) : new PluginError(data);
   return { ok: false, errorCode: result.errorCode, error: result.error,
-    ...(error.data.failureCause ? { failureCause: error.data.failureCause } : {}), details: error.data };
+    ...(error.data.failureCause ? { failureCause: error.data.failureCause } : {}),
+    details: result.details === undefined ? error.data : result.details };
 }
 
 /** One public refusal projection for immediate RPCs and retained finite results. */

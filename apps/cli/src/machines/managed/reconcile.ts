@@ -20,6 +20,7 @@ import type { ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/ma
 import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { AdmittedManagedProviderOperationExecutionRequest } from '@/plugins/runtime/invocation/actions/executeContributedAction';
+import { projectContributedActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
 import type { ManagedNativeCredentialInvocationBinding, PluginExternalActionContext } from '@/plugins/runtime/invocation/services/types';
 import { createPrivateBearerCredential } from '@/daemon/privateBearerFile';
 import type { MachineProvisionerContributionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -399,7 +400,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                 if (nativeEffectGuardFailure) throw nativeEffectGuardFailure.error;
                 if (!attempt.matched) throw new ManagedMachineNativeEffectGuardRefusal('provider_unavailable');
                 if (!attempt.result.ok) {
-                    const failureDetails = readManagedNativeFailureDetails(attempt.result, { pluginId: contribution.pluginId, localId });
+                    const failureDetails = readManagedNativeFailureDetails(projectContributedActionFailure(attempt.result), { pluginId: contribution.pluginId, localId });
                     throw attempt.result.actionHandlerInvocation === 'notStarted'
                         ? new ManagedMachineNativeEffectGuardRefusal(attempt.result.errorCode, undefined, failureDetails)
                         : new ManagedMachineControllerError(attempt.result.errorCode, undefined, failureDetails);

@@ -44,6 +44,7 @@ import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/fir
 import type { ManagedGuestLocalStop } from './managedRetentionPolicy';
 import { MachineProvisionerRenewResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { createManagedNativeObservationWait } from './nativeObservationWait';
+import { projectContributedActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
 
 import { ManagedMachineControllerError, ManagedMachineNativeRefusal, ManagedMachineNativeObservationFailure, readManagedNativeFailureDetails } from './controllerErrors';
 export { ManagedMachineControllerError, ManagedMachineNativeRefusal, ManagedMachineNativeEffectGuardRefusal } from './controllerErrors';
@@ -764,7 +765,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     });
                     if (!attempt.matched) throw new ManagedMachineControllerError('provider_unavailable');
                     if (!attempt.result.ok) throw new ManagedMachineControllerError(attempt.result.errorCode, undefined,
-                        readManagedNativeFailureDetails(attempt.result, { pluginId, localId }));
+                        readManagedNativeFailureDetails(projectContributedActionFailure(attempt.result), { pluginId, localId }));
                     return attempt.result.result;
                 } finally { current = false; await activation.cleanup(); }
                 } });

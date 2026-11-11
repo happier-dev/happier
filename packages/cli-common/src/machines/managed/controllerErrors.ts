@@ -29,7 +29,7 @@ export function readManagedNativeFailureDetails(failure: ActionExecuteFailure, a
         const cause = MachineProvisionerNativeCauseV1Schema.safeParse({ localCause: failure.errorCode, action, issues: failure.details.issues });
         if (cause.success) return { kind: 'managedNative', nativeCause: cause.data };
     }
-    const { data, errorCode: code } = failure;
+    const { details: data, errorCode: code } = failure;
     if (!data || typeof data !== 'object' || Array.isArray(data) || !('name' in data) || data.name !== 'PluginError'
         || !('code' in data) || data.code !== code || !('details' in data)) return undefined;
     const details = data.details;
