@@ -41,6 +41,20 @@ describe('ProviderErrorItems', () => {
         } finally { show.mockRestore(); }
     });
 
+    it('explains an empty saved gateway as setup, while retaining its typed diagnostic', async () => {
+        const { ProviderErrorItems } = await import('./ProviderErrorItems');
+        const screen = await renderScreen(<ProviderErrorItems error={{
+            v: 1, code: 'provider_connection_invalid', retryable: false, action: 'review_connection',
+            connectionId: 'pc_empty_gateway', reason: 'managed_purpose_bindings_missing',
+        }} />);
+        expect(state(screen)?.props).toMatchObject({
+            kind: 'unavailable',
+            title: 'settingsProviders.local.configureManaged',
+            reason: 'settingsProviders.local.configureManagedDescription',
+            diagnosticCode: 'provider_connection_invalid',
+        });
+    });
+
     it('renders and dispatches the exact typed recovery action', async () => {
         const { ProviderErrorItems } = await import('./ProviderErrorItems');
         const screen = await renderScreen(<ProviderErrorItems error={{

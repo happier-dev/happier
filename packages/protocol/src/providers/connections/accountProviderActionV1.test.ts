@@ -55,6 +55,43 @@ function accountRow(catalog: ProviderConnectionsCatalogV1 = DEFAULT_PROVIDER_CON
 }
 
 describe('shared Provider Account Action producer', () => {
+  describe.each(['createContribution', 'createCustom'] as const)('saved %s credential verification', action => {
+    it.each(['unauthorized', 'network', 'success', 'no_machine'] as const)('retains the saved connection and canonical %s outcome', async scenario => {
+      const row = accountRow();
+      const requests: string[] = [];
+      const failure = { v: 1, code: scenario === 'unauthorized' ? 'provider_endpoint_unauthorized' : 'provider_endpoint_unreachable',
+        retryable: scenario !== 'unauthorized', action: scenario === 'unauthorized' ? 'replace_secret' : 'retry',
+        connectionId: 'pc_save_probe', machineId: 'machine-a' } as const;
+      const execute = createProviderActionExecuteV1({ assertCurrent() {}, account: row.execute,
+        rpc: async input => {
+          requests.push(input.request.actionId);
+          if (input.request.actionId === 'providers.probe') return scenario === 'success'
+            ? { status: 'success', models: [], requestFingerprint: `probe-request:v1:${'a'.repeat(43)}` }
+            : { status: 'error', error: failure };
+          const described = describeAccountProviderConnectionsV1(row.catalog, [{ contributionKey: 'happier.provider.deepseek/deepseek',
+            definition: ProviderContributionV1Schema.parse(DEEPSEEK_PROVIDER_CONTRIBUTION), provenance: 'first_party' }]);
+          return { ...described, connections: described.connections.map(connection => ({ ...connection,
+            runtime: { ...connection.runtime, health: scenario === 'success' ? 'available' : scenario === 'unauthorized' ? 'needs_attention' : 'unreachable', checkedAt: 10, modelCount: 0 } })) };
+        },
+        setDefault: async () => ({ status: 'unchanged' }),
+      });
+      const shared = { connectionId: 'pc_save_probe', savedSecretId: 'ss_dummy', enable: true,
+        ...(scenario !== 'no_machine' ? { machineId: 'machine-a' } : {}) };
+      const request = action === 'createContribution'
+        ? parseProviderActionRequestV1('providers.connections.create_contribution', { action, ...shared,
+          contributionKey: 'happier.provider.deepseek/deepseek', displayName: null })
+        : parseProviderActionRequestV1('providers.connections.create_custom', { action, ...shared, template: customTemplate });
+      const outcome = await execute(request, {});
+      expect(outcome).toMatchObject({ ok: true, result: { status: 'success', connection: {
+        connectionId: 'pc_save_probe',
+        authorizationError: scenario === 'unauthorized' || scenario === 'network' ? failure : null,
+        runtime: { health: scenario === 'success' ? 'available' : scenario === 'unauthorized' ? 'needs_attention' : scenario === 'network' ? 'unreachable' : 'not_checked' },
+      } } });
+      expect(row.catalog.connections).toHaveLength(1);
+      // One save checks once; an unreachable provider never rolls back or retries the save.
+      expect(requests).toEqual(scenario === 'no_machine' ? [] : ['providers.probe', 'providers.connections.describe']);
+    });
+  });
   it('distinguishes pending declarations from a settled empty or failed declaration read', () => {
     const catalog = { ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [ProviderConnectionV1Schema.parse({
       v: 1, id: 'pc_pending', source: { kind: 'contribution', contributionKey: 'happier.provider.deepseek/deepseek' },

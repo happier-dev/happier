@@ -4,7 +4,7 @@ import { RPC_METHODS } from '../rpc/methods.js';
 import { createRpcCallError } from '../rpc/errors.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { createProviderErrorV1, ProviderErrorV1Schema, providerErrorFromRpcFailure } from './errors.js';
-import { PROVIDER_ACTION_OUTPUT_SCHEMAS_V1, resolveProviderActionOwnerV1, type ProviderActionRequestV1 } from './providerActionsV1.js';
+import { PROVIDER_ACTION_OUTPUT_SCHEMAS_V1, PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1, resolveProviderActionOwnerV1, type ProviderActionRequestV1 } from './providerActionsV1.js';
 import type { ProviderActionIdV1 } from './providerActionIdsV1.js';
 import type { ProviderDefaultModelSelectionMutationV1 } from './selection/v1.js';
 import type { AccountSettingsMutationResult } from '../account/settings/accountSettingMutationV1.js';
@@ -85,6 +85,42 @@ export function resolveProviderActionRpcRouteV1(actionId: ProviderActionIdV1): P
   }
 }
 
+/** Save verification consumes the existing probe once, for Actions and the SDK facade. */
+export async function verifySavedProviderConnectionV1(request: ProviderActionRequestV1, saved: unknown, host: Readonly<{
+  probe(input: Readonly<{ machineId: string; connectionId: string }>): Promise<unknown>;
+  describe(input: Readonly<{ machineId: string; connectionId: string }>): Promise<unknown>;
+}>): Promise<unknown> {
+  // Account authoring remains usable without a Machine. Machine-private creation
+  // already probes inside its authoring owner, so it must not be checked again.
+  if (resolveProviderActionOwnerV1(request) !== 'accountCatalog'
+    || (request.actionId !== PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1.createContribution
+      && request.actionId !== PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1.createCustom) || !request.input.machineId) return saved;
+  const parsed = PROVIDER_ACTION_OUTPUT_SCHEMAS_V1[request.actionId].safeParse(saved);
+  if (!parsed.success || parsed.data.status !== 'success' || !('connection' in parsed.data)
+    || !parsed.data.connection.credential?.accountBound) return saved;
+  const output = parsed.data;
+  const machineId = request.input.machineId;
+  const connectionId = output.connection.connectionId;
+  try {
+    const probe = PROVIDER_ACTION_OUTPUT_SCHEMAS_V1['providers.probe'].parse(await host.probe({ machineId, connectionId }));
+    if (probe.status === 'not_supported') return saved;
+    // The probe owns health; read its published summary rather than deriving
+    // a second health verdict from its model list, including failed observations.
+    const described = await host.describe({ machineId, connectionId })
+      .then(value => PROVIDER_ACTION_OUTPUT_SCHEMAS_V1['providers.connections.describe'].parse(value))
+      .catch(caught => ({ status: 'error' as const,
+        error: providerErrorFromRpcFailure(caught, { machineId, connectionId }) }));
+    const connection = described.status === 'success'
+      ? described.connections.find(row => row.connectionId === connectionId) ?? output.connection : output.connection;
+    const error = probe.status === 'error' ? probe.error : described.status === 'error' ? described.error : null;
+    return { ...output, connection: error ? { ...connection, authorizationError: error } : connection };
+  } catch (caught) {
+    // Verification cannot undo a committed save, including an unreachable Machine.
+    const error = providerErrorFromRpcFailure(caught, { machineId, connectionId });
+    return { ...output, connection: { ...output.connection, authorizationError: error } };
+  }
+}
+
 /** One dispatch owner: Account catalog semantics and exact-machine runtime effects. */
 export function createProviderActionExecuteV1(host: Readonly<{
   assertCurrent(context: ActionExecutorContext): void;
@@ -98,7 +134,14 @@ export function createProviderActionExecuteV1(host: Readonly<{
   return async (request, context): Promise<ActionExecuteResult> => {
     host.assertCurrent(context);
     if (resolveProviderActionOwnerV1(request) === 'accountCatalog' && host.account) {
-      return host.account(request, context);
+      const saved = await host.account(request, context);
+      if (!saved.ok) return saved;
+      return { ...saved, result: await verifySavedProviderConnectionV1(request, saved.result, {
+        probe: input => host.rpc({ machineId: input.machineId, method: RPC_METHODS.DAEMON_PROVIDERS_PROBE, context,
+          request: { actionId: 'providers.probe', input } }),
+        describe: input => host.rpc({ machineId: input.machineId, method: RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, context,
+          request: { actionId: 'providers.connections.describe', input } }),
+      }) };
     }
     if (request.actionId === 'providers.models.source_visibility.set' || request.actionId === 'providers.gateways.choose') {
       return { ok: false, errorCode: 'provider_account_action_unavailable', error: 'provider_account_action_unavailable' };

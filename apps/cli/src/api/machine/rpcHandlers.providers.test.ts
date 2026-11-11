@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   DaemonProviderConnectionMutationResponseV1Schema,
+  DaemonProviderConnectionViewV1Schema,
   DaemonProviderConnectionsDescribeResponseV1Schema,
   DaemonProviderProfileMigrationPreviewResponseV1Schema,
   DaemonProviderProfileMigrationConfirmResponseV1Schema,
@@ -112,6 +113,27 @@ function harness(providersEnabled: boolean | (() => boolean) = true) {
 }
 
 describe('machine provider RPC registration', () => {
+  it.each(['provider_endpoint_unauthorized', 'provider_endpoint_unreachable'] as const)('retains a saved API-key connection with the canonical %s outcome', async code => {
+    const h = harness();
+    const connection = DaemonProviderConnectionViewV1Schema.parse({
+      connectionId: 'pc_key', contributionKey: 'happier.provider.deepseek/deepseek', displayName: 'Key source', providerName: 'DeepSeek', icon: null,
+      role: 'named', displayNameMode: 'custom', sourceStatus: 'available', scope: 'account',
+      grants: { accountEnabled: true, enabledMachineIds: [] }, probeCapability: 'catalog', manualModelPolicy: 'allowed',
+      credential: { required: true, accountBound: true, boundMachineIds: [] }, endpoints: [], compatibility: [],
+      authorized: true, authorizationError: null, revision: 0,
+      runtime: { health: 'not_checked', modelCount: null, checkedAt: null },
+    });
+    const error = createProviderErrorV1(code, { connectionId: connection.connectionId, machineId: 'machine-a' });
+    h.services.mutateConnection.mockResolvedValue({ status: 'success', action: 'createContribution', connection, created: true });
+    h.services.probe.mockResolvedValue({ status: 'error', error });
+    await expect(h.handlers.get(RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE)!({ action: 'createContribution',
+      machineId: 'machine-a', connectionId: 'pc_key', contributionKey: connection.contributionKey,
+      displayName: null, savedSecretId: 'ss_key', enable: true,
+      authoringReview: { candidateId: null, fingerprint: 'authoring-review:v1:test', revision: 0 },
+    })).resolves.toMatchObject({ status: 'success', created: true, connection: { connectionId: 'pc_key', authorizationError: error } });
+    expect(h.services.probe).toHaveBeenCalledTimes(1);
+  });
+
   it('refreshes usage through its strict machine identity boundary and preserves source refusals', async () => {
     const h = harness();
     const handler = h.handlers.get('daemon.providers.usage.refresh');

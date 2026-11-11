@@ -4,6 +4,7 @@ import {
   ProviderConnectionIdSchema,
   ProviderProbeRequestFingerprintV1Schema,
 } from '@happier-dev/protocol';
+import { DaemonProviderConnectionViewV1Schema } from '@happier-dev/protocol/rpc/providers';
 import type { MachineProviderRpcServices } from '@/api/machine/rpcHandlers.providers';
 
 import {
@@ -169,6 +170,29 @@ describe('runtime Provider operation production boundary', () => {
     expect(machineServices.describeConnections).toHaveBeenCalledWith({
       machineId: 'machine-a',
     }, binding.signal);
+  });
+
+  it.each(['provider_endpoint_unauthorized', 'provider_endpoint_unreachable'] as const)('retains a saved SDK API-key connection with the canonical %s outcome', async code => {
+    // The existing Machine RPC boundary fixture preserves its real Protocol DTOs.
+    const machineServices = createMachineServices();
+    const connection = DaemonProviderConnectionViewV1Schema.parse({
+      connectionId: 'pc_key', contributionKey: 'happier.provider.deepseek/deepseek', displayName: 'Key source', providerName: 'DeepSeek', icon: null,
+      role: 'named', displayNameMode: 'custom', sourceStatus: 'available', scope: 'account',
+      grants: { accountEnabled: true, enabledMachineIds: [] }, probeCapability: 'catalog', manualModelPolicy: 'allowed',
+      credential: { required: true, accountBound: true, boundMachineIds: [] }, endpoints: [], compatibility: [],
+      authorized: true, authorizationError: null, revision: 0,
+      runtime: { health: 'not_checked', modelCount: null, checkedAt: null },
+    });
+    const error = createProviderErrorV1(code, { connectionId: connection.connectionId, machineId: 'machine-a' });
+    vi.mocked(machineServices.mutateConnection).mockResolvedValue({ status: 'success', action: 'createContribution', connection, created: true });
+    vi.mocked(machineServices.probe).mockResolvedValue({ status: 'error', error });
+    const operations = createRuntimeProviderOperationsProducer({ machineId: 'machine-a', machineServices,
+      featureGate: providersEnabledFeatureGate }).bind(currentBinding().binding);
+    await expect(operations.connections.mutate({ action: 'createContribution', connectionId: 'pc_key',
+      contributionKey: connection.contributionKey!, displayName: null, savedSecretId: 'ss_key', enable: true,
+      authoringReview: { candidateId: null, fingerprint: 'authoring-review:v1:test', revision: 0 },
+    })).resolves.toMatchObject({ status: 'success', created: true, connection: { connectionId: 'pc_key', authorizationError: error } });
+    expect(machineServices.probe).toHaveBeenCalledTimes(1);
   });
 
   it('binds the exact eleven machine-scoped operations over the same owner used by RPC', async () => {

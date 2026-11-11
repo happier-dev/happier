@@ -283,6 +283,8 @@ export function presentProviderError(input: unknown): ProviderErrorPresentation 
     if (full.success) error = full.data;
     else if (code.success) error = createProviderErrorV1(code.data);
     else return GENERIC;
+    const needsManagedSetup = error.code === 'provider_connection_invalid'
+        && error.reason === 'managed_purpose_bindings_missing';
     const context = {
         ...(error.requestId ? { requestId: error.requestId } : {}),
         ...(error.failureCause ? { failureCause: error.failureCause } : {}),
@@ -293,6 +295,10 @@ export function presentProviderError(input: unknown): ProviderErrorPresentation 
     };
     return {
         ...PRESENTATIONS[error.code],
+        ...(needsManagedSetup ? {
+            titleKey: 'settingsProviders.local.configureManaged' as const,
+            descriptionKey: 'settingsProviders.local.configureManagedDescription' as const,
+        } : {}),
         ...(error.code === 'provider_catalog_unavailable' && error.failureCause?.phase === 'providers.connections.save' ? {
             titleKey: 'settingsProviders.errors.saveFailedTitle' as const,
             descriptionKey: 'settingsProviders.errors.saveFailedDescription' as const,
@@ -300,7 +306,7 @@ export function presentProviderError(input: unknown): ProviderErrorPresentation 
         // A typed transport cause that names the fix replaces the generic sentence (an unknown host: the Base URL).
         ...(error.failureCause?.errorCode === 'ENOTFOUND' ? { descriptionKey: 'settingsProviders.errors.hostNotFoundDescription' as const } : {}),
         action: error.action,
-        severity: severityFor(error),
+        severity: needsManagedSetup ? 'neutral' : severityFor(error),
         scope: error.action === 'review_account_grant' ? 'account'
             : error.action === 'review_machine_grant' ? 'machine' : null,
         context,

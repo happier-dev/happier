@@ -1034,9 +1034,9 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         ? machineRows.find((row) => row.target.machineId === managedDeployment.targetMachineId)?.displayName ?? null
         : null;
     const connectionEnabled = gateway ? !gatewayOff : presentation.enabled;
-    // Healthy, untested or off says nothing here: test results live in the Test row, off in the switch.
-    const statusQuiet = presentation.status === 'available' || presentation.status === 'notChecked'
-        || presentation.status === 'disabled';
+    // Enablement is configuration, never credential verification. An untested
+    // connection keeps its health visible even before a Machine is connected.
+    const statusQuiet = presentation.status === 'available' || presentation.status === 'disabled';
     const websiteUrl = connection.sourceStatus === 'available' ? connection.websiteUrl : undefined;
     // Once a key is saved, where to get one is a rare link: it moves from the sheet to the menu.
     const keyUrl = connection.sourceStatus === 'available' ? connection.credential?.keyUrl : undefined;

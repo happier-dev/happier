@@ -24,7 +24,8 @@ import type {
 import type { MachineProviderRpcServices } from '@/api/machine/rpcHandlers.providers';
 import type { RuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
 import type { RuntimeProviderAccountModelProjectionContext } from '@/providers/modelManagement/runtimeServices';
-import type { ProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
+import { PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1, parseProviderActionRequestV1, type ProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
+import { verifySavedProviderConnectionV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
 
 export type RuntimeProviderAccountReadRequest = Extract<ProviderActionRequestV1,
   { actionId: 'providers.connections.describe' | 'providers.models.list' }>
@@ -321,7 +322,16 @@ export function createRuntimeProviderOperationsProducer(input: Readonly<{
                       machineId: input.machineId,
                     },
               ),
-              dispatch: async (parsed) => await input.machineServices.mutateConnection(parsed),
+              dispatch: async (parsed) => verifySavedProviderConnectionV1(
+                parseProviderActionRequestV1(PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1[parsed.action], parsed),
+                await input.machineServices.mutateConnection(parsed), {
+                  probe: request => input.machineServices.probe(request, {
+                    signal: composeOperationSignal(binding, options),
+                    isCurrent: () => isBindingCurrent(binding) && options?.signal?.aborted !== true,
+                  }),
+                  describe: request => input.machineServices.describeConnections(request, composeOperationSignal(binding, options)),
+                },
+              ),
               parseResult: (value) => DaemonProviderConnectionMutationResponseV1Schema.parse(value),
               failure: (error) => DaemonProviderConnectionMutationResponseV1Schema.parse({
                 status: 'error',

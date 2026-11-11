@@ -17,6 +17,22 @@ const base = DaemonProviderConnectionViewV1Schema.parse({
 });
 
 describe('provider connection presentation', () => {
+    it.each(['provider_endpoint_unauthorized', 'provider_endpoint_unreachable'] as const)('keeps saved API-key verification distinct from enablement for %s', code => {
+        const error = createProviderErrorV1(code);
+        const row = DaemonProviderConnectionViewV1Schema.parse({ ...base,
+            credential: { required: true, accountBound: true, boundMachineIds: [] },
+            authorizationError: error,
+            runtime: { health: 'not_checked', modelCount: null, checkedAt: null, endpoints: [] },
+        });
+        expect(presentProviderConnection(row)).toMatchObject({ enabled: true,
+            status: code === 'provider_endpoint_unauthorized' ? 'needsAttention' : 'notChecked' });
+        if (code === 'provider_endpoint_unreachable') {
+            const checked = { ...row, runtime: { ...row.runtime, health: 'unreachable' as const } };
+            expect(presentProviderConnection(checked).status).toBe('notChecked');
+            expect(presentProviderConnection({ ...checked, credential: null }).status).toBe('unreachable');
+        }
+    });
+
     it('keeps the typed probe cause with matching failed health and retires it after canonical recovery', () => {
         const error = createProviderErrorV1('provider_endpoint_unreachable', {
             failureCause: { phase: 'providers.probe.resolve_host', errorClass: 'Error', errorCode: 'ENOTFOUND', httpStatus: null },

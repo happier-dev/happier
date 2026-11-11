@@ -6760,7 +6760,7 @@ const enSettingsProviders = {
   status: {
     available: 'Connected',
     partial: 'Partially available',
-    notChecked: 'Not checked',
+    notChecked: 'Not verified',
     needsAttention: 'Needs attention',
     unreachable: 'Unreachable',
     disabled: 'Off',

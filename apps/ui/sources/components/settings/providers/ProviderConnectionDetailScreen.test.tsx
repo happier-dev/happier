@@ -539,7 +539,7 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(screen.findByTestId('provider-connection-picker-visibility')).not.toBeNull();
     });
 
-    it('shows an Account-enabled, untested connection as on and quiet in the header without a machine', async () => {
+    it('shows an Account-enabled, untested connection as unverified in the header without a machine', async () => {
         const saved = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_on',
             source: { kind: 'custom', template: buildCustomProviderTemplate({
                 ...createCustomProviderDraft('openai-responses'), name: 'On source',
@@ -563,9 +563,9 @@ describe('ProviderConnectionDetailScreen', () => {
         const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId={saved.id} />);
         await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-enabled')).not.toBeNull());
         expect(screen.findByTestId('provider-connection-enabled')?.props.value).toBe(true);
-        // Healthy and not yet tested says nothing; the Test row owns results (lab PD1).
+        // Enabled configuration does not attest credential health.
         const header = findComposite(screen, 'provider-connection-header', 'meta');
-        expect(header?.props.meta.map((entry: { key: string }) => entry.key)).not.toContain('status');
+        expect(header?.props.meta.map((entry: { key: string }) => entry.key)).toContain('status');
     });
 
     it.each([

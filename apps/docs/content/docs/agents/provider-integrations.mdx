@@ -62,6 +62,12 @@ If the service is a built-in Provider:
 4. Test the connection on the machine that will run the Agent.
 5. Start a session and choose a model from that Provider's section of the model picker.
 
+In unreleased 0.3 development, saving a key with a selected Machine tests the
+connection once. A rejected key stays saved and shows that it needs attention.
+Without a Machine, or when the network cannot verify it, the connection shows
+**Not verified**. You can use **Test connection** when a Machine is available.
+Turning a connection on does not mean its key has been verified.
+
 For an unlisted service, choose **Add custom provider** and select the compatibility contract the service actually implements. Enter its base URL, add an API key if required, and fetch or manually add its model ids.
 
 The model appears only for Agents whose protocol and required capabilities are compatible. An unverified pairing may be shown as **Experimental** and require explicit confirmation; an incompatible pairing is not selectable.

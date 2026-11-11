@@ -77,8 +77,10 @@ export function presentProviderConnection(connection: DaemonProviderConnectionVi
         ? 'loading'
         : connection.sourceStatus === 'unavailable'
         ? 'sourceUnavailable'
+        : connection.authorizationError?.code === 'provider_endpoint_unauthorized'
+            ? 'needsAttention'
         : connection.authorizationError?.code === 'provider_endpoint_unreachable'
-            ? 'unreachable'
+            ? connection.credential?.accountBound ? 'notChecked' : 'unreachable'
             : !enabled
                 ? 'disabled'
                 : connection.runtime.health === 'available'
@@ -86,7 +88,7 @@ export function presentProviderConnection(connection: DaemonProviderConnectionVi
                     : connection.runtime.health === 'partial'
                         ? 'partial'
                     : connection.runtime.health === 'unreachable'
-                        ? 'unreachable'
+                        ? connection.credential?.accountBound ? 'notChecked' : 'unreachable'
                         : connection.runtime.health === 'not_checked'
                             ? 'notChecked'
                             : 'needsAttention';

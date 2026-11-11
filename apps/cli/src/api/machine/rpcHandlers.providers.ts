@@ -3,6 +3,8 @@ import { DaemonProviderModelLoadResponseV1Schema, DaemonProviderConnectionsDescr
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonProviderProfileMigrationPrepareSourceRequestV1Schema, DaemonProviderProfileMigrationPrepareSourceResponseV1Schema, type DaemonProviderProfileMigrationPrepareSourceRequestV1, type DaemonProviderProfileMigrationPrepareSourceResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1, parseProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
+import { verifySavedProviderConnectionV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
 import { DaemonProviderUsageRefreshRequestV1Schema, DaemonProviderUsageRefreshResponseV1Schema,
   type DaemonProviderUsageRefreshRequestV1, type DaemonProviderUsageRefreshResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import type { ProviderCatalogRefreshResult } from '@/providers/probe/catalog';
@@ -160,13 +162,21 @@ export function registerMachineProviderRpcHandlers(input: Readonly<{
   );
   input.rpcHandlerManager.registerHandler(
     RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE,
-    async (raw) => {
+    async (raw, context) => {
       const request = DaemonProviderConnectionMutationRequestV1Schema.parse(raw);
       const result = !input.featureGate.isEnabled('providers')
         ? featureDisabled(request)
         : request.machineId !== input.machineId
           ? { status: 'error' as const, error: createProviderErrorV1('provider_not_enabled_on_machine', request) }
-          : await input.services.mutateConnection(request);
+          : await verifySavedProviderConnectionV1(
+              parseProviderActionRequestV1(PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1[request.action], request),
+              await input.services.mutateConnection(request), {
+                probe: value => input.services.probe(value, context?.signal ? {
+                  signal: context.signal, reportOperationDiagnostics: context.reportOperationDiagnostics,
+                } : undefined),
+                describe: value => input.services.describeConnections(value, context?.signal),
+              },
+            );
       return DaemonProviderConnectionMutationResponseV1Schema.parse(result);
     },
   );
