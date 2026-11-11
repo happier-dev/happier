@@ -188,9 +188,9 @@ export function resolveMachineReachability(
     const requestOutcome = readObservation(state, machine.id)?.outcome;
     if ((typeof machine.revokedAt === 'number' && Number.isFinite(machine.revokedAt) && machine.revokedAt > 0)
         || requestOutcome === 'failed') return 'unreachable';
+    if (readMachinePresenceAnswer(machine) === false) return 'unknown';
     const reachable = isMachineOnline(machine, nowMs);
     if (!reachable) return 'unreachable';
-    if (readMachinePresenceAnswer(machine) === false) return 'unknown';
     if (!normalized) return 'unknown';
     return 'reachable';
 }

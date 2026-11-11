@@ -39,6 +39,35 @@ describe('machine reachability', () => {
         expect(resolveMachineReachability(scope, machines[0]!, 100)).toBe('reachable');
         expect(machines.slice(1).every(machine => resolveMachineReachability(scope, machine, 100) === 'unknown')).toBe(true);
     });
+    it('keeps cold inactive presence unknown until its producer answers while preserving explicit refusals', () => {
+        const scope = { serverId: 'home', accountId: 'cold-inactive-account' };
+        const machine = { id: 'cold-inactive', active: false, activeAt: 100, revokedAt: 0, ...negotiated };
+        const projection = { ...machine };
+        linkMachineActivity(machine, projection);
+        const fleetCounts = () => partitionMachineFleetPresence([projection], row => resolveMachineFleetPresence(scope, row, 102)).counts;
+
+        expect(resolveMachineReachability(scope, machine, 100)).toBe('unknown');
+        expect(resolveMachineReachability(scope, projection, 100)).toBe('unknown');
+        expect(fleetCounts()).toEqual({ online: 0, offline: 0, unknown: 1 });
+
+        recordMachineRequestFailed({ ...scope, machineId: machine.id, observedAtMs: 100 });
+        expect(resolveMachineReachability(scope, machine, 100)).toBe('unreachable');
+        clearMachineRequestReachabilityForMachine(scope, machine.id);
+        machine.revokedAt = 1;
+        expect(resolveMachineReachability(scope, machine, 100)).toBe('unreachable');
+        machine.revokedAt = 0;
+        expect(resolveMachineReachability(scope, machine, 100)).toBe('unknown');
+
+        publishMachineActivity(machine, { active: false, activeAt: 101 }, [projection]);
+        expect(resolveMachineReachability(scope, machine, 101)).toBe('unreachable');
+        expect(resolveMachineReachability(scope, projection, 101)).toBe('unreachable');
+        expect(fleetCounts()).toEqual({ online: 0, offline: 1, unknown: 0 });
+
+        publishMachineActivity(machine, { active: true, activeAt: 102 }, [projection]);
+        expect(resolveMachineReachability(scope, machine, 102)).toBe('reachable');
+        expect(resolveMachineReachability(scope, projection, 102)).toBe('reachable');
+        expect(fleetCounts()).toEqual({ online: 1, offline: 0, unknown: 0 });
+    });
     it('counts only current persistent Machines, retaining unknown connection and historical identities separately', () => {
         const scope = { serverId: 'home', accountId: 'fleet-account' };
         const machines = [
