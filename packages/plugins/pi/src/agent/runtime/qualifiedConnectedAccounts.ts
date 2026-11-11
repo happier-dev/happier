@@ -135,7 +135,6 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
   const subscriptions: Array<Readonly<{ dispose(): void }>> = [];
   const initialObservations: Promise<void>[] = [];
   let invalidated = false;
-  let disposeBoundRuntime: (() => Promise<void>) | null = null;
   let subscriptionsDisposed = false;
 
   const disposeSubscriptions = (): void => {
@@ -145,7 +144,6 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
   };
   const invalidate = async (): Promise<void> => {
     invalidated = true;
-    await disposeBoundRuntime?.();
   };
   const bind = (runtime: AgentSessionRuntime): AgentSessionRuntime => {
     let disposed = false;
@@ -158,7 +156,6 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
         await runtime.dispose(reason);
       },
     };
-    disposeBoundRuntime = async () => await wrapped.dispose('runtime_recovery');
     if (invalidated) void wrapped.dispose('runtime_recovery');
     return wrapped;
   };

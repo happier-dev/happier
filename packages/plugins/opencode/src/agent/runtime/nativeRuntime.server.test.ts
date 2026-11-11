@@ -788,8 +788,16 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
     }
   });
 
-  it('watches every public purpose and converts a later resync into session recovery disposal', async () => {
-    const session = createSession();
+  it.each(['create', 'resume'] as const)('keeps the admitted %s Session usable after account resync', async (kind) => {
+    let disposed = false;
+    // ACP and Connected Accounts are the external host boundaries; launch preparation stays real.
+    const session = {
+      ...createSession(),
+      send: vi.fn(async () => disposed
+        ? { status: 'unavailable' as const, diagnostic: { code: 'acp_runtime_unavailable', message: 'Session disposed.' }, retryable: false }
+        : { status: 'admitted' as const }),
+      dispose: vi.fn(async () => { disposed = true; }),
+    } satisfies AgentSessionRuntime;
     const openAcp = vi.fn(async () => session);
     const harness = createConnectedAccountsHarness();
     const runtime = createOpenCodeAgentRuntime({
@@ -799,7 +807,8 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
     });
 
     const opened = await runtime.sessions.open({
-      kind: 'create',
+      kind,
+      ...(kind === 'resume' ? { providerSessionId: 'retained-native-session' } : {}),
       sessionId: 'happier-watch-auth',
       cwd: '/repo',
       launchEnvironment: {
@@ -815,12 +824,18 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       OPEN_CODE_CONNECTED_ACCOUNT_PURPOSES,
     );
     expect(harness.connectedAccounts.materialize).not.toHaveBeenCalled();
-    await harness.listeners.get('openai-api-key')?.({ kind: 'resync', authorityChanged: true });
-    expect(session.dispose).toHaveBeenCalledWith('runtime_recovery');
+    for (const dispose of harness.watcherDisposals.values()) expect(dispose).not.toHaveBeenCalled();
+    try {
+      await expect(opened.send({ inputIds: ['first'], input: { text: 'First turn.' },
+        delivery: { kind: 'newTurn', turnId: 'first' } })).resolves.toMatchObject({ status: 'admitted' });
+      await harness.listeners.get('openai-api-key')?.({ kind: 'resync', authorityChanged: true });
+      await expect(opened.send({ inputIds: ['next'], input: { text: 'Next turn.' },
+        delivery: { kind: 'newTurn', turnId: 'next' } })).resolves.toMatchObject({ status: 'admitted' });
+      expect(session.dispose).not.toHaveBeenCalled();
+    } finally { await opened.dispose(); }
     for (const dispose of harness.watcherDisposals.values()) {
       expect(dispose).toHaveBeenCalledTimes(1);
     }
-    await opened.dispose();
     expect(session.dispose).toHaveBeenCalledTimes(1);
   });
 

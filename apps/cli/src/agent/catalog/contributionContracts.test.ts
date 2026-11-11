@@ -7,6 +7,8 @@ import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { projectManifestAgentContribution } from '@/plugins/projection/registry/projectManifestAgentContribution';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveEngineBackendIdForCatalogAgent } from '@/agent/runtime/registry/engineRegistry/contributions';
+import { resolveEngineAdapterResolutionFromRegistry } from '@/agent/runtime/registry/engineRegistry/resolution';
+import { resolveRunnerAgentSessionDescriptorForLease } from '@/daemon/spawn/prepareAgentRuntimeSessionBridge';
 
 import { BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from '@/plugins/projection/registry/sources/generatedBundledPlugins';
@@ -64,6 +66,42 @@ describe('registered Agent contribution contracts', () => {
           expect(projected.identity).toEqual(binding.identity);
           expect(projected.id, `${metadata.pluginId}/${id}: admitted runner identity`).toBe(binding.implementationOwnerId);
           expect(resolveEngineBackendIdForCatalogAgent(contributions, projected.id)).toBe(binding.implementationOwnerId);
+          const resolution = await resolveEngineAdapterResolutionFromRegistry({
+            backendId: binding.implementationOwnerId,
+            agentTarget: { kind: 'agent', identity: binding.identity },
+            contributions,
+            runtimeRegistry: null,
+          });
+          expect(resolution?.agent.identity, `${metadata.pluginId}/${id}: selected runtime identity`).toEqual(binding.identity);
+          // An activated registry fixture supplies declaration/activation facts;
+          // descriptor production and runner reconstruction remain real.
+          const descriptor = await resolveRunnerAgentSessionDescriptorForLease({
+            target: { kind: 'backend', sourceKind: 'built_in', backendId: projected.id },
+            lease: { registry: {
+              contributes: contributions,
+              agentRuntimesByAgentId: new Map([[projected.id, {
+                pluginId: metadata.pluginId, pluginVersion: manifest.version,
+                agentId: projected.id, hasPrimaryRuntime: true,
+                occurrenceId: `occurrence:${metadata.pluginId}:census`,
+                sourceCustody: { kind: 'development', registeredRootId: 'census' },
+              }]]),
+              runtimeCapabilitiesByPluginId: new Map([[metadata.pluginId, new Set()]]),
+              activateContributionsOnDemand: async () => [],
+            } },
+          } as never);
+          expect(descriptor?.agentId, `${metadata.pluginId}/${id}: daemon descriptor identity`).toBe(projected.id);
+          if (!descriptor?.agentDeclaration) throw new Error('Missing census Agent declaration');
+          const runner = projectManifestAgentContribution({
+            ...descriptor.agentDeclaration, pluginId: descriptor.pluginId,
+            admittedAgentId: descriptor.agentId,
+          });
+          const runnerResolution = await resolveEngineAdapterResolutionFromRegistry({
+            backendId: descriptor.backendId,
+            agentTarget: { kind: 'agent', identity: binding.identity },
+            contributions: createResolvedContributionRegistry({ agents: [runner] }),
+            runtimeRegistry: null,
+          });
+          expect(runnerResolution?.agentId, `${metadata.pluginId}/${id}: runner engine identity`).toBe(projected.id);
           if (!Array.isArray(authoredDeclaration?.connectedAccounts)) offenders.push(`${id}: account support omitted (use [] for unsupported)`);
           if (!declaration.catalog?.vendorResume) offenders.push(`${id}: resume support omitted`);
           for (const purpose of declaration.connectedAccounts ?? []) {

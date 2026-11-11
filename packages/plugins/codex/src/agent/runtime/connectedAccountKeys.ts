@@ -49,14 +49,14 @@ export function prepareCodexConnectedAccountKeyRequest<T extends Pick<AgentSessi
   return { ...request, launchEnvironment: prepareEnvironment(request.launchEnvironment ?? { values: {}, unset: [] }, row) };
 }
 
-export const prepareCodexConnectedAccountKeyPreflight: NonNullable<AgentPreflightSessionControlsContributionV1['prepareLaunchEnvironment']> = async ({ environment, connectedAccounts, signal }) => {
+export const prepareCodexConnectedAccountKeyPreflight: NonNullable<AgentPreflightSessionControlsContributionV1['prepareLaunchEnvironment']> = async ({ environment, modelId, connectedAccounts, signal }) => {
   const bindings = await Promise.all(MODEL_SOURCE_PURPOSES.map(async purpose =>
     await connectedAccounts.getBinding(purpose, { signal }) ? purpose : null));
   const row = selectedKey(bindings.filter((purpose): purpose is string => purpose !== null));
   if (row) {
     const prepared = prepareEnvironment({ values: environment, unset: [] }, row);
     return { environment: prepared.values, unset: prepared.unset, catalogConfidence: 'account_unverified',
-      commandArgsSuffix: codexNativeUpstreamConfigOverrides(prepared.values).flatMap(value => ['-c', value]), dispose() {} };
+      commandArgsSuffix: codexNativeUpstreamConfigOverrides(prepared.values, modelId).flatMap(value => ['-c', value]), dispose() {} };
   }
   return { environment, dispose() {} };
 };

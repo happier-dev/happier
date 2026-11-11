@@ -130,7 +130,8 @@ describe.skipIf(process.platform !== 'linux')('managed cwd native identity prepa
       managedDirectory: { directory: '/daemon/private/placeholder', workspaceRoots: ['/accepted/a', '/accepted/b'] },
     });
     expect(result).toMatchObject({ ok: false, result: { type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED',
-      errorDetail: { kind: 'launch_error', code: 'agent_isolation_unavailable' } } });
+      errorDetail: { kind: 'launch_error', code: 'agent_isolation_unavailable',
+        agentIsolationRefusal: { reason: 'workspace_not_ready', phase: 'native_execution_preparation' } } } });
   });
 
   it('selects the unique accepted containing workspace for shared managed placement', async () => {

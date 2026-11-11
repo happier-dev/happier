@@ -186,7 +186,6 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
   }
   const subscriptions: Array<Readonly<{ dispose(): void }>> = [];
   let invalidated = false;
-  let invalidationHandler: (() => Promise<void>) | null = null;
   let disposed = false;
   let requestAuthAssets: SecureTempDirectory | undefined;
   const initialObservations = new Map<OpenCodeConnectedAccountPurposeId, Promise<void>>();
@@ -204,7 +203,6 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
   };
   const invalidate = async (): Promise<void> => {
     invalidated = true;
-    await invalidationHandler?.();
   };
 
   try {
@@ -439,8 +437,7 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
             }
           },
         };
-        invalidationHandler = async () => await preparedSession.dispose('runtime_recovery');
-        if (invalidated) void invalidationHandler();
+        if (invalidated) void preparedSession.dispose('runtime_recovery');
         return preparedSession;
       },
       bindExecutionRun(runtime) {

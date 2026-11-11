@@ -1,5 +1,6 @@
 import type {
   AgentAcpRuntimeOptions,
+  AgentAcpModel,
   AgentExecutionRunOpenRequest,
   AgentSessionOpenRequest,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -65,7 +66,10 @@ export function buildCodexNativeAcpRuntimeOptions(
       timeouts: Object.freeze({ initializeMs: timeouts.initMs }),
     }),
     definition: Object.freeze({
-      ...(env[CODEX_NATIVE_UPSTREAM_CONFIG_ENV] ? { models: { catalogConfidence: 'account_unverified' as const } } : {}),
+      ...(env[CODEX_NATIVE_UPSTREAM_CONFIG_ENV] ? { models: {
+        catalogConfidence: 'account_unverified' as const,
+        projectModel: (_rawModel: unknown, normalizedModel: AgentAcpModel) => normalizedModel,
+      } } : {}),
       ...(authMethodId ? { auth: Object.freeze({ methodId: authMethodId }) } : {}),
       timeouts: Object.freeze(timeouts),
       toolNameInference: Object.freeze({

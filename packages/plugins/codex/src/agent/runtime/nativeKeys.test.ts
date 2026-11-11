@@ -26,7 +26,7 @@ it('prepares selected Kimi Responses configuration through the registered Codex 
     const prepare = agent.preflightSessionControls!.prepareLaunchEnvironment;
     expect(prepare).toBeTypeOf('function');
     if (!prepare) throw new Error('Missing native key launch preparation');
-    const launch = await prepare({ environment: { ...material.env, OPENAI_API_KEY: 'ambient', CODEX_API_KEY: 'stored' },
+    const launch = await prepare({ modelId: 'kimi-for-coding', environment: { ...material.env, OPENAI_API_KEY: 'ambient', CODEX_API_KEY: 'stored' },
       connectedAccounts: { getBinding: async purpose => purpose === 'kimi-code-api-key' ? { purpose, target: { kind: 'account' as const, displayName: 'Selected' },
         service: { pluginId: 'happier.agent.kimi', localId: 'kimi-code' }, account: { service: { pluginId: 'happier.agent.kimi', localId: 'kimi-code' }, accountId: 'selected' },
       } : null, materialize: vi.fn(), watch: vi.fn() }, signal: new AbortController().signal });
@@ -37,6 +37,7 @@ it('prepares selected Kimi Responses configuration through the registered Codex 
     expect(args.join('\n')).toContain('HAPPIER_CODEX_PROVIDER_API_KEY');
     expect(args.join('\n')).not.toContain('fake-kimi-key');
     expect(launch.commandArgsSuffix?.join('\n')).toContain('https://api.kimi.com/coding/v1');
+    expect(launch.commandArgsSuffix).toContain('model="kimi-for-coding"');
     expect(launch.commandArgsSuffix?.join('\n')).not.toContain('fake-kimi-key');
     const acp = resolveCodexAcpSpawnWithOptions({ env: launch.environment }, { resolveExistingManagedBinPath: () => '/fake/codex-acp' });
     expect(acp.args.join('\n')).toContain('https://api.kimi.com/coding/v1');

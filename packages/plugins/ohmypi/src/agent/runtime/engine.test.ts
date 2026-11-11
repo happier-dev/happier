@@ -40,10 +40,16 @@ it('keeps admitted finite native work alive across account resync until explicit
 });
 
 
-it('keeps a session alive for presentation resync and recovers it for an authority change', async () => {
+it.each(['create', 'resume'] as const)('keeps the %s Session usable for another turn after account resync', async kind => {
   const listeners = new Set<(event: ConnectedAccountBindingEvent) => void | Promise<void>>();
-  const disposeNative = vi.fn(async () => {});
-  const native = { watch: () => ({ dispose() {} }), dispose: disposeNative } as unknown as AgentSessionRuntime;
+  let disposed = false;
+  const disposeNative = vi.fn(async () => { disposed = true; });
+  const native = {
+    async send() { return disposed
+      ? { status: 'unavailable' as const, diagnostic: { code: 'acp_runtime_unavailable', message: 'Session disposed.' }, retryable: false }
+      : { status: 'admitted' as const }; },
+    watch: () => ({ dispose() {} }), dispose: disposeNative,
+  } satisfies AgentSessionRuntime;
   // The ACP session and Connected Accounts service are external host boundaries.
   const context = {
     signal: new AbortController().signal,
@@ -61,12 +67,21 @@ it('keeps a session alive for presentation resync and recovers it for an authori
     plugin: { id: 'happier.agent.ohmypi', version: '0.0.0' },
     agent: { id: 'ohmypi' }, signal: context.signal,
   });
-  const session = await agent.sessions.open({ kind: 'create', sessionId: 'omp-presentation-continuity', cwd: '/workspace' }, context);
+  const common = { sessionId: 'omp-presentation-continuity', cwd: '/workspace' };
+  const session = await agent.sessions.open(kind === 'resume'
+    ? { ...common, kind, providerSessionId: 'retained-native-session' }
+    : { ...common, kind }, context);
   try {
+    expect(listeners.size).toBeGreaterThan(0);
+    await expect(session.send({ inputIds: ['first'], input: { text: 'First turn.' },
+      delivery: { kind: 'newTurn', turnId: 'first' } })).resolves.toMatchObject({ status: 'admitted' });
     for (const listener of listeners) await listener({ kind: 'resync', authorityChanged: false });
     expect(disposeNative).not.toHaveBeenCalled();
     for (const listener of listeners) await listener({ kind: 'resync', authorityChanged: true });
-    expect(disposeNative).toHaveBeenCalledWith('runtime_recovery');
+    await expect(session.send({ inputIds: ['next'], input: { text: 'Next turn.' },
+      delivery: { kind: 'newTurn', turnId: 'next' } })).resolves.toMatchObject({ status: 'admitted' });
+    expect(disposeNative).not.toHaveBeenCalled();
   } finally { await session.dispose(); }
   expect(disposeNative).toHaveBeenCalledOnce();
+  expect(listeners.size).toBe(0);
 });

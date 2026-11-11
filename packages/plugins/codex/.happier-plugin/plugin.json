@@ -317,6 +317,32 @@
             "purpose": "primary",
             "required": false,
             "service": "openai-codex"
+          },
+          {
+            "credentialKinds": [
+              "token"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "kimi-code-api-key",
+            "service": {
+              "localId": "kimi-code",
+              "pluginId": "happier.agent.kimi"
+            }
+          },
+          {
+            "credentialKinds": [
+              "token"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "openai-api-key",
+            "service": {
+              "localId": "openai",
+              "pluginId": "happier.voice.openai"
+            }
           }
         ],
         "id": "codex",
@@ -1099,7 +1125,12 @@
         "scope": {
           "envKeys": [
             "CODEX_HOME",
-            "CODEX_SQLITE_HOME"
+            "CODEX_SQLITE_HOME",
+            "HAPPIER_CODEX_PROVIDER_API_KEY",
+            "HAPPIER_CODEX_NATIVE_UPSTREAM_CONFIG",
+            "KIMI_API_KEY",
+            "KIMI_CODE_BASE_URL",
+            "HAPPIER_CONNECTED_OPENAI_API_KEY"
           ],
           "executables": [
             {

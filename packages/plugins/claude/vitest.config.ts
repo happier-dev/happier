@@ -2,19 +2,17 @@ import { resolveVitestWorkers } from '../../../scripts/testing/vitestWorkers';
 import { resolve } from 'node:path';
 
 import { configDefaults, defineConfig } from 'vitest/config';
-import { createWorkspacePackageSourcesPlugin } from '../../../scripts/testing/vitestWorkspacePackageResolution';
+import { createWorkspaceHostSourceAlias, createWorkspacePackageSourcesPlugin, readHostWorkspacePackageSpecs } from '../../../scripts/testing/vitestWorkspacePackageResolution';
 
 const uiSources = resolve(__dirname, '../../../apps/ui/sources');
 const uiDev = (path: string): string => resolve(uiSources, 'dev', path);
+const workspacePackages = readHostWorkspacePackageSpecs(resolve(__dirname, '../../..'), resolve(__dirname, '../../../apps/cli'), [
+  { packageName: '@happier-dev/plugins-claude', packageSourceRoot: resolve(__dirname, 'src') },
+]);
 
 export default defineConfig({
-  plugins: [createWorkspacePackageSourcesPlugin([
-    { packageName: '@happier-dev/plugin-sdk', packageSourceRoot: resolve(__dirname, '../../plugin-sdk/src') },
-    { packageName: '@happier-dev/agents', packageSourceRoot: resolve(__dirname, '../../agents/src') },
-    { packageName: '@happier-dev/protocol', packageSourceRoot: resolve(__dirname, '../../protocol/src') },
-    { packageName: '@happier-dev/agents', packageSourceRoot: resolve(__dirname, '../../agents/src') },
-    { packageName: '@happier-dev/cli-common', packageSourceRoot: resolve(__dirname, '../../cli-common/src') },
-  ])],
+  optimizeDeps: { exclude: workspacePackages.map(spec => spec.packageName) },
+  plugins: [createWorkspacePackageSourcesPlugin(workspacePackages)],
   define: {
     __DEV__: false,
   },
@@ -70,7 +68,7 @@ export default defineConfig({
       { find: '@/platform/hmacSha512', replacement: resolve(uiSources, 'platform/hmacSha512.node.ts') },
       { find: '@/platform/randomUUID', replacement: resolve(uiSources, 'platform/randomUUID.node.ts') },
       { find: '@/platform/digest', replacement: resolve(uiSources, 'platform/digest.node.ts') },
-      { find: '@', replacement: uiSources },
+      createWorkspaceHostSourceAlias(resolve(__dirname, '../../..'), uiSources),
     ],
   },
 });

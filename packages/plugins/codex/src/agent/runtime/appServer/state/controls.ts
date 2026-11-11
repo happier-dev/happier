@@ -2,6 +2,7 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { resolveModelDisplayName } from '@happier-dev/plugin-sdk/agents';
 
 import { isCodexAppServerFastServiceTier } from '../serviceTier.js';
+import { resolveCodexModelCostTier } from '../../../models/modelTiers.js';
 import {
     CODEX_APP_SERVER_REASONING_EFFORT_CONFIG_OPTION_ID,
     CODEX_APP_SERVER_SERVICE_TIER_CONFIG_OPTION_ID,
@@ -30,8 +31,11 @@ type SessionConfigOption = {
     options?: Array<{ value: SessionConfigOptionValue; name: string; description?: string }>;
 };
 
+type CodexModelCostTier = NonNullable<ReturnType<typeof resolveCodexModelCostTier>>;
+
 type SessionModelOption = SessionControlOption & Readonly<{
     modelOptions?: SessionConfigOption[];
+    costTier?: CodexModelCostTier;
 }>;
 
 export type CodexAppServerSessionControlsSnapshot = Readonly<{
@@ -296,11 +300,13 @@ function normalizeSessionModelMasks(params: Readonly<{
         });
         const modelOptions = [reasoningOption, speedOption]
             .filter((option): option is SessionConfigOption => option !== null);
+        const costTier = resolveCodexModelCostTier(id, record.costTier);
         out.push({
             id,
             name,
             ...(description ? { description } : {}),
             ...(modelOptions.length > 0 ? { modelOptions } : {}),
+            ...(costTier ? { costTier } : {}),
             isDefault: record.default === true || record.isDefault === true || record.selected === true || record.current === true,
         });
     }

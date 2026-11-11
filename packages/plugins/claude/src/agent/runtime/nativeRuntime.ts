@@ -1301,7 +1301,7 @@ function terminalSurface(): NonNullable<AgentRuntime['surfaces']>['terminal'] {
 
 export function createClaudeNativeRuntime(
   options: CreateClaudeNativeRuntimeOptions,
-): AgentRuntime {
+): Extract<AgentRuntime, { sessions: unknown }> {
   const goals = createClaudeNativeGoalControl();
   const skillCatalog = createClaudeSessionSkillCatalog();
   const openSession = async (
@@ -1553,7 +1553,7 @@ async function openClaudeNativeAgentSdkExecutionRunConversation(input: Readonly<
     readClaudeConnectedServiceRuntimeServiceFromEnv(input.request.launchEnvironment?.values));
 }
 
-export const createClaudeAgentRuntime: AgentRuntimeFactory = () => createClaudeNativeRuntime({
+export const createClaudeAgentRuntime = (_context: Parameters<AgentRuntimeFactory>[0]) => createClaudeNativeRuntime({
   openSession: createClaudeNativeSessionOpener({
     openAgentSdkSession: openClaudeNativeAgentSdkSession,
     openUnifiedTerminalSession: openClaudeNativeUnifiedTerminalSession,

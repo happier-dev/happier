@@ -131,7 +131,12 @@ describe('OpenAI Codex Connected Account', () => {
     expect(status.expiresAt).toBe(expiresAt);
     const headers = runtime.materialize({ kind: 'httpHeaders', origin: 'https://api.openai.com', headerNames: ['Authorization'] }, context);
     if (expired) await expect(headers).rejects.toThrow('credentials are unavailable');
-    else await expect(headers).resolves.toMatchObject({ kind: 'httpHeaders' });
+    else {
+      const materialized = await headers;
+      expect(materialized.kind).toBe('httpHeaders');
+      if (expiresAt === undefined) expect(materialized).not.toHaveProperty('expiresAt');
+      else expect(materialized).toHaveProperty('expiresAt', expiresAt);
+    }
   });
 
   it('materializes native auth within one round of independent credential reads', async () => {

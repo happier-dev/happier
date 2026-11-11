@@ -415,6 +415,19 @@
             "purpose": "model_upstream_api_key",
             "required": false,
             "service": "anthropic"
+          },
+          {
+            "credentialKinds": [
+              "token"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "kimi-code-api-key",
+            "service": {
+              "localId": "kimi-code",
+              "pluginId": "happier.agent.kimi"
+            }
           }
         ],
         "id": "claude",
@@ -2861,6 +2874,8 @@
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
             "ANTHROPIC_DEFAULT_SONNET_MODEL",
             "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "KIMI_API_KEY",
+            "KIMI_CODE_ANTHROPIC_BASE_URL",
             "CLAUDE_CONFIG_DIR",
             "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
             "CLAUDE_CODE_ENTRYPOINT",

@@ -118,7 +118,13 @@
               "OPENAI_API_KEY",
               "ANTHROPIC_OAUTH_TOKEN",
               "ANTHROPIC_API_KEY",
-              "GEMINI_API_KEY"
+              "GEMINI_API_KEY",
+              "KIMI_API_KEY",
+              "XAI_OAUTH_TOKEN",
+              "XAI_API_KEY",
+              "MUSE_CODE_CREDENTIAL",
+              "META_API_KEY",
+              "COPILOT_GITHUB_TOKEN"
             ],
             "loginLaunches": [],
             "machineLoginKey": "oh-my-pi",
@@ -241,13 +247,74 @@
               "token"
             ],
             "materializationKinds": [
-              "environment"
+              "environment",
+              "files"
             ],
             "purpose": "gemini",
             "required": false,
             "service": {
               "localId": "gemini-account",
               "pluginId": "happier.agent.gemini"
+            }
+          },
+          {
+            "credentialKinds": [
+              "token",
+              "oauth"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "kimi-code",
+            "required": false,
+            "service": {
+              "localId": "kimi-code",
+              "pluginId": "happier.agent.kimi"
+            }
+          },
+          {
+            "credentialKinds": [
+              "token",
+              "oauth"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "xai",
+            "required": false,
+            "service": {
+              "localId": "xai",
+              "pluginId": "happier.agent.grok"
+            }
+          },
+          {
+            "credentialKinds": [
+              "token",
+              "oauth"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "muse",
+            "required": false,
+            "service": {
+              "localId": "muse-account",
+              "pluginId": "happier.agent.muse"
+            }
+          },
+          {
+            "credentialKinds": [
+              "token",
+              "oauth"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "github-copilot",
+            "required": false,
+            "service": {
+              "localId": "github-account",
+              "pluginId": "happier.scm.forge.github"
             }
           }
         ],
@@ -261,18 +328,37 @@
           "authIsolation": {
             "ownedEnvKeys": [
               "HAPPIER_OH_MY_PI_PROVIDER_API_KEY",
+              "OMP_PROFILE",
+              "PI_PROFILE",
               "OPENAI_CODEX_OAUTH_TOKEN",
               "OPENAI_API_KEY",
               "ANTHROPIC_OAUTH_TOKEN",
               "ANTHROPIC_API_KEY",
-              "GEMINI_API_KEY"
+              "GEMINI_API_KEY",
+              "GOOGLE_GENAI_USE_VERTEXAI",
+              "GOOGLE_CLOUD_PROJECT",
+              "GOOGLE_CLOUD_LOCATION",
+              "GOOGLE_API_KEY",
+              "GOOGLE_APPLICATION_CREDENTIALS",
+              "KIMI_API_KEY",
+              "HAPPIER_KIMI_ACCESS_TOKEN",
+              "KIMI_CODE_BASE_URL",
+              "XAI_OAUTH_TOKEN",
+              "XAI_API_KEY",
+              "MUSE_CODE_CREDENTIAL",
+              "META_API_KEY",
+              "COPILOT_GITHUB_TOKEN"
             ],
             "suppressConnectedServiceIds": [
               "happier.agent.codex/openai-codex",
               "happier.voice.openai/openai",
               "happier.agent.claude/claude-subscription",
               "happier.agent.claude/anthropic",
-              "happier.agent.gemini/gemini-account"
+              "happier.agent.gemini/gemini-account",
+              "happier.agent.kimi/kimi-code",
+              "happier.agent.grok/xai",
+              "happier.agent.muse/muse-account",
+              "happier.scm.forge.github/github-account"
             ]
           },
           "credentialSupport": {
@@ -297,7 +383,8 @@
             "streaming": true,
             "toolRoundTrips": true
           },
-          "supportsFreeformModelIds": true
+          "supportsFreeformModelIds": true,
+          "supportsReasoningEffort": true
         },
         "runtime": {
           "kind": "custom"
@@ -640,6 +727,7 @@
     "workItems": [],
     "workflows": []
   },
+  "description": "Oh My Pi coding agent.",
   "displayName": "Oh My Pi",
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
@@ -654,11 +742,26 @@
         "scope": {
           "envKeys": [
             "HAPPIER_OH_MY_PI_PROVIDER_API_KEY",
+            "OMP_PROFILE",
+            "PI_PROFILE",
             "OPENAI_CODEX_OAUTH_TOKEN",
             "OPENAI_API_KEY",
             "ANTHROPIC_OAUTH_TOKEN",
             "ANTHROPIC_API_KEY",
             "GEMINI_API_KEY",
+            "GOOGLE_GENAI_USE_VERTEXAI",
+            "GOOGLE_CLOUD_PROJECT",
+            "GOOGLE_CLOUD_LOCATION",
+            "GOOGLE_API_KEY",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "KIMI_API_KEY",
+            "HAPPIER_KIMI_ACCESS_TOKEN",
+            "KIMI_CODE_BASE_URL",
+            "XAI_OAUTH_TOKEN",
+            "XAI_API_KEY",
+            "MUSE_CODE_CREDENTIAL",
+            "META_API_KEY",
+            "COPILOT_GITHUB_TOKEN",
             "PI_CODING_AGENT_DIR"
           ],
           "executables": [

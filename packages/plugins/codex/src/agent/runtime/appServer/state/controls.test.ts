@@ -12,8 +12,18 @@ describe('Codex app-server session controls', () => {
             ? { data: [{ id: 'gpt-6-luna', model: 'gpt-6-luna', displayName: 'GPT-6-Luna' }, { id: 'unknown-native-model' }] }
             : [] } });
         expect(snapshot.availableModels).toEqual([
-            { id: 'gpt-6-luna', name: 'GPT-6-Luna' }, { id: 'unknown-native-model', name: 'unknown-native-model' },
+            { id: 'gpt-6-luna', name: 'GPT-6-Luna', costTier: 'low' }, { id: 'unknown-native-model', name: 'unknown-native-model' },
         ]);
+    });
+    it('tags the live model list with Codex-owned cost tiers by model family, leaving unknown ids untiered', async () => {
+        const snapshot = await readCodexAppServerSessionControls({ client: { request: async method => method === 'model/list'
+            ? { data: ['gpt-6-luna', 'gpt-6.1-terra', 'gpt-6.1-sol', 'gpt-6-astra', 'gpt-reserve', 'gpt-5.4-mini', 'unknown-native-model']
+                .map(id => ({ id, displayName: id })).concat([{ id: 'gpt-7-luna', displayName: 'gpt-7-luna', costTier: 'premium' } as never]) }
+            : [] } });
+        expect(Object.fromEntries(snapshot.availableModels.map(model => [model.id, (model as { costTier?: string }).costTier ?? null]))).toEqual({
+            'gpt-6-luna': 'low', 'gpt-6.1-terra': 'standard', 'gpt-6.1-sol': 'standard', 'gpt-6-astra': 'premium',
+            'gpt-reserve': 'low', 'gpt-5.4-mini': 'low', 'unknown-native-model': null, 'gpt-7-luna': 'premium',
+        });
     });
     it.each(['rejected', 'malformed', 'empty'] as const)('distinguishes %s model discovery from an unavailable observation', async (outcome) => {
         const snapshot = await readCodexAppServerSessionControls({
@@ -140,6 +150,7 @@ describe('Codex app-server session controls', () => {
             {
                 id: 'gpt-5.6-sol',
                 name: 'GPT-5.6-Sol',
+                costTier: 'standard',
                 modelOptions: [
                     {
                         id: 'reasoning_effort',

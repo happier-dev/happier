@@ -8,7 +8,7 @@ import {
 } from './dialect.js';
 import { readOpenCodeEventReconnectBackoffMs } from './openCodeEventReconnect.js';
 import { asRecord, normalizeString, readNonBlankOpaqueIdentifier } from './openCodeParsing.js';
-import { isOpenCodeChatGptAccountRoute, type OpenCodeProviderInventory } from '../../models/eligibility.js';
+import { isOpenCodeChatGptAccountRoute, isOpenCodeModelSelectable, type OpenCodeProviderInventory } from '../../models/eligibility.js';
 import {
   buildOpenCodeV2ModelRef,
   buildOpenCodeV2PermissionRuleset,
@@ -763,6 +763,10 @@ export function createOpenCodeServerClient(input: Readonly<{
   dialect: OpenCodeServerDialect;
   signal?: AbortSignal;
   httpTimeoutMs?: number;
+  inventoryDiagnostic?: Readonly<{
+    model: OpenCodeServerPromptModel;
+    report(fields: Readonly<Record<string, unknown>>): void;
+  }>;
 }>): OpenCodeServerClient {
   const params: Readonly<{
     fetch: OpenCodeRuntimeFetch;
@@ -1452,6 +1456,34 @@ export function createOpenCodeServerClient(input: Readonly<{
         method: 'GET',
         path: '/provider',
       });
+      if (input.inventoryDiagnostic) {
+        // Observe the authenticated response before connected-provider filtering.
+        // Only catalog identifiers and field names leave this transport owner.
+        const { model, report } = input.inventoryDiagnostic;
+        const inventory = asRecord(response);
+        const all = Array.isArray(inventory?.all) ? inventory.all : [];
+        const provider = asRecord(all.find(entry => readProviderId(entry) === model.providerID));
+        const models = asRecord(provider?.models) ?? {};
+        const selectedModel = asRecord(models[model.modelID]);
+        const capabilities = asRecord(selectedModel?.capabilities);
+        const connected = Array.isArray(inventory?.connected) ? inventory.connected : [];
+        report({
+          providerId: model.providerID,
+          modelId: model.modelID,
+          providerIds: all.map(readProviderId).filter(Boolean),
+          connectedProviderIds: connected.map(readProviderId).filter(Boolean),
+          providerFields: Object.keys(provider ?? {}),
+          modelIdKeys: Object.keys(models),
+          selectableModelIdKeys: Object.entries(models).flatMap(([modelId, modelRecord]) => (
+            isOpenCodeModelSelectable({ providerID: model.providerID, modelID: modelId, modelRecord }) ? [modelId] : []
+          )),
+          modelFields: Object.keys(selectedModel ?? {}),
+          capabilitiesFields: Object.keys(capabilities ?? {}),
+          inputFields: Array.isArray(capabilities?.input)
+            ? capabilities.input.filter((field): field is string => typeof field === 'string')
+            : Object.keys(asRecord(capabilities?.input) ?? {}),
+        });
+      }
       return readProviderList(response);
     },
   };

@@ -16,10 +16,11 @@ export function buildCodexNativeUpstreamProvider(baseUrl: string) {
 }
 
 /** Config overrides contain environment references, never credential values. */
-export function codexNativeUpstreamConfigOverrides(environment: Readonly<Record<string, string | undefined>>): string[] {
+export function codexNativeUpstreamConfigOverrides(environment: Readonly<Record<string, string | undefined>>, modelId?: string): string[] {
   const config = readCodexNativeUpstreamConfig(environment);
   if (!config) return [];
-  return [`model_provider=${JSON.stringify(config.modelProvider)}`, ...Object.entries(config.config).flatMap(([path, value]) =>
+  return [...(modelId && modelId !== 'default' ? [`model=${JSON.stringify(modelId)}`] : []),
+    `model_provider=${JSON.stringify(config.modelProvider)}`, ...Object.entries(config.config).flatMap(([path, value]) =>
     typeof value === 'string' ? [`${path}=${JSON.stringify(value)}`]
       : Object.entries(value).map(([key, field]) => `${path}.${key}=${JSON.stringify(field)}`))];
 }

@@ -39,7 +39,7 @@ import { createOpenCodeServerTransport } from './transport.js';
 import { createOpenCodeServerRuntime } from './runtime.js';
 import { createOpenCodeSessionRuntime } from './sessionRuntime.js';
 import { createOpenCodeExecutionRunConversation } from './executionRunRuntime.js';
-import { projectOpenCodeSessionConfiguration } from './promptConfig.js';
+import { normalizeOpenCodePromptConfigUpdate, projectOpenCodeSessionConfiguration } from './promptConfig.js';
 import { buildOpenCodeAgentRuntimeDescriptorV1 } from '../../identity/runtimeDescriptor.js';
 import {
   OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV,
@@ -312,11 +312,16 @@ export async function createOpenCodeServerRuntimeAssembly(
               : { probeError: dialectDetection.probe.error }),
           }),
     });
+    const diagnosticModel = normalizeOpenCodePromptConfigUpdate({ modelId: configuration?.model.value }).model;
     const client = createOpenCodeServerClient({
       transport,
       directory: params.directory,
       dialect: dialectDetection.dialect,
       signal: params.signal ?? params.ctx.abort.signal,
+      ...(diagnosticModel ? { inventoryDiagnostic: {
+        model: diagnosticModel,
+        report: (fields: Readonly<Record<string, unknown>>) => params.ctx.logger.debug('[OpenCodeServer] provider inventory shape', fields),
+      } } : {}),
     });
     const initialProjection = buildOpenCodeSessionMcpProjection(
       params.executionRunId ?? params.happierSessionId, configuredMcpServers,

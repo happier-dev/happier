@@ -36,6 +36,21 @@ const cases = [
 ] as const;
 const serviceAccountJson = JSON.stringify({ type: 'service_account', client_id: '123', client_email: 'fake@example.iam.gserviceaccount.com',
   project_id: 'fake-project', private_key: 'fake-private-key' });
+// OpenCode 1.19.0 native inventory, captured with an isolated dummy Meta API key.
+const metaContributorModel = {
+  id: 'muse-spark-1.3-contributor', providerID: 'meta', status: 'active', family: 'muse',
+  cost: { input: 0.1, output: 0.2, cache: { read: 0.002, write: 0 } },
+  capabilities: { temperature: true, reasoning: true, attachment: true, toolcall: true,
+    input: { text: true, audio: true, image: true, video: true, pdf: true },
+    output: { text: true, audio: false, image: false, video: false, pdf: false } },
+};
+const metaCases = ['manual', 'native'].map(mode => ({
+  purpose: 'meta-inference', service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
+  provider: 'meta', model: metaContributorModel.id, modelRecord: metaContributorModel,
+  materialize: museAccountRuntimeDefinition.materialize,
+  context: producerContext({ credentialMode: mode, inferenceKey: 'fake-meta-selected', accountToken: 'fake-identity-token' }),
+  key: 'fake-meta-selected',
+}));
 function launchFixture(row: { purpose: string; service: { pluginId: string; localId: string }; materialize: Materialize; context: Parameters<Materialize>[1] }) {
   let acquisitions = 0;
   const context: Parameters<typeof prepareOpenCodeQualifiedConnectedAccounts>[1] = { services: { connectedAccounts: {
@@ -54,7 +69,7 @@ function request(provider: string, model: string) {
       OPENCODE_AUTH_CONTENT: JSON.stringify({ xai: { type: 'api', key: 'fake-ambient' } }) } } };
 }
 describe('OpenCode selected native accounts', () => {
-  it.each([...cases, { ...cases[2], provider: 'google-vertex',
+  it.each([...cases, ...metaCases, { ...cases[2], provider: 'google-vertex',
     context: producerContext({ serviceAccountJson }, 'service-account'), serviceAccountJson }])(
     'passes the selected $purpose credential through the real Session entry to managed launch', async row => {
     const f = launchFixture(row);
@@ -68,7 +83,9 @@ describe('OpenCode selected native accounts', () => {
           } }) };
         const body = path === '/session' || path === '/session/oc-native-account' ? { id: 'oc-native-account' }
           : path === '/agent' ? [{ name: 'build', mode: 'primary' }]
-            : path === '/provider' ? { all: [{ id: row.provider, models: { [row.model]: { id: row.model } } }], connected: [row.provider] }
+            : path === '/provider' ? { all: [{ id: row.provider,
+              models: { [row.model]: 'modelRecord' in row ? row.modelRecord : { id: row.model } },
+              options: { apiKey: 'fake-private-provider-key' } }], connected: [row.provider] }
             : path.endsWith('/message') ? [] : {};
         return { ok: true, status: 200, headers: { 'content-type': 'application/json' }, body: new Response(JSON.stringify(body)).body };
       } });
@@ -100,6 +117,18 @@ describe('OpenCode selected native accounts', () => {
       }
       expect(JSON.stringify(env)).not.toContain('fake-ambient');
       expect(f.acquisitions()).toBe('serviceAccountJson' in row ? 2 : 1);
+      if ('modelRecord' in row) {
+        const observation = vi.mocked(boundary.logger.debug).mock.calls.find(([message]) => message === '[OpenCodeServer] provider inventory shape');
+        expect(observation?.[1]).toMatchObject({
+          providerIds: ['meta'], connectedProviderIds: ['meta'], providerId: 'meta', modelId: row.model,
+          modelIdKeys: [row.model], selectableModelIdKeys: [row.model],
+          modelFields: expect.arrayContaining(['status', 'capabilities', 'cost']),
+          inputFields: ['text', 'audio', 'image', 'video', 'pdf'],
+        });
+        expect(JSON.stringify(observation)).not.toContain('fake-private-provider-key');
+        expect(JSON.stringify(observation)).not.toContain('fake-meta-selected');
+        expect(JSON.stringify(observation)).not.toContain('fake-identity-token');
+      }
     } finally { await session.dispose(); }
     if (adcFile) await expect(stat(adcFile)).rejects.toMatchObject({ code: 'ENOENT' });
   });

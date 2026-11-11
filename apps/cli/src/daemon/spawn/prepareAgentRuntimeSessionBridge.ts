@@ -11,7 +11,7 @@ import type {
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
 import { configuration } from '@/configuration';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
-import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity, resolveContributedAgentRoutingId } from '@/plugins/projection/registry/agentRoutingIdentity';
+import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
 
 import {
   createForegroundAgentRuntimeBootstrapAuthorization,
@@ -155,11 +155,7 @@ export async function resolveRunnerAgentSessionDescriptorForLease(
     // corridor's descriptor carries exactly that routing id. The manifest-local
     // id is reserved for contributor factory construction; the always-qualified
     // activation/service key travels only on the runner binding.
-    agentId: resolveContributedAgentRoutingId({
-      pluginId: registration.pluginId,
-      localId: agent.identity.localId,
-      provenance: agent.provenance,
-    }),
+    agentId: agent.id,
     backendId: backend.id,
     occurrenceId: registration.occurrenceId,
     sourceCustody: registration.sourceCustody,

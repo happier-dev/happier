@@ -255,7 +255,7 @@ describe('prepareRunnerAgentSessionBootstrapForLease', () => {
 
         expect(prepared?.authorization.descriptor).toMatchObject({
             pluginId,
-            agentId: 'ohmypi',
+            agentId: 'ohMyPi',
             backendId: 'ohMyPi',
             agentDeclaration: {
                 definition: {
@@ -265,7 +265,7 @@ describe('prepareRunnerAgentSessionBootstrapForLease', () => {
         });
     });
 
-    it('derives the descriptor routing id from the validated declaration identity', async () => {
+    it('retains the admitted descriptor routing id separately from the declaration identity', async () => {
         const pluginId = 'acme.identity';
         const declarationLocalId = 'declared-agent';
         const agent = {
@@ -301,7 +301,7 @@ describe('prepareRunnerAgentSessionBootstrapForLease', () => {
             target: { kind: 'backend', sourceKind: 'external', backendId: 'legacy-routing-id' },
             lease: { registry },
         } as never);
-        expect(prepared?.authorization.descriptor.agentId).toBe(`${pluginId}/${declarationLocalId}`);
+        expect(prepared?.authorization.descriptor.agentId).toBe(agent.id);
     });
 
     it('preserves two installed same-local-id Agents as distinct qualified daemon descriptors', async () => {

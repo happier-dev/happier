@@ -275,10 +275,10 @@ async function readHealth(
   };
 }
 
-async function readCurrentAccessToken(
+async function readCurrentAccessMaterial(
   credentials: ConnectedAccountCredentialReader,
   options?: Readonly<{ signal?: AbortSignal }>,
-): Promise<string> {
+): Promise<Readonly<{ accessToken: string; expiresAt: number | null }>> {
   const accessToken = await readCredential(credentials, ACCESS_TOKEN_KEY, options);
   const expiresAt = readCredentialExpiresAtMs(accessToken, await readCredential(credentials, EXPIRES_AT_MS_KEY, options));
   if (
@@ -287,7 +287,7 @@ async function readCurrentAccessToken(
   ) {
     throw new Error('OpenAI Codex connected-account credentials are unavailable');
   }
-  return accessToken;
+  return { accessToken, expiresAt };
 }
 
 const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
@@ -482,7 +482,7 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
   recoveryCredits: {
     async read(context, options) {
       const rawResetCredits = await fetchCodexRateLimitResetCredits({
-        accessToken: await readCurrentAccessToken(context.credentials, options),
+        accessToken: (await readCurrentAccessMaterial(context.credentials, options)).accessToken,
         accountId: await readCredential(context.credentials, PROVIDER_ACCOUNT_ID_KEY, options),
         runtimeFetch: context.services.http,
         signal: options?.signal ?? context.signal,
@@ -501,7 +501,7 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
     },
     async consume(request, context, options) {
       const outcome = await consumeCodexRateLimitResetCredit({
-        accessToken: await readCurrentAccessToken(context.credentials, options),
+        accessToken: (await readCurrentAccessMaterial(context.credentials, options)).accessToken,
         accountId: await readCredential(context.credentials, PROVIDER_ACCOUNT_ID_KEY, options),
         runtimeFetch: context.services.http,
         signal: options?.signal ?? context.signal,
@@ -520,10 +520,11 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
     if (request.kind === 'environment') {
       const env: Record<string, string> = {};
       if (request.keys.includes(OPENAI_CODEX_OAUTH_TOKEN_ENV_KEY)) {
-        env[OPENAI_CODEX_OAUTH_TOKEN_ENV_KEY] = await readCurrentAccessToken(
+        const { accessToken } = await readCurrentAccessMaterial(
           context.credentials,
           options,
         );
+        env[OPENAI_CODEX_OAUTH_TOKEN_ENV_KEY] = accessToken;
       }
       return { kind: 'environment', env };
     }
@@ -534,7 +535,7 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
       ) {
         throw new Error('OpenAI Codex connected accounts cannot materialize credentials for this origin');
       }
-      const accessToken = await readCurrentAccessToken(context.credentials, options);
+      const { accessToken, expiresAt } = await readCurrentAccessMaterial(context.credentials, options);
       const requestedNames = new Set(
         request.headerNames.map((name) => name.toLowerCase()),
       );
@@ -560,7 +561,7 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
           headers['ChatGPT-Account-Id'] = providerAccountId;
         }
       }
-      return { kind: 'httpHeaders', headers };
+      return { kind: 'httpHeaders', headers, ...(expiresAt === null ? {} : { expiresAt }) };
     }
     if (request.kind !== 'files') {
       throw new Error('OpenAI Codex connected accounts support native credential-file materialization only');

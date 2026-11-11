@@ -69,12 +69,12 @@ describe('Claude Subscription Connected Account', () => {
     ['enterprise', 'workspace'], [undefined, 'unknown'], ['future-plan', 'unknown'],
   ])('classifies the materialized subscription, not the Agent (%s)', async (plan, expectedScope) => {
     const runtime = await activateConnectedAccountRuntime();
-    const values = new Map([['accessToken', 'synthetic-access']]);
+    const values = new Map([['accessToken', 'synthetic-access'], ['expiresAtMs', '4102444800000']]);
     if (plan) values.set('subscriptionType', plan);
     const context = readContext('oauth', values);
     const request = { kind: 'httpHeaders' as const, origin: 'https://api.anthropic.com', headerNames: ['authorization'] };
     expect(await runtime.materialize(request, context, { signal: context.signal }))
-      .toMatchObject({ kind: 'httpHeaders', usageAccountScope: expectedScope });
+      .toMatchObject({ kind: 'httpHeaders', usageAccountScope: expectedScope, expiresAt: 4_102_444_800_000 });
   });
 
   it('updates account context while retaining workspace approvals and private native preferences', async () => {

@@ -274,7 +274,7 @@ describe('OhMyPi plugin activation', () => {
     await fixture.dispose();
   });
 
-  it('materializes every bound qualified purpose into the ACP launch environment and restarts on resync', async () => {
+  it('materializes every bound qualified purpose and retains the opened Session across account resync', async () => {
     const fixture = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     const factory = fixture.registration('agents', 'ohmypi')?.factory;
     if (!factory) throw new Error('Expected OhMyPi Agent factory');
@@ -387,14 +387,15 @@ describe('OhMyPi plugin activation', () => {
     expect(nativeDispose).not.toHaveBeenCalled();
 
     listeners.get('openai')?.({ kind: 'resync', authorityChanged: true });
-    await vi.waitFor(() => expect(nativeDispose).toHaveBeenCalledWith('runtime_recovery'));
-    for (const dispose of watchDisposers.values()) expect(dispose).toHaveBeenCalledTimes(1);
+    expect(nativeDispose).not.toHaveBeenCalled();
+    for (const dispose of watchDisposers.values()) expect(dispose).not.toHaveBeenCalled();
     await session.dispose();
+    for (const dispose of watchDisposers.values()) expect(dispose).toHaveBeenCalledTimes(1);
     expect(nativeDispose).toHaveBeenCalledTimes(1);
     await fixture.dispose();
   });
 
-  it('preserves native launch authentication while retaining unbound-purpose watches for restart', async () => {
+  it('preserves native launch authentication and host-owned account recovery watches', async () => {
     const fixture = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     const factory = fixture.registration('agents', 'ohmypi')?.factory;
     if (!factory) throw new Error('Expected OhMyPi Agent factory');
@@ -448,9 +449,10 @@ describe('OhMyPi plugin activation', () => {
     expect(open).toHaveBeenCalledWith(expect.objectContaining({ launchEnvironment }), expect.any(Object));
     expect(nativeDispose).not.toHaveBeenCalled();
     listeners.get('openai-codex')?.({ kind: 'resync', authorityChanged: true });
-    await vi.waitFor(() => expect(nativeDispose).toHaveBeenCalledWith('runtime_recovery'));
-    for (const dispose of watchDisposers.values()) expect(dispose).toHaveBeenCalledTimes(1);
+    expect(nativeDispose).not.toHaveBeenCalled();
+    for (const dispose of watchDisposers.values()) expect(dispose).not.toHaveBeenCalled();
     await session.dispose();
+    for (const dispose of watchDisposers.values()) expect(dispose).toHaveBeenCalledTimes(1);
     expect(nativeDispose).toHaveBeenCalledTimes(1);
     await fixture.dispose();
   });

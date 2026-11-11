@@ -1284,7 +1284,7 @@ describe('activate', () => {
     await session.dispose();
   });
 
-  it('disposes the one Pi session runtime and every purpose watch on a later public resync', async () => {
+  it('keeps Session authority observations and the admitted Pi runtime until explicit disposal', async () => {
     const listeners = new Map<string, (event: { kind: 'resync'; authorityChanged: boolean }) => void>();
     const disposedPurposes: string[] = [];
     const connectedAccounts: ConnectedAccountsFixture = {
@@ -1300,14 +1300,17 @@ describe('activate', () => {
     const capture: Capture = { specs: [], written: [] };
     const context = createContext(capture, 'pi-public-resync', connectedAccounts);
     const runtime = await createPiRuntime(context.factory);
-    await runtime.sessions!.open({
+    const session = await runtime.sessions!.open({
       kind: 'create',
       sessionId: 'pi-public-resync',
       cwd: '/tmp/pi-workspace',
     }, context.session);
 
+    expect(disposedPurposes).toEqual([]);
     listeners.get('openai-api-key')?.({ kind: 'resync', authorityChanged: true });
-    await vi.waitFor(() => expect(capture.disposeCount).toBe(1));
+    expect(capture.disposeCount ?? 0).toBe(0);
+    await session.dispose();
+    expect(capture.disposeCount).toBe(1);
     expect(disposedPurposes.sort()).toEqual([...purposeIds].sort());
   });
 

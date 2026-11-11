@@ -155,6 +155,58 @@
               "localId": "openai-codex",
               "pluginId": "happier.agent.codex"
             }
+          },
+          {
+            "credentialKinds": [
+              "token"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "anthropic-api-key",
+            "service": {
+              "localId": "anthropic",
+              "pluginId": "happier.agent.claude"
+            }
+          },
+          {
+            "credentialKinds": [
+              "token"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "openai-api-key",
+            "service": {
+              "localId": "openai",
+              "pluginId": "happier.voice.openai"
+            }
+          },
+          {
+            "credentialKinds": [
+              "token"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "kimi-api-key",
+            "service": {
+              "localId": "kimi-code",
+              "pluginId": "happier.agent.kimi"
+            }
+          },
+          {
+            "credentialKinds": [
+              "token"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "xai-api-key",
+            "service": {
+              "localId": "xai",
+              "pluginId": "happier.agent.grok"
+            }
           }
         ],
         "description": {

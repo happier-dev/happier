@@ -282,11 +282,28 @@ describe('Pi Agent runtime', () => {
     await vi.waitFor(() => expect(boundary.disposeProcess).toHaveBeenCalled());
   });
 
-  it('binds Connected Account invalidation outside Pi tool-extension cleanup', async () => {
+  it('disposes a Session whose account invalidates while the native process opens', async () => {
+    const boundary = hostBoundaries();
+    const spawn = boundary.spawn.getMockImplementation()!;
+    boundary.spawn.mockImplementation(async (spec) => {
+      const handle = await spawn(spec);
+      await boundary.subscriptions[0]!.listener();
+      return handle;
+    });
+    const session = await createPiAgentRuntime().sessions.open({
+      kind: 'create', sessionId: 'pi-invalidated-during-open', cwd: '/workspace',
+    }, boundary.context);
+    openedSessions.push(session);
+    await vi.waitFor(() => expect(boundary.disposeProcess).toHaveBeenCalled());
+    for (const subscription of boundary.subscriptions) expect(subscription.dispose).toHaveBeenCalledOnce();
+  });
+
+  it.each(['create', 'resume'] as const)('keeps the admitted %s Session and tool assets usable after account resync', async (kind) => {
     const boundary = hostBoundaries();
 
     const session = await createPiAgentRuntime().sessions.open({
-      kind: 'create',
+      kind,
+      ...(kind === 'resume' ? { providerSessionId: 'pi-shared' } : {}),
       sessionId: 'pi-invalidation-cleanup',
       cwd: '/workspace',
     }, {
@@ -309,10 +326,19 @@ describe('Pi Agent runtime', () => {
     if (!configPath) throw new Error('Expected a materialized Pi tools config');
     expect(JSON.parse(readFileSync(configPath, 'utf8'))).toMatchObject({ v: 1, directory: '/workspace', tools: [] });
     expect(boundary.subscriptions.length).toBeGreaterThan(0);
+    for (const subscription of boundary.subscriptions) expect(subscription.dispose).not.toHaveBeenCalled();
+    await expect(session.send({ inputIds: ['first'], input: { text: 'First turn.' },
+      delivery: { kind: 'newTurn', turnId: 'first' } })).resolves.toMatchObject({ status: 'admitted' });
+    await boundary.emit({ type: 'agent_end', willRetry: false });
     await boundary.subscriptions[0]!.listener({ kind: 'resync', authorityChanged: false });
     expect(boundary.disposeProcess).not.toHaveBeenCalled();
     expect(existsSync(configPath)).toBe(true);
     await boundary.subscriptions[0]!.listener({ kind: 'resync', authorityChanged: true });
+    await expect(session.send({ inputIds: ['next'], input: { text: 'Next turn.' },
+      delivery: { kind: 'newTurn', turnId: 'next' } })).resolves.toMatchObject({ status: 'admitted' });
+    expect(boundary.disposeProcess).not.toHaveBeenCalled();
+    expect(existsSync(configPath)).toBe(true);
+    await session.dispose();
     expect(boundary.disposeProcess).toHaveBeenCalled();
     expect(existsSync(configPath)).toBe(false);
     for (const subscription of boundary.subscriptions) expect(subscription.dispose).toHaveBeenCalledOnce();

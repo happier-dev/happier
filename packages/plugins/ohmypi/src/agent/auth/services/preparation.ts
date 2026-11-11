@@ -63,16 +63,14 @@ export async function prepareOhMyPiQualifiedAccounts<Request extends OhMyPiAccou
   const subscriptions: Array<Readonly<{ dispose(): void }>> = [];
   const initialObservations: Promise<void>[] = [];
   let invalidated = false;
-  let invalidationHandler: (() => Promise<void>) | null = null;
   let cleaned = false;
   const cleanup = (): void => {
     if (cleaned) return;
     cleaned = true;
     for (const subscription of subscriptions) subscription.dispose();
   };
-  const invalidate = async (): Promise<void> => {
+  const invalidate = (): void => {
     invalidated = true;
-    await invalidationHandler?.();
   };
 
   try {
@@ -207,6 +205,7 @@ export async function prepareOhMyPiQualifiedAccounts<Request extends OhMyPiAccou
       request: preparedRequest,
       isInvalidated: () => invalidated,
       bind(session) {
+        // The host owns account-change recovery at the Session turn boundary.
         let disposed = false;
         const dispose = async (reason?: AgentSessionDisposeReason): Promise<void> => {
           if (disposed) return;
@@ -214,8 +213,7 @@ export async function prepareOhMyPiQualifiedAccounts<Request extends OhMyPiAccou
           cleanup();
           await session.dispose(reason);
         };
-        invalidationHandler = async () => await dispose('runtime_recovery');
-        if (invalidated) void invalidationHandler();
+        if (invalidated) void dispose('runtime_recovery');
         return {
           ...session,
           runtimeCapabilities: {

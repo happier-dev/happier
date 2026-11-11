@@ -758,15 +758,18 @@ export function createClaudeSubscriptionConnectedAccountRuntime(
       ) {
         throw new Error('Claude OAuth connected accounts cannot materialize credentials for this HTTP-header request');
       }
-      const [accessToken, subscriptionType] = await Promise.all([
+      const [accessToken, subscriptionType, expiresAtValue] = await Promise.all([
         readCredential(context.credentials, ACCESS_TOKEN_KEY, options),
         readCredential(context.credentials, SUBSCRIPTION_TYPE_KEY, options),
+        readCredential(context.credentials, EXPIRES_AT_MS_KEY, options),
       ]);
       if (!accessToken) throw unavailableCredentials('OAuth');
+      const expiresAt = Number(expiresAtValue);
       return {
         kind: 'httpHeaders',
         usageAccountScope: classifyUsageAccountScope(subscriptionType),
         headers: { authorization: `Bearer ${accessToken}` },
+        ...(Number.isFinite(expiresAt) && expiresAt > 0 ? { expiresAt } : {}),
       };
     }
     if (request.kind !== 'files') {

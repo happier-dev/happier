@@ -527,7 +527,7 @@ export function buildClaudeUnifiedDialogTraceSummary(dialog: ClaudeUnifiedVisibl
     ...(dialog.kind === 'unrecognized' ? { mode: dialog.mode } : {}),
     itemCount: questions ? questions.length : 1,
     optionCount: questions
-      ? questions.reduce((count, question) => count + (question && typeof question === 'object'
+      ? questions.reduce<number>((count, question) => count + (question && typeof question === 'object'
         && 'options' in question && Array.isArray(question.options) ? question.options.length : 0), 0)
       : dialog.options.length,
   };

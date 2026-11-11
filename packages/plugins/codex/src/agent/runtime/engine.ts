@@ -153,7 +153,7 @@ async function openCodexSession(
   };
 }
 
-export const createCodexAgentRuntime: AgentRuntimeFactory = () => {
+export const createCodexAgentRuntime = ((_context: Parameters<AgentRuntimeFactory>[0]) => {
   const goalProjection = createCodexGoalProjection();
   const { bindSessionCatalog, ...controls } = createCodexNativeSessionControls(goalProjection);
   return {
@@ -186,4 +186,4 @@ export const createCodexAgentRuntime: AgentRuntimeFactory = () => {
       handoff: codexHandoffSurface,
     },
   } satisfies AgentRuntime;
-};
+}) satisfies AgentRuntimeFactory;

@@ -185,6 +185,45 @@
               "localId": "openai-codex",
               "pluginId": "happier.agent.codex"
             }
+          },
+          {
+            "credentialKinds": [
+              "token"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "openai-api-key",
+            "service": {
+              "localId": "openai",
+              "pluginId": "happier.voice.openai"
+            }
+          },
+          {
+            "credentialKinds": [
+              "token"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "kimi-api-key",
+            "service": {
+              "localId": "kimi-code",
+              "pluginId": "happier.agent.kimi"
+            }
+          },
+          {
+            "credentialKinds": [
+              "token"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "xai-api-key",
+            "service": {
+              "localId": "xai",
+              "pluginId": "happier.agent.grok"
+            }
           }
         ],
         "description": {
@@ -493,6 +532,7 @@
     "workItems": [],
     "workflows": []
   },
+  "description": "FX coding agent.",
   "displayName": "FX",
   "entrypoints": {
     "daemon": "./.happier-plugin/daemon.js"
@@ -507,10 +547,21 @@
         "scope": {
           "envKeys": [
             "HOME",
+            "AI_GATEWAY_API_KEY",
+            "VERCEL_OIDC_TOKEN",
+            "HAPPIER_FX_PROVIDER_API_KEY",
             "FX_PROVIDER",
+            "FX_MODEL",
             "FX_AUTH_MODE",
             "FX_HOME",
-            "FX_MODEL"
+            "FX_GATEWAY_BASE_URL",
+            "FX_E2E_GATEWAY_CHAT_URL",
+            "FX_E2E_GATEWAY_MODELS_URL",
+            "FX_E2E_GATEWAY_CREDITS_URL",
+            "HAPPIER_CONNECTED_OPENAI_API_KEY",
+            "HAPPIER_CONNECTED_KIMI_API_KEY",
+            "KIMI_CODE_BASE_URL",
+            "HAPPIER_CONNECTED_XAI_API_KEY"
           ],
           "executables": [
             {
