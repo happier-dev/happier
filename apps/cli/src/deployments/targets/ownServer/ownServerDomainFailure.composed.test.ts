@@ -123,6 +123,7 @@ it.each(['service', 'missing_artifact', 'root_verify'] as const)('preserves nati
             open, headers, persistPreparedContent: createOwnServerDomainContentWriter({ serverId,
                 serverHttpBaseUrl: endpoint, artifacts, headers }),
             readInstallation: async () => installation.installationId,
+            readReceipt: async () => { throw new Error('This active/membership Domain path does not read an incumbent'); },
             readEnvironment: async request => {
                 const detail = await readDeploymentEnvironmentForHost(request, { open,
                     assertCurrent: async context => context.signal?.throwIfAborted(),

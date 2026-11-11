@@ -7,8 +7,25 @@ import type { DeploymentSourceRequesterIdentityResolver } from './readDeployment
 import { readHostReviewedChildReceivingAdmissionV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
+import { refuseDeploymentAuthorization } from './deploymentAuthorizationFailure';
 
 const refuse = (): never => { throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' }); };
+
+export async function assertDeploymentHttpAuthorityForHost(context: ActionExecutorContext): Promise<void> {
+    context.signal?.throwIfAborted();
+    const authorization = context.externalActionExecutionAuthorization;
+    if (authorization) {
+        if (!authorization.requesterHttpProjection) return refuseDeploymentAuthorization('requester_http_projection_missing');
+    } else if (context.externalActionCredential || context.rpcSessionAuthorization) return refuseDeploymentAuthorization('requester_authorization_missing');
+    context.signal?.throwIfAborted();
+}
+
+/** Metadata spends the signed root; private content also needs its admitted Account custody. */
+export async function assertDeploymentContentAuthorityForHost(context: ActionExecutorContext): Promise<void> {
+    await assertDeploymentHttpAuthorityForHost(context);
+    if (context.externalActionExecutionAuthorization && !context.externalActionExecutionAuthorization.requesterAccountProjection)
+        return refuseDeploymentAuthorization('requester_account_projection_missing');
+}
 
 /** Consume Home's effective grant, never the role selected by an operation projection. */
 export async function resolveDeploymentDefinitionRoleForHost(context: ActionExecutorContext, host: Readonly<{

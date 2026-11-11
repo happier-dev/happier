@@ -43,6 +43,23 @@ export function selectDomainIngressMembers<T extends DomainMemberIdentity & Read
         : member.state === 'active').map(member => ({ ...member, state: 'active' as const }));
 }
 
+/** A retained serving installation can still be marked joining after a failed
+ * rollout. Its incumbent receipt, rather than the next placement's flag, owns
+ * whether it already runs a release. Membership children keep their exact set. */
+export async function readDomainIngressMembersForHost(
+    link: import('@happier-dev/deployment-protocol').DeploymentTargetLinkHeaderV1,
+    membershipMachines: readonly DomainMemberIdentity[] | undefined,
+    context: import('@happier-dev/protocol').ActionExecutorContext,
+    readReceipt: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readReceipt'],
+) {
+    if (membershipMachines || !link.activeDeploymentId || !link.members.some(member => member.state === 'joining'))
+        return selectDomainIngressMembers(link.members, membershipMachines);
+    const receipt = await readReceipt({ environmentId: link.environmentId, deploymentId: link.activeDeploymentId, context });
+    const serving = link.members.filter(member => member.state === 'active' || receipt.content.machineResults.some(row =>
+        row.machineId === member.machineId && row.installationId === member.installationId && row.currentDeploymentId !== undefined));
+    return selectDomainIngressMembers(link.members, serving);
+}
+
 /** The admitted root names removed members; the remaining set also owns ingress. */
 export function selectDomainMembershipMachines(members: readonly DomainMemberIdentity[], drainingMachines?: readonly string[]): DomainMemberIdentity[] {
     const draining = new Set(drainingMachines);
@@ -189,7 +206,8 @@ export async function readExpectedDownDomainReferencesForHost(input: DomainInven
             if (!capture.desired || capture.placement.targetLinkId !== input.targetLinkId) continue;
             const opened = await readContent(capture.content);
             if (!opened.ok) return null;
-            if (!affected.has(opened.content.target.service)) continue;
+            const service = opened.content.target.service;
+            if (service === undefined || !affected.has(service)) continue;
             const identity = JSON.stringify([capture.placement.machineId, capture.placement.installationId]);
             if (placements.has(identity)) continue;
             placements.add(identity);
@@ -223,7 +241,8 @@ export async function readDomainCaddyStartFirstLegs(input: Readonly<{
         if (!domain.placements?.length) {
             const opened = await readContent(domain);
             if (!opened.ok) return { kind: 'unavailable', reason: opened.error, domainIds: [domain.id] };
-            if (affected.has(opened.content.target.service)) return { kind: 'unavailable', reason: 'native_route_unavailable', domainIds: [domain.id] };
+            const service = opened.content.target.service;
+            if (service !== undefined && affected.has(service)) return { kind: 'unavailable', reason: 'native_route_unavailable', domainIds: [domain.id] };
             continue;
         }
         for (const capture of domain.placements) {
@@ -231,7 +250,8 @@ export async function readDomainCaddyStartFirstLegs(input: Readonly<{
             if (placement.machineId !== input.machineId) continue;
             const opened = await readContent(capture.content);
             if (!opened.ok) return { kind: 'unavailable', reason: opened.error, domainIds: [domain.id] };
-            if (!affected.has(opened.content.target.service)) continue;
+            const service = opened.content.target.service;
+            if (service === undefined || !affected.has(service)) continue;
             if (!capture.desired || domain.state === 'removing' || placement.targetLinkId !== input.targetLinkId
                 || placement.installationId !== input.installationId || capture.dockerEngineId !== input.dockerEngineId) {
                 return { kind: 'unavailable', reason: 'native_route_unavailable', domainIds: [domain.id] };

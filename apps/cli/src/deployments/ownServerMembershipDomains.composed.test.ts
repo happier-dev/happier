@@ -111,6 +111,7 @@ it.each(['join', 'successor join', 'rollback', 'promote', 'template upgrade', 'd
             createContent: async () => { throw new Error('Retained Domains already have content'); },
             persistPreparedContent: createOwnServerDomainContentWriter({ serverId: 'home', serverHttpBaseUrl: 'https://home.test', artifacts, headers }),
             readInstallation: async () => 'installed-a',
+            readReceipt: async () => { throw new Error('This active/membership Domain path does not read an incumbent'); },
             readEnvironment: async request => {
                 const detail = await readDeploymentEnvironmentForHost(request, { open,
                     assertCurrent: async context => context.signal?.throwIfAborted(),

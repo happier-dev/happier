@@ -3423,6 +3423,48 @@ describe('deployment children retain their controller Action authority', () => {
         return { f, target, input, envelope, authorization, mintQueries };
     }
 
+    it.each(['plain', 'e2ee'] as const)('reads the incumbent receipt only inside the signed %s Domain Environment', async mode => {
+        const { f, target, authorization } = await domainRootFixture(mode, mode === 'e2ee');
+        const foreign = await fixture();
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); }, async app => {
+            for (const [environment, receipt, status] of [
+                [f.environment, f.receipt, 200],
+                [foreign.environment, foreign.receipt, 401],
+            ] as const) {
+                const spec = getActionSpec('deployments.receipts.get');
+                if (!spec.serverTransport) throw new Error('Expected receipt HTTP transport');
+                const path = bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema,
+                    input: { serverId, environmentId: environment.id, deploymentId: receipt.id } }).path;
+                const response = await app.inject({ method: 'GET', url: path, headers: {
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'deployments.receipts.get',
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                        authorizationToken: authorization.token, effectActionId: 'deployments.receipts.get', target,
+                        installationId: f.controller.installationId, requestId: authorization.binding.requestId,
+                        method: 'GET', path, privateKey: f.controller.keys.secretKey,
+                    }),
+                } });
+                expect(response.statusCode, response.body).toBe(status);
+                if (status === 200) expect(response.json()).toMatchObject({ ok: true, deployment: { id: receipt.id } });
+            }
+            for (const [receipt, status] of [[f.receipt, 200], [foreign.receipt, 404]] as const) {
+                const path = `/v1/artifacts/${receipt.contentArtifactId}`;
+                const response = await app.inject({ method: 'GET', url: path, headers: {
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'deployments.domains.add',
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                        authorizationToken: authorization.token, effectActionId: 'deployments.domains.add', target,
+                        installationId: f.controller.installationId, requestId: authorization.binding.requestId,
+                        method: 'GET', path, privateKey: f.controller.keys.secretKey,
+                    }),
+                } });
+                expect(response.statusCode, response.body).toBe(status);
+            }
+        }, { authentication: 'real' });
+    });
+
     it.each(['plain', 'e2ee'] as const)('admits a signed %s Domain admission and retained settlement through its real controller HTTP transport', async mode => {
         const { f, input, envelope, target, authorization, mintQueries } = await domainRootFixture(mode, mode === 'e2ee');
         expect(mintQueries.filter(query => query.model === 'ProjectSource')).toEqual([]);

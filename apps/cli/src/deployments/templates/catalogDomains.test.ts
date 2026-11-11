@@ -298,6 +298,7 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
             } });
         const domainActions = createOwnServerDomainActions({ credentials, serverId: 'srv_template_home', machineId: 'target',
             serverHttpBaseUrl: fixture.origin, storage, headers: async () => ({}), readEnvironment: async () => environment,
+            readReceipt: async () => { throw new Error('This active/membership Domain path does not read an incumbent'); },
             readInstallation: async () => identity.installationId, open: async () => { throw new Error('No tunnel content read'); },
             persistPreparedContent: async () => { throw new Error('No tunnel rewrite'); },
             createContent: async (content, _owner, context) => {

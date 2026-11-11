@@ -46,7 +46,7 @@ import { isDeploymentActionIdV1, DeploymentDeployAdmissionInputV1Schema, Deploym
     readDeploymentArchiveRpcEffectV1, type DeploymentChildRoutingV1 } from '@happier-dev/protocol';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
 import { isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentObservationReadActionIdV1, isDeploymentDomainAddActionIdV1,
-    isDeploymentDomainMetadataReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
+    isDeploymentDomainMetadataReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1, DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1,
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
     isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema,
@@ -1218,7 +1218,8 @@ function isDeploymentReadPreparation(binding: ExternalActionExecutionAuthorizati
         || effectActionId === 'deployments.receipts.get' || effectActionId === 'projects.sources.read'
         || rootActionId === DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1 && effectActionId === 'deployments.receipts.list';
     if (isDeploymentDomainChildActionIdV1(rootActionId)) return effectActionId === 'deployments.environments.get'
-        || effectActionId === 'deployments.domains.get' || effectActionId === 'projects.sources.read';
+        || effectActionId === 'deployments.domains.get' || effectActionId === DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1[2]
+        || effectActionId === 'projects.sources.read';
     if (rootActionId === 'deployments.templates.instantiate') return effectActionId === 'projects.sources.read'
         || effectActionId === 'deployments.environments.get' || effectActionId === 'deployments.environments.create'
         || effectActionId === 'deployments.environments.update' || effectActionId === 'deployments.targets.link'

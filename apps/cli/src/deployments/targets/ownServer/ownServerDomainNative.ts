@@ -30,7 +30,7 @@ import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/mac
 import { createNativeCaddyRoutes } from '@/machines/reachability/nativeCaddyRoutes';
 import type { StoredCredentials } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { readDomainCaddyStartFirstLegs, resolveDomainIngress, selectDomainIngressMembers, selectEdgeCaddyDomainRoute, selectPrivateCaddyOriginNetwork } from './domainRouteSelection';
+import { readDomainCaddyStartFirstLegs, resolveDomainIngress, readDomainIngressMembersForHost, selectEdgeCaddyDomainRoute, selectPrivateCaddyOriginNetwork } from './domainRouteSelection';
 import type { CaddyDomainRouteInput } from './caddyRouteMaterialization';
 import { createNativeCaddyStartFirstRoutes } from '@/machines/reachability/nativeCaddyStartFirst';
 import type { OwnServerDeploymentTargetHostInput, OwnServerDeploymentRuntime } from './ownServerDeploymentTarget';
@@ -162,6 +162,7 @@ export function createOwnServerDomainNative(host: Readonly<{
     acquirePluginRuntimeRegistryLease?(): Promise<PluginRuntimeRegistryLease>;
     open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null>;
     readEnvironment(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
+    readReceipt: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readReceipt'];
 }>) {
     async function acquire(job: DomainJob, context: ActionExecutorContext) {
         const signal = context.signal ?? new AbortController().signal;
@@ -182,8 +183,8 @@ export function createOwnServerDomainNative(host: Readonly<{
             const link = environment.targetLinks.find(item => item.targetLink.id === job.input.targetLinkId)?.targetLink;
             if (!link || link.targetKind !== 'ownServer') return refuse('target_mismatch');
             environmentContent = environment.content;
-            members = selectDomainIngressMembers(link.members,
-                'membershipMachines' in job.input ? job.input.membershipMachines : undefined).map(member => ({
+            members = (await readDomainIngressMembersForHost(link,
+                'membershipMachines' in job.input ? job.input.membershipMachines : undefined, context, host.readReceipt)).map(member => ({
                 machineId: member.machineId, installationId: member.installationId, state: 'active' }));
         } else if (!withoutWorkload) {
             // Accepted work consumes its exact admitted private inputs, never a

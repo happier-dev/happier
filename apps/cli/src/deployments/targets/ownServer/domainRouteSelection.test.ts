@@ -27,7 +27,7 @@ import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec } from '@happier-dev/sync-client';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentDomainContentV1Schema, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, machineSecretGrantSubjectKey } from '@happier-dev/deployment-protocol';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
@@ -541,8 +541,12 @@ it.skipIf(process.platform === 'win32')('selects one container origin common to 
         tunnelOrigin: { members: [{ machineId: 'a' }, { machineId: 'joining' }] } });
 });
 
-it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied', 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running public network failure'] as const)(
+it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied', 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running public network failure'] as const)(
     'carries the complete shared origin through the real controller and private child transport: %s', async scenario => {
+    const noActiveDomainMembers = scenario === 'no active Domain members' || scenario === 'incumbent other installation'
+        || scenario === 'incumbent no serving release';
+    const incumbentJoining = scenario === 'incumbent receipt joining member' || scenario === 'incumbent other installation'
+        || scenario === 'incumbent no serving release';
     const membership = scenario === 'membership join installed' || scenario === 'membership drain';
     const removingNativeOutput = scenario === 'Remove native parsed output invalid' || scenario === 'Remove malformed native observation';
     const nativeOutcomeUnknown = scenario === 'administrator native outcome unknown'
@@ -574,10 +578,11 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
         link.members = [link.members[0]!];
         link.machines = ['a'];
     }
-    if (scenario === 'no active Domain members') link.members[0]!.state = 'joining';
+    if (noActiveDomainMembers || incumbentJoining) link.members[0]!.state = 'joining';
+    if (scenario === 'no active Domain members') delete link.activeDeploymentId;
     if (scenario === 'membership join installed') link.members[0]!.state = 'joining';
     const occupiedPort = scenario === 'native Caddy port occupied' || scenario === 'native Caddy host port occupied';
-    const installedCaddy = scenario === 'direct installed Caddy admin write refused' || scenario === 'direct installed Caddy' || scenario === 'membership join installed' || scenario === 'direct installed Caddy admin unavailable' || occupiedPort || retainedSeed;
+    const installedCaddy = incumbentJoining || scenario === 'direct installed Caddy admin write refused' || scenario === 'direct installed Caddy' || scenario === 'membership join installed' || scenario === 'direct installed Caddy admin unavailable' || occupiedPort || retainedSeed;
     if (installedCaddy) {
         link.state = 'deployed';
         link.activeDeploymentId = 'serving';
@@ -686,10 +691,20 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 version: retainedConnector.version, networkName: retainedConnector.networkName }] } } : {}),
     });
     const credentials: StoredCredentials = { token: `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`, encryption: null };
+    const incumbent = createDeploymentReceiptDetailV1();
+    incumbent.deployment = { ...incumbent.deployment, id: 'serving', environmentId: input.environmentId, targetLinkId: link.id };
+    incumbent.content.machines = ['a'];
+    incumbent.content.buildMachineId = 'a';
+    incumbent.content.machineResults = [{ machineId: 'a', installationId: 'installed-a', currentDeploymentId: 'serving',
+        activation: 'succeeded', health: 'healthy', steps: [] }];
+    if (scenario === 'incumbent other installation') incumbent.content.machineResults[0]!.installationId = 'retired-installation';
+    if (scenario === 'incumbent no serving release') delete incumbent.content.machineResults[0]!.currentDeploymentId;
+    createDeploymentReceiptDetailV1(incumbent); // Validate the complete private receipt at the HTTP fixture boundary.
     const documents = new Map<string, Record<string, unknown>>();
     for (const [id, kind, content] of [[environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environment.content],
         [link.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, {}],
-        [input.contentArtifactId, 'deployment-domain.v1', domainContent]] as const) {
+        [input.contentArtifactId, 'deployment-domain.v1', domainContent],
+        [incumbent.deployment.contentArtifactId, 'deployment-receipt.v1', incumbent.content]] as const) {
         documents.set(id, { id, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none', encryptionMode: 'plain',
             dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, header: encodePlainArtifactStoredContent({ kind, title: 'Domain' }),
             body: encodePlainArtifactStoredContent({ body: JSON.stringify(content) }), headerVersion: 1, bodyVersion: 1,
@@ -744,6 +759,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
             expect(request.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toEqual(expect.any(String));
             return { status: 401, data: { error: 'invalid_token', authorizationRefusal: 'verification_purpose' } };
         }
+        if (request.method === 'GET' && path.endsWith('/receipts/serving')) return { status: 200, data: { ok: true, deployment: incumbent.deployment } };
         if (request.method === 'GET') return { status: 200, data: DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
             environment: environment.environment, targetLinks: [link] }) };
         if (removingNativeOutput) {
@@ -1095,7 +1111,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
         const execute = () => deps.deploymentAction(actionId, actionInput, { externalActionExecutionAuthorization: requester.authorization,
             originalActionEnvelope: envelope, externalActionTarget: target, actionRequestId: envelope.requestId,
             operationAcceptance: { operationId: 'domain-operation', accept() {} } });
-        if (scenario === 'no active Domain members' || scenario === 'Domain Environment HTTP unavailable'
+        if (noActiveDomainMembers || scenario === 'Domain Environment HTTP unavailable'
             || scenario === 'network review required' || scenario === 'Domain Home purpose refused'
             || scenario === 'administrator native check unavailable' || nativeOutcomeUnknown || removingNativeOutput) {
             const operations = createHostActionOperationRuntime({ serverId: 'home', machineId: 'controller',
@@ -1104,7 +1120,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 actionRequestId: envelope.requestId, execute: async () => ActionExecuteResultSchema.parse(await execute()) });
             const details = { environmentId: input.environmentId, domainId: input.domainId, step: 'native_execution',
                 ...(removingNativeOutput ? { requiredFact: 'nativeExecutionResult', remedy: expect.stringMatching(/\S/) }
-                    : scenario === 'no active Domain members' ? { requiredFact: 'activeDomainMembers', remedy: expect.any(String) }
+                    : noActiveDomainMembers ? { requiredFact: 'activeDomainMembers', remedy: expect.any(String) }
                     : scenario === 'network review required' ? { requiredFact: 'reachabilityPosture', remedy: expect.any(String) }
                         : nativeOutcomeUnknown ? { ...(nativeUnknownWithFact ? { failure: nativeUnknownFailure, requiredFact: nativeUnknownFailure.requiredFact }
                             : { requiredFact: 'nativeExecutionResult' }),
@@ -1115,7 +1131,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
             // RpcError carries the Home reader's typed failure unchanged.
             const errorCode = removingNativeOutput ? scenario === 'Remove native parsed output invalid'
                 ? 'invalid_provider_output' : 'invalid_action_transport_output'
-                : scenario === 'no active Domain members' ? 'required_fact_unavailable'
+                : noActiveDomainMembers ? 'required_fact_unavailable'
                 : scenario === 'network review required' ? 'machine_network_review_required'
                     : nativeOutcomeUnknown ? 'outcome_unknown'
                     : scenario === 'administrator native check unavailable' ? 'native_check_unavailable'
@@ -1345,7 +1361,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 expect(transitions).toMatchObject(networkConnectFailure ? [] : [{ observations: [{ state: 'active' }] }]);
                 expect(admissions[0]?.placements).toMatchObject([{ machineId: 'a', listener: 'privateOrigin', nativeServer: 'happier_private' }]);
             }
-        } else if (scenario === 'direct installed Caddy' || scenario === 'membership join installed') {
+        } else if (scenario === 'direct installed Caddy' || scenario === 'membership join installed' || scenario === 'incumbent receipt joining member') {
             expect(result, `Native public TLS listener/publication required for Domain admission: ${JSON.stringify(result)}`)
                 .toMatchObject({ ok: true, domain: { state: 'active' } });
             expect(admissions).toHaveLength(1);

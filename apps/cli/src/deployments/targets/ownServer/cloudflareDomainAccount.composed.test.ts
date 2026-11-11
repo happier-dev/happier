@@ -487,6 +487,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
                 return lease;
             },
             readEnvironment: async () => environment,
+            readReceipt: async () => { throw new Error('This active/membership Domain path does not read an incumbent'); },
             open: id => runWithServerHttpBaseUrl(origin, () => artifacts.read(id,
                 { prepareRecipients: false, includeSharedAudience: false })) });
         installedIdentity.mockReturnValueOnce({ version: 1, installationId: installation('receiver'), createdAt: 1,

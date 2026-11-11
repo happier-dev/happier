@@ -1,4 +1,5 @@
 import { projectDeploymentFailure } from './deploymentFailure';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { readExpectedDownDomainReferencesForHost } from './targets/ownServer/domainRouteSelection';
 import { resolvePrivateServiceExportAdmissionForHost } from './targets/ownServer/privateServiceReference';
 import { resolveOwnServerDeploymentIdentityForHost } from './targets/ownServer/paths';
@@ -26,6 +27,8 @@ import { deploymentAuthorizationFailure, refuseDeploymentAuthorization } from '.
 import { logger } from '@/ui/logger';
 import axios from '@/api/client/credentialAxios';
 import { readHttpStatus } from '@/api/client/httpStatusError';
+import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
+import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
 import { z } from 'zod/mini';
 import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 import { isDeepStrictEqual } from 'node:util';
@@ -146,7 +149,8 @@ import { createOwnServerDomainActions, createOwnServerDomainContentWriter,
     prepareOwnServerMembershipDomainReviewedChildren } from './targets/ownServer/ownServerDomainActions';
 import { createOwnServerDomainNative, createOwnServerStartFirstRoutesForHost } from './targets/ownServer/ownServerDomainNative';
 import { createContributedDomainActionsForHost } from './targets/contributedDomainActionsForHost';
-import { resolveDeploymentDefinitionRoleForHost, admitUseDeploymentDefinition } from './deploymentDefinitionAdmission';
+import { resolveDeploymentDefinitionRoleForHost, admitUseDeploymentDefinition, assertDeploymentHttpAuthorityForHost,
+    assertDeploymentContentAuthorityForHost } from './deploymentDefinitionAdmission';
 import { createDeploymentRestartActionForHost } from './actions/restart';
 import { createDeploymentDataQueryActionForHost } from './actions/dataQuery';
 import { admitPreviewEnvironmentForHost, preparePreviewForkEligibilityForHost } from './previewAdmissionForHost';
@@ -166,10 +170,10 @@ export type DaemonDeploymentCandidateRequest = Readonly<{
     admittedTemplateSource?: AdmittedTemplateSource;
 }>;
 export type DaemonDeploymentCandidateResult = Readonly<{ ok: true; input: DeploymentDeployInputV1; content: DeploymentContentV1 }> | ActionExecuteFailure;
-const refuse = (reason: string | ActionExecuteFailure): never => {
+function refuse(reason: string | ActionExecuteFailure): never {
     const code = typeof reason === 'string' ? reason : reason.errorCode;
     throw Object.assign(new RpcError(code, code), { code, ...(typeof reason === 'string' ? {} : { cause: reason }) });
-};
+}
 // Home owns completeness and grant coverage; native preparation only consumes that typed fact.
 function requireDeploymentSecretScope(environment: DeploymentEnvironmentDetailV1): void {
     const scope = environment.secretScope;
@@ -244,21 +248,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         if (await definitionRole(context) !== 'manage') return refuse(code);
     };
     const atHome = <T>(run: () => T) => runWithServerHttpBaseUrl(host.serverHttpBaseUrl, run);
-    const assertHttpAuthority = async (context: ActionExecutorContext) => {
-        context.signal?.throwIfAborted();
-        const authorization = context.externalActionExecutionAuthorization;
-        if (authorization) {
-            if (!authorization.requesterHttpProjection) return refuseDeploymentAuthorization('requester_http_projection_missing');
-        } else if (context.externalActionCredential || context.rpcSessionAuthorization) return refuseDeploymentAuthorization('requester_authorization_missing');
-        context.signal?.throwIfAborted();
-    };
-    const assertCurrent = async (context: ActionExecutorContext) => {
-        await assertHttpAuthority(context);
-        // Metadata transport spends the signed root; opening private content
-        // additionally requires the requester's admitted content custody.
-        const authorization = context.externalActionExecutionAuthorization;
-        if (authorization && !authorization.requesterAccountProjection) return refuseDeploymentAuthorization('requester_account_projection_missing');
-    };
+    const assertHttpAuthority = assertDeploymentHttpAuthorityForHost;
+    const assertCurrent = assertDeploymentContentAuthorityForHost;
     const headers = async (context: ActionExecutorContext, actionId: string,
         request: Readonly<{ method: string; path: string; body?: unknown }>) => {
         await assertHttpAuthority(context);
@@ -267,8 +258,12 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             // A retained child spends its admitted root, not a new sub-read
             // Action. The projection and Home still admit the exact purpose.
             const child = readRequesterAccountActionContext(context.externalActionExecutionAuthorization)?.deploymentChild;
+            // An Environment-creating root (Create, adoption) spends its create preparation as itself.
+            const root = context.externalActionExecutionAuthorization?.binding.actionId;
+            const effectActionId = child?.actionId ?? (actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && root
+                && deploymentPreparationOperationForActionV1(root) === 'create' ? root : actionId);
             const signed = await captureRequesterCurrentnessRefusal(() => projection.createRequestHeaders({
-                ...request, effectActionId: child?.actionId ?? actionId,
+                ...request, effectActionId,
                 ...(context.signal ? { signal: context.signal } : {}) }));
             if (!signed.value) return refuseDeploymentAuthorization(signed.branch
                 ? `home_request_headers_refused:${signed.branch}` : 'home_request_headers_refused');
@@ -327,7 +322,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     };
     const readEnvironmentMetadata = async ({ environmentId, context }: Readonly<{ environmentId: string; context: ActionExecutorContext }>) => {
         const loaded = await storage('deployments.environments.get', { serverId: host.serverId, environmentId }, context);
-        if ('errorCode' in loaded) return refuse(loaded);
+        if ('ok' in loaded && !loaded.ok && 'errorCode' in loaded) return refuse(loaded);
         const detail = DeploymentEnvironmentGetResultV1Schema.parse(loaded);
         if (!detail.ok) return refuse(detail.error);
         return detail;
@@ -340,7 +335,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     };
     const readReceiptMetadata = async (environmentId: string, deploymentId: string, context: ActionExecutorContext) => {
         const loaded = await storage('deployments.receipts.get', { serverId: host.serverId, environmentId, deploymentId }, context);
-        if ('errorCode' in loaded) return refuse(loaded);
+        if ('ok' in loaded && !loaded.ok && 'errorCode' in loaded) return refuse(loaded);
         const detail = DeploymentReceiptGetResultV1Schema.parse(loaded);
         if (!detail.ok) return refuse(detail.error);
         return detail;
@@ -352,7 +347,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 storage('deployments.receipts.get', { serverId: host.serverId,
                     deploymentId: request.deploymentId }, request.context),
             ]);
-            if ('errorCode' in loaded) return refuse(loaded);
+            if ('ok' in loaded && !loaded.ok && 'errorCode' in loaded) return refuse(loaded);
             const receipt = DeploymentReceiptGetResultV1Schema.parse(loaded);
             if (!receipt.ok) return refuse(receipt.error);
             const link = environment.targetLinks.find(link => link.id === request.targetLinkId);
@@ -442,7 +437,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             async readPage(cursor) {
                 const loaded = await storage('deployments.receipts.list', { serverId: host.serverId,
                     environmentId: request.environmentId, ...(cursor ? { cursor } : {}) }, request.context);
-                if ('errorCode' in loaded) return refuse(loaded);
+                if ('ok' in loaded && !loaded.ok && 'errorCode' in loaded) return refuse(loaded);
                 return loaded;
             },
             readCurrent: deploymentId => targetHostReaders.readReceipt({ ...request, deploymentId }),
@@ -633,7 +628,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         async readInProgress() {
                             const result = await storage('deployments.receipts.list', { serverId: input.serverId,
                                 environmentId, inProgressOnly: true }, context);
-                            if ('errorCode' in result) return refuse(result);
+                            if ('ok' in result && !result.ok && 'errorCode' in result) return refuse(result);
                             const page = DeploymentReceiptListResultV1Schema.parse(result);
                             return page.ok ? page.items : refuse(page.error);
                         },
@@ -685,7 +680,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const result = await storage('deployments.receipts.list', {
                     serverId: host.serverId, environmentId: input.environmentId, ...(cursor ? { cursor } : {}),
                 }, context);
-                if ('errorCode' in result) return refuse(result);
+                if ('ok' in result && !result.ok && 'errorCode' in result) return refuse(result);
                 const page = DeploymentReceiptListResultV1Schema.parse(result);
                 if (!page.ok) return refuse(page.error);
                 const found = page.items.find(item => item.requestKey === input.requestKey);
@@ -743,9 +738,11 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     }>;
     function previewTemplateCreateContinuation(plan: PreviewTemplateCreationPlanForHost,
         prepared: import('@happier-dev/protocol').DeploymentEnvironmentCreateInputV1): HostReviewedChildrenPreparationV1 {
-        return { children: [...(plan.preparations.length || plan.explicitBindings?.length ? [{ action: 'deployments.bindings.set', role: 'preview.bindings' }] : []),
-            ...(plan.backup
-                ? [{ action: DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, role: 'preview.backup' }] : [])],
+        const children: HostReviewedChildrenPreparationV1['children'][number][] = [];
+        if (plan.preparations.length || plan.explicitBindings?.length)
+            children.push({ action: 'deployments.bindings.set', role: 'preview.bindings' });
+        if (plan.backup) children.push({ action: DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, role: 'preview.backup' });
+        return { children,
             executeAdmittedAction: ({ context }) => executePreviewTemplateCreationForHost({ plan, prepared, context }, { ...host, storage }) };
     }
     async function preparePreviewCreateContinuation(preview: import('./prepareEnvironmentCreateForHost').EnvironmentCreatePreviewResolution,
@@ -803,9 +800,13 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     async list(selection, cursor) {
                         const path = '/v1/deployments/targets/list';
                         const body = { serverId: host.serverId, scope: defaults.projectOwner, selection, ...(cursor ? { cursor } : {}) };
+                        const requestHeaders = await artifactAuthorization(context)({ method: 'POST', path, body });
                         const response = await axios.request({ method: 'POST', url: new URL(path, host.serverHttpBaseUrl).href,
-                            data: body, signal: context.signal, validateStatus: () => true,
-                            headers: await artifactAuthorization(context)({ method: 'POST', path, body }) });
+                            data: body, signal: context.signal, validateStatus: () => true, headers: requestHeaders });
+                        // A Home refusal is not a list result; keep its typed authorization reason.
+                        if (response.status === 401 || response.status === 403) {
+                            return refuse(projectHomeAuthorizationHttpFailure(response.status, requestHeaders, response.data));
+                        }
                         return DeploymentTargetLinksListResultV1Schema.parse(response.data);
                     },
                     artifact: targetLink => open(targetLink.contentArtifactId, context),
@@ -945,7 +946,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         return result;
     };
     const domainHost: Parameters<typeof createOwnServerDomainActions>[0] = { ...host,
-        storage, headers, dispatch: sendChild, open, readEnvironment: targetHostReaders.readEnvironment, readInstallation,
+        storage, headers, dispatch: sendChild, open, readEnvironment: targetHostReaders.readEnvironment, readReceipt: targetHostReaders.readReceipt, readInstallation,
         async createContent(content, owner, context) {
             const binding = context.externalActionExecutionAuthorization?.binding;
             const reviewedChild = readHostAdmittedReviewedChildV1(context);
@@ -988,7 +989,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             writeFile: input => execute('daemon.filesystem.writeFile', input),
             deleteFile: input => execute('daemon.filesystem.delete', input) };
     };
-    const moveToRepository = createDeploymentMoveToRepositoryForHost({ ...host, storage, assertCurrent, requireDefinitionManage,
+    const moveToRepository = createDeploymentMoveToRepositoryForHost({ ...host, assertCurrent, requireDefinitionManage,
         ...sharedRepositoryWorkspace, repositoryFiles,
         // A definition Move consumes only Environment content; Home admits no target-link reads for it.
         readEnvironment: request => readDeploymentEnvironmentForHost(request, { readMetadata: readEnvironmentMetadata, open, assertCurrent }),
@@ -1044,7 +1045,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             return { contentArtifactId: created.artifactId, contentHeaderVersion: created.revision.headerVersion,
                 contentBodyVersion: created.revision.bodyVersion };
         } });
-    const domainNative = createOwnServerDomainNative({ ...host, open, readEnvironment: targetHostReaders.readEnvironment });
+    const domainNative = createOwnServerDomainNative({ ...host, open, readEnvironment: targetHostReaders.readEnvironment, readReceipt: targetHostReaders.readReceipt });
     const deploymentChild = createDaemonDeploymentChildExecutor(targetHost, { target, open, storage, assertCurrent, domainNative,
         snapshot: nativeSnapshot.executeChild,
         teardown: ownServerTeardown.executeNative,
@@ -1497,7 +1498,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 if (!('targetLinkId' in input)) return null;
                 try { return await prepareOwnServerMembershipDomainReviewedChildren(input, request.context,
                     { serverId: host.serverId, storage, open, dispatch: sendChild,
-                        readEnvironment: targetHostReaders.readEnvironment, readInstallation }); }
+                        readEnvironment: targetHostReaders.readEnvironment, readReceipt: targetHostReaders.readReceipt, readInstallation }); }
                 catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
             }
             if (request.actionId === 'machines.services.adopt') return prepareServiceAdoptionForHost(request, {
@@ -1533,7 +1534,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             }
             if (isDeploymentDomainChildActionIdV1(request.actionId)) {
                 try { return await prepareContributedDomain(request) ?? await prepareOwnServerDomainReviewedChildren(request, { storage, open, dispatch: sendChild,
-                    readEnvironment: targetHostReaders.readEnvironment, readInstallation }); }
+                    readEnvironment: targetHostReaders.readEnvironment, readReceipt: targetHostReaders.readReceipt, readInstallation }); }
                 catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
             }
             if (request.actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) {
@@ -1547,7 +1548,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     environmentId: input.environment.environmentId, targetLinkId: input.target.targetLinkId,
                     requestKey: input.deploy.requestKey }, request.context,
                     { serverId: host.serverId, storage, open, dispatch: sendChild,
-                        readEnvironment: targetHostReaders.readEnvironment, readInstallation }); }
+                        readEnvironment: targetHostReaders.readEnvironment, readReceipt: targetHostReaders.readReceipt, readInstallation }); }
                 catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
             }
             if (request.actionId === 'deployments.environments.create') {
@@ -1604,7 +1605,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         targetLinkId: input.targetLinkId, context: request.context }, environment) : null;
                 if (targetPlan && 'errorCode' in targetPlan) return targetPlan;
                 const domainPlan = await prepareOwnServerTeardownDomainReviewedChildren({ ...request, input }, { serverId: host.serverId,
-                    storage, open, dispatch: sendChild, readEnvironment: targetHostReaders.readEnvironment, readInstallation,
+                    storage, open, dispatch: sendChild, readEnvironment: targetHostReaders.readEnvironment, readReceipt: targetHostReaders.readReceipt, readInstallation,
                     prepareProviderDomain: prepareContributedDomain });
                 if (domainPlan && 'errorCode' in domainPlan) return domainPlan;
                 const children = [...(targetPlan?.children ?? []), ...(domainPlan?.children ?? [])];
@@ -1633,7 +1634,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const address = selected.data;
                 try {
                     const result = await storage(actionId, address, context);
-                    if ('errorCode' in result) return result;
+                    if ('ok' in result && !result.ok && 'errorCode' in result) return result;
                     const detail = DeploymentReceiptGetResultV1Schema.parse(result);
                     if (!detail.ok || detail.deployment.state === 'queued' || detail.deployment.state === 'succeeded'
                         || detail.deployment.state === 'running_unverified') return detail;

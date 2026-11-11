@@ -12,7 +12,7 @@ import {
     DeploymentDomainMachineTopologyV1Schema, type DeploymentDomainHeaderV1, type DeploymentDomainTopologyV1,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
-import { resolveDomainIngress, selectDomainCaddyPlacements, selectDomainIngressMembers, selectDomainMembershipMachines } from './domainRouteSelection';
+import { resolveDomainIngress, selectDomainCaddyPlacements, readDomainIngressMembersForHost, selectDomainMembershipMachines } from './domainRouteSelection';
 import { DeploymentDomainPreparedContentInputV1Schema, type DeploymentDomainPlacementV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { readDeploymentDomainArtifactV1, getDeploymentTargetLinkLineageV1,
     type DeploymentDomainContentV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
@@ -48,6 +48,7 @@ const failure = (reason: string, details?: unknown, failureCause?: unknown, effe
 type DomainDiscoveryHost = Readonly<{
     dispatch(job: DeploymentDomainDiscoverChildRpcV1, context: ActionExecutorContext): Promise<unknown>;
     readEnvironment: OwnServerDeploymentTargetHostInput['readEnvironment'];
+    readReceipt: OwnServerDeploymentTargetHostInput['readReceipt'];
     readInstallation(machineId: string, context: ActionExecutorContext): Promise<string>;
 }>;
 
@@ -64,8 +65,8 @@ async function discoverOwnServerDomainPlacement(request: Readonly<{
     const resolved = resolveDomainIngress(request.content, environment.content.ingress);
     if (resolved.status === 'unavailable') return failure(resolved.reason, resolved.details);
     const ingress = resolved.ingress;
-    const membersForIngress = selectDomainIngressMembers(link.members,
-        'membershipMachines' in request.input ? request.input.membershipMachines : undefined);
+    const membersForIngress = await readDomainIngressMembersForHost(link,
+        'membershipMachines' in request.input ? request.input.membershipMachines : undefined, context, host.readReceipt);
     const destinations = membersForIngress.map(member => ({
         machineId: member.machineId, installationId: member.installationId }));
     if (ingress?.kind === 'edgeCaddy' && !destinations.some(member => member.machineId === ingress.edgeMachineId)) {
@@ -318,6 +319,7 @@ export function createOwnServerDomainActions(host: Readonly<{
     storage: NonNullable<ActionExecutorDeps['deploymentAction']>;
     dispatch(job: DeploymentDomainChildRpcV1 | DeploymentDomainDiscoverChildRpcV1, context: ActionExecutorContext): Promise<unknown>;
     readEnvironment: OwnServerDeploymentTargetHostInput['readEnvironment'];
+    readReceipt: OwnServerDeploymentTargetHostInput['readReceipt'];
     readInstallation(machineId: string, context: ActionExecutorContext): Promise<string>;
     open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null>;
     createContent(content: DeploymentDomainContentV1,
