@@ -74,7 +74,7 @@ afterEach(standardCleanup);
 
 let sequence = 0;
 async function createFixture(extraDomains: ReadonlyArray<{ key: string; required: boolean }> = [],
-  options: Readonly<{ teams?: boolean; domains?: ReturnType<typeof DeploymentTemplateV1Schema.parse>['domains']; receivingTemplate?: boolean }> = {}) {
+  options: Readonly<{ teams?: boolean; domains?: ReturnType<typeof DeploymentTemplateV1Schema.parse>['domains']; receivingTemplate?: boolean; templateInputs?: boolean; machineCatalogs?: boolean }> = {}) {
   const serverUrl = `https://store-app-presenter-${++sequence}.test`;
   const catalogUrl = `${serverUrl}/apps.json`;
   const sourceId = deriveMarketplaceSourceId(catalogUrl);
@@ -105,11 +105,12 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
     title: 'Uptime Kuma',
     description: 'Watch your sites and publish a status page',
     compose: {
-      document: 'services:\n  kuma:\n    image: louislam/uptime-kuma:2\n',
+      document: `services:\n  kuma:\n    image: louislam/uptime-kuma:2\n${options.templateInputs ? '  sidecar:\n    image: busybox:1\n' : ''}`,
       profiles: [],
       services: ['kuma'],
     },
-    variables: [],
+    variables: options.templateInputs ? [{ key: 'APP_USER', label: 'App user', required: true, valueKind: 'string', secret: false, sites: [] }] : [],
+    ...(options.templateInputs ? { companions: [{ id: 'sidecar', title: 'Add sidecar', services: ['sidecar'] }] } : {}),
     generatedSecrets: [],
     domains: options.domains ?? [
       {
@@ -136,6 +137,31 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
   const preparations: ReturnType<
     typeof DeploymentPublishPrepareInputV1Schema.parse
   >[] = [];
+  const { createRegistryHostV1, RegistryItemV1Schema, registryContentRefEqualV1 } = await import('@happier-dev/protocol/registries');
+  const machineItems = new Map<string, ReturnType<typeof RegistryItemV1Schema.parse>>();
+  if (options.machineCatalogs) {
+    for (const machineId of ['target', 'second-target']) {
+      const host = createRegistryHostV1({ host: 'node', readSources: async () => [{ id: sourceId, title: 'Apps',
+        url: catalogUrl, format: 'happier-catalog', kinds: ['app'], enabled: true, addedAt: 1, origin: { kind: 'user' }, removable: true }],
+        http: { getJson: async () => ({ ok: true, fetchedAt: 1, value: { schemaVersion: 1, apps: [{ itemId: 'uptime-kuma',
+          app: { ...app, title: machineId, compose: { ...app.compose, document: `${app.compose.document}# ${machineId}\n` } } }] } }),
+          getText: async () => { throw new Error('Unexpected text read'); },
+          getBytes: async () => { throw new Error('Unexpected byte read'); } } });
+      const result = await host.fetchRequest({ op: 'read', kind: 'app', sourceId, itemId: 'uptime-kuma' });
+      if (result.op !== 'read') throw new Error('Expected Machine catalog item');
+      machineItems.set(machineId, result.item);
+    }
+    const rpc = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    const original = rpc.machineRpcWithServerScope;
+    vi.spyOn(rpc, 'machineRpcWithServerScope').mockImplementation(createServerScopedMachineRpcBoundaryMock(async request => {
+      if (request.method !== 'daemon.registries.fetch') return original(request);
+      const { RegistryFetchRequestV1Schema } = await import('@happier-dev/protocol/registries');
+      const input = RegistryFetchRequestV1Schema.parse(request.payload);
+      if (input.op !== 'read' || input.sourceId !== sourceId) throw new Error('Unexpected registry request');
+      return { op: 'read', item: machineItems.get(request.machineId)! };
+    }).machineRpcWithServerScope);
+  }
   const mode: { value: 'prepared' | 'refused' | 'approval'; failure?: ActionExecuteFailure } = { value: 'prepared' };
   const serverId = await homes.addHome({
     name: 'App Home',
@@ -157,7 +183,9 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
     });
   }
   homes.answer(serverId, '/apps.json', {
-    select: () => ({
+    select: () => {
+      if (options.machineCatalogs) throw new TypeError('Network request failed');
+      return ({
       body: {
         schemaVersion: 1,
         apps: [
@@ -165,14 +193,20 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
           { itemId: 'needs-review', app, unsupported: true },
         ],
       },
-    }),
+    }); },
   });
   const failure = (result: unknown) => ActionExecuteFailureSchema.safeParse(result).data ?? null;
   await answerExternalActionAccountForHome(homes, serverId, {
     actionId: 'deployments.publish.prepare', machineId: 'target', installationId: 'installed', tokenEpoch: 0, failure,
+    ...(options.machineCatalogs ? { additionalMachines: [{ machineId: 'second-target', installationId: 'second-install' }] } : {}),
     execute: (raw) => {
       const input = DeploymentPublishPrepareInputV1Schema.parse(raw);
       preparations.push(input);
+      const current = machineItems.get(input.machineId);
+      if (current?.payload.kind === 'app' && current.payload.state === 'ready'
+        && !registryContentRefEqualV1(input.templateRef.ref, current.payload.ref)) {
+        return { ok: false, errorCode: 'template_changed', error: 'template_changed' };
+      }
       const result = DeploymentPublishPrepareResultV1Schema.parse({
         kind: 'prepared',
         templateRef: input.templateRef,
@@ -188,7 +222,7 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
           machineId: input.machineId,
           installationId: input.installationId,
         },
-        template: app,
+        template: current?.payload.kind === 'app' && current.payload.state === 'ready' ? current.payload.app : app,
         creationDefaults: {
           values: {
             controllerMachineId: 'target',
@@ -265,6 +299,7 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
   const receiverAdmissions: unknown[] = [];
   const templateBoundary = await answerExternalActionAccountForHome(homes, serverId, {
     actionId: 'deployments.templates.instantiate', machineId: 'target', installationId: 'installed', tokenEpoch: 0, failure,
+    ...(options.machineCatalogs ? { additionalMachines: [{ machineId: 'second-target', installationId: 'second-install' }] } : {}),
     execute: async (raw, transport) => {
       receiverAdmissions.push({ deploymentChildRoot: transport.authorization.binding.deploymentChildRoot,
         preparation: transport.authorization.binding.deploymentPreparationAdmission });
@@ -355,6 +390,7 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
             homeDir: '/home/a',
           },
         }),
+        ...(options.machineCatalogs ? [createMachineFixture({ id: 'second-target', installationId: 'second-install', activeAt: Date.now() })] : []),
         // A Machine that went offline: listed with its offline reason, never choosable.
         createMachineFixture({
           id: 'parked',
@@ -387,6 +423,7 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
     receiverAdmissions,
     createMode,
     mode,
+    machineItems,
     dispose: () => account.dispose(),
   };
 }
@@ -528,7 +565,7 @@ it.each(['applied', 'domain-failure', 'lost-root-reply'] as const)('retains a co
       expect(review.findHostByTestId('store.app.prepare.progress')).toBeTruthy();
       await review.pressByTestIdAsync('store.app.prepare.progress.failed.details');
       expect(review.getTextContent()).toContain('native_effect_failed');
-      expect(review.getTextContent()).toContain(t('projects.deployments.environmentCreated'));
+      expect(review.getTextContent()).toContain(t('projects.deployments.review.environment'));
       expect(review.findHostByTestId('store.app.prepare.confirm')).toBeNull();
       expect(installs).toHaveLength(1);
       expect(closed).not.toHaveBeenCalled();
@@ -790,6 +827,50 @@ it('builds both preparation Machine menus with linear name reads and keeps dupli
   expect(small).toBeGreaterThan(0);
   // Twice as many actual rows may read twice as many names, never four times as many peers.
   expect({ small, large }).toEqual({ small, large: small * 2 });
+});
+
+it('keeps typed template values and volume names through review without writing on input', async () => {
+  const fixture = await createFixture([], { domains: [], templateInputs: true });
+  const { StoreAppPreparationReview } = await import('./StoreAppPreparation');
+  function Harness() {
+    const state = useStoreAppListing({ selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
+      lifetime: fixture.lifetime, demand: { presented: true } });
+    return state.kind === 'ready' ? <StoreAppPreparationReview ready={state} lifetime={fixture.lifetime} onClose={() => {}} /> : null;
+  }
+  const screen = await renderScreen(<Harness />);
+  const press = async (testID: string) => {
+    await act(async () => { await screen.findHostByTestId(testID)!.props.onPress?.(); });
+  };
+  try {
+    await waitForHomeGovernance(() => expect(hasProjectChoice(screen, 'storefront')).toBe(true));
+    const userId = 'store.app.prepare.choices.variable.APP_USER';
+    const volumeId = 'store.app.prepare.choices.volume.data';
+    expect(screen.findHostByTestId(userId)).toBeTruthy();
+    await act(async () => { changeTextTestInstance(screen.findHostByTestId(userId)!, 'alice'); });
+    await act(async () => { changeTextTestInstance(screen.findHostByTestId(volumeId)!, 'status-data'); });
+    // An optional companion is a reviewed choice like any other input: off until switched on.
+    await act(async () => { screen.root.findAll(node => node.props.testID === 'store.app.prepare.choices.companion.sidecar'
+      && typeof node.props.onValueChange === 'function')[0]!.props.onValueChange(true); });
+    expect(fixture.preparations).toEqual([]);
+    expect(fixture.creations).toEqual([]);
+    await chooseMachine(screen, 'target');
+    await chooseProject(screen, 'storefront');
+    await nameIt(screen, {});
+    await press('store.app.prepare.review');
+    await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.prepare.prepared')).toBeTruthy());
+    await press('store.app.prepare.back');
+    expect(screen.findHostByTestId(userId)!.props.value).toBe('alice');
+    expect(screen.findHostByTestId(volumeId)!.props.value).toBe('status-data');
+    await press('store.app.prepare.review');
+    await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.prepare.prepared')).toBeTruthy());
+    await press('store.app.prepare.confirm');
+    await waitForHomeGovernance(() => expect(fixture.creations).toHaveLength(1));
+    expect(fixture.creations[0]).toMatchObject({
+      bindings: [{ name: 'APP_USER', source: { kind: 'value', value: 'alice' } }],
+      volumeBindings: [{ templateVolumeId: 'data', source: 'status-data' }],
+      companions: ['sidecar'],
+    });
+  } finally { await screen.unmount(); await fixture.dispose(); }
 });
 
 it.each(['none', 'optional', 'required'] as const)('reviews an App using its declared %s public-route requirement', async requirement => {
@@ -1188,7 +1269,7 @@ it('creates the App in the chosen new Project and retains its acknowledged Envir
     homes.answer(fixture.lifetime.scope.serverId, environmentPath, { status: 503, body: { error: 'service_unavailable' } });
     await press('store.app.prepare.confirm');
     await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.prepare.created')).toBeTruthy());
-    expect(screen.getTextContent()).toContain(t('projects.deployments.environmentCreated'));
+    expect(screen.getTextContent()).toContain(t('projects.deployments.review.environment'));
     expect(screen.getTextContent()).toContain('status-page');
     expect(screen.findHostByTestId('store.app.prepare.confirm')).toBeNull();
     expect(screen.findHostByTestId('store.app.prepare.back')).toBeNull();
@@ -1211,6 +1292,31 @@ it('creates the App in the chosen new Project and retains its acknowledged Envir
   }
 });
 
+
+it('re-pins the App from each selected install Machine before preparing its review', async () => {
+  const { StoreAppPreparationReview } = await import('./StoreAppPreparation');
+  const fixture = await createFixture([], { machineCatalogs: true });
+  function Harness() {
+    const state = useStoreAppListing({ selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
+      lifetime: fixture.lifetime, demand: { presented: true } });
+    return state.kind === 'ready' ? <StoreAppPreparationReview ready={state} lifetime={fixture.lifetime} onClose={() => {}} /> : null;
+  }
+  const screen = await renderScreen(<Harness />);
+  try {
+    await waitForHomeGovernance(() => expect(hasProjectChoice(screen, 'storefront')).toBe(true));
+    await chooseProject(screen, 'storefront');
+    await nameIt(screen);
+    await chooseMachine(screen, 'second-target');
+    await waitForHomeGovernance(() => expect(screen.findHostByTestId('store.app.prepare.review')?.props.disabled).toBe(false));
+    await act(async () => { await screen.findHostByTestId('store.app.prepare.review')!.props.onPress(); });
+    await waitForHomeGovernance(() => expect(fixture.preparations, screen.getTextContent()).toHaveLength(1));
+    const item = fixture.machineItems.get('second-target')!;
+    expect(item.payload.kind).toBe('app');
+    expect(fixture.preparations[0]?.templateRef).toMatchObject({ version: item.summary.version,
+      ref: item.payload.kind === 'app' && item.payload.state === 'ready' ? item.payload.ref : null });
+    expect(screen.findHostByTestId('store.app.prepare.confirm')).toBeTruthy();
+  } finally { await screen.unmount(); await fixture.dispose(); }
+});
 
 it.each(['target', 'parked', 'foreign-home'] as const)(
   'starts App preparation with the route Machine %s without overriding picker admission', async (choice) => {
@@ -1305,7 +1411,7 @@ it.each([
       expect(screen.findAll(node => node.props.loading === true && node.props.testID === 'store.app.prepare.confirm')).toHaveLength(0);
     });
     expect(screen.findHostByTestId('store.app.prepare.progress')).toBeTruthy();
-    expect(screen.getTextContent()).toContain(t('projects.deployments.environmentCreated'));
+    expect(screen.getTextContent()).toContain(t('projects.deployments.review.environment'));
     expect(screen.getTextContent()).toContain(t(scenario.state === 'succeeded' ? 'projects.deployments.stateSucceeded' : 'projects.deployments.stateUnknown'));
     if (scenario.phase === 'domains') expect(screen.getTextContent()).toContain(t('projects.deployments.domainChangeFailedTitle'));
     expect(screen.findHostByTestId('store.app.prepare.confirm')).toBeNull();
