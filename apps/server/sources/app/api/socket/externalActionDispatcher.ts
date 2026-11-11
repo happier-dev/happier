@@ -14,6 +14,7 @@ import { projectExternalActionPendingResetStartEnvelopeAdmissionV1, projectExter
     projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
     projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1,
     projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1,
+    projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1,
     projectExternalActionDeploymentReadEnvelopeAdmissionV1, projectExternalActionDiscussionEnvelopeIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -703,6 +704,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         let approvalDecisionAdmission: ExternalActionExecutionAuthorizationV1['binding']['approvalDecisionAdmission'];
         let deploymentPreparationAdmission: ExternalActionExecutionAuthorizationV1['binding']['deploymentPreparationAdmission'];
         let deploymentReadAdmission: ExternalActionExecutionAuthorizationV1['binding']['deploymentReadAdmission'];
+        let registryAppUpdateAdmission: ExternalActionExecutionAuthorizationV1['binding']['registryAppUpdateAdmission'];
         let discussionId: ExternalActionExecutionAuthorizationV1['binding']['discussionId'];
         let deploymentNativeAdmission: ReturnType<typeof projectExternalActionDeploymentNativeEnvelopeAdmissionV1>;
         let deploymentLinkEnvironmentId: string | undefined;
@@ -714,6 +716,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             approvalDecisionAdmission = projectExternalActionApprovalDecisionEnvelopeAdmissionV1({ actionId: request.actionId, envelope: request.envelope });
             deploymentPreparationAdmission = projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({ actionId: request.actionId, envelope: request.envelope });
             deploymentReadAdmission = projectExternalActionDeploymentReadEnvelopeAdmissionV1({ actionId: request.actionId, envelope: request.envelope });
+            registryAppUpdateAdmission = projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1({ actionId: request.actionId, envelope: request.envelope });
             discussionId = projectExternalActionDiscussionEnvelopeIdV1({ actionId: request.actionId, envelope: request.envelope });
         } catch {
             return { kind: 'invalid_request', errorCode: 'invalid_envelope',
@@ -777,6 +780,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 ...(approvalDecisionAdmission ? { approvalDecisionAdmission } : {}),
                 ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
                 ...(deploymentReadAdmission ? { deploymentReadAdmission } : {}),
+                ...(registryAppUpdateAdmission ? { registryAppUpdateAdmission } : {}),
                 ...(discussionId === undefined ? {} : { discussionId }),
                 ...(handoffAdmission ? { handoffAdmission } : {}),
                 ...(request.managedContinuation ? { managedContinuation: request.managedContinuation } : {}),

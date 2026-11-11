@@ -58,11 +58,14 @@ import { rpcHandler } from '@/app/api/socket/rpcHandler';
 import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, getSocketHandler } from '../../testkit/socketHarness';
 import { evaluateAccountStoredContentCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
-import { getActionSpec, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, projectSessionSpawnNewApiRequest, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { Server } from 'socket.io';
 import { createExternalActionDaemonDispatcher } from '@/app/api/socket/externalActionDispatcher';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { projectExternalActionDeploymentMetadataEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionDaemonDispatchRequestSchema, createExternalActionDaemonDispatchResponse,
+    prepareExternalActionResponseEnvelopeV1, prepareExternalActionResponseV2, sealExternalActionRequestV2,
+    openExternalActionRequestV2, isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions';
 
 // Database I/O is the only substitute: installation signatures, Machine and
 // Session admission, credential policy, Home minting and currentness stay real.
@@ -609,6 +612,64 @@ describe('installed Session proposal admission at the Home mint route', () => {
                 `/v1/deployments/environments/staging?serverId=${serverId}`, undefined, 'deployments.environments.get',
                 'GET', { serverId, environmentId: 'staging' }))).toBeNull();
         } finally { await app.close(); }
+    });
+
+    it.each(['plain', 'e2ee'] satisfies Array<'plain' | 'e2ee'>)('retains app update demand through the %s Action dispatcher mint', async mode => {
+        const previousMode = storage.account.encryptionMode;
+        storage.account.encryptionMode = mode;
+        storage.state.deploymentRead.enabled = true;
+        storage.state.deploymentRead.sourceReadable = true;
+        storage.state.operationProtocolCapabilities = { externalActionExecutionAuthorization: { protocolVersions: [1] } };
+        storage.state.operationProtocolCapabilitiesRevision = 1;
+        const material = { type: 'dataKey', machineKey: new Uint8Array(32).fill(7) } satisfies Parameters<typeof sealExternalActionRequestV2>[0]['material'];
+        if (mode === 'e2ee') Object.assign(storage.state, { metadata: 'encrypted-controller-metadata',
+            dataEncryptionKey: sealEncryptedDataKeyEnvelopeV1({ dataKey: material.machineKey,
+                recipientPublicKey: tweetnacl.box.keyPair().publicKey, randomBytes: tweetnacl.randomBytes }) });
+        const actionId = 'registries.updates.check';
+        const input = { kind: 'app', environments: [{ environmentId: 'staging', expectedRevision: 1 }] };
+        const binding = { serverIdentityId: storage.state.homeId, accountId: 'account',
+            authentication: { kind: 'account', tokenEpoch: 1 }, actionId, requestId: `app-update-${mode}`,
+            target: { kind: 'machine', machineId: 'machine' } } satisfies Parameters<typeof sealExternalActionRequestV2>[0]['binding'];
+        const envelope = mode === 'e2ee'
+            ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                binding, material, input, randomBytes: tweetnacl.randomBytes })
+            : protocol.ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: binding.requestId, target: binding.target, input });
+        const admitted: ExternalActionExecutionAuthorizationV1[] = [];
+        const app = createAuthenticatedTestApp({ authentication: 'real' });
+        const io = new Server();
+        // Database I/O and the daemon network are the only substituted boundaries.
+        registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({ io, forwardRpc: async request => {
+            const forwarded = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+            if (!forwarded.executionAuthorization) throw new Error('Missing Home authorization');
+            admitted.push(forwarded.executionAuthorization);
+            expect(forwarded.envelope.v === 1 ? forwarded.envelope.input : openExternalActionRequestV2({
+                projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                binding, envelope: forwarded.envelope, material })?.input).toEqual(input);
+            const execution = { ok: true, result: { checkedAt: 1, results: [] } };
+            const prepared = envelope.v === 2 ? prepareExternalActionResponseV2({ binding, material, request: envelope,
+                executedMachineId: 'machine', execution, randomBytes: tweetnacl.randomBytes })
+                : prepareExternalActionResponseEnvelopeV1({ v: 1, actionId, requestId: binding.requestId, execution });
+            return { ok: true, result: createExternalActionDaemonDispatchResponse(prepared) };
+        } }) });
+        try {
+            const token = await auth.createToken('account', undefined, { kind: 'account', authority: 'present_user' });
+            const response = await app.inject({ method: 'POST', url: `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${actionId}`,
+                headers: { authorization: `Bearer ${token}` }, payload: envelope });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(admitted).toHaveLength(1);
+            expect(admitted[0]?.binding.registryAppUpdateAdmission).toEqual({ environments: input.environments });
+            expect(admitted[0] && isExternalActionAuthorizationBoundToEnvelope(admitted[0].binding,
+                { actionId, machineId: 'machine', envelope })).toBe(true);
+            storage.state.deploymentRead.environment.revision = 2;
+            const stale = await app.inject({ method: 'POST', url: `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${actionId}`,
+                headers: { authorization: `Bearer ${token}` }, payload: envelope });
+            expect(stale.statusCode, stale.body).toBe(403);
+            expect(admitted).toHaveLength(1);
+        } finally {
+            storage.state.deploymentRead.environment.revision = 1;
+            storage.account.encryptionMode = previousMode;
+            await app.close();
+        }
     });
 
     it('admits an app update only to its selected current Environment and private content', async () => {
