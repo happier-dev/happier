@@ -1484,7 +1484,8 @@ describe('usage query captured Resource adapter', () => {
       const typed = decodeUsageQueryResource(content).results[0]!.accounting!;
       const encoded = UsageQueryBatchResultSchema.parse(JSON.parse(new TextDecoder().decode(content.bytes))).results[0]!.accounting!;
       const money = (value: UsageAnalyticsQueryResponse) => value.series?.map(cell => resolveEffectiveUsageCostUsd(cell.cost, 'auto'));
-      expect(money(typed)).toEqual([0, 3]);
+      // The report owns the charge; its covered cell has no independently measured selected amount.
+      expect(money(typed)).toEqual([null, 3]);
       expect(money(encoded)).toEqual(money(typed));
       expect(encoded.totals.cost.reportedUsd).toBe(3);
       expect('contributions' in encoded).toBe(false);

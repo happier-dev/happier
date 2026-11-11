@@ -43,6 +43,14 @@ describe('pricing-owner exact tariff reuse', () => {
         const expected = repriceUsageAnalyticsResponse(compact, observed.value, {}, mode, undefined, first);
         expect(first.stats.tariffCalculations).toBeGreaterThan(0);
         expect(observed.reads(), 'tariff statistics match real model resolution across output cells').toBe(first.stats.tariffCalculations);
+        let resolverBuilds = 0;
+        for (let publication = 0; publication < 4; publication++) {
+            expect(repriceUsageAnalyticsResponse(expected, observed.value, {}, mode, undefined, () => {
+                resolverBuilds++;
+                return first;
+            }), 'completed pricing retains identity across source publications').toBe(expected);
+        }
+        expect(resolverBuilds, 'completed publications need no tariff resolver').toBe(0);
         const next = createUsagePricingReuse(observed.value, {}, mode, roundTrip(first.snapshot()));
         observed.reset();
         const actual = repriceUsageAnalyticsResponse(compact, observed.value, {}, mode, undefined, next);

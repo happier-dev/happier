@@ -16,7 +16,7 @@ import { createUsageCoachDigestSuggestion } from './coach/coachDigestSuggestion.
 import { UsageCoachEvaluationSchema } from './coach/coachFinding.js';
 import { QualifiedConnectedAccountGroupRefSchema } from '../connect/qualifiedConnectedAccountProjectionsV4.js';
 import { ConnectedServicePoolSelectionGetResponseV1Schema } from '../connect/connectedServicePoolSelection.js';
-import { createUsagePricingReuse, projectUsageAnalyticsSummary, repriceUsageAnalyticsResponse, type UsagePricingReuse } from './usageCost.js';
+import { createUsagePricingReuse, projectUsageAnalyticsSummary, repriceUsageAnalyticsResponse, type UsagePricingReuse, type UsagePricingReuseSource } from './usageCost.js';
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
 import { projectUsagePlanInsights, UsagePlanInsightsSchema } from './usagePlanInsights.js';
 import { hasSameUsageQueryWorkEvidenceMembership } from './usageWorkEvidence.js';
@@ -446,7 +446,7 @@ export function projectUsageAccountingSnapshotPrices(snapshot: UsageAccountingSo
   overrides: UsageModelPriceOverridesV1 | undefined,
   siblings?: Iterable<UsageAccountingSourceSnapshot>,
   previous?: UsageAnalyticsQueryResponse,
-  reuse?: UsagePricingReuse): UsageAccountingSourceSnapshot {
+  reuse?: UsagePricingReuseSource): UsageAccountingSourceSnapshot {
   const value = snapshot.value;
   if (snapshot.query.population === 'public_eligible_personal') return snapshot.priceProjection
     ? { ...snapshot, priceProjection: undefined } : snapshot;
@@ -717,7 +717,7 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
   const projectPrices = (snapshot: UsageAccountingSourceSnapshot | undefined) => {
     if (!snapshot) return snapshot;
     const projected = projectUsageAccountingSnapshotPrices(snapshot, pricingOverrides, accounting.values(), undefined,
-      snapshot.value ? pricingReuseFor(snapshot.value, pricingOverrides, snapshot.query.costBasis) : undefined);
+      () => snapshot.value ? pricingReuseFor(snapshot.value, pricingOverrides, snapshot.query.costBasis) : undefined);
     const key = getUsageQueryKey(projected.query);
     if (accounting.get(key)?.value === projected.value) accounting.set(key, projected);
     return projected.priceProjection ? { ...projected, value: projected.priceProjection.value } : projected;
@@ -922,9 +922,9 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
       branchEvidence: retainWork ? retainedWork?.branchAllocations.flatMap(row => row.evidence) ?? [] : readableWork ? workSnapshot?.branchEvidence ?? [] : [],
     }));
     const workProjection = workFacts.value;
-    const workSummary = readableWork && workSnapshot?.summary
-      || retainWork && prior?.workSummary
-      || workProjection && projectUsageWorkSummary(workProjection.outcomes) || undefined;
+    const workSummary = workProjection ? prior?.work === workProjection && prior.workSummary
+      || projectUsageWorkSummary(workProjection.outcomes, workProjection)
+      : readableWork && workSnapshot?.summary || retainWork && prior?.workSummary || undefined;
     const hasMergedOutcomes = retainWork && prior?.mergedOutcomes !== undefined || readableWork;
     const mergedFacts = projectAdmittedUsageInputs(admitted?.mergedOutcomes, {
       work: workProjection, startMs, endMs, observed: Boolean(hasMergedOutcomes),

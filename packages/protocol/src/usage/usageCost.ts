@@ -31,6 +31,9 @@ export interface UsageModelCostEstimate {
   breakdown?: Readonly<{ cacheSavingsUsd: number }>;
 }
 
+/** A deferred live resolver is needed only when pricing changes; an explicit checkpoint admits its operands. */
+export type UsagePricingReuseSource = UsagePricingReuse | (() => UsagePricingReuse | undefined);
+
 export function estimateUsageModelCost(modelId: string | null | undefined, categories: UsageObservationTokens | null,
   catalog: UsageModelPriceCatalog = bundledUsageModelPriceCatalog, overrides: UsageModelPriceOverridesV1 = {}): UsageModelCostEstimate | null {
   return estimateResolvedUsageModelCost(resolveUsageModelPrice(modelId, catalog, overrides), categories);
@@ -139,7 +142,7 @@ export function priceUsageObservation(rawCost: UsageObservationCost, modelId: st
 export function repriceUsageAnalyticsResponse(value: UsageAnalyticsQueryResponse, catalog: UsageModelPriceCatalog = value.priceCatalog ?? bundledUsageModelPriceCatalog,
   overrides: UsageModelPriceOverridesV1 = {}, mode: UsageCostMode = 'auto',
   rankingDemand?: Pick<UsageAnalyticsQueryRequest, 'breakdowns' | 'includeLeaders' | 'topLimit'>,
-  reuse?: UsagePricingReuse): UsageAnalyticsQueryResponse {
+  reuse?: UsagePricingReuseSource): UsageAnalyticsQueryResponse {
   const steps = repriceUsageAnalyticsResponseSteps(value, catalog, overrides, mode, rankingDemand, () => false, reuse);
   let next = steps.next();
   while (!next.done) next = steps.next();
@@ -150,15 +153,18 @@ export function repriceUsageAnalyticsResponse(value: UsageAnalyticsQueryResponse
 export function* repriceUsageAnalyticsResponseSteps(value: UsageAnalyticsQueryResponse, catalog: UsageModelPriceCatalog = value.priceCatalog ?? bundledUsageModelPriceCatalog,
   overrides: UsageModelPriceOverridesV1 = {}, mode: UsageCostMode = 'auto',
   rankingDemand?: Pick<UsageAnalyticsQueryRequest, 'breakdowns' | 'includeLeaders' | 'topLimit'>,
-  shouldYield: () => boolean = () => true, reuse?: UsagePricingReuse): Generator<void, UsageAnalyticsQueryResponse, void> {
+  shouldYield: () => boolean = () => true, reuse?: UsagePricingReuseSource): Generator<void, UsageAnalyticsQueryResponse, void> {
   const completed = readUsagePageCostProjectionBasis(value);
-  if (!reuse && !rankingDemand && completed?.mode === mode && completed.catalog === catalog && sameStrictJsonValue(completed.overrides, overrides)) return value;
-  if (value.summary && !value.contributions) return repriceUsageAnalyticsSummary(value, catalog, overrides, mode, reuse);
+  const deferred = typeof reuse === 'function';
+  if ((!reuse || deferred) && !rankingDemand && completed?.mode === mode
+    && completed.catalog === catalog && sameStrictJsonValue(completed.overrides, overrides)) return value;
+  const pricing = deferred ? reuse() : reuse;
+  if (value.summary && !value.contributions) return repriceUsageAnalyticsSummary(value, catalog, overrides, mode, pricing);
   if (!value.contributions) return { ...value, priceCatalog: catalog };
   const facts = createUsageSourceCostFacts();
   let cacheSavings = usageMoneyFromNumber(0);
   let cacheSavingsComplete = true;
-  const estimateCost = createUsageModelCostEstimator(catalog, overrides, reuse);
+  const estimateCost = createUsageModelCostEstimator(catalog, overrides, pricing);
   const contributions: UsageAnalyticsContribution[] = [];
   for (const row of value.contributions) {
     const categories = row.tokenCategories ?? resolveUsageTokenCategories(row.tokens, null);

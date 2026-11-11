@@ -189,7 +189,7 @@ export function projectUsageQueryBatch(input: UsageQueryProjectionInput): UsageQ
         const prepared = input.prepareAccounting(snapshot, retained => {
             const pricedSnapshot = projectUsageAccountingSnapshotPrices(retained, accountSettings.usageModelPriceOverridesV1,
                 accounting.values(), priorAccounting.get(key)?.value,
-                retained.value ? pricingReuseFor(retained.value, accountSettings.usageModelPriceOverridesV1, retained.query.costBasis) : undefined);
+                () => retained.value ? pricingReuseFor(retained.value, accountSettings.usageModelPriceOverridesV1, retained.query.costBasis) : undefined);
             const priced = prepareAccountingDelivery(pricedSnapshot, accountingNowMs);
             return calendarQueryKeys.has(key) ? projectUsageAccountingSnapshotCalendar(priced, accounting.values()) : priced;
         });

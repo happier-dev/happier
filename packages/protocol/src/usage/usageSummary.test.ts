@@ -38,26 +38,52 @@ function response(rows: UsageAnalyticsContribution[]): UsageAnalyticsQueryRespon
             sources: [{ source: 'runtime', path: 'runtime', machineId: 'machine', status: 'available', eventCount: rows.length, historyComplete: true }] } });
 }
 
-it('shares tariff evaluation across distinct accounting periods in one projection batch', () => {
+it('shares one tariff evaluator per pricing inputs across periods and repeated publications', () => {
     const firstQuery = normalizeUsageQuery({ period: { startMs: 0, endMs: 86_400_000 }, includeContributions: true,
         includeWorkEvidence: false, includeSessionEvidence: false, includeTranscriptEvidence: false });
     const secondQuery = normalizeUsageQuery({ period: { startMs: 86_400_000, endMs: 2 * 86_400_000 }, includeContributions: true,
         includeWorkEvidence: false, includeSessionEvidence: false, includeTranscriptEvidence: false });
-    const first = response([contribution(1)]);
+    const first = UsageAnalyticsQueryResponseSchema.parse(response([contribution(1)]));
     const second = { ...first, totals: { ...first.totals }, contributions: first.contributions!.map(row => ({ ...row, id: 'period-2' })) };
     const reuseFor = createUsagePricingReuseResolver();
     const reuse = reuseFor(first, {}, 'auto')!;
     const equivalentCatalog = { ...catalog, models: { ...catalog.models } };
     const equivalentValue = { ...second, priceCatalog: equivalentCatalog };
-    expect(reuseFor(equivalentValue, {}, 'auto'), 'equal catalog revisions share one finite-read pricing owner').toBe(reuse);
+    for (let publication = 0; publication < 4; publication++) {
+        expect(reuseFor({ ...equivalentValue }, {}, 'auto'), 'equal catalog revisions share one finite-read pricing owner').toBe(reuse);
+    }
     const pricedFirst = projectUsageAccountingSnapshotPrices({ query: firstQuery, period: { startMs: 0, endMs: 86_400_000 },
-        status: 'available', value: first }, {}, undefined, undefined, reuse);
+        status: 'available', value: first }, {}, undefined, undefined, () => reuseFor(first, {}, 'auto'));
     const pricedSecond = projectUsageAccountingSnapshotPrices({ query: secondQuery, period: { startMs: 86_400_000, endMs: 2 * 86_400_000 },
-        status: 'available', value: second }, {}, undefined, undefined, reuse);
+        status: 'available', value: equivalentValue }, {}, undefined, undefined, () => reuseFor(equivalentValue, {}, 'auto'));
     expect(pricedFirst.priceProjection?.value.totals.cost.apiEquivalentUsd).toBe(0.000001);
     expect(pricedSecond.priceProjection?.value.totals.cost.apiEquivalentUsd).toBe(0.000001);
     expect(reuse.stats.tariffCalculations, 'pricing is one evaluation per distinct model/token operand across periods').toBe(1);
     expect(reuse.stats.tariffReuses).toBe(1);
+});
+
+it('builds one pricing resolver per catalog revision, overrides and basis across publications', () => {
+    let catalogReads = 0;
+    const observedCatalog = { ...catalog, get models() { catalogReads++; return catalog.models; } };
+    const value = { ...response([contribution(1)]), priceCatalog: observedCatalog };
+    const resolve = createUsagePricingReuseResolver();
+    const overrides = { model: { kind: 'rates' as const, inputUsdPerMillion: 2, outputUsdPerMillion: 3 } };
+    const changedRevision = { ...value, priceCatalog: { ...observedCatalog,
+        provenance: { ...observedCatalog.provenance, revision: 'next-revision' },
+        get models() { catalogReads++; return catalog.models; } } };
+    catalogReads = 0;
+    const initial = resolve(value, undefined, 'auto');
+    const changedCatalog = resolve(changedRevision, undefined, 'auto');
+    const changedOverrides = resolve(value, overrides, 'auto');
+    const changedBasis = resolve(value, undefined, 'reported');
+    for (let publication = 0; publication < 4; publication++) {
+        expect(resolve({ ...value }, {}, 'auto')).toBe(initial);
+        expect(resolve({ ...changedRevision }, {}, 'auto')).toBe(changedCatalog);
+        expect(resolve({ ...value }, { ...overrides }, 'auto')).toBe(changedOverrides);
+        expect(resolve({ ...value }, {}, 'reported')).toBe(changedBasis);
+    }
+    expect(new Set([initial, changedCatalog, changedOverrides, changedBasis]).size).toBe(4);
+    expect(catalogReads, 'the resolver builds each distinct tariff input once, without publication multipliers').toBe(4);
 });
 
 // The existing snapshot price owner consumes only the compact admitted answer.
