@@ -206,7 +206,8 @@ function emitDispatchPhaseWitness(
         message: 'invalid_encrypted_envelope' | 'External Action placement refused';
     }>,
     machineId?: string,
-    context: Readonly<{ requestId?: string; refusalBranch: PlacementRefusalBranch | 'daemon_envelope_rejected'; availability?: MachineResolution }> = {
+    context: Readonly<{ requestId?: string; refusalBranch: PlacementRefusalBranch | 'daemon_envelope_rejected'; availability?: MachineResolution;
+        refusalCode?: ManagedMachineError['code'] | ApiTokenOperationError['code'] }> = {
         refusalBranch: 'phase_exception',
     },
 ): void {
@@ -214,6 +215,7 @@ function emitDispatchPhaseWitness(
         log({ module: 'external-action-dispatch', level: 'warn', phase: failure.phase,
             errorClass: failure.errorClass, message: failure.message,
             refusalBranch: context.refusalBranch,
+            ...(context.refusalCode === undefined ? {} : { refusalCode: context.refusalCode }),
             ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
             ...(context.availability === undefined ? {} : { availability: context.availability }),
             ...(machineId === undefined ? {} : { machineId }) }, '[external-action-phase]');
@@ -282,6 +284,7 @@ function createPlacementError(input: Readonly<{
     machineId?: string;
     availability?: MachineResolution;
     phaseFailure?: DispatchPhaseFailure;
+    refusalCode?: ManagedMachineError['code'] | ApiTokenOperationError['code'];
     managedAdmission?: Readonly<{ managedId: string }>;
     credentialScopeDiagnostic?: ExternalActionCredentialScopeDiagnosticV1;
     machineAvailabilityDiagnostic?: MachineAvailabilityDiagnosticV1;
@@ -292,6 +295,7 @@ function createPlacementError(input: Readonly<{
         message: 'External Action placement refused',
     }, input.machineId, {
         refusalBranch: input.refusalBranch,
+        ...(input.refusalCode === undefined ? {} : { refusalCode: input.refusalCode }),
         ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
         ...(input.availability === undefined ? {} : { availability: input.availability }),
     });
@@ -857,6 +861,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                     code: cause.code === 'credential_scope_denied' ? 'credential_scope_denied' : 'target_unavailable',
                     refusalBranch: cause.code === 'credential_scope_denied'
                         ? 'managed_credential_scope_denied' : 'managed_acquire_unavailable',
+                    refusalCode: cause.code,
                     requestId: request.envelope.requestId, machineId,
                 });
                 if (error instanceof ManagedMachineError) {
@@ -868,6 +873,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                             : error.code === 'preset_limit_reached' ? 'preset_limit_reached' : 'target_unavailable',
                         refusalBranch: error.code === 'permission_denied'
                             ? 'managed_credential_scope_denied' : 'managed_acquire_unavailable',
+                        refusalCode: error.code,
                         requestId: request.envelope.requestId, machineId,
                     });
                 }

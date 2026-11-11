@@ -4,7 +4,9 @@ import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fas
 import type { Server, Socket } from 'socket.io';
 import tweetnacl from 'tweetnacl';
 import { createPersistentTokenGenerator, decodeBase64 } from 'privacy-kit';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { symbols, type DestinationStream } from 'pino';
+import { logger } from '@/utils/logging/log';
 import {
     MACHINE_PLAIN_DATA_KEY_MARKER, PluginManifestV2Schema, encodePlainMachineStoredContent, ManagedAcquireInputV1Schema,
     AUTHORITY_CEILING_HEADER_V1,
@@ -2185,10 +2187,12 @@ describe('ordinary Account managed Action origination', () => {
         } finally { await instance.close(); }
     });
 
-    it('answers a reached preset limit with its own refusal through a sealed acquire, not a missing target', async () => {
+    it.each(['preset_limit_reached', 'provider_unavailable'] as const)('witnesses the typed %s cause of a sealed managed acquire refusal', async (refusalCode) => {
         const selected = await fixture(true, 'e2ee');
         const preset = await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: selected.account.id,
-            name: 'Capped', launch: selected.input.selection.launch, setup: {}, revision: 1, simultaneousMaximum: 1,
+            name: 'private-preset-marker', launch: { ...selected.input.selection.launch,
+                schemaVersion: refusalCode === 'provider_unavailable' ? 2 : 1 }, setup: {}, revision: 1,
+            simultaneousMaximum: refusalCode === 'preset_limit_reached' ? 1 : 2,
             controllerMachineId: selected.controller.machineId, controllerInstallationId: selected.controller.installationId } });
         await db.managedMachine.create({ data: { homeId, custodianAccountId: selected.account.id,
             controllerMachineId: selected.controller.machineId, controllerInstallationId: selected.controller.installationId,
@@ -2206,13 +2210,21 @@ describe('ordinary Account managed Action origination', () => {
             input, material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) },
             randomBytes: length => new Uint8Array(length).fill(2) });
         const instance = await app(async () => { throw new Error('A refused admission must not reach a daemon'); });
+        const records: Record<string, unknown>[] = [];
+        // Capture the logger's real serialization at its output boundary.
+        const stream = (logger as unknown as { [symbols.streamSym]: DestinationStream })[symbols.streamSym];
+        const capture = vi.spyOn(stream, 'write').mockImplementation(message => { records.push(JSON.parse(message)); });
         try {
             const response = await instance.inject({ method: 'POST', url: '/v1/actions/machines.managed.acquire',
                 headers: { authorization: `Bearer ${selected.token}` }, payload: sealed });
             expect(response.statusCode, response.body).toBe(409);
-            expect(response.json(), response.body).toMatchObject({ code: 'preset_limit_reached' });
+            expect(response.json(), response.body).toMatchObject({ code: refusalCode === 'preset_limit_reached' ? refusalCode : 'target_unavailable' });
             expect(await db.managedMachine.count({ where: { admittedActionRequestId: selected.requestId } })).toBe(0);
-        } finally { await instance.close(); }
+            const witnesses = records.filter(record => record.phase === 'placement_refusal' && record.requestId === selected.requestId);
+            expect(witnesses).toContainEqual(expect.objectContaining({ refusalBranch: 'managed_acquire_unavailable', refusalCode }));
+            expect(JSON.stringify(witnesses)).not.toContain('private-preset-marker');
+            expect(JSON.stringify(witnesses)).not.toContain(sealed.payload.c);
+        } finally { capture.mockRestore(); await instance.close(); }
     });
 
     it('refuses a plaintext acquire for an encrypted Account before retaining an offline admission', async () => {
