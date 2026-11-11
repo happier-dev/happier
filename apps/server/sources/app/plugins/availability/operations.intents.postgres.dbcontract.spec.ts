@@ -163,7 +163,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         const captured: unknown[] = [];
         const client = new PrismaClient({ errorFormat: "minimal", log: [{ emit: "event", level: "query" }] });
         let physicalStatements = 0;
-        client.$on("query", (event: Prisma.QueryEvent) => { if (/^\s*SELECT\b/i.test(event.query)) physicalStatements++; });
+        let declarationStatements = 0;
+        client.$on("query", (event: Prisma.QueryEvent) => {
+            if (/^\s*SELECT\b/i.test(event.query)) physicalStatements++;
+            if (/\bi\."releaseLessDeclaration"/.test(event.query)) declarationStatements++;
+        });
         await client.$connect();
         // Observe bytes returned by the real database boundary; no domain logic is mocked.
         db.$transaction = new Proxy(transaction, { apply(_target, _receiver, args: unknown[]) {
@@ -179,15 +183,38 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                 };
             } })), ...args.slice(1)]);
         } });
-        const read = async () => {
+        const read = async (omitDeclarations = false) => {
             captured.length = 0;
             physicalStatements = 0;
-            const result = await operations.listIntentIds({ accountId: account.id, input: {} });
+            declarationStatements = 0;
+            const result = await operations.listIntentIds({ accountId: account.id,
+                input: omitDeclarations ? { omitDeclarations: true } : {} });
             const text = JSON.stringify(captured, (_key, value) => typeof value === "bigint" ? String(value) : value);
-            return { result, statements: physicalStatements, bodyCopies: text.split(bodyMarker).length - 1, fetchedBytes: Buffer.byteLength(text) };
+            return { result, statements: physicalStatements, declarationStatements,
+                bodyCopies: text.split(bodyMarker).length - 1, fetchedBytes: Buffer.byteLength(text) };
         };
         try {
+            // Session creation's Account census consumes enablement, not the
+            // retained Account's 490 declaration bodies or their JSONB identity projection.
+            const census = await read(true);
+            expect(census.declarationStatements).toBe(0);
+            expect(census.statements).toBe(1);
+            expect(census.bodyCopies).toBe(0);
+            expect(census.result.intentReads[0]?.response.intent?.enabled).toBe(true);
+            expect(census.result.intentReads[0]?.response).not.toHaveProperty("currentDeclaration");
+            expect(census.result.intentReads[0]?.response).not.toHaveProperty("machineDeclarations");
+            await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: account.id, pluginId } },
+                data: { enabled: false } });
+            await db.account.update({ where: { id: account.id }, data: { seq: { increment: 1 } } });
+            const disabledCensus = await read(true);
+            expect(disabledCensus.declarationStatements).toBe(0);
+            expect(disabledCensus.result.availabilityCursor).toBeGreaterThan(census.result.availabilityCursor);
+            expect(disabledCensus.result.intentReads[0]?.response.intent?.enabled).toBe(false);
+            await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: account.id, pluginId } },
+                data: { enabled: true } });
+
             const agreed = await read();
+            expect(agreed.declarationStatements).toBe(2);
             expect(agreed.result.failedPluginIds).toEqual([]);
             expect(agreed.result.intentReads[0]?.response.currentDeclaration?.manifest).toEqual(declaration.manifest);
             expect(agreed.result.intentReads[0]?.response.machineDeclarations).toHaveLength(490);

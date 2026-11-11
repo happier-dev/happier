@@ -2099,6 +2099,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                     ...(list?.cursor ? { after: list.cursor } : {}),
                     ...(list ? { take: PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1 } : {}),
                     ...(list ? { list: true } : {}),
+                    ...(list?.omitDeclarations ? { omitDeclarations: true } : {}),
                 });
                 const account = capturedRows[0];
                 if (!account) throw new PluginAvailabilityOperationError('plugin_account_not_found');

@@ -29,11 +29,12 @@ export async function readIntentRows(tx: Tx, input: Readonly<{
     after?: string;
     take?: number;
     list?: boolean;
+    omitDeclarations?: boolean;
 }>): Promise<readonly IntentReadRow[]> {
     const prisma = getActivePrismaRuntime();
     const provider = getDbProviderFromEnv(process.env, 'postgres');
     const mysql = provider === 'mysql';
-    const summarize = provider === 'postgres' && input.list === true;
+    const summarize = provider === 'postgres' && input.list === true && !input.omitDeclarations;
     const quote = mysql ? '`' : '"';
     const identifier = (name: string) => prisma.raw(`${quote}${name}${quote}`);
     const column = (alias: 'a' | 'i', name: string) => prisma.sql`${prisma.raw(alias)}.${identifier(name)}`;
@@ -46,8 +47,9 @@ export async function readIntentRows(tx: Tx, input: Readonly<{
             ${column('i', 'enabled')} AS ${identifier('enabled')},
             ${column('i', 'offlineUiHosting')} AS ${identifier('offlineUiHosting')},
             ${text('writableCollections')} AS ${identifier('writableCollectionsText')},
-            CASE WHEN ${column('i', 'enabled')} AND ${column('i', 'desiredVersion')} IS NULL
-                THEN ${summarize ? prisma.sql`NULL` : text('releaseLessDeclaration')} ELSE NULL END AS ${identifier('releaseLessDeclarationText')},
+            ${input.omitDeclarations || summarize ? prisma.sql`NULL`
+                : prisma.sql`CASE WHEN ${column('i', 'enabled')} AND ${column('i', 'desiredVersion')} IS NULL
+                    THEN ${text('releaseLessDeclaration')} ELSE NULL END`} AS ${identifier('releaseLessDeclarationText')},
             ${summarize ? prisma.sql`CASE WHEN i."enabled" AND i."desiredVersion" IS NULL
                 THEN CAST((${declarationSummary}) AS TEXT) ELSE NULL END AS "releaseLessDeclarationSummaryText",` : prisma.empty}
             ${column('i', 'revision')} AS ${identifier('revision')}
