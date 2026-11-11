@@ -67,7 +67,7 @@ export function mapCodexProjectedEventsToDirectMessages(params: Readonly<{
       if (shouldFilterHarnessBlob(action.text)) continue;
       out.push({
         id: stableId,
-        localId: stableId,
+        localId: action.clientId ?? stableId,
         createdAtMs,
         raw: {
           role: 'user',

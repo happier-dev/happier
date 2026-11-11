@@ -8450,7 +8450,7 @@ class Sync {
                     voiceHooks.onReady(sessionId, liveEffectMessages);
                 }
                 if (notifyActivity) {
-                    notifyActivityReady(sessionId, liveEffectMessages);
+                    notifyActivityReady(sessionId, liveEffectMessages, result.latestReadyEventSeq);
                 }
             }
         }

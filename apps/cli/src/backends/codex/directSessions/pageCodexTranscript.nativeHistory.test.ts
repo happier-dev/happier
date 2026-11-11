@@ -48,6 +48,31 @@ async function fixture(items: readonly unknown[] | null) {
 }
 
 describe('Codex native paginated direct history (0.162.1 contract)', () => {
+  it('preserves native user client ids across pages without conflating repeated prompt text', async () => {
+    const first = message('u1', 'repeat this prompt', 'user');
+    const second = message('u2', 'repeat this prompt', 'user');
+    const missing = message('u3', 'repeat this prompt', 'user');
+    const nullable = message('u4', 'repeat this prompt', 'user');
+    const f = await fixture([
+      { ...first, item: { ...first.item, clientId: 'outbound-first' } },
+      { ...second, item: { ...second.item, client_id: 'outbound-second' } },
+      missing,
+      { ...nullable, item: { ...nullable.item, clientId: null } },
+    ]);
+    const items = await loadDirectSessionTranscriptItems({ readPage: cursor => pageCodexTranscript({
+      ...f.params, direction: 'older', cursor,
+    }) });
+    const nativeIds = ['u1', 'u2', 'u3', 'u4'].map(id =>
+      `codex:native:thread-native:${JSON.stringify([`turn-${id}`, id])}:0`);
+    expect(items.map(item => item.id)).toEqual(nativeIds);
+    expect(items.map(item => item.localId)).toEqual([
+      'outbound-first', 'outbound-second', nativeIds[2], nativeIds[3],
+    ]);
+    expect(items.map(item => item.raw)).toEqual(Array.from({ length: 4 }, () => ({
+      role: 'user', content: { type: 'text', text: 'repeat this prompt' },
+    })));
+  });
+
   it('imports native reasoning as thinking between the user and answer, without exposing encrypted content', async () => {
     const f = await fixture([message('u1', 'question', 'user'),
       { turnId: 'turn-a1', startedAtMs: 1_000, completedAtMs: 2_000,
