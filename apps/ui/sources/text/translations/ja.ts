@@ -16911,7 +16911,7 @@ settingsSession: {
             planList: ({ amount, date }: { amount: string | number; date: string | number }) => `定価 ${amount}（${date} 時点）`,
             planNoPrice: "支払額・定価の報告なし",
             planNoPriceShort: "価格の報告なし",
-            planNoPriceAll: "プラン価格はまだありません · 詳細で追加できます",
+            planNoPriceAll: "プラン価格はまだありません · プランを開いて追加できます",
             planEndsUnused: ({ time, percent }: { time: string | number; percent: string | number }) => `${time}に終了・このペースで約${percent}が未使用`,
             planEnds: ({ time }: { time: string | number }) => `${time}に終了`,
             planRenews: ({ time }: { time: string | number }) => `${time}に更新`,

@@ -19,6 +19,7 @@ import {
   UsageBodyInsufficient,
   UsageCoverageLine,
   usageAgentTitle,
+  usagePeriodPhrase,
   useUsagePluginTheme,
   type UsageBodyProps,
   leadingUsageRows,
@@ -58,7 +59,7 @@ export function UsageSessionValueWidget(props: UsageBodyProps) {
   useWidgetFrameBodyCaption(
     summary
       ? t('usage.board.work.valueCaption', { count: summary.sessions.length })
-      : null,
+      : usagePeriodPhrase(props.query),
   );
   if (!summary)
     return (

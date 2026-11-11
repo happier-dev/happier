@@ -303,7 +303,7 @@ export function UsageCoachWidget(props: UsageBodyProps) {
           checks: coach.evaluations.filter(row => row.status !== 'disabled').length,
           period: usagePeriodPhrase(props.query),
         })
-      : null,
+      : usagePeriodPhrase(props.query),
   );
   if (!coach)
     return (

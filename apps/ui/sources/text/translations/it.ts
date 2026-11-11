@@ -17004,7 +17004,7 @@ settingsSession: {
             planList: ({ amount, date }: { amount: string | number; date: string | number }) => `prezzo di listino ${amount}, al ${date}`,
             planNoPrice: "Nessun prezzo pagato o di listino riportato",
             planNoPriceShort: "Nessun prezzo riportato",
-            planNoPriceAll: "Ancora nessun prezzo dei piani · aggiungi il tuo in Dettagli",
+            planNoPriceAll: "Ancora nessun prezzo dei piani · apri un piano per aggiungere il tuo",
             planEndsUnused: ({ time, percent }: { time: string | number; percent: string | number }) => `Termina ${time} · ~${percent} inutilizzato a questo ritmo`,
             planEnds: ({ time }: { time: string | number }) => `Termina ${time}`,
             planRenews: ({ time }: { time: string | number }) => `Si rinnova ${time}`,

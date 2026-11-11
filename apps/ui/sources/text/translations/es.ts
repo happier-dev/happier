@@ -16633,7 +16633,7 @@ settingsSession: {
             planList: ({ amount, date }: { amount: string | number; date: string | number }) => `precio de lista ${amount}, a ${date}`,
             planNoPrice: "No se informa precio pagado ni de lista",
             planNoPriceShort: "Sin precio informado",
-            planNoPriceAll: "Aún no hay precios de planes · añade el tuyo en Detalles",
+            planNoPriceAll: "Aún no hay precios de planes · abre un plan para añadir el tuyo",
             planEndsUnused: ({ time, percent }: { time: string | number; percent: string | number }) => `Termina ${time} · ~${percent} sin usar a este ritmo`,
             planEnds: ({ time }: { time: string | number }) => `Termina ${time}`,
             planRenews: ({ time }: { time: string | number }) => `Se renueva ${time}`,

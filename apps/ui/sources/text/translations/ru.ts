@@ -16578,7 +16578,7 @@ settingsSession: {
             planList: ({ amount, date }: { amount: string | number; date: string | number }) => `прайс ${amount}, на ${date}`,
             planNoPrice: "Нет данных о цене",
             planNoPriceShort: "Цена не указана",
-            planNoPriceAll: "Цены тарифов пока не указаны · добавьте свою в «Подробнее»",
+            planNoPriceAll: "Цены тарифов пока не указаны · откройте тариф, чтобы добавить свою",
             planEndsUnused: ({ time, percent }: { time: string | number; percent: string | number }) => `Заканчивается ${time} · ~${percent} не будет использовано`,
             planEnds: ({ time }: { time: string | number }) => `Заканчивается ${time}`,
             planRenews: ({ time }: { time: string | number }) => `Продлевается ${time}`,

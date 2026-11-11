@@ -16275,7 +16275,7 @@ settingsSession: {
             planList: ({ amount, date }: { amount: string | number; date: string | number }) => `标价 ${amount}（截至 ${date}）`,
             planNoPrice: "未报告实付或标价",
             planNoPriceShort: "未上报价格",
-            planNoPriceAll: "尚未报告套餐价格 · 可在详情中添加",
+            planNoPriceAll: "尚未报告套餐价格 · 打开套餐即可添加",
             planEndsUnused: ({ time, percent }: { time: string | number; percent: string | number }) => `${time} 结束 · 按此节奏约 ${percent} 未用`,
             planEnds: ({ time }: { time: string | number }) => `${time} 结束`,
             planRenews: ({ time }: { time: string | number }) => `${time} 续期`,

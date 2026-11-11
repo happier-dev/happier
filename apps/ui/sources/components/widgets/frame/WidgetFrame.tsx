@@ -132,6 +132,13 @@ export type WidgetFrameProps = Readonly<{
      * run long asks for `below` so the source is never pushed out of the header by it.
      */
     sourcePlacement?: 'inline' | 'below';
+    /** The widget declares its body names its source (`widgetDefinitionNamesItsSource`): its line is held until it does. */
+    sourceHeld?: boolean;
+    /**
+     * The widget is a section of a page (a core page such as Usage): plain, it still heads its section with a title
+     * (lab wgusage), where a plain glance among grouped rows is labelled quietly (lab crows B).
+     */
+    pageSection?: boolean;
     /** The widget's controls at the end of the header: its ⋯ menu. */
     menu?: React.ReactNode;
     /**
@@ -360,12 +367,13 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
 
     // A source names what the widget is bound to ("devbox · 3ad2"): a narrow header gives up its middle, never the
     // suffix that tells near-identical names apart. A title keeps its tail ellipsis.
+    const pageSection = props.pageSection === true;
     const renderText = React.useCallback<HappierWidgetFrameTextRender>((input) => input.role !== 'title' && input.text.includes(' · ') ? (
         <MiddleEllipsisText testID={input.testID} style={styles.source} value={input.text} />
     ) : (
-        <Text testID={input.testID} style={input.role !== 'title' ? styles.source : input.frameStyle === 'plain' ? styles.sectionLabel : styles.title}
+        <Text testID={input.testID} style={input.role !== 'title' ? styles.source : input.frameStyle === 'plain' && !pageSection ? styles.sectionLabel : styles.title}
             numberOfLines={1} accessibilityRole={input.role === 'title' ? 'header' : undefined}>{input.text}</Text>
-    ), [styles.sectionLabel, styles.source, styles.title]);
+    ), [styles.sectionLabel, styles.source, styles.title, pageSection]);
     // A bound source's glyph from the app's icon family: the pin it is set by, or the link it follows.
     const renderSourceGlyph = React.useCallback((binding: HappierWidgetFrameSourceBinding) => (
         <Icon name={binding === 'pin' ? 'push-pin' : 'link'} size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
@@ -476,6 +484,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             {...(props.source && !sourceRepeatsTitle(props.source, props.title) ? { source: props.source } : {})}
             renderSourceGlyph={renderSourceGlyph}
             sourcePlacement={props.sourcePlacement ?? (phone || props.titleMeta ? 'below' : 'inline')}
+            {...(props.sourceHeld ? { sourceHeld: true } : {})}
             meta={shiftedMeta}
             {...(shiftedCompactMeta ? { compactMeta: shiftedCompactMeta } : {})}
             {...(props.leading ? { leading: props.leading } : {})}

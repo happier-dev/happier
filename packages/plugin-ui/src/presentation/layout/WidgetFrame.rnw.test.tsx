@@ -235,6 +235,23 @@ describe('HappierWidgetFrame', () => {
     expect(titleRowOf(below.container).style.flexDirection).toBe('column');
   });
 
+  it('holds the line under the title for a source its body names later, so the header keeps its height when it arrives', () => {
+    // Usage at 390: "Last 7 days" arrives with the body; the declared caption keeps its line from the first paint.
+    const held = mount({ sourcePlacement: 'below', source: undefined, sourceHeld: true });
+    const line = byId(held.container, 'frame.source.held');
+    expect(line).not.toBeNull();
+    expect(line!.getAttribute('aria-hidden')).toBe('true');
+    expect(byId(held.container, 'frame.titleBlock')!.children).toHaveLength(2);
+    // Once named, the source takes that line; beside the title (wide) nothing is held, since the title line holds it.
+    const named = mount({ sourcePlacement: 'below', source: 'Last 7 days', sourceHeld: true });
+    expect(byId(named.container, 'frame.source.held')).toBeNull();
+    expect(byId(named.container, 'frame.source')!.textContent).toBe('Last 7 days');
+    const inline = mount({ source: undefined, sourceHeld: true });
+    expect(byId(inline.container, 'frame.source.held')).toBeNull();
+    // Undeclared, an absent source keeps no line.
+    expect(byId(mount({ sourcePlacement: 'below', source: undefined }).container, 'frame.source.held')).toBeNull();
+  });
+
   it('draws a widget card on one identity line (mark · title · source · meta · controls) and stacks only an item card', () => {
     // A glance on Home or a Board (atmosphere lab, berthd): the mark sits on the title's line, and so do its controls.
     for (const placement of ['home', 'board'] as const) {

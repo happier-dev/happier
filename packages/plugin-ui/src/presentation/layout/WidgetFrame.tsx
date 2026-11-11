@@ -277,6 +277,11 @@ export type HappierWidgetFrameProps = Readonly<{
   renderSourceGlyph?: (binding: HappierWidgetFrameSourceBinding) => ReactNode;
   /** `below` on phones: the source sits under the title instead of competing with it. */
   sourcePlacement?: 'inline' | 'below';
+  /**
+   * The widget declares that its body names its source once it reads ("Last 7 days"). Under the title, the
+   * frame holds that line from the first paint, so the header keeps its height when the name arrives.
+   */
+  sourceHeld?: boolean;
   /** Freshness ("as of 10:42") or a count, only when the source knows it. */
   meta?: ReactNode;
   /** The meta's short form for a narrow frame (an activity word becomes its spinner), drawn instead of crowding the title. */
@@ -455,6 +460,12 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
       : below ? props.source : resolveHappierWidgetFrameSource({ widthPx, source: props.source });
     source = renderSlot(plain, 'source', `${testID}.source`, renderText);
   }
+  if (below && props.sourceHeld && isEmptySlot(source))
+    source = (
+      <View testID={`${testID}.source.held`} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" aria-hidden>
+        {renderText({ role: 'source', text: '\u00a0', testID: `${testID}.source.heldText` })}
+      </View>
+    );
   const meta = below ? props.meta
     : resolveHappierWidgetFrameMeta({ widthPx, meta: props.meta, ...(props.compactMeta === undefined ? {} : { compactMeta: props.compactMeta }) });
   const hairline =

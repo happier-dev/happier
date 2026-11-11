@@ -480,6 +480,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   disclosureLabel: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: theme.space.s6, flexShrink: 1, minWidth: 0 },
   disclosureTitle: { flexShrink: 0 },
+  disclosureRow: { alignSelf: 'stretch', flex: 1, minWidth: 0, alignItems: 'flex-start' },
+  disclosureRowLabel: { flex: 1, minWidth: 0, gap: theme.space.s4 },
+  disclosureRowHead: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s16 },
   disclosureBody: { paddingTop: theme.space.s8 },
   rank: {
     minWidth: 18,
@@ -546,7 +549,18 @@ export function UsagePlanSectionHead(
  * a closed disclosure builds none of its rows.
  */
 export function UsagePlanDisclosure(
-  props: Readonly<{ title: string; meta?: string | null; testID: string; children: React.ReactNode }>,
+  props: Readonly<{
+    title: string;
+    meta?: string | null;
+    /**
+     * The row this disclosure opens from (a plan's identity and its quiet line), drawn in place of the title, which
+     * then names it for assistive tech. A row's figure stays beside it in `trailing`, outside the press target.
+     */
+    label?: React.ReactNode;
+    trailing?: React.ReactNode;
+    testID: string;
+    children: React.ReactNode;
+  }>,
 ) {
   const { theme } = useUnistyles();
   const text = usePlanText();
@@ -560,7 +574,8 @@ export function UsagePlanDisclosure(
       onExpandedChange={toggle}
       showDivider={false}
       bodyStyle={styles.disclosureBody}
-      header={({ headerProps }) => (
+      header={({ headerProps }) => {
+        const pressable = (
         <HappierPressable
           testID={`${props.testID}-header`}
           onPress={headerProps.onPress}
@@ -569,6 +584,7 @@ export function UsagePlanDisclosure(
           expanded={expanded}
           style={(state) => [
             styles.disclosureHeader,
+            props.label ? styles.disclosureRow : null,
             state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null,
             focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
           ]}
@@ -580,12 +596,14 @@ export function UsagePlanDisclosure(
             reducedMotion={reducedMotion}
           />
           {/* The title never wraps beside its meta: where both do not fit (a phone) the meta moves beneath it. */}
-          <View style={styles.disclosureLabel}>
+          {props.label ? <View style={styles.disclosureRowLabel}>{props.label}</View> : <View style={styles.disclosureLabel}>
             <Text style={[styles.sectionTitle, styles.disclosureTitle, text.title]} numberOfLines={1}>{props.title}</Text>
             {props.meta ? <Text style={[styles.sectionMeta, text.detail]}>{props.meta}</Text> : null}
-          </View>
+          </View>}
         </HappierPressable>
-      )}
+        );
+        return props.trailing ? <View style={styles.disclosureRowHead}>{pressable}{props.trailing}</View> : pressable;
+      }}
     >
       {props.children}
     </ExpandableItem>

@@ -16804,7 +16804,7 @@ settingsSession: {
             planList: ({ amount, date }: { amount: string | number; date: string | number }) => `Listenpreis ${amount}, Stand ${date}`,
             planNoPrice: "Kein bezahlter oder Listenpreis gemeldet",
             planNoPriceShort: "Kein Preis gemeldet",
-            planNoPriceAll: "Noch keine Tarifpreise · eigenen unter Details eintragen",
+            planNoPriceAll: "Noch keine Tarifpreise · Tarif öffnen, um deinen einzutragen",
             planEndsUnused: ({ time, percent }: { time: string | number; percent: string | number }) => `Endet ${time} · ~${percent} ungenutzt bei diesem Tempo`,
             planEnds: ({ time }: { time: string | number }) => `Endet ${time}`,
             planRenews: ({ time }: { time: string | number }) => `Verlängert sich ${time}`,

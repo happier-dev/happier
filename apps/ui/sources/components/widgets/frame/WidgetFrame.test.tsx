@@ -649,6 +649,33 @@ describe('WidgetFrame', () => {
         expect(card.findAllByProps({ name: 'timer' }).length).toBeGreaterThan(0);
     });
 
+    it('settles a body that lends its caption into the held source line in a fixed number of renders (no lend loop)', async () => {
+        const { WidgetFrameBodyCaptionContext, useWidgetFrameBodyCaption } = await import('./widgetFrameBodyCaption');
+        const counts = { body: 0, host: 0 };
+        function LendingBody(props: Readonly<{ caption: string }>) {
+            counts.body += 1;
+            useWidgetFrameBodyCaption(props.caption);
+            return <Text>rows</Text>;
+        }
+        // The area's wiring (WidgetArea): the lent caption is host state, the body element is memoized apart from it.
+        function Host() {
+            counts.host += 1;
+            const [caption, setCaption] = React.useState<string | null>(null);
+            const body = React.useMemo(() => ({ kind: 'content' as const, children: (
+                <WidgetFrameBodyCaptionContext.Provider value={setCaption}><LendingBody caption="Last 7 days" /></WidgetFrameBodyCaptionContext.Provider>
+            ) }), []);
+            return <WidgetFrame testID="frame" frameStyle="plain" placement="home" pageSection sourceHeld sourcePlacement="below"
+                title="Daily usage" source={caption ?? undefined} body={body} />;
+        }
+        const screen = await renderScreen(<Host />);
+        await flushHookEffects({ cycles: 6 });
+        expect(screen.findByTestId('frame.source')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('Last 7 days');
+        // One render to mount, one when the caption lands; the body is never re-run by the frame's re-render.
+        expect(counts.host).toBeLessThanOrEqual(2);
+        expect(counts.body).toBe(1);
+    });
+
     it('heads a plain widget that is a section of a page (Usage, lab wgusage) with its title, still without a mark', async () => {
         const screen = await renderFrame({ frameStyle: 'plain', placement: 'home', pageSection: true });
         expect(StyleSheet.flatten(screen.findByTestId('frame.title')!.props.style)?.color).toBe(lightTheme.colors.text.primary);

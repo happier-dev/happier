@@ -16507,7 +16507,7 @@ settingsSession: {
             planList: ({ amount, date }: { amount: string | number; date: string | number }) => `prix catalogue ${amount}, au ${date}`,
             planNoPrice: "Aucun prix payé ou catalogue communiqué",
             planNoPriceShort: "Aucun prix déclaré",
-            planNoPriceAll: "Aucun prix de forfait pour l’instant · ajoutez le vôtre dans Détails",
+            planNoPriceAll: "Aucun prix de forfait pour l’instant · ouvrez un forfait pour ajouter le vôtre",
             planEndsUnused: ({ time, percent }: { time: string | number; percent: string | number }) => `Se termine ${time} · ~${percent} inutilisé à ce rythme`,
             planEnds: ({ time }: { time: string | number }) => `Se termine ${time}`,
             planRenews: ({ time }: { time: string | number }) => `Se renouvelle ${time}`,

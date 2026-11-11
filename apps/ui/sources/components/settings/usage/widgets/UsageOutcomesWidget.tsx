@@ -9,6 +9,7 @@ import { usageSeriesColor } from '../usageAccent';
 import {
   UsageBodyInsufficient,
   UsageCoverageLine,
+  usagePeriodPhrase,
   useUsagePluginTheme,
   type UsageBodyProps,
 } from './usageBodyKit';
@@ -58,7 +59,7 @@ function UsageOutcomesEmpty(props: UsageBodyProps & Readonly<{
 }>) {
   const { presentation } = props;
   useUsageWorkSessionNavigation(presentation.sessions, props.query, props.serverId, presentation.machineIds);
-  useWidgetFrameBodyCaption(presentation.kind === 'unavailable' ? null
+  useWidgetFrameBodyCaption(presentation.kind === 'unavailable' ? usagePeriodPhrase(props.query)
     : t('usage.board.work.outcomesCaption', { count: 0 }));
   if (presentation.kind === 'unavailable')
     return (

@@ -10,7 +10,7 @@ import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFram
 import { usageCrewLabels, usageOrbitLabels, usagePlanetLabels, usageShippedLabels, usageSkyLabels } from './usageChartLabels';
 import { formatUsageDuration } from './usageHowYouWorkPresentation';
 import {
-  UsageBodyInsufficient, UsageBodyReadFailed, UsageBodyReading, UsageCoverageLine, isUsageReadFailed, isUsageReadOutstanding, type UsageBodyProps,
+  UsageBodyInsufficient, UsageBodyReadFailed, UsageBodyReading, UsageCoverageLine, isUsageReadFailed, isUsageReadOutstanding, usagePeriodPhrase, type UsageBodyProps,
 } from './usageBodyKit';
 import {
   formatUsageChartMetric, usageChartClock, usageChartDateLabels, usageChartMetricName, usageChartPercent, usageChartValuesLabels,
@@ -179,7 +179,7 @@ export function UsageScoreBody(props: UsageChartStyleBodyProps) {
   const calendar = useCalendar(props);
   const model = React.useMemo(() => calendar ? projectUsageScoreModel(calendar, props.presentation?.day) : null, [calendar, props.presentation?.day]);
   const agents = React.useMemo(() => (model?.rows ?? []).flatMap((row) => row.agentId === null ? [] : [host.agent(row.agentId)]), [model, host.agent]);
-  useWidgetFrameBodyCaption(model ? t('usage.board.charts.scoreSubtitle', { week: usageChartDateLabels(props.query).short(model.weekStart) }) : null);
+  useWidgetFrameBodyCaption(model ? t('usage.board.charts.scoreSubtitle', { week: usageChartDateLabels(props.query).short(model.weekStart) }) : usagePeriodPhrase(props.query));
   if (!model || (calendar && isMeasureUnrecorded(calendar.coverage, 'busy'))) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID}
     title={calendar && isMeasureUnrecorded(calendar.coverage, 'busy') ? t('usage.board.charts.metricNotRecordedTitle', { metric: usageChartMetricName('busy') }) : t('usage.board.charts.needsDataTitle')}
     reason={calendar && isMeasureUnrecorded(calendar.coverage, 'busy') ? t('usage.board.charts.metricNotRecordedHint') : t('usage.board.charts.needsCalendarReason')} />;
@@ -311,6 +311,7 @@ export function UsagePlanetBody(props: UsageChartStyleBodyProps) {
   const model = React.useMemo(() => {
     return calendar ? projectUsagePortraitModel(calendar, intervals?.maxParallel ?? null, Date.now()) : null;
   }, [calendar, intervals]);
+  useWidgetFrameBodyCaption(usagePeriodPhrase(props.query));
   if (!model) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.needsDataTitle')} reason={t('usage.board.charts.needsCalendarReason')} />;
   return <View style={{ gap: 12 }} testID={`${props.testID}.planet`}>
     <UsagePlanetPortrait theme={host.theme} paint={host.paint} model={model} renderPlanet={host.renderPlanet} testID={`${props.testID}.planetChart`} label={t('usage.board.charts.planetA11y')}

@@ -265,30 +265,36 @@ function PlanRow(
     verdict ? fitWindow : null,
     verdict ?? (fit.observed === 0 && !props.noneEndedSaidOnce ? [fitWindow, t('usage.board.plans.fitNoneEnded')].filter(Boolean).join(' · ') : null),
   ].filter(Boolean).join(' · ');
+  const figureNode = hiddenFigure && exactFigure ? <ChartDatum testID={`${props.testID}.figure`}
+    datum={{ label: props.name.title, value: exactFigure, subtitle: [priceText, periodText, fitText].join(' · ') }}>{figure}</ChartDatum> : figure;
+  const identity = <UsagePlanIdentity name={props.name} compact />;
+  const secondaryLine = (
+    <Text
+      testID={fit.observed === 0 ? `${props.testID}.fit.insufficient` : `${props.testID}.fit`}
+      accessibilityLabel={`${t('usage.board.plans.fitTitle')}: ${fitText}`}
+      style={[styles.secondary, text.detail, ending ? styles.warning : null]}
+      // Two lines on a phone, so the verdict is never cut after the price reason.
+      numberOfLines={2}
+    >
+      {secondary}
+    </Text>
+  );
   return (
     <View
       testID={props.testID}
       style={styles.row}
       accessibilityLabel={[props.name.title, priceText, periodText, paceText].filter(Boolean).join(', ')}
     >
-      <View style={styles.rowHead}>
-        <View style={styles.rowIdentity}>
-          <UsagePlanIdentity name={props.name} compact />
+      {props.compact ? <>
+        <View style={styles.rowHead}>
+          <View style={styles.rowIdentity}>{identity}</View>
+          {figureNode}
         </View>
-        {hiddenFigure && exactFigure ? <ChartDatum testID={`${props.testID}.figure`}
-          datum={{ label: props.name.title, value: exactFigure, subtitle: [priceText, periodText, fitText].join(' · ') }}>{figure}</ChartDatum> : figure}
-      </View>
-      <Text
-        testID={fit.observed === 0 ? `${props.testID}.fit.insufficient` : `${props.testID}.fit`}
-        accessibilityLabel={`${t('usage.board.plans.fitTitle')}: ${fitText}`}
-        style={[styles.secondary, text.detail, ending ? styles.warning : null]}
-        // Two lines on a phone, so the verdict is never cut after the price reason.
-        numberOfLines={2}
-      >
-        {secondary}
-      </Text>
-      {props.compact ? null : (
-        <UsagePlanDisclosure title={t('usage.board.plans.planDetails')} testID={`${props.testID}.details`}>
+        {secondaryLine}
+      </> : (
+        // The plan row itself opens its details (lab p2sheet-D: one row per plan), never a "Details" line under each.
+        <UsagePlanDisclosure title={`${props.name.title}, ${t('usage.board.plans.planDetails')}`} testID={`${props.testID}.details`}
+          label={<>{identity}{secondaryLine}</>} trailing={figureNode}>
           <View style={styles.details}>
             {/* Terms first (what it costs, when it ends), then how it is being used, then what you can do. */}
             <View style={styles.terms}>

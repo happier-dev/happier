@@ -20128,7 +20128,7 @@ const enUsage = {
       planList: ({ amount, date }: { amount: string | number; date: string | number }) => `list price ${amount}, as of ${date}`,
       planNoPrice: "No paid or list price reported",
       planNoPriceShort: "No price reported",
-      planNoPriceAll: "No plan prices reported yet · add yours under Details",
+      planNoPriceAll: "No plan prices reported yet · open a plan to add yours",
       planEndsUnused: ({ time, percent }: { time: string | number; percent: string | number }) => `Ends ${time} · ~${percent} unused at this pace`,
       planEnds: ({ time }: { time: string | number }) => `Ends ${time}`,
       planRenews: ({ time }: { time: string | number }) => `Renews ${time}`,

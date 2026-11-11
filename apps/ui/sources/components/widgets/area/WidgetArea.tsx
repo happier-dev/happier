@@ -71,7 +71,7 @@ import type { WidgetBindingValueLabels } from '@/components/widgets/surface/useW
 import { useWidgetInstanceDescriptors } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { runAcknowledgedWidgetSetupCommand, widgetProvidedContext, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
-import { isBuiltinWidgetSwitchedOff, readWidgetDescriptor, resolveWidgetInstanceTitle, widgetCandidateHoldsHtml, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { isBuiltinWidgetSwitchedOff, readWidgetDescriptor, resolveWidgetInstanceTitle, widgetCandidateHoldsHtml, widgetDefinitionNamesItsSource, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { useAtmosphereMoments } from '@/components/atmosphere/atmosphereMoments';
 import { t } from '@/text';
 import { PluginSurfaceFocusEligibilityProvider, usePluginSurfaceCurrentUiContextEligibility, usePluginSurfaceFocusEligibility, usePresentedValue } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -999,6 +999,8 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                     : followed
                         ? widgetGroupFollowSource(followed, parent?.wide === true)
                         : bodyCaption ?? bindingLabel ?? sourceName ?? undefined}
+                sourceHeld={widgetDefinitionNamesItsSource(instance.definition)}
+                pageSection={surface.owner.kind === 'corePage'}
                 meta={bodyMeta}
                 grouped={parent !== undefined}
                 // Every column's first widget leads: paired, the row reads level, with no hairline on one side only.

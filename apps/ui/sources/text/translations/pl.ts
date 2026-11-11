@@ -16917,7 +16917,7 @@ settingsSession: {
       planList: ({ amount, date }: { amount: string | number; date: string | number }) => `cena katalogowa ${amount}, stan na ${date}`,
       planNoPrice: "Nie zgłoszono ceny zapłaconej ani katalogowej",
       planNoPriceShort: "Nie zgłoszono ceny",
-      planNoPriceAll: "Nie zgłoszono jeszcze cen planów · dodaj swoje w Szczegółach",
+      planNoPriceAll: "Nie zgłoszono jeszcze cen planów · otwórz plan, aby dodać swoją",
       planEndsUnused: ({ time, percent }: { time: string | number; percent: string | number }) => `Kończy się ${time} · ~${percent} niewykorzystane przy tym tempie`,
       planEnds: ({ time }: { time: string | number }) => `Kończy się ${time}`,
       planRenews: ({ time }: { time: string | number }) => `Odnawia się ${time}`,

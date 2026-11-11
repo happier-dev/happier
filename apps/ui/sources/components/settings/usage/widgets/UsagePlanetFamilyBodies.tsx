@@ -13,7 +13,8 @@ import {
   UsageWeeksSkyline,
 } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
-import type { UsageBodyProps } from './usageBodyKit';
+import { usagePeriodPhrase, type UsageBodyProps } from './usageBodyKit';
+import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { useUsageChartHost } from './usageChartHost';
 import {
   usageAtmosphereLabels,
@@ -79,6 +80,11 @@ function usePlanetFamilyModels(props: UsageBodyProps) {
         : null,
     [calendar, props.slice],
   );
+}
+
+/** The frame names the period these portraits draw; their own labels carry the figures. */
+function usePeriodCaption(props: UsageBodyProps) {
+  useWidgetFrameBodyCaption(usagePeriodPhrase(props.query));
 }
 
 function Pending(props: UsageBodyProps) {
@@ -159,6 +165,7 @@ export function UsageCalendarArtStyleBody(
 /** Orbit · Style Moons. */
 export function UsageMoonsBody(props: UsageBodyProps) {
   const host = useUsageChartHost(props.serverId);
+  usePeriodCaption(props);
   const models = usePlanetFamilyModels(props);
   if (!models) return <Pending {...props} />;
   const agents = models.moons.agents.flatMap((member) =>
@@ -180,6 +187,7 @@ export function UsageMoonsBody(props: UsageBodyProps) {
 
 export function UsageMachinesBody(props: UsageBodyProps) {
   const host = useUsageChartHost(props.serverId);
+  usePeriodCaption(props);
   const models = usePlanetFamilyModels(props);
   if (!models) return <Pending {...props} />;
   return (
@@ -197,6 +205,7 @@ export function UsageMachinesBody(props: UsageBodyProps) {
 
 export function UsageProjectsBody(props: UsageBodyProps) {
   const host = useUsageChartHost(props.serverId);
+  usePeriodCaption(props);
   const models = usePlanetFamilyModels(props);
   if (!models) return <Pending {...props} />;
   return (
@@ -213,6 +222,7 @@ export function UsageProjectsBody(props: UsageBodyProps) {
 
 export function UsageAtmosphereBody(props: UsageBodyProps) {
   const host = useUsageChartHost(props.serverId);
+  usePeriodCaption(props);
   const models = usePlanetFamilyModels(props);
   if (!models?.atmosphere) return <Pending {...props} />;
   return (

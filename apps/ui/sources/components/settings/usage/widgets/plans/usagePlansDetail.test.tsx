@@ -338,6 +338,8 @@ it('shows the canonical capacity weather and insufficient model/reset basis insi
   const sharedPriceReason = t('usage.board.plans.planNoPriceAll');
   expect(String(screen.findByTestId('fit.once')!.props.children)).toContain(sharedPriceReason);
   expect(screen.getTextContent().split(sharedPriceReason), 'one shared cause across the accounts').toHaveLength(2);
+  // The plan row itself opens its details (lab p2sheet-D: one row per plan); no "Details" line repeats under every plan.
+  expect(screen.getTextContent()).not.toContain(t('usage.board.plans.planDetails'));
   await screen.pressByTestIdAsync('fit.plan.work.details-header');
   expect(screen.findByTestId('fit.plan.work.weather.weekly')).toBeTruthy();
   // What no account has a basis for yet is one line for the whole widget, never one per account.

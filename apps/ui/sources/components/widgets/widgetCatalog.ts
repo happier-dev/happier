@@ -10,6 +10,7 @@ import { InputHintsSchema, InputPathSchema, type InputHints } from '@happier-dev
 import { BUILTIN_WIDGET_DESCRIPTORS_V1, readBuiltinWidgetDescriptorV1, readWidgetDefinitionResourcesV1, type BuiltinWidgetDescriptorV1, type WidgetDefinitionV1, type WidgetInstanceV1, type WidgetDefinitionRefV1, type WidgetCandidateIdentityV1 } from '@happier-dev/protocol/widgets';
 import { t } from '@/text';
 import { readUsageBreakdownsInstanceTitle } from '@/components/settings/usage/usageBreakdownTitle';
+import { isUsageBuiltinWidgetId } from '@/components/settings/usage/widgets/usageBuiltinWidgetId';
 import { localizeBuiltinInputHints, localizeBuiltinInputLabel } from '@/text/builtinInputPrompts';
 import { isAtmosphereMomentOn, readAtmosphereMoments } from '@/components/atmosphere/atmosphereMoments';
 
@@ -137,6 +138,14 @@ export function selectWidgetCandidates(
 export function selectBuiltinWidgetCandidates(moments: Readonly<Record<string, boolean>> = readAtmosphereMoments()): readonly WidgetCandidate[] {
     return BUILTIN_WIDGET_DESCRIPTORS_V1.filter(descriptor => !isBuiltinWidgetSwitchedOff(descriptor.definition, moments))
         .map(describeBuiltinWidgetCandidate);
+}
+
+/**
+ * Whether the widget's body names what it shows in its frame's source line ("Tokens · last 7 days"), declared by
+ * its definition so the frame holds that line before the body has read. Every Usage body names its period or measure.
+ */
+export function widgetDefinitionNamesItsSource(definition: WidgetDefinitionRefV1): boolean {
+    return definition.kind === 'builtin' && isUsageBuiltinWidgetId(definition.id);
 }
 
 /** The one decision for a built-in withdrawn by the person's own switch. */

@@ -22,7 +22,7 @@ export function UsageFootprintWidget(props: UsageBodyProps) {
   const { theme } = useUnistyles();
   const chartTheme = useUsagePluginTheme();
   const footprint = props.slice.howYouWork?.footprint ?? null;
-  useWidgetFrameBodyCaption(footprint ? usagePeriodPhrase(props.query) : null);
+  useWidgetFrameBodyCaption(usagePeriodPhrase(props.query));
   if (!footprint) {
     return (
       <UsageBodyInsufficient
