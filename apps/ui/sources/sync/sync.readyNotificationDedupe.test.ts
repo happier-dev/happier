@@ -150,6 +150,8 @@ describe('Sync ready notification dedupe', () => {
 
         expect(voiceOnReadyMock).toHaveBeenCalledTimes(3);
         expect(notifyActivityReadyMock).toHaveBeenCalledTimes(2);
+        // Each activity event carries the ready event's own sequence, the identity every tab shares.
+        expect(notifyActivityReadyMock.mock.calls.map((call) => call[2])).toEqual([2, 3]);
         expect(voiceOnReadyMock).toHaveBeenNthCalledWith(1, 's1', []);
         expect(voiceOnReadyMock).toHaveBeenNthCalledWith(
             2,
@@ -170,6 +172,7 @@ describe('Sync ready notification dedupe', () => {
                     text: 'Ready with transcript context',
                 }),
             ]),
+            2,
         );
     });
 

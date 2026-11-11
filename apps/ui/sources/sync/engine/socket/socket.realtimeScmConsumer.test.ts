@@ -19,7 +19,7 @@ import {
     registerSessionRealtimeScmConsumerScope,
 } from '@/sync/runtime/sessionRealtimeScmConsumers';
 import { scmStatusSync } from '@/scm/scmStatusSync';
-import { handleUpdateContainer } from './socket';
+import { handleUpdateContainer, retireSessionSocketState } from './socket';
 
 const initialStorageState = storage.getState();
 type HandleUpdateContainerParams = Parameters<typeof handleUpdateContainer>[0];
@@ -142,6 +142,7 @@ function buildBaseParams(overrides: Partial<Omit<HandleUpdateContainerParams, 'u
             initializeMachines: vi.fn(async () => {}),
         } as unknown as HandleUpdateContainerParams['encryption'],
         artifactDataKeys: new Map(),
+        retireSession: retireSessionSocketState,
         applySessions: vi.fn((sessions: Parameters<HandleUpdateContainerParams['applySessions']>[0]) => {
             const normalizedSessions: Session[] = sessions.map((session) => ({
                 ...session,

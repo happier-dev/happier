@@ -6,6 +6,8 @@ export type ActivityLocalNotificationEvent =
         kind: 'ready';
         sessionId: string;
         messages?: Message[];
+        /** The ready event's transcript sequence: the identity every client shares for this turn end. */
+        readyEventSeq?: number;
     }>
     | Readonly<{
         kind: 'agent-request';
@@ -28,7 +30,7 @@ export function subscribeActivityLocalNotifications(listener: Listener): () => v
     };
 }
 
-export function notifyActivityReady(sessionId: string, messages?: Message[]): void {
+export function notifyActivityReady(sessionId: string, messages?: Message[], readyEventSeq?: number | null): void {
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!normalizedSessionId) return;
 
@@ -36,6 +38,7 @@ export function notifyActivityReady(sessionId: string, messages?: Message[]): vo
         kind: 'ready',
         sessionId: normalizedSessionId,
         messages,
+        ...(typeof readyEventSeq === 'number' && Number.isFinite(readyEventSeq) ? { readyEventSeq } : {}),
     };
 
     for (const listener of Array.from(listeners)) {

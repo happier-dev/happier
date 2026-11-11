@@ -1,6 +1,7 @@
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { storage } from '@/sync/domains/state/storage';
+import { sync } from '@/sync/sync';
 import { HappyError } from '@/utils/errors/errors';
 import {
     sessionArchiveWithServerScope,
@@ -14,6 +15,7 @@ import { sessionSetAttentionStandingWithServerScope, setSessionPin } from '@/syn
 import { resolveSessionOrganizationMutationScope } from '@/sync/domains/session/organization/mutationScope';
 import {
     archiveSessionWithPendingState,
+    isStopAcceptedAndPending,
     isSessionActiveArchiveResult,
     isSessionArchivePending,
     stopSessionAndMaybeArchive,
@@ -89,6 +91,15 @@ async function executeDeleteAction(target: SessionActionTarget, context?: Sessio
     if (!confirmed) return false;
     const deleteSession = resolveDeleteSession(context);
     if (target.canStopAndDelete) {
+        let sessionMissing = false;
+        const recoverMissingSession = async () => {
+            const result = await sync.ensureSessionVisibleForMessageRoute(target.sessionId, {
+                serverId: resolveSessionArchiveServerId(target.serverId),
+                forceRefresh: true,
+            });
+            sessionMissing = result.kind === 'missing' && result.cause === 'not_found';
+            return sessionMissing;
+        };
         // Use the same stop strategy and completion retry as Archive. In 0.2 the DELETE
         // endpoint does not guard activity, so current scoped lifecycle evidence must do so.
         await stopSessionAndRunAction({
@@ -96,12 +107,25 @@ async function executeDeleteAction(target: SessionActionTarget, context?: Sessio
                 const current = readCurrentSessionActionTarget(target);
                 if (!current?.isOwnedByCurrentUser) throw new HappyError(t('sessionInfo.failedToDeleteSession'), false);
                 if (current.canDelete) return { success: true };
-                return await resolveStopSession(context)(target.sessionId, { serverId: target.serverId });
+                let result: SessionActionOperationResult;
+                try {
+                    result = await resolveStopSession(context)(target.sessionId, { serverId: target.serverId });
+                } catch (error) {
+                    if (await recoverMissingSession()) return { success: true };
+                    throw error;
+                }
+                // Runner absence or missing encryption is not proof of Session absence.
+                // Only the canonical exact read can retire the stale row and finish Delete.
+                if (!result.success && !isStopAcceptedAndPending(result) && await recoverMissingSession()) {
+                    return { success: true };
+                }
+                return result;
             },
             stopErrorMessage: t('sessionInfo.failedToStopSession'),
             endAction: {
                 errorMessage: t('sessionInfo.failedToDeleteSession'),
                 run: async (options) => {
+                    if (sessionMissing) return { success: true };
                     const current = readCurrentSessionActionTarget(target);
                     if (!current?.isOwnedByCurrentUser) throw new HappyError(t('sessionInfo.failedToDeleteSession'), false);
                     if (!current.canDelete) return { success: false, code: 'session_active' };

@@ -136,6 +136,19 @@ export function isHostVisible(): boolean {
 }
 
 /**
+ * Whether someone is looking at this host window right now: it is visible and holds focus.
+ *
+ * Document hosts (browser tabs and the desktop app) answer from their document. When focus cannot
+ * be established the window counts as viewed, so callers keep their quiet default.
+ */
+export function isHostActivelyViewed(): boolean {
+    if (readDocument()?.visibilityState === 'hidden') {
+        return false;
+    }
+    return readHostWindowFocus() ?? true;
+}
+
+/**
  * Runs an interval only while the runtime is active. If regular ticks were
  * skipped while inactive, the callback runs once immediately when the runtime
  * returns to active and the interval is overdue.

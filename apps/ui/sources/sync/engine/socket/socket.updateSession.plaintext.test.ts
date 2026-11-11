@@ -22,6 +22,7 @@ import { buildActivityLocalNotificationContent } from '@/activity/notifications/
 import {
     flushActivityUpdates,
     handleUpdateContainer,
+    retireSessionSocketState,
     resetSocketSessionProjectionStateForServerScope,
     parseUpdateContainer,
 } from './socket';
@@ -57,6 +58,7 @@ function buildBaseParams(overrides: Partial<HandleUpdateContainerBaseParams> = {
             removeSessionEncryption: () => {},
         } as unknown as HandleUpdateContainerBaseParams['encryption'],
         artifactDataKeys: new Map(),
+        retireSession: retireSessionSocketState,
         applySessions: vi.fn(),
         fetchSessions: vi.fn(),
         applyMessages: vi.fn(),
@@ -1456,7 +1458,7 @@ describe('socket update handling: plaintext update-session', () => {
         }));
     });
 
-    it('drops queued durable session updates when the session is deleted before the coalesced flush', async () => {
+    it.each(['explicit', 'delete-session', 'session-share-revoked', 'remote-same-id'] as const)('drops queued durable session updates only for the retired server: %s', async (retirement) => {
         vi.useFakeTimers();
         storage.getState().applySessions([buildSession('s1')]);
         markSessionVisible('s1');
@@ -1494,23 +1496,30 @@ describe('socket update handling: plaintext update-session', () => {
                 },
             },
         });
-        await handleUpdateContainer({
-            ...params,
-            updateData: {
-                id: 'u_plain_session_delete_3',
-                seq: 12,
-                createdAt: 102,
-                body: {
-                    t: 'delete-session',
-                    sid: 's1',
+        if (retirement === 'explicit' || retirement === 'remote-same-id') {
+            const { sync } = await import('@/sync/sync');
+            const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
+            const remote = upsertServerProfile({ serverUrl: 'https://queued-retirement-remote.example', name: 'Queued retirement remote' });
+            sync.retireLocalSession('s1', retirement === 'remote-same-id' ? remote.id : undefined);
+        } else {
+            await handleUpdateContainer({
+                ...params,
+                updateData: {
+                    id: 'u_plain_session_delete_3', seq: 12, createdAt: 102,
+                    body: retirement === 'delete-session'
+                        ? { t: retirement, sid: 's1' }
+                        : { t: retirement, sessionId: 's1', shareId: 'retirement-share' },
                 },
-            },
-        });
+            });
+        }
 
         await vi.runAllTimersAsync();
 
-        expect(applySessions).toHaveBeenCalledTimes(1);
-        expect(storage.getState().sessions.s1).toBeUndefined();
+        if (retirement === 'remote-same-id') {
+            expect(storage.getState().sessions.s1).toEqual(expect.objectContaining({ pendingPermissionRequestCount: 7 }));
+        } else {
+            expect(storage.getState().sessions.s1).toBeUndefined();
+        }
     });
 
     it('invalidates sessions when an unpatchable agentState update-session targets a cache-only row', async () => {
@@ -2786,7 +2795,7 @@ describe('socket update handling: plaintext update-session', () => {
         expect(storage.getState().sessionListRenderables.s_cached_metadata_clock_only?.metadataVersion).toBe(2);
     });
 
-    it('drops queued cache-only metadata hydration when the session is deleted', async () => {
+    it.each(['delete-session', 'session-share-revoked'] as const)('drops queued cache-only metadata hydration on %s', async (retirement) => {
         vi.useFakeTimers();
         const sessionId = 's_deleted_before_metadata_hydration';
         const buildRenderable = (metadataVersion: number) => ({
@@ -2833,7 +2842,9 @@ describe('socket update handling: plaintext update-session', () => {
                 id: 'u_delete_before_metadata_hydration',
                 seq: 13,
                 createdAt: 4,
-                body: { t: 'delete-session', sid: sessionId },
+                body: retirement === 'delete-session'
+                    ? { t: retirement, sid: sessionId }
+                    : { t: retirement, sessionId, shareId: 'retirement-share' },
             },
         });
         storage.getState().replaceSessionListRenderables([buildRenderable(1)]);

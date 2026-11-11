@@ -121,6 +121,12 @@ function areWindowRectsEqual(a: WindowRect | null, b: WindowRect | null): boolea
 }
 
 type PopoverCommonProps = Readonly<{
+    /**
+     * Room preferred below the anchor before an `auto-vertical` popover flips above it. Defaults to
+     * `maxHeightCap`; set it when the height cap is the window, so side choice keeps a usable threshold.
+     * Horizontal side choice always uses `maxWidthCap`.
+     */
+    placementMinSpace?: number;
     open: boolean;
     /**
      * Legacy anchor prop. Kept for backwards compatibility — zero callsite changes needed.
@@ -212,6 +218,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         gap = 8,
         maxHeightCap = 400,
         maxWidthCap = 520,
+        placementMinSpace,
         onRequestClose,
         edgePadding = 0,
         backdrop,
@@ -774,7 +781,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
 
             const resolvedPlacement = resolvePlacement({
                 placement,
-                preferredMinAvailable: placement === 'auto-horizontal' ? maxWidthCap : maxHeightCap,
+                preferredMinAvailable: placement === 'auto-horizontal' ? maxWidthCap : (placementMinSpace ?? maxHeightCap),
                 available: {
                     top: availableTop,
                     bottom: availableBottom,
@@ -856,7 +863,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         // nothing to wait for. The retry ladder above still yields a frame BETWEEN attempts, which
         // is what actually handles the "layout settles late" case this used to cover.
         void measureWithRetries(0);
-    }, [anchorRef, anchorRectFromProp, boundaryRef, edgeInsets.horizontal, edgeInsets.vertical, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, placement, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, windowHeight, windowWidth, portalTarget]);
+    }, [anchorRef, anchorRectFromProp, boundaryRef, edgeInsets.horizontal, edgeInsets.vertical, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, placement, placementMinSpace, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, windowHeight, windowWidth, portalTarget]);
 
     React.useLayoutEffect(() => {
         if (!open) return;

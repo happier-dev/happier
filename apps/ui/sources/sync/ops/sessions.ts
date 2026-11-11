@@ -26,6 +26,8 @@ import { sessionRpcWithServerScope, sessionRpcWithServerAccountScope } from '@/s
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual, createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import type {
     LlmTaskRunnerConfigV1,
     SessionAttachMetadataIdentityPolicy,
@@ -54,7 +56,7 @@ import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 import { readMachineControlTargetForSession } from './sessionMachineTarget';
 import { stopSessionUsingCanonicalStrategy } from './sessionStopStrategy';
 import type { Metadata } from '../domains/state/storageTypes';
-import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { sync } from '@/sync/sync';
 import { supportsSessionForkRequestId } from '@/utils/system/versionUtils';
 import { throwIfSessionArchiveAborted, withSessionArchiveDeadline, type SessionArchiveRequestOptions } from './sessionArchiveLifecycle';
 import { AsyncTimeoutError } from '@/utils/timing/time';
@@ -979,10 +981,26 @@ export async function sessionDeleteWithServerScope(
             signal: opts?.signal,
         });
         if (opts?.signal) throwIfSessionArchiveAborted(opts.signal);
-        if (response.ok) {
-            await response.json().catch(() => null);
+        if (response.ok || response.status === 404) {
+            const body: unknown = await response.json().catch(() => null);
             if (opts?.signal) throwIfSessionArchiveAborted(opts.signal);
-            storage.getState().deleteSession(sessionId, serverId);
+            // Released DELETE /v1/sessions/:id uses this authenticated absence result;
+            // an unrelated route/proxy 404 does not establish that the session is gone.
+            if (!response.ok && (
+                body === null || typeof body !== 'object'
+                || !('error' in body) || body.error !== 'Session not found or not owned by user'
+            )) {
+                return { success: false, message: 'Failed to delete session' };
+            }
+            const currentCredentials = await TokenStorage.getCredentialsForServerUrl(context.targetServerUrl, {
+                serverId: context.targetServerId,
+            });
+            if (opts?.signal) throwIfSessionArchiveAborted(opts.signal);
+            // The write is settled, but its old Account must not retire a replacement
+            // Account's projection. Validate the target Home even when it is no longer active.
+            if (currentCredentials && resolveAuthCredentialsScopeKey(currentCredentials) === context.credentialScopeKey) {
+                sync.retireLocalSession(sessionId, serverId);
+            }
             return { success: true };
         }
         const error = await response.text().catch(() => '');
@@ -1021,7 +1039,6 @@ export async function sessionRename(
             return { success: false, message: 'invalid_parameters' };
         }
 
-        const sync = getSyncSingleton();
         const updatedAt = Date.now();
 
         await sync.patchSessionMetadataWithRetry(

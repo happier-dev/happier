@@ -49,6 +49,19 @@ const DEFAULT_SQLITE_TRANSACTION_RETRY_MAX_DELAY_MS = 800;
 const DEFAULT_SQLITE_TRANSACTION_TIMEOUT_MS = 10_000;
 // Keep default inTx retry scheduling inside request/client timeout envelopes; raise via env only for known background paths.
 const DEFAULT_SQLITE_TRANSACTION_TOTAL_RETRY_BUDGET_MS = 25_000;
+const DEFAULT_POSTGRES_TRANSACTION_MAX_RETRIES = 3;
+const POSTGRES_TRANSACTION_RETRY_BASE_DELAY_MS = 100;
+const POSTGRES_TRANSACTION_RETRY_MAX_DELAY_MS = 1_600;
+const POSTGRES_TRANSACTION_RETRY_JITTER_MIN = 0.5;
+const POSTGRES_TRANSACTION_RETRY_JITTER_SPAN = 1;
+
+function readTransactionMaxRetriesFromEnv(env: NodeJS.ProcessEnv, fallback: number): number {
+    return parseIntEnv(
+        env.HAPPIER_DB_TX_MAX_RETRIES ?? env.HAPPY_DB_TX_MAX_RETRIES,
+        fallback,
+        { min: 0, max: 100 },
+    );
+}
 
 function readSqliteTransactionConfigFromEnv(env: NodeJS.ProcessEnv): SqliteTransactionConfig {
     const retryBaseDelayMs = parseIntEnv(
@@ -58,11 +71,7 @@ function readSqliteTransactionConfigFromEnv(env: NodeJS.ProcessEnv): SqliteTrans
     );
 
     return {
-        maxRetries: parseIntEnv(
-            env.HAPPIER_DB_TX_MAX_RETRIES ?? env.HAPPY_DB_TX_MAX_RETRIES,
-            DEFAULT_SQLITE_TRANSACTION_MAX_RETRIES,
-            { min: 0, max: 100 },
-        ),
+        maxRetries: readTransactionMaxRetriesFromEnv(env, DEFAULT_SQLITE_TRANSACTION_MAX_RETRIES),
         maxWaitMs: parseIntEnv(
             env.HAPPIER_DB_TX_MAX_WAIT_MS ?? env.HAPPY_DB_TX_MAX_WAIT_MS,
             DEFAULT_SQLITE_TRANSACTION_MAX_WAIT_MS,
@@ -85,6 +94,17 @@ function readSqliteTransactionConfigFromEnv(env: NodeJS.ProcessEnv): SqliteTrans
             { min: 1, max: 600_000 },
         ),
     };
+}
+
+function resolvePostgresTransactionRetryDelayMs(attempt: number): number {
+    const exponentialDelayMs = Math.min(
+        POSTGRES_TRANSACTION_RETRY_MAX_DELAY_MS,
+        POSTGRES_TRANSACTION_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+    );
+    return Math.round(exponentialDelayMs * (
+        POSTGRES_TRANSACTION_RETRY_JITTER_MIN
+        + POSTGRES_TRANSACTION_RETRY_JITTER_SPAN * Math.random()
+    ));
 }
 
 function resolveSqliteTransactionRetryDelayMs(
@@ -169,7 +189,11 @@ export function isTransactionDeadlineExceededError(error: unknown): error is Tra
 export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options: InTxOptions = {}): Promise<T> {
     const provider = getDbProviderFromEnv(process.env, "postgres");
     const sqliteTransactionConfig = provider === "sqlite" ? readSqliteTransactionConfigFromEnv(process.env) : null;
-    const maxRetries = sqliteTransactionConfig?.maxRetries ?? 3;
+    // Postgres serialization failures and deadlocks (P2034) clear on retry. The default of 3
+    // is too few when many transactions contend on one Account row (markAccountChanged bumps
+    // Account.seq), as when a server pod shuts down and drops every socket at once.
+    const maxRetries = sqliteTransactionConfig?.maxRetries
+        ?? readTransactionMaxRetriesFromEnv(process.env, DEFAULT_POSTGRES_TRANSACTION_MAX_RETRIES);
     const startedAtMs = Date.now();
     let counter = 0;
     let transactionCallbackEntered = false;
@@ -226,7 +250,9 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options: InTxOptions =
                 const nextAttempt = counter + 1;
                 const retryDelayMs = sqliteTransactionConfig
                     ? resolveSqliteTransactionRetryDelayMs(nextAttempt, sqliteTransactionConfig)
-                    : nextAttempt * 100;
+                    // Exponential with jitter, so transactions that collided do not collide again
+                    // in lockstep: 100ms, 200ms, 400ms ... capped at 1.6s, each scaled by 0.5-1.5x.
+                    : resolvePostgresTransactionRetryDelayMs(nextAttempt);
                 if (
                     sqliteTransactionConfig &&
                     !canStartAnotherSqliteTransactionAttempt({

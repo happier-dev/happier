@@ -11,7 +11,7 @@ export function projectCodexNativeHistoryItem(item: Readonly<Record<string, unkn
   const actions: CodexRolloutAction[] = [];
   for (const update of updates) {
     switch (update.type) {
-      case 'provider-user-text': actions.push({ type: 'user-text', text: update.text, ...(update.nativeContent ? { nativeContent: update.nativeContent } : {}) }); break;
+      case 'provider-user-text': actions.push({ type: 'user-text', text: update.text, ...(update.clientId ? { clientId: update.clientId } : {}), ...(update.nativeContent ? { nativeContent: update.nativeContent } : {}) }); break;
       case 'assistant-text-final':
       case 'async-user-input-request': actions.push({ type: 'assistant-text', text: update.text }); break;
       case 'tool-call': actions.push({ type: 'tool-call', callId: update.callId, name: update.name, input: update.input }); break;

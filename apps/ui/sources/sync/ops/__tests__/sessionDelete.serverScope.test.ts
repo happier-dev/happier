@@ -69,7 +69,8 @@ describe('sessionDeleteWithServerScope', () => {
     expect(storage.getState().sessionListViewDataByServerId[serverA.id]?.some((item) => item.type === 'session' && item.session.id === sessionId)).toBe(false);
   });
 
-  it('removes a remote Home row through an identity alias while retaining a same-id active session', async () => {
+  it.each([200, 404])('retires a remote Home row through an identity alias without touching a same-id active session (%s)', async (status) => {
+    remoteRequest.mockImplementation(async () => Response.json(status === 404 ? { error: 'Session not found or not owned by user' } : { success: true }, { status }));
     seedRemoteSession(serverB.id);
     setServerProfileIdentityForUrl(serverB.serverUrl, 'srv_delete_b');
     const activeSession = storage.getState().sessions[sessionId];
@@ -96,6 +97,64 @@ describe('sessionDeleteWithServerScope', () => {
     await expect(sessionDeleteWithServerScope(sessionId, { serverId: targetServerId })).resolves.toMatchObject({ success: false });
 
     expect(storage.getState().sessions).toBe(before.sessions);
+    expect(storage.getState().sessionListViewDataByServerId).toBe(before.sessionListViewDataByServerId);
+  });
+
+  it('treats a missing server session as an idempotent deletion and retires it locally', async () => {
+    remoteRequest.mockImplementation(async () => Response.json({ error: 'Session not found or not owned by user' }, { status: 404 }));
+
+    await expect(sessionDeleteWithServerScope(sessionId, { serverId: serverA.id })).resolves.toEqual({ success: true });
+
+    expect(storage.getState().sessions[sessionId]).toBeUndefined();
+    expect(storage.getState().sessionListRenderables[sessionId]).toBeUndefined();
+    expect(storage.getState().sessionListViewDataByServerId[serverA.id]?.some((item) => item.type === 'session' && item.session.id === sessionId)).toBe(false);
+  });
+
+  it.each(['missing', JSON.stringify({ error: 'Route not found' })])('retains local state for an unrecognized DELETE 404 body: %s', async (body) => {
+    remoteRequest.mockImplementation(async () => new Response(body, { status: 404 }));
+    const before = storage.getState();
+
+    await expect(sessionDeleteWithServerScope(sessionId, { serverId: serverA.id })).resolves.toMatchObject({ success: false });
+
+    expect(storage.getState().sessions).toBe(before.sessions);
+    expect(storage.getState().sessionListRenderables).toBe(before.sessionListRenderables);
+    expect(storage.getState().sessionListViewDataByServerId).toBe(before.sessionListViewDataByServerId);
+  });
+
+  it.each([200, 404])('does not retire a shared session loaded by another Account while the DELETE %s body is pending', async (status) => {
+    const releaseBody = createDeferred<void>();
+    const body = JSON.stringify(status === 404
+      ? { error: 'Session not found or not owned by user' }
+      : { success: true });
+    const encoder = new TextEncoder();
+    const response = new Response(new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(encoder.encode(body.slice(0, 1)));
+        await releaseBody.promise;
+        controller.enqueue(encoder.encode(body.slice(1)));
+        controller.close();
+      },
+    }), { status });
+    remoteRequest.mockImplementation(async () => response);
+    vi.mocked(TokenStorage.getCredentialsForServerUrl).mockResolvedValue({
+      token: 'header.eyJzdWIiOiJhY2NvdW50LWEifQ.signature',
+    });
+    storage.getState().activateProfileScope({ serverId: serverA.id, accountId: 'account-a' });
+    const run = sessionDeleteWithServerScope(sessionId, { serverId: serverA.id });
+    await vi.waitFor(() => expect(remoteRequest).toHaveBeenCalled());
+
+    // Login persists the replacement Account's credentials before publishing its loaded sessions.
+    vi.mocked(TokenStorage.getCredentialsForServerUrl).mockResolvedValue({
+      token: 'header.eyJzdWIiOiJhY2NvdW50LWIifQ.signature',
+    });
+    storage.getState().activateProfileScope({ serverId: serverA.id, accountId: 'account-b' });
+    storage.getState().applySessions([createSessionFixture({ id: sessionId, serverId: serverA.id, seq: 42 })]);
+    const before = storage.getState();
+    releaseBody.resolve();
+
+    await expect(run).resolves.toEqual({ success: true });
+    expect(storage.getState().sessions).toBe(before.sessions);
+    expect(storage.getState().sessionListRenderables).toBe(before.sessionListRenderables);
     expect(storage.getState().sessionListViewDataByServerId).toBe(before.sessionListViewDataByServerId);
   });
 

@@ -1,18 +1,22 @@
 import * as React from 'react';
 
 import { Platform } from 'react-native';
+import { router } from 'expo-router';
 
+import { navigateToSessionRoute } from '@/hooks/session/navigateToSessionRoute';
 import { storage, useLocalSetting } from '@/sync/domains/state/storage';
 import { getActiveViewingSessionId } from '@/sync/domains/session/activeViewingSession';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import { isTauriMainWindowActivelyViewed } from '@/desktop/window/isTauriMainWindowActivelyViewed';
 import { isTauriDesktop } from '@/utils/platform/tauri';
+import { isHostActivelyViewed } from '@/utils/runtime/isRuntimeActive';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { buildActivityLocalNotificationContent } from '../buildActivityLocalNotificationContent';
+import { resolveForegroundNotificationBehavior, type ForegroundNotificationBehavior } from '../resolveForegroundNotificationBehavior';
 import { sendExpoLocalNotification } from '../channels/sendExpoLocalNotification';
 import { sendTauriLocalNotification } from '../channels/sendTauriLocalNotification';
+import { sendWebLocalNotification } from '../channels/sendWebLocalNotification';
 import { subscribeActivityLocalNotifications, type ActivityLocalNotificationEvent } from './activityLocalNotificationBus';
 import { usePresentedAgentRequestSettlement } from './usePresentedAgentRequestSettlement';
 
@@ -77,11 +81,43 @@ function shouldSuppressSameSessionNotification(event: ActivityLocalNotificationE
         return false;
     }
 
-    if (!isTauriDesktop()) {
-        return true;
+    // A browser tab or the desktop app can keep a session open while the person works elsewhere.
+    if (Platform.OS === 'web') {
+        return isHostActivelyViewed();
     }
 
-    return isTauriMainWindowActivelyViewed();
+    return true;
+}
+
+/**
+ * Every open tab delivers the same event, and the browser replaces a notification with the same
+ * tag, so an event-scoped tag shows one notification per event without merging distinct events.
+ */
+function resolveWebNotificationTag(event: ActivityLocalNotificationEvent): string | undefined {
+    if (event.kind === 'agent-request') {
+        return `happier:${event.sessionId}:request:${event.occurrenceId ?? event.requestId}`;
+    }
+
+    if (event.readyEventSeq !== undefined) {
+        return `happier:${event.sessionId}:ready:seq:${event.readyEventSeq}`;
+    }
+    const lastMessageId = event.messages?.at(-1)?.id;
+    return lastMessageId ? `happier:${event.sessionId}:ready:${lastMessageId}` : undefined;
+}
+
+/**
+ * The in-app choice applies while someone is using this browser tab or desktop window. Native
+ * applies the same choice from its Expo foreground handler.
+ */
+function resolveDocumentHostForegroundBehavior(): ForegroundNotificationBehavior {
+    if (!isHostActivelyViewed()) {
+        return 'full';
+    }
+    const state = storage.getState();
+    return resolveForegroundNotificationBehavior({
+        localSettings: state.localSettings,
+        accountSettings: state.settings,
+    });
 }
 
 export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
@@ -95,6 +131,11 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
             }
 
             if (shouldSuppressSameSessionNotification(event)) {
+                return;
+            }
+
+            const foregroundBehavior = Platform.OS === 'web' ? resolveDocumentHostForegroundBehavior() : 'full';
+            if (foregroundBehavior === 'off') {
                 return;
             }
 
@@ -116,7 +157,17 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
                 return;
             }
 
-            if (Platform.OS === 'web') return;
+            if (Platform.OS === 'web') {
+                const sessionId = event.sessionId;
+                fireAndForget(sendWebLocalNotification({
+                    title: notification.title,
+                    body: notification.body,
+                    tag: resolveWebNotificationTag(event),
+                    silent: foregroundBehavior === 'silent',
+                    onClick: () => navigateToSessionRoute({ router, sessionId }),
+                }), { tag: 'ActivityLocalNotificationRuntime.sendWebLocalNotification' });
+                return;
+            }
 
             fireAndForget(sendExpoLocalNotification({
                 title: notification.title,

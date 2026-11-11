@@ -44,7 +44,7 @@ The table below covers all user-facing released assets and how updates work.
 | **Managed Relay runtime** (`happier relay host …`) | Install the Happier CLI, then run `happier relay host install …` | You rerun `happier relay host install` | No | `happier relay host install` (local or with `--ssh user@host`) |
 | **CLI installer** (`https://happier.dev/install`) | `curl …install \| bash` / `irm …install.ps1` | You rerun it (or use the CLI’s self-update for installer installs) | No | Re-run the installer, or run the lane-specific command (`happier`, `hprev`, or `hdev`) with `self update` |
 | **CLI installer payload** | Installed under `~/.happier/cli{,-preview,-dev}/{versions,current,previous}` with lane-specific shims in `~/.happier/bin` and `~/.local/bin` (or Windows equivalent) | You run `happier self update`, `hprev self update`, `hdev self update`, or rerun the installer | No (but it can show notices) | Installer lanes are `stable` (`happier`), `preview` (`hprev`), and `dev` (`hdev`). You can still target `--channel preview|dev` or `--to versionOrTag` explicitly. |
-| **CLI npm package** (`@happier-dev/cli`) | `npm install -g @happier-dev/cli` | You upgrade the npm package | No (but it can show notices) | `npm install -g @happier-dev/cli@latest` (or `@next` for preview) |
+| **CLI npm package** (`@happier-dev/cli`) | `npm install -g @happier-dev/cli` | You upgrade the npm package | No (but it can show notices) | `npm install -g @happier-dev/cli@latest` (`@next` for preview, `@dev` for nightly dev) |
 | **Stack npm package** (`@happier-dev/stack`) | `npm install -g @happier-dev/stack` | You upgrade the npm package (or use `hstack self update` runtime install) | No (but it can show notices) | `hstack self update` (recommended in-stack) or `npm install -g @happier-dev/stack@latest` |
 
 ## Integrity verification (binaries + bundles)
@@ -162,6 +162,12 @@ Preview:
 
 ```bash
 npm install -g @happier-dev/cli@next
+```
+
+Nightly dev:
+
+```bash
+npm install -g @happier-dev/cli@dev
 ```
 
 ## Installers & binaries (what’s automatic vs manual)

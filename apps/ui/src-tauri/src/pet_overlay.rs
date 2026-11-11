@@ -39,6 +39,7 @@ use self::window_lifecycle::{
     ensure_pet_overlay_window, park_pet_overlay_window_offscreen,
     resolve_pet_overlay_available_monitor_rects, resolve_pet_overlay_ignore_cursor_events,
     resolve_pet_overlay_monitor_rect_with_id, set_pet_overlay_window_frame,
+    show_pet_overlay_window_if_hidden,
 };
 
 pub(crate) const PET_OVERLAY_WINDOW_LABEL: &str = "pet_overlay";
@@ -1242,7 +1243,7 @@ fn apply_desktop_pet_overlay_payload<R: Runtime>(
     let _ = window.set_ignore_cursor_events(resolve_pet_overlay_ignore_cursor_events(
         payload.policy.input_locked,
     ));
-    window.show().map_err(|error| error.to_string())?;
+    show_pet_overlay_window_if_hidden(&window)?;
 
     Ok(AppliedDesktopPetOverlayPayload {
         drag_offset: normalized_drag_offset,

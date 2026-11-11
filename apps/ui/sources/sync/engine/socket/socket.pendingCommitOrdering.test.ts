@@ -9,7 +9,7 @@ import { registerSessionRealtimeTranscriptConsumer } from '@/sync/runtime/sessio
 import { Encryption } from '@/sync/encryption/encryption';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { fetchAndApplyPendingMessagesV2 } from '@/sync/engine/pending/pendingQueueV2';
-import { handleUpdateContainer } from './socket';
+import { handleUpdateContainer, retireSessionSocketState } from './socket';
 
 /**
  * The pending -> committed handover ACROSS THE SOCKET, which is where its two halves actually race.
@@ -123,6 +123,7 @@ function buildBaseParams(overrides: Partial<Omit<HandleUpdateContainerParams, 'u
             initializeMachines: vi.fn(async () => {}),
         } as unknown as HandleUpdateContainerParams['encryption'],
         artifactDataKeys: new Map(),
+        retireSession: retireSessionSocketState,
         applySessions: vi.fn(),
         fetchSessions: vi.fn(),
         applyMessages: (sessionId: string, messages: any) => storage.getState().applyMessages(sessionId, messages),

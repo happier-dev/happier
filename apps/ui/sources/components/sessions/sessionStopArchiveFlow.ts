@@ -95,7 +95,7 @@ export async function archiveSessionWithPendingState<T>(
     }
 }
 
-function isStopAcceptedAndPending(result: SessionMutationResult): boolean {
+export function isStopAcceptedAndPending(result: SessionMutationResult): boolean {
     return result.success === false
         && result.code === 'session_stop_requested'
         && result.recovery === 'wait_for_inactive';

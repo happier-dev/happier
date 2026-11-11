@@ -13,7 +13,7 @@ import {
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import * as executionRunActivityBus from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { resetTranscriptStreamSegmentAssemblyForTests } from '@/sync/engine/sessions/transcriptStreamSegmentAssembly';
-import { flushMachineActivityUpdates, handleEphemeralSocketUpdate, handleSocketUpdate, handleUpdateContainer } from './socket';
+import { flushMachineActivityUpdates, handleEphemeralSocketUpdate, handleSocketUpdate, handleUpdateContainer, retireSessionSocketState } from './socket';
 import { Encryption } from '@/sync/encryption/encryption';
 import { encodeBase64 } from '@/encryption/base64';
 import { createMachineFixture } from '@/dev/testkit';
@@ -32,6 +32,7 @@ function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateC
             initializeMachines,
         } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
         artifactDataKeys: new Map(),
+        retireSession: retireSessionSocketState,
         applySessions: vi.fn(),
         fetchSessions: vi.fn(),
         applyMessages: vi.fn(),

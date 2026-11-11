@@ -287,7 +287,21 @@ pub(crate) fn park_pet_overlay_window_offscreen<R: Runtime>(
         1.0,
         1.0,
     )?;
-    window.show().map_err(|error| error.to_string())
+    show_pet_overlay_window_if_hidden(window)
+}
+
+pub(crate) fn show_pet_overlay_window_if_hidden<R: Runtime>(
+    window: &WebviewWindow<R>,
+) -> Result<(), String> {
+    let is_visible = window.is_visible().map_err(|error| error.to_string())?;
+    if should_show_pet_overlay_window(is_visible) {
+        window.show().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn should_show_pet_overlay_window(is_visible: bool) -> bool {
+    !is_visible
 }
 
 pub(crate) fn set_pet_overlay_window_frame<R: Runtime>(
@@ -385,6 +399,12 @@ mod tests {
     fn input_locked_overlay_ignores_cursor_events_for_click_through() {
         assert!(resolve_pet_overlay_ignore_cursor_events(true));
         assert!(!resolve_pet_overlay_ignore_cursor_events(false));
+    }
+
+    #[test]
+    fn visible_pet_overlay_does_not_need_a_second_show_call() {
+        assert!(should_show_pet_overlay_window(false));
+        assert!(!should_show_pet_overlay_window(true));
     }
 
     #[test]

@@ -9,6 +9,7 @@ import {
     type NotificationChannelTopicsV1,
     type NotificationsSettingsV1,
 } from '@happier-dev/protocol';
+import { installBrowserNotificationApiStub } from '@/dev/testkit/mocks/browserNotification';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
@@ -349,6 +350,45 @@ describe('NotificationsSettingsView', () => {
         });
 
         expect(tauriRequestPermissionMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('asks the browser for notification permission when local notifications are turned on', async () => {
+        const browser = installBrowserNotificationApiStub('default');
+        try {
+            const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+            const screen = await renderSettingsView(<NotificationsSettingsView />);
+            const enabledItem = requireRow(screen, 'settings-notifications-local-enabled');
+
+            await act(async () => {
+                enabledItem.props.rightElement.props.onValueChange(false);
+            });
+            expect(browser.requestPermission).not.toHaveBeenCalled();
+
+            await act(async () => {
+                enabledItem.props.rightElement.props.onValueChange(true);
+            });
+            expect(applyLocalSettingsMock).toHaveBeenLastCalledWith({ localNotificationsEnabled: true });
+            expect(browser.requestPermission).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it('leaves desktop app notification permission to the desktop diagnostics row', async () => {
+        isTauriDesktopState.value = true;
+        const browser = installBrowserNotificationApiStub('default');
+        try {
+            const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+            const screen = await renderSettingsView(<NotificationsSettingsView />);
+            await act(async () => {});
+
+            await act(async () => {
+                requireRow(screen, 'settings-notifications-local-enabled').props.rightElement.props.onValueChange(true);
+            });
+            expect(browser.requestPermission).not.toHaveBeenCalled();
+        } finally {
+            vi.unstubAllGlobals();
+        }
     });
 
     it('writes device-local badge settings through the local settings writer', async () => {

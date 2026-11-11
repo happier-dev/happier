@@ -399,6 +399,7 @@ export function useComposerKeyboardLayout(options: ComposerKeyboardLayoutOptions
         };
     }, [applyFinalKeyboardHeightFromJS, dimensions.height]);
 
+    const wasKeyboardLiftSuppressedRef = React.useRef(keyboardLiftSuppressed);
     React.useEffect(() => {
         // Every value written below is consumed by the recompute in this same pass, so it is
         // handed to the recompute directly; reading it back would replay the previous safe area /
@@ -410,12 +411,23 @@ export function useComposerKeyboardLayout(options: ComposerKeyboardLayoutOptions
         headerHeightValue.value = headerHeight;
         viewportHeight.value = dimensions.height;
         isKeyboardLiftSuppressed.value = keyboardLiftSuppressed;
+        // Suppression zeroes the recorded keyboard height, but a keyboard that stayed open (app
+        // modals are portal overlays and keep the composer focused) or settled while a modal held
+        // the lift sends no new frame when the modal goes. Re-seat from the last raw keyboard event
+        // — the same keyboard the UI-thread transcript inset already follows — instead of leaving
+        // the composer behind the keyboard over a lifted transcript (issue #893).
+        const liftReleased = wasKeyboardLiftSuppressedRef.current && !keyboardLiftSuppressed;
+        wasKeyboardLiftSuppressedRef.current = keyboardLiftSuppressed;
+        const releasedKeyboardHeight = liftReleased ? Math.max(0, lastKeyboardEventHeightAbsoluteRef.current) : 0;
         if (keyboardLiftSuppressed) {
             isInteractiveDismissActive.value = false;
             keyboardHeightAbsolute.value = 0;
             keyboardHeightLive.value = 0;
             keyboardHeightForInset.value = 0;
             keyboardProgress.value = 0;
+        } else if (liftReleased) {
+            keyboardHeightAbsolute.value = releasedKeyboardHeight;
+            keyboardProgress.value = resolveKeyboardHeightWithinScaffold(releasedKeyboardHeight, layoutBottomInset) > 0 ? 1 : 0;
         }
         recomputeStaticLayout({
             availablePanelMaxHeight,
@@ -426,7 +438,7 @@ export function useComposerKeyboardLayout(options: ComposerKeyboardLayoutOptions
             viewportHeight: dimensions.height,
             ...(keyboardLiftSuppressed
                 ? { isInteractiveDismissActive: false, keyboardHeightAbsolute: 0, keyboardHeightForInset: 0 }
-                : {}),
+                : liftReleased ? { keyboardHeightAbsolute: releasedKeyboardHeight } : {}),
         });
     }, [
         dimensions.height,

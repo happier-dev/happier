@@ -1,3 +1,5 @@
+import stringWidth from 'string-width';
+
 export type VirtualTerminalScreen = Readonly<{
   write(data: string): void;
   capture(): Readonly<{ text: string; cursor: Readonly<{ x: number; y: number }> }>;
@@ -62,7 +64,13 @@ export function createVirtualTerminalScreen(params?: Readonly<{ cols?: number; r
   const clearLineRange = (row: number, startCol: number, endCol: number): void => {
     const line = lines[row];
     if (!line) return;
-    for (let col = clamp(startCol, 0, cols - 1); col <= clamp(endCol, 0, cols - 1); col += 1) {
+    let start = Math.max(0, startCol);
+    let end = Math.min(cols - 1, endCol);
+    if (start > end) return;
+    // An empty cell continues the wide character immediately to its left.
+    if (line[start] === '') start -= 1;
+    if (line[end + 1] === '') end += 1;
+    for (let col = start; col <= end; col += 1) {
       line[col] = ' ';
     }
   };
@@ -86,13 +94,38 @@ export function createVirtualTerminalScreen(params?: Readonly<{ cols?: number; r
     scrollIfNeeded();
   };
 
-  const writePrintable = (char: string): void => {
-    if (cursorCol >= cols) {
+  const writePrintable = (char: string, widths: Map<string, number>): void => {
+    let width = 1;
+    if (char.charCodeAt(0) >= 0x7f) {
+      width = widths.get(char) ?? stringWidth(char);
+      widths.set(char, width);
+    }
+    if (width === 0 || (width === 2 && /\p{Emoji_Modifier}/u.test(char))) {
+      const line = lines[cursorRow]!;
+      let baseCol = cursorCol - 1;
+      if (line[baseCol] === '') baseCol -= 1;
+      const base = line[baseCol] ?? '';
+      if (baseCol >= 0 && (width === 0 || /^\p{Emoji_Modifier_Base}\p{Mark}*$/u.test(base))) {
+        const glyph = base + char;
+        // Presentation marks can widen an already printed glyph. Keep it on
+        // its row and clip occupancy to the viewport rather than reflowing.
+        const glyphWidth = Math.min(stringWidth(glyph), cols - baseCol);
+        clearLineRange(cursorRow, baseCol, baseCol + glyphWidth - 1);
+        line[baseCol] = glyph;
+        if (glyphWidth === 2) line[baseCol + 1] = '';
+        cursorCol = baseCol + glyphWidth;
+        return;
+      }
+      if (width === 0) return;
+    }
+    if (cursorCol + width > cols) {
       cursorCol = 0;
       newline();
     }
+    clearLineRange(cursorRow, cursorCol, cursorCol + width - 1);
     lines[cursorRow]![cursorCol] = char;
-    cursorCol += 1;
+    if (width === 2) lines[cursorRow]![cursorCol + 1] = '';
+    cursorCol += width;
   };
 
   const handleCsi = (buffer: string): void => {
@@ -150,7 +183,7 @@ export function createVirtualTerminalScreen(params?: Readonly<{ cols?: number; r
     }
   };
 
-  const handleNormalChar = (char: string): void => {
+  const handleNormalChar = (char: string, widths: Map<string, number>): void => {
     if (char === '\u001b') {
       state = { kind: 'escape' };
       return;
@@ -173,15 +206,18 @@ export function createVirtualTerminalScreen(params?: Readonly<{ cols?: number; r
     }
     const code = char.charCodeAt(0);
     if (code >= 0x20 && code !== 0x7f) {
-      writePrintable(char);
+      writePrintable(char, widths);
     }
   };
 
   return {
     write(data: string): void {
+      // Terminal redraws repeat border glyphs; measure each distinct character
+      // once per chunk without retaining an ever-growing session cache.
+      const widths = new Map<string, number>();
       for (const char of String(data ?? '')) {
         if (state.kind === 'normal') {
-          handleNormalChar(char);
+          handleNormalChar(char, widths);
           continue;
         }
         if (state.kind === 'escape') {
@@ -229,7 +265,9 @@ export function createVirtualTerminalScreen(params?: Readonly<{ cols?: number; r
       const safeRows = Math.max(2, Math.trunc(nextRows));
       const nextLines = Array.from({ length: safeRows }, (_, row) => {
         const existing = lines[row] ?? [];
-        return Array.from({ length: safeCols }, (_, col) => existing[col] ?? ' ');
+        const line = Array.from({ length: safeCols }, (_, col) => existing[col] ?? ' ');
+        if (existing[safeCols] === '') line[safeCols - 1] = ' ';
+        return line;
       });
       cols = safeCols;
       rows = safeRows;
