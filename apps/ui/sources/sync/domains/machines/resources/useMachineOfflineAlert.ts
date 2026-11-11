@@ -16,6 +16,7 @@ export type MachineOfflineAlertState = Readonly<{
 type OfflineAlertMutation = {
     machineId: string;
     serverId: string | undefined;
+    scope: ReturnType<typeof storage.getState>['settingsScope'];
     desired: boolean | null;
     saving: Promise<MachineOfflineAlertSetResult> | null;
 };
@@ -29,13 +30,15 @@ function readConsent(state: ReturnType<typeof storage.getState>, input: MachineR
 
 export function useMachineOfflineAlert(input: MachineResourceKey): MachineOfflineAlertState {
     const { machineId, serverId } = input;
+    const scope = storage(state => state.settingsScope, { settingsScope: true });
     const enabled = storage(React.useCallback((state: ReturnType<typeof storage.getState>) => readConsent(state, { machineId, serverId })?.enabled ?? null, [machineId, serverId]),
         { settings: ['machineOfflineAlertsV1'], settingsScope: true, profileScope: true });
     const mutationRef = React.useRef<OfflineAlertMutation | null>(null);
-    if (!mutationRef.current || mutationRef.current.machineId !== machineId || mutationRef.current.serverId !== serverId) {
+    if (!mutationRef.current || mutationRef.current.machineId !== machineId || mutationRef.current.serverId !== serverId
+        || !areAccountSettingsScopesEqual(mutationRef.current.scope, scope)) {
         // A retained Machine page may change targets while the old target's admitted
         // write finishes. Its next choice belongs to a separate mutation.
-        mutationRef.current = { machineId, serverId, desired: null, saving: null };
+        mutationRef.current = { machineId, serverId, scope, desired: null, saving: null };
     }
     const mutation = mutationRef.current;
     const [presentation, setPresentation] = React.useState<Readonly<{

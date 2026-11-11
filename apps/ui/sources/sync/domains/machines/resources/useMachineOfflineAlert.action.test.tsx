@@ -71,6 +71,56 @@ it.each([
     await screen.unmount();
 });
 
+it('keeps a new Account choice separate from the previous Account pending save on the same Machine', async () => {
+    const serverId = await home.addHome({ name: 'Rotating offline', serverUrl: 'https://rotating-offline.test',
+        serverIdentityId: 'srv_rotating_offline', accountId: 'owner', currentAccount: true });
+    const held = createDeferred<void>();
+    let oldWrites = 0;
+    let newWrites = 0;
+    let oldRaw: Record<string, unknown> = { machineOfflineAlertsV1: { machineIds: ['peer'] } };
+    let newRaw: Record<string, unknown> = { machineOfflineAlertsV1: { machineIds: ['other-peer'] } };
+    home.answer(serverId, '/v2/account/settings', { async select(input) {
+        if (input === undefined || input === null) return { body: { content: { t: 'plain', v: oldRaw }, version: 1 } };
+        const write = AccountSettingsV2UpdateRequestSchema.parse(input);
+        oldWrites++;
+        await held.promise;
+        if (write.content?.t !== 'plain') throw new Error('Expected plain Account settings');
+        oldRaw = write.content.v;
+        return { body: { success: true, version: 2 } };
+    } });
+    const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' };
+    storage.setState({ settingsScope: scope, profileScope: scope, settings: settingsParse(oldRaw) });
+    const screen = await renderScreen(<ItemList><MachineOfflineAlertRow serverId={serverId}
+        machine={{ id: 'machine' }} machineName="edge-1" /></ItemList>);
+    const control = () => screen.findByTestId('machine-alerts-offline-switch')!;
+    act(() => control().props.onValueChange(true));
+    await vi.waitFor(() => expect(oldWrites).toBe(1));
+    home.answer(serverId, '/v2/account/settings', { select(input) {
+        if (input === undefined || input === null) return { body: { content: { t: 'plain', v: newRaw }, version: 1 } };
+        const write = AccountSettingsV2UpdateRequestSchema.parse(input);
+        newWrites++;
+        if (write.content?.t !== 'plain') throw new Error('Expected plain Account settings');
+        newRaw = write.content.v;
+        return { body: { success: true, version: 2 } };
+    } });
+    try {
+        await act(async () => {
+            await home.switchAccount(serverId, 'other', { currentAccount: true });
+            const nextScope = { ...scope, accountId: 'other' };
+            storage.setState({ settingsScope: nextScope, profileScope: nextScope, settings: settingsParse(newRaw) });
+        });
+        expect(control().props.value).toBe(false);
+        act(() => control().props.onValueChange(true));
+    } finally {
+        await act(async () => { held.resolve(); });
+    }
+    await vi.waitFor(() => expect(newWrites).toBe(1));
+    await vi.waitFor(() => expect(newRaw.machineOfflineAlertsV1).toEqual({ machineIds: ['other-peer', 'machine'] }));
+    expect(oldRaw.machineOfflineAlertsV1).toEqual({ machineIds: ['peer', 'machine'] });
+    expect(control().props.value).toBe(true);
+    await screen.unmount();
+});
+
 it('persists keyed offline consent through the real Account Action, preserving other machines', async () => {
     const serverId = await home.addHome({ name: 'Offline', serverUrl: 'https://offline.test', serverIdentityId: 'srv_offline', accountId: 'owner', currentAccount: true });
     let raw: Record<string, unknown> = { machineOfflineAlertsV1: { machineIds: ['peer'] } };
