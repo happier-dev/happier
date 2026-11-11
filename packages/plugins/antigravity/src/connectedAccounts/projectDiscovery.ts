@@ -1,5 +1,5 @@
 import { sleepWithSignal } from '@happier-dev/plugin-sdk/async';
-import type { ConnectedAccountAuthenticationContext } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ConnectedAccountAuthCompletionResult, ConnectedAccountAuthenticationContext } from '@happier-dev/plugin-sdk/connected-accounts';
 import { ANTIGRAVITY_CONTROL_PLANE_USER_AGENT, readAntigravityProjectId } from './client.js';
 
 const endpoint = 'https://daily-cloudcode-pa.googleapis.com/v1internal';
@@ -7,10 +7,11 @@ const metadata = { ideType: 'ANTIGRAVITY' };
 type Context = Pick<ConnectedAccountAuthenticationContext, 'services' | 'signal'>;
 function record(value: unknown): Record<string, unknown> | null { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null; }
 function text(value: unknown): string { return typeof value === 'string' ? value.trim() : ''; }
-function failure(code: string, status: 'rejected' | 'outcomeUnknown' = 'outcomeUnknown', httpStatus?: number) {
-  return { status, diagnostic: { code, severity: 'error' as const, message: 'Antigravity project setup could not complete. Try connecting again.',
+function failure(code: string, status: 'rejected' | 'outcomeUnknown' = 'outcomeUnknown', httpStatus?: number): Extract<ConnectedAccountAuthCompletionResult, { status: 'rejected' | 'outcomeUnknown' }> {
+  const diagnostic = { code, severity: 'error' as const, message: 'Antigravity project setup could not complete. Try connecting again.',
     ...(httpStatus === undefined ? {} : { details: { httpStatus } }),
-  } };
+  };
+  return status === 'rejected' ? { status, diagnostic } : { status, diagnostic };
 }
 
 /** Cloud Code Assist login contract: load entitlement, onboard if needed, then load the assigned project. */

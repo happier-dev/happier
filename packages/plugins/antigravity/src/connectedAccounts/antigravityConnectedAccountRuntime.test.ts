@@ -8,6 +8,7 @@ import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk
 import { activate } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { ANTIGRAVITY_AGENT_ID } from '../agent/install/cliRuntime.js';
+import { ANTIGRAVITY_CREDENTIAL_ENV_KEY } from './antigravityConnectedAccountRuntime.js';
 
 const callbackUrl = 'https://antigravity.google/oauth-callback';
 const service = { pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' };
@@ -45,6 +46,15 @@ function response(status: number, body: unknown, finalUrl = 'https://oauth2.goog
 }
 
 describe('Antigravity qualified Connected Account', () => {
+  it.each([
+    { kind: 'httpHeaders', origin: 'https://daily-cloudcode-pa.googleapis.com', headerNames: ['authorization'] },
+    { kind: 'environment', keys: [ANTIGRAVITY_CREDENTIAL_ENV_KEY] },
+    { kind: 'files', fileIds: ['antigravity-acp/acp_token.json'] },
+  ] as const)('reports typed missing credentials for $kind', async request => {
+    const accountRuntime = await runtime();
+    await expect(accountRuntime.materialize(request, readContext() as Parameters<typeof accountRuntime.materialize>[1]))
+      .rejects.toMatchObject({ code: 'plugin_connected_account_credentials_unavailable' });
+  });
   it('discovers and retains the fresh OAuth project before materializing an access-only native bundle', async () => {
     const accountRuntime = await runtime();
     const mode = accountRuntime.authentication.modes['oauth-personal'];
@@ -144,6 +154,7 @@ describe('Antigravity qualified Connected Account', () => {
     } as Parameters<typeof mode.complete>[1];
     const result = await mode.complete({ callbackUrl, code: 'code', state: 'state', pkceVerifier: 'verifier' }, context);
     expect(result).toMatchObject({ status: failure === 403 ? 'rejected' : 'outcomeUnknown', diagnostic: { code: failure === 'missing' ? 'antigravity_project_missing' : 'antigravity_project_http_failed' } });
+    if (failure !== 'missing') expect(result).toMatchObject({ diagnostic: { details: { httpStatus: failure } } });
     expect(attempted.values.size).toBe(0);
     expect(JSON.stringify(result)).not.toContain('private vendor response');
   });

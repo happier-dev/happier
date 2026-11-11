@@ -216,11 +216,12 @@ export function createAntigravityConnectedAccountRuntime(readNativeCredential?: 
     if (request.kind === 'httpHeaders') {
       if (request.headerNames.some(name => name !== 'authorization')) throw new Error('Antigravity personal OAuth cannot materialize an unrelated header.');
       const accessToken = await read(context.credentials, 'accessToken', options);
-      if (!accessToken) throw new Error('Antigravity OAuth credentials are unavailable.');
+      if (!accessToken) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'Antigravity OAuth credentials are unavailable.' });
       const projectId = await read(context.credentials, 'projectId', options);
       const expiry = Number(await read(context.credentials, 'expiresAtMs', options));
-      return { kind: 'httpHeaders', headers: request.headerNames.includes('authorization') ? { authorization: `Bearer ${accessToken}` } : {},
-        facts: projectId ? { projectId } : {}, ...(Number.isSafeInteger(expiry) && expiry > 0 ? { expiresAt: expiry } : {}) };
+      const headers: Record<string, string> = request.headerNames.includes('authorization') ? { authorization: `Bearer ${accessToken}` } : {};
+      const facts: Record<string, string> = projectId ? { projectId } : {};
+      return { kind: 'httpHeaders', headers, facts, ...(Number.isSafeInteger(expiry) && expiry > 0 ? { expiresAt: expiry } : {}) };
     }
     if (request.kind === 'environment') {
       if (request.keys.some((key) => key !== 'AGY_ACP_FORCE_FILE_STORAGE' && key !== ANTIGRAVITY_CREDENTIAL_ENV_KEY)) throw new Error('Antigravity personal OAuth cannot materialize an unrelated environment key.');
@@ -237,7 +238,7 @@ export function createAntigravityConnectedAccountRuntime(readNativeCredential?: 
     const files: Record<string, Uint8Array> = {};
     if (request.fileIds.includes(tokenFileId)) {
       const accessToken = await read(context.credentials, 'accessToken', options), refreshToken = await read(context.credentials, 'refreshToken', options);
-      if (!accessToken || !refreshToken) throw new Error('Antigravity OAuth credentials are unavailable.');
+      if (!accessToken || !refreshToken) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'Antigravity OAuth credentials are unavailable.' });
       const expiry = Number(await read(context.credentials, 'expiresAtMs', options)), projectId = await read(context.credentials, 'projectId', options);
       files[tokenFileId] = new TextEncoder().encode(JSON.stringify({ token: accessToken, refresh_token: refreshToken, client_id: profile.clientId, client_secret: profile.clientSecret,
         token_uri: profile.tokenUrl, scopes: await scopes(context.credentials, options), ...(projectId ? { project_id: projectId } : {}),
