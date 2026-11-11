@@ -71,6 +71,20 @@ describe('qualified Connected Account list payload admission', () => {
         return { ref, ...result };
     }
 
+    it('uses provider email instead of an opaque account id stored as the display name in share-source offers', async () => {
+        const account = await createAccount();
+        const opaqueId = '35f1d8ec-633c-4bda-9e0d-7055ac95b8af';
+        const ref = { service, accountId: opaqueId };
+        await mutateQualifiedConnectedServiceCredential({
+            accountId: account.id, ref, authenticationModeId: 'api-key', expectedCredentialRevision: null,
+            content: { t: 'plain', v: { token: 'synthetic-token' } },
+            metadata: { displayName: opaqueId, providerIdentity: { email: 'ada@example.com' }, scopes: [] },
+        });
+        const offers = await listQualifiedConnectedAccountSourceOffersInTx(db, { accountId: account.id });
+        expect(offers).toContainEqual(expect.objectContaining({ ref, label: 'ada@example.com' }));
+        expect(offers.map(offer => offer.label)).not.toContain(opaqueId);
+    });
+
     it('reads one body-free row set for a filtered list while preserving profile facts and all-list consumers', async () => {
         const account = await createAccount();
         const outsider = await createAccount();
@@ -113,7 +127,7 @@ describe('qualified Connected Account list payload admission', () => {
         expect(all).toHaveLength(33);
         expect(all.filter(profile => profile.ref.service.localId === service.localId)).toEqual(profiles);
         expect(await listQualifiedConnectedAccountSourceOffersInTx(storage, { accountId: account.id }))
-            .toEqual(all.map(profile => expect.objectContaining({ ref: profile.ref, label: profile.displayName })));
+            .toEqual(all.map(profile => expect.objectContaining({ ref: profile.ref, label: profile.ref.service.localId === 'other' ? 'Other' : 'Accounts' })));
         expect(readColumns).toHaveLength(3);
         expect(readColumns.flat().filter(column => column === 'token' || column === 'configurationContent')).toHaveLength(0);
     });

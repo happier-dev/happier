@@ -7,6 +7,8 @@ import type {
 } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { isConnectedServiceProfileOptionSelectable } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import type { ConnectedAccountPurposeTargetChoice } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
+import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
+import { presentConnectedAccountPurposeTeamResource } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 
 export type ConnectedServicesAuthLabelModel = Readonly<{
     label: string;
@@ -51,6 +53,8 @@ export type ResolveConnectedServicesAuthLabelParams = Readonly<{
     formatConnectedCountLabel: (count: number) => string;
     bindingPresentation?: 'effective' | 'requested';
     teamResourceChoicesByServiceId?: Readonly<Record<string, Pick<ConnectedAccountPurposeTargetChoice, 'presentation' | 'eligibility'> | undefined>>;
+    teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
+    teamNameById?: Readonly<Record<string, string>>;
 }>;
 
 export function resolveConnectedServicesAuthWarningTranslationKey(
@@ -227,8 +231,19 @@ function resolveConnectedBindingLabel(
 ): string | null {
     if (state.effectiveSource === 'team_resource'
         || (params.bindingPresentation === 'requested' && state.requestedSource === 'team_resource')) {
-        return params.teamResourceChoicesByServiceId?.[serviceId]?.presentation.accessibilityLabel
-            ?? params.resolveServiceTitle(serviceId);
+        const choice = params.teamResourceChoicesByServiceId?.[serviceId];
+        if (choice) return choice.presentation.accessibilityLabel;
+        const binding = params.bindingsByServiceId[serviceId];
+        const resource = binding?.source === 'team_resource'
+            ? params.teamCredentialResources?.find(resource => resource.id === binding.resourceId) : undefined;
+        return resource && binding?.source === 'team_resource'
+            ? presentConnectedAccountPurposeTeamResource({
+                teamResource: { teamId: resource.teamId, selection: binding },
+                teamResources: params.teamCredentialResources ?? [],
+                teamNameById: params.teamNameById,
+                serviceTitle: params.resolveServiceTitle(serviceId),
+            }).accessibilityLabel
+            : params.resolveServiceTitle(serviceId);
     }
     const requested = params.bindingPresentation === 'requested' && state.requestedSource === 'connected';
     if (state.effectiveSource !== 'connected' && !requested) return null;

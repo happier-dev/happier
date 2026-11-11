@@ -519,6 +519,12 @@ export function buildNewSessionConnectedServicesSelectionListModel(
 
     if (params.nativeRoute && params.includeNativeAuthOption !== false) {
         const route = params.nativeRoute;
+        // A member leaving a shared credential needs their own connection before browsing its models.
+        // Keep ordinary Machine-native browsing unchanged; it does not require a Connected Account.
+        const connectServiceId = params.supportedServiceIds.find(serviceId => (
+            (params.appliedTeamRoute !== undefined || params.bindingsByServiceId[serviceId]?.source === 'team_resource')
+            && !(params.profileOptionsByServiceId[serviceId] ?? []).some(isConnectedServiceProfileOptionSelectable)
+        ));
         const unavailable = params.supportedServiceIds.map(serviceId => params.resolveOptionAvailability?.({
             serviceId, optionId: createNativeServiceOptionId(serviceId), binding: { source: 'native' },
         })).find(availability => availability?.disabled);
@@ -543,8 +549,10 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                 icon: params.renderRowIcon({ kind: 'native' }),
                 selected,
                 ...(route.onBrowse ? { rightAccessory: params.renderBrowseMark() } : {}),
-                disabled: !route.onBrowse || unavailable?.disabled === true,
-                onSelect: route.onBrowse,
+                disabled: (!connectServiceId && !route.onBrowse) || unavailable?.disabled === true,
+                onSelect: connectServiceId
+                    ? event => params.onOpenSettings(connectServiceId, resolvePressTriggerAnchor(event))
+                    : route.onBrowse,
             }],
         });
     }

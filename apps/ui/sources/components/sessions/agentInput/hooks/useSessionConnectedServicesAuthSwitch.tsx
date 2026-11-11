@@ -1034,13 +1034,15 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             defaultProfileIdByServiceId: params.settings.connectedServicesDefaultProfileByServiceId,
             resolveServiceTitle, nativeLabel: t('connectedServices.authChip.nativeLabel'),
             formatConnectedCountLabel: count => t('connectedServices.authChip.connectedCountLabel', { count }),
+            teamCredentialResources: params.teamCredentialResources, teamNameById: params.teamNameById,
         });
         return {
             label: label.label, connectedCount: label.connectedCount,
             authSource: label.connectedCount === 0 ? 'native' as const : label.connectedCount === supportedConnectedServiceIds.length ? 'connected' as const : 'mixed' as const,
         };
     }, [params.settings.connectedServicesDefaultProfileByServiceId, supportedConnectedServiceIds,
-        metadataBindingsByServiceId, profileOptionsByServiceId, groupOptionsByServiceId, accountGroupsFeatureEnabled, resolveServiceTitle]);
+        metadataBindingsByServiceId, profileOptionsByServiceId, groupOptionsByServiceId, accountGroupsFeatureEnabled, resolveServiceTitle,
+        params.teamCredentialResources, params.teamNameById]);
     const routePresentation = React.useMemo(() => params.route
         ? resolveSessionRoutePresentation({ ...params.route, native: appliedNativeRoute })
         : null, [appliedNativeRoute, params.route]);
@@ -1161,6 +1163,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             resolveServiceTitle,
             nativeLabel: t('connectedServices.authChip.nativeLabel'),
             formatConnectedCountLabel: (count) => t('connectedServices.authChip.connectedCountLabel', { count }),
+            teamCredentialResources: params.teamCredentialResources, teamNameById: params.teamNameById,
         });
 
         const authSource = label.connectedCount === 0

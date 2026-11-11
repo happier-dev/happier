@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { humanizeConnectedServiceIdentity, resolveConnectedAccountPrimaryNameV1 } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 
 import type { Prisma } from "@prisma/client";
 import { type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
@@ -2018,18 +2019,21 @@ export async function listQualifiedConnectedAccountSourceOffersInTx(
         tx,
         params,
     );
-    return entries.flatMap(({ profile, incarnation, directExportSupport }) => {
-        const label = profile.displayName?.trim()
-            || profile.providerIdentity?.email?.trim()
-            || null;
-        return label
-            ? [{
-                ref: profile.ref,
-                credentialIncarnation: incarnation,
-                label,
-                directExportSupport,
-            }]
-            : [];
+    return entries.map(({ profile, incarnation, directExportSupport }) => {
+        const serviceTitle = humanizeConnectedServiceIdentity(profile.ref.service.localId);
+        const label = resolveConnectedAccountPrimaryNameV1({
+            serviceTitle,
+            displayName: profile.displayName,
+            email: profile.providerIdentity?.email,
+            providerAccountId: profile.providerIdentity?.accountId,
+            accountId: profile.ref.accountId,
+        }).name ?? serviceTitle;
+        return {
+            ref: profile.ref,
+            credentialIncarnation: incarnation,
+            label,
+            directExportSupport,
+        };
     });
 }
 
